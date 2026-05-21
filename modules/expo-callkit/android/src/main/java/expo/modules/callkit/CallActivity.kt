@@ -50,6 +50,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -839,6 +840,14 @@ class CallActivity : ComponentActivity() {
     }
     remoteRenderer?.release()
     localRenderer?.release()
+    // [Wave C-2] Release all group-participant tile renderers to avoid
+    // GL surface leaks. Idempotent if already released by handleRoomEvent.
+    try {
+      for (p in state.groupParticipants) {
+        try { p.renderer?.release() } catch (_: Throwable) {}
+      }
+      state.groupParticipants.clear()
+    } catch (_: Throwable) {}
     LiveKitRoomHolder.clear()
     // [#1207, 2026-05-19] Drop the Room reference from NativeCallRoom so
     // `adoptNativeRoom()` returns null after the call ends. Idempotent —
@@ -1392,21 +1401,85 @@ class CallActivity : ComponentActivity() {
         finishCall(reason = "room_disconnect")
       }
       is RoomEvent.ParticipantConnected -> {
-        Log.d(TAG, "ParticipantConnected ${event.participant.identity}")
+        val identity = event.participant.identity?.value ?: ""
+        val name = event.participant.name ?: ""
+        Log.d(TAG, "ParticipantConnected $identity")
         stopRingback()
-        state.peerIdentity = event.participant.identity?.value ?: ""
+        state.peerIdentity = identity
+        // [Wave C-2] Add to the group grid if not already present.
+        // Video track starts null — wired in on TrackSubscribed.
+        if (state.groupParticipants.none { it.identity == identity }) {
+          state.groupParticipants.add(GroupParticipantAndroid(identity = identity, name = name))
+        }
       }
       is RoomEvent.ParticipantDisconnected -> {
-        Log.d(TAG, "ParticipantDisconnected ${event.participant.identity}")
+        val identity = event.participant.identity?.value ?: ""
+        Log.d(TAG, "ParticipantDisconnected $identity")
+        // [Wave C-2] Remove from group grid. Release the renderer to prevent
+        // leak; LK SurfaceViewRenderer must be released when no longer used.
+        val idx = state.groupParticipants.indexOfFirst { it.identity == identity }
+        if (idx >= 0) {
+          val old = state.groupParticipants[idx]
+          try { old.renderer?.release() } catch (_: Throwable) {}
+          state.groupParticipants.removeAt(idx)
+        }
       }
       is RoomEvent.TrackSubscribed -> {
         val track = event.track
         if (track is VideoTrack) {
           Log.d(TAG, "TrackSubscribed (video) sid=${event.publication.sid}")
           state.hasRemoteVideo = true
+          // 1:1 path: attach to the single remoteRenderer.
           remoteRenderer?.let { rv -> track.addRenderer(rv) }
+          // [Wave C-2] Also wire this track into the group grid tile.
+          // Allocate a dedicated SurfaceViewRenderer for this participant
+          // and hand it to the tile entry. If the participant entry doesn't
+          // exist yet (TrackSubscribed races ParticipantConnected on some
+          // SFU topologies), add them now.
+          val identity = event.participant.identity?.value ?: ""
+          val name = event.participant.name ?: ""
+          val tileRenderer = try { SurfaceViewRenderer(this) } catch (t: Throwable) {
+            Log.w(TAG, "Wave C-2 tile renderer alloc failed: ${t.message}")
+            null
+          }
+          if (tileRenderer != null) {
+            try { r.initVideoRenderer(tileRenderer) } catch (t: Throwable) {
+              Log.w(TAG, "Wave C-2 initVideoRenderer failed: ${t.message}")
+            }
+            try { track.addRenderer(tileRenderer) } catch (t: Throwable) {
+              Log.w(TAG, "Wave C-2 addRenderer failed: ${t.message}")
+            }
+            val existingIdx = state.groupParticipants.indexOfFirst { it.identity == identity }
+            if (existingIdx >= 0) {
+              val old = state.groupParticipants[existingIdx]
+              state.groupParticipants[existingIdx] = old.copy(renderer = tileRenderer)
+            } else {
+              state.groupParticipants.add(
+                GroupParticipantAndroid(identity = identity, name = name, renderer = tileRenderer)
+              )
+            }
+          }
         } else {
           Log.d(TAG, "TrackSubscribed (audio) sid=${event.publication.sid}")
+        }
+      }
+      is RoomEvent.TrackUnsubscribed -> {
+        val track = event.track
+        if (track is VideoTrack) {
+          // [Wave C-2] Clear the video renderer for this participant but keep
+          // them in the group grid (they're still in the call, just muted/video-off).
+          val identity = event.participant.identity?.value ?: ""
+          val idx = state.groupParticipants.indexOfFirst { it.identity == identity }
+          if (idx >= 0) {
+            val old = state.groupParticipants[idx]
+            try {
+              if (old.renderer != null) {
+                track.removeRenderer(old.renderer)
+                old.renderer.release()
+              }
+            } catch (t: Throwable) { Log.w(TAG, "Wave C-2 renderer release: ${t.message}") }
+            state.groupParticipants[idx] = old.copy(renderer = null)
+          }
         }
       }
       // [2026-05-18] LiveKit 2.x consolidated LocalTrackPublished + RemoteTrackPublished
@@ -2433,6 +2506,111 @@ private fun SpeakerRingComposable(level: Float) {
         radius = size.minDimension / 2f,
         style = Stroke(width = 8f),
       )
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// [Wave C-2] Multi-participant grid view
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Renders a `LazyVerticalGrid` of participant tiles.
+ *
+ * - 2-column layout for 2–4 participants (like WhatsApp group video).
+ * - 3-column layout for 5–9 participants.
+ * - Each tile shows a `SurfaceViewRenderer` when the participant's video
+ *   track is subscribed, otherwise an avatar circle (initial letter on
+ *   the dark chip background) for audio-only participants.
+ * - The tile label (participant name / identity) is pinned to the bottom-
+ *   leading corner, matching WhatsApp and Google Meet conventions.
+ *
+ * Lifecycle note: `SurfaceViewRenderer` instances are owned by the
+ * `GroupParticipantAndroid` entries in `CallSessionStateAndroid.groupParticipants`.
+ * CallActivity releases them in `handleRoomEvent(TrackUnsubscribed)` and
+ * `handleRoomEvent(ParticipantDisconnected)`.  This composable does NOT
+ * call `release()` — that is the Activity's responsibility.
+ */
+@Composable
+private fun ParticipantGridView(
+  participants: List<GroupParticipantAndroid>,
+  modifier: Modifier = Modifier,
+) {
+  val columns = if (participants.size <= 4) 2 else 3
+  LazyVerticalGrid(
+    columns = GridCells.Fixed(columns),
+    modifier = modifier,
+    horizontalArrangement = Arrangement.spacedBy(4.dp),
+    verticalArrangement = Arrangement.spacedBy(4.dp),
+    contentPadding = androidx.compose.foundation.layout.PaddingValues(4.dp),
+  ) {
+    items(participants) { p ->
+      ParticipantTile(participant = p)
+    }
+  }
+}
+
+/** One tile in the group-call grid. */
+@Composable
+private fun ParticipantTile(participant: GroupParticipantAndroid) {
+  Box(
+    modifier = Modifier
+      .aspectRatio(9f / 16f)
+      .clip(RoundedCornerShape(8.dp))
+      .background(ChipColor),
+  ) {
+    if (participant.renderer != null) {
+      // Live video — fill the tile.
+      val r = participant.renderer
+      AndroidView(
+        factory = { r },
+        modifier = Modifier.fillMaxSize(),
+      )
+    } else {
+      // Audio-only or video muted — avatar letter.
+      Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+      ) {
+        Box(
+          modifier = Modifier
+            .size(56.dp)
+            .clip(CircleShape)
+            .background(Color(0xFF2C3E50)),
+          contentAlignment = Alignment.Center,
+        ) {
+          Text(
+            text = participant.initial,
+            color = Color.White,
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Normal,
+          )
+        }
+      }
+    }
+
+    // Name / identity label — bottom-leading, semi-opaque pill.
+    val label = participant.name.ifEmpty { participant.identity }
+    if (label.isNotEmpty()) {
+      Box(
+        modifier = Modifier
+          .align(Alignment.BottomStart)
+          .padding(6.dp)
+      ) {
+        Text(
+          text = label,
+          color = Color.White,
+          fontSize = 11.sp,
+          fontWeight = FontWeight.SemiBold,
+          maxLines = 1,
+          modifier = Modifier
+            .background(
+              color = Color.Black.copy(alpha = 0.50f),
+              shape = RoundedCornerShape(50),
+            )
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+      }
     }
   }
 }
