@@ -143,10 +143,20 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
   const lat = hasCoords ? Number(location.latitude) : null;
   const lng = hasCoords ? Number(location.longitude) : null;
 
-  // Google Static Maps requires Cloud Billing enabled (returned 403 on prod).
-  // Disabled for now — OSM tile mosaic (web) + single OSM tile (native) work
-  // without any key/billing and look clean for chat-bubble previews.
-  const gmapsUrl = null;
+  // [2026-05-21] Switched to Google Static Maps (user mandate: "vamos usar
+  // google maps melhor vamos trocar o sistema pra google"). Cloud Billing now
+  // enabled on the project so the 403 from the prior attempt is gone. Falls
+  // back to the carto/OSM tile chain via static_map.php if the key isn't
+  // injected (e.g., older bundles without GOOGLE_MAPS_KEY in extra).
+  const gmapsUrl = (hasCoords && GMAPS_KEY) ? (() => {
+    const la = lat.toFixed(6);
+    const lo = lng.toFixed(6);
+    const w = Math.min(640, BUBBLE_WIDTH * 2);
+    const h = Math.min(640, BUBBLE_HEIGHT * 2);
+    // Marker uses Chatyy purple (#7C3AED). roadmap @ z=15 matches our
+    // previous CartoCDN preview density. scale=2 → retina sharpness.
+    return `https://maps.googleapis.com/maps/api/staticmap?center=${la},${lo}&zoom=15&size=${w}x${h}&scale=2&maptype=roadmap&markers=color:0x7C3AED|${la},${lo}&key=${GMAPS_KEY}`;
+  })() : null;
 
   // Tile coords formula (Web Mercator). Verified for São Paulo
   // lat=-23.55, lng=-46.63 @ z15 → x≈12104, y≈18213 (correct).
@@ -161,18 +171,15 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
     return { x, y };
   };
 
-  // Always hit our own backend proxy (api/static_map.php). It composes
-  // CartoCDN tiles server-side and returns ONE png with red pin already drawn.
-  // Why: stock RN Image on Android silently fails on some external tile
-  // responses (no onError, no onLoad — RN issues #18502/#19073). Single PNG
-  // from our domain renders reliably. Proxy caches 7d on disk + Cloudflare
-  // edge so it's effectively zero-cost after the first hit per (lat,lng).
-  // No osm fallback chain — the proxy IS the reliable path.
-  const tileUrl = hasCoords ? (() => {
+  // [2026-05-21] Prefer Google Static Maps when GMAPS_KEY is configured
+  // (user request). The previous CartoCDN proxy (static_map.php) remains as
+  // a fallback for the case where the bundle was built before
+  // GOOGLE_MAPS_KEY was added to extra — keeps old installs working.
+  const tileUrl = hasCoords ? (gmapsUrl || (() => {
     const la = lat.toFixed(5);
     const lo = lng.toFixed(5);
     return `https://chatyy.com.br/api/static_map.php?lat=${la}&lng=${lo}&z=15&w=${BUBBLE_WIDTH * 2}&h=${BUBBLE_HEIGHT * 2}`;
-  })() : null;
+  })()) : null;
 
   const handleTileError = (err) => {
     console.warn('LocationMessage tile failed:', tileUrl, err?.nativeEvent || err);

@@ -791,6 +791,61 @@ public class ExpoCallKitModule: Module {
         throw NSError(domain: "ExpoCallKit", code: 101,
                       userInfo: [NSLocalizedDescriptionKey: "CallController not ready — setupProvider() failed on main thread"])
       }
+
+      // [2026-05-21] Pre-cleanup orphan calls.
+      // User print: "Erro: Não foi possível iniciar a chamada. The
+      // operation couldn't be completed. (com.apple.CallKit.error.
+      // requesttransaction error 7.)" — code 7 =
+      // CXErrorCodeRequestTransactionErrorMaximumCallGroupsReached. iOS
+      // caps the number of active CXCall groups; if a previous outgoing
+      // attempt didn't tear down (network drop, app kill mid-call,
+      // delegate path bypassed end-action), every new attempt hits the
+      // cap and the dialog above appears. End every observed call from
+      // CXCallObserver and clear our maps before requesting the new
+      // transaction. Failures from end-action are ignored (best effort).
+      let observer = CXCallObserver()
+      let orphans = observer.calls.filter { !$0.hasEnded }
+      if !orphans.isEmpty {
+        NSLog("[ExpoCallKit] startOutgoingCall: clearing \(orphans.count) orphan call group(s) before new transaction")
+        let endTx = CXTransaction()
+        for orphan in orphans {
+          endTx.addAction(CXEndCallAction(call: orphan.uuid))
+        }
+        // Fire-and-forget — we don't await the end transaction; if it fails
+        // the new transaction below will likely also fail and the JS layer
+        // will surface a fresh error.
+        cc.request(endTx) { err in
+          if let err = err {
+            NSLog("[ExpoCallKit] orphan cleanup transaction error: \(err.localizedDescription)")
+          }
+        }
+        // Clear in-memory maps; the provider delegate's CXEndCallAction
+        // handlers may also fire and remove these, but doing it here keeps
+        // state coherent in case the delegate is delayed.
+        self.stateQueue.sync {
+          self.activeCalls.removeAll()
+          self.pendingOutgoingCalls.removeAll()
+        }
+        // Re-stash the new pending entry — the removeAll above wiped it.
+        self.stateQueue.sync {
+          self.activeCalls[callId] = uuid
+          ExpoCallKitModule._shared_setUUID(uuid, forCallId: callId)
+          self.pendingOutgoingCalls[uuid] = OutgoingCallParams(
+            callId: callId,
+            calleeEmail: calleeEmail,
+            calleeName: calleeName,
+            calleeAvatar: calleeAvatar.isEmpty ? nil : calleeAvatar,
+            callerName: callerName,
+            isVideo: isVideo,
+            roomName: roomName.isEmpty ? callId : roomName,
+            conversationId: conversationId,
+            lkUrl: lkUrl,
+            lkToken: lkToken,
+            suppressVCPresent: suppressVCPresent
+          )
+        }
+      }
+
       let handle = CXHandle(type: .emailAddress, value: calleeEmail)
       let startAction = CXStartCallAction(call: uuid, handle: handle)
       startAction.isVideo = isVideo

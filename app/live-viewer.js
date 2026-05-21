@@ -727,9 +727,16 @@ export default function LiveViewerScreen() {
         const ds = String(r?.data?.status || r?.status || '').toLowerCase();
         const endedAt = r?.data?.ended_at || r?.ended_at;
         const isLive = r?.data?.is_live ?? r?.is_live;
-        const confirmedEnded = ds === 'ended' || ds === 'finished' || ds === 'complete'
-          || (endedAt != null && endedAt !== '' && endedAt !== '0')
-          || (isLive === false && (ds === 'ended' || ds === 'finished'));
+        // [2026-05-21] Tightened: REQUIRE status='ended' AND a real ended_at
+        // timestamp. The previous OR-chain flagged sessions ended by partial
+        // signals (e.g., a stale legacy_p2p row that never got ended_at set
+        // could appear as is_live=false, falsely tripping ended). User
+        // report: "ainda aparece live encerrada quando tento conectar". With
+        // dual-pipeline rows in the DB (QA confirmed 4 legacy_p2p + 4 lk
+        // today), the pre-join check could hit the dead row and bounce.
+        const endedStatus = (ds === 'ended' || ds === 'finished' || ds === 'complete');
+        const hasEndedAt = (endedAt != null && endedAt !== '' && endedAt !== '0');
+        const confirmedEnded = endedStatus && hasEndedAt;
         console.log('[LIVE-TRACE] preJoinCheck', { sessionId: paramSessionId, ds, endedAt, isLive, confirmedEnded });
         if (confirmedEnded) {
           liveEndedRef.current = true;

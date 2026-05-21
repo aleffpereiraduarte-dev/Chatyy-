@@ -3416,7 +3416,13 @@ export default function OneScreen() {
   return (
     <KeyboardAvoidingView
       style={[st.container, { backgroundColor: canvasBg }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      // [2026-05-21] Android with behavior=undefined left the composer hidden
+      // behind the keyboard on /one. Even with android:windowSoftInputMode=
+      // adjustResize in the manifest, the KAV needed an explicit 'height' to
+      // recompute layout when IME opened (user print: composer não visível,
+      // só o keyboard sob os chips). 'height' shrinks the KAV to keyboard
+      // height, push the input bar above the IME.
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
       {/* Clean header — no gradient, just title + side actions on a flat canvas. */}
