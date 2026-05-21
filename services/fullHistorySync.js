@@ -588,8 +588,6 @@ export async function isBootstrapNeeded(apiCall, email) {
   if (Platform.OS === 'web' || !apiCall || !email) return false;
   try {
     const status = await getBootstrapStatus(email);
-    // Never run? definitely needed.
-    if (!status.gate) return true;
     // Done already and device has data — skip.
     if (status.gate === 'done') {
       try {
@@ -598,7 +596,10 @@ export async function isBootstrapNeeded(apiCall, email) {
         if (stats && stats.msgsTotal > 0) return false;
       } catch {}
     }
-    // Pending / started or empty DB — ask backend.
+    // First-run / pending / started / empty DB — ask backend so we only
+    // surface the "Baixar histórico" prompt when there's actually content
+    // to restore. Brand-new signups (zero server msgs) were getting pestered
+    // with an empty download prompt — gate by real server-side count.
     const r = await apiCall('chat_inventory', {});
     const convs = r?.data?.conversations || r?.conversations || [];
     let serverMsgs = 0;
@@ -611,6 +612,8 @@ export async function isBootstrapNeeded(apiCall, email) {
     } catch {}
     // Gap threshold: 50+ msg delta means the user is clearly missing
     // history. <50 is noise (a few WS msgs in flight, etc.) — don't pester.
+    // Also no-op when server has zero — a fresh account has nothing to download.
+    if (serverMsgs <= 0) return false;
     return Math.max(0, serverMsgs - localMsgs) >= 50;
   } catch {
     return false;
