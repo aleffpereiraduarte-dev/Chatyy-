@@ -884,7 +884,14 @@ function CallScreenInner() {
 
   // ───── Fetch LiveKit JWT ─────
   const fetchLivekitToken = useCallback(async () => {
-    const room = `call_${callId}`;
+    // WAVE 41 ROOT CAUSE FIX: native (CallActivity.kt:1143, ExpoCallKitModule.swift:1629)
+    // + voipNative.js:188 (caller) + IncomingCallListener.js:704 + backend
+    // (chat.php:7296) all use raw callId as the LK room name. This file was
+    // the ONLY consumer prefixing `call_`, putting JS in a different room than
+    // peer+native → adoptNativeRoom fallback joined an empty room → forever
+    // "Reconectando..." (Disconnected event loop). Bug existed for weeks
+    // disguised as "WebRTC desconecta após native answer". Fix = align names.
+    const room = String(callId);
     // Fast-path: IncomingCallListener pre-fetched the token when the call
     // invite arrived. If it's fresh (<30s old, same call_id) consume it and
     // skip the network round-trip. Saves 200-700ms on weak networks.
