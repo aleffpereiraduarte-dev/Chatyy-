@@ -6,6 +6,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconSend, IconZap } from '../components/Icons';
 import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
 import * as api from '../services/api';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -79,7 +80,7 @@ const CATEGORIES = [
   ]},
 ];
 
-export default function KidsLearnScreen() {
+function KidsLearnScreenInner() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
@@ -243,6 +244,12 @@ export default function KidsLearnScreen() {
       </ScrollView>
     </View>
   );
+}
+
+// [WAVE 63 #fam-crash] ErrorBoundary wrap to keep "Família"-adjacent screens
+// from taking down the app on unexpected null data.
+export default function KidsLearnScreen() {
+  return <ErrorBoundary><KidsLearnScreenInner /></ErrorBoundary>;
 }
 
 const s = StyleSheet.create({

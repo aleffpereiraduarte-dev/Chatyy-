@@ -14,6 +14,7 @@ import EmptyStateCard from '../components/EmptyStateCard';
 import AvatarCircle from '../components/AvatarCircle';
 import useIsMounted from '../hooks/useIsMounted';
 import * as haptics from '../services/haptics';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 const ACCENT = '#7C3AED';
 const STEPS = ['info', 'document', 'verifying', 'credentials'];
@@ -138,11 +139,15 @@ function OnlineDot({ dark, justWentOnline }) {
   );
 }
 
-export default function ParentalScreen() {
+function ParentalScreenInner() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const { t } = useLanguage();
+  // [WAVE 63 #fam-crash] Mount diagnostic — `/parental` is reached from the
+  // inbox menu item labelled "Família", so a crash on this screen looks
+  // identical to a contacts-tab crash to the user.
+  useEffect(() => { try { console.log('[FAMILIA-DIAG][parental][mount]'); } catch {} }, []);
   const [children, setChildren] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -2101,6 +2106,13 @@ export default function ParentalScreen() {
       )}
     </View>
   );
+}
+
+// [WAVE 63 #fam-crash] Wrap entire ParentalScreen in ErrorBoundary so any
+// unexpected null in children/restrictions/childMeta doesn't take down the
+// app at the JS bridge level. The inner screen is now `ParentalScreenInner`.
+export default function ParentalScreen() {
+  return <ErrorBoundary><ParentalScreenInner /></ErrorBoundary>;
 }
 
 const s = StyleSheet.create({

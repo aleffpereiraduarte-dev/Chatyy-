@@ -9,6 +9,7 @@ import {
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import * as api from '../services/api';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 const ACCENT = '#7C3AED';
 
@@ -68,7 +69,7 @@ function computeRiskScore(messages) {
   return { level, score };
 }
 
-export default function ParentalChildChatScreen() {
+function ParentalChildChatScreenInner() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { colors, isDark } = useTheme();
@@ -318,6 +319,12 @@ export default function ParentalChildChatScreen() {
       )}
     </View>
   );
+}
+
+// [WAVE 63 #fam-crash] ErrorBoundary wrap so a malformed message row can't
+// take down the host parental view from inside.
+export default function ParentalChildChatScreen() {
+  return <ErrorBoundary><ParentalChildChatScreenInner /></ErrorBoundary>;
 }
 
 const s = StyleSheet.create({

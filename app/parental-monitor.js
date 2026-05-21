@@ -8,6 +8,7 @@ import EmptyStateCard from '../components/EmptyStateCard';
 import AvatarCircle from '../components/AvatarCircle';
 import Svg, { Circle as SvgCircle } from 'react-native-svg';
 import * as api from '../services/api';
+import ErrorBoundary from '../components/ErrorBoundary';
 import { getCached, setCache } from '../services/cache';
 import useIsMounted from '../hooks/useIsMounted';
 
@@ -81,7 +82,7 @@ const isNewThisWeek = (c) => {
   return x ? (Date.now() - x.getTime()) < 7 * 24 * 3600 * 1000 : false;
 };
 
-export default function ParentalMonitorScreen() {
+function ParentalMonitorScreenInner() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { colors, isDark } = useTheme();
@@ -1077,6 +1078,12 @@ export default function ParentalMonitorScreen() {
       )}
     </View>
   );
+}
+
+// [WAVE 63 #fam-crash] ErrorBoundary wrap — reached via /family → "Encontrar
+// família" tile too, so a crash here surfaces as "Família crash" to user.
+export default function ParentalMonitorScreen() {
+  return <ErrorBoundary><ParentalMonitorScreenInner /></ErrorBoundary>;
 }
 
 // ─── Activity icon resolver ───

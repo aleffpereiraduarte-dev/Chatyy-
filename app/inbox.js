@@ -1428,7 +1428,7 @@ function InboxScreenInner() {
                 <IconSettings size={20} color={colors.textSecondary} />
                 <Text style={[s.dropActionLabel, { color: colors.text }]}>{t('menu.settings')}</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={s.dropActionBtn} onPress={() => { setShowMenu(false); router.push('/parental'); }}>
+              <TouchableOpacity style={s.dropActionBtn} onPress={() => { try { console.log('[FAMILIA-DIAG][inbox][tap_familia_menu]'); } catch {} setShowMenu(false); router.push('/parental'); }}>
                 <IconShield size={20} color="#7C3AED" />
                 <Text style={[s.dropActionLabel, { color: colors.text }]}>{t('menu.family') || 'Família'}</Text>
               </TouchableOpacity>

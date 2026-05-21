@@ -311,7 +311,7 @@ function FamilyScreenInner() {
     }
   }, [myEmail, user?.email, user?.name]);
 
-  useEffect(() => { loadInfo(); }, [loadInfo]);
+  useEffect(() => { try { console.log('[FAMILIA-DIAG][family][mount]'); } catch {} loadInfo(); }, [loadInfo]);
 
   const memberCount = info?.members?.length || 0;
   const childCount = useMemo(

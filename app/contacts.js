@@ -355,16 +355,30 @@ function ContactsScreenInner() {
       setSearchingUsers(true);
       try {
         const r = await api.searchOneMundoUsers(debouncedSearch);
-        if (r.success) setSearchResults(r.data || []);
-      } catch {} finally { setSearchingUsers(false); }
+        // [WAVE 63 #fam-crash] Same defense as loadFamilyUsers — never let
+        // `data` be a non-array. Filter out null entries that could crash the
+        // family tab merge in filteredItems below.
+        if (r?.success) {
+          const safe = (Array.isArray(r?.data) ? r.data : []).filter(u => u && typeof u === 'object');
+          try { console.log('[FAMILIA-DIAG][contacts][searchUsers][ok]', 'count=', safe.length); } catch {}
+          setSearchResults(safe);
+        }
+      } catch (e) {
+        try { console.log('[FAMILIA-DIAG][contacts][searchUsers][error]', e?.message); } catch {}
+      } finally { setSearchingUsers(false); }
     }, 200);
     return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
   }, [debouncedSearch, activeTab]);
 
   useEffect(() => {
+    try { console.log('[FAMILIA-DIAG][contacts][activeTab]', activeTab); } catch {}
     if (activeTab === 'device' && !deviceLoadedRef.current) loadDeviceContacts();
     if (activeTab === 'family' && familyUsers.length === 0) loadFamilyUsers();
   }, [activeTab]);
+
+  useEffect(() => {
+    try { console.log('[FAMILIA-DIAG][contacts][mount]'); } catch {}
+  }, []);
 
   const loadContacts = async () => {
     setLoadError(false);
@@ -468,11 +482,25 @@ function ContactsScreenInner() {
 
   // Load Chatyy family users
   const loadFamilyUsers = async () => {
+    try { console.log('[FAMILIA-DIAG][contacts][loadFamilyUsers][start]'); } catch {}
     setLoadingFamily(true);
     try {
       const r = await api.listOneMundoUsers();
-      if (r.success) setFamilyUsers(r.data || []);
-    } catch {} finally { setLoadingFamily(false); }
+      // [WAVE 63 #fam-crash] Defensive: never accept non-array data.
+      // Backend used to return `{success:true, data:null}` on empty — and
+      // `setFamilyUsers(null)` then made every `.filter`/`.map` crash later.
+      if (r?.success) {
+        const safe = (Array.isArray(r?.data) ? r.data : []).filter(u => u && typeof u === 'object');
+        try { console.log('[FAMILIA-DIAG][contacts][loadFamilyUsers][ok]', 'count=', safe.length); } catch {}
+        setFamilyUsers(safe);
+      } else {
+        try { console.log('[FAMILIA-DIAG][contacts][loadFamilyUsers][not_success]', r?.message); } catch {}
+        setFamilyUsers([]);
+      }
+    } catch (e) {
+      try { console.log('[FAMILIA-DIAG][contacts][loadFamilyUsers][error]', e?.message); } catch {}
+      setFamilyUsers([]);
+    } finally { setLoadingFamily(false); }
   };
 
   // Add device contact to my contacts. Previous code swallowed save errors
@@ -496,16 +524,24 @@ function ContactsScreenInner() {
 
   // Add Chatyy user to my contacts — same fix as above.
   const addFamilyContact = useCallback(async (user) => {
+    // [WAVE 63 #fam-crash] Guard against missing email — previously
+    // `user.email.split` crashed when search returned a phone-only row.
+    const safeEmail = (user?.email || '').toString();
+    const safeName = (user?.display_name || '').toString();
+    if (!safeEmail) {
+      Alert.alert(t('common.error') || 'Erro', t('contacts.saveError') || 'Não foi possível salvar este contato.');
+      return;
+    }
     try {
       const r = await api.saveContact({
-        name: user.display_name || user.email.split('@')[0],
-        email: user.email,
-        phone: user.phone || '',
+        name: safeName || safeEmail.split('@')[0] || safeEmail,
+        email: safeEmail,
+        phone: (user?.phone || '').toString(),
         group: 'Chatyy',
       });
       if (!r?.success) throw new Error(r?.message || 'save_failed');
       loadContacts();
-      Alert.alert(t('contacts.added'), t('contacts.addedMessage', { name: user.display_name || user.email }));
+      Alert.alert(t('contacts.added'), t('contacts.addedMessage', { name: safeName || safeEmail }));
     } catch (e) {
       Alert.alert(t('common.error') || 'Erro', t('contacts.saveError') || 'Não foi possível salvar este contato.');
       if (__DEV__) console.warn('[contacts.addFamilyContact]', e?.message);
@@ -812,18 +848,29 @@ function ContactsScreenInner() {
     }
 
     if (activeTab === 'family') {
-      const local = q ? familyUsers.filter(u =>
-        (u.display_name || '').toLowerCase().includes(q) ||
-        u.email.toLowerCase().includes(q) ||
-        (u.phone || '').includes(q)
-      ) : familyUsers;
+      // [WAVE 63 #fam-crash] Defensive: filter null/undefined users and
+      // normalize all string fields BEFORE calling .toLowerCase()/.includes().
+      // Previous code did `u.email.toLowerCase()` which crashes when backend
+      // (listOneMundoUsers + searchOneMundoUsers) returns rows without `email`
+      // — happened post-WAVE 53 when search results from a phone-only user
+      // came back with email:null.
+      try { console.log('[FAMILIA-DIAG][contacts][filter] familyUsers=', familyUsers?.length, 'searchResults=', searchResults?.length, 'q=', q ? '[search]' : '[empty]'); } catch {}
+      const safeUsers = (Array.isArray(familyUsers) ? familyUsers : []).filter(u => u && typeof u === 'object');
+      const local = q ? safeUsers.filter(u => {
+        const name = (u?.display_name || '').toString().toLowerCase();
+        const email = (u?.email || '').toString().toLowerCase();
+        const phone = (u?.phone || '').toString();
+        return name.includes(q) || email.includes(q) || phone.includes(q);
+      }) : safeUsers;
 
-      if (searchResults.length > 0) {
-        const localEmails = new Set(local.map(u => u.email));
+      const safeSearchResults = (Array.isArray(searchResults) ? searchResults : []).filter(s => s && typeof s === 'object');
+      if (safeSearchResults.length > 0) {
+        const localEmails = new Set(local.map(u => (u?.email || '').toString().toLowerCase()).filter(Boolean));
         const merged = [...local];
-        for (const sr of searchResults) {
-          if (!localEmails.has(sr.email)) {
-            merged.push({ email: sr.email, display_name: sr.name, match_type: sr.match_type });
+        for (const sr of safeSearchResults) {
+          const srEmail = (sr?.email || '').toString().toLowerCase();
+          if (srEmail && !localEmails.has(srEmail)) {
+            merged.push({ email: srEmail, display_name: (sr?.name || '').toString(), match_type: sr?.match_type });
           }
         }
         return merged;
@@ -1003,10 +1050,16 @@ function ContactsScreenInner() {
 
   // FlatList render items for family tab
   const renderFamilyItem = useCallback(({ item: user }) => {
-    const saved = isContactSaved(user.email);
+    // [WAVE 63 #fam-crash] Defensive guard against null/empty email — every
+    // downstream consumer (FamilyUserRow, isContactSaved, addFamilyContact)
+    // assumed `user.email` was a string. Crash repro: search returns a row
+    // where email is undefined → `isContactSaved(undefined).toLowerCase()`.
+    if (!user || typeof user !== 'object') return null;
+    const safeUser = { ...user, email: (user.email || '').toString() };
+    const saved = safeUser.email ? isContactSaved(safeUser.email) : false;
     return (
       <FamilyUserRow
-        user={user}
+        user={safeUser}
         colors={colors}
         saved={saved}
         onAdd={addFamilyContact}
