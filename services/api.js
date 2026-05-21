@@ -4439,6 +4439,27 @@ export async function statusList() {
   return apiCall('status_list');
 }
 
+// [WAVE 54 2026-05-21] Ultra-light strip payload — per-owner aggregates only
+// (latest_id, count, unviewed, latest_at, has_video). Target <5KB for 50
+// contacts so the home Status row paints subsecond on 3G even when the JS
+// SWR + MMKV caches are cold. The full per-item payload comes from
+// `statusList()` on first tab focus or when the user taps a bubble.
+//
+// Response shape: { users: [{ email, name, is_own, latest_id, count,
+//                              unviewed, latest_at, has_video }, ...] }
+export async function statusManifest() {
+  return apiCall('status_manifest');
+}
+
+// Fire-and-forget prefetch helper — call from bootstrap() / cold-start so the
+// manifest is warm in HTTP cache (Cache-Control SWR) by the time the user
+// taps the Chat tab. Never throws, never returns data (drop it on the floor).
+export function statusManifestPrefetch() {
+  try {
+    statusManifest().catch(() => {});
+  } catch {}
+}
+
 export async function statusView(statusId) {
   return apiCall('status_view', { status_id: statusId }, 'POST');
 }
@@ -8096,6 +8117,10 @@ export async function bootstrap() {
       }
     } catch {}
   }
+  // [WAVE 54 2026-05-21] Prefetch status_manifest so the home strip paints
+  // from HTTP/SWR cache when the user navigates to the Chat tab. Fire and
+  // forget — failures are silent and the strip's own fetch still runs.
+  try { statusManifestPrefetch(); } catch {}
   return r;
 }
 

@@ -56,17 +56,20 @@ for f in $ICON_FILES; do
   [ -f "$f" ] || continue
   # Extract Icons import block: from start of `import` line that ends with from .../Icons
   # Use python3 for proper multi-line grouping.
-  imports=$(python3 -c "
-import re, sys
-src = open('$f').read()
-# match import { ... } from '.../Icons' OR \".../Icons\" (single + double quoted).
-# Also accept Icons.js, ./components/Icons, ../components/Icons, etc.
-m = re.findall(r'import\s*\{([^}]+)\}\s*from\s*[\"\\']([^\"\\']*Icons(?:\.js)?)[\"\\']', src)
+  # Pass the filename as an env var so the python source doesn't have to be
+  # shell-interpolated — keeps regex escapes (\", \') sane. Accepts both
+  # single-quote and double-quote import-from forms, and optional .js suffix.
+  imports=$(F="$f" python3 - <<'PY' 2>/dev/null
+import os, re
+src = open(os.environ['F']).read()
+m = re.findall(r"""import\s*\{([^}]+)\}\s*from\s*['"]([^'"]*Icons(?:\.js)?)['"]""", src)
 names = set()
 for blk, _src in m:
   for n in re.findall(r'\b(Icon[A-Z][A-Za-z0-9_]*)\b', blk):
     names.add(n)
-print('\n'.join(sorted(names)))" 2>/dev/null)
+print('\n'.join(sorted(names)))
+PY
+)
   used=$(grep -oE '<Icon[A-Z][A-Za-z0-9_]+' "$f" | sed 's/^<//' | sort -u)
   # Locally available IconFoo names (function/const/let decls + destructured props
   # like `({ ..., IconCmp, ... })` where IconCmp is the prop name, not an import).

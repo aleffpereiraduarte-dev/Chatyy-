@@ -1507,8 +1507,21 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
       const lc = String(email).toLowerCase();
       const g = statuses.find(s => String(s.email || '').toLowerCase() === lc);
       if (g) {
-        setStatusViewerLockedGroup(g);
-        setStatusViewerLockedItems(g.items || []);
+        // [WAVE 54 2026-05-21] If the group is a manifest-only placeholder
+        // (items have no media_url + _placeholder=true), don't lock those —
+        // wait for refetch to supply real items so the viewer doesn't try
+        // to render an empty story. Refetch is already scheduled by the
+        // mount effect, but in the rare case user taps within the first
+        // ~200ms before status_list resolves we force one more refetch.
+        const isPlaceholder = (g.items || []).every(it => it?._placeholder);
+        if (isPlaceholder) {
+          setStatusViewerLockedGroup(null);
+          setStatusViewerLockedItems(null);
+          try { refetchStatuses?.(); } catch {}
+        } else {
+          setStatusViewerLockedGroup(g);
+          setStatusViewerLockedItems(g.items || []);
+        }
       } else {
         setStatusViewerLockedGroup(null);
         setStatusViewerLockedItems(null);

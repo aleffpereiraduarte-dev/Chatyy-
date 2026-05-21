@@ -302,6 +302,91 @@ export default function useStatuses(currentEmail, opts = {}) {
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, warmCacheVideos]);
+
+  // [WAVE 54 2026-05-21] Manifest-first paint. When MMKV + disk + async cache
+  // ALL miss (truly cold install, post-reset, fresh device, web first visit),
+  // we still want to avoid a blank strip waiting on the heavy status_list.
+  // The manifest endpoint returns <5KB of per-owner aggregates — we paint
+  // SKELETON groups from it (1 placeholder item per owner so the bubble +
+  // count + ring color render) while the full status_list call resolves in
+  // the background and replaces them with real items.
+  //
+  // Skipped when we already have data (any preload or async cache hit) so
+  // we never thrash the UI by re-painting placeholders on top of real items.
+  const manifestPaintedRef = useRef(false);
+  useEffect(() => {
+    if (!enabled || _hadPreload || manifestPaintedRef.current) return;
+    manifestPaintedRef.current = true;
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.statusManifest?.();
+        if (!alive || !r?.success || !r.data?.users) return;
+        // If the real fetch already won the race, do nothing.
+        if (fpRef.current) return;
+        const users = r.data.users || [];
+        if (users.length === 0) { setLoading(false); return; }
+        const me = String(currentEmail || '').toLowerCase();
+        const placeholderGroups = [];
+        const placeholderMine = [];
+        const placeholderOthers = [];
+        for (const u of users) {
+          const isMine = String(u.email || '').toLowerCase() === me;
+          // Build N skeleton items so the dotted ring renders with the
+          // right count + viewed/unviewed mix. We don't know which exact
+          // items are viewed — only that `count - unviewed` are. Fill
+          // viewed ones first to keep the leading bubble unviewed (matches
+          // status_list's "freshest unviewed first" sort within a group).
+          const total = Math.max(0, Number(u.count) || 0);
+          const unviewed = Math.max(0, Math.min(total, Number(u.unviewed) || 0));
+          const items = [];
+          for (let i = 0; i < total; i++) {
+            const viewed = i < (total - unviewed);
+            items.push({
+              id: `__manifest_${u.email}_${i}`,
+              type: u.has_video ? 'video' : 'image',
+              media_url: '',
+              thumbnail_url: '',
+              hls_url: '',
+              bgColor: '#6D28D9',
+              bg_color: '#6D28D9',
+              created_at: u.latest_at,
+              timestamp: u.latest_at,
+              viewed,
+              view_count: 0,
+              views: 0,
+              meta: null,
+              _placeholder: true,
+            });
+          }
+          if (items.length === 0) continue;
+          const g = {
+            email: u.email,
+            name: u.name || (u.email || '').split('@')[0],
+            is_own: !!u.is_own,
+            items,
+          };
+          placeholderGroups.push(g);
+          if (isMine) placeholderMine.push(...items);
+          else placeholderOthers.push({
+            ownerEmail: u.email,
+            ownerName: g.name,
+            items,
+          });
+        }
+        if (placeholderGroups.length === 0) return;
+        // DON'T set fpRef — placeholders have no real ids/created_at, so
+        // when the real fetch completes the fingerprint diff WILL see a
+        // change and replace them seamlessly.
+        setGroups(placeholderGroups);
+        setMine(placeholderMine);
+        setOthers(placeholderOthers);
+        setLoading(false);
+      } catch {}
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, currentEmail]);
   const mountedRef = useRef(true);
   useEffect(() => () => { mountedRef.current = false; }, []);
 

@@ -1473,6 +1473,14 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
   // ─── Viewer Logic ───
   const openViewer = useCallback((statusGroup) => {
+    // [WAVE 54 2026-05-21] Manifest-only placeholder guard. If user taps a
+    // bubble before status_list resolves, force a refetch and abort the
+    // open — empty stories would just flash + close anyway.
+    const isPlaceholder = (statusGroup?.items || []).every(it => it?._placeholder);
+    if (isPlaceholder) {
+      try { loadStatuses?.(); } catch {}
+      return;
+    }
     // Light haptic on tap — Instagram/WhatsApp parity. Without this the
     // tap into the story viewer feels unanchored vs other taps in the app.
     try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
