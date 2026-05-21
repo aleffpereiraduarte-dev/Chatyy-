@@ -54,6 +54,11 @@ function HistoryDownloadRow() {
   const [busyMedia, setBusyMedia] = useState(false);
   const [mediaProgress, setMediaProgress] = useState(null); // {loaded,total,percent}
   const [historyProgress, setHistoryProgress] = useState(null);
+  // #1247 (2026-05-21): live progress from the background media auto-sync
+  // loop. When phase='syncing', the row morphs into "Sincronizando X/Y"
+  // (vs the alarming "Mídias faltantes: Y"); when nothing is pending and
+  // the loop has settled, it shows "Sincronizado ✓".
+  const [autoSync, setAutoSync] = useState(null);
   const aliveRef = useRef(true);
   useEffect(() => () => { aliveRef.current = false; }, []);
 
@@ -95,6 +100,27 @@ function HistoryDownloadRow() {
     return () => { try { ws?.off?.('chat_bootstrap_progress', handler); } catch {} };
   }, [busyHistory, refreshStats]);
 
+  // [#1247] Subscribe to media auto-sync progress. Always-on so the row
+  // reflects whatever the background loop is doing. Seed with current
+  // snapshot so a mid-pass open shows progress immediately.
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    let ws = null;
+    try { ws = require('../services/websocket').default; } catch {}
+    try {
+      const mas = require('../services/mediaAutoSync');
+      const snap = mas.getAutoSyncProgress?.();
+      if (snap) setAutoSync(snap);
+    } catch {}
+    const handler = (payload) => {
+      if (!aliveRef.current) return;
+      setAutoSync({ ...(payload || {}) });
+      if (payload?.phase === 'done') refreshStats();
+    };
+    try { ws?.on?.('media_auto_sync_progress', handler); } catch {}
+    return () => { try { ws?.off?.('media_auto_sync_progress', handler); } catch {} };
+  }, [refreshStats]);
+
   const onDownloadAll = useCallback(async () => {
     if (busyHistory) return;
     setBusyHistory(true);
@@ -113,6 +139,12 @@ function HistoryDownloadRow() {
     if (busyMedia) return;
     setBusyMedia(true);
     setMediaProgress({ loaded: 0, total: 0, percent: 0 });
+    // Also nudge the background auto-sync — user pressed "Sincronizar agora",
+    // so push it past any cellular gate.
+    try {
+      const mas = require('../services/mediaAutoSync');
+      mas.nudgeMediaAutoSync?.('settings-manual');
+    } catch {}
     try {
       const { downloadMissingMediaOnly } = require('../services/fullHistorySync');
       await downloadMissingMediaOnly({
@@ -129,6 +161,9 @@ function HistoryDownloadRow() {
 
   const msgsTotal = Number(stats?.msgsTotal || 0);
   const mediaPending = Number(stats?.mediaPending || 0);
+  // [#1247] Derived UI state. Priority: live syncing > pending > all-synced.
+  const autoSyncing = autoSync?.phase === 'syncing' && (autoSync?.total || 0) > 0;
+  const allSynced = mediaPending === 0 && !autoSyncing;
 
   return (
     <View style={{ marginTop: Spacing.sm }}>
@@ -142,18 +177,38 @@ function HistoryDownloadRow() {
           {msgsTotal.toLocaleString()}
         </Text>
       </View>
+      {/* [#1247] WhatsApp-grade auto-sync status row. Replaces the old
+          "Mídias faltantes: 47" warning (which scared users) with a tri-state
+          indicator the background loop drives:
+            - syncing → "<spinner> 12/47" (live)
+            - pending → "47 pendentes" (idle — cellular-gated or paused)
+            - synced  → "✓ Sincronizado" (everything on disk)
+          Updates live via WS event 'media_auto_sync_progress'. */}
       <View style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, paddingVertical: Spacing.sm }]}>
         <View style={s.settingInfo}>
           <Text style={[s.settingLabel, { color: colors.text }]}>
-            {t('settings.storage.mediaMissing') || 'Mídias faltantes'}
+            {t('settings.storage.mediaSyncStatus') || 'Mídias'}
           </Text>
         </View>
-        <Text style={[s.settingLabel, {
-          color: mediaPending > 0 ? colors.warning || '#f59e0b' : colors.textSecondary,
-          fontVariant: ['tabular-nums'],
-        }]}>
-          {mediaPending.toLocaleString()}
-        </Text>
+        {autoSyncing ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <ActivityIndicator size="small" color={colors.primary} style={{ marginRight: 6 }} />
+            <Text style={[s.settingLabel, { color: colors.primary, fontVariant: ['tabular-nums'] }]}>
+              {`${(autoSync?.loaded || 0).toLocaleString()}/${(autoSync?.total || 0).toLocaleString()}`}
+            </Text>
+          </View>
+        ) : allSynced ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <IconCheck size={16} color={colors.success || '#10b981'} style={{ marginRight: 4 }} />
+            <Text style={[s.settingLabel, { color: colors.success || '#10b981' }]}>
+              {t('settings.storage.allSynced') || 'Sincronizado'}
+            </Text>
+          </View>
+        ) : (
+          <Text style={[s.settingLabel, { color: colors.textSecondary, fontVariant: ['tabular-nums'] }]}>
+            {`${mediaPending.toLocaleString()} ${t('settings.storage.pending') || 'pendentes'}`}
+          </Text>
+        )}
       </View>
 
       <TouchableOpacity
@@ -179,12 +234,15 @@ function HistoryDownloadRow() {
         </View>
       </TouchableOpacity>
 
+      {/* [#1247] "Sincronizar agora" — manual nudge for users who want it
+          forced past any cellular gate (e.g. about to leave wifi). Always
+          enabled so they can re-verify even when allSynced. */}
       <TouchableOpacity
         onPress={onDownloadMissing}
-        disabled={busyMedia || mediaPending === 0}
-        style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, paddingTop: 0, opacity: (busyMedia || mediaPending === 0) ? 0.5 : 1 }]}
+        disabled={busyMedia}
+        style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, paddingTop: 0, opacity: busyMedia ? 0.5 : 1 }]}
         accessibilityRole="button"
-        accessibilityLabel={t('settings.storage.downloadMedia')}
+        accessibilityLabel={t('settings.storage.syncNow') || t('settings.storage.downloadMedia')}
       >
         <View style={s.settingInfo}>
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -196,7 +254,7 @@ function HistoryDownloadRow() {
                 ? (mediaProgress && mediaProgress.total
                     ? `${t('settings.storage.downloadingMedia') || 'Baixando mídias…'} ${mediaProgress.loaded}/${mediaProgress.total} (${mediaProgress.percent || 0}%)`
                     : (t('settings.storage.downloadingMedia') || 'Baixando mídias…'))
-                : (t('settings.storage.downloadMedia') || 'Baixar mídias faltantes')}
+                : (t('settings.storage.syncNow') || 'Sincronizar agora')}
             </Text>
           </View>
         </View>

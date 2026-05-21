@@ -1553,17 +1553,41 @@ export default function LiveBroadcastScreen() {
           } catch {}
           if (ingestUrl && localStreamRef.current) {
             console.log('[LIVE-VOD-TRACE] starting WHIP publish to CF Stream');
+            try { liveDiagAppend('info', 'host tapped Go Live → starting WHIP publish', { sessionId: sid, cf_input_uid: res.data?.cf_input_uid }); } catch {}
             publishToCfStream(localStreamRef.current, ingestUrl)
               .then((pub) => {
                 cfPublisherRef.current = pub;
                 console.log('[LIVE-VOD-TRACE] WHIP publish OK — CF should record VOD');
+                try { liveDiagAppend('info', 'WHIP publish OK — viewers should connect now', { sessionId: sid }); } catch {}
               })
               .catch((e) => {
-                console.warn('[LIVE-VOD-TRACE] CF Stream WHIP publish failed:', e?.message || e);
-                // Soft-warn the host so they know the replay won't materialize.
-                // Without this, host taps end-live, sees "Processing", and
-                // /lives-saved never shows the row (a 2-week+ silent bug for
-                // every CF live since the pipeline shipped).
+                const errMsg = e?.message || String(e);
+                console.warn('[LIVE-VOD-TRACE] CF Stream WHIP publish failed:', errMsg);
+                try { liveDiagAppend('error', 'WHIP publish failed: ' + errMsg, { sessionId: sid }); } catch {}
+                // [WAVE 98 Fix A] Surface the REAL error so the host knows
+                // why no viewer can connect — previously this was a silent
+                // console.warn and the host had zero feedback while every
+                // viewer sat on "Conectando..." forever. User report
+                // 2026-05-21: "abri a live aí tento entrar na live por outro
+                // celular não abre fica só conectando, testa a fundo o motivo".
+                try {
+                  const friendly = (errMsg.includes('ICE') || errMsg.includes('NAT'))
+                    ? 'Falha de rede ao publicar a transmissão. Viewers não conseguirão entrar. Toque em Diagnóstico para detalhes.'
+                    : (errMsg.includes('WHIP failed: 4') || errMsg.includes('WHIP failed: 5'))
+                      ? 'O servidor de mídia (Cloudflare) recusou a transmissão. Tente novamente.'
+                      : (errMsg.includes('no audio or video'))
+                        ? 'Câmera/microfone não disponíveis. Verifique as permissões e tente de novo.'
+                        : 'Transmissão não foi entregue ao servidor de mídia. Viewers verão "Conectando..." sem fim. Veja /live-diagnose.';
+                  Alert.alert(
+                    t('live.publishFailedTitle') || 'Transmissão não publicada',
+                    friendly + '\n\n(Detalhes: ' + errMsg.slice(0, 200) + ')',
+                    [
+                      { text: 'OK', style: 'default' },
+                      { text: 'Diagnóstico', onPress: () => { try { router.push('/live-diagnose'); } catch {} } },
+                    ],
+                  );
+                } catch {}
+                // Soft-warn for legacy back-compat (Android toast).
                 try {
                   const msg = t('live.replayPublishFailed') || 'Replay não será salvo (falha de conexão com servidor de mídia)';
                   if (Platform.OS === 'android' && Platform.constants?.ToastAndroid !== undefined) {
@@ -1576,8 +1600,10 @@ export default function LiveBroadcastScreen() {
               });
           } else if (!ingestUrl) {
             console.warn('[LIVE-VOD-TRACE] live_start_cf returned no webrtc_url — VOD will be empty');
+            try { liveDiagAppend('error', 'live_start_cf returned no webrtc_url — backend bug', { sessionId: sid }); } catch {}
           } else if (!localStreamRef.current) {
             console.warn('[LIVE-VOD-TRACE] no localStream when WHIP would have started — VOD will be empty');
+            try { liveDiagAppend('error', 'no localStream at WHIP time — camera/mic permission denied?', { sessionId: sid }); } catch {}
           }
         }
 
