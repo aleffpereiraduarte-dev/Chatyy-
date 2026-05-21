@@ -638,9 +638,13 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
                   </View>
                 </View>
 
-                {/* Has-events dot row: small colored dots below the day number.
-                    Each dot adopts the event's category color (event.color) and
-                    "+N" overflows when more than 3. */}
+                {/* Apple-Calendar-style event indicator — up to 3 colored dots
+                    below the day number, "+N" badge for overflow. Full event
+                    list with names appears in the FlatList below the grid when
+                    the day is selected. Removed the in-cell chip overlay
+                    (truncated names like "Aniv…", "Vick…") because it cluttered
+                    the month view; the dots + day-list pattern is cleaner and
+                    matches Apple Calendar / WhatsApp Status. */}
                 {hasEvents && (
                   <View style={styles.cellDotRow}>
                     {dotEvents.map((evt, di) => {
@@ -658,58 +662,6 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
                     {cellEvents.length > 3 && (
                       <Text style={[styles.cellDotMore, { color: colors.textTertiary }]}>
                         +{cellEvents.length - 3}
-                      </Text>
-                    )}
-                  </View>
-                )}
-
-                {/* Event chip overlay — rounded pill h:24 with left vertical
-                    color bar, 12px medium font, 1-line ellipsis. Tap opens
-                    event-detail directly. Long-press = quick peek modal. */}
-                {hasEvents && (
-                  <View style={styles.cellEventPreviews}>
-                    {cellEvents.slice(0, 2).map((evt, ei) => {
-                      const accent = evt.color || evt.calendar_color || colors.primary;
-                      const live = eventIsLive(evt);
-                      return (
-                        <TouchableOpacity
-                          key={ei}
-                          activeOpacity={0.7}
-                          style={[styles.cellEventChip, { backgroundColor: accent + '1A', borderLeftColor: accent }]}
-                          onPress={(e) => {
-                            e.stopPropagation && e.stopPropagation();
-                            haptic.select();
-                            if (onEventOpen) onEventOpen(evt);
-                            else onSelectDate(cell.date);
-                          }}
-                          onLongPress={() => {
-                            const time = evt.all_day
-                              ? (t ? t('calendar.allDay') : 'All day')
-                              : `${formatTime(evt.start_at)} - ${formatTime(evt.end_at)}`;
-                            const loc = evt.location ? `\n${evt.location}` : '';
-                            safeAlert(evt.title || (t ? t('calendar.untitledEvent') : 'Untitled'), `${time}${loc}`);
-                          }}
-                          delayLongPress={300}
-                        >
-                          {live && <View style={styles.cellEventLiveDot} />}
-                          <Text
-                            style={[styles.cellEventText, { color: isOtherMonth ? colors.textTertiary : colors.text }]}
-                            numberOfLines={1}
-                            ellipsizeMode="tail"
-                          >
-                            {evt.title || ''}
-                          </Text>
-                          {evt.recurring && (
-                            <View style={{ marginLeft: 2 }}>
-                              <IconRepeat size={8} color={isOtherMonth ? colors.textTertiary : colors.textSecondary} />
-                            </View>
-                          )}
-                        </TouchableOpacity>
-                      );
-                    })}
-                    {cellEvents.length > 2 && (
-                      <Text style={[styles.cellEventMore, { color: colors.textTertiary }]}>
-                        +{cellEvents.length - 2}
                       </Text>
                     )}
                   </View>
@@ -3035,9 +2987,12 @@ const styles = StyleSheet.create({
   cellBadges: { flexDirection: 'row', alignItems: 'center', gap: 3 },
   // Has-events dot row beneath the day number — each dot adopts that event's
   // category color (event.color). Used in dense months when chips overflow.
-  cellDotRow: { flexDirection: 'row', alignItems: 'center', gap: 3, marginTop: 2, paddingHorizontal: 4 },
-  cellDot: { width: 5, height: 5, borderRadius: 2.5 },
-  cellDotMore: { fontSize: 9, fontWeight: '700', marginLeft: 2 },
+  // Dots are now the only in-cell event indicator (chips removed for clarity),
+  // so they're slightly larger (6px) with a roomier gap so 3 dots + "+N" still
+  // read crisp on small day cells.
+  cellDotRow: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 3, paddingHorizontal: 4 },
+  cellDot: { width: 6, height: 6, borderRadius: 3 },
+  cellDotMore: { fontSize: 10, fontWeight: '700', marginLeft: 2 },
   // Multi-day stripe: stacked thin bars pinned to the bottom of the cell.
   cellStripeStack: { marginTop: 'auto', gap: 2, paddingBottom: 2 },
   cellMultiDayStripe: { height: 3 },

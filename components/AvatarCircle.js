@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, memo } from 'react';
-import { View, Text, StyleSheet, Platform } from 'react-native';
+import { View, Text, StyleSheet, Platform, TouchableOpacity } from 'react-native';
 import { getAvatarUrlForEmail } from '../services/api';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
 // Disk-persistent avatar cache (documentDirectory/avatar-saved). Survives

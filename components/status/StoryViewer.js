@@ -2244,7 +2244,7 @@ export default function StoryViewer({
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                   <IconEye size={16} color="#fff" />
                   <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', opacity: 0.9 }}>
-                    {(cur?.views ?? 0)} {cur?.views === 1 ? (t?.('status.view') || 'visualização') : (t?.('status.views') || 'visualizações')}
+                    {(cur?.views ?? 0)} {cur?.views === 1 ? (t?.('status.viewSingular') || 'visualização') : (t?.('status.viewPlural') || 'visualizações')}
                   </Text>
                 </View>
               )}

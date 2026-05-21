@@ -1637,7 +1637,10 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
   const advanceViewer = useCallback(() => {
     const currentItem = viewerStatuses[viewerIndex];
-    if (currentItem && !currentItem.viewed) {
+    // [WAVE 93 2026-05-21] Skip placeholder items: their id looks like
+    // `__manifest_<email>_<i>` and the backend rejects it (500 → goes into
+    // offline queue → garbage retries forever). Mirrors the StoryViewer fix.
+    if (currentItem && !currentItem.viewed && !currentItem._placeholder && !String(currentItem.id).startsWith('__manifest_')) {
       const _viewId = currentItem.id;
       api.statusView(_viewId).catch(() => {
         // Offline / 5xx — queue the view receipt so it lands next reconnect.
