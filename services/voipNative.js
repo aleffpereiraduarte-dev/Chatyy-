@@ -89,6 +89,25 @@ export async function startOutgoingCall({
   callId,
   onWebFallback,
 } = {}) {
+  // [CALL-TRACE 2026-05-21 ROUND3] Step 2a/12 — voipNative entry. Snapshot
+  // every field BEFORE any coercion / validation so we can see exactly what
+  // the caller (chat-conversation/ChatCallsTab/one.js) handed us. Critical
+  // for diagnosing camelCase mismatches and missing fields without a device
+  // attached.
+  try {
+    console.log('[CALL-TRACE][2a/12] voipNative.startOutgoingCall ENTRY', {
+      calleeEmail_raw: calleeEmail,
+      calleeEmail_type: typeof calleeEmail,
+      calleeName,
+      callerName,
+      isVideo: !!isVideo,
+      conversationId,
+      callId,
+      hasOnWebFallback: typeof onWebFallback === 'function',
+      ts: Date.now(),
+    });
+  } catch {}
+
   // [2026-05-21] Defensive validation. The native (iOS/Android) layer
   // returns cryptic errors ("callee_email required", "Cannot convert
   // [object Object]... Value is undefined") when the JS payload is
@@ -101,12 +120,33 @@ export async function startOutgoingCall({
       'callee_email required (got: ' + JSON.stringify(calleeEmail) + ')'
     );
     err.code = 'CALLEE_EMAIL_EMPTY';
+    try {
+      console.warn('[CALL-TRACE][2a/12][FAIL] empty calleeEmail', {
+        calleeEmail_raw: calleeEmail,
+        calleeName,
+        conversationId,
+        ts: Date.now(),
+      });
+    } catch {}
     throw err;
   }
   // Use the trimmed value below so downstream native layers receive a
   // clean string with no whitespace surprises.
   calleeEmail = calleeEmailStr;
   const cid = callId || generateCallId();
+
+  // [CALL-TRACE 2026-05-21 ROUND3] Step 2b/12 — post-validation. Confirms
+  // the trimmed calleeEmail + generated cid that propagate to native.
+  try {
+    console.log('[CALL-TRACE][2b/12] voipNative validated', {
+      calleeEmail,
+      cid,
+      isVideo: !!isVideo,
+      conversationId: conversationId || '',
+      platform: Platform.OS,
+      ts: Date.now(),
+    });
+  } catch {}
   // [CALL-TRACE 2026-05-20 WAVE42] Step 2/12 — JS hands the call off to
   // native CallKit / CallActivity. From this point the foreground UI is
   // either /call.js (in-app foreground branch below) or the native call
@@ -132,9 +172,33 @@ export async function startOutgoingCall({
   // resolved. Now we fire callNotify in the background and kick the native
   // surface immediately so CallKit / CallActivity is visible in <100ms.
   if (conversationId) {
-    api.callNotify(conversationId, cid, isVideo).catch((e) => {
-      console.warn(TAG, 'callNotify failed (non-fatal):', e?.message || e);
-    });
+    // [CALL-TRACE 2026-05-21 ROUND3] Step 3/12 — fire-and-forget push to
+    // wake the callee. We log both the request kickoff and the response
+    // shape so a missing call_invite on the peer side can be traced back
+    // to a 400/401 here instead of guessing.
+    try {
+      console.log('[CALL-TRACE][3/12] callNotify fired', {
+        conversationId, cid, isVideo: !!isVideo, ts: Date.now(),
+      });
+    } catch {}
+    api.callNotify(conversationId, cid, isVideo)
+      .then((resp) => {
+        try {
+          console.log('[CALL-TRACE][3/12] callNotify resp', {
+            cid,
+            success: !!resp?.success,
+            error: resp?.error || '',
+            ts: Date.now(),
+          });
+        } catch {}
+      })
+      .catch((e) => {
+        console.warn(TAG, '[CALL-TRACE][3/12] callNotify failed (non-fatal):', e?.message || e);
+      });
+  } else {
+    try {
+      console.warn('[CALL-TRACE][3/12] callNotify SKIPPED (no conversationId)', { cid });
+    } catch {}
   }
 
   // On web we have no native module; let the caller route to /call.js.
@@ -190,7 +254,12 @@ export async function startOutgoingCall({
   // "Cannot convert [object Object]... Value is undefined" and iOS Swift
   // sees empty strings for everything. Match the wrapper's expected
   // StartOutgoingCallParams shape (camelCase) and let it do the conversion.
-  const nativePresent = ExpoCallKit.startOutgoingCall({
+  // [CALL-TRACE 2026-05-21 ROUND3] Step 4/12 — hand off to ExpoCallKit
+  // wrapper (modules/expo-callkit/index.ts:542). The wrapper does the
+  // camelCase→snake_case remap with the `s()` coercion fixed in the
+  // earlier round. Logging the exact payload sent to the wrapper makes
+  // any subsequent "Value is undefined" trivial to root-cause.
+  const nativePayload = {
     calleeEmail: String(calleeEmail ?? ''),
     calleeName: String(calleeName || calleeEmail || ''),
     calleeAvatar: String(calleeAvatar ?? ''),
@@ -199,42 +268,65 @@ export async function startOutgoingCall({
     roomName: String(cid ?? ''),
     conversationId: String(conversationId ?? ''),
     callId: String(cid ?? ''),
-  });
+  };
+  try {
+    console.log('[CALL-TRACE][4/12] ExpoCallKit.startOutgoingCall payload', {
+      ...nativePayload,
+      // Explicit empty-string spotting — the wrapper coerces undefined → ''
+      // so the only way to see a true "" here is a truly empty source field.
+      emptyFields: Object.keys(nativePayload).filter(
+        (k) => typeof nativePayload[k] === 'string' && nativePayload[k] === ''
+      ),
+      ts: Date.now(),
+    });
+  } catch {}
+  const nativePresent = ExpoCallKit.startOutgoingCall(nativePayload);
 
   // Background: mint LK token then forward it to native.
   (async () => {
     try {
+      // [CALL-TRACE 2026-05-21 ROUND3] Step 5/12 — chatLivekitToken request.
+      // This races the native present (~100ms vs ~300-500ms). The native
+      // side has token-fetcher fallbacks if this loses the race.
+      try {
+        console.log('[CALL-TRACE][5/12] chatLivekitToken request', {
+          conversationId: conversationId || '', cid, ts: Date.now(),
+        });
+      } catch {}
       const tokenResp = await api.chatLivekitToken(conversationId || '', cid);
+      try {
+        console.log('[CALL-TRACE][5/12] chatLivekitToken resp', {
+          cid,
+          success: !!tokenResp?.success,
+          hasUrl: !!tokenResp?.data?.url,
+          hasToken: !!tokenResp?.data?.token,
+          error: tokenResp?.error || '',
+          ts: Date.now(),
+        });
+      } catch {}
       if (tokenResp?.success && tokenResp.data) {
         const lkUrl = tokenResp.data.url || '';
         const lkToken = tokenResp.data.token || '';
         if (lkUrl && lkToken) {
           // Cache for the iOS CX delegate fetcher AND for the Android
-          // CallActivity.onNewIntent late-token path.
+          // LkTokenFetcher cache-source path (#1169). The native side
+          // observes this cache so the in-flight CallActivity picks up
+          // the token without re-launching.
           try {
             await ExpoCallKit.persistPendingLkToken(cid, lkToken, lkUrl);
           } catch {}
-          // Android needs a second startActivity with the token in extras so
-          // onNewIntent fires bringUpRoom. iOS doesn't need this — its
-          // delegate path consults NativeCallTokenFetcher directly.
-          if (Platform.OS === 'android') {
-            try {
-              await ExpoCallKit.startOutgoingCall({
-                calleeEmail: String(calleeEmail ?? ''),
-                calleeName: String(calleeName || calleeEmail || ''),
-                calleeAvatar: String(calleeAvatar ?? ''),
-                callerName: String(callerName ?? ''),
-                isVideo: !!isVideo,
-                roomName: String(cid ?? ''),
-                conversationId: String(conversationId ?? ''),
-                callId: String(cid ?? ''),
-                lkUrl: String(lkUrl ?? ''),
-                lkToken: String(lkToken ?? ''),
-              });
-            } catch (e) {
-              console.warn(TAG, 'android late-token re-launch failed:', e?.message || e);
-            }
-          }
+          // [2026-05-21 #1310 "dual call system" fix] Removed the second
+          // ExpoCallKit.startOutgoingCall(...) call that previously fired
+          // here on Android. That extra startActivity was the root cause
+          // of the "2 sistemas de ligação" user report: the first launch
+          // mounted CallActivity without an LK token (showing
+          // "Desconectado"), and the late-token re-launch started a
+          // SECOND CallActivity instance on top, both visible (the bottom
+          // CallStatusBar plus the new full-screen activity that finally
+          // connects). Since #1169 wired LkTokenFetcher to consume the
+          // `persistPendingLkToken` cache directly, the second
+          // startActivity is no longer needed — the in-flight Activity
+          // observes the cache and calls bringUpRoom() without a remount.
         }
       }
     } catch (e) {
@@ -243,9 +335,29 @@ export async function startOutgoingCall({
   })();
 
   try {
-    await nativePresent;
+    const ok = await nativePresent;
+    // [CALL-TRACE 2026-05-21 ROUND3] Step 6/12 — native promise resolved.
+    // `ok` is the boolean returned by the wrapper (true once the
+    // CXStartCallAction transaction was queued / startActivity fired).
+    try {
+      console.log('[CALL-TRACE][6/12] native startOutgoingCall resolved', {
+        cid, ok, ts: Date.now(),
+      });
+    } catch {}
     return { callId: cid, native: true };
   } catch (e) {
+    // [CALL-TRACE 2026-05-21 ROUND3] Step 6/12 FAIL — native rejection.
+    // Most common causes: native module missing in build, CallKit not
+    // configured (iOS), startActivity blocked by missing permission
+    // (Android). Surface message+code so the caller's Alert is actionable.
+    try {
+      console.warn('[CALL-TRACE][6/12][FAIL] native startOutgoingCall rejected', {
+        cid,
+        message: e?.message || String(e),
+        code: e?.code,
+        ts: Date.now(),
+      });
+    } catch {}
     console.warn(TAG, 'native startOutgoingCall failed:', e?.message || e);
     // [WAVE 117A] Mobile = 100% native. Callers gate any router.push('/call')
     // behind Platform.OS === 'web', so native failure shows user-facing error

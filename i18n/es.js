@@ -1631,6 +1631,7 @@ export default {
   'chat.location': 'Ubicación',
   'chat.contact': 'Contacto',
   'chat.callError': 'No se pudo iniciar la llamada',
+  'chat.calleeNotIdentified': 'No se pudo identificar al destinatario',
   'chat.callNoConnection': 'Sin conexión al servidor. Verifica tu internet e intenta nuevamente.',
   'chat.groupCallNotSupported': 'Las llamadas grupales aún no están disponibles',
   'chat.joinAt': 'Unirse',

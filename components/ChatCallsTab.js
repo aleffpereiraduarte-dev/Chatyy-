@@ -3284,6 +3284,32 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         try {
           const voipNative = require('../services/voipNative');
           const conversationId = item.conversation_id || item.conversationId || '';
+          // [CALL-TRACE 2026-05-21 ROUND3] Step 1b/12 — ChatCallsTab redial
+          // tap. Snapshot the row payload so we can see if a history entry
+          // is missing contactEmail / contact_email (e.g. a row scraped
+          // from VoIP/SIP history that only has to_number).
+          try {
+            console.log('[CALL-TRACE][1b/12] ChatCallsTab redial tap', {
+              email,
+              name,
+              video: !!item.video,
+              conversationId,
+              itemKeys: Object.keys(item || {}),
+              ts: Date.now(),
+            });
+          } catch {}
+          // Defensive guard — voipNative will throw CALLEE_EMAIL_EMPTY but
+          // surfacing the user-facing Alert here makes the intent obvious.
+          if (!email || !String(email).trim()) {
+            try {
+              console.warn('[CALL-TRACE][1b/12][FAIL] empty calleeEmail in redial', { item });
+            } catch {}
+            Alert.alert(
+              (t && t('common.error')) || 'Erro',
+              (t && t('chat.calleeNotIdentified')) || 'Não foi possível identificar o destinatário',
+            );
+            return;
+          }
           const { callId, native } = await voipNative.startOutgoingCall({
             calleeEmail: email,
             calleeName: name,

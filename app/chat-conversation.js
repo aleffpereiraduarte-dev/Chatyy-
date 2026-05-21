@@ -16074,6 +16074,23 @@ export default function ChatConversationScreen() {
 
     const _meLc = (currentEmail || '').toLowerCase();
     let otherEmail = members.find(m => (m?.email || '').toLowerCase() !== _meLc)?.email || params.email || '';
+    // [CALL-TRACE 2026-05-21 ROUND3] Step 1a/12 — otherEmail derivation.
+    // Three sources, ordered: members[] (in-memory from chat header) →
+    // params.email (route param when chat opened from contact tap) →
+    // remote chatMembers fetch fallback. Logging all three plus the
+    // resolved value catches "Suporte" / system-thread cases where the
+    // thread is 1:1 in DB but members[] may be empty.
+    try {
+      console.log('[CALL-TRACE][1a/12] chat-conversation otherEmail derivation', {
+        me: _meLc,
+        conversationId,
+        membersLen: Array.isArray(members) ? members.length : -1,
+        memberEmails: Array.isArray(members) ? members.map(m => m?.email || '').slice(0, 6) : [],
+        paramsEmail: params?.email || '',
+        otherEmail_initial: otherEmail,
+        ts: Date.now(),
+      });
+    } catch {}
     if (!otherEmail) {
       try {
         const r = await api.chatMembers(conversationId);
@@ -16081,10 +16098,32 @@ export default function ChatConversationScreen() {
           setMembers(r.data.members);
           otherEmail = r.data.members.find(m => (m?.email || '').toLowerCase() !== _meLc)?.email || '';
         }
-      } catch {}
+        try {
+          console.log('[CALL-TRACE][1a/12] chat-conversation otherEmail (after API)', {
+            apiSuccess: !!r?.success,
+            apiMembersLen: r?.data?.members?.length || 0,
+            otherEmail_resolved: otherEmail,
+          });
+        } catch {}
+      } catch (e) {
+        // Was silently swallowing the API failure — now surface it for trace.
+        try {
+          console.warn('[CALL-TRACE][1a/12] chatMembers fetch failed', {
+            conversationId, message: e?.message || String(e),
+          });
+        } catch {}
+      }
     }
     if (!otherEmail) {
-      safeAlert(t('common.error') || 'Erro', t('chat.callError') || 'Não foi possível iniciar a chamada');
+      try {
+        console.warn('[CALL-TRACE][1a/12][FAIL] no calleeEmail resolvable', {
+          conversationId, conversationType, paramsEmail: params?.email || '',
+        });
+      } catch {}
+      safeAlert(
+        t('common.error') || 'Erro',
+        t('chat.calleeNotIdentified') || 'Não foi possível identificar o destinatário',
+      );
       return;
     }
 

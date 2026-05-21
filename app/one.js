@@ -2290,6 +2290,28 @@ export default function OneScreen() {
             (async () => {
               try {
                 const voipNative = require('../services/voipNative');
+                // [CALL-TRACE 2026-05-21 ROUND3] Step 1c/12 — /one (Chatyy
+                // AI) action handler. start_call action arrives from the
+                // Rust one-api / legacy PHP. Logging the params + resolved
+                // contactEmail catches AI hallucinated empty email.
+                try {
+                  console.log('[CALL-TRACE][1c/12] one.js start_call action', {
+                    contactEmail, contactName, video: !!params.video, callId, ts: Date.now(),
+                  });
+                } catch {}
+                if (!contactEmail || !String(contactEmail).trim()) {
+                  try {
+                    console.warn('[CALL-TRACE][1c/12][FAIL] empty contactEmail from AI action', { params });
+                  } catch {}
+                  try {
+                    const { Alert } = require('react-native');
+                    Alert.alert(
+                      (typeof t === 'function' && t('common.error')) || 'Erro',
+                      (typeof t === 'function' && t('chat.calleeNotIdentified')) || 'Não foi possível identificar o destinatário',
+                    );
+                  } catch {}
+                  return;
+                }
                 const { native } = await voipNative.startOutgoingCall({
                   calleeEmail: contactEmail,
                   calleeName: contactName,

@@ -1038,25 +1038,48 @@ export default function LiveViewerScreen() {
             try {
               const _lk2 = loadLiveKit();
               if (!_lk2?.Room) return;
+              console.log('[LIVE-TRACE] viewer liveJoinLk start (REST fallback) — session=' + paramSessionId);
               const _jr = await api.liveJoinLk(paramSessionId);
               if (!_jr?.success || !_jr?.data?.lk_token) return;
-              const { lk_url: _lu, lk_token: _lt, lk_room: _lr } = _jr.data;
+              const { lk_url: _lu, lk_token: _lt, lk_room: _lr, identity: _lid } = _jr.data;
+              console.log('[LIVE-TRACE] viewer liveJoinLk resolved (REST) — room=' + _lr + ' identity=' + (_lid || '(none)'));
               const _rm = new _lk2.Room({ adaptiveStream: true, dynacast: false });
               lkViewerRoomRef.current = _rm;
+              // [ROUND 3 FIX] Track subscribed-video state so setConnected
+              // only flips true once we actually have pixels; listener
+              // attached BEFORE connect so initial server-sync events aren't
+              // dropped.
+              let _hasVideo2 = false;
               const _ct = () => {
                 const _ts = [];
+                let _v = false;
                 _rm.remoteParticipants.forEach((p) => {
                   p.trackPublications.forEach((pub) => {
-                    if (pub.track) _ts.push({ track: pub.track, participant: p, kind: pub.kind });
+                    if (pub.track) {
+                      _ts.push({ track: pub.track, participant: p, kind: pub.kind });
+                      if (pub.kind === 'video' || pub.track.kind === 'video') _v = true;
+                    }
                   });
                 });
                 setLkTracks([..._ts]);
+                if (_v && !_hasVideo2) {
+                  _hasVideo2 = true;
+                  setConnected(true);
+                  console.log('[LIVE-TRACE] TrackSubscribed (video, REST) — setConnected(true)');
+                } else if (!_v && _hasVideo2) {
+                  _hasVideo2 = false;
+                  setConnected(false);
+                  console.log('[LIVE-TRACE] TrackUnsubscribed (no video, REST) — setConnected(false)');
+                }
               };
+              _rm.on(_lk2.RoomEvent.TrackPublished, _ct);
               _rm.on(_lk2.RoomEvent.TrackSubscribed, _ct);
               _rm.on(_lk2.RoomEvent.TrackUnsubscribed, _ct);
-              _rm.on(_lk2.RoomEvent.Disconnected, () => { lkViewerRoomRef.current = null; setLkTracks([]); });
+              _rm.on(_lk2.RoomEvent.Disconnected, () => { lkViewerRoomRef.current = null; setLkTracks([]); setConnected(false); });
+              console.log('[LIVE-TRACE] viewer Room.connect start (REST) — ' + (_lu || 'wss://livekit.chatyy.com.br'));
               await _rm.connect(_lu || 'wss://livekit.chatyy.com.br', _lt);
-              setConnected(true);
+              console.log('[LIVE-TRACE] viewer Room.connect resolved (REST) — room=' + _lr);
+              // Don't blindly setConnected here — let _ct gate on video.
               _ct();
             } catch (_e2) { console.warn('[WAVE-110 REST] LK join failed:', _e2?.message); }
           })();
@@ -1252,6 +1275,7 @@ export default function LiveViewerScreen() {
             setStreamType('livekit');
             setError('');
             const _lkSid = msg.session_id || paramSessionId;
+            console.log('[LIVE-TRACE] live_session_info received (livekit pipeline) — session=' + _lkSid);
             ;(async () => {
               try {
                 const _lk = loadLiveKit();
@@ -1262,6 +1286,7 @@ export default function LiveViewerScreen() {
                 // backoff before falling back to webrtc — that fallback was
                 // causing permanent "Conectando..." for early viewers.
                 let _joinRes = null;
+                console.log('[LIVE-TRACE] viewer liveJoinLk start — session=' + _lkSid);
                 for (let _attempt = 0; _attempt < 3; _attempt++) {
                   try {
                     _joinRes = await api.liveJoinLk(_lkSid);
@@ -1280,18 +1305,56 @@ export default function LiveViewerScreen() {
                 if (!_joinRes || !_joinRes.success || !_joinRes?.data?.lk_token) {
                   throw new Error('live_join_lk failed: ' + (_joinRes?.message || 'no token after 3 attempts'));
                 }
-                const { lk_url: _lkUrl, lk_token: _lkToken, lk_room: _lkRoom } = _joinRes.data;
+                const { lk_url: _lkUrl, lk_token: _lkToken, lk_room: _lkRoom, identity: _lkIdentity } = _joinRes.data;
+                console.log('[LIVE-TRACE] viewer liveJoinLk resolved — room=' + _lkRoom + ' identity=' + (_lkIdentity || '(none)'));
                 const _room = new _lk.Room({ adaptiveStream: true, dynacast: false });
                 lkViewerRoomRef.current = _room;
+                // [ROUND 3 FIX 2026-05-21] _collectTracks listener MUST be
+                // attached BEFORE Room.connect — previously TrackSubscribed
+                // events that fired during the connect handshake (server
+                // sends an initial sync containing already-published tracks
+                // the moment auth completes) were dropped because the
+                // listener wasn't wired yet. That gave us a "connected but
+                // empty" Room with no video, even though the SFU had been
+                // announcing the host's track all along.
+                let _hasVideoTrack = false;
                 const _collectTracks = () => {
                   const _tracks = [];
+                  let _hasVideo = false;
                   _room.remoteParticipants.forEach((p) => {
                     p.trackPublications.forEach((pub) => {
-                      if (pub.track) _tracks.push({ track: pub.track, participant: p, kind: pub.kind });
+                      if (pub.track) {
+                        _tracks.push({ track: pub.track, participant: p, kind: pub.kind });
+                        if (pub.kind === 'video' || pub.track.kind === 'video') _hasVideo = true;
+                      }
                     });
                   });
                   setLkTracks([..._tracks]);
+                  // Only flip connected=true once a video track is actually
+                  // subscribed. Room.connect resolving doesn't mean we have
+                  // pixels — it just means auth succeeded. Without this gate
+                  // the viewer flashed "Conectado" + empty black surface for
+                  // 1-30s while waiting for the first TrackSubscribed.
+                  if (_hasVideo && !_hasVideoTrack) {
+                    _hasVideoTrack = true;
+                    setConnected(true);
+                    console.log('[LIVE-TRACE] TrackSubscribed (video) — viewer setConnected(true)');
+                  } else if (!_hasVideo && _hasVideoTrack) {
+                    // Lost all video tracks — surface disconnected state so
+                    // UI can show reconnecting overlay instead of frozen frame.
+                    _hasVideoTrack = false;
+                    setConnected(false);
+                    console.log('[LIVE-TRACE] TrackUnsubscribed (no video remaining) — viewer setConnected(false)');
+                  }
                 };
+                // Wire TrackPublished AND TrackSubscribed — TrackPublished
+                // fires before the client actually subscribes (useful for
+                // late-bound subscriptions where the SFU announces a new
+                // track mid-session); TrackSubscribed is the one that
+                // actually has `pub.track` populated. Listening to both
+                // means we don't miss the late-bound case where a host
+                // publishes camera AFTER the viewer connected.
+                _room.on(_lk.RoomEvent.TrackPublished, _collectTracks);
                 _room.on(_lk.RoomEvent.TrackSubscribed, _collectTracks);
                 _room.on(_lk.RoomEvent.TrackUnsubscribed, _collectTracks);
                 _room.on(_lk.RoomEvent.ParticipantConnected, _collectTracks);
@@ -1299,11 +1362,17 @@ export default function LiveViewerScreen() {
                 _room.on(_lk.RoomEvent.Disconnected, () => {
                   lkViewerRoomRef.current = null;
                   setLkTracks([]);
+                  setConnected(false);
                 });
+                console.log('[LIVE-TRACE] viewer Room.connect start — ' + (_lkUrl || 'wss://livekit.chatyy.com.br'));
                 await _room.connect(_lkUrl || 'wss://livekit.chatyy.com.br', _lkToken);
-                setConnected(true);
-                console.log('[WAVE-110] LK viewer connected — room', _lkRoom);
+                console.log('[LIVE-TRACE] viewer Room.connect resolved — room=' + _lkRoom);
+                // Don't blindly setConnected(true) here — _collectTracks
+                // does it once a video track arrives. Run _collectTracks
+                // once to handle the case where tracks were already attached
+                // during the connect handshake (server sync).
                 _collectTracks();
+                console.log('[WAVE-110] LK viewer connected — room', _lkRoom);
               } catch (_lkErr) {
                 const _lkMsg = _lkErr?.message || String(_lkErr);
                 console.warn('[WAVE-110] LK viewer connect failed, falling back to webrtc:', _lkMsg);

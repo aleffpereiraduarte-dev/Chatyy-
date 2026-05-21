@@ -658,6 +658,7 @@ export default function LiveBroadcastScreen() {
             return;
           }
           console.log('[Live] sending live_start session=' + sid);
+          console.log('[LIVE-TRACE] WS live_start sent session=' + sid);
           ws.send(JSON.stringify({ type: 'live_start', session_id: sid }));
           // Ack watchdog — if WS server doesn't echo live_started, the
           // subscribe never happened. Surface the error instead of waiting forever.
@@ -1593,47 +1594,76 @@ export default function LiveBroadcastScreen() {
         // If LK won the race, connect the host to the LK room and publish
         // camera+mic via the SFU. This is the preferred path — no WHIP,
         // no CF ICE issues, works on all mobile NATs via LK's own TURN.
-        // Non-fatal: if LK SDK fails to load we fall through to CF/P2P.
+        //
+        // [ROUND 3 FIX 2026-05-21] Previously this was a detached IIFE
+        // (`;(async () => { ... })()`) that fired AND-FORGOT — the outer
+        // function continued immediately, the countdown ran, WS `live_start`
+        // was sent, and the UI flipped to AO VIVO before the SFU ever saw a
+        // single track published. Viewers joining the LK room subscribed
+        // BEFORE any TrackPublished event had fired → empty room → viewer
+        // sees avatar-on-void forever. We now AWAIT publish completion before
+        // the function continues so countdown + WS live_start only fire AFTER
+        // the SFU is announcing tracks.
+        //
+        // Also: publishTrack was being called with raw MediaStreamTrack
+        // objects pulled from getUserMedia. The LK SDK expects LocalVideoTrack
+        // / LocalAudioTrack wrappers; passing a bare MST causes the SDK's
+        // publish path to silently no-op on some versions (no exception, no
+        // server-side track-published event). Switch to the explicit
+        // createLocalVideoTrack / createLocalAudioTrack path on both
+        // platforms so the SFU actually gets the announcement.
         if (lkModeRef.current && res.data?.lk_room && res.data?.lk_token) {
           const lkUrl = res.data.lk_url || 'wss://livekit.chatyy.com.br';
           const lkRoom = res.data.lk_room;
           const lkToken = res.data.lk_token;
-          ;(async () => {
-            try {
-              if (!_loadLkBroadcast()) throw new Error('LK SDK not available');
-              const room = new _LK_Room({
-                adaptiveStream: true,
-                dynacast: true,
-              });
-              lkRoomRef.current = room;
-              await room.connect(lkUrl, lkToken);
-              // Publish from the already-acquired localStream if available;
-              // otherwise create dedicated LK tracks from camera/mic.
-              if (localStreamRef.current) {
-                const vt = localStreamRef.current.getVideoTracks()[0];
-                const at = localStreamRef.current.getAudioTracks()[0];
-                if (vt) await room.localParticipant.publishTrack(vt);
-                if (at) await room.localParticipant.publishTrack(at);
-              } else {
-                const [vTrack, aTrack] = await Promise.all([
-                  _LK_createLocalVideoTrack && _LK_createLocalVideoTrack({ facingMode: 'user' }),
-                  _LK_createLocalAudioTrack && _LK_createLocalAudioTrack(),
-                ]);
-                if (vTrack) await room.localParticipant.publishTrack(vTrack);
-                if (aTrack) await room.localParticipant.publishTrack(aTrack);
-              }
-              console.log('[WAVE-110] LK host publish OK — room', lkRoom);
-              try { liveDiagAppend('info', 'LK host publish OK', { sessionId: sid, room: lkRoom }); } catch {}
-            } catch (e) {
-              const msg = e?.message || String(e);
-              console.warn('[WAVE-110] LK host publish failed:', msg);
-              try { liveDiagAppend('error', 'LK host publish failed: ' + msg, { sessionId: sid }); } catch {}
-              // Non-fatal: LK failure doesn't kill the session — WS P2P
-              // viewers still get the offer from the normal signaling path.
-              lkModeRef.current = false;
-              lkRoomRef.current = null;
+          console.log('[LIVE-TRACE] live_start_lk response — room=' + lkRoom + ' url=' + lkUrl + ' session=' + sid);
+          try {
+            if (!_loadLkBroadcast()) throw new Error('LK SDK not available');
+            const room = new _LK_Room({
+              adaptiveStream: true,
+              dynacast: true,
+            });
+            lkRoomRef.current = room;
+            console.log('[LIVE-TRACE] host Room.connect start — ' + lkUrl);
+            await room.connect(lkUrl, lkToken);
+            console.log('[LIVE-TRACE] host Room.connect resolved');
+            // Always go through the explicit createLocalVideoTrack /
+            // createLocalAudioTrack path — passing raw MediaStreamTrack into
+            // publishTrack is unreliable across LK SDK versions (silent no-op
+            // on iOS RN). The explicit path gives us a proper LocalAudioTrack
+            // / LocalVideoTrack which the SDK then wires into the publish
+            // pipeline + publishes to the SFU.
+            if (!_LK_createLocalAudioTrack || !_LK_createLocalVideoTrack) {
+              throw new Error('LK createLocalVideoTrack / createLocalAudioTrack missing');
             }
-          })();
+            console.log('[LIVE-TRACE] host mic publish start');
+            const aTrack = await _LK_createLocalAudioTrack();
+            await room.localParticipant.publishTrack(aTrack);
+            console.log('[LIVE-TRACE] host mic publish end');
+            console.log('[LIVE-TRACE] host camera publish start');
+            const vTrack = await _LK_createLocalVideoTrack({ facingMode: 'user' });
+            await room.localParticipant.publishTrack(vTrack);
+            console.log('[LIVE-TRACE] host camera publish end');
+            console.log('[WAVE-110] LK host publish OK — room', lkRoom);
+            try { liveDiagAppend('info', 'LK host publish OK', { sessionId: sid, room: lkRoom }); } catch {}
+          } catch (e) {
+            const msg = e?.message || String(e);
+            console.warn('[WAVE-110] LK host publish failed:', msg);
+            try { liveDiagAppend('error', 'LK host publish failed: ' + msg, { sessionId: sid }); } catch {}
+            // Surface a real error to the user — previously a silent warn
+            // left the host on AO VIVO with zero viewers ever connecting.
+            // Round 3 fix: setError so the host UI shows what broke and can
+            // bail/retry instead of pretending everything's fine.
+            try {
+              setError((t('live.lkPublishFailed') || 'Falha ao publicar no servidor de mídia (LiveKit)') + ': ' + msg.slice(0, 160));
+            } catch {}
+            // Non-fatal in terms of teardown: LK failure doesn't kill the
+            // session — WS P2P viewers still get the offer from the normal
+            // signaling path. Flag lkMode=false so the rest of the flow
+            // doesn't expect the SFU to be alive.
+            lkModeRef.current = false;
+            lkRoomRef.current = null;
+          }
         }
 
         // ── CF Stream WHIP publish ──

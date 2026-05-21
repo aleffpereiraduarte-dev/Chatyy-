@@ -1490,44 +1490,123 @@ public class ExpoCallKitModule: Module {
   }
 
   func endCallAction(callId: String) {
-    let uuid = stateQueue.sync { activeCalls[callId] }
-    guard let uuid = uuid, let callController = callController else {
-      // [#1179 cleanup, 2026-05-19] No tracked CallKit UUID for this callId,
-      // but JS still wants the native UI gone. Two real-world cases:
-      //   * Outgoing call where the CXStartCallAction params never landed
-      //     (stale CallSignalWs invite) — VC is presented from a non-CallKit
-      //     path. Without a UUID we can't fire CXEndCallAction, so we lose
-      //     the only place that previously cleaned the modal up.
-      //   * Hot-reload during dev: activeCalls is empty after a JS refresh
-      //     but the SwiftUI modal persists across the bridge restart.
-      // Dispatch a direct surface-dismiss so the modal at least comes down,
-      // and tear down AudioRouter so the next call starts clean.
-      print("[ExpoCallKit] endCallAction(\(callId)): no tracked UUID — direct dismiss path")
-      DispatchQueue.main.async {
-        ProviderDelegate.dismissActiveCallSurfaces(reason: "endCallAction_no_uuid")
-        AudioRouter.shared.teardown()
-      }
-      return
+    // [WAVE 116 followup, 2026-05-21] Resolve the UUID via THREE sources so
+    // a JS-initiated hangup always reaches CallKit's system layer:
+    //   1. activeCalls (primary, populated on incoming/outgoing tracking)
+    //   2. sharedUUIDByCallId static mirror (survives map clears during
+    //      orphan cleanup, populated alongside activeCalls)
+    //   3. CXCallObserver().calls (system source of truth — picks up any
+    //      CXCall that iOS still considers active even if our bookkeeping
+    //      lost it, e.g. after hot reload, app re-launch, or a race where
+    //      the cold-start VoIP push stub created a UUID we never tracked)
+    // Without all three, the lock-screen pill / Recents / system call bar
+    // stays visible after the user taps the JS hangup button — exactly the
+    // user report: "desligando quando desliga a chamada no app" the native
+    // CallKit UI doesn't sync.
+    var resolvedUUID: UUID? = stateQueue.sync { activeCalls[callId] }
+    if resolvedUUID == nil {
+      resolvedUUID = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId)
     }
-    let action = CXEndCallAction(call: uuid)
-    let transaction = CXTransaction(action: action)
-    callController.request(transaction) { error in
-      if let error = error {
-        print("[ExpoCallKit] End call error: \(error.localizedDescription)")
-        // [#1179 cleanup, 2026-05-19] Belt-and-suspenders: if the CallKit
-        // transaction fails (already-ended UUID, provider in inconsistent
-        // state) we still need to dismiss the modal. Without this the user
-        // sees the SwiftUI screen stuck on top with no way out.
-        DispatchQueue.main.async {
-          ProviderDelegate.dismissActiveCallSurfaces(reason: "cx_transaction_error")
+    let observedActiveCalls: [CXCall] = {
+      let observed = CXCallObserver().calls.filter { !$0.hasEnded }
+      // If we resolved a UUID via maps, prefer ending only that one. Otherwise
+      // fall back to ALL active CXCalls (last-resort — there should never be
+      // more than one in normal flow because of the orphan-cleanup in
+      // startOutgoingCall).
+      if let known = resolvedUUID {
+        return observed.filter { $0.uuid == known }.isEmpty
+          ? observed // known UUID isn't in the observer set (already ended at system level) — fall through to system-wide sweep
+          : observed.filter { $0.uuid == known }
+      }
+      return observed
+    }()
+
+    // Always tell CallKit the call ended at the SYSTEM level. CXEndCallAction
+    // alone is for user-initiated hangups via the system UI; reportCall is the
+    // generic "this call is over, dismiss your surfaces" API and is the one
+    // that reliably clears the lock screen + Recents entries on JS-initiated
+    // ends. We fire BOTH — reportCall first (no-op if the UUID is unknown to
+    // the provider) so CallKit drops its system pill immediately, then submit
+    // CXEndCallAction so the delegate's perform-handler runs and the rest of
+    // our teardown (audio session, JS event, UI dismiss) fires through the
+    // canonical path.
+    if let provider = self.provider {
+      var endedAny = false
+      if let uuid = resolvedUUID {
+        provider.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
+        endedAny = true
+        print("[ExpoCallKit] endCallAction(\(callId)): reportCall(remoteEnded) on resolved uuid=\(uuid.uuidString)")
+      }
+      for cxCall in observedActiveCalls where cxCall.uuid != resolvedUUID {
+        provider.reportCall(with: cxCall.uuid, endedAt: Date(), reason: .remoteEnded)
+        endedAny = true
+        print("[ExpoCallKit] endCallAction(\(callId)): reportCall(remoteEnded) on observed uuid=\(cxCall.uuid.uuidString)")
+      }
+      if !endedAny {
+        print("[ExpoCallKit] endCallAction(\(callId)): no UUID resolvable, no observed active CXCalls — UI-only dismiss path")
+      }
+    }
+
+    // Submit CXEndCallAction(s) through the controller so the delegate's
+    // perform-handler runs (it owns audio teardown + system-bar cleanup).
+    // Idempotent vs. reportCall above — CallKit dedupes.
+    if let callController = callController {
+      var endActions: [CXEndCallAction] = []
+      if let uuid = resolvedUUID {
+        endActions.append(CXEndCallAction(call: uuid))
+      }
+      for cxCall in observedActiveCalls where cxCall.uuid != resolvedUUID {
+        endActions.append(CXEndCallAction(call: cxCall.uuid))
+      }
+      if !endActions.isEmpty {
+        let transaction = CXTransaction()
+        for action in endActions { transaction.addAction(action) }
+        callController.request(transaction) { error in
+          if let error = error {
+            print("[ExpoCallKit] End call transaction error: \(error.localizedDescription)")
+            // [#1179 cleanup, 2026-05-19] Belt-and-suspenders: if the CallKit
+            // transaction fails (already-ended UUID, provider in inconsistent
+            // state) we still need to dismiss the modal. Without this the
+            // user sees the SwiftUI screen stuck on top with no way out.
+            DispatchQueue.main.async {
+              ProviderDelegate.dismissActiveCallSurfaces(reason: "cx_transaction_error")
+            }
+          }
         }
       }
     }
+
+    // Always dismiss any presented call surfaces and tear down audio routing
+    // — this is the only path for the "no UUID + no observed call" edge case
+    // (hot-reload in dev, residual CallViewController after the system call
+    // already ended). Idempotent vs. the CXEndCallAction delegate path.
+    DispatchQueue.main.async {
+      ProviderDelegate.dismissActiveCallSurfaces(reason: "endCallAction")
+      AudioRouter.shared.teardown()
+    }
+
+    // Clean bookkeeping so a stale UUID stash can't drive a dismiss on the
+    // next call. Safe to clear unconditionally — if the entry wasn't there,
+    // removeValue is a no-op. Mirror static map.
     stateQueue.sync {
       activeCalls.removeValue(forKey: callId)
+      callPayloads.removeValue(forKey: callId)
     }
     // [#1184 dismiss fix, 2026-05-19] Mirror remove.
     ExpoCallKitModule._shared_setUUID(nil, forCallId: callId)
+    // [WAVE 116 2026-05-21] Issue 4 — purge pending LK token.
+    ExpoCallKitModule.clearPendingLkToken(callId: callId)
+
+    // When the resolved-UUID path is taken, the delegate's CXEndCallAction
+    // handler fires `module?.callEnded(uuid:)` which emits onCallEnded — JS
+    // listens and finishes its teardown (unmounts /call.web.js). When the
+    // no-UUID path is taken (no CXEndCallAction submitted), we must emit
+    // here so JS still gets the canonical "call ended" event. Guard by
+    // checking we never submitted a transaction.
+    let didSubmitTransaction = (resolvedUUID != nil) || !observedActiveCalls.isEmpty
+    if !didSubmitTransaction {
+      safeSendEvent("onCallEnded", ["callId": callId])
+    }
   }
 
   /// Send event to JS, buffering if JS isn't ready yet (cold start)
@@ -1647,12 +1726,36 @@ public class ExpoCallKitModule: Module {
       ExpoCallKitModule.clearPendingLkToken(callId: callId)
       safeSendEvent("onCallEnded", ["callId": callId, "reason": reasonRaw])
     } else {
-      // Unknown callId — still dismiss the UI as the legacy path would
-      print("[ExpoCallKit] endCallActionWithReason: no UUID for \(callId) — direct dismiss")
+      // [WAVE 116 followup, 2026-05-21] Unknown callId in activeCalls. Try the
+      // shared static mirror + CXCallObserver before falling back to a UI-only
+      // dismiss — otherwise the system call bar / lock-screen pill stays.
+      let fallbackUUID = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId)
+      let observed = CXCallObserver().calls.filter { !$0.hasEnded }
+      var anyReported = false
+      if let provider = self.provider {
+        if let uuid = fallbackUUID {
+          provider.reportCall(with: uuid, endedAt: Date(), reason: mapped)
+          anyReported = true
+          print("[ExpoCallKit] endCallActionWithReason: reportCall on shared-mirror uuid=\(uuid.uuidString) reason=\(reasonRaw)")
+        }
+        for cxCall in observed where cxCall.uuid != fallbackUUID {
+          provider.reportCall(with: cxCall.uuid, endedAt: Date(), reason: mapped)
+          anyReported = true
+          print("[ExpoCallKit] endCallActionWithReason: reportCall on observed uuid=\(cxCall.uuid.uuidString) reason=\(reasonRaw)")
+        }
+      }
+      if !anyReported {
+        print("[ExpoCallKit] endCallActionWithReason: no UUID for \(callId) — direct dismiss")
+      }
       DispatchQueue.main.async {
         ProviderDelegate.dismissActiveCallSurfaces(reason: "endCall_reason_no_uuid")
         AudioRouter.shared.teardown()
       }
+      ExpoCallKitModule._shared_setUUID(nil, forCallId: callId)
+      ExpoCallKitModule.clearPendingLkToken(callId: callId)
+      // JS expects the onCallEnded event even when we couldn't find a UUID —
+      // without it, /call.web.js never unmounts on the no-UUID path.
+      safeSendEvent("onCallEnded", ["callId": callId, "reason": reasonRaw])
     }
   }
 
