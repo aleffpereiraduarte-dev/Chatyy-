@@ -25,6 +25,7 @@ import {
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import EmptyStateCard from '../components/EmptyStateCard';
+import ErrorBoundary from '../components/ErrorBoundary';
 import * as api from '../services/api';
 
 const ACCENT = '#7C3AED';
@@ -38,9 +39,10 @@ const ROLE_PALETTE = {
 };
 
 // Composite avatar — shows up to 4 members in a 2×2 grid, falls back to a
-// single icon when nobody yet.
+// single icon when nobody yet. Defensive against members[] entries with
+// undefined email/name (parental sync can emit rows missing those fields).
 function FamilyComposite({ members, size = 88 }) {
-  const slice = (members || []).slice(0, 4);
+  const slice = (Array.isArray(members) ? members : []).filter(Boolean).slice(0, 4);
   const cell = size / 2;
   if (slice.length === 0) {
     return (
@@ -105,7 +107,13 @@ function FeatureRow({ icon: Icon, color, title, subtitle, onPress, colors, badge
 }
 
 function MemberRow({ member, colors, isMe, onRemove, index = 0 }) {
-  const palette = ROLE_PALETTE[member.role] || ROLE_PALETTE.child;
+  // Defensive: parental sync occasionally hands us a member shaped
+  // `{ child_email, child_name }` instead of `{ email, name }`. Render
+  // crashed downstream when both were missing. Normalize here so the row
+  // can never call `.split`/`.toUpperCase` on undefined.
+  const safeEmail = (member?.email || member?.child_email || '').toString();
+  const safeName = (member?.name || member?.child_name || (safeEmail.includes('@') ? safeEmail.split('@')[0] : safeEmail) || '').toString();
+  const palette = ROLE_PALETTE[member?.role] || ROLE_PALETTE.child;
   // Staggered entrance: each row drifts in 60ms after the previous, scaling
   // from 0.9 → 1 + fading 0 → 1. Native driver (transform+opacity only).
   const enter = useRef(new Animated.Value(0)).current;
@@ -141,15 +149,15 @@ function MemberRow({ member, colors, isMe, onRemove, index = 0 }) {
         },
       ]}
     >
-      <TouchableOpacity activeOpacity={0.85} onPress={bounceAvatar} accessibilityRole="image" accessibilityLabel={member.name || member.email}>
+      <TouchableOpacity activeOpacity={0.85} onPress={bounceAvatar} accessibilityRole="image" accessibilityLabel={safeName || safeEmail || 'Familiar'}>
         <Animated.View style={{ transform: [{ scale: avatarScale }] }}>
-          <AvatarCircle email={member.email} name={member.name} size={44} online={!!member.online} showStatus />
+          <AvatarCircle email={safeEmail} name={safeName} size={44} online={!!member?.online} showStatus />
         </Animated.View>
       </TouchableOpacity>
       <View style={{ flex: 1, marginLeft: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text style={[s.memberName, { color: colors.text }]} numberOfLines={1}>
-            {member.name || member.email}
+            {safeName || safeEmail || 'Familiar'}
             {isMe ? ' (você)' : ''}
           </Text>
         </View>
@@ -157,7 +165,7 @@ function MemberRow({ member, colors, isMe, onRemove, index = 0 }) {
           <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8, backgroundColor: palette.bg }}>
             <Text style={{ fontSize: 11, fontWeight: '700', color: palette.fg }}>{palette.label}</Text>
           </View>
-          {!!member.age && (
+          {!!member?.age && (
             <Text style={{ fontSize: 12, color: colors.textSecondary }}>{member.age} anos</Text>
           )}
         </View>
@@ -218,7 +226,7 @@ function FamilySkeleton({ colors }) {
   );
 }
 
-export default function FamilyScreen() {
+function FamilyScreenInner() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
@@ -245,34 +253,56 @@ export default function FamilyScreen() {
       ]);
       // Default fallback when backend not yet implemented — synthesize a
       // family from the parental list so the screen still feels alive.
+      //
+      // [bug 2026-05-21 #fam-crash] parental_list_children returns rows
+      // keyed `child_email`/`child_name` (not `email`/`name`). The old
+      // mapping fell through to `(c.email || '').split('@')[0]` and ended
+      // up with members where `email`/`name` were undefined — downstream
+      // renders (AvatarCircle initials, key extractor, MemberRow press
+      // handlers) crashed on `.split`/`.toUpperCase` of undefined when
+      // the children list wasn't empty.
       if (r1?.success && r1.data) {
-        setInfo(r1.data);
+        // Defensive: filter out any member without an email — every row
+        // downstream assumes a string. Anything else trips renderers.
+        const safeMembers = Array.isArray(r1.data.members)
+          ? r1.data.members.filter(m => m && typeof m.email === 'string' && m.email)
+          : [];
+        setInfo({ ...r1.data, members: safeMembers });
       } else {
         try {
           const kids = await api.parentalListChildren();
           if (kids?.success) {
             const myName = (user?.name || (user?.email || '').split('@')[0] || 'Você').trim();
-            const childMembers = (kids?.data?.children || kids?.children || []).map(c => ({
-              email: c.email,
-              name: c.name || c.full_name || (c.email || '').split('@')[0],
-              role: 'child',
-              age: c.age,
-              avatar_url: c.avatar_url,
-            }));
+            const childMembers = (kids?.data?.children || kids?.children || [])
+              .map(c => {
+                // parental rows use child_email / child_name; older clients
+                // may send email/name — accept both, drop the row if neither.
+                const childEmail = (c.child_email || c.email || '').toString().trim();
+                if (!childEmail) return null;
+                const childName = (c.child_name || c.name || c.full_name || childEmail.split('@')[0] || '').toString();
+                return {
+                  email: childEmail,
+                  name: childName,
+                  role: 'child',
+                  age: c.age,
+                  avatar_url: c.avatar_url,
+                };
+              })
+              .filter(Boolean);
             setInfo({
               id: 'local',
               name: myName ? `Família ${myName.split(' ')[0]}` : 'Minha família',
               avatar_url: null,
               members: [
-                { email: myEmail, name: myName, role: 'parent' },
+                { email: myEmail || 'me@chatyy', name: myName, role: 'parent' },
                 ...childMembers,
               ],
             });
           } else {
-            setInfo({ id: 'local', name: 'Minha família', members: [{ email: myEmail, name: user?.name || myEmail, role: 'parent' }] });
+            setInfo({ id: 'local', name: 'Minha família', members: [{ email: myEmail || 'me@chatyy', name: user?.name || myEmail || 'Você', role: 'parent' }] });
           }
         } catch {
-          setInfo({ id: 'local', name: 'Minha família', members: [{ email: myEmail, name: user?.name || myEmail, role: 'parent' }] });
+          setInfo({ id: 'local', name: 'Minha família', members: [{ email: myEmail || 'me@chatyy', name: user?.name || myEmail || 'Você', role: 'parent' }] });
         }
       }
       if (r2?.success && r2.data) setPlanShare(r2.data);
@@ -689,3 +719,10 @@ const s = StyleSheet.create({
   btn: { borderRadius: 12, paddingVertical: 14, alignItems: 'center', justifyContent: 'center' },
   btnText: { fontSize: 15, fontWeight: '700' },
 });
+
+// Wrap the surface in an ErrorBoundary so a single mis-shaped member row
+// (parental sync sometimes emits members without an `email` field) can't
+// take down the whole screen.
+export default function FamilyScreen() {
+  return <ErrorBoundary><FamilyScreenInner /></ErrorBoundary>;
+}

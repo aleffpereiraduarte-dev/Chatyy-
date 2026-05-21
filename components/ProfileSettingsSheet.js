@@ -403,7 +403,7 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
         // 2026-05-18 — Diamond wallet entry. Surfaces balance, top-up CTA,
         // and the full ledger history. Same icon as the gift box used in
         // the live/feed tip flows so users learn the diamond=gift mapping.
-        { icon: IconGiftBox, label: t?.('wallet.myDiamonds') || 'Meus diamantes', tint: ICON_PURPLE, onPress: () => closeAndRun(() => { try { router?.push?.('/wallet'); } catch {} }) },
+        { icon: IconGiftBox, label: t?.('wallet.title') || 'Carteira', tint: ICON_PURPLE, onPress: () => closeAndRun(() => { try { router?.push?.('/wallet'); } catch {} }) },
         // 2026-05-19 — Creator-focused earnings hub. Mostra saldo em BRL,
         // gifts recebidos por origem, top fãs e atalho pra solicitar saque.
         // Mesma cor verde do hero de saque pra reforçar "isso é dinheiro real".

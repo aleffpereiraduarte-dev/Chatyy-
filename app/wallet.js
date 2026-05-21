@@ -1359,4 +1359,82 @@ const styles = StyleSheet.create({
   emptyCtaText: { color: '#fff', fontSize: 15, fontWeight: '800' },
 
   empty: { textAlign: 'center', fontSize: 13, paddingVertical: 40 },
+
+  // [WAVE 51] Cash / BRL summary card
+  cashCard: {
+    marginHorizontal: 14, marginTop: 16,
+    padding: 16, borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  cashHeadRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
+  cashLabel: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4 },
+  cashAmtRow: { flexDirection: 'row', alignItems: 'baseline', marginTop: 6 },
+  cashPrefix: { fontSize: 20, fontWeight: '900', marginRight: 6 },
+  cashAmt: { fontSize: 32, fontWeight: '900', letterSpacing: -0.6 },
+  cashHint: { fontSize: 11, marginTop: 6 },
+  cashCtaRow: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  cashCta: { flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center' },
+  cashCtaText: { color: '#fff', fontSize: 13, fontWeight: '800' },
+  cashSubLabel: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 },
+  cashRow: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingVertical: 6,
+  },
+  cashRowAmt: { fontSize: 13, fontWeight: '700' },
+  cashStatusPill: {
+    paddingHorizontal: 8, paddingVertical: 3,
+    borderRadius: 999, borderWidth: StyleSheet.hairlineWidth,
+  },
+  cashStatusText: { fontSize: 10, fontWeight: '800' },
+
+  // [WAVE 51] Insights card
+  insightsCard: {
+    marginHorizontal: 14, marginTop: 16,
+    padding: 14, borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  insightsGrid: { flexDirection: 'row', alignItems: 'center', marginTop: 4 },
+  insightCol: { flex: 1, alignItems: 'center' },
+  insightDivider: { width: StyleSheet.hairlineWidth, height: 32 },
+  insightVal: { fontSize: 18, fontWeight: '900' },
+  insightLbl: { fontSize: 10, marginTop: 3, textAlign: 'center', paddingHorizontal: 4 },
+
+  // [WAVE 51] Payment method row
+  methodRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    borderWidth: StyleSheet.hairlineWidth, borderRadius: 12,
+    paddingHorizontal: 12, paddingVertical: 10, marginBottom: 8,
+  },
+  methodIconBox: {
+    width: 38, height: 38, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  methodTitle: { fontSize: 14, fontWeight: '700' },
+  methodSub: { fontSize: 11, marginTop: 2 },
+  methodRemove: { padding: 6 },
+  methodEmpty: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    borderWidth: StyleSheet.hairlineWidth, borderStyle: 'dashed', borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 14,
+  },
+  methodEmptyText: { flex: 1, fontSize: 12, lineHeight: 17 },
+
+  // [WAVE 51] History filter chips
+  filterChipsScroll: { paddingVertical: 4, gap: 8, alignItems: 'center' },
+  filterChip: {
+    paddingHorizontal: 14, paddingVertical: 7,
+    borderRadius: 999, borderWidth: StyleSheet.hairlineWidth,
+    marginRight: 8,
+  },
+  filterChipText: { fontSize: 12, fontWeight: '700' },
+
+  // [WAVE 51] Settings sheet rows
+  settingRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 20, paddingVertical: 14, gap: 12,
+  },
+  settingLabel: { fontSize: 14, fontWeight: '700' },
+  settingSub: { fontSize: 11, marginTop: 2 },
+  toggle: { width: 42, height: 24, borderRadius: 12, padding: 3, justifyContent: 'center' },
+  toggleDot: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#fff' },
 });

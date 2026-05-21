@@ -164,6 +164,13 @@ const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered
 });
 
 const FamilyUserRow = React.memo(({ user, colors, saved, onAdd, t, onOpenProfile, onQuickActions }) => {
+  // [bug 2026-05-21 #fam-crash] Backend search merge could push entries
+  // with `email: undefined` (when search results lack the field), then
+  // `user.email.split('@')[0]` below crashed the whole tab. Normalize.
+  const safeEmail = (user?.email || '').toString();
+  const safeDisplay = (user?.display_name || '').toString();
+  const fallbackInitial = (safeDisplay || safeEmail || '?')[0] || '?';
+  const displayName = safeDisplay || (safeEmail.includes('@') ? safeEmail.split('@')[0] : safeEmail) || '—';
   return (
     <TouchableOpacity
       style={[s.contactRow, { borderBottomColor: colors.borderLight }]}
@@ -172,19 +179,19 @@ const FamilyUserRow = React.memo(({ user, colors, saved, onAdd, t, onOpenProfile
       delayLongPress={350}
       activeOpacity={0.6}
     >
-      <View style={[s.avatar, { backgroundColor: getAvatarColor(user.display_name || user.email) }]}>
-        <Text style={s.avatarText}>{(user.display_name || user.email || '?')[0].toUpperCase()}</Text>
+      <View style={[s.avatar, { backgroundColor: getAvatarColor(safeDisplay || safeEmail) }]}>
+        <Text style={s.avatarText}>{fallbackInitial.toUpperCase()}</Text>
       </View>
       <View style={s.contactInfo}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Text style={[s.contactName, { color: colors.text }]}>{user.display_name || user.email.split('@')[0]}</Text>
+          <Text style={[s.contactName, { color: colors.text }]}>{displayName}</Text>
           <View style={[s.familyBadge, { backgroundColor: colors.primary + '18' }]}>
             <IconStar size={10} color={colors.primary} />
             <Text style={[s.familyBadgeText, { color: colors.primary }]}>{t('contacts.family')}</Text>
           </View>
         </View>
-        <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{user.email}</Text>
-        {!!user.phone && <Text style={[s.contactPhone, { color: colors.textTertiary }]}>{user.phone}</Text>}
+        {!!safeEmail && <Text style={[s.contactEmail, { color: colors.textSecondary }]}>{safeEmail}</Text>}
+        {!!user?.phone && <Text style={[s.contactPhone, { color: colors.textTertiary }]}>{user.phone}</Text>}
       </View>
       {saved ? (
         <View style={s.savedBadge}>
@@ -736,8 +743,45 @@ function ContactsScreenInner() {
     } catch {} finally { setSaving(false); }
   };
 
+  // [bug 2026-05-21 #contact-delete] Previous version was fire-and-forget:
+  // any backend hiccup (timeout, 401 silent, cache write fail) left the
+  // contact on screen with zero feedback, then `loadContacts()` re-fetched
+  // the same row and the user thought "nothing happened".
+  //
+  // Now: optimistic remove (snap the row out immediately for instant UX),
+  // call API, restore + surface error on failure. Also invalidates the
+  // local 90d cache so next cold-start matches reality.
   const handleDelete = useCallback((email) => {
-    const doDelete = async () => { await api.deleteContact(email); loadContacts(); };
+    if (!email) return;
+    const target = (email || '').toLowerCase();
+    const doDelete = async () => {
+      // Snapshot for rollback. setContacts is sync — UI updates this tick.
+      let snapshot = null;
+      setContacts(prev => {
+        snapshot = prev;
+        return prev.filter(c => (c.email || '').toLowerCase() !== target);
+      });
+      try {
+        const r = await api.deleteContact(email);
+        if (!r?.success) throw new Error(r?.message || 'delete_failed');
+        // Invalidate the on-disk contacts cache so we don't resurrect on
+        // next cold-start. Best-effort — failure here is non-fatal.
+        try { await setCache('contacts', { success: true, data: snapshot.filter(c => (c.email || '').toLowerCase() !== target) }, 7776000000); } catch {}
+        // Refetch in the background to reconcile (e.g. groups list refresh
+        // when the deleted contact was the last of its group).
+        loadContacts();
+      } catch (err) {
+        // Restore and tell the user — silent failure is what made this
+        // bug invisible for so long.
+        if (snapshot) setContacts(snapshot);
+        if (Platform.OS === 'web') {
+          try { window.alert(t('contacts.deleteError') || t('common.error') || 'Não foi possível excluir.'); } catch {}
+        } else {
+          Alert.alert(t('common.error') || 'Erro', t('contacts.deleteError') || 'Não foi possível excluir o contato. Tente novamente.');
+        }
+        if (__DEV__) console.warn('[contacts.handleDelete]', err?.message);
+      }
+    };
     if (Platform.OS === 'web') {
       if (window.confirm(t('contacts.deleteConfirmWeb'))) doDelete();
     } else {
