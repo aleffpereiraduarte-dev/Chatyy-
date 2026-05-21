@@ -674,6 +674,40 @@ export default function NotificationsHub({
 
             <View style={{ height: 12 }} />
           </ScrollView>
+
+          {/* [follow-back-fix 2026-05-21] Toast pinned to bottom of the
+              hub modal — non-blocking, auto-dismiss after ~2.4s. */}
+          {toastMsg ? (
+            <Animated.View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                left: 12, right: 12, bottom: 12,
+                paddingHorizontal: 14, paddingVertical: 12,
+                borderRadius: 12,
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: 10,
+                backgroundColor: isDark ? 'rgba(20,20,28,0.95)' : 'rgba(20,20,28,0.92)',
+                opacity: toastAnim,
+                transform: [{
+                  translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }),
+                }],
+                ...(Platform.OS === 'web'
+                  ? { boxShadow: '0 6px 18px rgba(0,0,0,0.22)' }
+                  : Platform.OS === 'ios'
+                    ? { shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 14, shadowOffset: { width: 0, height: 6 } }
+                    : { elevation: 8 }),
+              }}
+            >
+              <IconCheck size={16} color="#10b981" />
+              <Text style={{
+                flex: 1, color: '#fff', fontSize: 13.5, fontWeight: '600', letterSpacing: -0.1,
+              }}>
+                {toastMsg}
+              </Text>
+            </Animated.View>
+          ) : null}
         </Pressable>
       </Pressable>
     </Modal>
