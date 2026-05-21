@@ -1499,6 +1499,7 @@ export default function RootLayout() {
                   <Stack.Screen name="stickers/my" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="share-diagnose" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="live-diagnose" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="call-diagnose" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                 </Stack>
                 </ChildRestrictionGuard>
                 <Suspense fallback={null}>

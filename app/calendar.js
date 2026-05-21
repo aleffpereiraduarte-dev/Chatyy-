@@ -389,14 +389,6 @@ function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
       ]}>
         {day}
       </Text>
-      {isToday && (
-        <Text
-          numberOfLines={1}
-          style={[styles.dayCellTodayLabel, { color: colors.primary }]}
-        >
-          Hoje
-        </Text>
-      )}
     </Animated.View>
   );
 }

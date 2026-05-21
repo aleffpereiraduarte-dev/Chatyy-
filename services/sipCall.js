@@ -3,6 +3,9 @@
  * WebSocket JSON-RPC + native RTCPeerConnection
  */
 import { Platform } from 'react-native';
+// [WAVE 104F] Call telemetry — best-effort, never throws.
+let _callDiagAppend = () => {};
+try { _callDiagAppend = require('./callDiag').callDiagAppend; } catch {}
 import { getBaseUrl } from './api';
 
 let RTCPeerConnection = null;
@@ -149,6 +152,8 @@ export async function startSipCall(creds, destinationNumber, onStateChange) {
   _onStateChange = onStateChange;
   _dest = destinationNumber;
   _callerId = creds?.caller_id || '';
+  // [WAVE 104F] Telemetry tap — outgoing SIP call requested.
+  try { _callDiagAppend('info', 'outgoing SIP call requested', { dest: destinationNumber, has_creds: !!(creds?.sip_user) }); } catch {}
   _sessid = uuid();
   _callId = null;
   onStateChange('connecting');

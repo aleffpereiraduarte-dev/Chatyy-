@@ -11,6 +11,10 @@ import { startRingtone, stopRingtone } from '../services/ringtone';
 import { stopAllAudio } from '../services/audioManager';
 import { ensureContactIndex, lookupName as lookupDeviceContactName } from '../services/deviceContactLookup';
 
+// [WAVE 104F] Call telemetry — best-effort, never throws.
+let _callDiagAppend = () => {};
+try { _callDiagAppend = require('../services/callDiag').callDiagAppend; } catch {}
+
 // Lazy-load to break circular dependency with ChatCallsTab
 let addCallToHistory = () => {};
 const initAddCallToHistory = (() => {
@@ -70,6 +74,8 @@ export function triggerIncomingCall(data) {
     console.log('[IncomingCall] trigger ignored: call already active');
     return;
   }
+  // [WAVE 104F] Telemetry tap — incoming push/WS trigger received.
+  try { _callDiagAppend('info', 'incoming call trigger received', { call_id: data?.call_id || data?.room_id, caller: data?.caller_email, platform: Platform.OS }); } catch {}
   if (_triggerIncomingCall) {
     _triggerIncomingCall(data);
   } else {
@@ -1574,6 +1580,8 @@ export default function IncomingCallListener() {
       console.log('[IncomingCall] handleAccept BLOCKED by handlingRef');
       return;
     }
+    // [WAVE 104F] Telemetry tap.
+    try { const _c = callStateRef.current || call; _callDiagAppend('info', 'incoming call accepted by user', { call_id: _c?.call_id || _c?.room_id, caller: _c?.caller_email }); } catch {}
     try { if (Platform.OS !== 'web') { const H = require('expo-haptics'); H.impactAsync?.(H.ImpactFeedbackStyle.Medium); } } catch {}
     handlingRef.current = true;
     acceptedRef.current = true; // MUST be set before callKeep.endCall triggers onEnd
@@ -1702,6 +1710,8 @@ export default function IncomingCallListener() {
 
   const handleDecline = () => {
     console.log('[IncomingCall] handleDecline called, handlingRef=' + handlingRef.current + ' acceptedRef=' + acceptedRef.current);
+    // [WAVE 104F] Telemetry tap.
+    try { const _c = callStateRef.current || call; _callDiagAppend('info', 'incoming call declined by user', { call_id: _c?.call_id || _c?.room_id, caller: _c?.caller_email }); } catch {}
     // If already accepted (active call), the red button means "end the call".
     // Previously we BLOCKED this path, leaving the caller stuck on "Calling..."
     // because no call_end was sent. Now we send a hangup so the peer's UI

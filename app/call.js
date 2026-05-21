@@ -139,6 +139,9 @@ import {
   IconZap, IconUserPlus, IconX, IconSearch, IconVerifiedBadge,
 } from '../components/Icons';
 import { setCallActive } from '../components/IncomingCallListener';
+// [WAVE 104F] Call telemetry — best-effort, never throws.
+let _callDiagAppend = () => {};
+try { _callDiagAppend = require('../services/callDiag').callDiagAppend; } catch {}
 // Lazy-load to break circular dependency
 let setActiveCall = () => {};
 let clearActiveCall = () => {};
@@ -218,6 +221,7 @@ function qualityToLabel(q) {
 function CallScreenInner() {
   useEffect(() => { initCallModules(); }, []);
 
+
   // WhatsApp-grade cold-start: the moment the call screen mounts (even before
   // LiveKit connects), tell the native IncomingCallActivity to dismiss its
   // "Conectando com X..." overlay. Without this, on Android cold-start the
@@ -281,6 +285,20 @@ function CallScreenInner() {
   // the freshly-accepted call → "Chamada encerrada" + home navigation.
   const autoAccepted = params.autoAccepted === '1' || params.autoAccepted === 'true';
   const mountTimeRef = useRef(Date.now());
+  // [WAVE 104F] Telemetry — screen mounted with role + callId.
+  // Run once; callId/isCaller are stable URL params for the call's lifetime.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    try {
+      _callDiagAppend('info', 'call screen mounted', {
+        call_id: callId,
+        role: isCaller ? 'caller' : 'callee',
+        is_video: initialVideoCall,
+        platform: Platform.OS,
+        adopt_native: wantsAdoptNative,
+      });
+    } catch {}
+  }, []); // intentionally empty — mount-once
 
   // Null safety for peer display.
   // [bug 2026-05-15 #978-2] When answered via Android lock-screen native UI,
@@ -585,6 +603,8 @@ function CallScreenInner() {
           ts: Date.now(),
         });
       } catch {}
+      // [WAVE 104F] Telemetry — connect timeout reached.
+      try { _callDiagAppend('error', 'connect timeout — 25s without peer join', { call_id: callId, role: isCaller ? 'caller' : 'callee', peer_ringing: peerRinging }); } catch {}
       try {
         const api = require('../services/api');
         api.apiCall?.('push_diag', {
@@ -1508,7 +1528,9 @@ function CallScreenInner() {
     }
 
     // RoomEvent handlers
+    // [WAVE 104F] Telemetry taps wired to critical LK events.
     r.on(RoomEvent.Connected, () => {
+      try { _callDiagAppend('info', 'LK Room connected', { call_id: callId, remotes: r.remoteParticipants?.size || 0 }); } catch {}
       if (endedRef.current) return;
       // [TTFC] Stamp time-to-first-connect ONCE. Reconnects don't reset
       // this — we want the cold-path latency the user perceived. Logged via
@@ -1555,6 +1577,7 @@ function CallScreenInner() {
     });
 
     r.on(RoomEvent.Reconnecting, () => {
+      try { _callDiagAppend('warn', 'LK Room reconnecting', { call_id: callId, count: (reconnectCountRef.current || 0) + 1 }); } catch {}
       console.log('[Call] LiveKit Reconnecting');
       setReconnecting(true);
       // Bump QoS counter for the post-call rating.
@@ -1581,6 +1604,7 @@ function CallScreenInner() {
     });
 
     r.on(RoomEvent.Reconnected, () => {
+      try { _callDiagAppend('info', 'LK Room reconnected', { call_id: callId }); } catch {}
       console.log('[Call] LiveKit Reconnected');
       setReconnecting(false);
       if (reconnectGraceTimerRef.current) {
@@ -1605,6 +1629,7 @@ function CallScreenInner() {
     });
 
     r.on(RoomEvent.Disconnected, (reason) => {
+      try { _callDiagAppend('warn', 'LK Room disconnected', { call_id: callId, reason: String(reason), peer_was_connected: peerConnected }); } catch {}
       console.log('[Call] LiveKit Disconnected reason=', reason);
       // [CALL-TRACE 2026-05-20 WAVE42] Step 12b/12 — JS Room dropped. If
       // reason=ClientInitiated it's our own hangup. Anything else combined
@@ -1702,16 +1727,35 @@ function CallScreenInner() {
       // peerVideoEnabled / remoteAudioMuted flags need to follow.
       if (participant && participant !== r.localParticipant) {
         _refreshRemoteTracks(participant);
+        // [WAVE 104F] Log remote audio mute events (audio only — video mute is less critical).
+        try {
+          if (publication?.track?.kind === 'audio' || publication?.kind === 'audio') {
+            _callDiagAppend('info', 'remote audio track muted', { call_id: callId, participant: participant.identity });
+          }
+        } catch {}
       }
     });
     r.on(RoomEvent.TrackUnmuted, (publication, participant) => {
       if (participant && participant !== r.localParticipant) {
         _refreshRemoteTracks(participant);
+        // [WAVE 104F] Log remote audio unmute events.
+        try {
+          if (publication?.track?.kind === 'audio' || publication?.kind === 'audio') {
+            _callDiagAppend('info', 'remote audio track unmuted', { call_id: callId, participant: participant.identity });
+          }
+        } catch {}
       }
     });
 
     r.on(RoomEvent.ConnectionQualityChanged, (quality, participant) => {
       if (!participant) return;
+      // [WAVE 104F] Log quality changes for remote participant only, and only when poor/lost.
+      try {
+        const isRemote = participant !== r.localParticipant;
+        if (isRemote && (quality === ConnectionQuality.Poor || quality === ConnectionQuality.Lost)) {
+          _callDiagAppend('warn', 'remote connection quality degraded', { call_id: callId, quality: String(quality) });
+        }
+      } catch {}
       // We surface the REMOTE quality (the local user already sees their UI
       // freezing if their own connection is bad). Only act as a fallback
       // when our stats poller hasn't produced a sample yet — the raw
@@ -2147,6 +2191,8 @@ function CallScreenInner() {
   // ───── End call ─────
   const handleEndCall = useCallback(() => {
     if (endedRef.current) return;
+    // [WAVE 104F] Telemetry — user (or system) ended the call.
+    try { _callDiagAppend('info', 'call ended (handleEndCall)', { call_id: callId, peer_connected: peerConnected, duration_s: callDurationRef.current }); } catch {}
     // [debug 2026-05-14 call-drops-on-answer]
     // User reported that when the callee accepts, the caller hangs up
     // within 1s — sending call_end x3 to the WS server. Stack trace
