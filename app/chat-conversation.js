@@ -20757,9 +20757,12 @@ export default function ChatConversationScreen() {
                         );
                       }
                       // Partial-text quote (Telegram premium)
+                      // WAVE 67 (2026-05-21): allow up to 3 lines for real
+                      // text content so the inline quote bubble matches
+                      // WhatsApp instead of truncating mid-sentence.
                       if (msg.reply_quote_text) {
                         return (
-                          <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">
+                          <Text style={baseTextStyle} numberOfLines={3} ellipsizeMode="tail">
                             {'“' + msg.reply_quote_text + '”'}
                           </Text>
                         );
@@ -20768,13 +20771,13 @@ export default function ChatConversationScreen() {
                       if (msg.reply_to?.type === 'image') {
                         const hasCaption = msg.reply_to?.content && !/^https?:\/\//i.test(msg.reply_to?.content) && msg.reply_to?.content !== msg.reply_to?.file_name;
                         return hasCaption
-                          ? <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">{msg.reply_to?.content}</Text>
+                          ? <Text style={baseTextStyle} numberOfLines={3} ellipsizeMode="tail">{msg.reply_to?.content}</Text>
                           : renderIconLabel(IconImage, t('chat.photo') || 'Foto');
                       }
                       if (msg.reply_to?.type === 'video') {
                         const hasCaption = msg.reply_to?.content && !/^https?:\/\//i.test(msg.reply_to?.content) && msg.reply_to?.content !== msg.reply_to?.file_name;
                         return hasCaption
-                          ? <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">{msg.reply_to?.content}</Text>
+                          ? <Text style={baseTextStyle} numberOfLines={3} ellipsizeMode="tail">{msg.reply_to?.content}</Text>
                           : renderIconLabel(IconFilm, t('chat.video') || 'Vídeo');
                       }
                       if (msg.reply_to?.type === 'audio')    return renderIconLabel(IconMic, t('chat.audio') || 'Áudio');
@@ -20830,7 +20833,10 @@ export default function ChatConversationScreen() {
                         }
                         return renderIconLabel(IconLink, t('chat.link') || 'Link');
                       }
-                      return <Text style={baseTextStyle} numberOfLines={1} ellipsizeMode="tail">{c}</Text>;
+                      // WAVE 67 (2026-05-21): real message text quote shown
+                      // in 3 lines (WhatsApp parity); was numberOfLines={1}
+                      // and cut off mid-word.
+                      return <Text style={baseTextStyle} numberOfLines={3} ellipsizeMode="tail">{c}</Text>;
                     })()}
                   </View>
                   {!msg.reply_to?.deleted_at && (msg.reply_to?.type === 'image' || msg.reply_to?.type === 'video') && msg.reply_to?.file_url && (
@@ -23035,16 +23041,16 @@ export default function ChatConversationScreen() {
               <Text style={[styles.replyBarLabel, { color: _composerReplyColor }]}>
                 {editingMsg ? t('chat.editing') : t('chat.replyingTo', { name: replyTo?.sender_name || t('chat.message') })}
               </Text>
-              <Text style={[styles.replyBarText, { color: colors.textSecondary }]} numberOfLines={1}>
+              <Text style={[styles.replyBarText, { color: colors.textSecondary }]} numberOfLines={3} ellipsizeMode="tail">
                 {(() => {
-                  // WhatsApp-grade compose preview: cap at 60 chars + "…" so
-                  // long replies never overflow the bar's single line. Applied
-                  // to ALL paths (quoteText, content, status_reply text) for
-                  // consistency. Type-tag previews ("📷 Foto", "📞 Chamada")
-                  // are short by design and don't need trimming.
+                  // WAVE 67 (2026-05-21): show the full reply text up to 3
+                  // lines like WhatsApp — was capped at 60 chars + single line
+                  // which truncated mid-sentence. Cap raised to 240 chars
+                  // (~3 lines of preview width) so very long messages still
+                  // get a ceiling but normal messages show in full.
                   const _trim = (s) => {
                     const str = String(s || '');
-                    return str.length > 60 ? (str.slice(0, 60) + '…') : str;
+                    return str.length > 240 ? (str.slice(0, 240) + '…') : str;
                   };
                   if (editingMsg) return _trim(editingMsg.content);
                   // Partial-text quote takes priority over the type-based

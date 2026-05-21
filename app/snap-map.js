@@ -820,17 +820,43 @@ export default function SnapMapScreen() {
     return () => { try { sub?.remove?.(); } catch {} };
   }, [refreshShares]);
 
-  // Center: prefer my GPS; fall back to first friend; final fallback Brazil.
-  // We only compute center ONCE — on mount — to seed the WebView HTML.
-  // After mount, the user is free to pan/zoom; we don't yank them back to
-  // center every time `myLocation` updates. New pins arrive via
-  // injectJavaScript, not a full HTML re-render.
+  // Center: prefer my GPS; cached last-known location; first friend's pin; final fallback Brazil center (not Brasília specifically).
+  // [WAVE 65 2026-05-21] Read sync cached last-known location from AsyncStorage
+  // (set every time we obtain a fresh fix) so cold-start paints near the user
+  // instead of Brasília while expo-location warms up.
+  const [cachedHomeLoc, setCachedHomeLoc] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const raw = await AsyncStorage.getItem('snap_map_last_loc:v1');
+        if (alive && raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && Number.isFinite(parsed.lat) && Number.isFinite(parsed.lng)) setCachedHomeLoc(parsed);
+        }
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
+  // Persist every fresh fix so next cold-start has a near-real seed.
+  useEffect(() => {
+    if (myLocation && Number.isFinite(myLocation.lat) && Number.isFinite(myLocation.lng)) {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        AsyncStorage.setItem('snap_map_last_loc:v1', JSON.stringify({ lat: myLocation.lat, lng: myLocation.lng, ts: Date.now() })).catch(() => {});
+      } catch {}
+    }
+  }, [myLocation?.lat, myLocation?.lng]);
+  // First paint: prefer fresh GPS → cached last-known → first friend's pin → Brazil-centroid fallback.
+  // After mount, panning is preserved (we don't re-center on every update).
   const initialCenter = useMemo(() => {
     if (myLocation) return myLocation;
+    if (cachedHomeLoc) return cachedHomeLoc;
     if (shares[0] && Number.isFinite(shares[0].latitude)) return { lat: shares[0].latitude, lng: shares[0].longitude };
-    return { lat: -15.77, lng: -47.92 };
+    return { lat: -14.235, lng: -51.925 }; // Brazil geographic centroid (Cuiabá-ish) — neutral, not Brasília
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);   // ← intentionally empty; first paint only
+  }, [cachedHomeLoc ? 1 : 0]);   // re-seed once when cache loads (still pre-pan)
 
   // [WAVE 49 2026-05-21] Apply the filter pill before computing the pin
   // payload. We compute it here (vs inside pinsPayload) so the list panel

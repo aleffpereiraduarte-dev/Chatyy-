@@ -401,6 +401,15 @@ export function AuthProvider({ children }) {
       // when there's no network. Without this, an offline launch lands on
       // /login because savedCredentials is in-memory only and is null on
       // a cold start (we intentionally never persist plaintext passwords).
+      //
+      // [WAVE 66 2026-05-21] Hydrate guard: after painting cached user,
+      // kick a background HTTP check_auth. If it returns an *explicit*
+      // 401/revoked we clear the cache and bounce to /login — this prevents
+      // a zombie session where the offline cache survived a server-side
+      // logout. Note: we do NOT clear on network errors (transient) — only
+      // on a server response that *explicitly* says auth is dead.
+      // Also: a successful hydrate kicks WS.resurrect() so the socket
+      // doesn't sit in destroyed=true state until next watchdog tick.
       const hydrateOffline = async () => {
         if (Platform.OS === 'web') return false;
         try {
@@ -413,6 +422,36 @@ export function AuthProvider({ children }) {
               loadAccounts();
               _syncShareExtAuth(userData.email);
               setLoading(false);
+              // [WAVE 66] Background revalidation. Bounded 8s timeout so a
+              // genuinely offline launch never blocks. Only acts on an
+              // *explicit* server rejection (not a network error).
+              setTimeout(() => {
+                Promise.race([
+                  api.checkAuth().catch(() => null),
+                  new Promise(r => setTimeout(() => r(null), 8000)),
+                ]).then((r) => {
+                  if (!r) return; // network/timeout — keep cached session
+                  const explicitlyRejected = !r.success && typeof r.message === 'string' &&
+                    /not.*authenticated|session.*expired|invalid.*token|unauthor|revoked|logged_out/i.test(r.message);
+                  if (explicitlyRejected) {
+                    // Cache is stale and server says session is dead.
+                    // Don't clear if token is within 90-day grace (transient
+                    // edge issue) — let the auth-failure handler decide.
+                    if (api.isTokenWithinGracePeriod?.()) return;
+                    try { console.warn('[auth] hydrate guard: server rejected cached session, forcing logout'); } catch {}
+                    AsyncStorage.removeItem('chatyy_offline_user').catch(() => {});
+                    doLogout('hydrate_guard_rejected');
+                  } else if (r.success) {
+                    // [WAVE 66] Token still valid — refresh cache + revive WS
+                    // so it doesn't sit dead after a cold-start hydrate.
+                    if (r.data) AsyncStorage.setItem('chatyy_offline_user', JSON.stringify(r.data)).catch(() => {});
+                    try {
+                      const ws = require('../services/websocket').default;
+                      if (ws?.resurrect) ws.resurrect('hydrate_guard_revalidated');
+                    } catch {}
+                  }
+                });
+              }, 1500);
               return true;
             }
           }

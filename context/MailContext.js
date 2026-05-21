@@ -859,16 +859,18 @@ export function MailProvider({ children }) {
     // No cleanup — the socket should outlive provider re-renders.
   }, [user?.email]);
 
-  // [WAVE 43G 2026-05-21] Zombie WS watchdog. Auto-reconnect handles the
-  // common case (close → backoff → connect), but does NOT cover:
+  // [WAVE 43G 2026-05-21 / WAVE 66 2026-05-21] Zombie WS watchdog.
+  // Auto-reconnect handles the common case (close → backoff → connect), but
+  // does NOT cover:
   //   - destroyed=true tombstone from 8 auth_error strikes (outside grace
   //     window the chatyy:authFailure handler refuses logout but the WS
   //     never wakes up again)
   //   - readyState===OPEN zombie sockets that the ping watchdog missed
   //     because the timer was cleared by a botched AppState cycle
-  // We poll every 30s and call ws.resurrect() if isZombie() returns true.
+  // We poll every 10s (WAVE 66 — was 30s, too slow per user feedback
+  // "ainda acontece") and call ws.resurrect() if isZombie() returns true.
   // resurrect() is a no-op when the socket is healthy so the overhead is
-  // a single property read every 30s while logged in. Bug report:
+  // a single property read every 10s while logged in. Bug report:
   // "me desloga do nada parece qe eu to logado mas as mensagens para de
   //  chegar... tenho que deslogar e logar denovo".
   useEffect(() => {
@@ -876,10 +878,10 @@ export function MailProvider({ children }) {
     const iv = setInterval(() => {
       try {
         if (typeof mailWs.isZombie === 'function' && mailWs.isZombie()) {
-          mailWs.resurrect?.('mailcontext_watchdog_30s');
+          mailWs.resurrect?.('mailcontext_watchdog_10s');
         }
       } catch {}
-    }, 30000);
+    }, 10000);
     return () => clearInterval(iv);
   }, [user?.email]);
 

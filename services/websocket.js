@@ -132,6 +132,17 @@ class MailWebSocket {
     this._pendingOutgoing = new Map(); // msg_id → { data, retries, timer, resolve }
     this._msgIdCounter = 0;
 
+    // [WAVE 66 2026-05-21] Ghost-login defense-in-depth v2.
+    //   - _resurrectRetryTimer: exponential retry when resurrect() fails to
+    //     actually bring the socket back (pullToken null, server reject, etc).
+    //   - _resurrectAttempt: counter for the backoff sequence.
+    //   - _ghostDiagRing: in-memory ring buffer of WS state transitions for
+    //     /diagnose tap-5-on-logo support flow.
+    this._resurrectRetryTimer = null;
+    this._resurrectAttempt = 0;
+    this._ghostDiagRing = [];
+    this._ghostDiagMax = 200;
+
     // ─── Resume Token Tracking (WhatsApp catch-up) ───
     // Server stamps each per-user event with a monotonic `event_id`. We
     // track the highest one we've successfully delivered to listeners,
@@ -553,12 +564,25 @@ class MailWebSocket {
     try {
       const apiMod = require('./api');
       const token = apiMod.getAuthToken?.();
-      if (!token) return false;
-      // Socket is alive and authenticated → nothing to do.
-      if (this.connected && this.authenticated && !this.destroyed) {
+      if (!token) {
+        // [WAVE 66] No token in memory yet (hydrate race). Schedule a retry
+        // so we don't sit dead until the next watchdog tick (10s).
+        this._logGhost('resurrect_no_token', { reason });
+        this._scheduleResurrectRetry(reason);
         return false;
       }
-      try { console.warn('[WS] resurrect() — reason=' + reason + ' destroyed=' + this.destroyed + ' connected=' + this.connected + ' authed=' + this.authenticated); } catch {}
+      // Socket is alive and authenticated → nothing to do.
+      if (this.connected && this.authenticated && !this.destroyed) {
+        // Clear any retry timer — we're healthy.
+        if (this._resurrectRetryTimer) {
+          clearTimeout(this._resurrectRetryTimer);
+          this._resurrectRetryTimer = null;
+          this._resurrectAttempt = 0;
+        }
+        return false;
+      }
+      try { console.warn('[WS] resurrect() — reason=' + reason + ' destroyed=' + this.destroyed + ' connected=' + this.connected + ' authed=' + this.authenticated + ' attempt=' + this._resurrectAttempt); } catch {}
+      this._logGhost('resurrect_kick', { reason, attempt: this._resurrectAttempt });
       try { this._cleanup(); } catch {}
       this.destroyed = false;
       this.reconnectAttempt = 0;
@@ -566,15 +590,88 @@ class MailWebSocket {
       this._authErrorBackoff = 0;
       this.token = token;
       this.connect(token);
+      // Arm a backoff retry in case this connect() never reaches authenticated.
+      // _onAuthenticated clears it; otherwise next backoff tick re-tries.
+      this._scheduleResurrectRetry(reason);
       return true;
     } catch (e) {
       try { console.warn('[WS] resurrect() failed:', e?.message); } catch {}
+      this._logGhost('resurrect_exception', { reason, err: e?.message });
+      this._scheduleResurrectRetry(reason);
       return false;
     }
   }
 
+  // [WAVE 66 2026-05-21] Resurrect retry with exponential backoff.
+  // Steps: 5s, 15s, 30s, 60s, 120s (capped). Cancelled on _onAuthenticated.
+  // Without this, a single failed resurrect (no token / server reject) sits
+  // dead for 10s (next watchdog tick) — slower than what the user reports
+  // as "deslogou silenciosamente, msgs não chegam".
+  _scheduleResurrectRetry(reason) {
+    if (this._resurrectRetryTimer) {
+      clearTimeout(this._resurrectRetryTimer);
+      this._resurrectRetryTimer = null;
+    }
+    const delays = [5000, 15000, 30000, 60000, 120000];
+    const idx = Math.min(this._resurrectAttempt, delays.length - 1);
+    const delay = delays[idx];
+    this._resurrectAttempt++;
+    this._resurrectRetryTimer = setTimeout(() => {
+      this._resurrectRetryTimer = null;
+      // If we got authenticated meanwhile, stop.
+      if (this.connected && this.authenticated && !this.destroyed) {
+        this._resurrectAttempt = 0;
+        return;
+      }
+      // Surface user-visible banner after 3rd retry (~50s of pain) so user
+      // knows they should pull-to-refresh or check network — silent reconnect
+      // attempts up to 3 are fine.
+      if (this._resurrectAttempt >= 3) {
+        try {
+          this._emit('connection', {
+            status: 'reconnecting',
+            attempt: this._resurrectAttempt,
+            persistent: true, // banner caller checks this — sticky until OPEN
+          });
+        } catch {}
+      }
+      // Try again — recurse into resurrect() which will re-schedule.
+      this.resurrect(reason + '_retry' + this._resurrectAttempt);
+    }, delay);
+  }
+
+  // [WAVE 66 2026-05-21] Ghost diagnostic ring buffer. 200 events covers
+  // ~10min of activity at typical rate. Read via getGhostDiag() from the
+  // /diagnose screen (5-tap on logo). Includes WS state transitions,
+  // AppState changes, resurrect attempts, auth events.
+  _logGhost(event, data) {
+    try {
+      const e = {
+        ts: Date.now(),
+        ev: event,
+        connected: this.connected,
+        authed: this.authenticated,
+        destroyed: this.destroyed,
+        readyState: this.ws?.readyState,
+        ...(data || {}),
+      };
+      this._ghostDiagRing.push(e);
+      if (this._ghostDiagRing.length > this._ghostDiagMax) {
+        this._ghostDiagRing.shift();
+      }
+    } catch {}
+  }
+
+  getGhostDiag() {
+    return this._ghostDiagRing.slice();
+  }
+
   // Cheap state inspector for the resurrect watchdog. Returns true if the
   // socket is in a recoverable-by-resurrect state (dead but should be live).
+  // [WAVE 66 2026-05-21] Tightened ping-silence threshold from 3× to 2×
+  // PING_TIMEOUT (was 54s, now 36s) — shaves ~18s off worst-case ghost
+  // detection. Watchdog cadence also tightened to 10s in MailContext so
+  // total ghost detection bounded at ~46s (was up to 84s).
   isZombie() {
     if (this.destroyed) return true;
     if (!this.ws) return true;
@@ -583,7 +680,7 @@ class MailWebSocket {
     // Long ping silence — the ping watchdog should have caught this, but if
     // it didn't (timer cleared by a botched AppState cycle, etc.) treat the
     // socket as zombie.
-    if (this.lastPongTime && (Date.now() - this.lastPongTime) > (PING_TIMEOUT * 3)) return true;
+    if (this.lastPongTime && (Date.now() - this.lastPongTime) > (PING_TIMEOUT * 2)) return true;
     return false;
   }
 
@@ -1569,6 +1666,18 @@ class MailWebSocket {
 
   // Replay queued messages and re-subscribe to tracked channels after reconnect
   _onAuthenticated() {
+    // [WAVE 66 2026-05-21] Auth landed → cancel any pending resurrect retry
+    // and clear sticky banner so UI snaps back to clean.
+    if (this._resurrectRetryTimer) {
+      clearTimeout(this._resurrectRetryTimer);
+      this._resurrectRetryTimer = null;
+    }
+    if (this._resurrectAttempt > 0) {
+      this._logGhost('resurrect_landed', { attempts: this._resurrectAttempt });
+    }
+    this._resurrectAttempt = 0;
+    try { this._emit('connection', { status: 'connected' }); } catch {}
+
     // Re-subscribe to all tracked channels
     for (const channel of this._subscribedChannels) {
       this._send({ type: 'subscribe', channel });
