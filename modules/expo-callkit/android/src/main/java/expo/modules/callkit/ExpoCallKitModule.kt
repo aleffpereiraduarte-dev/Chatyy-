@@ -129,6 +129,38 @@ class ExpoCallKitModule : Module() {
       }
     }
 
+    /**
+     * [foreground gate, 2026-05-21] Bridge for CallSignalWs.kt: when a
+     * `call_invite` WS frame arrives while the app is in the foreground,
+     * the native ring path is suppressed (JS owns the UI). We still emit
+     * `onIncomingCall` so any listener wired through ExpoCallKit picks up
+     * the call metadata. JS-side primary subscription is `mailWs.on
+     * 'call_invite'` in IncomingCallListener — this is a belt-and-suspenders
+     * bridge so cold-bundle / Suspense races still see the invite.
+     */
+    fun emitIncomingCallForeground(
+      callId: String,
+      callerName: String,
+      callerEmail: String,
+      conversationId: String,
+      hasVideo: Boolean
+    ) {
+      val inst = instance.get()
+      if (inst != null) {
+        inst.sendEvent("onIncomingCall", mapOf(
+          "callId" to callId,
+          "callerName" to callerName,
+          "callerEmail" to callerEmail,
+          "conversationId" to conversationId,
+          "hasVideo" to hasVideo,
+          "foreground" to true,
+          "source" to "ws"
+        ))
+      } else {
+        Log.d(TAG, "emitIncomingCallForeground: no JS instance — JS WS subscription is primary anyway")
+      }
+    }
+
     // [2026-05-15 #992] LiveKit native pre-connect events. NativeCallRoom
     // is a singleton that owns the Room and emits events through these
     // companion methods so the Expo Module instance doesn't need to be alive

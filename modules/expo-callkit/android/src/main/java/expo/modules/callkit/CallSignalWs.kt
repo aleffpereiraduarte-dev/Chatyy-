@@ -464,6 +464,36 @@ object CallSignalWs {
             } catch (_: Throwable) { /* fall through */ }
         }
 
+        // [foreground gate, 2026-05-21] WhatsApp/Telegram parity for INCOMING.
+        // If the app is currently in the foreground, the JS WS subscription
+        // (services/websocket.js → IncomingCallListener.js `mailWs.on
+        // 'call_invite'`) already received this same frame and is rendering
+        // the rich in-app IncomingCallSheet (avatar + accept/decline + ringtone).
+        // Launching CallRingingService → IncomingCallActivity → CallActivity
+        // on top stacks two ringing UIs and creates the "2 telas" feedback
+        // (incidente 2026-05-12). Mirrors the gate that
+        // CallFirebaseMessagingService applies for FCM-driven invites — the
+        // WS-driven path was the last branch missing it.
+        //
+        // BACKGROUND / KILLED app keeps the native ring path so the OS-level
+        // lock-screen FSI can still ring even when JS is paused or unloaded.
+        val appForeground = try {
+            ExpoCallKitModule.isAppForeground || isProcessForeground(ctx)
+        } catch (_: Throwable) { false }
+        if (appForeground) {
+            Log.d(TAG, "call_invite $callId: app foreground — JS WS handler owns the UI, skipping native ring")
+            // Best-effort: also nudge ExpoCallKitModule so any onIncomingCall
+            // listener wired through the module gets a copy (parity with the
+            // VoIP push path on iOS). JS-side primary surface remains the
+            // mailWs `call_invite` subscription.
+            try {
+                ExpoCallKitModule.emitIncomingCallForeground(
+                    callId, callerName, callerEmail, conversationId, hasVideo
+                )
+            } catch (_: Throwable) { /* best-effort */ }
+            return
+        }
+
         Log.d(TAG, "call_invite $callId from $callerEmail — launching CallRingingService")
         try {
             val serviceIntent = Intent(ctx, CallRingingService::class.java).apply {
@@ -492,6 +522,35 @@ object CallSignalWs {
             } catch (e2: Throwable) {
                 Log.e(TAG, "call_invite $callId: notification fallback also failed", e2)
             }
+        }
+    }
+
+    /**
+     * [foreground gate, 2026-05-21] ActivityManager-based process foreground
+     * check mirroring CallFirebaseMessagingService.isProcessForeground. The
+     * `ExpoCallKitModule.isAppForeground` flag is set by Activity lifecycle
+     * hooks which can lag by 50-500ms on Android (AppState race on first
+     * resume from cold), so we use this complement to avoid a brief window
+     * where the flag is still false even though the user has the app open.
+     */
+    private fun isProcessForeground(ctx: Context): Boolean {
+        return try {
+            val am = ctx.applicationContext.getSystemService(Context.ACTIVITY_SERVICE)
+                as? android.app.ActivityManager ?: return false
+            val procs = am.runningAppProcesses ?: return false
+            val myPkg = ctx.applicationContext.packageName
+            for (p in procs) {
+                if (p.processName != myPkg) continue
+                // IMPORTANCE_VISIBLE accepted (matches FCM path) — covers
+                // app-behind-system-dialog / app-in-Recents.
+                if (p.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE) {
+                    return true
+                }
+            }
+            false
+        } catch (e: Exception) {
+            Log.w(TAG, "isProcessForeground check failed: ${e.message}")
+            false
         }
     }
 
