@@ -506,6 +506,11 @@ export const isSetup = false;
 
 let _stateSyncInstalled = false;
 const _stateListeners = [];
+// iOS fires a spurious CXEndCallAction within ~3s of answer (race between
+// CXAnswerCallAction.fulfill and audio session activation). The bridge
+// previously cleared `__chatyyNativeCallActive` on that ghost event,
+// causing /call.js to skip the legitimate WS BYE on the next hangup.
+let _lastNativeAnswerAt = 0;
 
 /** Read the current native-call active flag. Set by `installNativeCallStateBridge`
  *  in response to onLkConnected / onCallEnded. Mobile-only — on web this
@@ -516,6 +521,20 @@ export function isNativeCallActive() {
   } catch {
     return false;
   }
+}
+
+/** Drop every state listener registered by `installNativeCallStateBridge`
+ *  and reset the install flag so a subsequent setupCallKeep() re-wires from
+ *  scratch. Safe to call on app background / logout / hot reload — otherwise
+ *  `_stateListeners` grows on every reinstall and the duplicate handlers fan
+ *  out N copies of every native event into analytics + callState. */
+export function teardownNativeCallStateBridge() {
+  for (const unsub of _stateListeners) {
+    try { if (typeof unsub === 'function') unsub(); } catch {}
+  }
+  _stateListeners.length = 0;
+  _stateSyncInstalled = false;
+  _lastNativeAnswerAt = 0;
 }
 
 /** Subscribe to one of the native call-state events. `cb` is called with the
@@ -548,9 +567,20 @@ function installNativeCallStateBridge() {
   _stateListeners.push(ExpoCallKit.onLkEvent('onLkConnected', () => {
     try { globalThis.__chatyyNativeCallActive = true; } catch {}
   }));
+  // Track native answer so the 3s spurious-end guard below can ignore the
+  // iOS CXEndCallAction ghost event that fires right after CXAnswerCallAction.
+  try {
+    if (typeof ExpoCallKit.onCallAnswered === 'function') {
+      _stateListeners.push(ExpoCallKit.onCallAnswered(() => {
+        _lastNativeAnswerAt = Date.now();
+        try { globalThis.__chatyyNativeCallActive = true; } catch {}
+      }));
+    }
+  } catch {}
   // Native Room ended → flag drops so the post-call HTTP/WS hangup path can
   // run as it did before (no race vs. the native CXEndCallAction tear-down).
   _stateListeners.push(ExpoCallKit.onCallEnded(() => {
+    if (_lastNativeAnswerAt && Date.now() - _lastNativeAnswerAt < 3000) return;
     try { globalThis.__chatyyNativeCallActive = false; } catch {}
   }));
   _stateListeners.push(ExpoCallKit.onLkEvent('onLkDisconnected', () => {
