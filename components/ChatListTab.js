@@ -1295,7 +1295,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
     return () => { cancelled = true; clearInterval(iv); };
   }, [user?.email]);
   const liveAoVivo = (t('live.aoVivo') || 'AO VIVO').toUpperCase();
-  const openLiveViewer = useCallback((email, sessionId, hostName) => {
+  const openLiveViewer = useCallback(async (email, sessionId, hostName) => {
     try {
       // Self-live exception — tapping your own AO VIVO ring on the chat list
       // routes to /live-broadcast (your host panel) instead of /live-viewer,
@@ -1307,13 +1307,44 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
         router.push(`/live-broadcast${sid}`);
         return;
       }
+      // [WAVE 38 2026-05-20] Pre-tap status verify. Antes de navegar pro
+      // /live-viewer, confirma com o backend que o sessionId AINDA está
+      // live. Cenário: host fechou live mas live_ended WS event não chegou
+      // (reconnect, network blip) → user clica num card AO VIVO obsoleto
+      // → viewer abre e mostra "live encerrada". Agora detectamos antes
+      // de navegar e: (a) limpamos a entry obsoleta da lista,
+      // (b) mostramos toast/alert curto em vez de abrir viewer morto.
+      try {
+        const r = await api.liveStatusCf(sessionId);
+        const status = String(r?.data?.status || r?.status || '').toLowerCase();
+        const isLive = status === 'live' || status === 'active' || r?.data?.is_live === true;
+        if (!isLive && r) {
+          // Stale — clear the card from our local list so next render hides it.
+          if (email) {
+            const emailLower = String(email).toLowerCase();
+            setLivesByEmail(prev => {
+              if (!prev[emailLower]) return prev;
+              const n = { ...prev }; delete n[emailLower]; return n;
+            });
+          }
+          try {
+            const { Alert } = require('react-native');
+            Alert.alert(t('live.endedTitle') || 'Live encerrada', t('live.endedBody') || 'Esta transmissão já terminou.');
+          } catch {}
+          return;
+        }
+      } catch {
+        // If status probe fails (network/backend hiccup), fall through and
+        // let /live-viewer's own error handling kick in. We don't want a
+        // probe failure to block opening a live that's actually fine.
+      }
       const params = new URLSearchParams();
       params.set('sessionId', sessionId);
       if (email) params.set('hostEmail', email);
       if (hostName) params.set('hostName', hostName);
       router.push(`/live-viewer?${params.toString()}`);
     } catch {}
-  }, [router, user?.email]);
+  }, [router, user?.email, t]);
 
   const myStatusGroup = statuses.find(s => s.email === user?.email);
   const myStatus = myStatusGroup?.items?.length > 0 ? myStatusGroup : null;
@@ -2879,9 +2910,32 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         const data = payload?.data || payload || {};
         const email = (data.host_email || '').toLowerCase();
         if (!email || email === (user?.email || '').toLowerCase()) return;
+        // [WAVE 38 2026-05-20] BEFORE: o handler retornava `prev` sem update
+        // se já houvesse entry pra esse email — isso causava bug "AO VIVO
+        // mostra session antiga". Cenário: host A inicia live #1, fecha
+        // (live_ended limpa), inicia live #2 imediato. Em race, live_list
+        // tick antigo poderia ter recriado a entry de #1 antes do
+        // live_started #2 chegar — e o handler ignorava o evento novo. Agora
+        // SEMPRE atualiza a entry com o session_id + host_name novos.
+        // Stale-protection: comparamos started_at (se vier) com 6h
+        // freshness gate igual o Profile.js (WAVE 37) pra rejeitar replay
+        // de eventos durante reconnect.
+        if (data.started_at) {
+          try {
+            const startedMs = new Date(data.started_at).getTime();
+            if (Number.isFinite(startedMs) && (Date.now() - startedMs) > 6 * 3600 * 1000) {
+              console.warn('[ChatListTab.live] ignoring stale live_started echo, age>6h');
+              return;
+            }
+          } catch {}
+        }
         setLivesByEmail(prev => {
-          if (prev[email]) return prev;
-          return { ...prev, [email]: { id: data.session_id, host_name: data.host_name || email.split('@')[0], viewer_count: 0 } };
+          const existing = prev[email];
+          const sid = data.session_id;
+          // Same session_id already painted? Skip — no churn.
+          if (existing && String(existing.id || '') === String(sid)) return prev;
+          // Different session → replace (host re-broadcast scenario).
+          return { ...prev, [email]: { id: sid, host_name: data.host_name || email.split('@')[0], viewer_count: 0 } };
         });
       }));
       unsubs.push(mailWs.on('live_ended', (payload) => {

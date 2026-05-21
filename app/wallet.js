@@ -15,15 +15,17 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator,
-  RefreshControl, Platform, StatusBar, Alert,
+  RefreshControl, Platform, StatusBar, Alert, Modal, TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
-import { IconArrowLeft, IconDiamond } from '../components/Icons';
+import { IconArrowLeft, IconDiamond, IconX, IconSearch } from '../components/Icons';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
+import SendDiamondSheet from '../components/SendDiamondSheet';
+import AvatarCircle from '../components/AvatarCircle';
 import { formatInt } from '../utils/dateFormat';
 
 function LedgerRow({ item, colors, isDark, t, lang }) {
@@ -86,6 +88,64 @@ export default function WalletScreen() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [topUpOpen, setTopUpOpen] = useState(false);
+  // [WAVE 38 2026-05-20] "Enviar" botão precisa abrir um picker de contato
+  // antes do SendDiamondSheet. Antes só fazia router.push('/chat') — user
+  // reportou "botão não funciona". Agora abrimos um sheet que lista as
+  // conversas diretas + tap leva ao SendDiamondSheet com o peer alvo.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const [pickerConvs, setPickerConvs] = useState([]);
+  const [pickerQuery, setPickerQuery] = useState('');
+  const [sendTarget, setSendTarget] = useState(null); // { email, name, avatar }
+
+  const openSendPicker = useCallback(async () => {
+    setPickerOpen(true);
+    setPickerLoading(true);
+    setPickerQuery('');
+    try {
+      const r = await api.chatConversations();
+      // chat_list responses come in a couple shapes (Rust + PHP). Normalize
+      // to a flat list of direct DMs only — group convs can't receive a
+      // P2P diamond transfer.
+      const raw = Array.isArray(r?.conversations) ? r.conversations
+        : Array.isArray(r?.data?.conversations) ? r.data.conversations
+        : Array.isArray(r?.data) ? r.data
+        : Array.isArray(r) ? r
+        : [];
+      const directs = raw.filter(c => {
+        const type = String(c.type || c.conv_type || 'direct').toLowerCase();
+        if (type !== 'direct') return false;
+        // Filter out self / saved-messages (chat com você mesmo) — can't
+        // send diamonds to your own account.
+        const peer = String(c.peer_email || c.other_email || c.email || '').toLowerCase();
+        return peer && peer !== 'me' && peer !== 'self';
+      });
+      setPickerConvs(directs);
+    } catch (e) {
+      setPickerConvs([]);
+    } finally {
+      setPickerLoading(false);
+    }
+  }, []);
+
+  const onPickerSelect = useCallback((conv) => {
+    const email = conv.peer_email || conv.other_email || conv.email;
+    const name = conv.peer_name || conv.name || conv.title || (email ? email.split('@')[0] : '');
+    const avatar = conv.peer_avatar_url || conv.avatar_url || conv.photo_url;
+    if (!email) return;
+    setSendTarget({ email, name, avatar });
+    setPickerOpen(false);
+  }, []);
+
+  const filteredPickerConvs = React.useMemo(() => {
+    const q = pickerQuery.trim().toLowerCase();
+    if (!q) return pickerConvs;
+    return pickerConvs.filter(c => {
+      const name = String(c.peer_name || c.name || c.title || '').toLowerCase();
+      const email = String(c.peer_email || c.other_email || c.email || '').toLowerCase();
+      return name.includes(q) || email.includes(q);
+    });
+  }, [pickerConvs, pickerQuery]);
 
   const load = useCallback(async ({ append = false } = {}) => {
     try {
@@ -215,9 +275,10 @@ export default function WalletScreen() {
             <Text style={styles.ctaBtnText}>{t('wallet.topup') || 'Comprar'}</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            onPress={() => router.push('/chat')}
+            onPress={openSendPicker}
             style={[styles.ctaBtn, { backgroundColor: 'transparent', borderWidth: StyleSheet.hairlineWidth, borderColor: '#A855F7' }]}
             accessibilityRole="button"
+            accessibilityLabel={t('wallet.sendAction') || 'Enviar diamantes'}
           >
             <Text style={[styles.ctaBtnText, { color: '#A855F7' }]}>
               {t('wallet.sendAction') || 'Enviar'}
@@ -270,6 +331,91 @@ export default function WalletScreen() {
         visible={topUpOpen}
         onClose={() => { setTopUpOpen(false); load(); }}
         onBalanceChange={(b) => { if (typeof b === 'number') setBalance(b); }}
+      />
+
+      {/* [WAVE 38] Picker sheet — listar conversas diretas para escolher
+          o destinatário do envio de diamantes. Aparece quando user toca
+          "Enviar" no header. Tap em contato → SendDiamondSheet. */}
+      <Modal visible={pickerOpen} animationType="slide" transparent onRequestClose={() => setPickerOpen(false)}>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '85%', paddingBottom: Math.max(insets.bottom, 16) }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 14, paddingBottom: 8 }}>
+              <View style={{ width: 34 }} />
+              <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
+                {t('wallet.pickRecipient') || 'Enviar diamantes para'}
+              </Text>
+              <TouchableOpacity onPress={() => setPickerOpen(false)} style={{ width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' }} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
+                <IconX size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginHorizontal: 14, marginBottom: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10, backgroundColor: isDark ? '#2a2a2a' : '#f1f1f4' }}>
+              <IconSearch size={16} color={colors.textTertiary} />
+              <TextInput
+                value={pickerQuery}
+                onChangeText={setPickerQuery}
+                placeholder={t('common.search') || 'Buscar'}
+                placeholderTextColor={colors.textTertiary}
+                style={{ flex: 1, marginLeft: 8, color: colors.text, fontSize: 14, padding: 0 }}
+                autoCorrect={false}
+                autoCapitalize="none"
+              />
+            </View>
+            {pickerLoading ? (
+              <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                <ActivityIndicator color="#A855F7" />
+              </View>
+            ) : filteredPickerConvs.length === 0 ? (
+              <View style={{ paddingVertical: 40, paddingHorizontal: 24 }}>
+                <Text style={{ textAlign: 'center', color: colors.textTertiary, fontSize: 13 }}>
+                  {pickerQuery
+                    ? (t('common.noResults') || 'Nenhum contato encontrado')
+                    : (t('wallet.noContactsBody') || 'Sem conversas ainda. Inicie um chat para enviar diamantes.')
+                  }
+                </Text>
+              </View>
+            ) : (
+              <FlatList
+                data={filteredPickerConvs}
+                keyExtractor={(item, idx) => String(item.id || item.peer_email || idx)}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item }) => {
+                  const email = item.peer_email || item.other_email || item.email || '';
+                  const name = item.peer_name || item.name || item.title || (email ? email.split('@')[0] : '');
+                  const avatar = item.peer_avatar_url || item.avatar_url || item.photo_url;
+                  return (
+                    <TouchableOpacity
+                      onPress={() => onPickerSelect(item)}
+                      activeOpacity={0.7}
+                      style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingVertical: 12 }}
+                    >
+                      <AvatarCircle size={42} email={email} name={name} avatarUrl={avatar} />
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={1}>{name || email}</Text>
+                        {!!email && email !== name && (
+                          <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 1 }} numberOfLines={1}>{email}</Text>
+                        )}
+                      </View>
+                      <IconDiamond size={18} color="#A855F7" />
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* [WAVE 38] After picker selects a target, mount SendDiamondSheet.
+          The sheet handles balance check + amount picker + wallet_send POST.
+          On close we clear sendTarget and reload the wallet history so the
+          new transfer surfaces in the ledger immediately. */}
+      <SendDiamondSheet
+        visible={!!sendTarget}
+        onClose={() => setSendTarget(null)}
+        toEmail={sendTarget?.email}
+        toName={sendTarget?.name}
+        toAvatarUrl={sendTarget?.avatar}
+        onSent={() => { setSendTarget(null); load(); }}
       />
     </View>
   );

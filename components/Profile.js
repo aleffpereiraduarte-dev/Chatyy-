@@ -1306,6 +1306,10 @@ export default function Profile({
               }
             } catch {}
           }
+          // [WAVE 38 2026-05-20] Always overwrite — host re-broadcast scenario
+          // (live #1 ended, live #2 started seconds later) must paint the
+          // NEW session_id even if a stale value happened to still be in
+          // local state. Setter is idempotent if values match.
           setLiveSessionId(d.session_id || null);
         }
       });

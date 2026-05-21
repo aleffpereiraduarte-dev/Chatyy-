@@ -4660,7 +4660,13 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
 // single naked <Image> source previously, which left the bubble dead
 // black whenever the .thumb.jpg pipeline failed (corrupt video,
 // missing codec, R2 upload race).
-function VideoThumbImage({ url, thumbnailUrl, style }) {
+// [WAVE 38 2026-05-20] Added extra candidate columns (posterUrl,
+// videoThumb, imageVariantsThumb, thumbB64). Mensagens antigas tinham
+// thumbnail_url vazio mas o backend gravava o poster em image_variants
+// ou poster_url (status video pipeline). Sem isso o bubble ficava só
+// com o play button sobre fundo cinza — user reportou "deveria mostrar
+// um frame do video".
+function VideoThumbImage({ url, thumbnailUrl, posterUrl, videoThumb, imageVariantsThumb, thumbB64, style }) {
   const candidates = React.useMemo(() => {
     const out = [];
     const abs = (u) => {
@@ -4668,6 +4674,7 @@ function VideoThumbImage({ url, thumbnailUrl, style }) {
       if (u.startsWith('http') || u.startsWith('data:') || u.startsWith('blob:')) return u;
       try { return api.getMediaUrl(u); } catch { return `https://chatyy.com.br${u}`; }
     };
+    // Highest-quality / server-curated poster first.
     if (thumbnailUrl) {
       out.push(abs(thumbnailUrl));
       // Some rows store the raw path, the server adds `.thumb.jpg` only
@@ -4676,11 +4683,17 @@ function VideoThumbImage({ url, thumbnailUrl, style }) {
         out.push(abs(thumbnailUrl) + '.thumb.jpg');
       }
     }
+    if (posterUrl) out.push(abs(posterUrl));
+    if (videoThumb) out.push(abs(videoThumb));
+    if (imageVariantsThumb) out.push(abs(imageVariantsThumb));
     if (url) {
       out.push(abs(url) + '.thumb.jpg');
     }
+    // Inline base64 (thumb_b64) as last resort — used for very old
+    // messages or when remote .thumb.jpg 404s. Doesn't need network.
+    if (thumbB64) out.push(`data:image/jpeg;base64,${thumbB64}`);
     return out.filter((v, i, a) => v && a.indexOf(v) === i);
-  }, [url, thumbnailUrl]);
+  }, [url, thumbnailUrl, posterUrl, videoThumb, imageVariantsThumb, thumbB64]);
   const [idx, setIdx] = React.useState(0);
   if (idx >= candidates.length) return null;
   return (
@@ -17086,6 +17099,57 @@ export default function ChatConversationScreen() {
           // photo streaming on top — user sees a blurred version of the
           // actual photo instantly, never a blank box.
           const lqipUri = msg.thumb_b64 ? `data:image/jpeg;base64,${msg.thumb_b64}` : null;
+          // [WAVE 38 2026-05-20] Eager cacheMedia trigger. Por que: o
+          // ChatMedia/ExpoImage abaixo CHAMA onLoadStart só quando começa o
+          // network fetch — mas em alguns paths (decoder queue cheio, cache
+          // miss seguido de fallback HSL, regressão WAVE 35 que sumiu o
+          // shimmer/ring) o componente fica idle e a foto vira "bloco
+          // branco" sem indicação. Aqui forçamos cacheMedia em background
+          // logo na 1ª render do bubble se NÃO tem local file. Dedup
+          // globalThis pra não disparar 2× a mesma URL entre re-renders.
+          if (Platform.OS !== 'web' && msg.file_url && !msg._uploading && !msg._localUri && !imgLocalPath && !(typeof fullUri === 'string' && fullUri.startsWith('file://'))) {
+            try {
+              const _eagerKey = `__chatyy_eager_${msg.id}_${msg.file_url}`;
+              if (!globalThis.__chatyy_eager_set) globalThis.__chatyy_eager_set = new Set();
+              if (!globalThis.__chatyy_eager_set.has(_eagerKey)) {
+                globalThis.__chatyy_eager_set.add(_eagerKey);
+                // Defer to next tick so we don't disrupt render. Note we
+                // DON'T await — fire-and-forget. The ChatMedia component
+                // will pick up the cached file via the next setCachedUris
+                // update from cacheMedia's resolved local path.
+                setTimeout(() => {
+                  try {
+                    const _api = require('../services/api');
+                    const remote = _api?.getMediaUrl
+                      ? _api.getMediaUrl(msg.file_url)
+                      : (msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`);
+                    const { getLocalUriIfCached, cacheMedia } = require('../services/mediaCache');
+                    if (!getLocalUriIfCached(remote)) {
+                      // Mark progress as 0.001 so the ring renders immediately
+                      // even before bytes start flowing. ExpoImage's onProgress
+                      // will overwrite with the real %.
+                      if (mountedRef.current) {
+                        setDownloadProgress(prev => prev[msg.id] === undefined ? { ...prev, [msg.id]: 0 } : prev);
+                      }
+                      cacheMedia(remote, { conversationId }).then(local => {
+                        if (local && local !== remote && mountedRef.current) {
+                          setCachedUris(p => ({ ...p, [remote]: local }));
+                          setDownloadProgress(p => { if (p[msg.id] === undefined) return p; const n = { ...p }; delete n[msg.id]; return n; });
+                        }
+                      }).catch(() => {
+                        // Don't flip to imgFailed here — onError on ChatMedia
+                        // handles that path. Just clear progress so the spinner
+                        // doesn't spin forever for a known-dead URL.
+                        if (mountedRef.current) {
+                          setDownloadProgress(p => { if (p[msg.id] === undefined) return p; const n = { ...p }; delete n[msg.id]; return n; });
+                        }
+                      });
+                    }
+                  } catch {}
+                }, 100);
+              }
+            } catch {}
+          }
           const _looksLikeFilename = typeof msg.content === 'string' && /^[^\s]+\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mov|mp4|webm|mkv|avi|m4v|3gp|m4a|mp3|ogg|wav|opus|oga|aac|flac)$/i.test(msg.content.trim());
           const hasCaption = msg.content && msg.content !== msg.file_name && !_looksLikeFilename;
           return (
@@ -17157,13 +17221,29 @@ export default function ChatConversationScreen() {
                 {!msg.blurhash && !lqipUri && thumbUri && !msg._localUri && (
                   <ExpoImage source={{ uri: thumbUri }} style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 0 }} contentFit="cover" cachePolicy="memory-disk" blurRadius={8} />
                 )}
-                {!msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && (
+                {!msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && (
+                  // [WAVE 38 2026-05-20] HSL fallback bg + always-on "Carregando..." overlay.
+                  // Antes ficava só uma cor pastel lisa que parecia um "bloco branco
+                  // gigante" pro user (especialmente em mídia velha sem blurhash/lqip).
+                  // Agora SEMPRE mostra o text + spinner enquanto não tem _localUri,
+                  // independente do downloadProgress ter sido populado ou não — o ring
+                  // grande do meio cobre o cenário "baixando agora", esse text cobre
+                  // o cenário "tá idle/aguardando trigger".
                   <View style={{ width: imgBoxW, height: imgBoxH, position: 'absolute', zIndex: 0, backgroundColor: (() => {
                     const u = String(msg.file_url || msg.id || '');
                     let h = 0;
                     for (let i = 0; i < u.length; i++) h = (h * 31 + u.charCodeAt(i)) & 0xffffffff;
                     return `hsl(${Math.abs(h) % 360}, 28%, 82%)`;
-                  })() }} />
+                  })(), alignItems: 'center', justifyContent: 'center' }}>
+                    {!imgUploading && !imgFailed && (
+                      <>
+                        <ActivityIndicator size="small" color="rgba(60,60,60,0.55)" />
+                        <Text style={{ marginTop: 6, fontSize: 11, fontWeight: '500', color: 'rgba(60,60,60,0.65)' }}>
+                          {t('chatConv.loadingImage') || (t('common.loading') || 'Carregando...')}
+                        </Text>
+                      </>
+                    )}
+                  </View>
                 )}
                 {/* [WAVE 34 2026-05-20] Shimmer skeleton overlay. Visible while
                     the full image hasn't emitted onLoadEnd AND we have no
@@ -17330,14 +17410,29 @@ export default function ChatConversationScreen() {
                     the server and the full-resolution is still fetching.
                     [WAVE 36 2026-05-20] Switched to purple Chatyy ring (#7C3AED)
                     + white translucent backing per user spec — much more visible
-                    on the HSL-pastel fallback placeholder backgrounds. */}
-                {!imgUploading && downloadProgress[msg.id] !== undefined && downloadProgress[msg.id] < 100 && (() => {
-                  const dlPct = downloadProgress[msg.id] || 0;
+                    on the HSL-pastel fallback placeholder backgrounds.
+                    [WAVE 38 2026-05-20] Now renders whenever the bubble has a
+                    remote URL AND no local file AND isn't failed/uploading —
+                    not just when onProgress fired. ExpoImage's onLoadStart can
+                    race or be skipped entirely (cached miss, idle queue), so
+                    user previously saw a flat HSL square with NO indication
+                    that anything was happening. Spinner shape when progress=0,
+                    real % when it's been populated. */}
+                {!imgUploading && !imgFailed && !msg._localUri && !imgLocalPath && !(typeof fullUri === 'string' && fullUri.startsWith('file://')) && msg.file_url && (() => {
+                  const hasPct = downloadProgress[msg.id] !== undefined;
+                  const dlPct = hasPct ? (downloadProgress[msg.id] || 0) : 0;
+                  if (hasPct && dlPct >= 100) return null;
                   return (
-                    <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)', zIndex: 2 }}>
+                    <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.18)', zIndex: 2 }}>
                       <View style={{ width: 56, height: 56, borderRadius: 28, borderWidth: 2, borderColor: 'rgba(124,58,237,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.92)' }}>
-                        <CircularProgressArc pct={dlPct} size={56} strokeWidth={3} color="#7C3AED" style={{ position: 'absolute' }} />
-                        <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '800' }}>{dlPct}%</Text>
+                        {hasPct && dlPct > 0 ? (
+                          <>
+                            <CircularProgressArc pct={dlPct} size={56} strokeWidth={3} color="#7C3AED" style={{ position: 'absolute' }} />
+                            <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '800' }}>{dlPct}%</Text>
+                          </>
+                        ) : (
+                          <ActivityIndicator size="small" color="#7C3AED" />
+                        )}
                       </View>
                     </View>
                   );
@@ -17452,7 +17547,25 @@ export default function ChatConversationScreen() {
               {Platform.OS === 'web' ? (
                 <View style={{ position: 'relative', width: 280, height: 200, backgroundColor: '#000' }}>
                   <video
-                    src={videoUrl} preload="metadata" muted playsInline
+                    src={videoUrl}
+                    preload="metadata" muted playsInline
+                    poster={(() => {
+                      let _ivThumb = null;
+                      if (msg.image_variants) {
+                        try {
+                          const _iv = typeof msg.image_variants === 'string' ? JSON.parse(msg.image_variants) : msg.image_variants;
+                          _ivThumb = _iv?.thumb || _iv?.poster || null;
+                        } catch {}
+                      }
+                      const abs = (u) => {
+                        if (!u) return '';
+                        if (u.startsWith('http') || u.startsWith('data:') || u.startsWith('blob:')) return u;
+                        try { return api.getMediaUrl(u); } catch { return `https://chatyy.com.br${u}`; }
+                      };
+                      return abs(msg.thumbnail_url) || abs(msg.poster_url) || abs(msg.video_thumb) || abs(_ivThumb)
+                        || (msg.file_url ? abs(msg.file_url) + '.thumb.jpg' : '')
+                        || (msg.thumb_b64 ? `data:image/jpeg;base64,${msg.thumb_b64}` : undefined);
+                    })()}
                     style={{ width: 280, height: 200, objectFit: 'cover', backgroundColor: '#000', opacity: vidUploading ? 0.7 : 1 }}
                     onLoadedData={(e) => { try { e.target.currentTime = 0.5; } catch {} }}
                     // Wave 14: animated thumbnail on hover. Seek to 3s, autoplay
@@ -17540,13 +17653,30 @@ export default function ChatConversationScreen() {
                       blurRadius={15}
                     />
                   )}
-                  {msg.file_url && !vidUploading && (
-                    <VideoThumbImage
-                      url={msg.file_url}
-                      thumbnailUrl={msg.thumbnail_url}
-                      style={{ position: 'absolute', top: 0, left: 0, width: 280, height: 200 }}
-                    />
-                  )}
+                  {msg.file_url && !vidUploading && (() => {
+                    // [WAVE 38 2026-05-20] Compute extra poster candidates
+                    // from common server payload shapes. Try image_variants
+                    // parsed JSON first (matches status video pipeline),
+                    // fall back to direct columns.
+                    let _ivThumb = null;
+                    if (msg.image_variants) {
+                      try {
+                        const _iv = typeof msg.image_variants === 'string' ? JSON.parse(msg.image_variants) : msg.image_variants;
+                        _ivThumb = _iv?.thumb || _iv?.poster || null;
+                      } catch {}
+                    }
+                    return (
+                      <VideoThumbImage
+                        url={msg.file_url}
+                        thumbnailUrl={msg.thumbnail_url}
+                        posterUrl={msg.poster_url}
+                        videoThumb={msg.video_thumb}
+                        imageVariantsThumb={_ivThumb}
+                        thumbB64={msg.thumb_b64}
+                        style={{ position: 'absolute', top: 0, left: 0, width: 280, height: 200 }}
+                      />
+                    );
+                  })()}
                   {vidUploading ? (
                     <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' }}>
                       <View style={{ width: 68, height: 68, borderRadius: 34, borderWidth: 3, borderColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' }}>

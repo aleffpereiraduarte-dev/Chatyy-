@@ -4536,6 +4536,8 @@ export default {
   'live.aoVivo': 'AO VIVO',
   'live.enter': 'Entrar',
   'live.watchingNow': 'Assistindo agora',
+  'live.endedTitle': 'Live encerrada',
+  'live.endedBody': 'Esta transmissão já terminou.',
   'live.thisIsYourLive': 'Esta é sua live',
   'live.youCantWatchOwn': 'Você não pode assistir sua própria transmissão. Volte pro painel do host pra ver os espectadores e o chat.',
   'live.backToBroadcast': 'Voltar ao seu broadcast',
@@ -4785,6 +4787,8 @@ export default {
   'wallet.diamondsLabel': 'diamantes',
   'wallet.sendAction': 'Enviar',
   'wallet.cashoutAction': 'Sacar',
+  'wallet.pickRecipient': 'Enviar diamantes para',
+  'wallet.noContactsBody': 'Sem conversas ainda. Inicie um chat para enviar diamantes.',
   // 2026-05-18 — Diamond shop screen.
   'diamondShop.title': 'Loja de Diamantes',
   'diamondShop.heroSubtitle': 'Compre diamantes para enviar a amigos, presentear criadores e desbloquear conteúdo.',
