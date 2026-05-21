@@ -53,12 +53,33 @@ import AVFoundation
 import Vision
 import UIKit
 
-public final class ExpoFaceLandmarkerModule: Module, AVCaptureVideoDataOutputSampleBufferDelegate {
+// MARK: ─── AVCaptureVideoDataOutputSampleBufferDelegate helper ──────────────
+// AVCaptureVideoDataOutputSampleBufferDelegate extends NSObjectProtocol, which
+// requires the conforming type to be an NSObject subclass. ExpoModulesCore's
+// BaseModule is a pure Swift class (not NSObject), so the module class itself
+// cannot conform to this protocol — Xcode 16 raises a compile error.
+// We extract the AV delegate into a thin NSObject helper that forwards frames
+// back to the module via a closure. Zero behaviour change.
+
+private final class FaceLandmarkerCaptureDelegate: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
+    var onFrame: ((CMSampleBuffer) -> Void)?
+
+    func captureOutput(_ output: AVCaptureOutput,
+                       didOutput sampleBuffer: CMSampleBuffer,
+                       from connection: AVCaptureConnection) {
+        onFrame?(sampleBuffer)
+    }
+}
+
+// MARK: ─── ExpoFaceLandmarkerModule ─────────────────────────────────────────
+
+public final class ExpoFaceLandmarkerModule: Module {
 
     // MARK: Capture pipeline
     private let captureQueue = DispatchQueue(label: "chatyy.facelandmarker.capture", qos: .userInitiated)
     private var captureSession: AVCaptureSession?
     private var videoOutput: AVCaptureVideoDataOutput?
+    private var captureDelegate: FaceLandmarkerCaptureDelegate?
     private var sequenceHandler = VNSequenceRequestHandler()
 
     // MARK: Throttle
@@ -115,10 +136,15 @@ public final class ExpoFaceLandmarkerModule: Module, AVCaptureVideoDataOutputSam
         }
         if session.canAddInput(input) { session.addInput(input) }
 
+        let delegate = FaceLandmarkerCaptureDelegate()
+        delegate.onFrame = { [weak self] sampleBuffer in
+            self?.handleSampleBuffer(sampleBuffer)
+        }
+
         let output = AVCaptureVideoDataOutput()
         output.alwaysDiscardsLateVideoFrames = true
         output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-        output.setSampleBufferDelegate(self, queue: captureQueue)
+        output.setSampleBufferDelegate(delegate, queue: captureQueue)
         if session.canAddOutput(output) { session.addOutput(output) }
 
         if let conn = output.connection(with: .video) {
@@ -131,6 +157,7 @@ public final class ExpoFaceLandmarkerModule: Module, AVCaptureVideoDataOutputSam
 
         self.captureSession = session
         self.videoOutput = output
+        self.captureDelegate = delegate
 
         captureQueue.async {
             session.startRunning()
@@ -145,6 +172,7 @@ public final class ExpoFaceLandmarkerModule: Module, AVCaptureVideoDataOutputSam
         captureQueue.async {
             self.captureSession?.stopRunning()
             self.videoOutput?.setSampleBufferDelegate(nil, queue: nil)
+            self.captureDelegate = nil
             self.captureSession = nil
             self.videoOutput = nil
             self.sequenceHandler = VNSequenceRequestHandler()
@@ -153,9 +181,7 @@ public final class ExpoFaceLandmarkerModule: Module, AVCaptureVideoDataOutputSam
 
     // MARK: Frame -> Vision -> JS event
 
-    public func captureOutput(_ output: AVCaptureOutput,
-                              didOutput sampleBuffer: CMSampleBuffer,
-                              from connection: AVCaptureConnection) {
+    private func handleSampleBuffer(_ sampleBuffer: CMSampleBuffer) {
         // FPS throttle — Vision can run hot on older devices; we cap at
         // the requested fps so the JS bridge never queues up.
         let now = CACurrentMediaTime()
