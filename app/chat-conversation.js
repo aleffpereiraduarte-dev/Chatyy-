@@ -17470,6 +17470,12 @@ export default function ChatConversationScreen() {
                   if (!getLocalUriIfCached(remote)) {
                     cacheMedia(remote, { force: true, conversationId }).catch(() => {});
                   }
+                  // [WAVE 72 2026-05-21] Also seed expo-image's NATIVE memory
+                  // cache via Image.prefetch. cacheMedia only writes disk;
+                  // memory cache is what makes the viewer paint sub-frame
+                  // when ChatMediaViewer mounts because expo-image checks
+                  // memory before disk before network. ~80ms head start.
+                  try { require('expo-image').Image.prefetch?.(remote, 'memory-disk'); } catch {}
                 } catch {}
               }}
               onPress={() => {
@@ -17477,7 +17483,18 @@ export default function ChatConversationScreen() {
                 if (selectionMode) return toggleSelection(msg.id);
                 if (!msg._uploading && msg.file_url) setMediaViewer({
                   visible: true,
-                  fileUrl: msg.file_url,
+                  // [WAVE 72 2026-05-21] Pass `fullUri` instead of raw
+                  // `msg.file_url`. `fullUri` already resolves to a `file://`
+                  // path when the photo is on disk (msg._localUri ||
+                  // imgLocalPath || resolveMediaUri). That eliminates the
+                  // viewer's getFullUrl → getLocalUriIfCached round-trip on
+                  // mount: the very first render hands expo-image a local
+                  // URI = zero-network paint = sub-100ms open. Previously
+                  // we sent the relative path, getFullUrl built the CDN URL,
+                  // looked up syncIndex, hit, returned file:// — same result
+                  // but ~1 extra commit + the viewer's `effectiveUrl` state
+                  // settled async, so the first paint flashed the spinner.
+                  fileUrl: fullUri || msg.file_url,
                   fileName: msg.file_name || 'image',
                   fileSize: msg.file_size || 0,
                   type: 'image',

@@ -464,11 +464,29 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
           ],
         }]}
       >
-        <Image
+        {/* [WAVE 72 2026-05-21] Use expo-image instead of RN <Image>.
+            Why: the chat bubble renders via ChatMedia → expo-image which
+            keeps the bytes in expo-image's NATIVE memory+disk cache. RN
+            <Image> uses a SEPARATE cache layer (NSURLCache on iOS / Fresco
+            on Android), so opening the viewer for a photo that was already
+            painted in the bubble paid a fresh network round-trip — ~1-2s on
+            cellular. Switching the viewer to expo-image makes it a memory-
+            cache HIT in the common case (bubble visible → tap → viewer):
+            zero-latency paint, no spinner.
+            • `cachePolicy="memory-disk"` shares the bubble's disk cache.
+            • `priority="high"` jumps the queue when not yet cached.
+            • `transition=0` avoids the 200ms fade-in (the loading state is
+              gated by `loading` which we drive ourselves via onLoad). */}
+        <_PlaceholderImage
           key={retryEpoch}
           source={{ uri: effectiveUrl }}
           style={s.fullImage}
+          contentFit="contain"
           resizeMode="contain"
+          cachePolicy="memory-disk"
+          priority="high"
+          transition={0}
+          onLoad={() => setLoading(false)}
           onLoadEnd={() => setLoading(false)}
           onError={(e) => {
             setLoading(false);
