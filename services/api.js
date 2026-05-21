@@ -4222,6 +4222,27 @@ export async function friendLocationGrants() {
 export async function friendsMapShares() {
   return apiCall('chat_friends_map_shares', {});
 }
+
+/**
+ * WAVE 69 2026-05-21 — Zero-permission IP geolocation fallback for snap-map.
+ *
+ * Why: even with last-known cache + Brazil centroid (WAVE 65/66), brand-new
+ * cold-installs still saw Cuiabá on first open. User feedback:
+ *   "amigos no mapa quando abre o mapa a loc que deve carregar e da onde eu to ne"
+ *
+ * The backend (chat.php case `geo_locate_ip`) tries Cloudflare geo headers
+ * first (Pro+ plan returns lat/lng) then falls back to ipapi.co free tier
+ * (1000/day). Both have ~5-10km city-level accuracy — more than enough to
+ * pan the map to the right region while expo-location warms up.
+ *
+ * Result is cached in AsyncStorage under `snap_map_ip_loc:v1` so we only
+ * hit the backend once per cold-install. IPs change ~rarely.
+ *
+ * Returns `{success, data: { lat, lng, city, country, source }}`.
+ */
+export async function geoLocateIp() {
+  return apiCall('geo_locate_ip', {});
+}
 // Saved collections
 export async function feedCollectionCreate(name) { return apiCall('feed_collection_create', { name }, 'POST'); }
 export async function feedCollectionList() { return apiCall('feed_collection_list', {}); }

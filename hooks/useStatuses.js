@@ -80,16 +80,49 @@ export function isAllowedGifUrl(raw) {
 
 // MMKV preload runs ONCE per JS bundle. Subsequent hook mounts get the
 // already-parsed object. Keeps cold start instant on native.
+//
+// [WAVE 71 2026-05-21] Two key fixes:
+//   1. Scope the MMKV key per-account (was `chat_statuses` flat, so user A
+//      and user B on the same device cross-pollinated their strips).
+//   2. Add a module-scope live store so re-mounts across nav (Chat→Inbox→
+//      Chat) paint instantly from the last-known-good snapshot instead of
+//      reading from MMKV again (still ~1ms but skips the JSON.parse).
+//   3. Persist BOTH the heavy `status_list` snapshot AND the lightweight
+//      `status_manifest` placeholders so the strip never falls back to a
+//      blank skeleton on cold start once we've seen the user before.
 let _mmkvPreloaded = null;
 let _mmkvAttempted = false;
+let _liveStore = null; // module-scope live snapshot — survives unmount/re-mount
+function _mmkvStatusKey() {
+  try {
+    const { getActiveAccountEmail } = require('../services/api');
+    const e = String((typeof getActiveAccountEmail === 'function' ? getActiveAccountEmail() : '') || '').toLowerCase();
+    return e ? `chat_statuses:${e}` : 'chat_statuses';
+  } catch { return 'chat_statuses'; }
+}
+function _mmkvManifestKey() {
+  try {
+    const { getActiveAccountEmail } = require('../services/api');
+    const e = String((typeof getActiveAccountEmail === 'function' ? getActiveAccountEmail() : '') || '').toLowerCase();
+    return e ? `chat_status_manifest:${e}` : 'chat_status_manifest';
+  } catch { return 'chat_status_manifest'; }
+}
 function _readMMKVOnce() {
   if (_mmkvAttempted) return _mmkvPreloaded;
   _mmkvAttempted = true;
   if (Platform.OS === 'web') return null;
   try {
     const { getString } = require('../services/mmkv');
-    const raw = getString('chat_statuses');
+    const scopedKey = _mmkvStatusKey();
+    // Try scoped first, then legacy unscoped (one-time migration on read).
+    let raw = getString(scopedKey);
+    if (!raw && scopedKey !== 'chat_statuses') {
+      raw = getString('chat_statuses');
+    }
     if (raw) _mmkvPreloaded = JSON.parse(raw);
+    if (__DEV__) {
+      try { console.log('[STATUS-CACHE]', _mmkvPreloaded ? 'mmkv-hit' : 'mmkv-miss', scopedKey); } catch {}
+    }
   } catch {}
   return _mmkvPreloaded;
 }
@@ -97,7 +130,41 @@ function _writeMMKV(payload) {
   if (Platform.OS === 'web') return;
   try {
     const { setString } = require('../services/mmkv');
-    setString('chat_statuses', JSON.stringify(payload));
+    setString(_mmkvStatusKey(), JSON.stringify(payload));
+  } catch {}
+}
+function _readManifestMMKV() {
+  if (Platform.OS === 'web') return null;
+  try {
+    const { getString } = require('../services/mmkv');
+    const raw = getString(_mmkvManifestKey());
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+function _writeManifestMMKV(users) {
+  if (Platform.OS === 'web') return;
+  try {
+    const { setString } = require('../services/mmkv');
+    setString(_mmkvManifestKey(), JSON.stringify({ users, at: Date.now() }));
+  } catch {}
+}
+
+// Prefetch avatar URLs from a manifest payload so the first paint with real
+// covers reads from disk instead of a fresh CDN round-trip. Cheap — expo-image
+// dedupes via its own cache (cachePolicy=memory-disk default).
+function _prefetchAvatars(users) {
+  if (!Array.isArray(users) || users.length === 0) return;
+  if (Platform.OS === 'web') return;
+  try {
+    const { Image: ExpoImg } = require('expo-image');
+    if (!ExpoImg?.prefetch) return;
+    const urls = [];
+    for (const u of users.slice(0, 30)) {
+      const a = u?.avatar_url || u?.avatarUrl;
+      if (a && typeof a === 'string') urls.push(a.startsWith('http') ? a : (BASE_URL + a));
+    }
+    if (urls.length) ExpoImg.prefetch(urls).catch(() => {});
   } catch {}
 }
 
@@ -242,12 +309,24 @@ export default function useStatuses(currentEmail, opts = {}) {
   // ainda não foi warmed; chamamos ele primeiro como hot path. Combinado
   // ao MMKV, o status strip pinta IMEDIATAMENTE em 99% dos casos pós-uso
   // inicial. O fetch real continua acontecendo no background.
-  const _preload = enabled ? (_readMMKVOnce() || getCachedSync('statuses')) : null;
+  // [WAVE 71 2026-05-21] Preload priority:
+  //   1. _liveStore (module-scope) — same JS session, survives unmount
+  //   2. MMKV synchronous read (scoped per account)
+  //   3. disk cache (services/cache.js, also MMKV-backed but scoped via _userHash)
+  // _liveStore matters when the user navigates away (e.g. Chat → Inbox → Chat)
+  // and the hook unmounts/remounts. Without it, even with a valid MMKV blob,
+  // the JSON.parse+normalize triggered another paint flicker.
+  const _preload = enabled
+    ? (_liveStore || _readMMKVOnce() || getCachedSync('statuses'))
+    : null;
   const _hadPreload = !!(_preload && (
     (Array.isArray(_preload.mine) && _preload.mine.length) ||
     (Array.isArray(_preload.others) && _preload.others.length) ||
     (Array.isArray(_preload.groups) && _preload.groups.length)
   ));
+  if (__DEV__ && enabled) {
+    try { console.log('[STATUS-CACHE]', _hadPreload ? 'preload-hit' : 'preload-miss', _liveStore ? 'live' : (_preload ? 'mmkv/disk' : 'none')); } catch {}
+  }
   const _initialNorm = _preload
     ? (_preload.groups
         ? { groups: _preload.groups, mine: _preload.mine || [], others: _preload.others || [] }
@@ -320,8 +399,25 @@ export default function useStatuses(currentEmail, opts = {}) {
     let alive = true;
     (async () => {
       try {
+        // [WAVE 71 2026-05-21] Cached manifest is paintable INSTANTLY before
+        // the network call resolves. Manifest payload is tiny + the placeholders
+        // it builds are valid for up to 6h even if the latest_at counts drift
+        // a little — beats a blank skeleton waiting on a 3G hop.
+        const cachedManifest = _readManifestMMKV();
+        const cachedUsers = cachedManifest?.users;
+        if (Array.isArray(cachedUsers) && cachedUsers.length > 0 && !fpRef.current) {
+          try {
+            _paintFromManifestUsers(cachedUsers);
+            if (__DEV__) console.log('[STATUS-CACHE] manifest-cache-hit', cachedUsers.length);
+          } catch {}
+        }
         const r = await api.statusManifest?.();
         if (!alive || !r?.success || !r.data?.users) return;
+        // Persist manifest result NOW — covers the case where status_list never
+        // completes (offline, transient failure). Next cold start still has
+        // placeholders to paint instead of an empty strip.
+        try { _writeManifestMMKV(r.data.users); } catch {}
+        try { _prefetchAvatars(r.data.users); } catch {}
         // If the real fetch already won the race, do nothing.
         if (fpRef.current) return;
         const users = r.data.users || [];

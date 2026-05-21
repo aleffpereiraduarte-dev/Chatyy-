@@ -624,6 +624,13 @@ export default function SnapMapScreen() {
   const [myLocation, setMyLocation] = useState(null);
   const [selected, setSelected] = useState(null); // bottom sheet pin
   const [pendingReqs, setPendingReqs] = useState([]); // incoming requests
+  // [WAVE 69 2026-05-21] IP-based fallback location + permission state.
+  // ipLocation = result of `geo_locate_ip` (Cloudflare or ipapi.co). Used
+  // ONLY when GPS unavailable. usingIpFallback drives the banner that
+  // explains to the user why we picked their city without permission.
+  const [ipLocation, setIpLocation] = useState(null);
+  const [usingIpFallback, setUsingIpFallback] = useState(false);
+  const [permissionDenied, setPermissionDenied] = useState(false);
   const [grantsOpen, setGrantsOpen] = useState(false);
   const [grantsData, setGrantsData] = useState(null);
   // Apple Find-My-style friends list panel — when expanded the list of
@@ -707,29 +714,111 @@ export default function SnapMapScreen() {
   }, []);
 
   // ── Initial load: my GPS + friends + pending requests ─────────────
+  // [WAVE 69 2026-05-21] Smart fallback chain so a brand-new user (no GPS
+  // permission, no cache) still sees a map centered near their actual city
+  // instead of Cuiabá (the Brazil geographic centroid). Order:
+  //   1. Fresh GPS (best — sub-100m)
+  //   2. Last-known cached GPS (WAVE 65/66 — minutes-to-hours old)
+  //   3. IP geolocate via backend `geo_locate_ip` (Cloudflare → ipapi.co)
+  //   4. First friend's pin (group context > nothing)
+  //   5. Brazil centroid (very last resort)
+  //
+  // `permissionDenied` + `usingIpFallback` drive the explanatory banner
+  // (Fix C) — user gets an actionable "Ativar localização" CTA instead of
+  // wondering why the map shows the wrong city.
   useEffect(() => {
     let alive = true;
     const load = async () => {
       // My own location for centering. We DON'T auto-share — that's a
       // separate explicit user action (in-chat live-location bubble or
       // an accepted request).
+      let gotFreshGps = false;
       if (Platform.OS !== 'web') {
         try {
           const Location = require('expo-location');
-          const { status } = await Location.requestForegroundPermissionsAsync();
+          // Check existing status BEFORE asking — never re-prompt if user
+          // already denied (iOS shows a dead alert; Android shows nothing).
+          let { status } = await Location.getForegroundPermissionsAsync();
+          if (status !== 'granted' && status !== 'denied') {
+            // Only ask if status is undetermined.
+            const res = await Location.requestForegroundPermissionsAsync();
+            status = res.status;
+          }
+          if (alive) setPermissionDenied(status === 'denied');
           if (status === 'granted') {
             const pos = await Location.getLastKnownPositionAsync({ maxAge: 60000 });
-            if (alive && pos?.coords) setMyLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+            if (alive && pos?.coords) {
+              setMyLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+              gotFreshGps = true;
+            }
             try {
               const fresh = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-              if (alive && fresh?.coords) setMyLocation({ lat: fresh.coords.latitude, lng: fresh.coords.longitude });
+              if (alive && fresh?.coords) {
+                setMyLocation({ lat: fresh.coords.latitude, lng: fresh.coords.longitude });
+                gotFreshGps = true;
+              }
             } catch {}
           }
         } catch {}
       } else if (typeof navigator !== 'undefined' && navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition((pos) => {
-          if (alive) setMyLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        }, () => {}, { maximumAge: 60000, timeout: 8000 });
+        // Web: navigator.geolocation has no separate "check" call. We have
+        // to wrap getCurrentPosition in a promise so we know whether we
+        // need to kick off the IP fallback below.
+        try {
+          const webPos = await new Promise((resolve) => {
+            try {
+              navigator.geolocation.getCurrentPosition(
+                (pos) => resolve(pos),
+                (err) => {
+                  if (alive && err && (err.code === 1 || err.PERMISSION_DENIED === 1)) {
+                    setPermissionDenied(true);
+                  }
+                  resolve(null);
+                },
+                { maximumAge: 60000, timeout: 6000 },
+              );
+            } catch { resolve(null); }
+          });
+          if (alive && webPos?.coords) {
+            setMyLocation({ lat: webPos.coords.latitude, lng: webPos.coords.longitude });
+            gotFreshGps = true;
+          }
+        } catch {}
+      }
+
+      // Fallback chain. Only fire IP geo if we still have nothing — saves
+      // a network round-trip when GPS works. Cache result so subsequent
+      // cold-starts skip the backend hop entirely.
+      if (alive && !gotFreshGps) {
+        try {
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          // a) cached IP loc from previous session (≤ 7 days)
+          const ipRaw = await AsyncStorage.getItem('snap_map_ip_loc:v1');
+          if (ipRaw) {
+            try {
+              const cached = JSON.parse(ipRaw);
+              if (cached && Number.isFinite(cached.lat) && Number.isFinite(cached.lng)
+                  && (Date.now() - (cached.ts || 0)) < 7 * 24 * 3600 * 1000) {
+                if (alive) {
+                  setIpLocation({ lat: cached.lat, lng: cached.lng, city: cached.city, source: cached.source });
+                  setUsingIpFallback(true);
+                }
+              }
+            } catch {}
+          }
+          // b) live IP geolocate via backend (if no cache or expired)
+          if (!ipRaw) {
+            try {
+              const r = await api.geoLocateIp?.();
+              if (alive && r?.success && r.data && Number.isFinite(r.data.lat) && Number.isFinite(r.data.lng)) {
+                const payload = { lat: r.data.lat, lng: r.data.lng, city: r.data.city, source: r.data.source, ts: Date.now() };
+                setIpLocation(payload);
+                setUsingIpFallback(true);
+                try { await AsyncStorage.setItem('snap_map_ip_loc:v1', JSON.stringify(payload)); } catch {}
+              }
+            } catch {}
+          }
+        } catch {}
       }
 
       try {
@@ -848,15 +937,20 @@ export default function SnapMapScreen() {
       } catch {}
     }
   }, [myLocation?.lat, myLocation?.lng]);
-  // First paint: prefer fresh GPS → cached last-known → first friend's pin → Brazil-centroid fallback.
+  // First paint: prefer fresh GPS → cached last-known → IP geo → first
+  // friend's pin → Brazil-centroid fallback.
+  // [WAVE 69 2026-05-21] Inserted IP geo step between cache and friend-pin
+  // because a brand-new user (no GPS perm yet, no cached fix) was seeing
+  // Cuiabá. IP geo gives city-precision before GPS warms up.
   // After mount, panning is preserved (we don't re-center on every update).
   const initialCenter = useMemo(() => {
     if (myLocation) return myLocation;
     if (cachedHomeLoc) return cachedHomeLoc;
+    if (ipLocation && Number.isFinite(ipLocation.lat)) return { lat: ipLocation.lat, lng: ipLocation.lng };
     if (shares[0] && Number.isFinite(shares[0].latitude)) return { lat: shares[0].latitude, lng: shares[0].longitude };
     return { lat: -14.235, lng: -51.925 }; // Brazil geographic centroid (Cuiabá-ish) — neutral, not Brasília
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cachedHomeLoc ? 1 : 0]);   // re-seed once when cache loads (still pre-pan)
+  }, [cachedHomeLoc ? 1 : 0, ipLocation ? 1 : 0]);   // re-seed once when cache OR ip-loc loads
 
   // [WAVE 49 2026-05-21] Apply the filter pill before computing the pin
   // payload. We compute it here (vs inside pinsPayload) so the list panel
@@ -968,6 +1062,22 @@ export default function SnapMapScreen() {
     if (!mapReadyRef.current) { pendingMeRef.current = mePayload; return; }
     pushToMap({ type: 'me', me: mePayload });
   }, [mePayload, pushToMap]);
+
+  // [WAVE 69 2026-05-21] Pan to IP-fallback location when it arrives AFTER
+  // the map already mounted. initialCenter only seeds the HTML — without
+  // this, a user who opens snap-map with no GPS sees Brazil-centroid for
+  // ~300-1500ms (until the backend round-trip resolves) before the map
+  // would otherwise stay frozen on Brazil. We pan once, gently, and only
+  // if the user hasn't already received a real GPS fix.
+  const ipPannedRef = useRef(false);
+  useEffect(() => {
+    if (ipPannedRef.current) return;
+    if (!ipLocation || !Number.isFinite(ipLocation.lat) || !Number.isFinite(ipLocation.lng)) return;
+    if (myLocation || cachedHomeLoc) return; // GPS won — don't override.
+    if (!mapReadyRef.current) return;
+    ipPannedRef.current = true;
+    pushToMap({ type: 'pan', lat: ipLocation.lat, lng: ipLocation.lng });
+  }, [ipLocation, myLocation, cachedHomeLoc, pushToMap]);
 
   // Bridge messages from the WebView (pin tap → open bottom sheet,
   // map_ready → flush pending pins + dismiss loading spinner).
@@ -1215,6 +1325,80 @@ export default function SnapMapScreen() {
           <View style={{ position: 'absolute', top: 14, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <ActivityIndicator size="small" color="#fff" />
             <Text style={{ color: '#fff', fontSize: 13 }}>{t?.('common.loading') || 'Carregando…'}</Text>
+          </View>
+        )}
+
+        {/* [WAVE 69 2026-05-21] Location-permission banner.
+            Surfaces a clear CTA when we couldn't get GPS — either because
+            the user denied permission or because the OS hasn't returned a
+            fix yet but we're using the IP fallback. Without this banner
+            the user sees a map centered on their (approximate) city and
+            has no idea WHY it's not pinpoint-accurate. The CTA opens app
+            settings on a denied state; on the fallback state it asks the
+            OS for permission. */}
+        {!myLocation && (permissionDenied || usingIpFallback) && (
+          <View pointerEvents="box-none" style={{ position: 'absolute', top: 14, left: 12, right: 12, alignItems: 'center' }}>
+            <View style={{
+              flexDirection: 'row', alignItems: 'center', gap: 10,
+              backgroundColor: 'rgba(0,0,0,0.82)',
+              paddingHorizontal: 14, paddingVertical: 10,
+              borderRadius: 14, maxWidth: 460,
+              shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 8,
+              shadowOffset: { width: 0, height: 4 }, elevation: 5,
+            }}>
+              <IconMapPin size={18} color="#fbbf24" />
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }} numberOfLines={1}>
+                  {permissionDenied
+                    ? (t?.('snapmap.locationDenied') || 'Localização desativada')
+                    : (t?.('snapmap.locationFromIp') || 'Mostrando localização aproximada')}
+                </Text>
+                <Text style={{ color: 'rgba(255,255,255,0.78)', fontSize: 11, marginTop: 1 }} numberOfLines={2}>
+                  {permissionDenied
+                    ? (t?.('snapmap.locationDeniedHint') || 'Ative pra ver amigos perto de você')
+                    : (ipLocation?.city
+                        ? `~ ${ipLocation.city}`
+                        : (t?.('snapmap.locationFromIpHint') || 'Toque pra usar GPS preciso'))}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={async () => {
+                  if (permissionDenied) {
+                    try { Linking.openSettings(); } catch {}
+                  } else if (Platform.OS !== 'web') {
+                    try {
+                      const Location = require('expo-location');
+                      const { status } = await Location.requestForegroundPermissionsAsync();
+                      if (status === 'granted') {
+                        setPermissionDenied(false);
+                        try {
+                          const fresh = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+                          if (fresh?.coords) setMyLocation({ lat: fresh.coords.latitude, lng: fresh.coords.longitude });
+                        } catch {}
+                      } else {
+                        setPermissionDenied(true);
+                      }
+                    } catch {}
+                  } else if (typeof navigator !== 'undefined' && navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                      (pos) => setMyLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+                      () => setPermissionDenied(true),
+                      { maximumAge: 0, timeout: 8000 },
+                    );
+                  }
+                }}
+                style={{
+                  paddingHorizontal: 12, paddingVertical: 7,
+                  borderRadius: 14,
+                  backgroundColor: '#22c55e',
+                }}
+                accessibilityLabel={t?.('snapmap.enableLocation') || 'Ativar localização'}
+              >
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
+                  {t?.('snapmap.enableLocation') || 'Ativar'}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
 

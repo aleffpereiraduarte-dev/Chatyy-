@@ -266,15 +266,12 @@ export function startCallingTone() {
     ringtoneInterval = setInterval(playTone, 4000);
   } else {
     // Native: ringback tone (caller waiting for callee to answer).
-    // Previously disabled "to avoid WebRTC AVAudioSession conflict" — but
-    // user complaint is real: silence sounds broken. Re-enable using
-    // mixWithOthers so it coexists with WebRTC's playAndRecord category.
-    try {
-      Vibration.vibrate([0, 200, 3800], false);
-      ringtoneInterval = setInterval(() => {
-        try { Vibration.vibrate([0, 200, 3800], false); } catch {}
-      }, 4000);
-    } catch {}
+    // [WAVE 72 2026-05-21] NO vibration on the caller's side — only the
+    // callee's phone should vibrate. The caller hears the audio ringback
+    // tone (below), which is enough feedback that the call is dialing.
+    // Previously we vibrated here, which made the caller's phone shake
+    // every 4s during outgoing call setup — wrong UX (parity bug vs
+    // WhatsApp/iOS native).
 
     (async () => {
       try {
