@@ -31,7 +31,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.onemundo.mail",
-      "buildNumber": "544",
+      "buildNumber": "545",
       "googleServicesFile": "./GoogleService-Info.plist",
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [
