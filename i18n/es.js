@@ -4459,6 +4459,10 @@ export default {
 
   // Live Streaming
   'live.title': 'En Vivo',
+  'live.heroTitle': 'Descubrir lives',
+  'live.heroSubtitle': 'Entra en una live, envía un regalo, o empieza la tuya.',
+  'live.headerCount': 'transmisiones ahora',
+  'live.headerCountOne': 'transmisión ahora',
   'live.goLive': 'Iniciar Live',
   'live.sendGift': 'Enviar regalo',
   'live.share': 'Compartir',

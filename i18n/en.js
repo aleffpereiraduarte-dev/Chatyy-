@@ -4462,6 +4462,10 @@ export default {
 
   // Live Streaming
   'live.title': 'Live',
+  'live.heroTitle': 'Discover Lives',
+  'live.heroSubtitle': 'Join a live, send a gift, or go live yourself.',
+  'live.headerCount': 'broadcasts now',
+  'live.headerCountOne': 'broadcast now',
   'live.goLive': 'Go Live',
   'live.sendGift': 'Send gift',
   'live.share': 'Share',

@@ -141,6 +141,14 @@ export default function LiveBroadcastScreen() {
   const [uniqueViewers, setUniqueViewers] = useState(0);
   // Recent joins (timestamps + names), drives the insights modal list.
   const [joinFeed, setJoinFeed] = useState([]); // [{email,name,ts}]
+  // [WAVE 121] Host's own LK local video track — render via _LK_VideoView so
+  // the host sees EXACTLY the frames going to viewers (same source = no
+  // dual-camera conflict between getUserMedia and LK SDK).
+  const [lkLocalVideoTrack, setLkLocalVideoTrack] = useState(null);
+  // [WAVE 121] Real-time viewer list pulled from host's LK room
+  // ParticipantConnected/Disconnected events. Replaces the WS-driven
+  // viewerCountRef as ground truth when LK is the active pipeline.
+  const [lkViewers, setLkViewers] = useState([]); // [{identity,name,joinedAt}]
 
   // Live state
   const [sessionId, setSessionId] = useState(null);
@@ -1602,6 +1610,33 @@ export default function LiveBroadcastScreen() {
             if (!_loadLkBroadcast()) throw new Error('LK SDK not available');
             const room = new _LK_Room({ adaptiveStream: true, dynacast: true });
             lkRoomRef.current = room;
+            // [WAVE 121] Track viewers via LK Room events on the host's own
+            // room. ParticipantConnected/Disconnected fires for every viewer
+            // (CanPublish:false grant), giving the host a real-time list of
+            // who's watching — was missing because cohostRoomRef (separate
+            // room) was the only one with listeners.
+            try {
+              const lkre = _LK_RoomEvent;
+              if (lkre) {
+                room.on(lkre.ParticipantConnected, (p) => {
+                  try {
+                    const id = String(p?.identity || '');
+                    if (!id) return;
+                    setLkViewers(prev => {
+                      if (prev.some(v => v.identity === id)) return prev;
+                      return [...prev, { identity: id, name: p?.name || id.split('#')[0] || id, joinedAt: Date.now() }];
+                    });
+                  } catch {}
+                });
+                room.on(lkre.ParticipantDisconnected, (p) => {
+                  try {
+                    const id = String(p?.identity || '');
+                    if (!id) return;
+                    setLkViewers(prev => prev.filter(v => v.identity !== id));
+                  } catch {}
+                });
+              }
+            } catch {}
             console.log('[LIVE-TRACE] host Room.connect start — ' + lkUrl);
             await room.connect(lkUrl, lkToken);
             lkConnectOk = true;
@@ -1616,6 +1651,10 @@ export default function LiveBroadcastScreen() {
               const vTrack = await _LK_createLocalVideoTrack({ facingMode: 'user' });
               await room.localParticipant.publishTrack(vTrack);
               lkVideoOk = true;
+              // [WAVE 121] Expose the published video track so the host
+              // self-preview can render via _LK_VideoView (same source the
+              // viewers see). Fixes "eu nao consigo me ver" on the host UI.
+              try { setLkLocalVideoTrack(vTrack); } catch {}
               console.log('[LIVE-TRACE] host camera publish end');
             } catch (vErr) {
               const vMsg = vErr?.message || String(vErr);
@@ -1953,6 +1992,9 @@ export default function LiveBroadcastScreen() {
         try { lkRoomRef.current.disconnect(); } catch {}
         lkRoomRef.current = null;
       }
+      // [WAVE 121] Drop the host self-preview + viewer list on end.
+      try { setLkLocalVideoTrack(null); } catch {}
+      try { setLkViewers([]); } catch {}
       // Close the CF Stream WHIP publisher (if we went through that path)
       // BEFORE telling the backend to finalize the recording. CF stops
       // ingest the moment we close the PC; if we did it after live_end_cf
@@ -3033,6 +3075,36 @@ export default function LiveBroadcastScreen() {
               width: '100%', height: '100%',
               objectFit: 'cover', transform: 'scaleX(-1)',
             }}
+          />
+        </View>
+      );
+    }
+    // [WAVE 121] Prefer LK VideoView when host has published a track.
+    // It renders the EXACT same source going to viewers (no dual-camera
+    // conflict with getUserMedia), so what the host sees == what viewers
+    // see. Falls through to NativeRTCView if LK SDK isn't loaded or the
+    // track hasn't been published yet (pre-stream warmup).
+    if (Platform.OS !== 'web' && _LK_VideoView && lkLocalVideoTrack) {
+      if (!isFocused) {
+        return (
+          <View
+            collapsable={false}
+            style={[StyleSheet.absoluteFill, { backgroundColor: '#000', overflow: 'hidden' }]}
+          />
+        );
+      }
+      const VV = _LK_VideoView;
+      return (
+        <View
+          collapsable={false}
+          style={[StyleSheet.absoluteFill, { backgroundColor: '#000', overflow: 'hidden' }]}
+        >
+          <VV
+            key={`lk-local:${videoEpoch}`}
+            style={StyleSheet.absoluteFillObject}
+            videoTrack={lkLocalVideoTrack}
+            mirror={mirrorOn}
+            zOrder={0}
           />
         </View>
       );
