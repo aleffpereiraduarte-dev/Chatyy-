@@ -2539,13 +2539,52 @@ export default function OneScreen() {
       const placeholder = { id: aiMsgId, role: 'assistant', content: '', actions: [], _streaming: true };
       setMessages(prev => [...prev, placeholder]);
 
-      let streamedText = '';
+      let streamedText = '';      // full received text (server truth)
+      let renderedText = '';       // text currently shown to the user (typewriter)
       let streamActions = [];
       let activeToolName = null;
       let streamConvId = conversationId;
       let streamFailed = false;
       // Typing indicator state — shown while a tool is executing (no text yet for that round)
       let toolPending = false;
+
+      // [WAVE 129 2026-05-22] ChatGPT-style typewriter render. OpenAI streams
+      // ~30-100 tokens/second on gpt-4o-mini — RN often paints them in big
+      // chunks because setState batches inside an async event handler. The
+      // user perception was "tudo de uma vez" even though SSE was streaming.
+      //
+      // Fix: decouple receive from render. onDelta appends to streamedText
+      // (the buffer). A rAF-driven drain pulls 2-4 chars/frame onto
+      // renderedText and pushes it to state. At ~60fps that's 120-240
+      // chars/sec — fast enough to keep up with the model on simple replies,
+      // slow enough to FEEL like typing on long ones. When the stream ends
+      // (onDone), a short flush loop catches the rendered text up so we
+      // don't leave a tail unwritten.
+      let typewriterRaf = null;
+      let typewriterDone = false;
+      const drainTypewriter = () => {
+        if (!isMountedRef.current) return;
+        const pending = streamedText.length - renderedText.length;
+        if (pending <= 0) {
+          if (typewriterDone) { typewriterRaf = null; return; }
+          typewriterRaf = requestAnimationFrame(drainTypewriter);
+          return;
+        }
+        // Adaptive step: when far behind, catch up faster so we never lag
+        // more than ~30 chars (~0.5s of typing) on long bursts; at parity,
+        // 2 chars/frame keeps a smooth ~120cps cadence.
+        const step = pending > 30 ? Math.ceil(pending / 8) : pending > 12 ? 4 : 2;
+        renderedText = streamedText.slice(0, renderedText.length + step);
+        setMessages(prev => prev.map(m =>
+          m.id === aiMsgId ? { ...m, content: renderedText, _streaming: true, _toolPending: false } : m
+        ));
+        typewriterRaf = requestAnimationFrame(drainTypewriter);
+      };
+      const startTypewriter = () => {
+        if (typewriterRaf == null) {
+          typewriterRaf = requestAnimationFrame(drainTypewriter);
+        }
+      };
 
       const abortCtrl = api.oneChatStream(
         effectiveMsg,
@@ -2554,11 +2593,8 @@ export default function OneScreen() {
           onDelta: (delta) => {
             if (!isMountedRef.current) return;
             streamedText += delta;
-            // Clear tool pending indicator once text starts flowing
             toolPending = false;
-            setMessages(prev => prev.map(m =>
-              m.id === aiMsgId ? { ...m, content: streamedText, _streaming: true, _toolPending: false } : m
-            ));
+            startTypewriter();
           },
           onToolCall: (name /*, args*/) => {
             if (!isMountedRef.current) return;
@@ -2593,10 +2629,14 @@ export default function OneScreen() {
           },
           onDone: () => {
             if (!isMountedRef.current) return;
+            // Mark typewriter as done and flush ANY remaining buffer in one
+            // tick so the rendered text matches what the server sent. Without
+            // this we'd leave a 0-30 char tail unrendered when the stream
+            // ends mid-frame.
+            typewriterDone = true;
+            renderedText = streamedText;
+            if (typewriterRaf != null) { try { cancelAnimationFrame(typewriterRaf); } catch {} typewriterRaf = null; }
             const finalRaw = streamedText || t('one.errorProcess');
-            // Fallback parse: if the meta event somehow didn't carry chips
-            // (older server, partial flush) we recover them from the marker
-            // still embedded in the streamed text.
             const { text: cleanText, followups: parsedFollowups } = extractFollowups(finalRaw);
             if (parsedFollowups.length > 0) setLastFollowups(parsedFollowups);
             setMessages(prev => prev.map(m =>
@@ -2611,7 +2651,8 @@ export default function OneScreen() {
           onError: (errMsg) => {
             if (!isMountedRef.current) return;
             streamFailed = true;
-            // Remove placeholder and fall back to non-streaming
+            typewriterDone = true;
+            if (typewriterRaf != null) { try { cancelAnimationFrame(typewriterRaf); } catch {} typewriterRaf = null; }
             setMessages(prev => prev.filter(m => m.id !== aiMsgId));
             sendMessageFallback(effectiveMsg, currentImage, aiMsgId).finally(() => {
               setLoading(false);
