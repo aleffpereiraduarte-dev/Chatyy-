@@ -1114,6 +1114,35 @@ public class ExpoCallKitModule: Module {
         }
       }
 
+      // [WAVE 150 2026-05-22] ARCHITECTURAL FIX: defer CXStartCallAction in foreground.
+      //
+      // User report after build 551 (WAVE 149): "tela do CallKit aparece, mas a UI rica não".
+      // Root cause: CXStartCallAction triggers iOS to inject its own UIWindow at
+      // windowLevel=.alert (≥2000) which COVERS our CallWindowManager UIWindow
+      // (windowLevel=.normal+1=1). Even with WAVE 149's dedicated window, CallKit's
+      // overlay wins z-order during ringing.
+      //
+      // WhatsApp/Signal pattern: when app is FOREGROUND for outgoing, DO NOT fire
+      // CXStartCallAction at all. Show our rich UI directly. CallKit transaction
+      // fires later if user backgrounds the app (via AppState observer — TODO) or
+      // when call connects (LiveKit handoff).
+      //
+      // For now WAVE 150 simplest version: skip transaction entirely in foreground.
+      // - Signaling already happens via JS-side chatCallInviteV2 (not dependent on CallKit)
+      // - Audio session managed by LiveKit when Room connects (also independent)
+      // - Lock screen pill / Recents log: lost during foreground ringing only (WhatsApp same)
+      // - Background ringing: still uses CallKit normally (untouched)
+      let isAppForeground = (UIApplication.shared.applicationState == .active)
+
+      if isAppForeground {
+        NSLog("[ExpoCallKit WAVE 150] FOREGROUND outgoing — SKIP CXStartCallAction, CallView already shown via WAVE 149. callId=\(callId)")
+        // Schedule ring timeout anyway (45s) for safety so we don't leak state.
+        self.scheduleOutgoingTimeout(callId: callId)
+        // Return success — JS proceeds with chatCallInviteV2 to signal callee.
+        return true
+      }
+
+      // BACKGROUND/INACTIVE path: original CallKit flow (provides system pill).
       let handle = CXHandle(type: .emailAddress, value: calleeEmail)
       let startAction = CXStartCallAction(call: uuid, handle: handle)
       startAction.isVideo = isVideo
