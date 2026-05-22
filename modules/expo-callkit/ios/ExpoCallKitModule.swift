@@ -2166,6 +2166,22 @@ public class ExpoCallKitModule: Module {
 private class ProviderDelegate: NSObject, CXProviderDelegate {
   weak var module: ExpoCallKitModule?
 
+  // [WAVE 147 2026-05-22 DOUBLE-PRESENT GUARD]
+  // Tracks callIds for which CallViewController has been successfully
+  // presented. presentOutgoingCallVC checks this set as its first guard
+  // — if a callId is already presented, subsequent presents (e.g. from
+  // CXStartCallAction handler firing AFTER WAVE 145's immediate present)
+  // short-circuit silently.
+  //
+  // Lifecycle:
+  // - INSERT: _actuallyPresentOutgoing completion block (after UIKit
+  //   accepts and vc.view.window is non-nil — proves real attachment).
+  // - REMOVE: CXEndCallAction handler (call ends naturally) AND in
+  //   CallViewController.deinit via NotificationCenter (force-dismiss
+  //   or memory pressure dismissal).
+  // - ALWAYS accessed on main thread (UIKit invariant).
+  fileprivate static var _activePresentedCallIds = Set<String>()
+
   init(module: ExpoCallKitModule) {
     self.module = module
     super.init()
@@ -2517,6 +2533,27 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // native CallView ALWAYS presents on outgoing — no escape hatch.
     NSLog("[CallTrace][PRESENT-1] presentOutgoingCallVC ENTRY callId=\(params.callId) hasUrl=\(lkUrl != nil) hasToken=\(lkToken != nil) thread=\(Thread.isMainThread ? "main" : "bg")")
 
+    // [WAVE 147 2026-05-22 DOUBLE-PRESENT GUARD — ROOT CAUSE FIX]
+    // Deep audit identified: WAVE 145 added immediate present in
+    // AsyncFunction("startOutgoingCall") body, BUT did NOT remove the
+    // existing presentOutgoingCallVC calls in CXStartCallAction handler
+    // (lines ~2433, ~2452, ~2457). Both code paths fire unconditionally
+    // — first WAVE 145 (~0ms after JS call), then CXStartCallAction
+    // (~200-500ms later). UIKit silently rejects the second present
+    // with "Attempt to present X on Y which is already presenting Z"
+    // → the rich SwiftUI CallView never renders (either clobbered or
+    // never reaches the window).
+    //
+    // Fix: short-circuit if a CallVC is ALREADY presented for this callId.
+    // _activePresentedCallIds is mutated on _actuallyPresentOutgoing
+    // completion (after window attachment confirmed) and cleared in
+    // CXEndCallAction. Static Set<String> is thread-safe via main-thread
+    // dispatch convention (all callers wrap in DispatchQueue.main.async).
+    if Self._activePresentedCallIds.contains(params.callId) {
+      NSLog("[CallTrace][PRESENT-1B-SKIP] WAVE 147: CallVC already presented for callId=\(params.callId) — skipping duplicate present (double-present collision avoided)")
+      return
+    }
+
     // [WAVE 146 2026-05-22] Defensive main-thread guard. UIKit `present(_:)`
     // MUST run on main; warm-path callsite uses DispatchQueue.main.async but
     // we double-guard here in case a future callsite forgets.
@@ -2588,7 +2625,16 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     vc.isModalInPresentation = true
     NSLog("[CallTrace][PRESENT-7] calling present from=\(type(of: presenter)) callId=\(callId)")
     presenter.present(vc, animated: true) {
-      NSLog("[CallTrace][PRESENT-8-DONE] CallViewController.present completion fired callId=\(callId) window=\(vc.view.window != nil)")
+      let attached = vc.view.window != nil
+      NSLog("[CallTrace][PRESENT-8-DONE] CallViewController.present completion fired callId=\(callId) window=\(attached)")
+      // [WAVE 147] Only mark presented when window-attached. If UIKit silently
+      // dropped the present (attached=false), keep the slot empty so a retry
+      // (e.g. CXStartCallAction-driven path) can still try. If attached=true,
+      // any further present for this callId becomes a no-op via PRESENT-1B-SKIP.
+      if attached {
+        ProviderDelegate._activePresentedCallIds.insert(callId)
+        NSLog("[CallTrace][PRESENT-9] WAVE 147 marked callId=\(callId) as actively presented — future duplicates will skip")
+      }
     }
   }
 
@@ -2603,6 +2649,12 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       ud.removeObject(forKey: "callAvatar:\(cid)")
       ud.removeObject(forKey: "lk_token_\(cid)")
       ud.removeObject(forKey: "lk_url_\(cid)")
+      // [WAVE 147] Clear duplicate-present guard so a subsequent call with the
+      // same callId (rare but possible on retry) can present cleanly.
+      DispatchQueue.main.async {
+        ProviderDelegate._activePresentedCallIds.remove(cid)
+        NSLog("[CallTrace][PRESENT-CLEAR] WAVE 147 removed callId=\(cid) from active presented set on CXEndCallAction")
+      }
     }
     // [WAVE 142 GPT-5.5-pro] Snippet 15 — notify shared observer so SwiftUI
     // status flips to "Encerrada" (and the duration timer stops) without
