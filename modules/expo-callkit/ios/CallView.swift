@@ -148,19 +148,29 @@ private struct ThreePulseRings: View {
 
     var body: some View {
         if active {
+            // [WAVE 148 2026-05-22 LAYOUT-LOOP FIX — ROOT CAUSE]
+            // Crash bug_type 309 watchdog 0x8BADF00D — Swift UI infinite layout
+            // loop. Original WAVE 142 code used `.frame(width: baseSize * p)`
+            // which makes the Circle's size fluctuate 142pt→258pt every frame.
+            // ZStack parent (220×220) keeps re-negotiating size → recursion in
+            // UnaryLayoutEngine.childPlacement → main thread stuck → iOS kills.
+            //
+            // Fix: fixed `.frame(baseSize, baseSize)` (does NOT change) +
+            // `.scaleEffect(0.78 + 0.64 * p)` which is RENDER-only and does
+            // NOT propagate to layout. Mirrors the working pattern in
+            // `pulseRing` helper (line ~742).
             TimelineView(.animation) { context in
                 ZStack {
                     ForEach(0..<3, id: \.self) { i in
                         let p = phase(time: context.date.timeIntervalSinceReferenceDate, index: i)
                         Circle()
                             .stroke(Color.white.opacity(Double(0.42 * (1 - p))), lineWidth: 2)
-                            .frame(
-                                width: baseSize * (0.78 + 0.64 * p),
-                                height: baseSize * (0.78 + 0.64 * p)
-                            )
+                            .frame(width: baseSize, height: baseSize)
+                            .scaleEffect(0.78 + 0.64 * p)
                     }
                 }
             }
+            .frame(width: baseSize, height: baseSize)
             .allowsHitTesting(false)
         }
     }
@@ -690,9 +700,11 @@ struct CallView: View {
                 ThreePulseRings(active: session.status != "Conectado")
 
                 if session.remoteIsActiveSpeaker {
+                    // [WAVE 148] same layout-loop fix — fixed frame + scaleEffect.
                     Circle()
                         .stroke(Color(rgb: 0x25D366).opacity(0.82), lineWidth: 4)
-                        .frame(width: 154 * speakerPulse, height: 154 * speakerPulse)
+                        .frame(width: 154, height: 154)
+                        .scaleEffect(speakerPulse)
                         .shadow(color: Color(rgb: 0x25D366).opacity(0.7), radius: 14)
                 }
 
