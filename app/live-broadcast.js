@@ -149,6 +149,23 @@ export default function LiveBroadcastScreen() {
   // ParticipantConnected/Disconnected events. Replaces the WS-driven
   // viewerCountRef as ground truth when LK is the active pipeline.
   const [lkViewers, setLkViewers] = useState([]); // [{identity,name,joinedAt}]
+  // [WAVE 123] Bridge LK viewer events → viewerCount UI. WAVE 121 set up
+  // the listeners but never wrote into the existing viewerCount state, so
+  // the AO VIVO badge always showed 0 even with viewers in the room. Mirror
+  // lkViewers.length the moment any participant joins/leaves.
+  useEffect(() => {
+    try {
+      const n = (lkViewers || []).length;
+      if (n > (viewerCountRef.current || 0)) {
+        viewerCountRef.current = n;
+        setViewerCount(n);
+      } else if (n !== viewerCountRef.current && n >= 0) {
+        // Take LK ground-truth when WS hasn't reported lately.
+        viewerCountRef.current = n;
+        setViewerCount(n);
+      }
+    } catch {}
+  }, [lkViewers]);
 
   // Live state
   const [sessionId, setSessionId] = useState(null);

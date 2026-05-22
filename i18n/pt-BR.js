@@ -4530,6 +4530,17 @@ export default {
 
   // Live Streaming
   'live.title': 'Ao Vivo',
+  'live.heroTitle': 'Descobrir lives',
+  'live.heroSubtitle': 'Entre numa live, mande presente, ou comece a sua agora.',
+  'live.headerCount': 'transmissões agora',
+  'live.headerCountOne': 'transmissão agora',
+  'live.upcomingPrefix': 'Live de',
+  'live.upcomingScheduled': 'Lives agendadas',
+  'live.popularReplays': 'Replays populares',
+  'live.notifyMe': 'Avisar',
+  'live.emptyTitle': 'Nenhuma live ativa agora',
+  'live.emptySubtitle': 'Volte depois ou comece a sua agora.',
+  'live.startNowCta': 'Começar live',
   'live.goLive': 'Iniciar Live',
   'live.sendGift': 'Enviar presente',
   'live.share': 'Compartilhar',
