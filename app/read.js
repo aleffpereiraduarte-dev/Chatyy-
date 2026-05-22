@@ -92,9 +92,21 @@ export default function ReadScreen() {
     let cancelled = false;
 
     // Load the single message first, then try to get thread
+    // [WAVE 122] 25s hard timeout so a hung IMAP fetch / dead-network
+    // doesn't strand the user on the skeleton forever (user report:
+    // "isso e o email quando eu vou ver o email" — skeleton infinito).
+    // The finally still runs because the timeout resolves with null.
+    const _timeoutMs = 25000;
+    const _withTimeout = (p, label) => Promise.race([
+      p,
+      new Promise((resolve) => setTimeout(() => {
+        try { console.warn('[read.js] timeout fetching', label); } catch {}
+        resolve(null);
+      }, _timeoutMs)),
+    ]);
     Promise.all([
-      getMessage(uid, folder),
-      getThread(uid, folder).catch(() => null),
+      _withTimeout(getMessage(uid, folder), 'message'),
+      _withTimeout(getThread(uid, folder).catch(() => null), 'thread'),
     ]).then(([msgResult, threadResult]) => {
       if (cancelled) return;
       // Sempre seta email/thread baseado no resultado atual — antes deixava
