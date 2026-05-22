@@ -67,6 +67,24 @@ const TopFadeGradient = memo(function TopFadeGradient({ width = 280, height = 56
   );
 });
 
+// [7184 fix 2026-05-22] Live chat content cleaner. Users can paste raw
+// Chatyy invite/deep-link URLs ("https://chatyy.com.br/j/<32-hex>" or any
+// long hash) into live chat — they render as 60+ char gibberish that
+// breaks the TikTok overlay aesthetic. Strip Chatyy deep-link URLs to a
+// "🔗 Link compartilhado" tag and trim anything else over 100 chars.
+function formatLiveChatContent(raw) {
+  if (!raw || typeof raw !== 'string') return raw || '';
+  const trimmed = raw.trim();
+  // Pure Chatyy deep link → friendly chip
+  if (/^https?:\/\/(www\.)?chatyy\.com\.br\/[a-zA-Z0-9\-_/]+$/i.test(trimmed)) {
+    return '🔗 Link compartilhado';
+  }
+  // Inline URL: replace with shortened token
+  const urlPattern = /https?:\/\/\S+/g;
+  const replaced = trimmed.replace(urlPattern, '🔗 link');
+  return replaced;
+}
+
 // CommentRow — memoized so the row only re-reconciles when its own props
 // change (entry anim value, content, tier). Without this every parent
 // render (countdown tick, viewer count, heart anim) rebuilt all rows.
@@ -108,7 +126,7 @@ const CommentRow = memo(function CommentRow({
             {tier === 'gift' ? <Text style={styles.tierBadge}>★</Text> : null}
             {(tier === 'guest' || tier === 'cohost') ? <Text style={styles.tierBadge}>COLAB</Text> : null}
           </View>
-          <Text style={styles.text} numberOfLines={3}>{m.content}</Text>
+          <Text style={styles.text} numberOfLines={3}>{formatLiveChatContent(m.content)}</Text>
         </View>
         {heartAnim ? (
           <Animated.View
