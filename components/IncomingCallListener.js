@@ -320,7 +320,19 @@ export default function IncomingCallListener() {
   useEffect(() => {
     if (!call) return;
     stopAllAudio();
-    startRingtone();
+    // [WAVE 138] BUG-2 FIX: only start JS ringtone when the JS Modal is
+    // actually visible — i.e. app is foreground (or web, where there's no
+    // native ringtone at all). When backgrounded on iOS/Android, the native
+    // CallKit / IncomingCallActivity ALREADY plays the system ringtone; if
+    // we also start the JS one, the user hears two overlapping ringtones
+    // (and audio session conflicts can mute one). Gate strictly on
+    // appState === 'active' OR web.
+    const _shouldPlayJsRingtone = Platform.OS === 'web' || appState === 'active';
+    if (_shouldPlayJsRingtone) {
+      startRingtone();
+    } else {
+      try { console.log('[IncomingCall][WAVE 138] skip JS ringtone — native owns it (appState=' + appState + ')'); } catch {}
+    }
 
     // Fade in
     Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: false }).start();
@@ -359,13 +371,20 @@ export default function IncomingCallListener() {
       p2.stop();
       p3.stop();
       acceptPulse.stop();
+      // [WAVE 138] BUG-2: cleanup runs on call=null AND on appState change
+      // (since appState is now a dep). When app goes background mid-ring,
+      // cleanup → stopRingtone() kills the JS ringtone; the next effect run
+      // skips startRingtone() because shouldPlayJsRingtone is false. When
+      // app comes back to foreground while still ringing, the effect runs
+      // again and starts JS ringtone (native has already stopped its own
+      // because the JS modal is now responsible for the foreground UI).
       stopRingtone();
       fadeAnim.setValue(0);
       ring1.setValue(0);
       ring2.setValue(0);
       ring3.setValue(0);
     };
-  }, [call]);
+  }, [call, appState]);
 
   const showCall = (data) => {
     // Accept both old format (room_id) and new format (call_id)
@@ -430,6 +449,28 @@ export default function IncomingCallListener() {
           } catch {}
         }
         if (known) return;
+        // [WAVE 138] BUG-3 FIX: race window. The async contact lookup
+        // above can take 200-1500ms (device contact index warm-up +
+        // backend check_contacts round-trip). During that gap the user
+        // may have already tapped Accept on the JS Modal OR on the
+        // native CallKit/IncomingCallActivity. If we proceed blindly,
+        // we send chat_call_status=declined, killing a call that the
+        // user just answered. Re-check both flags AFTER the await
+        // chain and abort if either has flipped:
+        //   - acceptedRef.current → JS-side accept already fired
+        //   - callStateRef.current?.callId !== normalizedCallId → a new
+        //     incoming call replaced this one, or the call was cleared.
+        const _curCallId = callStateRef.current?.call_id || callStateRef.current?.room_id;
+        if (acceptedRef.current || (_curCallId && String(_curCallId) !== normalizedCallId)) {
+          try {
+            console.log('[IncomingCall][WAVE 138] silence-unknown: aborted post-await', {
+              accepted: acceptedRef.current,
+              expected: normalizedCallId,
+              current: _curCallId,
+            });
+          } catch {}
+          return;
+        }
         // 3. Unknown caller — auto-decline silently.
         try {
           const api = require('../services/api');

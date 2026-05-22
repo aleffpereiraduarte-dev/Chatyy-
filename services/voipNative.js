@@ -105,6 +105,15 @@ function generateCallId() {
   return `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
+// [WAVE 138] BUG-4: Anti-double-tap lock. Without this, a user mashing
+// the call button (or React re-rendering and re-firing onPress before the
+// first tap settles) fires startOutgoingCall twice → 2 distinct callIds,
+// 2 chat_call_invite_v2 requests, 2 native CallActivity launches,
+// 2 UIs on the callee. Module-level Map keyed by (calleeEmail, conversationId)
+// with a 5s TTL — covers React StrictMode double-invoke AND human jitter.
+const _outgoingCallLock = new Map();
+const _OUTGOING_LOCK_TTL_MS = 5000;
+
 /**
  * Start an outgoing call to a single email. For group calls use the
  * /group-call route — group flow has its own entry (server-side call_notify
@@ -185,6 +194,31 @@ export async function startOutgoingCall({
   // Use the trimmed value below so downstream native layers receive a
   // clean string with no whitespace surprises.
   calleeEmail = calleeEmailStr;
+
+  // [WAVE 138] BUG-4: Anti-double-tap lock. If we already have an
+  // in-flight outgoing call to the same callee in the same conversation
+  // within the last 5s, drop the second invocation. We DO NOT throw — we
+  // return a sentinel `{blocked:'double_tap'}` so the JS caller (chat-
+  // conversation.js, ChatCallsTab.js) can render a friendly toast instead
+  // of an error modal. The lock is keyed by (calleeEmail, conversationId)
+  // so a user can still place a deliberate second call to a different
+  // contact / conversation without delay.
+  const _lockKey = `${calleeEmail}:${conversationId || ''}`;
+  const _lockHit = _outgoingCallLock.get(_lockKey);
+  if (_lockHit && (Date.now() - _lockHit) < _OUTGOING_LOCK_TTL_MS) {
+    try {
+      console.warn(TAG, '[WAVE 138][BUG-4] double-tap blocked', {
+        lockKey: _lockKey,
+        msSinceFirst: Date.now() - _lockHit,
+      });
+    } catch {}
+    return { callId: null, native: false, blocked: 'double_tap' };
+  }
+  _outgoingCallLock.set(_lockKey, Date.now());
+  setTimeout(() => {
+    try { _outgoingCallLock.delete(_lockKey); } catch {}
+  }, _OUTGOING_LOCK_TTL_MS);
+
   const cid = callId || generateCallId();
 
   // [CALL-TRACE 2026-05-21 ROUND3] Step 2b/12 — post-validation. Confirms
@@ -324,6 +358,16 @@ export async function startOutgoingCall({
           ts: Date.now(),
         });
       } catch {}
+      // [WAVE 138] BUG-1 FIX: chat_call_invite_v2 returns {success:false} on
+      // server-side rejection (rate limit, conv permission, missing LK config,
+      // etc.) WITHOUT throwing. Previously we only checked `v2Resp` truthiness,
+      // which made the legacy fallback below (`if (!v2Resp && conversationId)`)
+      // think v2 succeeded — but no callNotify invite was ever sent → callee
+      // phone never rings. Force null so the legacy fan-out engages.
+      if (!v2Resp?.success) {
+        console.warn(TAG, '[WAVE 138][v2] success=false; forcing legacy callNotify fallback', v2Resp?.error || '');
+        v2Resp = null;
+      }
       // Pre-cache the LK token so the native side picks it up without a
       // second round-trip. iOS: CXStartCallAction handler reads via the
       // NativeCallTokenFetcher pending cache. Android: LkTokenFetcher
