@@ -181,13 +181,21 @@ private struct AnimatedDotsText: View {
     let color: Color
     let font: Font
     @State private var dots = 0
+    // [WAVE 143 HOTFIX 2026-05-22] CRITICAL: Timer.publish MUST be stored in
+    // @State, not created inside body. Creating a new publisher per body render
+    // → SwiftUI sees a new publisher → cancels+resubscribes → fires → re-render
+    // → cascading infinite update loop → main thread watchdog kill 0x8BADF00D
+    // after 10s scene-update budget. Reported as app crash on backgrounded call
+    // (build 545). Static @State stabilizes the publisher identity across
+    // renders so subscription happens once per view lifetime.
+    @State private var timer = Timer.publish(every: 0.42, on: .main, in: .common).autoconnect()
 
     var body: some View {
         Text(base + String(repeating: ".", count: dots).padding(toLength: 3, withPad: " ", startingAt: 0))
             .font(font)
             .foregroundColor(color)
             .monospacedDigit()
-            .onReceive(Timer.publish(every: 0.42, on: .main, in: .common).autoconnect()) { _ in
+            .onReceive(timer) { _ in
                 dots = (dots + 1) % 4
             }
     }
