@@ -319,19 +319,20 @@ export default function IncomingCallListener() {
 
   useEffect(() => {
     if (!call) return;
-    stopAllAudio();
-    // [WAVE 138] BUG-2 FIX: only start JS ringtone when the JS Modal is
-    // actually visible — i.e. app is foreground (or web, where there's no
-    // native ringtone at all). When backgrounded on iOS/Android, the native
-    // CallKit / IncomingCallActivity ALREADY plays the system ringtone; if
-    // we also start the JS one, the user hears two overlapping ringtones
-    // (and audio session conflicts can mute one). Gate strictly on
-    // appState === 'active' OR web.
-    const _shouldPlayJsRingtone = Platform.OS === 'web' || appState === 'active';
-    if (_shouldPlayJsRingtone) {
-      startRingtone();
+    // [WAVE 140 WhatsApp arch]: mobile NUNCA toca ringtone JS — native owns
+    // audio (CallKit on iOS / IncomingCallActivity on Android always plays
+    // the system ringtone, regardless of AppState). The JS modal is a pure
+    // visual mirror on mobile; only render audio when the platform has no
+    // native call surface (web) or native explicitly ceded UI ownership.
+    const jsOwns = Platform.OS === 'web' || call?.uiOwner === 'js';
+    if (!jsOwns) {
+      stopRingtone();
+      // Still proceed with fade-in / pulse animations below — mobile JS
+      // modal may render as a passive UI mirror (depending on Fix 2 render
+      // gate further down), but it must NEVER produce audio.
     } else {
-      try { console.log('[IncomingCall][WAVE 138] skip JS ringtone — native owns it (appState=' + appState + ')'); } catch {}
+      stopAllAudio();
+      startRingtone();
     }
 
     // Fade in
@@ -384,7 +385,7 @@ export default function IncomingCallListener() {
       ring2.setValue(0);
       ring3.setValue(0);
     };
-  }, [call, appState]);
+  }, [call?.call_id /* appState removed — native gate, WAVE 140 */]);
 
   const showCall = (data) => {
     // Accept both old format (room_id) and new format (call_id)
@@ -1869,15 +1870,15 @@ export default function IncomingCallListener() {
 
   if (!call) return null;
 
-  // [WhatsApp-parity hybrid, 2026-05-22] On mobile, only render the JS modal
-  // when the app is foreground (AppState=active). Background/inactive: native
-  // CallKit / IncomingCallActivity owns the UI. We still keep the call state
-  // (callStateRef, listeners) alive so that when the user brings the app to
-  // foreground via the native answer button, the existing onAnswer handler
-  // (line ~1088) navigates to /call.js with the ringing call's metadata.
-  if (Platform.OS !== 'web' && appState !== 'active') {
-    return null;
-  }
+  // [WAVE 140 WhatsApp arch revert, 2026-05-22] Mobile without explicit
+  // `uiOwner === 'js'` ⇒ native owns the UI (CallKit / IncomingCallActivity).
+  // JS modal does NOT render — it would otherwise create a dual-UI race where
+  // both the native call surface and the JS Modal flash for the user. We keep
+  // call state alive (callStateRef, WS listeners, CallKit observers) so the
+  // existing onAnswer handler can navigate to /call.js (which adopts the
+  // native LK Room via adoptNativeRoom(callId)) when the user accepts.
+  const jsRenderAllowed = Platform.OS === 'web' || call?.uiOwner === 'js';
+  if (Platform.OS !== 'web' && !jsRenderAllowed) return null;
 
   // Caller display name with device-book override.
   // Precedence: (1) name saved in this device's address book against the

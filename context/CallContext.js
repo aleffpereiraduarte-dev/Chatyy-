@@ -10,6 +10,7 @@
  *  - getCallDuration() returns elapsed seconds
  */
 import React, { createContext, useContext, useState, useRef, useCallback } from 'react';
+import { Platform } from 'react-native';
 
 const CallContext = createContext(null);
 
@@ -46,20 +47,27 @@ export function CallProvider({ children }) {
         // Lazy-require both modules to avoid circular import + so a missing
         // native binding (e.g. on web) silently degrades to JS-only cleanup
         // instead of throwing and breaking the hangup flow entirely.
+        // [WAVE 140 WhatsApp arch] Native owns hangup signaling on mobile.
+        // ck.endCall internally calls chat_call_active_close — JS double-call
+        // criava race condition (peer recebia 2 'ended' eventos). Only fall
+        // back to direct JS HTTP signaling when native didn't run (web, or
+        // expo-callkit module unavailable).
+        let nativeEnded = false;
         try {
           const ck = require('../modules/expo-callkit').default || require('../modules/expo-callkit');
-          if (ck?.endCall) ck.endCall(callId, 'remoteEnded');
+          if (Platform.OS !== 'web' && ck?.endCall) {
+            ck.endCall(callId, 'remoteEnded');
+            nativeEnded = true;
+          }
         } catch {}
-        try {
-          // [WAVE 139, GPT-5.5-pro C1.3] `chatEndCall` NÃO EXISTE em services/api.js —
-          // a função certa é `chatCallActiveClose`. Antes esta chamada falhava
-          // silenciosamente (api?.chatEndCall falsy → no-op), então o peer
-          // `chat_call_state` row ficava até o GC cron de 60s timeout marcar
-          // dead. Agora chama o endpoint real com reason="hangup".
-          const api = require('../services/api');
-          const close = api?.chatCallActiveClose || api?.chatEndCall;
-          if (close) close(callId, 'hangup').catch(() => {});
-        } catch {}
+        if (!nativeEnded) {
+          // Web fallback: native não rodou, JS precisa sinalizar peer.
+          try {
+            const api = require('../services/api');
+            const close = api?.chatCallActiveClose || api?.chatEndCall;
+            if (close) close(callId, 'hangup').catch(() => {});
+          } catch {}
+        }
       }
     } catch {}
 

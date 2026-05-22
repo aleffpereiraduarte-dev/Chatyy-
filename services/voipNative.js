@@ -471,34 +471,20 @@ export async function startOutgoingCall({
   // Kotlin) close that gap by short-circuiting the native UI when JS
   // owns the foreground. Phase 1 (this commit) is OTA-able and ships
   // the JS side of the contract; Phase 2 lands in the next native build.
-  if (isAppForeground()) {
-    try {
-      console.log('[CALL-TRACE][3.5/12] foreground → JS /call.js path', {
-        cid, calleeEmail, isVideo: !!isVideo, ts: Date.now(),
-      });
-    } catch {}
-    // Flip the AsyncStorage flag so the next incoming call_invite WS frame
-    // (during the brief window between caller minting and callee receiving)
-    // routes through the JS sheet rather than CallKit popup. The native
-    // CallFirebaseMessagingService / VoipPushAppDelegateSubscriber observe
-    // this flag (Phase 2) and bail out when ON + AppState=active.
-    try {
-      const AS = require('@react-native-async-storage/async-storage').default;
-      AS.setItem('prefer_js_call_ui', '1').catch(() => {});
-    } catch {}
-    const route = typeof onForegroundJsRoute === 'function'
-      ? onForegroundJsRoute
-      : onWebFallback;
-    if (typeof route === 'function') {
-      try { route(cid); } catch (e) {
-        console.warn(TAG, 'onForegroundJsRoute threw:', e?.message || e);
-      }
-      return { callId: cid, native: false };
-    }
-    // Caller didn't supply a JS-route callback — fall through to native
-    // (preserves existing behavior for any callsite that hasn't migrated).
-    console.warn(TAG, 'foreground but no onForegroundJsRoute supplied — falling back to native');
-  }
+  // [WAVE 140 — WhatsApp arch revert, 2026-05-22]
+  // GPT-5.5-pro Round 3: WhatsApp NUNCA usa JS como dono da call no mobile.
+  // Sempre CallKit/Telecom + LK native + JS espelho. Manter foreground gate
+  // JS criava 2 state machines (fg=JS, bg=native) e race condition. /call.js
+  // renderer fica MAS agora adopts native session via adoptNativeRoom(callId).
+  //
+  // Previous behavior (WAVE 138 Phase 1) routed outgoing calls to JS /call.js
+  // when AppState === 'active'. This dual-owner model was the root cause of:
+  //   - peer receiving 2x 'ended' events (JS + native both signaling)
+  //   - LK Room dual-mount when app foregrounded mid-call
+  //   - ringtone double-play on callee
+  // Native CallKit / CallActivity is now the unconditional owner on mobile.
+  // The `onForegroundJsRoute` param is kept in the signature for backwards
+  // compat with callsites that still pass it (no-op on mobile).
 
   // Pre-resolve the callee avatar URL so the native screen can paint a real
   // avatar (not just the initial letter) before LK Room is even up. The URL
