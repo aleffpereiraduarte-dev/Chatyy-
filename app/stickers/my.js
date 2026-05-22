@@ -17,6 +17,8 @@ import * as api from '../../services/api';
 import {
   IconArrowLeft, IconTrash, IconPlus, IconStar, IconX, IconShare,
 } from '../../components/Icons';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { PLANS_ENABLED } from '../../constants/featureFlags';
 
 // Resolve a stored R2 key / relative URL to something Image can fetch.
 function resolveCoverUri(url) {
@@ -201,7 +203,10 @@ export default function StickerMyPacksScreen() {
     // Pro gate. Free / Plus users get nudged to /plans instead of failing
     // server-side with a 402. The server check still acts as the source of
     // truth on the upload step.
-    if (!['pro', 'family'].includes(planTier)) {
+    // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+    // while plans are paused we let everyone through and rely on the server
+    // check to soft-fail. Avoids routing users to a hidden /plans screen.
+    if (PLANS_ENABLED && !['pro', 'family'].includes(planTier)) {
       setShowCreate(false);
       router.push('/plans');
       return;

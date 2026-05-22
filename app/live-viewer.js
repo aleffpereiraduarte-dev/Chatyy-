@@ -3258,10 +3258,11 @@ export default function LiveViewerScreen() {
         </View>
       ) : null}
 
-      {/* Top gifters (right side, just below the topbar). Same component
-          used on the host side so the leaderboard is consistent across
-          POVs. Tap → full-screen leaderboard modal. */}
-      {paramSessionId ? (
+      {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+          Top gifters leaderboard + center-screen gift animation overlay.
+          Component imports stay so flipping the flag restores both with
+          no rebuild. */}
+      {DIAMONDS_ENABLED && paramSessionId ? (
         <View
           pointerEvents="box-none"
           style={{
@@ -3283,9 +3284,7 @@ export default function LiveViewerScreen() {
         </View>
       ) : null}
 
-      {/* Center-screen gift animation overlay — pops in when a live_gift
-          WS event arrives (including ones the sender just emitted). */}
-      {activeGiftAnim ? (
+      {DIAMONDS_ENABLED && activeGiftAnim ? (
         <LiveGiftAnimation
           key={activeGiftAnim.key}
           gift={activeGiftAnim}
@@ -3314,18 +3313,21 @@ export default function LiveViewerScreen() {
       />
 
       {/* Right floating rail — like / chat-toggle / snapshot / share / more.
-          Like button shows the cumulative count below it (TikTok parity). */}
+          Like button shows the cumulative count below it (TikTok parity).
+          [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+          for the diamond-tip and gift-picker entry points. Like + share +
+          snapshot stay free. */}
       <LiveRightRail
         bottom={Math.max(insets.bottom + 200, 220)}
         likeCount={likeCount}
         chatHidden={chatHidden}
         onHeartPress={handleHeartTap}
         onHeartLongPress={handleHeartLongPress}
-        onDiamondPress={handleDiamondTap}
+        onDiamondPress={DIAMONDS_ENABLED ? handleDiamondTap : undefined}
         onToggleChat={() => setChatHidden(h => !h)}
         onSnapshot={handleScreenshot}
         onShare={handleShare}
-        onMore={() => setGiftPickerVisible(true)}
+        onMore={DIAMONDS_ENABLED ? () => setGiftPickerVisible(true) : undefined}
         i18n={{
           like: t('live.like') || 'Curtir',
           showChat: t('live.showChat') || 'Mostrar chat',
@@ -3613,7 +3615,8 @@ export default function LiveViewerScreen() {
             onSubmit={sendComment}
             onHeartTap={handleHeartTap}
             onHeartLongPress={handleHeartLongPress}
-            onGiftPress={() => setGiftPickerVisible(true)}
+            /* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag */
+            onGiftPress={DIAMONDS_ENABLED ? () => setGiftPickerVisible(true) : undefined}
             onFocus={() => setInputFocused(true)}
             onBlur={() => setInputFocused(false)}
             focused={inputFocused}
@@ -3649,32 +3652,34 @@ export default function LiveViewerScreen() {
         </Animated.View>
       ) : null}
 
-      {/* Virtual-gift picker — 6 typed gifts (rose/heart/star/crown/fire/
-          rocket) with SVG glyphs. Tap → POST chat_live_send_gift → backend
-          writes chat_live_gifts row + broadcasts `live_gift` WS event so
-          every client renders LiveGiftAnimation in sync. */}
-      {/* Round 66 (2026-05-18) issue #7 — IAP top-up sheet wired so empty
-          wallet UX is a single tap to buy diamonds, no nav round-trip. */}
-      <DiamondTopUpSheet
-        visible={topUpVisible}
-        onClose={() => setTopUpVisible(false)}
-      />
+      {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+          DiamondTopUpSheet + LiveGiftPicker. With the buttons that trigger
+          them gated above, these never open anyway; we still gate the JSX
+          so React doesn't waste cycles mounting hidden modals. */}
+      {DIAMONDS_ENABLED && (
+        <DiamondTopUpSheet
+          visible={topUpVisible}
+          onClose={() => setTopUpVisible(false)}
+        />
+      )}
 
-      <LiveGiftPicker
-        visible={giftPickerVisible}
-        onClose={() => setGiftPickerVisible(false)}
-        onSelect={sendVirtualGift}
-        i18n={{
-          sendGift: t('live.sendGift') || 'Enviar presente',
-          giftSubtitle: t('live.giftSubtitle') || 'Toque para enviar e aparecer para todos',
-          gift_rose: t('live.gift_rose') || 'Rosa',
-          gift_heart: t('live.gift_heart') || 'Coração',
-          gift_star: t('live.gift_star') || 'Estrela',
-          gift_crown: t('live.gift_crown') || 'Coroa',
-          gift_fire: t('live.gift_fire') || 'Fogo',
-          gift_rocket: t('live.gift_rocket') || 'Foguete',
-        }}
-      />
+      {DIAMONDS_ENABLED && (
+        <LiveGiftPicker
+          visible={giftPickerVisible}
+          onClose={() => setGiftPickerVisible(false)}
+          onSelect={sendVirtualGift}
+          i18n={{
+            sendGift: t('live.sendGift') || 'Enviar presente',
+            giftSubtitle: t('live.giftSubtitle') || 'Toque para enviar e aparecer para todos',
+            gift_rose: t('live.gift_rose') || 'Rosa',
+            gift_heart: t('live.gift_heart') || 'Coração',
+            gift_star: t('live.gift_star') || 'Estrela',
+            gift_crown: t('live.gift_crown') || 'Coroa',
+            gift_fire: t('live.gift_fire') || 'Fogo',
+            gift_rocket: t('live.gift_rocket') || 'Foguete',
+          }}
+        />
+      )}
 
       {/* Viewers list sheet — Instagram-style "who's watching".
           Recent joiners on top, capped at 100 to keep render cheap. */}

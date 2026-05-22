@@ -24,6 +24,8 @@ import {
 // mirrors LivePaidGiftSheet's grid but calls feed_post_tip instead of
 // the live-only live_gift_send endpoint.
 import * as api from '../services/api';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 // expo-shorts powers the native player + pool. Imported lazily so a missing
 // native binary (dev only) doesn't break the import chain — fallback paths
 // degrade gracefully when these are null.
@@ -2002,11 +2004,9 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         </Animated.View>
 
         {/* Tip / Diamond — Reels P1 monetization. Opens LivePaidGiftSheet,
-            which reuses the same SKU set + wallet UI as Live gifts. On send
-            we fire feed_post_tip (not the live gift endpoint) so the reel
-            gets credit and the floating diamond animation. Hidden when
-            viewing your own reel — you can't tip yourself. */}
-        {reel.author_email?.toLowerCase() !== user?.email?.toLowerCase() && (
+            which reuses the same SKU set + wallet UI as Live gifts.
+            [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag. */}
+        {DIAMONDS_ENABLED && reel.author_email?.toLowerCase() !== user?.email?.toLowerCase() && (
           <TouchableOpacity
             style={styles.sidebarBtn}
             onPress={handleOpenTip}
@@ -2183,7 +2183,8 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           how to call our reel-tip endpoint). Trick: hand it a tip handler
           via a wrapping side-effect — when the sheet closes we check
           its last-selected gift and fire the tip ourselves. */}
-      <TipSheetWrapper
+      {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag */}
+      {DIAMONDS_ENABLED && <TipSheetWrapper
         visible={tipSheetOpen}
         onClose={() => setTipSheetOpen(false)}
         postId={reel?.id}
@@ -2192,7 +2193,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           try { require('expo-haptics').notificationAsync(require('expo-haptics').NotificationFeedbackType.Success); } catch {}
         }}
         t={t}
-      />
+      />}
 
       {/* ── DRAGGABLE SCRUBBER ── (tap to jump / drag to seek) */}
       <Scrubber

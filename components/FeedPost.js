@@ -25,6 +25,8 @@ import {
 } from './Icons';
 import * as api from '../services/api';
 import { useLanguage } from '../context/LanguageContext';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { MONETIZATION_ENABLED } from '../constants/featureFlags';
 
 const ACCENT = '#7C3AED';
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -1041,7 +1043,9 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                         $9.99). Backend feed_post_promote inserts into
                         chat_feed_promotions and the FYP ranker boosts the
                         score by 1.5x for the active window. */}
-                    {!post.is_promoted ? (
+                    {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+                        "Impulsionar" paid boost flow debits diamonds. */}
+                    {MONETIZATION_ENABLED && !post.is_promoted ? (
                       <TouchableOpacity
                         style={styles.menuItem}
                         onPress={() => { setShowMenu(false); setShowPromoteModal(true); }}
@@ -1738,8 +1742,9 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         </Pressable>
       </Modal>
 
-      {/* Reels P2 — Promote modal (budget tiers + duration). */}
-      <PromotePostModal
+      {/* Reels P2 — Promote modal (budget tiers + duration).
+          [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag. */}
+      {MONETIZATION_ENABLED && <PromotePostModal
         visible={showPromoteModal}
         onClose={() => setShowPromoteModal(false)}
         post={post}
@@ -1753,7 +1758,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
         t={t}
         submitting={promoteSubmitting}
         setSubmitting={setPromoteSubmitting}
-      />
+      />}
     </View>
   );
 }

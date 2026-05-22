@@ -27,6 +27,8 @@ import AvatarCircle from '../components/AvatarCircle';
 import EmptyStateCard from '../components/EmptyStateCard';
 import ErrorBoundary from '../components/ErrorBoundary';
 import * as api from '../services/api';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { PLANS_ENABLED } from '../constants/featureFlags';
 
 const ACCENT = '#7C3AED';
 const ACCENT_LIGHT = '#A78BFA';
@@ -488,19 +490,25 @@ function FamilyScreenInner() {
           <View style={s.section}>
             <SectionHeader title="Família compartilhada" colors={colors} />
             <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-              <FeatureRow
-                icon={IconStar}
-                color="#F59E0B"
-                title={planShare?.plan_name ? `Plano ${planShare.plan_name}` : 'Plano Plus/Pro'}
-                subtitle={
-                  planShare?.shared
-                    ? `Compartilhado com ${planShare.shared_with || memberCount} membros`
-                    : 'Compartilhe seu plano com até 6 pessoas'
-                }
-                badge={planShare?.shared ? 'Ativo' : null}
-                onPress={() => router.push('/plans')}
-                colors={colors}
-              />
+              {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+                  "Plano Plus/Pro" share row jumps to /plans (paid upsell). Hide
+                  during the WhatsApp-style free era; the rest of the section
+                  (shared album, calendar) stays free. */}
+              {PLANS_ENABLED && (
+                <FeatureRow
+                  icon={IconStar}
+                  color="#F59E0B"
+                  title={planShare?.plan_name ? `Plano ${planShare.plan_name}` : 'Plano Plus/Pro'}
+                  subtitle={
+                    planShare?.shared
+                      ? `Compartilhado com ${planShare.shared_with || memberCount} membros`
+                      : 'Compartilhe seu plano com até 6 pessoas'
+                  }
+                  badge={planShare?.shared ? 'Ativo' : null}
+                  onPress={() => router.push('/plans')}
+                  colors={colors}
+                />
+              )}
               <FeatureRow
                 icon={IconImage}
                 color="#EC4899"

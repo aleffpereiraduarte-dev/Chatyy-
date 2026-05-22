@@ -31,6 +31,8 @@ import {
 } from './Icons';
 import * as api from '../services/api';
 import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { WALLET_ENABLED, MONETIZATION_ENABLED } from '../constants/featureFlags';
 
 const ACCENT = '#7C3AED';
 
@@ -400,14 +402,16 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
         // /profile-creator-dashboard which calls the creator_dashboard
         // backend action.
         { icon: IconBarChart, label: t?.('profile.creatorDashboard') || 'Painel de criador', tint: ICON_PURPLE, onPress: () => closeAndRun(() => { try { router?.push?.('/profile-creator-dashboard'); } catch {} }) },
-        // 2026-05-18 — Diamond wallet entry. Surfaces balance, top-up CTA,
-        // and the full ledger history. Same icon as the gift box used in
-        // the live/feed tip flows so users learn the diamond=gift mapping.
-        { icon: IconGiftBox, label: t?.('wallet.title') || 'Carteira', tint: ICON_PURPLE, onPress: () => closeAndRun(() => { try { router?.push?.('/wallet'); } catch {} }) },
-        // 2026-05-19 — Creator-focused earnings hub. Mostra saldo em BRL,
-        // gifts recebidos por origem, top fãs e atalho pra solicitar saque.
-        // Mesma cor verde do hero de saque pra reforçar "isso é dinheiro real".
-        { icon: IconBarChart, label: t?.('creatorEarnings.title') || 'Meus Ganhos', tint: '#10B981', onPress: () => closeAndRun(() => { try { router?.push?.('/creator-earnings'); } catch {} }) },
+        // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+        // Carteira + Meus Ganhos rows route to wallet/earnings screens that
+        // are hidden during the WhatsApp-style free era. Conditional spread
+        // keeps the rows in the source so flipping the flag re-shows them.
+        ...(WALLET_ENABLED ? [
+          { icon: IconGiftBox, label: t?.('wallet.title') || 'Carteira', tint: ICON_PURPLE, onPress: () => closeAndRun(() => { try { router?.push?.('/wallet'); } catch {} }) },
+        ] : []),
+        ...(MONETIZATION_ENABLED ? [
+          { icon: IconBarChart, label: t?.('creatorEarnings.title') || 'Meus Ganhos', tint: '#10B981', onPress: () => closeAndRun(() => { try { router?.push?.('/creator-earnings'); } catch {} }) },
+        ] : []),
       ],
     },
     {

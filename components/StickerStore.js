@@ -9,6 +9,8 @@ import {
   IconCheck, IconArrowLeft, IconSparkles, IconUser,
 } from './Icons';
 import * as api from '../services/api';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { PREMIUM_BADGES_VISIBLE } from '../constants/featureFlags';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -141,7 +143,9 @@ function PackCard({ pack, onPress, onInstall, onUninstall, installed, installing
               </View>
             );
           })()}
-          {pack.is_premium && (
+          {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+              "PRO" badge on premium packs would advertise paid plans. */}
+          {PREMIUM_BADGES_VISIBLE && pack.is_premium && (
             <View style={{
               position: 'absolute', top: 8, right: 8,
               backgroundColor: '#F59E0B',

@@ -18,6 +18,8 @@ import { useTheme } from '../context/ThemeContext';
 import AnimatedViewerCount from '../components/AnimatedViewerCount';
 import LiveTopGifters from '../components/LiveTopGifters';
 import LiveGiftAnimation from '../components/LiveGiftAnimation';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import LivePollOverlay from '../components/live/LivePollOverlay';
 import * as liveBroadcastNotification from '../services/liveBroadcastNotification';
 import { publishToCfStream, liveDiagAppend } from '../services/cfStreamPublisher';
@@ -3837,11 +3839,9 @@ export default function LiveBroadcastScreen() {
         </View>
       </View>
 
-      {/* Top gifters — stacked avatars top-right under the topbar. Sits
-          below the close/end-live button + above the chat overlay. Bumps
-          its internal refreshKey whenever a live_gift WS event lands so
-          the leaderboard stays current without polling-only lag. */}
-      {sessionId ? (
+      {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+          Top gifters leaderboard on the host POV. */}
+      {DIAMONDS_ENABLED && sessionId ? (
         <View
           pointerEvents="box-none"
           style={{
@@ -3865,8 +3865,9 @@ export default function LiveBroadcastScreen() {
 
       {/* Gift animation overlay — center-screen card that pops in when
           a `live_gift` WS event arrives. Uses a key derived from the
-          incoming event so React mounts a fresh animation each time. */}
-      {activeGiftAnim ? (
+          incoming event so React mounts a fresh animation each time.
+          [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag. */}
+      {DIAMONDS_ENABLED && activeGiftAnim ? (
         <LiveGiftAnimation
           key={activeGiftAnim.key}
           gift={activeGiftAnim}

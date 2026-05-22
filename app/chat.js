@@ -13,6 +13,8 @@ import {
   IconCreditCard, IconDiamond,
 } from '../components/Icons';
 import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop } from 'react-native-svg';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { WALLET_ENABLED } from '../constants/featureFlags';
 import ChatListTab from '../components/ChatListTab';
 import AvatarCircle from '../components/AvatarCircle';
 import ChatCallsTab from '../components/ChatCallsTab';

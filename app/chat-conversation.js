@@ -14088,6 +14088,16 @@ export default function ChatConversationScreen() {
       // DO want the backend destructive cleanup (delete row + grants).
       if (msgId && api.chatStopLiveLocation) await api.chatStopLiveLocation(msgId, { force: true });
     } catch {}
+    // Clear the global share-active flag so LiveLocationHeartbeat stops
+    // both the foreground tick and the OS background updates. Without
+    // this, background GPS keeps running after the user taps Parar (and
+    // Apple/Google flag the app for "always-on tracking").
+    try {
+      const AS = require('@react-native-async-storage/async-storage').default;
+      await AS.removeItem('live_location_active');
+      const bg = require('../services/backgroundLocationTask');
+      await bg.stopBackgroundLocationUpdates();
+    } catch {}
     try {
       if (liveLocIntervalRef.current) { clearInterval(liveLocIntervalRef.current); liveLocIntervalRef.current = null; }
       if (liveLocTimeoutRef.current) { clearTimeout(liveLocTimeoutRef.current); liveLocTimeoutRef.current = null; }
@@ -14272,6 +14282,20 @@ export default function ChatConversationScreen() {
         // Start background location updates (stored for cleanup on unmount)
         const msgId = r.data.id;
         liveLocMsgIdRef.current = msgId;
+        // Persist the global "share active" flag so LiveLocationHeartbeat
+        // (root-mounted) keeps GPS flowing while the user navigates to
+        // other screens, AND requests OS-managed background updates so the
+        // pin stays fresh while the app is minimized. Cleared in
+        // stopLiveLocationNow when the user taps "Parar compartilhamento".
+        try {
+          const AS = require('@react-native-async-storage/async-storage').default;
+          await AS.setItem('live_location_active', '1');
+          const bg = require('../services/backgroundLocationTask');
+          // Fire-and-forget: respects existing permission state and won't
+          // re-prompt if already denied. LiveLocationHeartbeat's reconcile
+          // tick will retry on the next focus tick.
+          bg.startBackgroundLocationUpdates().catch(() => {});
+        } catch {}
         // Mirror to reactive state so the picker sheet (re-opened later) can
         // render the "you're already sharing" guard card with countdown. We
         // pick the same `liveUntil` math used in the WS payload above for
