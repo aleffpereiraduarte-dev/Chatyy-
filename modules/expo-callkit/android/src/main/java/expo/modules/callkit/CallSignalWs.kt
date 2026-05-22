@@ -302,8 +302,31 @@ object CallSignalWs {
     }
 
     private fun handleFrame(ws: WebSocket, text: String) {
-        val obj = try { JSONObject(text) } catch (_: Throwable) { return }
-        when (obj.optString("type")) {
+        val outer = try { JSONObject(text) } catch (_: Throwable) { return }
+        val type = outer.optString("type")
+        // [P0 2026-05-21 ROOT-CAUSE-FIX C++ WS envelope]
+        //
+        // The C++ WS server (/opt/chatyy-ws-cpp/src/main.cpp:166-181 build_frame,
+        // live since 2026-05-19 cutover) wraps EVERY broadcast payload as
+        // {"type":"call_invite", "data":{call_id, room_id, caller_email, ...}}.
+        // This file was authored against the legacy Go WS frame format which
+        // delivered fields flat at the top level. Since the C++ cutover, every
+        // call_invite / call_end reaching Android via WS dropped silently:
+        // `obj.optString("call_id")` returned "" because the real call_id was
+        // nested inside `data`.
+        //
+        // Symptom (visible in logcat): `W CallSignalWs: call_invite: missing
+        // call_id/room_id, skipping` — and CallRingingService NEVER started.
+        //
+        // Result: 3 days where every Android incoming call via WS-active path
+        // (callee online) dropped without ringing. The only path that survived
+        // was FCM data-message (callee offline), because FCM payloads ARE
+        // flat by design.
+        //
+        // Fix: unwrap the C++ envelope before dispatching. Accept BOTH shapes
+        // (data wrapper + legacy flat) so a Go-WS rollback can't re-break us.
+        val obj = outer.optJSONObject("data") ?: outer
+        when (type) {
             "auth_success" -> {
                 Log.d(TAG, "auth_success — draining ${queue.size} queued frame(s)")
                 authenticated.set(true)

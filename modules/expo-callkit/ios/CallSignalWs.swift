@@ -266,10 +266,26 @@ final class CallSignalWs: NSObject {
         }
         guard let t = text,
               let data = t.data(using: .utf8),
-              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+              let outer = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return
         }
-        let type = obj["type"] as? String ?? ""
+        let type = outer["type"] as? String ?? ""
+        // [P0 2026-05-21 ROOT-CAUSE-FIX C++ WS envelope]
+        //
+        // The C++ WS server (/opt/chatyy-ws-cpp/src/main.cpp:166-181 build_frame,
+        // live since 2026-05-19 cutover) wraps EVERY broadcast payload as
+        // {"type":"call_invite", "data":{call_id, room_id, caller_email, ...}}.
+        // This file was authored against the legacy Go WS frame which delivered
+        // fields flat at the top level. Since the C++ cutover, every call_invite
+        // / call_end reaching iOS via WS dropped silently because
+        // `obj["call_id"]` returned nil.
+        //
+        // Symptom: `NSLog "call_end: missing call_id/room_id, skipping"` and
+        // CallKit never reported the inbound call.
+        //
+        // Fix: unwrap the C++ envelope. Accept BOTH shapes (data + flat) so
+        // a Go-WS rollback can't re-break iOS.
+        let obj = (outer["data"] as? [String: Any]) ?? outer
         switch type {
         case "auth_success":
             NSLog("[CallSignalWs] auth_success — draining \(pendingMessages.count) queued frame(s)")
