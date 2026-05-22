@@ -272,41 +272,94 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // ringback engine the moment the callee's WS accept frame lands.
         installRemoteAnsweredObserver()
 
-        // Build the SwiftUI tree with the full closure set Stage #995 demands.
-        let rootView = CallView(
-            callId: callId,
-            callerName: callerName,
-            callerEmail: callerEmail,
-            hasVideo: hasVideo,
-            session: session,
-            onHangup: { [weak self] in self?.handleHangup() },
-            onToggleMute: { [weak self] desired in self?.applyMicEnabled(desired) },
-            onToggleCam: { [weak self] desired in self?.applyCamEnabled(desired) },
-            onToggleSpeaker: { [weak self] desired in self?.applySpeaker(desired) },
-            onSwitchCamera: { [weak self] in self?.switchCamera() },
-            onScreenShare: { [weak self] in self?.toggleScreenShare() },
-            onAddMember: { [weak self] in self?.handleAddMember() },
-            onMinimize: { [weak self] in self?.handleMinimize() },
-            onSendReaction: { [weak self] emoji in self?.sendReaction(emoji) },
-            onToggleNoiseSuppression: { [weak self] desired in self?.applyNoiseSuppression(desired) },
-            onCycleBackground: { [weak self] in self?.cycleBackground() },
-            onToggleHold: { [weak self] desired in self?.applyHold(desired) },
-            onPlayDTMF: { [weak self] digit in self?.handlePlayDTMF(digit) },
-            onOpenChat: { [weak self] in self?.openChat() }
-        )
+        // [WAVE 154 2026-05-22] NUCLEAR — SwiftUI CallView removed entirely.
+        //
+        // Builds 552-555 ALL crashed in SwiftUI _UIHostingView.layoutSubviews
+        // with various flavors of layout/metadata/style recursion. WAVE 153
+        // disabled CallView body to Color.black but a CUSTOM ButtonStyle
+        // somewhere ELSE in the tree (StyleBodyAccessor) still caused stack
+        // overflow in iOS 26.5.
+        //
+        // Total exhaustion strategy: NO SwiftUI at all in the call screen.
+        // Pure UIKit — name label + 3 buttons (mute / speaker / end). All
+        // the audio session, AVAudioSession, LiveKit Room, signaling,
+        // observers, and hangup logic stays intact and continues to work
+        // independently. CallKit native UI shows during ringing as before.
+        // When user opens app foreground during call, this minimal UIKit
+        // screen shows — no rich animations but zero crash.
+        let nameLabel = UILabel()
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.text = callerName.isEmpty ? callerEmail : callerName
+        nameLabel.textColor = .white
+        nameLabel.font = .systemFont(ofSize: 28, weight: .semibold)
+        nameLabel.textAlignment = .center
+        view.addSubview(nameLabel)
 
-        let host = UIHostingController(rootView: rootView)
-        addChild(host)
-        host.view.translatesAutoresizingMaskIntoConstraints = false
-        host.view.backgroundColor = .clear
-        view.addSubview(host.view)
+        let statusLabel = UILabel()
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.text = isOutgoing ? "Chamando…" : "Conectando…"
+        statusLabel.textColor = UIColor.white.withAlphaComponent(0.7)
+        statusLabel.font = .systemFont(ofSize: 16, weight: .regular)
+        statusLabel.textAlignment = .center
+        statusLabel.tag = 9001
+        view.addSubview(statusLabel)
+
+        let endButton = UIButton(type: .system)
+        endButton.translatesAutoresizingMaskIntoConstraints = false
+        endButton.backgroundColor = UIColor(red: 0xE6/255.0, green: 0x3A/255.0, blue: 0x3A/255.0, alpha: 1.0)
+        endButton.setTitle("Encerrar", for: .normal)
+        endButton.setTitleColor(.white, for: .normal)
+        endButton.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)
+        endButton.layer.cornerRadius = 36
+        endButton.addTarget(self, action: #selector(uikitOnHangupTap), for: .touchUpInside)
+        view.addSubview(endButton)
+
+        let muteButton = UIButton(type: .system)
+        muteButton.translatesAutoresizingMaskIntoConstraints = false
+        muteButton.backgroundColor = UIColor.white.withAlphaComponent(0.15)
+        muteButton.setTitle("Mute", for: .normal)
+        muteButton.setTitleColor(.white, for: .normal)
+        muteButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .medium)
+        muteButton.layer.cornerRadius = 32
+        muteButton.tag = 9002
+        muteButton.addTarget(self, action: #selector(uikitOnMuteTap), for: .touchUpInside)
+        view.addSubview(muteButton)
+
+        let speakerButton = UIButton(type: .system)
+        speakerButton.translatesAutoresizingMaskIntoConstraints = false
+        speakerButton.backgroundColor = UIColor.white.withAlphaComponent(0.15)
+        speakerButton.setTitle("Speaker", for: .normal)
+        speakerButton.setTitleColor(.white, for: .normal)
+        speakerButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .medium)
+        speakerButton.layer.cornerRadius = 32
+        speakerButton.tag = 9003
+        speakerButton.addTarget(self, action: #selector(uikitOnSpeakerTap), for: .touchUpInside)
+        view.addSubview(speakerButton)
+
         NSLayoutConstraint.activate([
-            host.view.topAnchor.constraint(equalTo: view.topAnchor),
-            host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            nameLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            nameLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -100),
+            nameLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
+
+            statusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            statusLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 8),
+
+            muteButton.widthAnchor.constraint(equalToConstant: 64),
+            muteButton.heightAnchor.constraint(equalToConstant: 64),
+            muteButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -40),
+            muteButton.trailingAnchor.constraint(equalTo: view.centerXAnchor, constant: -56),
+
+            speakerButton.widthAnchor.constraint(equalToConstant: 64),
+            speakerButton.heightAnchor.constraint(equalToConstant: 64),
+            speakerButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -40),
+            speakerButton.leadingAnchor.constraint(equalTo: view.centerXAnchor, constant: 56),
+
+            endButton.widthAnchor.constraint(equalToConstant: 72),
+            endButton.heightAnchor.constraint(equalToConstant: 72),
+            endButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            endButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -130),
         ])
-        host.didMove(toParent: self)
 
         // [STAGE-A 2026-05-20] GAP #2 — If preconnectRoom (push-receive path)
         // already published a Room for this callId, adopt it instead of
@@ -1792,6 +1845,29 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             top = presented
         }
         return top
+    }
+
+    // [WAVE 154 2026-05-22] UIKit-only button handlers (no SwiftUI).
+
+    @objc private func uikitOnHangupTap() {
+        handleHangup()
+    }
+
+    @objc private func uikitOnMuteTap() {
+        let next = !session.isMuted
+        session.isMuted = next
+        applyMicEnabled(!next)
+        if let btn = view.viewWithTag(9002) as? UIButton {
+            btn.setTitle(next ? "Unmute" : "Mute", for: .normal)
+        }
+    }
+
+    @objc private func uikitOnSpeakerTap() {
+        let next = !session.speakerOn
+        applySpeaker(next)
+        if let btn = view.viewWithTag(9003) as? UIButton {
+            btn.setTitle(next ? "Earpiece" : "Speaker", for: .normal)
+        }
     }
 }
 
