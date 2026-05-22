@@ -1251,6 +1251,17 @@ export default function LiveViewerScreen() {
       if (!alive) return;
       let msg;
       try { msg = JSON.parse(event.data); } catch { return; }
+      // [2026-05-21] C++ WS envelope unwrap. chatyy-ws-cpp wraps every
+      // broadcast as {"type":"live_chat","data":{...payload...}} while the
+      // legacy Go WS sent the inner payload flat at the top level. Until the
+      // handlers below are migrated to read `msg.data.foo`, we flatten by
+      // merging `data` keys back into the top-level `msg`. send_json-style
+      // single-target frames (live_session_info, live_join_ack, auth_*) stay
+      // flat and pass through unchanged. Safe because `data` keys never
+      // collide with our envelope keys (`type`, `event_id`).
+      if (msg && msg.data && typeof msg.data === 'object' && !Array.isArray(msg.data)) {
+        msg = { ...msg, ...msg.data };
+      }
 
       switch (msg.type) {
         case 'auth_failure':
