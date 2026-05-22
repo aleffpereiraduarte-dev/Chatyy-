@@ -21142,8 +21142,17 @@ export default function ChatConversationScreen() {
                   borderLeftColor: replySenderColor,
                 }]}
               >
+                {(() => {
+                  // WAVE 71 (2026-05-22): reply quote was capped at maxWidth:'70%'
+                  // unconditionally, leaving the text column ~50% of screen even
+                  // when there was no thumbnail beside it. That truncated lines
+                  // mid-word ("você N tá atualizando pra tu ne ver aqui o pq" bug
+                  // #7168). Constrain to 70% ONLY when a real image/video thumb
+                  // renders to the right; otherwise let the text fill the bubble.
+                  const hasReplyThumb = (msg.reply_to?.type === 'image' || msg.reply_to?.type === 'video') && msg.reply_to?.file_url && !msg.reply_to?.deleted_at;
+                  return (
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                  <View style={{ flex: 1, maxWidth: '70%', marginRight: (msg.reply_to?.type === 'image' || msg.reply_to?.type === 'video') && msg.reply_to?.file_url ? 8 : 0 }}>
+                  <View style={{ flex: 1, ...(hasReplyThumb ? { maxWidth: '70%', marginRight: 8 } : null) }}>
                     <Text style={[styles.replyName, { color: replySenderColor }]} numberOfLines={1}>
                       {replyDisplayName}
                     </Text>

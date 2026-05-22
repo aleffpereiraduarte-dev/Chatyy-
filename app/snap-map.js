@@ -454,12 +454,12 @@ window.addEventListener('message', function(ev) {
 // ──────────────────────────── Loader ─────────────────────────────────────
 // Google Maps JS API path. Billing was enabled 2026-05-18 and verified again
 // 2026-05-22 via direct API probe (Maps JS API + Geocoding both 200 OK).
-// [BUG FIX 2026-05-22] Removed `loading=async` query param. When combined
-// with `callback=initMap`, Google's loader IGNORES the legacy callback —
-// async mode requires `google.maps.importLibrary()` instead. Result was:
-// `initMap` never fired → 6s safety-net timeout → bootLeaflet() →
-// OSM/Leaflet tiles shown to user even with billing fully enabled. Without
-// `loading=async`, the classic callback pattern works reliably.
+// [BUG FIX 2026-05-22] Removed the loading=async query param. When combined
+// with callback=initMap, Google ignores the legacy callback — async mode
+// requires google.maps.importLibrary() instead. Result was: initMap never
+// fired, 6s safety-net timeout hit, bootLeaflet() ran, OSM tiles shown to
+// the user even with billing fully enabled. Without loading=async the
+// classic callback pattern works reliably.
 function initMap() { try { bootGmaps(); } catch (e) { bootLeaflet(); } }
 
 (function loadGoogleMaps() {

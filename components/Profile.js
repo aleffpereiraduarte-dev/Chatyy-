@@ -3444,22 +3444,14 @@ export default function Profile({
               icon: <IconGrid size={20} color={colors?.text} />,
               onPress: () => {
                 setAvatarActionOpen(false);
-                // Open story viewer on existing stories if any; otherwise
-                // synth an item from the avatar url so user sees the photo.
-                if ((stories?.length || 0) > 0) {
-                  setStoryViewer({ open: true, startIdx: 0 });
-                } else {
-                  const url = identity?.avatar_url || (identity?.email ? api.getAvatarUrlForEmail?.(identity.email) : '');
-                  if (url) {
-                    setHighlightViewer({
-                      open: true,
-                      title: identity?.name || '',
-                      items: [{ id: -1, type: 'image', media_url: url, created_at: new Date().toISOString() }],
-                      startIdx: 0,
-                      highlightId: null,
-                    });
-                  }
-                }
+                // Bug 7174: was routing into StoryViewer / HighlightViewer
+                // which surfaced story chrome (progress bar, "0 visualizações"
+                // footer, purple bg) — user just wants to see THEIR profile
+                // photo full-screen. Use AvatarLightbox: plain dark fullscreen
+                // photo with pinch-zoom and swipe-down to dismiss, same UX
+                // as when viewing another user's avatar (WAVE 95).
+                const url = identity?.avatar_url || (identity?.email ? api.getAvatarUrlForEmail?.(identity.email) : '');
+                if (url) setAvatarLightboxOpen(true);
               },
             },
           ].map((row) => (

@@ -3741,7 +3741,7 @@ export default function LiveBroadcastScreen() {
       {/* Top bar — TikTok-grade: avatar + LIVE pulsing badge + viewer pill +
           duration timer + connection-quality bars + close. Glass background. */}
       <View style={[styles.topBar, { paddingTop: insets.top + 10 }]}>
-        <View style={styles.topLeft}>
+        <View style={styles.topLeft} pointerEvents="box-none">
           {/* Host avatar with a red pulse ring — same red as the LIVE pill so
               the "we are live" rhythm reads as one beat. The ring sits behind
               the avatar (Animated.View at -3 inset) so the image itself stays
@@ -3800,10 +3800,16 @@ export default function LiveBroadcastScreen() {
                   was only bouncing via viewerBounce; formatCount inside
                   the component handles the "k"/"M" formatting. */}
               <AnimatedViewerCount count={viewerCount} style={styles.viewerCountText} />
-              <Text style={styles.viewerWatchText}>{t('live.watching') || 'assistindo'}</Text>
+              <Text style={styles.viewerWatchText} numberOfLines={1}>{t('live.watching') || 'assistindo'}</Text>
             </TouchableOpacity>
           </View>
         </View>
+        {/* Bug 7169 fix — explicit flexible spacer between left cluster and
+            right cluster so chips don't collide on narrow phones. Without
+            this, hostMeta (LIVE + viewer pill) and topRight (signal bars +
+            duration + close) were squeezing together and clipping at the
+            375pt iPhone width. */}
+        <View style={styles.topSpacer} pointerEvents="none" />
         <View style={styles.topRight}>
           <ConnectionBars quality={connQuality} t={t} />
           <View style={styles.durationPill}>
@@ -5616,11 +5622,22 @@ const styles = StyleSheet.create({
   topLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
+    // Bug 7169 — let the left cluster yield space to the right cluster
+    // (signal bars + duration + close) instead of pushing them off-screen.
+    flexShrink: 1,
+    minWidth: 0,
   },
   topCenter: {
     flex: 1,
     alignItems: 'center',
+  },
+  // Bug 7169 — soakable gap between left and right clusters. Without this,
+  // the row was hostAvatar|LIVE|viewerPill||signalBars|duration|close all
+  // packed wall-to-wall on 375pt phones, causing the right cluster to clip.
+  topSpacer: {
+    flex: 1,
+    minWidth: 8,
   },
   durationPill: {
     flexDirection: 'row',
@@ -5781,18 +5798,24 @@ const styles = StyleSheet.create({
   hostMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
+    // Bug 7169 — allow the LIVE+viewer pill row to compress (and truncate
+    // its child texts via numberOfLines={1}) rather than force the parent
+    // topLeft to exceed available width.
+    flexShrink: 1,
+    minWidth: 0,
   },
   liveBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 4,
     backgroundColor: LIVE_RED,
-    paddingHorizontal: 8,
+    paddingHorizontal: 7,
     paddingVertical: 2,
     borderRadius: 6,
     alignSelf: 'flex-start',
     position: 'relative',
+    flexShrink: 0,
     ...(Platform.OS === 'web' ? {
       boxShadow: '0 0 12px rgba(220,38,38,0.55)',
     } : {}),
