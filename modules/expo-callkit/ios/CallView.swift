@@ -419,7 +419,27 @@ struct CallView: View {
 
     // MARK: - Body
 
+    // [WAVE 153 2026-05-22] NUCLEAR FIX — CallView SwiftUI inteiro renderiza
+    // EmptyView. Crash em build 552/553/554 todos no _UIHostingView.layoutSubviews
+    // → DynamicBody.updateValue → metadata cache infinite loop. CallView (1795
+    // linhas, ZStacks aninhados, GeometryReaders, Pulse rings, glassmorphism)
+    // não converge no layout SwiftUI. WAVE 152 desabilitou só uma das 5 entradas
+    // de criação de CallViewController; CXStartCallAction continuava criando.
+    //
+    // WAVE 153 mata pela raiz: body = EmptyView. CallViewController + UIHostingController
+    // ainda são instanciados (pra não quebrar callsites) mas renderizam NADA.
+    // Zero SwiftUI tree = zero layout loop = zero crash.
+    //
+    // Resultado: durante call, app não mostra a UI rica (apenas CallKit nativa).
+    // Ligação FUNCIONA. Hangup FUNCIONA. Sem crash.
+    //
+    // TODO: reescrever CallView em UIKit puro (estilo Telegram, ~200 linhas)
+    // pra ter UI bonita SEM SwiftUI layout-loop. Próxima sessão.
     var body: some View {
+        Color.black.ignoresSafeArea()
+    }
+
+    private var _legacyBodyDisabled: some View {
         ZStack {
             // ── 1. Background (remote video when subscribed; gradient otherwise)
             backgroundLayer
