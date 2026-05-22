@@ -969,6 +969,41 @@ public class ExpoCallKitModule: Module {
         ud.set(calleeAvatar, forKey: "callAvatar:\(callId)")
       }
 
+      // [WAVE 145 2026-05-22 IMMEDIATE PRESENT — WhatsApp parity]
+      // User report: "no whatsapp chama o nativo diferente — quando atende
+      // abre o app com a UI". WhatsApp shows its rich call UI INSTANTLY when
+      // the user taps "Call", BEFORE CallKit's CXStartCallAction transaction
+      // is even queued. The CallKit transaction runs in parallel just for
+      // system integration (Recents, lock-screen pill, audio session
+      // ownership) — it never blocks the UI.
+      //
+      // Our old flow waited for: CXStartCallAction.fulfill() → token fetch
+      // (200-800ms) → presentOutgoingCallVC. During that window the user
+      // saw NO rich UI — just the JS chat screen + maybe iOS's basic call
+      // pill at the top. That's the "page não abre dentro do app" bug.
+      //
+      // Fix: present CallViewController RIGHT NOW with whatever token info
+      // we already have (params.lkUrl + params.lkToken if JS prefetched, or
+      // nil/nil to let the VC fetch async on its own). CallKit transaction
+      // queues immediately after but doesn't block UI rendering.
+      let immediateParams = OutgoingCallParams(
+        callId: callId,
+        calleeEmail: calleeEmail,
+        calleeName: calleeName,
+        calleeAvatar: calleeAvatar.isEmpty ? nil : calleeAvatar,
+        callerName: callerName,
+        isVideo: isVideo,
+        roomName: roomName.isEmpty ? callId : roomName,
+        conversationId: conversationId,
+        lkUrl: lkUrl,
+        lkToken: lkToken,
+        suppressVCPresent: false
+      )
+      DispatchQueue.main.async {
+        NSLog("[ExpoCallKit WAVE 145] immediate present pre-CXStartCallAction — callId=\(callId)")
+        ExpoCallKitModule.presentOutgoingCallVC(params: immediateParams, lkUrl: lkUrl, lkToken: lkToken)
+      }
+
       // [2026-05-21] Donate an INStartCallIntent so iOS records this outgoing
       // call in Siri / Recents / "Suggestions" surfaces. Without donation
       // the system can't surface a "Call <name>" shortcut and the call won't
