@@ -9,6 +9,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.graphics.Shader
+import android.graphics.RenderEffect as AndroidRenderEffect
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
@@ -21,6 +23,24 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+// [WAVE 142 GPT-5.5-pro] Snippet #1 — Compose imports for blur/glass/edge-to-edge UI polish.
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.unit.Dp
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -292,6 +312,16 @@ class CallActivity : ComponentActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+
+    // [WAVE 142 GPT-5.5-pro] Parte 5 — Edge-to-edge so the gradient/blur paints
+    // under the status + navigation bars. Compose pulls real inset paddings via
+    // WindowInsets.statusBars / navigationBars in the Column above so content
+    // still avoids the cutout. Light-status-bar appearance OFF because the
+    // surface is always dark.
+    WindowCompat.setDecorFitsSystemWindows(window, false)
+    window.statusBarColor = android.graphics.Color.TRANSPARENT
+    window.navigationBarColor = android.graphics.Color.TRANSPARENT
+    WindowCompat.getInsetsController(window, window.decorView)?.isAppearanceLightStatusBars = false
 
     // Show over lockscreen + keep screen on while connecting / in call.
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
@@ -1490,6 +1520,17 @@ class CallActivity : ComponentActivity() {
           state.hasRemoteVideo = true
           // 1:1 path: attach to the single remoteRenderer.
           remoteRenderer?.let { rv -> track.addRenderer(rv) }
+          // [WAVE 142 GPT-5.5-pro] Snippet #6 — flip remoteFirstFrame on a
+          // ~180ms post-subscribe delay so the Crossfade audio→video kicks
+          // in once the first I-frame has decoded. The LK Android Room API
+          // exposed in this codebase wraps SurfaceViewRenderer.init with a
+          // null RendererEvents, so we approximate "first frame rendered"
+          // via the addRenderer side-effect timing. Mirrors the iOS
+          // session.remoteVideoFirstFrame fallback in CallView.swift line 150.
+          lifecycleScope.launch {
+            delay(180)
+            state.remoteFirstFrame = true
+          }
           // [Wave C-2] Also wire this track into the group grid tile.
           // Allocate a dedicated SurfaceViewRenderer for this participant
           // and hand it to the tile entry. If the participant entry doesn't
@@ -2010,6 +2051,14 @@ class CallSessionStateAndroid {
   // ParticipantDisconnected). When count >= 2, CallScreen renders
   // ParticipantGridView instead of the 1:1 remote-video background.
   val groupParticipants: SnapshotStateList<GroupParticipantAndroid> = mutableStateListOf()
+
+  // [WAVE 142 GPT-5.5-pro] Snippet #2 — First-frame + local active-speaker
+  // fields. `remoteFirstFrame` drives the Crossfade between the audio avatar
+  // blur background and the live remote video; `localIsActiveSpeaker` +
+  // `localSpeakerLevel` drive the WhatsApp-green glow ring on the PiP tile.
+  var remoteFirstFrame by mutableStateOf(false)
+  var localIsActiveSpeaker by mutableStateOf(false)
+  var localSpeakerLevel by mutableStateOf(0f)
 }
 
 /** One floating emoji burst. The activity scope removes it after ~3s. */
@@ -2043,6 +2092,67 @@ private val HangupColor = Color(0xFFE5_39_35)
 private val SecondaryText = Color(0xFF86_96_A0)
 private val SpeakerRing = Color(0xFF2E_CC_71)
 private val ReconnectBanner = Color(0xFFF1_C4_0F)
+
+// [WAVE 142 GPT-5.5-pro] Snippet #3 — Deterministic gradient palette for the
+// per-caller avatar. FNV-1a hash on the caller identity (email | name) makes
+// the same person always pick the same gradient across calls; mirrors the
+// iOS AvatarPalette helper used by CallView.swift line-for-line.
+private val AvatarPalettes = listOf(
+  listOf(Color(0xFF0EA5E9), Color(0xFF8B5CF6)),
+  listOf(Color(0xFF22C55E), Color(0xFF14B8A6)),
+  listOf(Color(0xFFF97316), Color(0xFFEC4899)),
+  listOf(Color(0xFF6366F1), Color(0xFF06B6D4)),
+  listOf(Color(0xFF25D366), Color(0xFF128C7E)),
+)
+
+private fun stableIndex(key: String): Int {
+  var h = 2166136261L
+  key.lowercase().forEach {
+    h = h xor it.code.toLong()
+    h = (h * 16777619L) and 0xffffffffL
+  }
+  return (h % AvatarPalettes.size).toInt()
+}
+
+private fun avatarBrush(key: String): Brush =
+  Brush.linearGradient(AvatarPalettes[stableIndex(key)])
+
+// [WAVE 142 GPT-5.5-pro] Snippet #4 — Blurred avatar background for the audio
+// call surface. Renders the gradient base, optional decoded photo at 1.16x +
+// blur 38dp + 0.80 alpha, then a vertical dim gradient on top so the foreground
+// text stays legible. Mirrors AvatarBlurBackground in CallView.swift.
+@Composable
+private fun AudioAvatarBlurBackground(state: CallSessionStateAndroid) {
+  val key = state.callerEmail.ifEmpty { state.callerName }
+  Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().background(avatarBrush(key)))
+
+    state.callerAvatarBitmap?.let { bitmap ->
+      Image(
+        bitmap = bitmap.asImageBitmap(),
+        contentDescription = null,
+        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+        modifier = Modifier
+          .fillMaxSize()
+          .scale(1.16f)
+          .blur(38.dp)
+          .alpha(0.80f),
+      )
+    }
+
+    Box(
+      Modifier.fillMaxSize().background(
+        Brush.verticalGradient(
+          listOf(
+            Color.Black.copy(alpha = 0.10f),
+            Color.Black.copy(alpha = 0.45f),
+            Color.Black.copy(alpha = 0.82f),
+          )
+        )
+      )
+    )
+  }
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // Root composable
@@ -2093,6 +2203,26 @@ private fun CallScreen(
     }
   }
 
+  // [WAVE 142 GPT-5.5-pro] Snippet #12 — Connect celebration. When the call
+  // transitions to "Conectado" we play a long-press haptic and bounce the
+  // main Column down→up via a Spring(MediumBouncy / MediumLow) Animatable.
+  // Mirrors ConnectedCelebrationModifier in CallView.swift line 434.
+  val haptic = LocalHapticFeedback.current
+  val connectedScale = remember { Animatable(1f) }
+  LaunchedEffect(state.status) {
+    if (state.status == "Conectado") {
+      try { haptic.performHapticFeedback(HapticFeedbackType.LongPress) } catch (_: Throwable) {}
+      connectedScale.snapTo(0.9f)
+      connectedScale.animateTo(
+        targetValue = 1f,
+        animationSpec = spring(
+          dampingRatio = Spring.DampingRatioMediumBouncy,
+          stiffness = Spring.StiffnessMediumLow,
+        ),
+      )
+    }
+  }
+
   Box(
     modifier = Modifier
       .fillMaxSize()
@@ -2100,6 +2230,38 @@ private fun CallScreen(
         Brush.verticalGradient(colors = listOf(BgTop, BgBottom))
       )
   ) {
+    // [WAVE 142 GPT-5.5-pro] Snippet #5 — Audio↔Video Crossfade. The audio
+    // blur avatar background is the default surface; once the remote video
+    // produces its first frame we crossfade to the live renderer. Falls back
+    // to the dark gradient (already painted on the parent Box above) if the
+    // group grid is taking over below.
+    if (state.groupParticipants.size < 2) {
+      Crossfade(
+        targetState = state.isVideo && state.hasRemoteVideo && state.remoteFirstFrame && remoteRenderer != null,
+        animationSpec = tween(320),
+        label = "remoteVideoCrossfade",
+      ) { showVideo ->
+        if (showVideo && remoteRenderer != null) {
+          val remote = remoteRenderer
+          Box(Modifier.fillMaxSize()) {
+            AndroidView(
+              factory = { remote },
+              modifier = Modifier.fillMaxSize(),
+            )
+            Box(
+              Modifier.fillMaxSize().background(
+                Brush.verticalGradient(
+                  listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))
+                )
+              )
+            )
+          }
+        } else {
+          AudioAvatarBlurBackground(state)
+        }
+      }
+    }
+
     // [Wave C-2] MULTI-PARTICIPANT PATH ──────────────────────────────────────
     // When the room has ≥2 remote participants, render a grid of tiles
     // instead of the 1:1 full-bleed remote video. The 1:1 code path below
@@ -2123,28 +2285,11 @@ private fun CallScreen(
             )
           )
       )
-    } else {
-      // 1. Remote video fills the background once subscribed. Audio calls
-      //    just keep the gradient.
-      if (state.isVideo && state.hasRemoteVideo && remoteRenderer != null) {
-        val remote = remoteRenderer
-        AndroidView(
-          factory = { remote },
-          modifier = Modifier.fillMaxSize(),
-        )
-        // Dim overlay so action bar / top bar stay readable on bright frames.
-        Box(
-          modifier = Modifier
-            .fillMaxSize()
-            .background(
-              Brush.verticalGradient(
-                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.55f))
-              )
-            )
-        )
-      }
     }
     // ── END Wave C-2 multi-participant split ─────────────────────────────────
+    // [WAVE 142 GPT-5.5-pro] Snippet #5 — Remote-video AndroidView moved up
+    // into the Crossfade above; the legacy `else { AndroidView(...) }` was
+    // removed to avoid a double-rendered SurfaceViewRenderer.
 
     // 2. Reconnect banner (slides from the top under the status bar).
     AnimatedVisibility(
@@ -2175,8 +2320,18 @@ private fun CallScreen(
     }
 
     // 3. Main column: top bar + avatar + spacer + bottom controls.
-    Column(modifier = Modifier.fillMaxSize()) {
-      Spacer(Modifier.height(44.dp))
+    // [WAVE 142 GPT-5.5-pro] Snippet #12 — Apply the connect-celebration
+    // scale on the whole column and replace the hardcoded 44dp status-bar
+    // Spacer with a real `windowInsetsTopHeight(WindowInsets.statusBars)`.
+    // Bottom action bar now uses `navigationBarsPadding()` so the hangup
+    // button never hides behind the gesture pill.
+    Column(
+      modifier = Modifier
+        .fillMaxSize()
+        .scale(connectedScale.value)
+    ) {
+      Spacer(Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+      Spacer(Modifier.height(8.dp))
       TopBar(
         state = state,
         onMinimize = onMinimize,
@@ -2202,35 +2357,46 @@ private fun CallScreen(
 
       Spacer(Modifier.weight(1f))
 
-      BottomActionBar(
-        state = state,
-        onToggleMute = onToggleMute,
-        onToggleCam = onToggleCam,
-        onToggleSpeaker = onToggleSpeaker,
-        onPickAudioOutput = {
-          // Refresh the device list right before showing so we reflect a
-          // headset that just got plugged in / paired.
-          audioDevices = enumerateAudioOutputs(ctx)
-          showAudioPicker = true
-        },
-        onHangup = onHangup,
-        onToggleHand = onToggleHand,
-        onShowReactions = { showReactions = !showReactions },
-        onToggleNoiseSuppression = onToggleNoiseSuppression,
-        onCycleBackground = onCycleBackground,
-        onStartScreenshare = onStartScreenshare,
-        onShowKeypad = {
-          showKeypad = true
-          dtmfBuffer = ""
-        },
-      )
-      Spacer(Modifier.height(36.dp))
+      // [WAVE 142 GPT-5.5-pro] Snippet #12 — wrap the bottom bar so the
+      // navigation-bar inset gets applied as bottom padding instead of a
+      // hardcoded 36dp Spacer that under-/over-shoots on gesture-pill devices.
+      Box(modifier = Modifier.navigationBarsPadding()) {
+        BottomActionBar(
+          state = state,
+          onToggleMute = onToggleMute,
+          onToggleCam = onToggleCam,
+          onToggleSpeaker = onToggleSpeaker,
+          onPickAudioOutput = {
+            // Refresh the device list right before showing so we reflect a
+            // headset that just got plugged in / paired.
+            audioDevices = enumerateAudioOutputs(ctx)
+            showAudioPicker = true
+          },
+          onHangup = onHangup,
+          onToggleHand = onToggleHand,
+          onShowReactions = { showReactions = !showReactions },
+          onToggleNoiseSuppression = onToggleNoiseSuppression,
+          onCycleBackground = onCycleBackground,
+          onStartScreenshare = onStartScreenshare,
+          onShowKeypad = {
+            showKeypad = true
+            dtmfBuffer = ""
+          },
+        )
+      }
+      Spacer(Modifier.height(12.dp))
     }
 
     // 4. Local preview PiP (top-right, draggable).
     if (state.isVideo && state.isCameraOn && localRenderer != null && state.hasLocalVideo && !state.isInPip) {
       val local = localRenderer
-      LocalPreviewTile(localRenderer = local)
+      // [WAVE 142 GPT-5.5-pro] Snippet #11 — propagate localIsActiveSpeaker
+      // + localSpeakerLevel so the tile glow lights up while the user talks.
+      LocalPreviewTile(
+        localRenderer = local,
+        isActiveSpeaker = state.localIsActiveSpeaker,
+        speakerLevel = state.localSpeakerLevel,
+      )
     }
 
     // 5. Floating emoji bursts.
@@ -2417,6 +2583,29 @@ private fun ConnectionQualityBars(quality: Int) {
 // Avatar block (with pulse rings + breathing speaker ring)
 // ══════════════════════════════════════════════════════════════════════════
 
+// [WAVE 142 GPT-5.5-pro] Snippet #9 — Animated "Chamando…" dots that step on
+// a 420ms cadence. Mirrors AnimatedDotsText in CallView.swift line 200.
+@Composable
+private fun AnimatedDotsText(
+  base: String,
+  color: Color,
+  fontSize: androidx.compose.ui.unit.TextUnit,
+) {
+  var dots by remember { mutableStateOf(0) }
+  LaunchedEffect(base) {
+    while (true) {
+      delay(420)
+      dots = (dots + 1) % 4
+    }
+  }
+  Text(
+    text = base + ".".repeat(dots).padEnd(3, ' '),
+    color = color,
+    fontSize = fontSize,
+    fontWeight = FontWeight.Medium,
+  )
+}
+
 @Composable
 private fun AvatarBlock(state: CallSessionStateAndroid, elapsedSeconds: Int) {
   Column(
@@ -2430,8 +2619,8 @@ private fun AvatarBlock(state: CallSessionStateAndroid, elapsedSeconds: Int) {
       // Pulse rings (3 staggered) — only while we're not yet connected.
       if (state.status != "Conectado") {
         PulseRing(delayMs = 0)
-        PulseRing(delayMs = 200)
-        PulseRing(delayMs = 400)
+        PulseRing(delayMs = 600)
+        PulseRing(delayMs = 1200)
       }
 
       // Breathing green active-speaker ring. Scale tracks peerSpeakerLevel
@@ -2454,21 +2643,33 @@ private fun AvatarBlock(state: CallSessionStateAndroid, elapsedSeconds: Int) {
 
     Spacer(Modifier.height(16.dp))
 
+    // [WAVE 142 GPT-5.5-pro] Snippet #9 — typography bump: 28sp SemiBold for
+    // the caller name; AnimatedDotsText replaces the static "Conectando…"
+    // string when we haven't picked up yet.
     Text(
       text = state.callerName.ifEmpty { state.callerEmail.ifEmpty { "Chamada" } },
       color = Color.White,
-      fontSize = 26.sp,
-      fontWeight = FontWeight.Normal,
+      fontSize = 28.sp,
+      fontWeight = FontWeight.SemiBold,
       maxLines = 1,
     )
 
     Spacer(Modifier.height(8.dp))
 
-    Text(
-      text = statusLine(state.status, elapsedSeconds),
-      color = SecondaryText,
-      fontSize = 16.sp,
-    )
+    if (state.status == "Conectado") {
+      Text(
+        text = statusLine(state.status, elapsedSeconds),
+        color = SecondaryText,
+        fontSize = 16.sp,
+        fontWeight = FontWeight.Medium,
+      )
+    } else {
+      AnimatedDotsText(
+        base = state.status.removeSuffix("…").removeSuffix("..."),
+        color = SecondaryText,
+        fontSize = 16.sp,
+      )
+    }
   }
 }
 
@@ -2492,49 +2693,44 @@ private fun statusLine(status: String, elapsedSeconds: Int): String {
   return status
 }
 
+// [WAVE 142 GPT-5.5-pro] Snippet #7 — Replace PulseRing with staggered tween.
+// Per-instance delayMs picks an independent phase on the infinite tween so the
+// 3 rings drawn from AvatarBlock land at small/opaque, mid-expansion, and
+// near-faded simultaneously — matching the 3-ring waterfall pattern from
+// CallView.swift's TimelineView pulse. 1800ms cycle, FastOutSlowInEasing
+// produces a natural "breath" instead of the old linear ease.
 @Composable
 private fun PulseRing(delayMs: Int) {
-  // Three concentric rings spawned with staggered delays — at any moment
-  // one is small/opaque, one mid-expansion, one almost faded.
-  var started by remember { mutableStateOf(false) }
-  LaunchedEffect(Unit) {
-    delay(delayMs.toLong())
-    started = true
-  }
-  val transition = rememberInfiniteTransition(label = "pulse")
+  val transition = rememberInfiniteTransition(label = "pulse-$delayMs")
   val scale by transition.animateFloat(
-    initialValue = 0.7f,
-    targetValue = 1.6f,
+    initialValue = 0.76f,
+    targetValue = 1.42f,
     animationSpec = infiniteRepeatable(
-      animation = tween(durationMillis = 1800, easing = LinearEasing),
+      animation = tween(1800, delayMillis = delayMs, easing = FastOutSlowInEasing),
       repeatMode = RepeatMode.Restart,
     ),
     label = "pulseScale",
   )
   val alphaAnim by transition.animateFloat(
-    initialValue = 0.5f,
+    initialValue = 0.44f,
     targetValue = 0f,
     animationSpec = infiniteRepeatable(
-      animation = tween(durationMillis = 1800, easing = LinearEasing),
+      animation = tween(1800, delayMillis = delayMs, easing = LinearEasing),
       repeatMode = RepeatMode.Restart,
     ),
     label = "pulseAlpha",
   )
-  if (started) {
-    Box(
-      modifier = Modifier
-        .size(180.dp)
-        .scale(scale)
-        .alpha(alphaAnim)
-    ) {
-      Canvas(modifier = Modifier.fillMaxSize()) {
-        drawCircle(
-          color = Color.White,
-          radius = size.minDimension / 2f,
-          style = Stroke(width = 4f),
-        )
-      }
-    }
+
+  Canvas(
+    modifier = Modifier
+      .size(210.dp)
+      .scale(scale)
+      .alpha(alphaAnim)
+  ) {
+    drawCircle(
+      color = Color.White,
+      style = Stroke(width = 2.dp.toPx()),
+    )
   }
 }
 
@@ -2674,37 +2870,36 @@ private fun ParticipantTile(participant: GroupParticipantAndroid) {
   }
 }
 
+// [WAVE 142 GPT-5.5-pro] Snippet #8 — AvatarCircle with deterministic gradient
+// background (via avatarBrush) replaces the flat ChipColor fill. Mirrors
+// PolishedAvatarCircle in CallView.swift line 220. Initial sits behind the
+// optional decoded photo so the letter is visible during the ~200-500ms
+// bitmap decode window.
 @Composable
 private fun AvatarCircle(name: String, bitmap: android.graphics.Bitmap? = null) {
-  val initial = name.trim().firstOrNull()?.uppercase() ?: "?"
+  val initial = name.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "?"
   Box(
     modifier = Modifier
       .size(180.dp)
       .clip(CircleShape)
-      .background(ChipColor),
+      .background(avatarBrush(name)),
     contentAlignment = Alignment.Center,
   ) {
-    // Initial letter sits behind the photo so it's visible during the
-    // ~200-500ms bitmap decode window — and remains as the fallback when
-    // no URL was supplied.
     Text(
       text = initial,
       color = Color.White,
       fontSize = 72.sp,
-      fontWeight = FontWeight.Normal,
+      fontWeight = FontWeight.SemiBold,
     )
-    // [#1176 polish, 2026-05-18] Real photo via androidx.compose.foundation
-    // Image. ImageBitmap.asImageBitmap() wraps the existing Bitmap without
-    // copy. ContentScale.Crop center-crops so the circle clip is filled
-    // edge-to-edge with no letterboxing.
+
     if (bitmap != null) {
-      androidx.compose.foundation.Image(
+      Image(
         bitmap = bitmap.asImageBitmap(),
         contentDescription = null,
+        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
         modifier = Modifier
           .size(180.dp)
           .clip(CircleShape),
-        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
       )
     }
   }
@@ -2714,8 +2909,16 @@ private fun AvatarCircle(name: String, bitmap: android.graphics.Bitmap? = null) 
 // Local preview PiP — draggable top-right tile
 // ══════════════════════════════════════════════════════════════════════════
 
+// [WAVE 142 GPT-5.5-pro] Snippet #11 — Local PiP tile + active-speaker glow.
+// When the local participant is the dominant speaker we paint 3 concentric
+// rounded-rect strokes in WhatsApp green (#25D366) that breath on a 900ms
+// reverse tween and scale alpha by the latest speakerLevel (0..1).
 @Composable
-private fun LocalPreviewTile(localRenderer: SurfaceViewRenderer) {
+private fun LocalPreviewTile(
+  localRenderer: SurfaceViewRenderer,
+  isActiveSpeaker: Boolean,
+  speakerLevel: Float,
+) {
   val density = LocalDensity.current
   val baseRightDp = 16.dp
   val baseTopDp = 72.dp
@@ -2761,6 +2964,31 @@ private fun LocalPreviewTile(localRenderer: SurfaceViewRenderer) {
         factory = { localRenderer },
         modifier = Modifier.fillMaxSize(),
       )
+
+      // [WAVE 142 GPT-5.5-pro] Snippet #11 — WhatsApp-green active-speaker
+      // glow ring layered on top of the renderer.
+      if (isActiveSpeaker) {
+        val transition = rememberInfiniteTransition(label = "localSpeakerGlow")
+        val breath by transition.animateFloat(
+          initialValue = 0.55f,
+          targetValue = 1f,
+          animationSpec = infiniteRepeatable(
+            animation = tween(900),
+            repeatMode = RepeatMode.Reverse,
+          ),
+          label = "breath",
+        )
+        Canvas(Modifier.matchParentSize()) {
+          val a = (0.30f + speakerLevel.coerceIn(0f, 1f) * 0.55f) * breath
+          repeat(3) { i ->
+            drawRoundRect(
+              color = Color(0xFF25D366).copy(alpha = a / (i + 1)),
+              style = Stroke((2 + i * 4).dp.toPx()),
+              cornerRadius = androidx.compose.ui.geometry.CornerRadius(12.dp.toPx()),
+            )
+          }
+        }
+      }
     }
   }
 }
@@ -2930,9 +3158,44 @@ private fun ActionPill(
   }
 }
 
+// [WAVE 142 GPT-5.5-pro] Snippet #10 — Glassmorphism disc. RenderEffect.createBlurEffect
+// gives an iOS-grade frosted-glass background on API 31+; on older builds we just
+// skip the blur node and fall back to the gradient + border combo (still legible).
+@Composable
+private fun GlassDisc(tint: Color, modifier: Modifier = Modifier) {
+  val blurModifier =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+      Modifier.graphicsLayer {
+        renderEffect = AndroidRenderEffect
+          .createBlurEffect(18f, 18f, Shader.TileMode.CLAMP)
+          .asComposeRenderEffect()
+      }
+    } else Modifier
+
+  Box(
+    modifier
+      .then(blurModifier)
+      .clip(CircleShape)
+      .background(
+        Brush.verticalGradient(
+          listOf(
+            Color.White.copy(alpha = 0.26f),
+            tint.copy(alpha = 0.50f),
+            Color.White.copy(alpha = 0.08f),
+          )
+        )
+      )
+      .border(1.dp, Color.White.copy(alpha = 0.22f), CircleShape)
+  )
+}
+
+// [WAVE 142 GPT-5.5-pro] Snippet #10 — CircleControlButton rebuilt on top of
+// the GlassDisc helper. The `background` param now tints the glass instead
+// of being a solid fill; selected states (mute on, speaker on) read the same
+// "Color.White" / "ChipColor" pair the rest of the action bar passes.
 @Composable
 private fun CircleControlButton(
-  size: androidx.compose.ui.unit.Dp,
+  size: Dp,
   background: Color,
   foreground: Color,
   icon: androidx.compose.ui.graphics.vector.ImageVector,
@@ -2943,15 +3206,15 @@ private fun CircleControlButton(
     modifier = Modifier
       .size(size)
       .clip(CircleShape)
-      .background(background)
       .clickable { onClick() },
     contentAlignment = Alignment.Center,
   ) {
+    GlassDisc(tint = background, modifier = Modifier.matchParentSize())
     Icon(
       imageVector = icon,
       contentDescription = contentDescription,
       tint = foreground,
-      modifier = Modifier.size(size * 0.42f),
+      modifier = Modifier.size(size * 0.38f),
     )
   }
 }

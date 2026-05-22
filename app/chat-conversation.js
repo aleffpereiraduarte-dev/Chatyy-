@@ -16173,10 +16173,7 @@ export default function ChatConversationScreen() {
         isVideo: !!videoEnabled,
         conversationId,
         onWebFallback: _jsRoute,
-        // [WhatsApp-parity hybrid restore 2026-05-22] App foreground on
-        // mobile → rich JS /call.js (same route as web). voipNative gates
-        // this on AppState=active; background/killed still goes native.
-        onForegroundJsRoute: _jsRoute,
+        // [WAVE 141] WhatsApp arch: native owns call UI, no JS route foreground.
       });
       const { native, error: nativeErr } = callResult || {};
       // native=false is expected when foreground mobile takes the JS path

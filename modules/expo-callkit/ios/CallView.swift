@@ -29,6 +29,11 @@ import UIKit
 import Combine
 import LiveKitClient
 import AVKit
+// [WAVE 142 GPT-5.5-pro] Snippet 1 — explicit CallKit + AVFoundation imports
+// so CallSessionObserver bindings + UINotificationFeedbackGenerator celebrate
+// path resolve without leaning on AVKit's transitive AVFoundation export.
+import CallKit
+import AVFoundation
 
 // MARK: - Floating reaction model
 
@@ -41,6 +46,247 @@ struct CallFloatingReaction: Identifiable, Equatable {
     let spawnedAt: Date
     /// Horizontal offset from screen center in points, picked at spawn time.
     let xOffset: CGFloat
+}
+
+// MARK: - WAVE 142 GPT-5.5-pro helpers (deterministic avatar palette + blur bg)
+
+// [WAVE 142 GPT-5.5-pro] Snippet 4 — `Color(rgb:)` so the palette table reads
+// like a CSS / Android counterpart (we already use the same hex codes in the
+// Compose CallActivity). Keeps the AvatarPalette tuples short and inline.
+private extension Color {
+    init(rgb: UInt32) {
+        self.init(
+            red: Double((rgb >> 16) & 0xff) / 255,
+            green: Double((rgb >> 8) & 0xff) / 255,
+            blue: Double(rgb & 0xff) / 255
+        )
+    }
+}
+
+// [WAVE 142 GPT-5.5-pro] Snippet 4 — deterministic avatar palette. Same FNV
+// hash that the Compose / web versions use so the same caller picks the same
+// gradient across platforms. Five WhatsApp-y palettes hand-picked to read
+// well over the dark glassmorphism overlay.
+private struct AvatarPalette {
+    static let palettes: [[Color]] = [
+        [Color(rgb: 0x0EA5E9), Color(rgb: 0x8B5CF6)],
+        [Color(rgb: 0x22C55E), Color(rgb: 0x14B8A6)],
+        [Color(rgb: 0xF97316), Color(rgb: 0xEC4899)],
+        [Color(rgb: 0x6366F1), Color(rgb: 0x06B6D4)],
+        [Color(rgb: 0x25D366), Color(rgb: 0x128C7E)]
+    ]
+
+    static func colors(for key: String) -> [Color] {
+        var hash: UInt32 = 2166136261
+        for b in key.lowercased().utf8 {
+            hash ^= UInt32(b)
+            hash = hash &* 16777619
+        }
+        return palettes[Int(hash % UInt32(palettes.count))]
+    }
+}
+
+// [WAVE 142 GPT-5.5-pro] Snippet 4 — full-bleed avatar-blur background used by
+// `backgroundLayer` while we wait for the remote VideoTrack first frame.
+// Layers: deterministic gradient, scaled+blurred avatar bitmap (if any), a
+// thin glass material, then a top→bottom black gradient so the avatar/status
+// stay readable. Crossfades to/from the remote video via opacity in
+// `backgroundLayer`.
+private struct AvatarBlurBackground: View {
+    let name: String
+    let email: String
+    let avatarUrl: String
+
+    var key: String { email.isEmpty ? name : email }
+
+    var body: some View {
+        ZStack {
+            LinearGradient(
+                colors: AvatarPalette.colors(for: key),
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            if !avatarUrl.isEmpty, let url = URL(string: avatarUrl) {
+                AsyncImage(url: url, transaction: Transaction(animation: .easeInOut(duration: 0.25))) { phase in
+                    if case .success(let image) = phase {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .scaleEffect(1.16)
+                            .blur(radius: 44, opaque: true)
+                            .opacity(0.78)
+                    }
+                }
+            }
+
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(0.18)
+
+            LinearGradient(
+                colors: [
+                    .black.opacity(0.10),
+                    .black.opacity(0.45),
+                    .black.opacity(0.78)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+        .ignoresSafeArea()
+    }
+}
+
+// [WAVE 142 GPT-5.5-pro] Snippet 6 — three concentric pulse rings staggered
+// by 0.34s. Rendered via TimelineView so we don't need three separate
+// `withAnimation(.repeatForever)` blocks competing on the view's runloop.
+// Auto-removed when `active == false`.
+private struct ThreePulseRings: View {
+    let active: Bool
+    var baseSize: CGFloat = 182
+
+    var body: some View {
+        if active {
+            TimelineView(.animation) { context in
+                ZStack {
+                    ForEach(0..<3, id: \.self) { i in
+                        let p = phase(time: context.date.timeIntervalSinceReferenceDate, index: i)
+                        Circle()
+                            .stroke(Color.white.opacity(Double(0.42 * (1 - p))), lineWidth: 2)
+                            .frame(
+                                width: baseSize * (0.78 + 0.64 * p),
+                                height: baseSize * (0.78 + 0.64 * p)
+                            )
+                    }
+                }
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func phase(time: TimeInterval, index: Int) -> CGFloat {
+        let period: Double = 1.8
+        let shifted = time - Double(index) * 0.34
+        let mod = shifted - floor(shifted / period) * period
+        return CGFloat(mod / period)
+    }
+}
+
+// [WAVE 142 GPT-5.5-pro] Snippet 7 — animated `...` status dots, cycling
+// every 0.42s. Used by `subtitleView` while the call is still ringing /
+// connecting so the status looks alive without animating the whole label.
+private struct AnimatedDotsText: View {
+    let base: String
+    let color: Color
+    let font: Font
+    @State private var dots = 0
+
+    var body: some View {
+        Text(base + String(repeating: ".", count: dots).padding(toLength: 3, withPad: " ", startingAt: 0))
+            .font(font)
+            .foregroundColor(color)
+            .monospacedDigit()
+            .onReceive(Timer.publish(every: 0.42, on: .main, in: .common).autoconnect()) { _ in
+                dots = (dots + 1) % 4
+            }
+    }
+}
+
+// [WAVE 142 GPT-5.5-pro] Snippet 8 — 132pt avatar circle with deterministic
+// gradient fill + initial letter + AsyncImage overlay. Replaces the inline
+// stack inside `avatarBlock` so the new pulse rings + speaker glow can
+// compose around it cleanly.
+private struct PolishedAvatarCircle: View {
+    let name: String
+    let email: String
+    let avatarUrl: String
+
+    private var key: String { email.isEmpty ? name : email }
+    private var initial: String {
+        String((name.isEmpty ? email : name).trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
+    }
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(
+                    LinearGradient(
+                        colors: AvatarPalette.colors(for: key),
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+                .shadow(color: .black.opacity(0.5), radius: 16, x: 0, y: 8)
+
+            Text(initial.isEmpty ? "?" : initial)
+                .font(.system(size: 54, weight: .semibold, design: .rounded))
+                .foregroundColor(.white)
+
+            if !avatarUrl.isEmpty, let url = URL(string: avatarUrl) {
+                AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.2))) { phase in
+                    if case .success(let image) = phase {
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .clipShape(Circle())
+                            .transition(.opacity)
+                    }
+                }
+            }
+        }
+        .frame(width: 132, height: 132)
+    }
+}
+
+// [WAVE 142 GPT-5.5-pro] Snippet 13 — pulsing green ring overlaid on the
+// local PiP preview tile while the local user is the active speaker. Breathes
+// at 3.2 Hz, modulated by `level` (0..1 — the LiveKit speaking metric).
+private struct ActiveSpeakerGlowRing: View {
+    let active: Bool
+    let level: CGFloat
+
+    var body: some View {
+        if active {
+            TimelineView(.animation) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                let breath = 0.65 + 0.35 * CGFloat(sin(t * 3.2) * 0.5 + 0.5)
+                let alpha = min(1, 0.35 + level * 0.55) * breath
+
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(Color(rgb: 0x25D366).opacity(alpha), lineWidth: 3)
+                    .shadow(color: Color(rgb: 0x25D366).opacity(alpha), radius: 14)
+            }
+            .allowsHitTesting(false)
+        }
+    }
+}
+
+// [WAVE 142 GPT-5.5-pro] Snippet 14 — connect-celebration modifier. Plays a
+// `.success` haptic and a 0.42/0.68 spring scale bounce the first time the
+// status flips to "Conectado". Tracks `lastStatus` so re-renders from other
+// state changes don't re-fire the celebration.
+private struct ConnectedCelebrationModifier: ViewModifier {
+    let status: String
+    @State private var scale: CGFloat = 1
+    @State private var lastStatus: String = ""
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(scale)
+            .onChange(of: status) { newValue in
+                guard newValue == "Conectado", lastStatus != "Conectado" else {
+                    lastStatus = newValue
+                    return
+                }
+                lastStatus = newValue
+                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                scale = 0.9
+                withAnimation(.spring(response: 0.42, dampingFraction: 0.68)) {
+                    scale = 1
+                }
+            }
+    }
 }
 
 // MARK: - Top-level call view
@@ -122,6 +368,13 @@ struct CallView: View {
     /// of the initial-letter placeholder.
     @State private var avatarUrl: String = ""
 
+    // [WAVE 142 GPT-5.5-pro] Snippet 3 — bind the shared CallSessionObserver
+    // so we mirror CallKit-side signals (mute, status, duration) without
+    // requiring a JS round trip. The VC's `session` remains source of truth
+    // for LK Room state; this observer just makes the SwiftUI surface feel
+    // instant when the user mutes from the system call bar.
+    @ObservedObject private var callKit = CallSessionObserver.shared
+
     // Palette matches the JS /call.js + Android CallActivity. Pulled from the
     // WhatsApp dark-call screen — same hex values across iOS/Android so the
     // experience is consistent across platforms.
@@ -142,7 +395,8 @@ struct CallView: View {
             // ── 2. Subtle glassmorphism overlay so the avatar / status text
             //      stay readable even when the remote feed is bright. Skipped
             //      when there's no video so the dark color shows through.
-            if !hasVideo || session.remoteVideoTrack == nil {
+            // [WAVE 142 GPT-5.5-pro] Snippet 10 — gate on first-frame too.
+            if !hasVideo || !session.remoteVideoFirstFrame {
                 LinearGradient(
                     colors: [
                         Color.black.opacity(0.0),
@@ -165,8 +419,14 @@ struct CallView: View {
                 Spacer().frame(height: 24)
 
                 // 1:1 layout: show avatar block when no remote video.
-                if !hasVideo || session.remoteVideoTrack == nil {
+                // [WAVE 142 GPT-5.5-pro] Snippet 10 — gate on
+                // `remoteVideoFirstFrame` (not just track presence) so the
+                // crossfade ducks the avatar AFTER the first decoded frame
+                // arrives. `.transition(.opacity + scale)` softens the swap.
+                if !hasVideo || !session.remoteVideoFirstFrame {
                     avatarBlock
+                        .transition(.opacity.combined(with: .scale(scale: 0.985)))
+                        .animation(.easeInOut(duration: 0.30), value: session.remoteVideoFirstFrame)
                 }
 
                 Spacer()
@@ -241,7 +501,28 @@ struct CallView: View {
                !url.isEmpty {
                 avatarUrl = url
             }
+            // [WAVE 142 GPT-5.5-pro] Snippet 3 — bind the shared observer to
+            // this call so its Published surface starts emitting status /
+            // duration / mute signals from CallKit. Idempotent.
+            callKit.attach(callId: callId, uuid: session.callUUID, hasVideo: hasVideo)
         }
+        // [WAVE 142 GPT-5.5-pro] Snippet 3 — mirror observer state back into
+        // the VC's session so the SwiftUI flags update without a JS round trip.
+        // `removeDuplicates()` avoids redundant view diffs when the observer
+        // republishes the same value (e.g. the per-second duration tick when
+        // we're still on the same second integer).
+        .onReceive(callKit.$statusText.removeDuplicates()) { value in
+            if !value.isEmpty { session.status = value }
+        }
+        .onReceive(callKit.$isMuted.removeDuplicates()) { muted in
+            session.micEnabled = !muted
+        }
+        .onReceive(callKit.$duration.removeDuplicates()) { seconds in
+            elapsedSeconds = seconds
+        }
+        // [WAVE 142 GPT-5.5-pro] Snippet 14 — apply the spring/haptic
+        // celebration whenever `session.status` flips to "Conectado".
+        .modifier(ConnectedCelebrationModifier(status: session.status))
         .onDisappear {
             timer?.invalidate()
             timer = nil
@@ -277,27 +558,39 @@ struct CallView: View {
     ///   1. Audio call OR video call awaiting first remote frame → dark grad.
     ///   2. Video call with remote VideoTrack → fullscreen SwiftUIVideoView.
     ///   3. Peer screen-sharing → screen-share track replaces camera feed.
+    // [WAVE 142 GPT-5.5-pro] Snippet 5 — replace the old flat gradient with a
+    // crossfaded stack: deterministic avatar-blur background underneath, the
+    // remote LK video on top once `remoteVideoFirstFrame` flips. The flag is
+    // intended to be set by the LK renderer first-frame callback (real path);
+    // the .onAppear fallback below covers the case where the VC pushed the
+    // track before wiring the callback so we never see a black flash.
     @ViewBuilder
     private var backgroundLayer: some View {
-        if hasVideo, let remote = session.remoteVideoTrack {
-            // SwiftUIVideoView (LiveKit's SwiftUI wrapper) handles aspect-fit
-            // and renders the latest decoded frame. We want fill behavior so
-            // there are no letterbox bars during portrait calls.
-            SwiftUIVideoView(remote)
-                .ignoresSafeArea()
-        } else {
-            // Glassmorphism gradient: top is mid-bg, bottom darker. Subtle —
-            // SwiftUI's LinearGradient is GPU-cheap so we don't worry about
-            // perf even on older iPhones.
-            LinearGradient(
-                colors: [
-                    Color(red: 0x14/255.0, green: 0x20/255.0, blue: 0x28/255.0),
-                    Color(red: 0x07/255.0, green: 0x0E/255.0, blue: 0x14/255.0)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
+        ZStack {
+            AvatarBlurBackground(
+                name: callerName,
+                email: callerEmail,
+                avatarUrl: avatarUrl
             )
+            .opacity(hasVideo && session.remoteVideoFirstFrame ? 0 : 1)
+
+            if hasVideo, let remote = session.remoteVideoTrack {
+                SwiftUIVideoView(remote)
+                    .ignoresSafeArea()
+                    .opacity(session.remoteVideoFirstFrame ? 1 : 0)
+                    .animation(.easeInOut(duration: 0.32), value: session.remoteVideoFirstFrame)
+                    .onAppear {
+                        // Preferir setar isto pelo callback real do renderer/VC.
+                        // Este fallback evita flash preto quando o track chega antes do frame.
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                            if session.remoteVideoTrack != nil {
+                                session.remoteVideoFirstFrame = true
+                            }
+                        }
+                    }
+            }
         }
+        .animation(.easeInOut(duration: 0.32), value: session.remoteVideoFirstFrame)
     }
 
     // MARK: - Top bar
@@ -377,80 +670,63 @@ struct CallView: View {
 
     // MARK: - Avatar block (1:1 audio / pre-remote video)
 
+    // [WAVE 142 GPT-5.5-pro] Snippet 9 — replace the inline avatar stack with
+    // the polished helpers: ThreePulseRings (white, staggered) + speaker glow
+    // (green, modulated by `speakerPulse`) + PolishedAvatarCircle (132pt
+    // gradient w/ shadow). Name uses 28pt semibold rounded for visual weight
+    // parity with WhatsApp 2025 / iOS Phone. Status switches between the
+    // dotted "Chamando..." and the formatted duration once connected.
     private var avatarBlock: some View {
         VStack(spacing: 16) {
-            // Pulse rings — two concentric expanding circles. Shown during
-            // ringing so the user has visual feedback that the call is alive.
-            // We use the speaker-pulse anim when the remote participant is in
-            // the active speakers list (green ring instead of white).
             ZStack {
-                if session.status != "Conectado" {
-                    pulseRing(scale: pulseScale, opacity: pulseOpacity)
-                    pulseRing(scale: pulseScale * 0.85, opacity: pulseOpacity * 0.8)
-                }
+                ThreePulseRings(active: session.status != "Conectado")
 
                 if session.remoteIsActiveSpeaker {
                     Circle()
-                        .stroke(speakerRingColor.opacity(0.75), lineWidth: 4)
-                        .frame(width: 144 * speakerPulse, height: 144 * speakerPulse)
+                        .stroke(Color(rgb: 0x25D366).opacity(0.82), lineWidth: 4)
+                        .frame(width: 154 * speakerPulse, height: 154 * speakerPulse)
+                        .shadow(color: Color(rgb: 0x25D366).opacity(0.7), radius: 14)
                 }
 
-                Circle()
-                    .fill(chipColor)
-                    .frame(width: 132, height: 132)
-                    .shadow(color: .black.opacity(0.5), radius: 14, x: 0, y: 8)
-
-                // Initial letter. SF rounded weight matches WhatsApp's avatar
-                // font feel; rendered behind the AsyncImage so the user sees
-                // it instantly while the photo decodes — and stays as the
-                // fallback if the URL load fails or there's no URL at all.
-                Text(initialFor(callerName))
-                    .font(.system(size: 52, weight: .regular, design: .rounded))
-                    .foregroundColor(.white)
-
-                // [#1176 polish, 2026-05-18] Real avatar photo when JS supplied
-                // a URL (api.getAvatarUrlForEmail). AsyncImage handles the
-                // HTTP fetch on a background queue and crossfades in once the
-                // bitmap is decoded. `clipShape(Circle())` mirrors the
-                // chipColor circle behind it so there's no square-photo glitch
-                // during the brief load window. EmptyView keeps the placeholder
-                // letter visible — we don't want to blank the avatar circle.
-                if !avatarUrl.isEmpty, let url = URL(string: avatarUrl) {
-                    AsyncImage(url: url, transaction: Transaction(animation: .easeIn(duration: 0.2))) { phase in
-                        switch phase {
-                        case .success(let image):
-                            image
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 132, height: 132)
-                                .clipShape(Circle())
-                        default:
-                            EmptyView()
-                        }
-                    }
-                    .frame(width: 132, height: 132)
-                }
+                PolishedAvatarCircle(
+                    name: callerName,
+                    email: callerEmail,
+                    avatarUrl: avatarUrl
+                )
             }
-            .frame(width: 168, height: 168)
+            .frame(width: 220, height: 220)
 
             Text(callerName.isEmpty ? callerEmail : callerName)
-                .font(.system(size: 26, weight: .regular))
+                .font(.system(size: 28, weight: .semibold, design: .rounded))
                 .foregroundColor(.white)
                 .lineLimit(1)
+                .minimumScaleFactor(0.82)
 
-            // Status: "Chamando…" / "Conectando…" / "Conectado HH:MM:SS"
-            Text(statusLine)
-                .font(.system(size: 16))
-                .foregroundColor(secondaryText)
-                .multilineTextAlignment(.center)
+            subtitleView
         }
     }
 
-    private var statusLine: String {
+    // [WAVE 142 GPT-5.5-pro] Snippet 9 — subtitle: monospaced timer when
+    // connected, animated dotted base otherwise. Transitions via opacity so
+    // the swap feels smooth instead of cutting.
+    @ViewBuilder
+    private var subtitleView: some View {
         if session.status == "Conectado" {
-            return formatDuration(elapsedSeconds)
+            Text(formatDuration(elapsedSeconds))
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(secondaryText)
+                .monospacedDigit()
+                .transition(.opacity)
+        } else {
+            AnimatedDotsText(
+                base: session.status
+                    .replacingOccurrences(of: "\u{2026}", with: "")
+                    .replacingOccurrences(of: "...", with ""),
+                color: secondaryText,
+                font: .system(size: 16, weight: .medium)
+            )
+            .transition(.opacity)
         }
-        return session.status
     }
 
     /// One pulse ring. SwiftUI redraws via `pulseScale` + `pulseOpacity` —
@@ -479,6 +755,16 @@ struct CallView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(Color.white.opacity(0.25), lineWidth: 1)
                 )
+                // [WAVE 142 GPT-5.5-pro] Snippet 13 — active-speaker glow ring
+                // over the local PiP tile. Driven by `session.localIsActiveSpeaker`
+                // + `session.localSpeakerLevel`, set by the VC's LK audio-level
+                // delegate (snippet 2 added the @Published flags).
+                .overlay {
+                    ActiveSpeakerGlowRing(
+                        active: session.localIsActiveSpeaker,
+                        level: session.localSpeakerLevel
+                    )
+                }
                 .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 4)
                 .offset(
                     x: pipOffset.width + pipDragOffset.width,
@@ -698,6 +984,10 @@ struct CallView: View {
     /// When `active` is true (e.g. noise suppression ON, background blur ON)
     /// the pill renders with a green tint so users can see the toggle state
     /// without opening a menu.
+    // [WAVE 142 GPT-5.5-pro] Snippet 12 — glassmorphism capsule: stacked
+    // `.ultraThinMaterial` + chipColor/white tint + hairline border. Active
+    // state lightens the tint to 0.28 white so the user sees the toggle
+    // without staring at the icon color alone.
     @ViewBuilder
     private func actionPillButton(
         icon: String,
@@ -707,26 +997,27 @@ struct CallView: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundColor(active ? speakerRingColor : .white)
+            VStack(spacing: 6) {
+                ZStack {
+                    Capsule().fill(.ultraThinMaterial)
+                    Capsule().fill((active ? Color.white : chipColor).opacity(active ? 0.28 : 0.42))
+                    Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+
+                    Image(systemName: icon)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                .frame(width: 58, height: 42)
+
                 Text(label)
                     .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white.opacity(0.9))
+                    .foregroundColor(.white.opacity(enabled ? 0.92 : 0.35))
+                    .lineLimit(1)
             }
-            .frame(width: 70, height: 56)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(
-                        active
-                            ? Color.white.opacity(0.18)
-                            : chipColor.opacity(enabled ? 0.85 : 0.4)
-                    )
-            )
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
+        .opacity(enabled ? 1 : 0.45)
     }
 
     // [MediaPipe, 2026-05-17] Helpers for the background pill label + icon.
@@ -750,6 +1041,11 @@ struct CallView: View {
 
     /// Generic circular control button. Used for mic, cam, speaker, hangup,
     /// hand raise. Supports an optional long-press handler (speaker uses it).
+    // [WAVE 142 GPT-5.5-pro] Snippet 11 — glassmorphism styling: stack a
+    // `.ultraThinMaterial` blur + the tint at 62% opacity + a hairline white
+    // border + the SF Symbol. Shadow at 28%/16pt grounds the button on top of
+    // the avatar-blur background. `onLongPress` is preserved so the speaker
+    // button can still open the AVRoutePicker sheet.
     @ViewBuilder
     private func circleButton(
         size: CGFloat,
@@ -762,12 +1058,21 @@ struct CallView: View {
         Button(action: action) {
             ZStack {
                 Circle()
-                    .fill(background)
-                    .frame(width: size, height: size)
+                    .fill(.ultraThinMaterial)
+
+                Circle()
+                    .fill(background.opacity(0.62))
+
+                Circle()
+                    .strokeBorder(Color.white.opacity(0.24), lineWidth: 1)
+
                 Image(systemName: systemName)
-                    .font(.system(size: size * 0.42, weight: .medium))
+                    .font(.system(size: size * 0.34, weight: .semibold))
                     .foregroundColor(foreground)
             }
+            .frame(width: size, height: size)
+            .shadow(color: .black.opacity(0.28), radius: 16, x: 0, y: 8)
+            .contentShape(Circle())
         }
         .buttonStyle(.plain)
         .simultaneousGesture(

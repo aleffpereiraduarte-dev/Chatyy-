@@ -2529,6 +2529,18 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       ud.removeObject(forKey: "lk_token_\(cid)")
       ud.removeObject(forKey: "lk_url_\(cid)")
     }
+    // [WAVE 142 GPT-5.5-pro] Snippet 15 — notify shared observer so SwiftUI
+    // status flips to "Encerrada" (and the duration timer stops) without
+    // waiting on the existing onCallEnded round trip. Also emit a tagged
+    // event so JS analytics can disambiguate CallKit-originated hangups
+    // from JS-driven ones (the latter go through endCall → endCallAction).
+    CallSessionObserver.shared.markEnded(uuid: action.callUUID)
+    let callIdForEnd = module?.callIdForUUID(action.callUUID) ?? action.callUUID.uuidString
+    module?.safeSendEvent("onCallEnded", [
+      "uuid": action.callUUID.uuidString,
+      "callId": callIdForEnd,
+      "source": "callkit"
+    ])
     module?.callEnded(uuid: action.callUUID)
     // [#1179 cleanup, 2026-05-19] Dismiss the presented native call UI.
     // CXEndCallAction can be triggered three ways:
@@ -2628,6 +2640,17 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       object: nil,
       userInfo: ["muted": muted, "callId": callIdForEvent]
     )
+    // [WAVE 142 GPT-5.5-pro] Snippet 15 — mirror into the shared observer so
+    // the SwiftUI `@ObservedObject callKit` instantly reflects the system
+    // mute. Also surface an `onMuteChanged` JS event so JS-side UI (the
+    // hybrid /call.js layer) stays in sync without re-deriving from the
+    // existing onLkLocalAudioChanged event.
+    CallSessionObserver.shared.setMutedFromProvider(uuid: actionUuid, muted: muted)
+    module?.safeSendEvent("onMuteChanged", [
+      "uuid": actionUuid.uuidString,
+      "callId": callIdForEvent,
+      "isMuted": muted
+    ])
     action.fulfill()
   }
 

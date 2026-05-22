@@ -83,6 +83,16 @@ final class CallSessionState: ObservableObject {
     /// local send. SwiftUI removes each via a per-emoji `.task` after 3s.
     @Published var floatingReactions: [CallFloatingReaction]
 
+    // [WAVE 142 GPT-5.5-pro] Snippet 2 — extra session fields for the polished
+    // SwiftUI UI: a backing CallKit UUID so the SwiftUI layer can attach the
+    // CallSessionObserver helper, a first-frame flag so the avatar→video
+    // crossfade triggers on the real RTC callback (and not on track-arrival),
+    // and active-speaker level/flag for the local PiP glow ring.
+    @Published var callUUID: UUID? = nil
+    @Published var remoteVideoFirstFrame: Bool = false
+    @Published var localIsActiveSpeaker: Bool = false
+    @Published var localSpeakerLevel: CGFloat = 0
+
     init(status: String = "Conectando\u{2026}",
          micEnabled: Bool = true,
          camEnabled: Bool = true,

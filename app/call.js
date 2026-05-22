@@ -13,11 +13,17 @@
 // dead WebRTC stub.
 import { useEffect } from 'react';
 import { View } from 'react-native';
+import { Platform } from 'react-native';
 import { router } from 'expo-router';
 
 export default function CallMobileFallback() {
   useEffect(() => {
-    try { router.replace('/chat'); } catch { /* nav unavailable */ }
+    if (Platform.OS !== 'web') {
+      // [WAVE 141] Mobile shouldn't reach /call.js anymore — native UI owns.
+      // Defensive: redirect home + log telemetry.
+      console.warn('[call.js] mobile navigated to /call — native UI should own this. Redirecting.');
+      try { router.replace('/'); } catch { /* nav unavailable */ }
+    }
   }, []);
   return <View />;
 }

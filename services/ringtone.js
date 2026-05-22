@@ -175,6 +175,14 @@ export function startRingtone() {
   stopRingtone();
   const generation = ++ringtoneGeneration;
 
+  // [WAVE 141] Mobile = native ONLY. iOS CallKit / Android Telecom play the
+  // system ringtone — JS must NEVER duplicate (would cause double-ring during
+  // foreground transitions). Only web (which has no native call surface) is
+  // allowed past this gate.
+  if (Platform.OS !== 'web') {
+    return;
+  }
+
   // [mute-call-ringtone, 2026-05-19] Honor the user's silent-mode-for-calls
   // toggle. We refresh from AsyncStorage (or localStorage on web) every call
   // so settings changes take effect on the next inbound ring without needing

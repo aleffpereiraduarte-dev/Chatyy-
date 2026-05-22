@@ -128,18 +128,16 @@ const _OUTGOING_LOCK_TTL_MS = 5000;
  * @param {string} [params.callId]           Pin a callId; otherwise generated.
  * @param {function} [params.onWebFallback]  Called on web with the generated callId
  *                                           so the caller can router.push('/call').
- * @param {function} [params.onForegroundJsRoute]  WhatsApp-parity hybrid (2026-05-22):
- *                                           Called on iOS/Android when AppState is
- *                                           `active` so the rich JS /call.js UI is
- *                                           used instead of bare-bones native CallKit
- *                                           / CallActivity. Falls back to onWebFallback
- *                                           when not provided.
  * @returns {Promise<{callId: string, native: boolean}>}
  *          callId is the canonical server-side identifier. `native` is true when
  *          the call was handed off to the native flow; false on web / native
  *          module unavailable, in which case the caller should fall back to the
  *          JS /call screen.
  */
+// [WAVE 141] signature dropped `onForegroundJsRoute` — mobile is always
+// native; we kept the name out of the destructure on purpose so any straggler
+// callsite still passing it just ignores the field instead of silently
+// reactivating a JS foreground path.
 export async function startOutgoingCall({
   calleeEmail,
   calleeName,
@@ -148,7 +146,6 @@ export async function startOutgoingCall({
   conversationId,
   callId,
   onWebFallback,
-  onForegroundJsRoute,
 } = {}) {
   // [CALL-TRACE 2026-05-21 ROUND3] Step 2a/12 — voipNative entry. Snapshot
   // every field BEFORE any coercion / validation so we can see exactly what
@@ -483,8 +480,8 @@ export async function startOutgoingCall({
   //   - LK Room dual-mount when app foregrounded mid-call
   //   - ringtone double-play on callee
   // Native CallKit / CallActivity is now the unconditional owner on mobile.
-  // The `onForegroundJsRoute` param is kept in the signature for backwards
-  // compat with callsites that still pass it (no-op on mobile).
+  // [WAVE 141] kept signature backwards-compat = false; mobile always native.
+  // The `onForegroundJsRoute` parameter was removed entirely.
 
   // Pre-resolve the callee avatar URL so the native screen can paint a real
   // avatar (not just the initial letter) before LK Room is even up. The URL

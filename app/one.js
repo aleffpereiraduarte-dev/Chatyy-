@@ -2321,8 +2321,7 @@ export default function OneScreen() {
                   isVideo: !!params.video,
                   callId,
                   onWebFallback: _jsRoute,
-                  // [WhatsApp-parity hybrid restore 2026-05-22] foreground → JS /call.js
-                  onForegroundJsRoute: _jsRoute,
+                  // [WAVE 141] WhatsApp arch: native owns call UI, no JS route foreground.
                 });
                 if (!native) {
                   // onWebFallback already handled the navigation. No-op here.

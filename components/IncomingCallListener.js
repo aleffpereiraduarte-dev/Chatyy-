@@ -243,7 +243,20 @@ function isNativeRingingActive() {
   }
 }
 
+// [WAVE 141] Mobile = native ONLY (CallKit on iOS / IncomingCallActivity on
+// Android). Web/desktop still needs the JS path since browsers have no native
+// call surface. The wrapper bails BEFORE any hook executes so the React
+// rules-of-hooks invariant holds — the inner component (the one with hooks +
+// modal + ringtone wiring) only ever mounts on web.
 export default function IncomingCallListener() {
+  if (Platform.OS !== 'web') {
+    // [WAVE 141] WhatsApp arch: native owns call UI, no JS modal on mobile.
+    return null;
+  }
+  return <IncomingCallListenerWeb />;
+}
+
+function IncomingCallListenerWeb() {
   // [#992 Stage 4 — retire JS incoming-call modal on mobile]
   // The native CallKit UI (iOS via PushKit + CXProvider) and the
   // IncomingCallActivity full-screen overlay (Android via the priority=10

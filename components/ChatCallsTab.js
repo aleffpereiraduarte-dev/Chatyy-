@@ -3319,8 +3319,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
             isVideo: !!item.video,
             conversationId,
             onWebFallback: _jsRoute,
-            // [WhatsApp-parity hybrid restore 2026-05-22] foreground → JS /call.js
-            onForegroundJsRoute: _jsRoute,
+            // [WAVE 141] WhatsApp arch: native owns call UI, no JS route foreground.
           });
           if (!native) {
             // [WAVE 117A] Mobile = 100% native. onWebFallback already gated.
