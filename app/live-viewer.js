@@ -753,16 +753,28 @@ export default function LiveViewerScreen() {
 
   useEffect(() => {
     if (connected || liveEnded) return undefined;
-    // HLS sessions need a longer warm-up budget — CF Stream first-segment is
-    // 20-60s typical after the host starts publishing. WebRTC P2P should
-    // resolve within 30s on any reasonable network.
-    const timeoutMs = streamType === 'cf_hls' ? HLS_BOOT_TIMEOUT_MS : 30000;
-    const timer = setTimeout(() => {
+    // [2026-05-21 progressive UX] Two-stage stuck detection:
+    //   T+8s on LK  → "Aguardando vídeo do host..." (informative, no error)
+    //   T+18s on LK → "Stream indisponível — host pode não estar transmitindo"
+    //   T+90s on HLS → original HLS_BOOT_TIMEOUT message
+    // Previously a single 30s window left users staring at "Conectando..."
+    // with no feedback for the first 30s. Real-world LK connects in <2s on
+    // good networks; if no video track arrives within 18s the host probably
+    // failed to publish (publishTrack threw silently) and we should say so.
+    const isHls = streamType === 'cf_hls';
+    const finalTimeoutMs = isHls ? HLS_BOOT_TIMEOUT_MS : 18000;
+    const softTimeoutMs = isHls ? 30000 : 8000;
+    const softTimer = setTimeout(() => {
       if (!connected && !liveEnded) {
-        setError(t('live.streamUnavailable') || 'Stream indisponível — host pode ter saído');
+        setError(t('live.awaitingHostPublish') || 'Aguardando vídeo do host...');
       }
-    }, timeoutMs);
-    return () => clearTimeout(timer);
+    }, softTimeoutMs);
+    const finalTimer = setTimeout(() => {
+      if (!connected && !liveEnded) {
+        setError(t('live.streamUnavailable') || 'Stream indisponível — host pode não estar transmitindo');
+      }
+    }, finalTimeoutMs);
+    return () => { clearTimeout(softTimer); clearTimeout(finalTimer); };
   }, [connected, liveEnded, streamType, t]);
 
   // HLS readiness — only flip `connected` once expo-video reports
