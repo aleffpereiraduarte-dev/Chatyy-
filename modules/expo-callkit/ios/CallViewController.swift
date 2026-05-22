@@ -1915,11 +1915,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     }
 
     @objc private func uikitOnMuteTap() {
-        let next = !session.isMuted
-        session.isMuted = next
-        applyMicEnabled(!next)
+        // session.micEnabled = mic ENABLED. Mute = micEnabled false.
+        let newMicEnabled = !session.micEnabled
+        applyMicEnabled(newMicEnabled)
         if let btn = view.viewWithTag(9002) as? UIButton {
-            btn.setTitle(next ? "Unmute" : "Mute", for: .normal)
+            let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
+            btn.setImage(UIImage(systemName: newMicEnabled ? "mic.fill" : "mic.slash.fill", withConfiguration: cfg), for: .normal)
         }
     }
 
