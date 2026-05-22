@@ -20970,8 +20970,11 @@ export default function ChatConversationScreen() {
           {/* [VISUAL-G2, 2026-05-19] WhatsApp bubble tail (SVG triangle) — TOP of first-in-group.
               Skips media bubbles (image/video) because they use overflow:'hidden' which would
               clip the tail, AND WA itself doesn't draw a tail on photo bubbles. Bumped from
-              7x11 → 8x13 for retina visibility. Fill matches bubble bg exactly. */}
-          {isFirstInGroup && msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video' && (
+              7x11 → 8x13 for retina visibility. Fill matches bubble bg exactly.
+              WAVE 129 (2026-05-22): also skip when msg has reply_to — bubbleWithReply now
+              uses overflow:'hidden' to clip the inner reply pill (bug #1354), which would
+              also clip the tail. WhatsApp behavior on reply bubbles is tail-less; matches. */}
+          {isFirstInGroup && msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video' && !(msg.reply_to && !isDeleted) && (
             <Svg
               width={8}
               height={13}
@@ -29070,7 +29073,12 @@ const styles = StyleSheet.create({
       web: { boxShadow: '0 2px 8px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05)' },
     }),
   },
-  bubbleWithReply: { minWidth: 200 },
+  // WAVE 129 (2026-05-22, bug #1354 / foto 7192): overflow:'hidden' clips the
+  // inner reply quote pill (replyIndicator has borderRadius:6 vs bubble's 18)
+  // so the darker purple wash can't render past the bubble's rounded corners.
+  // The bubble tail SVG (rendered at right:-8 / left:-8) is moved to a sibling
+  // wrapper so it survives the clip — see bubble row composition.
+  bubbleWithReply: { minWidth: 200, overflow: 'hidden' },
   bubbleOwn: {
     borderTopLeftRadius: 18, borderTopRightRadius: 18,
     borderBottomLeftRadius: 18, borderBottomRightRadius: 5,

@@ -166,6 +166,21 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // muted-by-iOS even though our LK track says it's enabled.
     private var avInterruptionObserver: NSObjectProtocol?
 
+    // [2026-05-22 #1349 fix] Caller-side ringback teardown.
+    //
+    // Listens for `CallKitCallAnsweredRemote`, posted by CallSignalWs when
+    // the callee's `call_accepted` frame lands on our WS. Without this
+    // observer the ringback engine kept droning until the 45s outgoing
+    // timeout fired even after the peer connected — user feedback:
+    // "ringback toca 45s mesmo após o outro lado atender". CallSignalWs
+    // already runs the receiver loop; this VC just has to react to the
+    // notification it now publishes.
+    //
+    // Filter by callId so a stale notification from a previous call surface
+    // doesn't bleed into this one (same pattern as installSystemMuteObserver).
+    // Cleared in deinit.
+    private var remoteAnsweredObserver: NSObjectProtocol?
+
     // Stash for the mic-enabled state we owned right before an AVAudioSession
     // interruption. Read back when the interruption ends so the user comes
     // out in the same state they went in.
@@ -242,6 +257,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // [Wave WhatsApp parity, 2026-05-20 gap B5 iOS] AVAudioSession recovery.
         installAVInterruptionObserver()
 
+        // [2026-05-22 #1349 fix] Caller-side ringback teardown — wire the
+        // CallSignalWs receiver-loop notification so this VC stops the
+        // ringback engine the moment the callee's WS accept frame lands.
+        installRemoteAnsweredObserver()
+
         // Build the SwiftUI tree with the full closure set Stage #995 demands.
         let rootView = CallView(
             callId: callId,
@@ -300,22 +320,40 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             if NativeCallRoom.shared.state == .connected {
                 self.session.status = "Conectado"
             }
-            // If this is a video call we still need to publish the local
-            // camera — preconnectRoom only published the mic to keep the
-            // ring-window light. Publish here on the same Task pattern as
-            // the legacy path.
-            if hasVideo, let r = self.room {
+            // [2026-05-22 #1330 fix] PUBLISH-ON-ANSWER. Because preconnectRoom
+            // is now subscribe-only (no setMicrophone during the ring window
+            // to avoid ghost-participant on the peer's SFU), we MUST publish
+            // the mic here — viewDidLoad runs after CXAnswerCallAction
+            // fulfills, so we are in the post-accept path. For video calls we
+            // also publish the camera (same as before). Audio still arrives
+            // in <500ms because Room.connect already completed during the
+            // ring window; we only have to negotiate the outbound track now.
+            if let r = self.room {
                 Task { [weak self] in
                     guard let self = self else { return }
-                    let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
-                    let publishOpts = Self.defaultVideoPublishOptions()
-                    if let pub = try? await r.localParticipant.setCamera(
-                        enabled: true,
-                        captureOptions: captureOpts,
-                        publishOptions: publishOpts
-                    ), let track = pub.track as? LocalVideoTrack {
-                        await MainActor.run { self.session.localVideoTrack = track }
-                        print("[CallVC] STAGE-A: late camera publish on preconnect adopt")
+                    do {
+                        let micPub = try await r.localParticipant.setMicrophone(
+                            enabled: true,
+                            captureOptions: Self.defaultAudioCaptureOptions()
+                        )
+                        if let track = micPub?.track as? LocalAudioTrack {
+                            await MainActor.run { self.localAudioTrackRef = track }
+                        }
+                        print("[CallVC] STAGE-A: mic published on answer (deferred from preconnect, #1330)")
+                    } catch {
+                        print("[CallVC] STAGE-A: post-answer mic publish failed: \(error)")
+                    }
+                    if self.hasVideo {
+                        let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
+                        let publishOpts = Self.defaultVideoPublishOptions()
+                        if let pub = try? await r.localParticipant.setCamera(
+                            enabled: true,
+                            captureOptions: captureOpts,
+                            publishOptions: publishOpts
+                        ), let track = pub.track as? LocalVideoTrack {
+                            await MainActor.run { self.session.localVideoTrack = track }
+                            print("[CallVC] STAGE-A: camera published on answer (deferred from preconnect, #1330)")
+                        }
                     }
                 }
             }
@@ -1262,6 +1300,41 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
+    /// [2026-05-22 #1349 fix] Caller-side ringback teardown observer.
+    /// Posted by CallSignalWs.handleIncomingCallAcceptedLocked when the
+    /// callee's `call_accepted` frame arrives on the WS receiver loop.
+    /// We stop the ringback engine, flip the visible status to "Connected",
+    /// and let the existing LK didConnect / participantDidConnect path
+    /// do the rest of the connect UX. Filters by callId so a stale
+    /// notification from a previous outgoing surface doesn't bleed in
+    /// (matches installSystemMuteObserver pattern). Idempotent vs. the
+    /// LK didSubscribeTrack path which ALSO calls stopRingbackTone — the
+    /// ringbackActive guard inside stopRingbackTone makes a second call
+    /// a cheap no-op.
+    private func installRemoteAnsweredObserver() {
+        guard remoteAnsweredObserver == nil else { return }
+        remoteAnsweredObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("CallKitCallAnsweredRemote"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self = self else { return }
+            // CallSignalWs writes both "callId" and "call_id" to userInfo;
+            // tolerate either spelling so a future refactor (or alternate
+            // emitter) can't silently break the filter.
+            let nid = (note.userInfo?["callId"] as? String)
+                ?? (note.userInfo?["call_id"] as? String)
+                ?? ""
+            if !nid.isEmpty, nid != self.callId {
+                // Different call surface — let its own observer handle.
+                return
+            }
+            print("[CallVC] remote-answered \(self.callId) — stopping ringback + flipping status")
+            self.stopRingbackTone(reason: "remote_answered")
+            self.session.status = "Conectado"
+        }
+    }
+
     /// Local handler — called by the SwiftUI CallView keypad. Plays the
     /// matching system tone (so the user gets immediate audible feedback
     /// even before the data frame is acked) and forwards to the same path
@@ -1574,6 +1647,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if let obs = dtmfObserver { NotificationCenter.default.removeObserver(obs); dtmfObserver = nil }
         if let obs = systemMuteObserver { NotificationCenter.default.removeObserver(obs); systemMuteObserver = nil }
         if let obs = avInterruptionObserver { NotificationCenter.default.removeObserver(obs); avInterruptionObserver = nil }
+        // [2026-05-22 #1349 fix] Caller-side ringback teardown observer.
+        if let obs = remoteAnsweredObserver { NotificationCenter.default.removeObserver(obs); remoteAnsweredObserver = nil }
         if #available(iOS 15.0, *), let pip = pipController, pip.isPictureInPictureActive {
             pip.stopPictureInPicture()
         }
@@ -1639,12 +1714,28 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 NSLog("[CallTrace][8/12] LK Room.connect roomName=\(callId) serverUrl=\(url) tokenLen=\(token.count) path=preconnect")
                 try await r.connect(url: url, token: token)
                 NSLog("[CallTrace][8b/12] LK Room state=\(r.connectionState) after connect (path=preconnect)")
-                try await r.localParticipant.setMicrophone(
-                    enabled: true,
-                    captureOptions: Self.defaultAudioCaptureOptions()
-                )
+                // [2026-05-22 #1330 fix] PUBLISH DEFERRAL — do NOT call
+                // setMicrophone(enabled: true) here during the ring window.
+                //
+                // Previously this preconnect path published the mic track the
+                // moment the SFU handshake resolved, BEFORE the user had even
+                // tapped Accept in CallKit. Result: the peer's SFU saw a live
+                // publisher in the room and forwarded our audio downstream
+                // immediately. If the callee then declined / let it ring out
+                // / iOS went to sleep, the peer was left with a "ghost"
+                // participant — connected with audio, no UI, no way to hang
+                // up cleanly. (Ticket #1330.)
+                //
+                // Fix: stay subscribe-only during the ring window. We are
+                // still connected to the SFU (so audio is hot the instant
+                // we publish) and we still receive remote tracks via
+                // auto-subscribe — we just don't push anything outbound.
+                // The mic publish moves to CallViewController.viewDidLoad
+                // (the adopt branch ~line 289), which runs only after
+                // CXAnswerCallAction fulfills — i.e. the user actually
+                // accepted. No publish = no ghost on the peer's SFU.
                 NativeCallRoom.shared.didConnect()
-                print("[CallVC] preconnectRoom: connected callId=\(callId)")
+                print("[CallVC] preconnectRoom: connected (subscribe-only, mic publish deferred to answer) callId=\(callId)")
             } catch {
                 NSLog("[CallTrace][8b/12] LK Room connect FAILED err=\(error) (path=preconnect)")
                 print("[CallVC] preconnectRoom: failed callId=\(callId) err=\(error)")

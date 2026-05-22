@@ -27,6 +27,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useCurrency } from '../context/CurrencyContext';
 import * as api from '../services/api';
 import {
   IconArrowLeft, IconPlus, IconSend, IconArrowRight, IconCreditCard,
@@ -37,6 +38,9 @@ import WalletSendSheet    from '../components/wallet/WalletSendSheet';
 import WalletReceiveSheet from '../components/wallet/WalletReceiveSheet';
 import WalletCashoutSheet from '../components/wallet/WalletCashoutSheet';
 import { formatInt } from '../utils/dateFormat';
+import { Redirect } from 'expo-router';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { WALLET_ENABLED } from '../constants/featureFlags';
 
 // ---- Palette -----------------------------------------------------------
 
@@ -212,10 +216,22 @@ function LedgerRow({ item, colors, isDark, t, lang }) {
 // =======================================================================
 
 export default function WalletScreen() {
+  // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag.
+  // Keep the route registered (deep-links + back-stack remain valid) but
+  // bounce visitors back to /chat so no wallet UI surfaces during the
+  // WhatsApp-style free era. Flip the flag in constants/featureFlags.js
+  // to bring this screen back instantly without a rebuild.
+  if (!WALLET_ENABLED) {
+    return <Redirect href="/chat" />;
+  }
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { t, language } = useLanguage();
+  // Display currency (user-configurable in settings). Wallet balance, payouts
+  // and ledger rows are all rendered in this currency; centavos stay BRL in
+  // state + on the wire. See services/currencyService.js.
+  const { format: formatMoney } = useCurrency(language);
 
   const [items, setItems]               = useState([]);
   const [balance, setBalance]           = useState(0);
@@ -365,7 +381,7 @@ export default function WalletScreen() {
             <Text style={styles.payoutPillLabel}>
               {t('wallet.cashAvailable') || 'Disponível para saque'}:
             </Text>
-            <Text style={styles.payoutPillValue}>R$ {fmtBrl(pendingPayout)}</Text>
+            <Text style={styles.payoutPillValue}>{formatMoney(pendingPayout)}</Text>
             <IconChevronRight size={14} color="#fff" />
           </TouchableOpacity>
         ) : null}

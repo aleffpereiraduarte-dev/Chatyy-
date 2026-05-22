@@ -19,9 +19,11 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, TextInput,
   ActivityIndicator, Alert, Platform, StatusBar,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Redirect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { WALLET_ENABLED } from '../constants/featureFlags';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { IconArrowLeft, IconDiamond, IconX } from '../components/Icons';
@@ -193,6 +195,11 @@ function DetailRow({ label, value, colors, mono }) {
 }
 
 export default function WalletCashoutScreen() {
+  // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag.
+  // Creator payouts ride on the wallet — hidden while wallet is off.
+  if (!WALLET_ENABLED) {
+    return <Redirect href="/chat" />;
+  }
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();

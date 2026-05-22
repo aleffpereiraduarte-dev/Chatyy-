@@ -808,7 +808,18 @@ export default function SignupPhone() {
                         <SvgCircle cx="12" cy="18.5" r="0.9" fill="#fff" />
                       </Svg>
                     )}
-                    {step === 'otp'    && <IconShield size={42} color="#fff" />}
+                    {/* OTP step: swap generic shield for the new Chatyy brand
+                        icon (bug #7193 — May 19 1.3MB asset). Rendered inside
+                        the existing purple orb, slightly inset so the white
+                        ring/halo of the orb still frames it. Kept ~84x84 so it
+                        fills the 92px orb cleanly without touching the edges. */}
+                    {step === 'otp'    && (
+                      <Image
+                        source={require('../assets/icon.png')}
+                        style={{ width: 84, height: 84, borderRadius: 42 }}
+                        resizeMode="cover"
+                      />
+                    )}
                     {step === 'name'   && <IconUser size={42} color="#fff" />}
                     {step === 'handle' && <IconAtSign size={42} color="#fff" />}
                   </Animated.View>

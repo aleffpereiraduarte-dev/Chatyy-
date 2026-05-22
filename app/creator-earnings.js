@@ -21,10 +21,12 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
   RefreshControl, StatusBar,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Redirect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { MONETIZATION_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
 import {
   IconArrowLeft, IconGiftBox, IconHeart, IconChevronRight, IconStar,
@@ -141,6 +143,12 @@ function TimelineRow({ item, colors, isDark, t, lang }) {
 }
 
 export default function CreatorEarningsScreen() {
+  // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag.
+  // Earnings come from paid gifts/tips — none of that exists while
+  // monetization is paused, so the dashboard is meaningless. Redirect.
+  if (!MONETIZATION_ENABLED) {
+    return <Redirect href="/chat" />;
+  }
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();

@@ -31,6 +31,8 @@ import LiveTopGifters from '../components/LiveTopGifters';
 import LiveGiftAnimation from '../components/LiveGiftAnimation';
 import LiveGiftPicker, { IconGiftBox } from '../components/LiveGiftPicker';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import LivePollOverlay from '../components/live/LivePollOverlay';
 import ConnectionBars from '../components/ConnectionBars';
 // Round 67 #1158 (2026-05-18) — keep the display on while watching a
@@ -3226,7 +3228,9 @@ export default function LiveViewerScreen() {
         viewersListLabel={t('live.viewersList') || 'Ver espectadores'}
         onLongPressAvatar={openHostPeek}
         onPressViewers={() => setShowViewersList(true)}
-        onPressMore={() => setGiftPickerVisible(true)}
+        /* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+           "More" button used to open the gift picker. */
+        onPressMore={DIAMONDS_ENABLED ? () => setGiftPickerVisible(true) : undefined}
         onPressShare={handleShare}
         onClose={() => router.back()}
       />

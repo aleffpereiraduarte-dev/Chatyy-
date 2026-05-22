@@ -18,6 +18,8 @@ import AvatarCircle from '../components/AvatarCircle';
 import {
   IconArrowLeft, IconUpload, IconCheck, IconTrash, IconShield, IconLock, IconRefresh,
 } from '../components/Icons';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { MONETIZATION_ENABLED } from '../constants/featureFlags';
 // Backup engine config / progress hooks. Quality toggle reads/writes the
 // shared settings store the engine consults at runtime, so flipping it here
 // affects the very next photo the engine compresses (or skips, for original).
@@ -441,9 +443,13 @@ export default function BackupScreen() {
           <Text style={{ color: colors.textSecondary, fontSize: FontSize.base, textAlign: 'center', lineHeight: 22, marginBottom: 24 }}>
             {t('backup.notAvailableDesc')}
           </Text>
-          <Text style={{ color: colors.textSecondary, fontSize: FontSize.base, textAlign: 'center', lineHeight: 22, marginBottom: 28 }}>
-            {t('backup.upgradePrompt')}
-          </Text>
+          {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+              "upgradePrompt" pitches paid plans; the free-tier card stays. */}
+          {MONETIZATION_ENABLED && (
+            <Text style={{ color: colors.textSecondary, fontSize: FontSize.base, textAlign: 'center', lineHeight: 22, marginBottom: 28 }}>
+              {t('backup.upgradePrompt')}
+            </Text>
+          )}
           <View style={{ marginTop: 16, padding: 16, borderRadius: 12, backgroundColor: (colors.primary || '#7C3AED') + '12' }}>
             <Text style={{ fontSize: 15, fontWeight: '700', color: colors.primary || '#7C3AED' }}>
               {t?.('backup.freeTier') || '100 GB grátis'}

@@ -39,6 +39,8 @@ import ProfileSettingsSheet from './ProfileSettingsSheet';
 import FollowersSheet from './FollowersSheet';
 import EmptyStateCard from './EmptyStateCard';
 import SendDiamondSheet from './SendDiamondSheet';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import HighlightEditSheet from './HighlightEditSheet';
 import HighlightShareSheet from './HighlightShareSheet';
 import {
@@ -2371,11 +2373,11 @@ export default function Profile({
             )}
           </View>
         )}
-        {/* 2026-05-18 — "Enviar diamante" chip on non-self profiles.
-            Opens SendDiamondSheet anchored to this user. The chip is its
-            own row (full-width) so it pops visually — diamond gifts are
-            the primary monetization surface. SVG icon (no emojis in UI). */}
-        {!actions.is_self && identity?.email ? (
+        {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+            "Enviar diamante" chip on non-self profiles. SendDiamondSheet
+            component itself stays in the tree so flipping the flag back
+            restores the chip with one line. */}
+        {DIAMONDS_ENABLED && !actions.is_self && identity?.email ? (
           <View style={{ flexDirection: 'row', gap: 8, marginTop: 6 }}>
             <TouchableOpacity
               onPress={() => setSendDiamondOpen(true)}
@@ -3555,7 +3557,10 @@ export default function Profile({
   // 2026-05-18 — Diamond gift sheet for non-self profiles. Anchored to
   // the viewed user; opens from the "Enviar diamante" chip rendered in
   // the action-row block above.
-  const sendDiamondNode = !actions.is_self && identity?.email ? (
+  // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+  // sheet stays defined but is suppressed so it can't surface even via
+  // a stray setSendDiamondOpen(true) path.
+  const sendDiamondNode = DIAMONDS_ENABLED && !actions.is_self && identity?.email ? (
     <SendDiamondSheet
       visible={sendDiamondOpen}
       onClose={() => setSendDiamondOpen(false)}

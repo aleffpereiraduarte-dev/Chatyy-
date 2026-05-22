@@ -246,6 +246,7 @@ import ChildRestrictionGuard from '../components/ChildRestrictionGuard';
 import { MailProvider } from '../context/MailContext';
 import { ThemeProvider } from '../context/ThemeContext';
 import { LanguageProvider } from '../context/LanguageContext';
+import { CurrencyProvider } from '../context/CurrencyContext';
 import { BiometricProvider } from '../context/BiometricContext';
 import { PhotosProvider } from '../context/PhotosContext';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -1346,6 +1347,7 @@ export default function RootLayout() {
       <SafeAreaProvider>
         <ThemeProvider>
           <LanguageProvider>
+          <CurrencyProvider>
           <BiometricProvider>
             <AuthProvider>
               <CallProvider>
@@ -1531,6 +1533,7 @@ export default function RootLayout() {
               </CallProvider>
             </AuthProvider>
           </BiometricProvider>
+          </CurrencyProvider>
           </LanguageProvider>
         </ThemeProvider>
       </SafeAreaProvider>

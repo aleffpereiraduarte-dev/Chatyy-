@@ -85,6 +85,71 @@ final class CallSignalWs: NSObject {
     // by the callee (who has nothing to send). Flipped on by `warmConnect()`.
     private var keepAlive: Bool = false
 
+    // [2026-05-22 #1349 fix] Receiver-loop pattern (caller side):
+    //
+    // Before today this file only emitted outbound frames (call_invite,
+    // call_answered, call_end, call_cancel, call_reaction). The caller had
+    // NO inbound observer for call_accepted / call_declined / call_cancel —
+    // listenLocked() existed and ran the loop, but handleFrameLocked() only
+    // branched on auth_success / call_invite / call_end. Result: when the
+    // callee tapped Accept the server relayed call_accepted to the caller,
+    // the frame landed in this WS task… and was silently dropped. The
+    // caller-side ringback engine kept playing until the 45s outgoing
+    // timeout fired, even though the call had already connected. User
+    // feedback: "ringback toca 45s mesmo após o outro lado atender".
+    //
+    // Fix: extend handleFrameLocked to dispatch the three remote-side
+    // signaling frames the server actually emits on the caller's channel:
+    //
+    //   * call_accepted  — callee answered. (Server aliases the legacy
+    //                      `call_answered` event to `call_accepted` on relay
+    //                      — see /opt/chatyy-ws-cpp/src/main.cpp:1059. We
+    //                      accept both wire spellings.) Post the
+    //                      `CallKitCallAnsweredRemote` notification so
+    //                      CallViewController stops ringback and the SwiftUI
+    //                      status flips to "Connected". ExpoCallKitModule
+    //                      also observes the same notification and forwards
+    //                      it to JS as `onCallAnsweredRemote` so the JS-side
+    //                      /call screen state stays consistent.
+    //
+    //   * call_declined  — callee tapped Decline. Post
+    //                      `CallKitCallDeclinedRemote`; module forwards to
+    //                      JS as `onCallDeclinedRemote`. CallViewController
+    //                      doesn't have to dismiss itself — JS owns the
+    //                      outgoing UI tear-down (it posts onCallEnded which
+    //                      drives the existing ExpoCallKitNativeCallEnded
+    //                      observer in this file, which dismisses any
+    //                      presented CallViewController via
+    //                      ProviderDelegate.dismissActiveCallSurfaces).
+    //
+    //   * call_cancel    — picked up elsewhere (multi-device fan-out). Server
+    //                      tags the frame with accepted_by_client_id (see
+    //                      C++ WS line 1081). Each sibling device gets this
+    //                      frame too; the device that DID answer must
+    //                      self-suppress to avoid tearing down its own
+    //                      now-active call. We don't currently know our own
+    //                      WS client_id (server-assigned, never echoed back
+    //                      in auth_success today), so we track "this device
+    //                      sent call_answered for this callId" locally —
+    //                      same effect, drift-free. If the set matches we
+    //                      ignore the cancel; otherwise we post
+    //                      `CallKitCallCancelledRemote` so sibling devices
+    //                      stop ringing.
+    //
+    // The receive loop itself is unchanged (listenLocked is recursive and
+    // re-arms after each frame — Apple's URLSessionWebSocketTask requires
+    // that pattern). Reconnect path is also unchanged: when scheduleReconnect
+    // calls connectLocked again, listenLocked re-attaches to the new task.
+    //
+    // [2026-05-22 #1349 fix end]
+
+    /// Tracks calls THIS device answered via fireCallAnswered, so the
+    /// follow-up call_cancel{reason:answered_elsewhere} the server fans out
+    /// to all of our sibling sessions can be self-suppressed on the
+    /// originating device. Bounded FIFO — 16 entries.
+    private var selfAnsweredCallIds: [String] = []
+    private let kSelfAnsweredMax = 16
+
     private override init() { super.init() }
 
     // MARK: – Public API
@@ -118,6 +183,17 @@ final class CallSignalWs: NSObject {
             "conversation_id": conversationId,
             "ts": Int(Date().timeIntervalSince1970 * 1000)
         ]
+        // [2026-05-22 #1349 fix] Remember we answered this callId locally so
+        // the server-fanned-out call_cancel{accepted_by_client_id} that goes
+        // to every sibling session of this user gets self-suppressed by the
+        // device that DID pick up. See handleIncomingCallCancelLocked.
+        queue.async { [weak self] in
+            guard let self = self else { return }
+            self.selfAnsweredCallIds.append(callId)
+            while self.selfAnsweredCallIds.count > self.kSelfAnsweredMax {
+                self.selfAnsweredCallIds.removeFirst()
+            }
+        }
         enqueue(dict)
     }
 
@@ -315,6 +391,17 @@ final class CallSignalWs: NSObject {
             // CallKit rings even if JS is broken, and JS still gets the
             // event for its in-app modal.
             handleIncomingCallInviteLocked(obj)
+        // [2026-05-22 #1349 fix] Caller-side signaling — see the receiver-
+        // loop comment block at the top of this file for the full design
+        // notes. The server aliases `call_answered` → `call_accepted` on
+        // relay (C++ WS main.cpp:1059) but we accept both spellings so a
+        // Go-WS rollback or older proxy in the chain can't re-break us.
+        case "call_accepted", "call_answered":
+            handleIncomingCallAcceptedLocked(obj)
+        case "call_declined":
+            handleIncomingCallDeclinedLocked(obj)
+        case "call_cancel":
+            handleIncomingCallCancelLocked(obj)
         case "call_end":
             // [#1179 cleanup, 2026-05-19] Native CallKit fallback for REMOTE
             // hangup. Mirror of the Android path in CallSignalWs.kt.
@@ -339,6 +426,135 @@ final class CallSignalWs: NSObject {
             // the real call event surface.
             break
         }
+    }
+
+    /// [2026-05-22 #1349 fix] Called on `queue`. Caller-side handler for the
+    /// server's relayed `call_accepted` (alias of legacy `call_answered`).
+    /// Stops outgoing ringback by posting `CallKitCallAnsweredRemote`, which
+    /// both CallViewController (UIKit modal) and ExpoCallKitModule (RN
+    /// bridge) observe.
+    private func handleIncomingCallAcceptedLocked(_ obj: [String: Any]) {
+        let callId = (obj["call_id"] as? String) ?? (obj["room_id"] as? String) ?? ""
+        guard !callId.isEmpty else {
+            NSLog("[CallSignalWs] call_accepted: missing call_id/room_id, skipping")
+            return
+        }
+        let acceptedByEmail = (obj["accepted_by_email"] as? String)
+            ?? (obj["callee_email"] as? String)
+            ?? ""
+        let acceptedByClientId = (obj["accepted_by_client_id"] as? String) ?? ""
+        NSLog("[CallSignalWs] call_accepted \(callId) by=\(acceptedByEmail) — stopping caller ringback")
+
+        var userInfo: [String: Any] = ["callId": callId, "call_id": callId]
+        if !acceptedByEmail.isEmpty { userInfo["acceptedByEmail"] = acceptedByEmail }
+        if !acceptedByClientId.isEmpty { userInfo["acceptedByClientId"] = acceptedByClientId }
+
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: Notification.Name("CallKitCallAnsweredRemote"),
+                object: nil,
+                userInfo: userInfo
+            )
+        }
+    }
+
+    /// [2026-05-22 #1349 fix] Called on `queue`. Caller-side handler for
+    /// `call_declined`. Posts `CallKitCallDeclinedRemote`; JS owns the
+    /// outgoing-UI dismiss via its existing onCallEnded path. CallVC
+    /// observers also tear down ringback so the user hears it stop
+    /// immediately even if RN is paused.
+    private func handleIncomingCallDeclinedLocked(_ obj: [String: Any]) {
+        let callId = (obj["call_id"] as? String) ?? (obj["room_id"] as? String) ?? ""
+        guard !callId.isEmpty else {
+            NSLog("[CallSignalWs] call_declined: missing call_id/room_id, skipping")
+            return
+        }
+        let reason = (obj["reason"] as? String) ?? "declined"
+        let declinedByEmail = (obj["declined_by_email"] as? String)
+            ?? (obj["callee_email"] as? String)
+            ?? ""
+        NSLog("[CallSignalWs] call_declined \(callId) reason=\(reason) by=\(declinedByEmail)")
+
+        var userInfo: [String: Any] = [
+            "callId": callId,
+            "call_id": callId,
+            "reason": reason,
+        ]
+        if !declinedByEmail.isEmpty { userInfo["declinedByEmail"] = declinedByEmail }
+
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: Notification.Name("CallKitCallDeclinedRemote"),
+                object: nil,
+                userInfo: userInfo
+            )
+        }
+    }
+
+    /// [2026-05-22 #1349 fix] Called on `queue`. Sibling-side handler for
+    /// `call_cancel`. Two flavors arrive here:
+    ///
+    ///   1. Caller-initiated cancel ("caller hung up before pickup"): treat
+    ///      it like a remote-end on the callee side. Forwards to the same
+    ///      teardown path as call_end so CallKit dismisses.
+    ///
+    ///   2. Multi-device fan-out ("answered elsewhere"): the server tags
+    ///      the frame with accepted_by_client_id and reason=answered_elsewhere.
+    ///      Every sibling session of the callee receives this frame —
+    ///      including the device that just answered. The answering device
+    ///      MUST suppress it, otherwise it tears down its own newly-active
+    ///      call. We don't track our WS client_id (server-assigned, not
+    ///      currently echoed back in auth_success) so we instead use the
+    ///      selfAnsweredCallIds set, populated by fireCallAnswered just
+    ///      moments earlier — same identity, less wire-format coupling.
+    private func handleIncomingCallCancelLocked(_ obj: [String: Any]) {
+        let callId = (obj["call_id"] as? String) ?? (obj["room_id"] as? String) ?? ""
+        guard !callId.isEmpty else {
+            NSLog("[CallSignalWs] call_cancel: missing call_id/room_id, skipping")
+            return
+        }
+        let reason = (obj["reason"] as? String) ?? "cancelled"
+        let acceptedByClientId = (obj["accepted_by_client_id"] as? String) ?? ""
+
+        // Self-suppress: if this is an "answered_elsewhere" fan-out AND we
+        // were the device that fired call_answered for this callId, drop it.
+        if reason == "answered_elsewhere" || !acceptedByClientId.isEmpty {
+            if selfAnsweredCallIds.contains(callId) {
+                NSLog("[CallSignalWs] call_cancel \(callId): we answered locally — self-suppress (reason=\(reason))")
+                // Pop so the slot can be re-used by a future call_id.
+                if let idx = selfAnsweredCallIds.firstIndex(of: callId) {
+                    selfAnsweredCallIds.remove(at: idx)
+                }
+                return
+            }
+        }
+
+        NSLog("[CallSignalWs] call_cancel \(callId) reason=\(reason) — dismissing sibling UI")
+
+        let userInfo: [String: Any] = [
+            "callId": callId,
+            "call_id": callId,
+            "reason": reason,
+            "acceptedByClientId": acceptedByClientId,
+        ]
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(
+                name: Notification.Name("CallKitCallCancelledRemote"),
+                object: nil,
+                userInfo: userInfo
+            )
+        }
+
+        // Sibling devices that were ringing for this invite (CallKit pill
+        // showing, in-app sheet up) need the SAME CallKit cleanup the
+        // call_end path does — otherwise the system ring stays up forever
+        // on the non-answering device. Route through the existing handler
+        // so the inviteUUIDsByCallId / shared-map lookup + provider
+        // remoteEnded report runs unchanged.
+        handleIncomingCallEndLocked([
+            "call_id": callId,
+            "reason": reason,
+        ])
     }
 
     /// [#1179 cleanup, 2026-05-19] Called on `queue`. Native CallKit cleanup

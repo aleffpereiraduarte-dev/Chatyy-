@@ -3,10 +3,13 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Animated,
   ActivityIndicator, Platform, Alert, Modal, useWindowDimensions, Linking, Easing,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, Redirect } from 'expo-router';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { PLANS_ENABLED } from '../constants/featureFlags';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useCurrency } from '../context/CurrencyContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
@@ -518,8 +521,23 @@ function loadStripeJs() {
 }
 
 export default function PlansScreen() {
+  // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag.
+  // Plans/Premium/IAP all paused — app ships WhatsApp-style fully free.
+  // Route stays registered so any lingering deep-link is a soft redirect
+  // instead of a 404. Flip PLANS_ENABLED to bring the subscription
+  // upgrade flow back without a rebuild.
+  if (!PLANS_ENABLED) {
+    return <Redirect href="/chat" />;
+  }
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  // Display currency for past invoices + current subscription amount.
+  // NOTE: the headline pricing tiles still render BRL directly because
+  // App Store / Play Store IAP receipts come back in BRL and the user
+  // is actually charged the BRL price — converting on the tile would
+  // mislead. Only post-sale displays (where the amount is informational)
+  // get the converted view.
+  const { format: formatMoney } = useCurrency(language);
   const { user } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -2364,7 +2382,7 @@ export default function PlansScreen() {
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                       <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>{t('plans.amount')}</Text>
                       <Text style={{ color: colors.text, fontSize: FontSize.base, fontWeight: '500' }}>
-                        {formatBRL(subInfo.amount)}/{t('plans.perMonth').replace('/', '')}
+                        {formatMoney(subInfo.amount)}/{t('plans.perMonth').replace('/', '')}
                       </Text>
                     </View>
                   </>
@@ -2481,7 +2499,7 @@ export default function PlansScreen() {
                         {formatDateBR(inv.date)}
                       </Text>
                       <Text style={{ color: colors.text, fontSize: FontSize.sm, fontWeight: '500' }}>
-                        {formatBRL(inv.amount)}
+                        {formatMoney(inv.amount)}
                       </Text>
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                         <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: invoiceStatusColor(inv.status) }} />

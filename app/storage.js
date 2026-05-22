@@ -21,6 +21,8 @@ import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { IconArrowLeft, IconCloud, IconDatabase, IconRefresh } from '../components/Icons';
 import StorageShopSheet from '../components/StorageShopSheet';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { MONETIZATION_ENABLED } from '../constants/featureFlags';
 
 function formatBytes(b) {
   const v = Number(b) || 0;
@@ -184,8 +186,11 @@ export default function StorageScreen() {
               )}
             </View>
 
-            {/* Active tier card (if paid) */}
-            {isPaid && (
+            {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+                "Aumentar armazenamento" / "Gerenciar assinatura" / "Mudar plano"
+                CTAs + "Cancele quando quiser" disclaimer all hidden. Free 50GB
+                stays visible above. */}
+            {MONETIZATION_ENABLED && isPaid && (
               <View style={[styles.tierCard, { backgroundColor: colors.cardBackground || colors.surface || '#fff' }]}>
                 <Text style={[styles.tierName, { color: colors.text }]}>
                   {tierLabel(usage.tier)} · {usage.billing_period === 'annual' ? (t('storage.cycle.annual') || 'Anual') : (t('storage.cycle.monthly') || 'Mensal')}
@@ -203,19 +208,20 @@ export default function StorageScreen() {
               </View>
             )}
 
-            {/* Upgrade CTA */}
-            <TouchableOpacity
-              onPress={onShopOpen}
-              style={[styles.upgradeBtn, { backgroundColor: colors.tint || '#0a84ff' }]}
-              activeOpacity={0.85}
-            >
-              <IconDatabase size={20} color="#fff" />
-              <Text style={styles.upgradeBtnText}>
-                {isPaid
-                  ? (t('storage.changeTier') || 'Mudar plano')
-                  : (t('storage.upgrade') || 'Aumentar armazenamento')}
-              </Text>
-            </TouchableOpacity>
+            {MONETIZATION_ENABLED && (
+              <TouchableOpacity
+                onPress={onShopOpen}
+                style={[styles.upgradeBtn, { backgroundColor: colors.tint || '#0a84ff' }]}
+                activeOpacity={0.85}
+              >
+                <IconDatabase size={20} color="#fff" />
+                <Text style={styles.upgradeBtnText}>
+                  {isPaid
+                    ? (t('storage.changeTier') || 'Mudar plano')
+                    : (t('storage.upgrade') || 'Aumentar armazenamento')}
+                </Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               onPress={() => router.push('/files')}
@@ -226,18 +232,23 @@ export default function StorageScreen() {
               </Text>
             </TouchableOpacity>
 
-            <Text style={[styles.helpText, { color: colors.muted }]}>
-              {t('storage.cancelAnytime') || 'Cancele quando quiser. Assinatura renova automaticamente.'}
-            </Text>
+            {MONETIZATION_ENABLED && (
+              <Text style={[styles.helpText, { color: colors.muted }]}>
+                {t('storage.cancelAnytime') || 'Cancele quando quiser. Assinatura renova automaticamente.'}
+              </Text>
+            )}
           </>
         )}
       </ScrollView>
 
-      <StorageShopSheet
-        visible={showShop}
-        onClose={onShopClose}
-        currentTier={usage?.tier || 'free'}
-      />
+      {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag */}
+      {MONETIZATION_ENABLED && (
+        <StorageShopSheet
+          visible={showShop}
+          onClose={onShopClose}
+          currentTier={usage?.tier || 'free'}
+        />
+      )}
     </View>
   );
 }

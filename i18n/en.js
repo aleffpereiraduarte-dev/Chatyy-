@@ -8024,4 +8024,16 @@ export default {
   'settings.networkUsage.received': 'Received',
   'audio.offline.unavailable': 'Audio not available offline',
   'audio.miniPlayer.title': 'Playing now',
+  // Currency picker — issue #1355.
+  'settings.currencyLabel': 'Currency',
+  'settings.currencyAuto': 'Auto',
+  'settings.currency.BRL': 'Brazilian real',
+  'settings.currency.USD': 'US dollar',
+  'settings.currency.EUR': 'Euro',
+  'settings.currency.GBP': 'Pound sterling',
+  'settings.currency.ARS': 'Argentine peso',
+  'settings.currency.MXN': 'Mexican peso',
+  'settings.currency.COP': 'Colombian peso',
+  'settings.currency.PEN': 'Peruvian sol',
+  'settings.currency.CLP': 'Chilean peso',
 };

@@ -8126,4 +8126,18 @@ export default {
   'settings.networkUsage.received': 'Recebido',
   'audio.offline.unavailable': 'Áudio não disponível offline',
   'audio.miniPlayer.title': 'Reproduzindo agora',
+  // Currency picker — issue #1355 (2026-05-22). Lives inside the language
+  // section of settings ("Idioma e moeda"). Conversion rates fetched from
+  // chat_currency_rates and applied at render time only.
+  'settings.currencyLabel': 'Moeda',
+  'settings.currencyAuto': 'Auto',
+  'settings.currency.BRL': 'Real brasileiro',
+  'settings.currency.USD': 'Dólar americano',
+  'settings.currency.EUR': 'Euro',
+  'settings.currency.GBP': 'Libra esterlina',
+  'settings.currency.ARS': 'Peso argentino',
+  'settings.currency.MXN': 'Peso mexicano',
+  'settings.currency.COP': 'Peso colombiano',
+  'settings.currency.PEN': 'Sol peruano',
+  'settings.currency.CLP': 'Peso chileno',
 };

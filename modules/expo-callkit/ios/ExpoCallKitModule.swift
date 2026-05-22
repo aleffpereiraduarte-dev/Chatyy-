@@ -55,6 +55,15 @@ public class ExpoCallKitModule: Module {
   // listener still sees the call.
   private var incomingCallForegroundObserver: Any?
 
+  // [2026-05-22 #1349 fix] Observers for the caller-side WS receiver loop
+  // notifications posted by CallSignalWs (CallKitCallAnsweredRemote /
+  // CallKitCallDeclinedRemote / CallKitCallCancelledRemote). Forwarded to JS
+  // as `onCallAnsweredRemote` / `onCallDeclinedRemote` / `onCallCancelledRemote`
+  // so the JS-side /call screen stops ringback + dismisses outgoing UI
+  // without waiting for the 45s outgoing timeout. Stored as a small array
+  // so deinit removes all three with one loop.
+  private var remoteSignalObservers: [Any] = []
+
   // __chatyy_native_call_sync 2026-05-19 — call-state observers (mute, cam,
   // speaker, route, hold, PiP, camera flip). CallViewController posts the
   // matching ExpoCallKitLk* notifications; we forward them to JS as typed
@@ -319,7 +328,16 @@ public class ExpoCallKitModule: Module {
       // [Wave C-1, 2026-05-21] Emitted when the user taps the in-call chat
       // button on the native SwiftUI CallView. Payload: { callId, conversationId }.
       // JS subscriber in callkeep.js calls router.push('/chat-conversation').
-      "onOpenChat"
+      "onOpenChat",
+      // [2026-05-22 #1349 fix] Caller-side remote-signaling events bridged
+      // from the CallSignalWs receiver loop. Caller-only — the callee path
+      // already has `onCallAnswered` (CXAnswerCallAction) and `onIncomingCall`.
+      // Without these, ringback drones until the 45s outgoing timeout fires
+      // even after the peer accepted/declined, because the JS-side mailWs
+      // subscription was the only place these frames were observed.
+      "onCallAnsweredRemote",
+      "onCallDeclinedRemote",
+      "onCallCancelledRemote"
     )
 
     // Auto-initialize on module load (skip CallKit in China per Apple requirement)
@@ -340,6 +358,7 @@ public class ExpoCallKitModule: Module {
         self.setupNetworkMonitor()
         self.installAppDelegateBridges()
         self.installNativeCallEndedObserver()
+        self.installRemoteSignalObservers()
         self.installShareDidSendObserver()
         self.flushVoipTokenFromAppGroup()
         self.adoptPendingCallsFromAppGroup()
@@ -1472,6 +1491,55 @@ public class ExpoCallKitModule: Module {
     callStateObservers.append(chatToken)
   }
 
+  /// [2026-05-22 #1349 fix] Bridge the CallSignalWs receiver-loop
+  /// notifications to JS as typed Expo Module events. CallSignalWs only
+  /// posts NotificationCenter (it has no RN bridge ref of its own);
+  /// CallViewController observes the same notifications for its own
+  /// ringback teardown. This installer adds the JS-side fan-out so /call
+  /// state stays consistent without waiting for the JS mailWs subscription
+  /// (which is paused when the screen is backgrounded or the JS bridge is
+  /// still loading on cold-start). Idempotent.
+  private func installRemoteSignalObservers() {
+    guard remoteSignalObservers.isEmpty else { return }
+    let nc = NotificationCenter.default
+    let q = OperationQueue.main
+
+    let triples: [(notif: String, event: String)] = [
+      ("CallKitCallAnsweredRemote",  "onCallAnsweredRemote"),
+      ("CallKitCallDeclinedRemote",  "onCallDeclinedRemote"),
+      ("CallKitCallCancelledRemote", "onCallCancelledRemote"),
+    ]
+    for triple in triples {
+      let event = triple.event
+      let token = nc.addObserver(
+        forName: Notification.Name(triple.notif),
+        object: nil,
+        queue: q
+      ) { [weak self] note in
+        // Tolerate both spellings — CallSignalWs writes both today.
+        let callId = (note.userInfo?["callId"] as? String)
+          ?? (note.userInfo?["call_id"] as? String)
+          ?? ""
+        guard !callId.isEmpty else { return }
+        var payload: [String: Any] = ["callId": callId]
+        if let r = note.userInfo?["reason"] as? String, !r.isEmpty {
+          payload["reason"] = r
+        }
+        if let e = note.userInfo?["acceptedByEmail"] as? String, !e.isEmpty {
+          payload["acceptedByEmail"] = e
+        }
+        if let c = note.userInfo?["acceptedByClientId"] as? String, !c.isEmpty {
+          payload["acceptedByClientId"] = c
+        }
+        if let d = note.userInfo?["declinedByEmail"] as? String, !d.isEmpty {
+          payload["declinedByEmail"] = d
+        }
+        self?.safeSendEvent(event, payload)
+      }
+      remoteSignalObservers.append(token)
+    }
+  }
+
   private func flushVoipTokenFromAppGroup() {
     guard let ud = UserDefaults(suiteName: kAppGroupId),
           let token = ud.string(forKey: "voipToken") else { return }
@@ -1588,6 +1656,11 @@ public class ExpoCallKitModule: Module {
     if let obs = shareDidSendObserver {
       NotificationCenter.default.removeObserver(obs)
     }
+    // [2026-05-22 #1349 fix] Caller-side WS receiver-loop event observers.
+    for obs in remoteSignalObservers {
+      NotificationCenter.default.removeObserver(obs)
+    }
+    remoteSignalObservers.removeAll()
     // __chatyy_native_call_sync — drop the call-state observers too.
     for obs in callStateObservers {
       NotificationCenter.default.removeObserver(obs)

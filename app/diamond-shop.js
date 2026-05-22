@@ -13,9 +13,11 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView, ActivityIndicator,
   Platform, StatusBar, Alert, Linking, Animated, Easing, AppState,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Redirect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { getBaseUrl } from '../services/api';
@@ -31,6 +33,13 @@ function formatBrl(v) {
 }
 
 export default function DiamondShopScreen() {
+  // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag.
+  // Diamond purchases paused; bounce visitors back to /chat. Backend
+  // IAP code and DIAMOND_PACKS catalog stay intact so flipping the flag
+  // restores the shop instantly.
+  if (!DIAMONDS_ENABLED) {
+    return <Redirect href="/chat" />;
+  }
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();

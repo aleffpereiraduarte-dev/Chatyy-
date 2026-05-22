@@ -125,10 +125,12 @@ import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 import kotlin.random.Random
 
@@ -865,10 +867,30 @@ class CallActivity : ComponentActivity() {
       // Room.disconnect() is suspend in LK 2.x. lifecycleScope is already
       // cancelled at onDestroy, so fire-and-forget on a fresh IO scope so
       // the WS+ICE teardown completes after the activity is gone.
-      GlobalScope.launch(Dispatchers.IO) {
-        try { r.disconnect() } catch (t: Throwable) {
-          Log.w(TAG, "room.disconnect() threw: ${t.message}")
+      // [2026-05-22 #1331 fix] Wrap in withTimeoutOrNull(10s) — if WS teardown
+      // hangs the Room would stay alive 30-60s and peer sees "Conectando"
+      // until SFU eviction. On timeout, force engine.shutdown() via reflection.
+      val disconnectScope = MainScope()
+      disconnectScope.launch(Dispatchers.IO) {
+        val result = withTimeoutOrNull(10_000L) {
+          try { r.disconnect() } catch (t: Throwable) {
+            Log.w(TAG, "room.disconnect() threw: ${t.message}")
+          }
         }
+        if (result == null) {
+          Log.w(TAG, "[#1331] room.disconnect timed out after 10s — forcing engine shutdown")
+          try {
+            val engineField = r.javaClass.declaredFields.firstOrNull {
+              it.name.contains("engine", ignoreCase = true)
+            }
+            val engine = engineField?.apply { isAccessible = true }?.get(r)
+            val shutdown = engine?.javaClass?.methods?.firstOrNull { it.name == "shutdown" && it.parameterTypes.isEmpty() }
+            shutdown?.invoke(engine)
+          } catch (t: Throwable) {
+            Log.w(TAG, "engine.shutdown threw: ${t.message}")
+          }
+        }
+        disconnectScope.cancel()
       }
     }
     remoteRenderer?.release()

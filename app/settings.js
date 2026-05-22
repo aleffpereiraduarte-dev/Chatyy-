@@ -10,6 +10,7 @@ import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useCurrency } from '../context/CurrencyContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import {
   IconArrowLeft, IconSparkles, IconMessageSquare, IconPenTool, IconDraft,
@@ -266,6 +267,7 @@ function HistoryDownloadRow() {
 function SettingsScreenInner() {
   const { colors, isDark, toggle, density, setDensity } = useTheme();
   const { t, language, changeLanguage } = useLanguage();
+  const { currency: userCurrency, setCurrency: setUserCurrency, resetCurrency: resetUserCurrency, autoDetected: currencyAutoDetected, supported: supportedCurrencies, symbols: currencySymbols } = useCurrency();
   const { biometricEnabled, biometricAvailable, toggleBiometric, autoLockInterval, setAutoLockInterval } = useBiometric();
   // Modal state for the auto-lock interval picker. Surface lives in the
   // Security section below the biometric toggle so users find it where
@@ -1670,6 +1672,46 @@ function SettingsScreenInner() {
                     language === l.val && { color: '#fff' },
                   ]}>
                     {l.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* Currency picker (2026-05-22 — issue #1355). Lives inside the
+              language section because the two settings travel together
+              conceptually ("Idioma e moeda"). FX rates fetched from
+              chat_currency_rates and cached 24h; first launch auto-detects
+              from device locale. */}
+          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>
+                {t('settings.currencyLabel') || 'Moeda'}
+              </Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {currencyAutoDetected
+                  ? (t('settings.currencyAuto') || 'Auto') + ' · ' + userCurrency
+                  : userCurrency}
+              </Text>
+            </View>
+            <View style={[s.perPageBtns, { flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: '60%' }]}>
+              {supportedCurrencies.map(code => (
+                <TouchableOpacity
+                  key={code}
+                  style={[
+                    s.perPageBtn,
+                    { borderColor: colors.divider, marginBottom: 4 },
+                    userCurrency === code && { backgroundColor: colors.primary, borderColor: colors.primary },
+                  ]}
+                  onPress={() => setUserCurrency(code)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`${t('settings.currency.' + code) || code} (${currencySymbols[code] || ''})`}
+                >
+                  <Text style={[
+                    s.perPageText, { color: colors.text },
+                    userCurrency === code && { color: '#fff' },
+                  ]}>
+                    {currencySymbols[code] || ''} {code}
                   </Text>
                 </TouchableOpacity>
               ))}

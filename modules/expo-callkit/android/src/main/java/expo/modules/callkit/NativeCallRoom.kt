@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * NativeCallRoom — singleton holder for the LiveKit Room owned by CallActivity.
@@ -294,6 +295,10 @@ object NativeCallRoom {
      * Disconnect the live Room. Room.disconnect() is NOT a suspend in LK
      * 2.24.x — it returns Unit. Non-suspend so the AsyncFunction bridge
      * in ExpoCallKitModule can call it without coroutine boilerplate.
+     *
+     * [2026-05-22 #1331 fix] Even non-suspend disconnect can block on WS
+     * teardown; wrap in coroutine with 10s timeout so JS bridge call never
+     * stalls and stale Room can't keep peer stuck on "Conectando".
      */
     fun disconnect() {
         val r = room
@@ -301,14 +306,33 @@ object NativeCallRoom {
             Log.d(TAG, "disconnect: no live Room (no-op)")
             return
         }
-        try {
-            r.disconnect()
-            Log.d(TAG, "disconnect: room.disconnect() called")
-        } catch (t: Throwable) {
-            Log.w(TAG, "disconnect threw: ${t.message}")
-        } finally {
-            clear()
+        // Snapshot + null fields immediately so a re-entrant call is a no-op
+        // and stale state can't survive past this point.
+        room = null
+        scope.launch(Dispatchers.IO) {
+            val result = withTimeoutOrNull(10_000L) {
+                try {
+                    r.disconnect()
+                    Log.d(TAG, "disconnect: room.disconnect() called")
+                } catch (t: Throwable) {
+                    Log.w(TAG, "disconnect threw: ${t.message}")
+                }
+            }
+            if (result == null) {
+                Log.w(TAG, "[#1331] disconnect timed out after 10s — forcing engine shutdown")
+                try {
+                    val engineField = r.javaClass.declaredFields.firstOrNull {
+                        it.name.contains("engine", ignoreCase = true)
+                    }
+                    val engine = engineField?.apply { isAccessible = true }?.get(r)
+                    val shutdown = engine?.javaClass?.methods?.firstOrNull { it.name == "shutdown" && it.parameterTypes.isEmpty() }
+                    shutdown?.invoke(engine)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "engine.shutdown threw: ${t.message}")
+                }
+            }
         }
+        clear()
     }
 
     // ────────────── Event forwarding ──────────────
@@ -405,7 +429,16 @@ object NativeCallRoom {
         }
         if (preconnectingCallId != null && preconnectingCallId != callId) {
             Log.w(TAG, "preconnect: switching from ${preconnectingCallId} → $callId; clearing prior Room")
-            try { room?.disconnect() } catch (_: Throwable) {}
+            // [2026-05-22 #1331 fix] Fire-and-forget timeout-bounded disconnect
+            // so a hung WS teardown on the prior Room can't block the new call.
+            val prior = room
+            if (prior != null) {
+                scope.launch(Dispatchers.IO) {
+                    withTimeoutOrNull(10_000L) {
+                        try { prior.disconnect() } catch (_: Throwable) {}
+                    }
+                }
+            }
             clear()
         }
         preconnectingCallId = callId
