@@ -999,15 +999,25 @@ public class ExpoCallKitModule: Module {
         lkToken: lkToken,
         suppressVCPresent: false
       )
+      // [WAVE 149 2026-05-22] ROOT CAUSE FIX — use dedicated UIWindow.
+      // Histórico: builds 545-550 usavam `topVC.present(callVC, modal)` mas
+      // CallKit injeta sua UIWindow em windowLevel=.alert (2000+) que cobre
+      // qualquer modal apresentada na window normal do app. User toca pill
+      // → iOS volta pro app → mas keyWindow é a normal (chat-conversation),
+      // não a modal-coberta. CallView nunca aparece.
+      // Fix: criar UIWindow dedicada em windowLevel=.normal+1, makeKey →
+      // tap-no-pill leva user direto pra essa window. Padrão Signal/WhatsApp.
       DispatchQueue.main.async { [immediateParams] in
-        NSLog("[ExpoCallKit WAVE 145] immediate present pre-CXStartCallAction — callId=\(immediateParams.callId)")
-        // presentOutgoingCallVC lives in ProviderDelegate (file-private),
-        // not in ExpoCallKitModule. Access via the class qualifier — fileprivate
-        // access works because this call is in the same file.
-        ProviderDelegate.presentOutgoingCallVC(
-          params: immediateParams,
+        NSLog("[ExpoCallKit WAVE 149] CallWindowManager.showCallUI pre-CXStartCallAction — callId=\(immediateParams.callId)")
+        CallWindowManager.shared.showCallUI(
+          callId: immediateParams.callId,
+          callerName: immediateParams.calleeName,
+          callerEmail: immediateParams.calleeEmail,
+          hasVideo: immediateParams.isVideo,
           lkUrl: immediateParams.lkUrl,
-          lkToken: immediateParams.lkToken
+          lkToken: immediateParams.lkToken,
+          isOutgoing: true,
+          conversationId: immediateParams.conversationId
         )
       }
 
@@ -2654,6 +2664,10 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       DispatchQueue.main.async {
         ProviderDelegate._activePresentedCallIds.remove(cid)
         NSLog("[CallTrace][PRESENT-CLEAR] WAVE 147 removed callId=\(cid) from active presented set on CXEndCallAction")
+        // [WAVE 149] Tear down the dedicated call UIWindow so the user
+        // returns to the normal app UI after End. Idempotent — no-op if
+        // not currently showing.
+        CallWindowManager.shared.hideCallUI(callId: cid)
       }
     }
     // [WAVE 142 GPT-5.5-pro] Snippet 15 — notify shared observer so SwiftUI
