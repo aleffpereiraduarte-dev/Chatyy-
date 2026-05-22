@@ -5531,6 +5531,78 @@ export async function chatCallInvite(conversationId, callId, emails, video = tru
   }, 'POST');
 }
 
+// ============================================================
+// CALL E2EE — Signal-style master-key envelopes (Phase 1, 2026-05-22)
+// ------------------------------------------------------------
+// Companion of services/e2e-call.js. The caller mints the 32-byte master
+// locally, wraps it once per callee device with tweetnacl Box (X25519 +
+// XSalsa20-Poly1305), and ships the envelopes here. Server stores them as
+// opaque BYTEA and pushes a `call_e2ee_envelope_ready` WS event to each
+// callee device. Master plaintext NEVER leaves the caller's process.
+//
+// Feature flag: backend requires CALL_E2EE_ENABLED=1 (default OFF). The
+// kill-switch CALL_E2EE_KILLSWITCH=1 returns 503 — clients fall back to
+// legacy SRTP-only (DTLS-protected, still safe but server-recordable).
+// ============================================================
+
+/**
+ * Upload per-device encrypted master-key envelopes for a brand-new call.
+ *
+ * @param {object} args
+ * @param {string} args.callId             — server call_id (same as call_invite)
+ * @param {string} args.callerDeviceId     — sender's device_id (from getDeviceId())
+ * @param {string} [args.sdpFingerprint]   — hex SHA-256 of local DTLS cert
+ * @param {Array}  args.envelopes          — output of buildEnvelopesForBundles()
+ * @param {number} [args.wireVersion=1]    — envelope wire format version
+ */
+export async function chatCallInviteE2ee({
+  callId,
+  callerDeviceId,
+  sdpFingerprint = '',
+  envelopes,
+  wireVersion = 1,
+} = {}) {
+  return apiCall('chat_call_invite_e2ee', {
+    call_id:           String(callId || ''),
+    caller_device_id:  String(callerDeviceId || ''),
+    sdp_fingerprint:   String(sdpFingerprint || ''),
+    envelopes:         Array.isArray(envelopes) ? envelopes : [],
+    wire_version:      wireVersion | 0,
+  }, 'POST');
+}
+
+/**
+ * Acknowledge successful decrypt — server deletes the row (replay defense).
+ */
+export async function chatCallKeyAck({ callId, deviceId, rotationCounter = 0 } = {}) {
+  return apiCall('chat_call_key_ack', {
+    call_id:          String(callId || ''),
+    device_id:        String(deviceId || ''),
+    rotation_counter: rotationCounter | 0,
+  }, 'POST');
+}
+
+/**
+ * Push a fresh master to every callee device during a long call. Same
+ * envelope shape as the initial invite; rotation_counter must be ≥ 1 and
+ * monotonically increasing per call.
+ */
+export async function chatCallKeyRotate({
+  callId,
+  callerDeviceId,
+  rotationCounter,
+  envelopes,
+  wireVersion = 1,
+} = {}) {
+  return apiCall('chat_call_key_rotate', {
+    call_id:           String(callId || ''),
+    caller_device_id:  String(callerDeviceId || ''),
+    rotation_counter:  rotationCounter | 0,
+    envelopes:         Array.isArray(envelopes) ? envelopes : [],
+    wire_version:      wireVersion | 0,
+  }, 'POST');
+}
+
 // Host-issued mute of a remote participant in a group call. Backend validates
 // the caller has admin role on the conversation, then relays a WS
 // `call_mute_request` event to the target's `chat_user_{email}` channel.
@@ -8789,6 +8861,42 @@ export async function chatLivekitToken(conversationId, room = '') {
   const _did = await _getDeviceIdSafe();
   if (_did) payload.device_id = _did;
   return apiCall('chat_livekit_token', payload, 'POST');
+}
+
+// [WAVE 119, 2026-05-22] Relay-first call invite v2 — single round-trip that:
+//   1. Mints the LK token for the caller (no separate chat_livekit_token call)
+//   2. Mints time-limited TURN HMAC credentials + returns turn_uris[]
+//   3. INSERTs chat_call_active row (survives SFU/relay restart)
+//   4. Fans VoIP/FCM/WS invites to every callee with the same payload
+// Returns { call_id, lk_token, lk_url, lk_room, lk_expires_at, turn_uris,
+//           turn_username, turn_password, turn_expires_at, call_type,
+//           relay_node, backup_relay, e2ee_key_pending, invited[] }.
+// Caller passes { conversationId, callId?, video, calleeEmail | emails[] }.
+// See /var/www/mail/docs/relay-first-migration.md for runbook.
+export async function chatCallInviteV2({ conversationId, callId, video = false, calleeEmail, emails, callType } = {}) {
+  const payload = {
+    conversation_id: conversationId,
+    video: !!video,
+  };
+  if (callId) payload.call_id = callId;
+  if (calleeEmail) payload.callee_email = calleeEmail;
+  if (Array.isArray(emails) && emails.length) payload.emails = emails;
+  if (callType) payload.call_type = callType;
+  const _did = await _getDeviceIdSafe();
+  if (_did) payload.device_id = _did;
+  return apiCall('chat_call_invite_v2', payload, 'POST');
+}
+
+// Crash-recovery probe — clients hit this after DTLS drop / suspected relay
+// restart to learn whether the call survived and which node to reconnect to.
+// Returns { call: {...}, devices: [...] } or 404 if the call ended.
+export async function chatCallActiveStateGet(callId) {
+  return apiCall('chat_call_active_state_get', { call_id: callId }, 'POST');
+}
+
+// Explicit hangup/timeout/cancelled close — idempotent.
+export async function chatCallActiveClose(callId, reason = 'hangup') {
+  return apiCall('chat_call_active_close', { call_id: callId, reason }, 'POST');
 }
 
 // [gap E2 2026-05-20] "Join ongoing call" banner.

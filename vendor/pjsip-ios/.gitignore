@@ -1,0 +1,21 @@
+# Keep this directory in tree but ignore built artifacts.
+# The XCFramework is built per-host on Mac 207 via scripts/pjsip/build-ios.sh.
+# DO NOT commit the binary — it's GPLv2-derived; see ../../docs/whatsapp-migration/IMPL-pjsip-ios-license.md
+
+# Build outputs
+PJSIP.xcframework/
+.build/
+*.a
+*.dylib
+*.o
+*.tmp
+
+# Source tree (cloned by build script, never tracked in this repo).
+# The source is GPLv2 and lives in a sibling dir, not here, but defensively
+# ignore in case someone copies it in.
+pjproject*/
+pjsip-src/
+
+# Allow these meta files only.
+!.gitignore
+!README.md

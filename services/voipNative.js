@@ -21,8 +21,53 @@
 import { Platform, AppState } from 'react-native';
 import * as ExpoCallKit from '../modules/expo-callkit';
 import * as api from './api';
+// [CALL-E2EE 2026-05-22 — Phase 1] Lazy-loaded so dev builds without the
+// e2e-call service still boot. The module is pure JS (tweetnacl) so the
+// import itself is cheap; we still gate behind the runtime feature flag.
+let _e2eCall = null;
+let _e2e = null;
+function _loadE2eCall() {
+  if (!_e2eCall) {
+    try { _e2eCall = require('./e2e-call'); } catch (e) {
+      console.warn('[voipNative] e2e-call module unavailable:', e?.message || e);
+      _e2eCall = false;
+    }
+  }
+  if (!_e2e) {
+    try { _e2e = require('./e2e'); } catch { _e2e = false; }
+  }
+  return _e2eCall && _e2e ? { ec: _e2eCall, e: _e2e } : null;
+}
+
+// Feature-flag gate. The client default is OFF for Phase 1 — flipped to ON
+// from a future settings hook or remote config. Mirrors the CALL_E2EE_ENABLED
+// backend env: even if the caller forces it on, the server returns 501 unless
+// the backend flag is also flipped.
+function _callE2eeEnabled() {
+  try {
+    const g = typeof globalThis !== 'undefined' ? globalThis : global;
+    if (g && g.__CALL_E2EE_ENABLED === true) return true;
+  } catch {}
+  return false;
+}
 
 const TAG = '[voipNative]';
+
+// [WAVE 119, 2026-05-22] Relay-first feature flag. When ON, startOutgoingCall
+// calls `chat_call_invite_v2` BEFORE the native CallActivity launch and pipes
+// the pre-minted LK token + TURN credentials into native via
+// persistPendingLkToken — eliminating the legacy 200-500ms token-mint round
+// trip that previously ran AFTER ExpoCallKit.startOutgoingCall. Combined with
+// the client-side iceTransportPolicy='relay' (CallActivity.kt /
+// CallViewController.swift WAVE 115 blocks) the tap→audible-audio budget
+// drops from ~1500ms to <500ms p50.
+//
+// Toggle at runtime via setRelayFirstV2Enabled(true|false). Default OFF for
+// canary rollout; flip to true after 5%/50%/100% measurements look healthy
+// (see /var/www/mail/docs/relay-first-migration.md §Verification).
+let RELAY_FIRST_V2_ENABLED = false;
+export function setRelayFirstV2Enabled(v) { RELAY_FIRST_V2_ENABLED = !!v; }
+export function isRelayFirstV2Enabled() { return RELAY_FIRST_V2_ENABLED; }
 
 /**
  * [2026-05-20 restore foreground gate — WhatsApp/Telegram parity]
@@ -171,7 +216,145 @@ export async function startOutgoingCall({
   // screen stayed up. The native call UI only appeared AFTER both HTTPs
   // resolved. Now we fire callNotify in the background and kick the native
   // surface immediately so CallKit / CallActivity is visible in <100ms.
-  if (conversationId) {
+  // [CALL-E2EE 2026-05-22] Mint+distribute the per-call master secret as
+  // the FIRST network call so the callee's WS can receive the envelope
+  // *before* the legacy call_invite push wakes them. Fire-and-forget — a
+  // failure here MUST NOT block the call (we fall back to legacy SRTP /
+  // DTLS-only). The backend rejects with 501 when CALL_E2EE_ENABLED isn't
+  // set, which we treat as a no-op (the rollout staging plan).
+  if (conversationId && _callE2eeEnabled()) {
+    (async () => {
+      try {
+        const mods = _loadE2eCall();
+        if (!mods) return;
+        const { ec, e } = mods;
+        // 1. Resolve callee device bundles. chat_conv_device_keys returns
+        //    every member-device tuple for the conversation (including our
+        //    own paired devices) — perfect fan-out target.
+        const bundleResp = await api.apiCall('chat_conv_device_keys', { conversation_id: conversationId });
+        const devices = Array.isArray(bundleResp?.data?.devices) ? bundleResp.data.devices : [];
+        if (!devices.length) {
+          console.warn(TAG, '[CALL-E2EE] no device bundles — skip e2ee mint');
+          return;
+        }
+        // 2. Mint master + build per-device envelopes.
+        const master = ec.mintCallMasterSecret();
+        const bundles = devices.map((d) => ({
+          email:      d.email,
+          device_id:  d.device_id,
+          pubkey_b64: d.pubkey,
+        }));
+        const envelopes = ec.buildEnvelopesForBundles(master, bundles);
+        const callerDeviceId = await e.getDeviceId();
+        // 3. Ship.
+        const r = await api.chatCallInviteE2ee({
+          callId: cid,
+          callerDeviceId,
+          envelopes,
+          // sdp_fingerprint filled in by the native layer once DTLS cert is
+          // generated; Phase 1 ships without the binding and adds it in a
+          // follow-up patch when PJSIP/LK expose the cert via setLocalDescription.
+          sdpFingerprint: '',
+        });
+        console.log('[CALL-E2EE] invite_e2ee resp', { ok: !!r?.success, stored: r?.data?.stored });
+        // 4. Cache the master for the local SRTP-derivation step. We never
+        //    persist this to disk — process-memory only, zeroized on call_end.
+        try {
+          const g = typeof globalThis !== 'undefined' ? globalThis : global;
+          if (g) {
+            if (!g.__callMasterSecrets) g.__callMasterSecrets = new Map();
+            g.__callMasterSecrets.set(cid, master);
+          }
+        } catch {}
+      } catch (e) {
+        console.warn(TAG, '[CALL-E2EE] mint/distribute failed (non-fatal):', e?.message || e);
+      }
+    })();
+  }
+
+  // [WAVE 119, 2026-05-22] Relay-first v2 fast path. When the feature flag is
+  // ON, replace the legacy fire-and-forget `call_notify` + lazy
+  // `chat_livekit_token` round-trip with a single `chat_call_invite_v2` call
+  // that:
+  //   - mints the caller's LK token (no second HTTP)
+  //   - mints TURN HMAC creds (no third HTTP)
+  //   - INSERTs chat_call_active row (crash-recovery)
+  //   - fans VoIP/FCM/WS invites to callees with their own pre-minted LK token
+  //     embedded in the payload
+  //
+  // We AWAIT this here (~80-120ms) so the LK token + TURN creds are persisted
+  // via persistPendingLkToken BEFORE ExpoCallKit.startOutgoingCall fires.
+  // The native CallActivity / CallViewController reads the cached token at
+  // onCreate / viewDidLoad and goes straight to LiveKit.create + Room.connect
+  // with iceTransportPolicy='relay'. Net effect: tap → audible audio drops
+  // from ~1500ms to <500ms.
+  //
+  // Legacy path (callNotify + parallel chatLivekitToken in the background
+  // block below) is kept untouched and runs when the flag is OFF — additive
+  // rollout, instant revert by flipping setRelayFirstV2Enabled(false).
+  let v2Resp = null;
+  if (RELAY_FIRST_V2_ENABLED && conversationId) {
+    try {
+      console.log('[CALL-TRACE][3v2/12] chat_call_invite_v2 fired', {
+        conversationId, cid, isVideo: !!isVideo, calleeEmail, ts: Date.now(),
+      });
+    } catch {}
+    try {
+      v2Resp = await api.chatCallInviteV2({
+        conversationId,
+        callId: cid,
+        video: !!isVideo,
+        calleeEmail,
+      });
+      try {
+        console.log('[CALL-TRACE][3v2/12] chat_call_invite_v2 resp', {
+          cid,
+          success: !!v2Resp?.success,
+          hasLkToken: !!(v2Resp?.data?.lk_token),
+          hasTurn: Array.isArray(v2Resp?.data?.turn_uris) && v2Resp.data.turn_uris.length > 0,
+          relayNode: v2Resp?.data?.relay_node,
+          error: v2Resp?.error || '',
+          ts: Date.now(),
+        });
+      } catch {}
+      // Pre-cache the LK token so the native side picks it up without a
+      // second round-trip. iOS: CXStartCallAction handler reads via the
+      // NativeCallTokenFetcher pending cache. Android: LkTokenFetcher
+      // consumes the same cache and CallActivity proceeds with EXTRA_LK_*
+      // already populated (no late onNewIntent re-launch needed).
+      const d = v2Resp?.data || {};
+      if (d.lk_token && d.lk_url) {
+        try {
+          await ExpoCallKit.persistPendingLkToken(cid, d.lk_token, d.lk_url);
+        } catch (e) {
+          console.warn(TAG, '[v2] persistPendingLkToken failed:', e?.message || e);
+        }
+      }
+      // Stash TURN creds on globalThis so the native bridge can read them
+      // without yet another async hop. Both platforms can pick this up via
+      // the existing camelCase-snake_case wrapper at index.ts.
+      try {
+        const g = typeof globalThis !== 'undefined' ? globalThis : global;
+        if (!g.__pendingTurnCreds) g.__pendingTurnCreds = new Map();
+        g.__pendingTurnCreds.set(cid, {
+          turn_uris: d.turn_uris || [],
+          turn_username: d.turn_username || '',
+          turn_password: d.turn_password || '',
+          turn_expires_at: d.turn_expires_at || 0,
+          relay_node: d.relay_node || '',
+          backup_relay: d.backup_relay || '',
+        });
+      } catch {}
+    } catch (e) {
+      console.warn(TAG, '[v2] chat_call_invite_v2 failed (falling back to legacy):', e?.message || e);
+      v2Resp = null;
+    }
+  }
+
+  // Legacy fire-and-forget callNotify — runs when v2 is OFF or when v2
+  // failed/was skipped (e.g. no conversationId). Identical behavior to the
+  // pre-WAVE-119 flow; preserved for rollback safety.
+  if (!v2Resp && conversationId) {
     // [CALL-TRACE 2026-05-21 ROUND3] Step 3/12 — fire-and-forget push to
     // wake the callee. We log both the request kickoff and the response
     // shape so a missing call_invite on the peer side can be traced back
@@ -195,7 +378,7 @@ export async function startOutgoingCall({
       .catch((e) => {
         console.warn(TAG, '[CALL-TRACE][3/12] callNotify failed (non-fatal):', e?.message || e);
       });
-  } else {
+  } else if (!conversationId) {
     try {
       console.warn('[CALL-TRACE][3/12] callNotify SKIPPED (no conversationId)', { cid });
     } catch {}
@@ -283,7 +466,15 @@ export async function startOutgoingCall({
   const nativePresent = ExpoCallKit.startOutgoingCall(nativePayload);
 
   // Background: mint LK token then forward it to native.
-  (async () => {
+  // [WAVE 119, 2026-05-22] Skip when v2 already pre-minted the token above —
+  // the persistPendingLkToken cache is already populated and the native side
+  // doesn't need a second mint. We log the skip so the absence of the legacy
+  // 5/12 trace doesn't read as a regression.
+  if (v2Resp && v2Resp.data?.lk_token) {
+    try {
+      console.log('[CALL-TRACE][5/12] chatLivekitToken SKIPPED (v2 pre-minted)', { cid });
+    } catch {}
+  } else (async () => {
     try {
       // [CALL-TRACE 2026-05-21 ROUND3] Step 5/12 — chatLivekitToken request.
       // This races the native present (~100ms vs ~300-500ms). The native

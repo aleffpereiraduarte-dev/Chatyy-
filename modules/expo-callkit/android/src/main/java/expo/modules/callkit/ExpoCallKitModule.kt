@@ -720,6 +720,39 @@ class ExpoCallKitModule : Module() {
       )
     }
 
+    // [Wave Bridge-Surface, 2026-05-21 / Agent 9] Read-only call snapshot.
+    //
+    // SYNCHRONOUS — must be `Function`, NOT `AsyncFunction`. JS polls every
+    // 1s from services/call-state-reader.js plus on event triggers.
+    //
+    // Returns `null` when no call is in progress. Otherwise returns the
+    // canonical [CallStateSnapshot] as a Map (Expo Modules serializes
+    // primitive maps reliably across SDK versions).
+    //
+    // The native side is the source of truth: this reads live values from
+    // [CurrentCallTracker], [NativeCallRoom], and the audio router.
+    // JS never gets a handle to any of those — only the snapshot.
+    //
+    // See docs/whatsapp-migration/IMPL-bridge-surface-policy.md before
+    // expanding this API.
+    Function("getCurrentCallSnapshot") {
+      val tracker = CurrentCallTracker.snapshotOrNull()
+      if (tracker == null) return@Function null
+      val lkConnected = NativeCallRoom.isConnected()
+      val snap = CallStateSnapshot(
+        callId = tracker.callId,
+        contactEmail = tracker.contactEmail,
+        contactName = tracker.contactName,
+        isVideo = tracker.isVideo,
+        mic = tracker.mic,
+        speaker = tracker.speaker,
+        durationSec = tracker.durationSec(),
+        lkConnected = lkConnected,
+        ringState = tracker.ringState,
+      )
+      snap.toMap()
+    }
+
     // ─── Native LiveKit Room (Stage 1 #992) ───────────────────────────────
     //
     // Allow JS to persist auth + base URL into SharedPreferences so Kotlin
@@ -750,10 +783,19 @@ class ExpoCallKitModule : Module() {
       LkTokenFetcher.setCached(context, roomName, token, url)
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // Replaced by getCurrentCallSnapshot().lkConnected. Standalone existence
+    // encouraged JS to poll LK state independently of the rest of call
+    // state, causing the "Connecting..." eterno desync.
     Function("isNativeRoomConnected") {
       NativeCallRoom.isConnected()
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // [Wave Bridge-Surface, 2026-05-21 / Agent 9] Leaked Room handle data
+    // (participants, identity, roomName). JS /call.js on mobile is going
+    // away — Compose InCallScreen owns the UI. Replacement: read minimal
+    // info via getCurrentCallSnapshot().
     // [#992] JS calls this when /call.js mounts. If native already has a
     // connected Room for the callId, returns a snapshot and JS skips its
     // own Room.connect → no dual-Room race. Otherwise returns null and JS
@@ -767,6 +809,10 @@ class ExpoCallKitModule : Module() {
       NativeCallRoom.getSnapshot()
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // Native owns Room.connect (CallActivity + NativeCallRoom). JS must
+    // not initiate connect on mobile from v2.5.0. Kept for OTA-shipped
+    // bundles still in the wild.
     // JS-initiated connect (outgoing calls — Stage 5). Native is happy to
     // either pre-connect (incoming, from onAccept) or be told to connect
     // (outgoing, from chat-conversation tap "ligar").
@@ -774,14 +820,25 @@ class ExpoCallKitModule : Module() {
       NativeCallRoom.connect(context.applicationContext, url, token, callId, hasVideo)
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // Use endCall(callId, reason) which goes through Telecom Connection
+    // teardown; direct disconnect bypassed Telecom so the notification
+    // pill stayed visible.
     AsyncFunction("lkDisconnect") {
       NativeCallRoom.disconnect()
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // Mic state is Telecom-driven (Connection.setActive / setOnHold +
+    // AudioManager). JS reads via getCurrentCallSnapshot().mic and
+    // toggles via toggleMute() fire-and-forget (lands in v2.4.x).
     AsyncFunction("lkSetMicEnabled") { enabled: Boolean ->
       NativeCallRoom.setMicEnabled(enabled)
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // Camera state is native-owned. JS should not poke the LK track
+    // directly. Replacement: toggleCamera() lands in v2.4.x.
     AsyncFunction("lkSetCameraEnabled") { enabled: Boolean ->
       NativeCallRoom.setCameraEnabled(enabled)
     }
@@ -1257,14 +1314,25 @@ class ExpoCallKitModule : Module() {
     // signaling path no longer touches the JS bridge. Until then, the
     // JS-side WS (services/api.js) remains the primary path and these are
     // a no-op until JS opts in.
+    // DEPRECATED — to be removed in v2.5.0
+    // [Wave Bridge-Surface, 2026-05-21 / Agent 9] JS-initiated signaling
+    // emission. Native CallSignalWs emits call_invite when the outgoing
+    // Connection is created — JS should not be the source of these frames.
     Function("fireCallInviteNative") { callId: String, conversationId: String, calleeEmail: String, hasVideo: Boolean ->
       CallSignalWs.fireCallInvite(context.applicationContext, callId, conversationId, calleeEmail, hasVideo)
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // Native fires answered signal when Connection.onAnswer fulfils, not
+    // when JS asks. JS-initiated double-answer caused SFU duplicate joins.
     Function("fireCallAnsweredNative") { callId: String, conversationId: String ->
       CallSignalWs.fireCallAnswered(context.applicationContext, callId, conversationId)
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // Use endCall(callId, reason) which routes through Telecom Connection
+    // teardown. Direct frame emission left the system notification pill
+    // visible after hangup.
     Function("fireCallEndNative") { callId: String, conversationId: String, reason: String ->
       CallSignalWs.fireCallEnd(context.applicationContext, callId, conversationId, reason)
     }

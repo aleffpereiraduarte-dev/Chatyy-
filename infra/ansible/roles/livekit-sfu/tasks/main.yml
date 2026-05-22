@@ -1,0 +1,169 @@
+# roles/livekit-sfu/tasks/main.yml
+#
+# Installs LiveKit SFU as a single-binary systemd service, tagged with the
+# PoP region so the LK cluster routes multi-PoP sessions correctly.
+#
+# Redis lives on origin (10.88.0.1:6379) so LK nodes share room state. The
+# tunnel is private so we don't need TLS for Redis itself.
+#
+# Public exposure: 7880/tcp (HTTP API → behind nginx), 7881/udp (RTC), 7882/tcp (RTC fallback).
+
+- name: Create livekit group
+  group:
+    name: livekit
+    system: yes
+
+- name: Create livekit user
+  user:
+    name: livekit
+    system: yes
+    group: livekit
+    shell: /usr/sbin/nologin
+    home: /var/lib/livekit
+    create_home: yes
+
+- name: Ensure config + state dirs
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: livekit
+    group: livekit
+    mode: '0750'
+  loop:
+    - /etc/livekit
+    - /var/lib/livekit
+    - /var/log/livekit
+
+# ---------------------------------------------------------------------------
+# Binary install. Pin a known-good version; matches origin.
+# ---------------------------------------------------------------------------
+
+- name: Set livekit version (must match origin)
+  set_fact:
+    livekit_version: "1.7.2"
+
+- name: Check installed LK version
+  shell: /usr/local/bin/livekit-server --version 2>&1 | awk '{print $3}'
+  register: lk_installed
+  changed_when: false
+  failed_when: false
+
+- name: Download LiveKit
+  unarchive:
+    src: "https://github.com/livekit/livekit/releases/download/v{{ livekit_version }}/livekit_{{ livekit_version }}_linux_amd64.tar.gz"
+    dest: /usr/local/bin/
+    remote_src: yes
+    mode: '0755'
+    owner: root
+    group: root
+  when: lk_installed.stdout != livekit_version
+  notify: restart livekit
+
+# ---------------------------------------------------------------------------
+# Config. We pull the canonical livekit.yaml from origin (over WG) so any
+# operator tuning on origin propagates here on next apply, then override
+# `region` + `node_ip` + `redis.address` per PoP.
+# ---------------------------------------------------------------------------
+
+- name: Fetch base livekit.yaml from origin
+  ansible.builtin.shell: |
+    set -euo pipefail
+    # Pull the active config from origin via SSH over WG (root must have a
+    # key auth'd there; CI loads this from a 1Password item.). Falls back to
+    # the template baked in this role if origin is unreachable.
+    if scp -o StrictHostKeyChecking=no -o ConnectTimeout=5 \
+          root@{{ pg_origin_host }}:/etc/livekit/livekit.yaml /tmp/livekit.origin.yaml 2>/dev/null; then
+      echo from-origin
+    else
+      echo from-template
+    fi
+  register: lk_cfg_source
+  changed_when: false
+
+- name: Use origin's livekit.yaml when available
+  copy:
+    src: /tmp/livekit.origin.yaml
+    dest: /etc/livekit/livekit.yaml.base
+    remote_src: yes
+    owner: livekit
+    group: livekit
+    mode: '0640'
+  when: lk_cfg_source.stdout == "from-origin"
+
+- name: Otherwise fall back to bundled template
+  template:
+    src: livekit.yaml.j2
+    dest: /etc/livekit/livekit.yaml.base
+    owner: livekit
+    group: livekit
+    mode: '0640'
+  when: lk_cfg_source.stdout == "from-template"
+
+- name: Render final livekit.yaml with PoP overrides
+  template:
+    src: livekit-overrides.yaml.j2
+    dest: /etc/livekit/livekit.yaml
+    owner: livekit
+    group: livekit
+    mode: '0640'
+  notify: restart livekit
+
+# ---------------------------------------------------------------------------
+# Firewall — LiveKit needs UDP 7881 + TCP 7882 from the public Internet.
+# ---------------------------------------------------------------------------
+
+- name: UFW allow LK UDP/TCP media
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+  loop:
+    - { port: "7881", proto: "udp" }
+    - { port: "7882", proto: "tcp" }
+    - { port: "50000:60000", proto: "udp" }  # ICE candidate range
+
+- name: UFW allow LK API only from WG mesh
+  community.general.ufw:
+    rule: allow
+    port: "7880"
+    proto: tcp
+    src: "{{ wg_subnet }}"
+
+# ---------------------------------------------------------------------------
+# systemd unit
+# ---------------------------------------------------------------------------
+
+- name: livekit systemd unit
+  copy:
+    dest: /etc/systemd/system/livekit.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=LiveKit SFU (PoP {{ inventory_hostname }})
+      After=network-online.target wg-quick@wg0.service
+      Wants=network-online.target
+
+      [Service]
+      Type=simple
+      User=livekit
+      Group=livekit
+      ExecStart=/usr/local/bin/livekit-server --config /etc/livekit/livekit.yaml
+      Restart=on-failure
+      RestartSec=5
+      LimitNOFILE=65536
+      # Tighten sandbox
+      ProtectSystem=strict
+      ReadWritePaths=/var/lib/livekit /var/log/livekit
+      ProtectHome=yes
+      NoNewPrivileges=yes
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: restart livekit
+
+- name: Enable livekit
+  systemd:
+    name: livekit
+    enabled: yes
+    daemon_reload: yes
+    state: started

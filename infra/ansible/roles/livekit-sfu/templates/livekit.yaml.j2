@@ -1,0 +1,31 @@
+# {{ ansible_managed }}
+# Fallback LiveKit base config — used only if origin's /etc/livekit/livekit.yaml
+# is unreachable during apply. Origin's copy is authoritative.
+
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+
+rtc:
+  tcp_port: 7882
+  udp_port: 7881
+  port_range_start: 50000
+  port_range_end: 60000
+  use_external_ip: true
+
+keys:
+  # Matches origin /etc/mail-api.env LIVEKIT_API_KEY/SECRET
+  "{{ livekit_api_key }}": "{{ livekit_api_secret }}"
+
+logging:
+  level: info
+  json: false
+
+turn:
+  enabled: false   # we use coturn separately for finer control
+
+# Distributed mode: every PoP joins via origin's Redis. Without this the
+# nodes don't see each other and cross-PoP forwarding doesn't work.
+redis:
+  address: "{{ redis_origin_host }}:{{ redis_origin_port }}"
+  db: 1

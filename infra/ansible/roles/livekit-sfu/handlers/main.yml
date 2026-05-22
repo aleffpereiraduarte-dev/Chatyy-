@@ -1,0 +1,5 @@
+- name: restart livekit
+  systemd:
+    name: livekit
+    state: restarted
+    daemon_reload: yes

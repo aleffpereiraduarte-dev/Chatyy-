@@ -1,0 +1,23 @@
+# {{ ansible_managed }}
+# WireGuard config for {{ inventory_hostname }} -> origin mesh
+# Subnet: {{ wg_subnet }}
+
+[Interface]
+PrivateKey = {{ pop_privkey_b64.content | b64decode | trim }}
+Address    = {{ wg_ip }}/24
+ListenPort = 51820
+# Do not let WG manage DNS; we keep public DNS via resolved/systemd.
+Table = off
+# Add only the WG subnet to the routing table; everything else stays on eth0.
+PostUp   = ip route add {{ wg_subnet }} dev %i
+PostDown = ip route del {{ wg_subnet }} dev %i || true
+
+# ---------------------------------------------------------------------------
+# Origin peer (Contabo NY, 217.216.67.99)
+# ---------------------------------------------------------------------------
+[Peer]
+# Origin
+PublicKey  = {{ origin_wg_pubkey }}
+Endpoint   = {{ origin_ip }}:51820
+AllowedIPs = {{ wg_subnet }}
+PersistentKeepalive = 25

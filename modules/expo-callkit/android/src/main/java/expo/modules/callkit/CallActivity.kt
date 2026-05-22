@@ -1350,15 +1350,19 @@ class CallActivity : ComponentActivity() {
       }
       reconnectAttempts = 0
       Log.d(TAG, "LK connect + publish OK (attempt=$attempt)")
-      // [WAVE 115, 2026-05-21] Relay-first Phase-2: after 5s on TURN relay,
-      // open iceTransportPolicy to 'all' and call restartIce() so WebRTC
-      // attempts a direct P2P candidate pair. If P2P wins → lower RTT.
-      // If P2P fails → relay stays, call uninterrupted.
+      // [WAVE 115, 2026-05-21 / WAVE 119, 2026-05-22] Relay-first Phase-2:
+      // 1s after Connected on TURN relay, open iceTransportPolicy to 'all'
+      // and call restartIce() so WebRTC attempts a direct P2P candidate
+      // pair. If P2P wins → lower RTT. If P2P fails → relay stays, call
+      // uninterrupted. Was 5s in WAVE 115; WAVE 119 tightens to 1s so the
+      // P2P win-rate window opens earlier (most successful pairs complete
+      // ICE checks in 200-800ms). The relay leg keeps media flowing across
+      // the restartIce so this is invisible to the user even on slow nets.
       // Only run on first successful connect (attempt==0 guard prevents
       // re-triggering on manual reconnect paths).
       if (attempt == 0) {
         lifecycleScope.launch {
-          delay(5000L)
+          delay(1000L)
           if (isFinishing || isDestroyed) return@launch
           try {
             // Walk Room internals to reach the publisher RTCPeerConnection.

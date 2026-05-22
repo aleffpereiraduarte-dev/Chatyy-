@@ -51,6 +51,68 @@ if ! git rev-parse --git-dir >/dev/null 2>&1; then
 fi
 
 echo "==> ship.sh mode=$MODE"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pre-flight: WhatsApp-stack migration guard (warning-only, never blocks)
+# ─────────────────────────────────────────────────────────────────────────────
+# Reads docs/whatsapp-migration/BUILD-STATUS.md and warns if anything claimed
+# as SHIPPED is missing its critical file on disk. We never block — the user
+# can ship anyway — but a loud warning catches "BUILD-STATUS says SHIPPED but
+# the migration was reverted" drift.
+#
+# Added 2026-05-21 as part of Phase 0 SCAFFOLD wave. Currently no items are
+# SHIPPED, so this block is silent. It will start firing once components ship.
+preflight_migration_check() {
+  local status_md="docs/whatsapp-migration/BUILD-STATUS.md"
+  [[ -f "$status_md" ]] || return 0  # not applicable in this repo state
+
+  local warns=0
+  # Grep for table rows marked SHIPPED ("[x]" in the SHIPPED column = 6th col).
+  # Format we trust: "| name | [x|space] | [x|space] | [x|space] | [x|space] | [x] | path |"
+  while IFS= read -r line; do
+    # Only rows with a [x] in the SHIPPED column (5th tickbox)
+    # We count tickboxes left-to-right; the 5th [x] (or " ") is SHIPPED state.
+    # Simpler: look for "| [x] |" appearing as the 6th pipe-delimited cell.
+    # Use awk for clarity.
+    local shipped
+    shipped="$(printf '%s\n' "$line" | awk -F'|' 'NF>=8 { gsub(/ /, "", $6); print $6 }')"
+    [[ "$shipped" != "[x]" ]] && continue
+
+    local name files
+    name="$(printf '%s\n' "$line" | awk -F'|' '{ gsub(/^ +| +$/, "", $2); print $2 }')"
+    files="$(printf '%s\n' "$line" | awk -F'|' '{ gsub(/^ +| +$/, "", $7); print $7 }')"
+    # files cell may list multiple paths separated by " · " — check each backtick'd path
+    local missing=()
+    while IFS= read -r p; do
+      [[ -z "$p" ]] && continue
+      # Strip backticks
+      p="${p//\`/}"
+      # Skip non-path-like fragments
+      [[ "$p" =~ ^/|^[a-zA-Z]+/ ]] || continue
+      # Strip trailing punctuation
+      p="${p% }"
+      [[ -e "$p" ]] || missing+=("$p")
+    done < <(printf '%s\n' "$files" | grep -oE '`[^`]+`' | sed 's/`//g')
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+      warns=$((warns + 1))
+      echo "" >&2
+      echo "⚠  ship.sh pre-flight: '$name' marked SHIPPED in BUILD-STATUS.md" >&2
+      echo "    but the following critical files are MISSING:" >&2
+      for m in "${missing[@]}"; do echo "      - $m" >&2; done
+      echo "    Either the deploy was rolled back, or BUILD-STATUS.md is stale." >&2
+      echo "    Run scripts/check-migration-progress.sh to re-evaluate." >&2
+    fi
+  done < <(grep -E '^\| [a-zA-Z]' "$status_md" 2>/dev/null || true)
+
+  if [[ $warns -gt 0 ]]; then
+    echo "" >&2
+    echo "⚠  $warns migration drift warning(s) above. NOT BLOCKING — ship.sh continues." >&2
+    echo "" >&2
+  fi
+}
+preflight_migration_check || true
+
 echo "==> Inspecting working tree"
 
 # 1. Stage everything (modified, deleted, new). -A is intentional: we WANT

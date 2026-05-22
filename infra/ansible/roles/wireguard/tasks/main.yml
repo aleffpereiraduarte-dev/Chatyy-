@@ -1,0 +1,138 @@
+# roles/wireguard/tasks/main.yml
+#
+# Brings up the persistent WireGuard tunnel from this PoP to the origin
+# (Contabo NY, 217.216.67.99). The tunnel is the ONLY way the PoP talks to
+# origin's PG master, Redis, and control-plane endpoints.
+#
+# Subnet: 10.88.0.0/24
+#   .1   = origin
+#   .10  = pop-frankfurt
+#   .20  = pop-ashburn
+#   .30  = pop-saopaulo
+#   .40+ = future PoPs
+#
+# CRITICAL: 10.88.0.0/24 does NOT overlap with Tailscale (100.64.0.0/10) or
+# with any Hetzner/Vultr internal network. Verify on origin:
+#   ip route | grep -E '(10\.88|100\.64)'
+# If you see 10.88.x.y already, pick a different /24 (10.89, 10.90 …) and
+# update wg_subnet in BOTH ansible vars and terraform tfvars.
+
+- name: Ensure wireguard packages
+  apt:
+    name:
+      - wireguard
+      - wireguard-tools
+      - resolvconf
+    state: present
+    update_cache: yes
+
+- name: Ensure /etc/wireguard exists with strict perms
+  file:
+    path: /etc/wireguard
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+
+# ---------------------------------------------------------------------------
+# Key material. Generate ONCE on first apply; persist on disk. If keys are
+# already present we skip generation so re-running doesn't rotate them
+# (which would break the origin peer until updated).
+# ---------------------------------------------------------------------------
+
+- name: Check for existing WG private key
+  stat:
+    path: /etc/wireguard/wg0.key
+  register: wg_priv_stat
+
+- name: Generate WG private key
+  shell: |
+    set -e
+    umask 077
+    wg genkey | tee /etc/wireguard/wg0.key | wg pubkey > /etc/wireguard/wg0.pub
+  args:
+    creates: /etc/wireguard/wg0.key
+  when: not wg_priv_stat.stat.exists
+
+- name: Set strict perms on key files
+  file:
+    path: "/etc/wireguard/{{ item }}"
+    mode: '0600'
+    owner: root
+    group: root
+  loop:
+    - wg0.key
+    - wg0.pub
+
+- name: Read PoP public key (to register at origin)
+  slurp:
+    src: /etc/wireguard/wg0.pub
+  register: pop_pubkey_b64
+
+- name: Read PoP private key
+  slurp:
+    src: /etc/wireguard/wg0.key
+  register: pop_privkey_b64
+
+- name: Surface PoP pubkey for origin operator
+  debug:
+    msg: |
+      ============================================================
+      PoP {{ inventory_hostname }} WireGuard pubkey:
+        {{ pop_pubkey_b64.content | b64decode | trim }}
+      WG IP: {{ wg_ip }}
+      Add this peer on the origin (217.216.67.99) with:
+        wg set wg0 peer {{ pop_pubkey_b64.content | b64decode | trim }} \
+          allowed-ips {{ wg_ip }}/32 \
+          persistent-keepalive 25
+        wg-quick save wg0
+      ============================================================
+
+# ---------------------------------------------------------------------------
+# Config file
+# ---------------------------------------------------------------------------
+
+- name: Render /etc/wireguard/wg0.conf
+  template:
+    src: wg0.conf.j2
+    dest: /etc/wireguard/wg0.conf
+    owner: root
+    group: root
+    mode: '0600'
+  notify: restart wg-quick
+
+- name: Ensure IP forwarding
+  sysctl:
+    name: net.ipv4.ip_forward
+    value: '1'
+    state: present
+    sysctl_set: yes
+    reload: yes
+
+- name: Enable wg-quick@wg0
+  systemd:
+    name: wg-quick@wg0
+    enabled: yes
+    daemon_reload: yes
+    state: started
+
+# ---------------------------------------------------------------------------
+# Connectivity check — fails noisy if origin hasn't added our peer yet.
+# ---------------------------------------------------------------------------
+
+- name: Wait for origin reachable over WG (up to 60s)
+  wait_for:
+    host: "{{ pg_origin_host }}"
+    port: 22
+    timeout: 60
+  ignore_errors: yes
+  register: wg_check
+
+- name: Warn if WG tunnel is not up yet
+  debug:
+    msg: |
+      WG tunnel to origin not yet established.
+      Most likely cause: origin operator has not added this PoP's pubkey
+      as a peer. Re-run this play after adding the peer per the message
+      above, or run scripts/pop-finalize.sh once peer is registered.
+  when: wg_check is failed

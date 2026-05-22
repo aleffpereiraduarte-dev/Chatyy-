@@ -1,0 +1,16 @@
+# {{ ansible_managed }}
+# Final livekit.yaml = origin base + PoP-specific overrides applied below.
+# This is the file LiveKit actually reads.
+
+{{ lookup('file', '/etc/livekit/livekit.yaml.base') }}
+
+# ---------------------------------------------------------------------------
+# PoP-specific overrides ({{ inventory_hostname }})
+# ---------------------------------------------------------------------------
+node_ip: "{{ wg_ip }}"
+region: "{{ dns_host | default(inventory_hostname) }}"
+rtc:
+  use_external_ip: true
+redis:
+  address: "{{ redis_origin_host }}:{{ redis_origin_port }}"
+  db: 1

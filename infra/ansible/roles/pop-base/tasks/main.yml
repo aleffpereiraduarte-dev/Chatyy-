@@ -1,0 +1,195 @@
+# roles/pop-base/tasks/main.yml
+#
+# Bootstraps the OS on a fresh PoP VM. Runs first in bootstrap-pop.yml.
+#
+# Idempotent: re-running just verifies state.
+
+- name: Ensure package cache is fresh (<24h)
+  apt:
+    update_cache: yes
+    cache_valid_time: 86400
+
+- name: Install base packages
+  apt:
+    name:
+      - curl
+      - wget
+      - jq
+      - htop
+      - net-tools
+      - dnsutils
+      - tcpdump
+      - ufw
+      - fail2ban
+      - unattended-upgrades
+      - ca-certificates
+      - gnupg
+      - lsb-release
+      - python3-psycopg2          # pg-replica role needs this
+      - python3-cryptography
+      - chrony                    # NTP is mandatory for TURN HMAC + PG repl
+    state: present
+
+- name: Set timezone to UTC
+  timezone:
+    name: Etc/UTC
+
+- name: Enable chrony
+  systemd:
+    name: chrony
+    enabled: yes
+    state: started
+
+# ---------------------------------------------------------------------------
+# UFW (basic egress=allow, ingress=deny by default, role-specific opens
+# happen in coturn/livekit-sfu roles).
+# ---------------------------------------------------------------------------
+
+- name: UFW default deny incoming
+  community.general.ufw:
+    direction: incoming
+    policy: deny
+
+- name: UFW default allow outgoing
+  community.general.ufw:
+    direction: outgoing
+    policy: allow
+
+- name: UFW allow SSH (rate-limited)
+  community.general.ufw:
+    rule: limit
+    name: OpenSSH
+
+- name: UFW allow WireGuard (UDP 51820)
+  community.general.ufw:
+    rule: allow
+    port: "51820"
+    proto: udp
+
+- name: UFW allow HTTP/HTTPS (ACME challenges + nginx)
+  community.general.ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "80"
+    - "443"
+
+- name: UFW enable
+  community.general.ufw:
+    state: enabled
+    logging: low
+
+# ---------------------------------------------------------------------------
+# fail2ban — minimal SSH jail. We're not exposing much else publicly.
+# ---------------------------------------------------------------------------
+
+- name: fail2ban jail.local
+  copy:
+    dest: /etc/fail2ban/jail.local
+    mode: '0644'
+    content: |
+      [DEFAULT]
+      bantime  = 1h
+      findtime = 10m
+      maxretry = 5
+      backend  = systemd
+
+      [sshd]
+      enabled = true
+  notify: restart fail2ban
+
+- name: fail2ban enabled + running
+  systemd:
+    name: fail2ban
+    enabled: yes
+    state: started
+
+# ---------------------------------------------------------------------------
+# Unattended security updates — same posture as origin.
+# ---------------------------------------------------------------------------
+
+- name: Enable unattended security updates
+  copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    mode: '0644'
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+# ---------------------------------------------------------------------------
+# Prometheus node_exporter — scraped from origin over the WG tunnel.
+# We don't pin to apt's outdated version; download the official tarball.
+# ---------------------------------------------------------------------------
+
+- name: Check if node_exporter is installed at desired version
+  shell: /usr/local/bin/node_exporter --version 2>&1 | head -n1 | grep -q "{{ node_exporter_version }}"
+  register: ne_check
+  changed_when: false
+  failed_when: false
+
+- name: Create node_exporter user
+  user:
+    name: node_exporter
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+  when: ne_check.rc != 0
+
+- name: Download node_exporter
+  get_url:
+    url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
+    dest: "/tmp/node_exporter.tar.gz"
+    mode: '0644'
+  when: ne_check.rc != 0
+
+- name: Extract node_exporter
+  unarchive:
+    src: /tmp/node_exporter.tar.gz
+    dest: /tmp/
+    remote_src: yes
+  when: ne_check.rc != 0
+
+- name: Install node_exporter binary
+  copy:
+    src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+    dest: /usr/local/bin/node_exporter
+    remote_src: yes
+    owner: node_exporter
+    group: node_exporter
+    mode: '0755'
+  when: ne_check.rc != 0
+  notify: restart node_exporter
+
+- name: node_exporter systemd unit
+  copy:
+    dest: /etc/systemd/system/node_exporter.service
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=Prometheus Node Exporter
+      Wants=network-online.target
+      After=network-online.target
+
+      [Service]
+      User=node_exporter
+      Group=node_exporter
+      Type=simple
+      # Bind to WG IP only — never expose metrics publicly
+      ExecStart=/usr/local/bin/node_exporter \
+        --web.listen-address={{ wg_ip }}:9100 \
+        --collector.systemd \
+        --no-collector.wifi
+      Restart=on-failure
+      RestartSec=5
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: restart node_exporter
+
+- name: Enable node_exporter
+  systemd:
+    name: node_exporter
+    enabled: yes
+    daemon_reload: yes
+    state: started

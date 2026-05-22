@@ -33,6 +33,36 @@ function _msgpackEnabled() {
   } catch { return false; }
 }
 
+// ─── CWP/1 binary signaling (Agent 3, 2026-05-21) ──────────────────────
+// Negotiates `cwp.1` subprotocol when `globalThis.__chatyy_cwp_ws === true`,
+// advertising `json.legacy` as fallback so the server can pick either side.
+// Default OFF for gradual rollout — server stays JSON-compatible forever.
+// See /root/webmail-app/docs/whatsapp-migration/03-signaling-protocol.md
+let _cwp = null;
+function _getCwp() {
+  if (_cwp) return _cwp;
+  try {
+    // eslint-disable-next-line global-require
+    _cwp = require('../modules/chatyy-cwp');
+  } catch (e) {
+    _cwp = { __unavailable: true };
+    if (typeof console !== 'undefined') {
+      console.warn('[WS] chatyy-cwp not available, CWP disabled:', e?.message);
+    }
+  }
+  return _cwp;
+}
+function _cwpEnabled() {
+  try {
+    return globalThis.__chatyy_cwp_ws === true && !_getCwp().__unavailable;
+  } catch { return false; }
+}
+// Public toggle helper: callers (settings screen, AB-test flag, etc.) can
+// flip via `setCwpEnabled(true)` without hunting through code.
+export function setCwpEnabled(on) {
+  try { globalThis.__chatyy_cwp_ws = !!on; } catch {}
+}
+
 // Resume token persistence key. Per-account scoping isn't needed: the value
 // is just a high-water id from a single server-side sequence (ws_event_log)
 // and is also gated by the WS auth (server only replays events for the
@@ -380,7 +410,18 @@ class MailWebSocket {
     try {
       // Use dedicated WS domain (bypasses Cloudflare proxy which breaks WS)
       const wsUrl = 'wss://ws.chatyy.com.br/ws';
-      this.ws = new WebSocket(wsUrl);
+      // CWP/1 subprotocol negotiation — feature-flagged (default OFF).
+      // Server picks 'cwp.1' if it supports CWP, else 'json.legacy'.
+      // Falls back transparently because the server's onMessage handler
+      // accepts JSON TEXT frames forever (no deprecation deadline).
+      this.cwpNegotiated = false;
+      if (_cwpEnabled()) {
+        // RN's WebSocket constructor accepts protocols as second arg
+        // (string or string[]).
+        this.ws = new WebSocket(wsUrl, ['cwp.1', 'json.legacy']);
+      } else {
+        this.ws = new WebSocket(wsUrl);
+      }
       // We need ArrayBuffer (not Blob) so we can sync-decode in onmessage.
       // Harmless when msgpack is disabled — we only ever get text frames in
       // JSON-only mode anyway.
@@ -393,7 +434,15 @@ class MailWebSocket {
     this.ws.onopen = () => {
       this.connected = true;
       this.reconnectAttempt = 0;
-      this._emit('connection', { status: 'connected' });
+      // Detect which subprotocol the server selected. `ws.protocol` is the
+      // selected one from the list we advertised (or '' / 'json.legacy'
+      // for JSON-only servers). CWP-negotiated sockets serialize the auth
+      // frame as binary; everything else stays on JSON text.
+      try {
+        const proto = (this.ws && this.ws.protocol) ? String(this.ws.protocol) : '';
+        this.cwpNegotiated = (proto === 'cwp.1');
+      } catch { this.cwpNegotiated = false; }
+      this._emit('connection', { status: 'connected', protocol: this.cwpNegotiated ? 'cwp.1' : 'json' });
 
       // Authenticate with bearer token
       this._send({ type: 'auth', token: this.token });
@@ -420,12 +469,35 @@ class MailWebSocket {
         // drop the frame (should never happen with flag off, since we never
         // send upgrade_msgpack and the server defaults to JSON text frames).
         if (event.data instanceof ArrayBuffer) {
-          const mp = _getMsgpack();
-          if (mp.__unavailable || typeof mp.decode !== 'function') {
-            console.warn('[WS] Received binary frame but msgpack module unavailable; ignoring');
-            return;
+          // Binary frame — could be CWP/1 (magic 0xC7) or msgpack. We sniff
+          // the first byte: CWP frames always start with 0xC7, while
+          // msgpack maps/arrays start with 0x80–0x9F / 0xDC–0xDF. The
+          // server only emits one or the other based on the negotiated
+          // subprotocol, but sniffing keeps us correct during transitions.
+          const u8 = new Uint8Array(event.data);
+          let handled = false;
+          if (this.cwpNegotiated || (u8.length > 0 && u8[0] === 0xc7)) {
+            try {
+              const cwp = _getCwp();
+              if (!cwp.__unavailable && typeof cwp.cwpToJson === 'function') {
+                const decoded = cwp.cwpToJson(u8);
+                if (decoded) {
+                  msg = decoded;
+                  handled = true;
+                }
+              }
+            } catch (e) {
+              console.warn('[WS] CWP decode failed, trying msgpack:', e?.message);
+            }
           }
-          msg = mp.decode(new Uint8Array(event.data));
+          if (!handled) {
+            const mp = _getMsgpack();
+            if (mp.__unavailable || typeof mp.decode !== 'function') {
+              console.warn('[WS] Received binary frame but neither CWP nor msgpack available; ignoring');
+              return;
+            }
+            msg = mp.decode(u8);
+          }
         } else {
           msg = JSON.parse(event.data);
         }
@@ -737,7 +809,24 @@ class MailWebSocket {
   // Encode payload with the codec negotiated for this socket. When the
   // server has acked upgrade_msgpack we send binary msgpack; otherwise JSON.
   // Falls back to JSON if msgpack encode throws for any reason.
+  //
+  // CWP/1 (binary signaling) takes precedence over msgpack when the
+  // `cwp.1` subprotocol was negotiated AT CONNECT TIME. CWP only knows
+  // how to encode a known opcode catalog (auth, call_*, presence, ping…);
+  // anything outside that set silently falls through to JSON/msgpack so
+  // chat_message and other legacy types keep working unchanged.
   _encodeOutbound(data) {
+    if (this.cwpNegotiated) {
+      try {
+        const cwp = _getCwp();
+        if (!cwp.__unavailable && typeof cwp.jsonToCwp === 'function') {
+          const bin = cwp.jsonToCwp(data);
+          if (bin) return bin;  // Uint8Array, sent as a BINARY frame
+        }
+      } catch (e) {
+        console.warn('[WS] CWP encode failed, falling back:', e?.message);
+      }
+    }
     if (this.binaryUpgraded) {
       try {
         const mp = _getMsgpack();

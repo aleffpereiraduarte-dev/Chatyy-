@@ -1478,94 +1478,57 @@ export default function LiveBroadcastScreen() {
       // do servidor" screen with no recovery. By starting live_start_cf in
       // parallel after 7s and racing, we cover the slow-backend case while
       // keeping live_start as the preferred (cheaper, faster) path.
+      // [WAVE 120 2026-05-21] Kill the multi-endpoint race that was creating
+      // duplicate live_sessions rows.
+      //
+      // Before today: handleStartLive fired liveStartLk + liveStart + liveStartCf
+      // in parallel (3-way race) and even the wantsCf branch fired liveStartLk
+      // + liveStartCf (2-way). Since WAVE 117, live_start_cf REDIRECTS to
+      // live_start_lk on the backend (chat.php case 'live_start_cf' →
+      // handleChatAction('live_start_lk')), so the JS racing 2-3 endpoints
+      // resulted in 2-3 concurrent inserts into chat_live_sessions in the
+      // same ms — each generating a DIFFERENT sessionId + lk_room_name.
+      // The LATER request's stale-row cleanup (UPDATE...status='ended') flipped
+      // the earlier row to ended, leaving the host JS Room.connect target
+      // unpredictable and viewers latching onto a different row via WS fanout.
+      // Result: host never participant_joined the room viewers were watching;
+      // viewers saw "AO VIVO" → "Conectando..." forever.
+      //
+      // Fix: a single liveStartLk call. LK is the canonical pipeline (WAVE 117)
+      // and the only one viewers actually subscribe to. Belt-and-suspenders:
+      // backend now also has an idempotency guard for <5s old rows (chat.php
+      // case 'live_start_lk') that returns the existing row if a dupe slips
+      // through (e.g. retry on transient timeout).
       let res;
       let sid;
-      if (wantsCf) {
-        // [WAVE 110] Race CF against LK: LK wins if CF WHIP fails ICE (mobile NAT).
-        // live_start_lk is the preferred path — it uses the same self-hosted SFU
-        // that already works for 1:1 calls. CF stays as the fallback so VOD
-        // recording still lands on Cloudflare when LK is unavailable.
-        const lkOpts = { audience, category: liveCategory, subscribersOnly };
-        const lkPromise = api.liveStartLk(liveTitle, lkOpts);
-        const cfPromise = api.liveStartCf(liveTitle, { ...lkOpts });
-        const wrapM = (p, mode) => p.then((r) => ({ r, mode })).catch((e) => ({ r: null, mode, err: e }));
-        const lkW = wrapM(lkPromise, 'lk');
-        const cfW = wrapM(cfPromise, 'cf');
-        const pick = (x) => (x?.r?.success && (x.r.data?.session_id || x.r.data?.id)) ? x : null;
-        try {
-          const ceiling = new Promise((_, rej) => setTimeout(() => rej(new Error('race ceiling 25s')), 25000));
-          const winner = await Promise.race([
-            lkW.then(x => pick(x) || new Promise(() => {})),
-            cfW.then(x => pick(x) || new Promise(() => {})),
-            ceiling,
-          ]);
-          res = winner.r;
-          sid = res?.data?.session_id || res?.data?.id;
-          if (winner.mode === 'lk') {
-            lkModeRef.current = true;
-            cfModeRef.current = false;
-            console.log('[Live] WAVE-110 race winner: live_start_lk (LK SFU)');
-          } else {
-            cfModeRef.current = true;
-            lkModeRef.current = false;
-            console.log('[Live] WAVE-110 race winner: live_start_cf (CF fallback)');
-          }
-        } catch {
-          // Ceiling hit — grab whichever settled first.
-          try {
-            const settled = await Promise.race([lkW, cfW]);
-            res = settled?.r;
-            sid = res?.data?.session_id || res?.data?.id;
-            if (settled?.mode === 'lk') { lkModeRef.current = true; cfModeRef.current = false; }
-            else { cfModeRef.current = true; lkModeRef.current = false; }
-          } catch {}
+      const lkOpts = { audience, category: liveCategory, subscribersOnly };
+      try {
+        const ceiling = new Promise((_, rej) => setTimeout(() => rej(new Error('live_start_lk timeout 25s')), 25000));
+        res = await Promise.race([api.liveStartLk(liveTitle, lkOpts), ceiling]);
+        sid = res?.data?.session_id || res?.data?.id;
+        if (res?.success && sid) {
+          lkModeRef.current = true;
+          cfModeRef.current = false;
+          console.log('[Live] WAVE-120 single live_start_lk OK — sid=' + sid);
+        } else {
+          console.warn('[Live] live_start_lk returned without sid:', res?.message);
         }
-      } else {
-        // [WAVE 110] Three-way race: LK (preferred) + P2P + CF.
-        // LK wins most of the time — self-hosted SFU, no ICE NAT issues.
-        // P2P and CF remain for devices where LK SDK fails to load.
-        const lkOpts = { audience, category: liveCategory, subscribersOnly };
-        const lk = api.liveStartLk(liveTitle, lkOpts);
-        const primary = api.liveStart(liveTitle, { audience, category: liveCategory, subscribersOnly });
-        const cf = api.liveStartCf(liveTitle, { audience, category: liveCategory, subscribersOnly });
-        const wrapWithMode = (p, mode) => p.then((r) => ({ r, mode })).catch((e) => ({ r: null, mode, err: e }));
-        const lkWrapped = wrapWithMode(lk, 'lk');
-        const primaryWrapped = wrapWithMode(primary, 'p2p');
-        const cfWrapped = wrapWithMode(cf, 'cf');
-        const pickIfSuccess = (x) => (x?.r?.success && (x.r.data?.session_id || x.r.data?.id)) ? x : null;
+      } catch (lkErr) {
+        console.warn('[Live] live_start_lk threw/timed out:', lkErr?.message);
+        // Last-ditch fallback: try live_start_cf once (backend aliases to LK
+        // anyway, but the HTTP path may have a different proxy cache state).
+        // If this also fails, the !res?.success block below surfaces error.
         try {
-          // Each promise resolves with the wrapped result IF successful, else
-          // hangs forever — Promise.race picks the first WINNER, not the
-          // first SETTLER. 25s ceiling guards against all endpoints hanging
-          // past the WS ack window (30s) so we don't deadlock.
-          const lkRace = lkWrapped.then(x => pickIfSuccess(x) || new Promise(() => {}));
-          const primaryRace = primaryWrapped.then(x => pickIfSuccess(x) || new Promise(() => {}));
-          const cfRace = cfWrapped.then(x => pickIfSuccess(x) || new Promise(() => {}));
-          const ceiling = new Promise((_, rej) => setTimeout(() => rej(new Error('race ceiling 25s')), 25000));
-          const winner = await Promise.race([lkRace, primaryRace, cfRace, ceiling]);
-          res = winner.r;
-          sid = res.data?.session_id || res.data?.id;
-          if (winner.mode === 'lk') {
+          const cfRes = await api.liveStartCf(liveTitle, lkOpts);
+          if (cfRes?.success && (cfRes.data?.session_id || cfRes.data?.id)) {
+            res = cfRes;
+            sid = cfRes.data?.session_id || cfRes.data?.id;
             lkModeRef.current = true;
             cfModeRef.current = false;
-            console.log('[Live] WAVE-110 race winner: live_start_lk (LK SFU)');
-          } else if (winner.mode === 'cf') {
-            cfModeRef.current = true;
-            lkModeRef.current = false;
-            console.warn('[Live] race winner: live_start_cf (P2P slow or failed)');
-          } else {
-            console.log('[Live] race winner: live_start (P2P)');
+            console.log('[Live] WAVE-120 cf-alias fallback OK — sid=' + sid);
           }
-        } catch {
-          // Race timed out — try awaiting whichever has settled (or fallback
-          // to settled-or-null). Symmetric: never hang past 25s.
-          try {
-            const settled = await Promise.race([lkWrapped, primaryWrapped, cfWrapped]);
-            res = settled?.r;
-            sid = res?.data?.session_id || res?.data?.id;
-            if (settled?.mode === 'lk') { lkModeRef.current = true; cfModeRef.current = false; }
-            else if (settled?.mode === 'cf') cfModeRef.current = true;
-          } catch {}
+        } catch (cfErr) {
+          console.warn('[Live] live_start_cf fallback also failed:', cfErr?.message);
         }
       }
       if ((!res?.success || !sid) && !wantsCf) {

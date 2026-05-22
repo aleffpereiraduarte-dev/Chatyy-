@@ -1,0 +1,35 @@
+# infra/ansible/inventory/hosts.yml.example
+#
+# Generated automatically by scripts/pop-add.sh from terraform output. Hand-
+# editing is fine for one-offs, but prefer re-running the script so terraform
+# state and inventory stay in sync.
+
+all:
+  vars:
+    ansible_user: root
+    ansible_python_interpreter: /usr/bin/python3
+    origin_ip: 217.216.67.99
+    origin_wg_pubkey: "REPLACE_ME"
+    wg_subnet: 10.88.0.0/24
+    pg_origin_host: 10.88.0.1            # origin reachable over WG
+    pg_replica_user: replicator
+    pg_database: chatyy_main
+    redis_origin_host: 10.88.0.1
+    redis_origin_port: 6379
+    livekit_api_key: "REPLACE_ME"        # match origin /etc/mail-api.env LIVEKIT_API_KEY
+    livekit_api_secret: "REPLACE_ME"     # match origin LIVEKIT_API_SECRET
+    cloudflare_api_token: "REPLACE_ME"
+    cloudflare_account_email: "ops@chatyy.com.br"
+    monitoring_origin: 10.88.0.1
+    node_exporter_version: "1.8.2"
+
+  children:
+    pops:
+      hosts:
+        # Example — real entries written by scripts/pop-add.sh
+        # pop-frankfurt:
+        #   ansible_host: 5.75.X.X
+        #   wg_ip: 10.88.0.10
+        #   dns_host: fra
+        #   roles: ["livekit-sfu", "coturn", "nginx-ws", "pg-replica"]
+        #   public_fqdn: turn-fra.chatyy.com.br

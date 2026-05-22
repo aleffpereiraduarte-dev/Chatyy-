@@ -1,0 +1,35 @@
+# infra/terraform/envs/prod.tfvars.example
+#
+# Copy to prod.tfvars and fill in real values. prod.tfvars is gitignored.
+#
+#   cp envs/prod.tfvars.example envs/prod.tfvars
+#   $EDITOR envs/prod.tfvars
+#   terraform plan  -var-file=envs/prod.tfvars
+#   terraform apply -var-file=envs/prod.tfvars
+
+# Hetzner Cloud API token (https://console.hetzner.cloud → project → Security → API Tokens)
+hcloud_token = "REPLACE_ME"
+
+# Vultr API key (needed only for pop-sao). Leave blank until then.
+vultr_api_key = ""
+
+# Cloudflare API token (scope: Zone DNS Edit on chatyy.com.br)
+cloudflare_api_token = "REPLACE_ME"
+
+# Find with: curl -s -H "Authorization: Bearer $TOKEN" https://api.cloudflare.com/client/v4/zones | jq '.result[] | {name, id}'
+cloudflare_zone_id = "REPLACE_ME"
+
+# Origin (Contabo NY) — already running PG master + chatyy-ws-cpp + mail
+origin_ip = "217.216.67.99"
+
+# WireGuard pubkey of the origin. On the origin run:
+#   wg genkey | tee /etc/wireguard/origin.key | wg pubkey > /etc/wireguard/origin.pub
+# then paste the contents of origin.pub here.
+origin_wg_pubkey = "REPLACE_ME_WITH_44_CHAR_PUBKEY="
+
+# SSH pubkey installed on every PoP (root). Tighten via Ansible afterwards.
+ssh_pub_key = "ssh-ed25519 AAAA... ops@chatyy"
+
+# Tailscale on the origin sits in 100.64.0.0/10. WireGuard mesh MUST be
+# disjoint. We use 10.88.0.0/24 — verify with `ip route` on the origin.
+wg_subnet = "10.88.0.0/24"

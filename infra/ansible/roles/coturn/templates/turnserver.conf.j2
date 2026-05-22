@@ -1,0 +1,47 @@
+# {{ ansible_managed }}
+# coturn config for PoP {{ inventory_hostname }} ({{ turn_fqdn }})
+
+listening-port=3478
+tls-listening-port=5349
+listening-ip={{ ansible_default_ipv4.address }}
+relay-ip={{ ansible_default_ipv4.address }}
+external-ip={{ ansible_default_ipv4.address }}
+
+min-port=49160
+max-port=49300
+
+# REST API auth (shared with backend). Backend mints ephemeral creds:
+#   username = "{expiry_unix_ts}:{user_id}"
+#   password = base64(hmacsha1(TURN_SECRET, username))
+use-auth-secret
+static-auth-secret={{ turn_static_secret | default(lookup('env','TURN_SECRET')) | default('REPLACE_ME') }}
+realm=chatyy.com.br
+server-name={{ turn_fqdn }}
+
+# TLS material from Let's Encrypt (DNS-01 challenge)
+cert=/etc/letsencrypt/live/{{ turn_fqdn }}/fullchain.pem
+pkey=/etc/letsencrypt/live/{{ turn_fqdn }}/privkey.pem
+
+# Quotas / safety
+total-quota=1000
+user-quota=20
+max-bps=1500000
+stale-nonce=600
+
+# Be loud about misconfig, quiet otherwise
+log-file=/var/log/turnserver/turnserver.log
+verbose
+no-cli
+no-tcp-relay
+no-multicast-peers
+no-loopback-peers
+denied-peer-ip=10.0.0.0-10.255.255.255
+denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=172.16.0.0-172.31.255.255
+# But allow our own WG mesh so cross-PoP probes work
+allowed-peer-ip={{ wg_subnet | regex_replace('/24$','.0') }}-{{ wg_subnet | regex_replace('/24$','.255') }}
+
+fingerprint
+lt-cred-mech
+no-stdout-log
+syslog

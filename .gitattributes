@@ -1,0 +1,27 @@
+# Mark vendored PJSIP source as binary-ish so git doesn't try to diff/merge it.
+# The source tree is huge (~70 MB) and any diff slows the whole repo down.
+# Source is cloned at build time by scripts/pjsip/build-ios.sh and is NOT
+# committed to this repo (see vendor/pjsip-ios/.gitignore + IMPL doc).
+#
+# This rule is defensive — if someone accidentally adds the source tree,
+# git status / git log become unusable but the repo isn't bricked.
+vendor/pjsip-src/**       -diff -merge linguist-vendored
+vendor/pjsip-src/**       -text
+
+# Same for the equivalent Android vendor dir (Phase 2, Agent 7+).
+vendor/pjsip-android/**   -diff -merge linguist-vendored
+vendor/pjsip-android/**   -text
+
+# Built XCFrameworks are binary — don't diff, don't merge.
+*.xcframework/**          binary
+*.xcframework             binary
+
+# Static libs / object files (in case any leak through .gitignore).
+*.a                       binary
+*.o                       binary
+*.dylib                   binary
+*.so                      binary
+
+# Force LF on shell scripts (Mac build server bites on CRLF).
+*.sh                      text eol=lf
+*.config                  text eol=lf

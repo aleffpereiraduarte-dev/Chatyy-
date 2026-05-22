@@ -1713,13 +1713,18 @@ extension CallViewController: RoomDelegate {
         // so the JS-side /call.js sees onLkConnected and renders peers from
         // the snapshot without spinning up a duplicate Room.
         NativeCallRoom.shared.didConnect()
-        // [WAVE 115, 2026-05-21] Relay-first Phase-2: after 5s on TURN relay,
-        // trigger ICE restart with policy 'all' so WebRTC tries a direct P2P
-        // candidate. If P2P wins, media migrates silently (lower RTT/latency).
-        // If P2P fails the relay leg stays uninterrupted.
+        // [WAVE 115, 2026-05-21 / WAVE 119, 2026-05-22] Relay-first Phase-2:
+        // 1s after Connected on TURN relay, trigger ICE restart with policy
+        // 'all' so WebRTC tries a direct P2P candidate. If P2P wins, media
+        // migrates silently (lower RTT/latency). If P2P fails the relay leg
+        // stays uninterrupted. Was 5s in WAVE 115; WAVE 119 tightens to 1s
+        // (most successful candidate pairs complete ICE checks in 200-800ms,
+        // so 5s left ~80% of the upgrade window on the table). The relay
+        // leg keeps media flowing across the restartIce, so this is
+        // invisible to the user.
         // LK Swift exposes room.engine.publisher which is an RTCPeerConnection
         // wrapper — call restartIce() on it directly.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self, weak room] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self, weak room] in
             guard let self = self, let r = room else { return }
             // [6th Swift compile cause, build cd37bbe] didHangup is on the VC, not session.
             guard !self.didHangup else { return }

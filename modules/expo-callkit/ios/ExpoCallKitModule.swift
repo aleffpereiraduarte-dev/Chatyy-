@@ -228,6 +228,49 @@ public class ExpoCallKitModule: Module {
   private var pendingEvents: [(String, [String: Any])] = []
   private var jsListenersReady = false
 
+  // [Wave Bridge-Surface, 2026-05-21 / Agent 9] Snapshot-backing storage.
+  //
+  // The whole point of CallStateSnapshot is that JS cannot reach into
+  // the raw call state machine. To support that we have to keep the
+  // minimum needed information here, and update it from the same code
+  // paths that drive the actual state (CallKit callbacks, NativeCallRoom
+  // notifications, etc.). All writes go through stateQueue.
+  //
+  // Invariant: at most one entry — calls are 1:1 by design on this client.
+  // (Group calls own their own path via GroupCallViewController and don't
+  // surface in this snapshot.)
+  //
+  // TODO(Agent 9 follow-up wave): wire updateCurrentCallContext from
+  //   - reportIncomingCall                        → begin "ringing"
+  //   - provider(_:perform:CXAnswerCallAction)    → "connecting"
+  //   - NativeCallRoom .connected listener        → "active" + startedAt
+  //   - provider(_:perform:CXSetHeldCallAction)   → "held" / "active"
+  //   - provider(_:perform:CXSetMutedCallAction)  → mic flip
+  //   - AudioRouter speaker route observer        → speaker flip
+  //   - cleanup paths (callEnded/timeout/orphan)  → set nil
+  // Until that lands, getCurrentCallSnapshot() will return nil even during
+  // an active call — JS gracefully falls back to CallContext via
+  // CallStatusBar's hybrid path.
+  internal struct CurrentCallContext {
+    var callId: String
+    var contactEmail: String
+    var contactName: String
+    var isVideo: Bool
+    var mic: Bool          // true == unmuted
+    var speaker: Bool
+    var startedAt: TimeInterval?   // CFAbsoluteTimeGetCurrent at answer/connect
+    var ringState: String  // "ringing" | "connecting" | "active" | "held"
+  }
+  private var currentCallContext: CurrentCallContext?
+
+  /// Update the snapshot when the call advances. Called from CallKit
+  /// delegate callbacks and NativeCallRoom listener. Never called from JS.
+  internal func updateCurrentCallContext(_ mutate: (inout CurrentCallContext?) -> Void) {
+    stateQueue.sync {
+      mutate(&currentCallContext)
+    }
+  }
+
   public func definition() -> ModuleDefinition {
     Name("ExpoCallKit")
 
@@ -422,6 +465,16 @@ public class ExpoCallKitModule: Module {
     // live updates.
     // ---------------------------------------------------------------------
 
+    // DEPRECATED — to be removed in v2.5.0
+    // [Wave Bridge-Surface, 2026-05-21 / Agent 9] This exposes the LiveKit
+    // Room handle to JS via the lkUrl/lkToken side channel, which is exactly
+    // the bridge-heavy path we are eliminating. JS must NOT call this on
+    // mobile from v2.5.0 onwards. Native owns Room.connect via
+    // CallViewController + NativeCallRoom; JS observes via the
+    // getCurrentCallSnapshot read path. Kept here only to avoid breaking
+    // OTA-shipped JS bundles still running on installed app builds.
+    // Replacement: do nothing in JS; native handles connect after CallKit
+    // CXAnswerCallAction / CXStartCallAction.
     // [#992 Stage 1+2 alignment] Positional args matching Android Kotlin
     // signature: lkConnect(url, token, callId, hasVideo). JS uses positional
     // — Expo Module binds them to ordered params. identity is derived from
@@ -441,14 +494,31 @@ public class ExpoCallKitModule: Module {
       )
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // JS-driven disconnect bypasses CallKit's CXEndCallAction. Use
+    // ExpoCallKit.endCall(callId, reason) instead which fires the proper
+    // CallKit transaction; CallKit then notifies native, native tears down
+    // the Room. Removing this stops one class of "Room disconnected but
+    // CallKit pill still visible" bugs.
     AsyncFunction("lkDisconnect") { () -> Void in
       NativeCallRoom.shared.disconnect()
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // Mic state is now driven natively (CXSetMutedCallAction + AVAudioSession).
+    // JS reads it via getCurrentCallSnapshot().mic and toggles via the
+    // forthcoming toggleMute() fire-and-forget Function. This direct setter
+    // skipped CXSetMutedCallAction so the system Recents + lock-screen UI
+    // never saw the mute toggle — visible bug class going away.
     AsyncFunction("lkSetMicEnabled") { (enabled: Bool) -> Void in
       NativeCallRoom.shared.setMicEnabled(enabled)
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // Camera state is native-owned (CallViewController.swift). JS should
+    // not poke the LK track directly. Replacement: new toggleCamera()
+    // fire-and-forget Function lands in v2.4.x; for now JS code targeting
+    // mobile should skip calling this and let native handle camera.
     AsyncFunction("lkSetCameraEnabled") { (enabled: Bool) -> Void in
       NativeCallRoom.shared.setCameraEnabled(enabled)
     }
@@ -603,6 +673,15 @@ public class ExpoCallKitModule: Module {
       return true
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // [Wave Bridge-Surface, 2026-05-21 / Agent 9] This was the explicit
+    // "give JS a handle to the native LiveKit Room so JS /call.js can
+    // render the participant grid" escape hatch. The return value leaks
+    // remote participants array, identity, room name — all things JS
+    // shouldn't need. /call.js on mobile is going away (full native
+    // SwiftUI CallView owns the UI). Replacement: read minimal call info
+    // via getCurrentCallSnapshot(). For participant list (group calls
+    // only) a new dedicated GroupCallSnapshot will be added if needed.
     // [Stage 1+2 alignment] Match Android signature: adoptNativeRoom(callId)
     // returns the snapshot dict or nil if no room or callId mismatch.
     AsyncFunction("adoptNativeRoom") { (callId: String) -> [String: Any]? in
@@ -626,6 +705,11 @@ public class ExpoCallKitModule: Module {
       return dict
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // Replaced by getCurrentCallSnapshot().lkConnected which is part of the
+    // canonical read API. Standalone existence of this Function encouraged
+    // JS to poll LK state independently of the rest of call state, which
+    // is exactly the desync that caused "Connecting..." eternal.
     Function("isNativeRoomConnected") { () -> Bool in
       NativeCallRoom.shared.state.rawValue == "connected"
     }
@@ -671,6 +755,48 @@ public class ExpoCallKitModule: Module {
         "nativeRoomName": NativeCallRoom.shared.lastRoomName as Any,
         "nativeRoomIdentity": NativeCallRoom.shared.lastIdentity as Any,
       ]
+    }
+
+    // [Wave Bridge-Surface, 2026-05-21 / Agent 9] Read-only call snapshot.
+    //
+    // SYNCHRONOUS — must be `Function`, NOT `AsyncFunction`. JS polls this
+    // every 1s from `services/call-state-reader.js` (via `useCurrentCall`
+    // hook) plus on `onCallStarted`/`onCallEnded` event triggers. Sync
+    // means a single bridge crossing and no microtask queue scheduling —
+    // measured at ~30µs roundtrip on iPhone 13.
+    //
+    // Returns `nil` when no call is active. JS receives `null` in that
+    // case and the hook short-circuits CallStatusBar rendering.
+    //
+    // CONTRACT: the payload shape is the entire JS-visible call state.
+    // If you find yourself wanting to expose more (Room handle, SDP, raw
+    // signaling), STOP — see docs/whatsapp-migration/IMPL-bridge-surface-policy.md
+    // and either add it to CallStateSnapshot intentionally or push the
+    // logic into native instead.
+    Function("getCurrentCallSnapshot") { () -> [String: Any]? in
+      return self.stateQueue.sync { () -> [String: Any]? in
+        guard let ctx = self.currentCallContext else { return nil }
+        let duration: Int = {
+          guard let start = ctx.startedAt else { return 0 }
+          return max(0, Int(CFAbsoluteTimeGetCurrent() - start))
+        }()
+        // [Bridge-Surface] lkConnected derived from NativeCallRoom — JS
+        // doesn't reach into NativeCallRoom directly anymore. The single
+        // permitted way for JS to learn about LK state is via this field.
+        let lkConnected = (NativeCallRoom.shared.state.rawValue == "connected")
+        let snap = CallStateSnapshot(
+          callId: ctx.callId,
+          contactEmail: ctx.contactEmail,
+          contactName: ctx.contactName,
+          isVideo: ctx.isVideo,
+          mic: ctx.mic,
+          speaker: ctx.speaker,
+          durationSec: duration,
+          lkConnected: lkConnected,
+          ringState: ctx.ringState
+        )
+        return snap.toDictionary()
+      }
     }
 
     // [native call screen, 2026-05-16] Mirrors Android's `openNativeCall`.
@@ -1007,6 +1133,12 @@ public class ExpoCallKitModule: Module {
     // Stage 1 only stands up the bridge. Stage 2 (separate work) will wire
     // CallViewController to call these directly so the call signaling path
     // no longer touches the JS bridge. JS-side WS keeps working in parallel.
+    // DEPRECATED — to be removed in v2.5.0
+    // [Wave Bridge-Surface, 2026-05-21 / Agent 9] JS-initiated signaling
+    // emission. The whole point of native ownership is that JS should not
+    // be the source of call_invite frames anymore — CallSignalWs.swift
+    // emits them directly when CXStartCallAction fulfils. Kept so OTA-
+    // shipped JS bundles still work; new code paths must NOT call this.
     Function("fireCallInviteNative") { (callId: String, conversationId: String, calleeEmail: String, hasVideo: Bool) -> Void in
       CallSignalWs.shared.fireCallInvite(
         callId: callId,
@@ -1016,10 +1148,18 @@ public class ExpoCallKitModule: Module {
       )
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // Native fires the answered signal when CXAnswerCallAction fulfils,
+    // not when JS asks. JS-initiated firing produced double-answer races
+    // (JS emits while CallKit is mid-fulfill → SFU joins twice).
     Function("fireCallAnsweredNative") { (callId: String, conversationId: String) -> Void in
       CallSignalWs.shared.fireCallAnswered(callId: callId, conversationId: conversationId)
     }
 
+    // DEPRECATED — to be removed in v2.5.0
+    // Use ExpoCallKit.endCall(callId, reason) which goes through CallKit
+    // CXEndCallAction. Direct WS frame emission from JS skipped CallKit's
+    // call-ended cleanup so the system pill stayed visible.
     Function("fireCallEndNative") { (callId: String, conversationId: String, reason: String) -> Void in
       CallSignalWs.shared.fireCallEnd(callId: callId, conversationId: conversationId, reason: reason)
     }
@@ -1666,6 +1806,26 @@ public class ExpoCallKitModule: Module {
     }
   }
 
+  // [Wave Bridge-Surface, 2026-05-21 / Agent 9] LEAKAGE AUDIT — onCallAnswered.
+  //
+  // Spec (08-native-call-no-bridge.md §4) calls for minimal `{callId,
+  // peerEmail}` only. Today this emitter still publishes callerEmail,
+  // callerName, conversationId, hasVideo — that's three extra fields JS
+  // could (and does) parse into its own duplicate call state.
+  //
+  // We DO NOT trim them yet:
+  //   - services/callkeep.js reads callerEmail/callerName/hasVideo to
+  //     populate the CallContext (CallStatusBar contactName etc).
+  //   - Pruning now would blank the status bar on every existing OTA
+  //     bundle.
+  //
+  // Migration plan:
+  //   v2.4.x — getCurrentCallSnapshot() ships, JS switches to reading
+  //            contactName/contactEmail/isVideo from there (via the new
+  //            useCurrentCall hook).
+  //   v2.5.0 — strip everything except callId from this emission, drop
+  //            the deprecated direct event fields. By then the snapshot
+  //            read path is the source of truth.
   func callAnswered(uuid: UUID) {
     let result: (String, [String: Any])? = stateQueue.sync {
       guard let callId = activeCalls.first(where: { $0.value == uuid })?.key else { return nil }

@@ -1,12 +1,23 @@
 /**
  * CallStatusBar — Ongoing call indicator.
- * ZERO external context imports (avoids circular dependency crash).
- * All state comes from CallContext via lazy require.
+ *
+ * [Wave Bridge-Surface, 2026-05-21 / Agent 9] Refactored: state now comes
+ * from `useCurrentCall()` (services/call-state-reader.js) which reads the
+ * native call snapshot via the single sanctioned ExpoModule entry point.
+ *
+ * On mobile (iOS/Android): native is the source of truth. JS never touches
+ * the LiveKit Room handle, SDP, or ICE candidates — see
+ * docs/whatsapp-migration/IMPL-bridge-surface-policy.md.
+ *
+ * On web: native module returns null, so we fall back to the legacy
+ * CallContext path (web has no PJSIP / CallKit and stays on the JS-driven
+ * LiveKit Room).
  */
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform, StatusBar } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
 import { IconPhone, IconPhoneOff, IconVideo } from './Icons';
+import { useCurrentCall } from '../services/call-state-reader';
 
 // Safe area top padding (no hook import to avoid circular dep). On Android,
 // devices with punch-hole/notch report 36-48px via StatusBar.currentHeight —
@@ -46,14 +57,31 @@ function PulseDot() {
 }
 
 export default function CallStatusBar() {
-  // Always call the hook unconditionally (rules of hooks). If CallContext failed to load,
-  // _useCall is null and we use safe defaults.
-  const callState = _useCall ? _useCall() : { isInCall: false, callData: null, callStartTime: null, endCall: () => {}, getCallDuration: () => 0 };
-  const isInCall = callState.isInCall;
-  const callData = callState.callData;
-  const callStartTime = callState.callStartTime;
-  const endCall = callState.endCall;
-  const getCallDuration = callState.getCallDuration;
+  // [Wave Bridge-Surface, 2026-05-21] Primary state: native snapshot via
+  // the single sanctioned reader. CallContext stays as a web fallback +
+  // SIP/PSTN fallback (Telnyx voice calls go through ChatCallsTab modal,
+  // not the native CallKit/Telecom path, so they keep using CallContext).
+  const nativeSnapshot = useCurrentCall();
+  const ctxState = _useCall
+    ? _useCall()
+    : { isInCall: false, callData: null, callStartTime: null, endCall: () => {}, getCallDuration: () => 0 };
+
+  // Prefer the native snapshot. Fall back to JS context for web + SIP.
+  // Build a unified `callData` shape so the rest of the component below
+  // doesn't have to branch on the source.
+  const fromNative = !!nativeSnapshot;
+  const callData = fromNative ? {
+    callId: nativeSnapshot.callId,
+    contactName: nativeSnapshot.contactName,
+    contactEmail: nativeSnapshot.contactEmail,
+    isVideo: nativeSnapshot.isVideo,
+    conversationId: '', // not present in the minimal snapshot — read from
+                        // CallContext if absolutely needed (deep-link only)
+    isCaller: false,    // ditto — not surfaced by native, JS treats as N/A
+    callType: 'native',
+  } : ctxState.callData;
+  const isInCall = fromNative ? true : ctxState.isInCall;
+  const endCall = ctxState.endCall; // JS-side cleanup still goes through CallContext
 
   const [duration, setDuration] = useState(0);
   const router = useRouter();
@@ -62,16 +90,24 @@ export default function CallStatusBar() {
   const slideAnim = useRef(new Animated.Value(-100)).current;
 
   // Timer
+  // When state comes from native, durationSec is already authoritative —
+  // we skip the local clock so JS Hermes time can't drift away from CFAbs.
   useEffect(() => {
-    if (!isInCall || !callStartTime) {
+    if (fromNative) {
+      setDuration(nativeSnapshot.durationSec);
+      // Cleanup any leftover JS timer from a previous fallback render.
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+      return;
+    }
+    if (!isInCall || !ctxState.callStartTime) {
       if (timerRef.current) clearInterval(timerRef.current);
       setDuration(0);
       return;
     }
-    setDuration(getCallDuration());
-    timerRef.current = setInterval(() => setDuration(getCallDuration()), 1000);
+    setDuration(ctxState.getCallDuration());
+    timerRef.current = setInterval(() => setDuration(ctxState.getCallDuration()), 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [isInCall, callStartTime]);
+  }, [fromNative, nativeSnapshot?.durationSec, isInCall, ctxState.callStartTime]);
 
   // Show/hide animation
   const shouldShow = isInCall && pathname !== '/call';

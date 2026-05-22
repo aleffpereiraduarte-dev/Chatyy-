@@ -1,0 +1,31 @@
+# vendor/pjsip-android/
+#
+# We want this directory tracked (so README.md and this .gitignore live in
+# git) but the giant build artefacts and intermediate trees stay out.
+#
+# Note: the produced .aar is large (~12 MB total across 3 ABIs) AND derived
+# from a GPLv2 source tree we have not yet relicensed (see README.md +
+# docs/whatsapp-migration/IMPL-pjsip-android-license.md). Committing it
+# would publish a derivative work under terms we can't yet satisfy.
+#
+# Once the Teluu commercial licence is signed (item in
+# IMPL-pjsip-android-license.md), revisit: we'll either keep it gitignored
+# and push to an internal artifact store, or commit the .aar with the
+# licence file alongside.
+
+# Built AAR (any version)
+pjsip-*.aar
+
+# Per-ABI build tree
+/build/
+
+# ccache scratch
+/.ccache/
+
+# Source checkouts (re-cloned on demand)
+/src/
+
+# Editor & OS noise
+.DS_Store
+*.swp
+*.swo

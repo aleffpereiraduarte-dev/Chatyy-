@@ -1,0 +1,113 @@
+# roles/coturn/tasks/main.yml
+#
+# coturn = STUN/TURN server for WebRTC ICE. Mounted at turn-<region>.chatyy.com.br
+# with a Let's Encrypt cert obtained via Cloudflare DNS-01 challenge (we can't
+# do HTTP-01 because UDP-only public IP plus CF orange-cloud on the apex).
+#
+# Public ports:
+#   3478 udp/tcp  STUN + TURN
+#   5349 tcp      TURN-TLS
+#   49160-49300 udp  relay
+#
+# Auth model = REST API per https://datatracker.ietf.org/doc/html/draft-uberti-rtcweb-turn-rest-00
+# Origin issues short-lived credentials; coturn validates them against the
+# shared TURN_SECRET in /etc/mail-api.env.
+
+- name: Install coturn
+  apt:
+    name:
+      - coturn
+      - certbot
+      - python3-certbot-dns-cloudflare
+    state: present
+    update_cache: yes
+
+- name: Enable coturn auto-start (Debian/Ubuntu defaults to disabled)
+  lineinfile:
+    path: /etc/default/coturn
+    regexp: '^#?TURNSERVER_ENABLED='
+    line: 'TURNSERVER_ENABLED=1'
+    create: yes
+
+# ---------------------------------------------------------------------------
+# TLS cert via Cloudflare DNS challenge.
+# ---------------------------------------------------------------------------
+
+- name: Cloudflare credentials file for certbot
+  copy:
+    dest: /etc/letsencrypt/cloudflare.ini
+    mode: '0600'
+    owner: root
+    group: root
+    content: |
+      # Cloudflare API token with Zone:DNS:Edit on chatyy.com.br
+      dns_cloudflare_api_token = {{ cloudflare_api_token }}
+
+- name: Pin TURN FQDN
+  set_fact:
+    turn_fqdn: "turn-{{ dns_host | default(inventory_hostname | replace('pop-','')) }}.chatyy.com.br"
+
+- name: Issue cert (idempotent — certbot is a no-op when valid cert exists)
+  command: >
+    certbot certonly
+      --dns-cloudflare
+      --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini
+      --dns-cloudflare-propagation-seconds 30
+      -d {{ turn_fqdn }}
+      --non-interactive
+      --agree-tos
+      -m {{ cloudflare_account_email | default('ops@chatyy.com.br') }}
+      --keep-until-expiring
+  args:
+    creates: "/etc/letsencrypt/live/{{ turn_fqdn }}/fullchain.pem"
+  register: certbot_out
+
+- name: Allow turnserver to read certs (Let's Encrypt dir is root-only)
+  acl:
+    path: "/etc/letsencrypt/{{ item }}"
+    entity: turnserver
+    etype: user
+    permissions: rx
+    state: present
+    recursive: yes
+  loop:
+    - archive
+    - live
+
+- name: Daily renew cron + reload coturn
+  cron:
+    name: "certbot renew + coturn reload"
+    minute: "27"
+    hour: "3"
+    job: "certbot renew --quiet --post-hook 'systemctl reload coturn'"
+    user: root
+
+# ---------------------------------------------------------------------------
+# coturn config
+# ---------------------------------------------------------------------------
+
+- name: Render turnserver.conf
+  template:
+    src: turnserver.conf.j2
+    dest: /etc/turnserver.conf
+    owner: root
+    group: turnserver
+    mode: '0640'
+  notify: restart coturn
+
+- name: UFW open TURN ports
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+  loop:
+    - { port: "3478",         proto: "udp" }
+    - { port: "3478",         proto: "tcp" }
+    - { port: "5349",         proto: "tcp" }
+    - { port: "49160:49300",  proto: "udp" }
+
+- name: Enable + start coturn
+  systemd:
+    name: coturn
+    enabled: yes
+    state: started

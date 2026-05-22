@@ -1,0 +1,128 @@
+name: e2e-call-tests
+
+# Continuous E2E test harness for calls + live. Runs on PRs to main and on
+# every push to main. Self-hosted runner on prod (217.216.67.99) because:
+#   - already SSHs to emulator host (213.136.72.141)
+#   - already SSHs to Mac 207 over Tailscale for iOS builds
+#   - reads C++ WS logs at /opt/chatyy-ws-cpp/logs/ws.log directly
+#   - reads `docker logs livekit`
+#
+# Phase 0: T1 + T7 implemented; T2..T6, T8..T10 are stubs that exit SKIP.
+# Phase 1 (later): ship.sh reads /var/lib/e2e/last_green.txt and gates deploys.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: "Comma-separated scenario IDs (e.g. T1,T7). Empty = all."
+        required: false
+        default: ""
+      skip_build:
+        description: "Skip APK build, reuse existing /tmp/chatyy-e2e.apk"
+        required: false
+        default: "false"
+
+concurrency:
+  group: e2e-call-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wave:
+    runs-on: [self-hosted, prod]
+    timeout-minutes: 20
+
+    env:
+      EMUL_HOST: 213.136.72.141
+      EMUL_USER: root
+      # SSHPASS only used as a fallback if the prod runner doesn't have the
+      # ed25519 key for the emul host. Set this secret in repo settings.
+      SSHPASS: ${{ secrets.EMUL_SSH_PASSWORD }}
+      MAC207_HOST: 100.103.47.109
+      MAC207_USER: administrator
+      R2_BUCKET: chatyy-e2e
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      SLACK_E2E_WEBHOOK: ${{ secrets.SLACK_E2E_WEBHOOK }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show wave parameters
+        run: |
+          echo "sha=${{ github.sha }}"
+          echo "scenarios=${{ github.event.inputs.scenarios }}"
+          echo "skip_build=${{ github.event.inputs.skip_build }}"
+          echo "ref=${{ github.ref }}"
+
+      - name: Build APK on Mac 207 (Tailscale)
+        if: ${{ github.event.inputs.skip_build != 'true' }}
+        timeout-minutes: 12
+        run: |
+          set -e
+          ssh -o StrictHostKeyChecking=no "${MAC207_USER}@${MAC207_HOST}" \
+            "cd ~/apps/chatyy && eas build -p android --local --profile preview --non-interactive --output ~/apps/chatyy/e2e.apk"
+          scp -o StrictHostKeyChecking=no \
+            "${MAC207_USER}@${MAC207_HOST}:~/apps/chatyy/e2e.apk" \
+            /tmp/chatyy-e2e.apk
+          ls -la /tmp/chatyy-e2e.apk
+
+      - name: Run wave
+        id: wave
+        timeout-minutes: 12
+        run: |
+          set +e
+          APK_ARG=""
+          [ -f /tmp/chatyy-e2e.apk ] && APK_ARG="--apk /tmp/chatyy-e2e.apk"
+          SCEN_ARG=""
+          if [ -n "${{ github.event.inputs.scenarios }}" ]; then
+            SCEN_ARG="--scenarios ${{ github.event.inputs.scenarios }}"
+          fi
+          chmod +x scripts/e2e/run-wave.sh scripts/e2e/scenarios/*.sh scripts/e2e/lib/*.sh
+          scripts/e2e/run-wave.sh \
+            --out /tmp/e2e-run-${{ github.sha }} \
+            --sha ${{ github.sha }} \
+            $APK_ARG $SCEN_ARG
+          echo "wave_exit=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Show verdict
+        if: always()
+        run: |
+          if [ -f /tmp/e2e-run-${{ github.sha }}/verdict.json ]; then
+            cat /tmp/e2e-run-${{ github.sha }}/verdict.json
+          else
+            echo "no verdict.json produced"
+          fi
+
+      - name: Upload artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-dumps-${{ github.sha }}
+          path: /tmp/e2e-run-${{ github.sha }}
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: PR comment on failure
+        if: failure() && github.event_name == 'pull_request'
+        run: |
+          if [ -f /tmp/e2e-run-${{ github.sha }}/verdict.json ]; then
+            SUMMARY=$(jq -r '.scenarios[] | "- **\(.id)** \(.name // ""): \(.status) \(.failure_class // "")"' \
+              /tmp/e2e-run-${{ github.sha }}/verdict.json)
+            BODY="### E2E wave FAIL on \`${{ github.sha }}\`\n\n${SUMMARY}\n\nDumps uploaded to artifacts + R2."
+            gh pr comment ${{ github.event.pull_request.number }} --body "$BODY" || true
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Mark last green (push to main only)
+        if: success() && github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          mkdir -p /var/lib/e2e 2>/dev/null || sudo mkdir -p /var/lib/e2e
+          echo "${{ github.sha }}" | sudo tee /var/lib/e2e/last_green.txt >/dev/null
+          echo "marked ${{ github.sha }} as last green"

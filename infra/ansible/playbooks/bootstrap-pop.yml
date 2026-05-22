@@ -1,0 +1,71 @@
+---
+# infra/ansible/playbooks/bootstrap-pop.yml
+#
+# End-to-end PoP bootstrap. Run by scripts/pop-add.sh after terraform apply.
+#
+# Time budget on a fresh CPX21:
+#   pop-base       ~  90 s
+#   wireguard      ~  20 s (+ blocked wait if origin peer not yet added)
+#   pg-replica     ~ 4–6 min (pg_basebackup of chatyy_main, ~3 GB today)
+#   livekit-sfu    ~  60 s
+#   coturn         ~  90 s (cert issuance via DNS-01 takes ~30 s)
+#   ---
+#   ≈ 8–10 min wall-clock. Add ~2 min slack for first-time apt operations →
+#   12 min target from the design doc.
+#
+# Manual invocation:
+#   ansible-playbook -i inventory/hosts.yml playbooks/bootstrap-pop.yml --limit pop-frankfurt
+#
+# Re-runs are idempotent.
+
+- name: PoP bootstrap
+  hosts: pops
+  become: yes
+  serial: 1                # roll out one PoP at a time so a broken role doesn't take all of them down
+  any_errors_fatal: false
+
+  pre_tasks:
+    - name: Sanity — wg_ip must be set
+      assert:
+        that:
+          - wg_ip is defined
+          - wg_ip | length > 0
+          - dns_host is defined
+        fail_msg: "Inventory entry missing wg_ip or dns_host. See inventory/hosts.yml.example."
+
+    - name: Wait for cloud-init to finish (max 180s)
+      command: cloud-init status --wait
+      changed_when: false
+
+  roles:
+    - role: pop-base
+      tags: [base]
+    - role: wireguard
+      tags: [wireguard, net]
+    - role: pg-replica
+      tags: [pg, replica]
+      when: "'pg-replica' in (roles | default([]))"
+    - role: livekit-sfu
+      tags: [livekit, sfu]
+      when: "'livekit-sfu' in (roles | default([]))"
+    - role: coturn
+      tags: [coturn, turn]
+      when: "'coturn' in (roles | default([]))"
+
+  post_tasks:
+    - name: Print PoP summary
+      debug:
+        msg: |
+          ============================================================
+          PoP {{ inventory_hostname }} ready.
+            public IP      : {{ ansible_host }}
+            wg IP          : {{ wg_ip }}
+            roles          : {{ roles | default([]) | join(', ') }}
+            turn FQDN      : turn-{{ dns_host }}.chatyy.com.br
+            sfu FQDN       : sfu-{{ dns_host }}.chatyy.com.br
+            ws FQDN        : ws-{{ dns_host }}.chatyy.com.br
+          Manual follow-ups:
+            1. Add this PoP's WG pubkey on origin (see wireguard role output).
+            2. Add a Cloudflare GeoSteering rule for the region.
+            3. Verify replica lag <1s: scripts/pop-list.sh
+          ============================================================
