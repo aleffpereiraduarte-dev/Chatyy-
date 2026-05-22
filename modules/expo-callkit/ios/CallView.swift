@@ -190,24 +190,39 @@ private struct AnimatedDotsText: View {
     let base: String
     let color: Color
     let font: Font
-    @State private var dots = 0
-    // [WAVE 143 HOTFIX 2026-05-22] CRITICAL: Timer.publish MUST be stored in
-    // @State, not created inside body. Creating a new publisher per body render
-    // → SwiftUI sees a new publisher → cancels+resubscribes → fires → re-render
-    // → cascading infinite update loop → main thread watchdog kill 0x8BADF00D
-    // after 10s scene-update budget. Reported as app crash on backgrounded call
-    // (build 545). Static @State stabilizes the publisher identity across
-    // renders so subscription happens once per view lifetime.
-    @State private var timer = Timer.publish(every: 0.42, on: .main, in: .common).autoconnect()
 
+    // [WAVE 151 2026-05-22] ROOT CAUSE FIX for crash 0x8BADF00D on build 552.
+    //
+    // Apple crash report stack trace:
+    //   _UIHostingView.beginTransaction → GraphHost.runTransaction →
+    //   AG::Subgraph::update → SubscriptionView.Subscriber.updateValue →
+    //   MutableBox.value.setter → Publishers.Autoconnect.deinit →
+    //   Color full type metadata → _xzm_free
+    //
+    // Cause: Timer.publish().autoconnect() in @State + onReceive triggers a
+    // SwiftUI render-loop runaway. Each .42s tick mutates `dots` state, which
+    // invalidates the AttributeGraph node, which re-evaluates body, which
+    // captures the publisher in a new child Subscriber, which causes the old
+    // Autoconnect to deinit *inside* the active transaction. The transaction
+    // doesn't close before the next tick fires; SpringBoard measures 5s hang
+    // on main runloop and kills the process. The `.common` runloop mode
+    // makes it worse because it includes animation tracking — exactly where
+    // you cannot mutate state without reentrancy.
+    //
+    // Refs: FB8365664 (Apple Developer Forums 656873), thread 731676.
+    //
+    // Fix: TimelineView(.periodic) derives the dot count from `context.date`
+    // directly — zero @State mutation, zero publisher lifecycle, zero feedback
+    // loop. SwiftUI controls the schedule via display link; pauses in
+    // background automatically. Runs outside the main GraphHost transaction.
     var body: some View {
-        Text(base + String(repeating: ".", count: dots).padding(toLength: 3, withPad: " ", startingAt: 0))
-            .font(font)
-            .foregroundColor(color)
-            .monospacedDigit()
-            .onReceive(timer) { _ in
-                dots = (dots + 1) % 4
-            }
+        TimelineView(.periodic(from: .now, by: 0.42)) { context in
+            let dots = Int(context.date.timeIntervalSince1970 / 0.42) % 4
+            Text(base + String(repeating: ".", count: dots).padding(toLength: 3, withPad: " ", startingAt: 0))
+                .font(font)
+                .foregroundColor(color)
+                .monospacedDigit()
+        }
     }
 }
 
