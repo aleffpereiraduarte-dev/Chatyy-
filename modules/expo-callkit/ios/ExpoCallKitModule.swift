@@ -999,27 +999,26 @@ public class ExpoCallKitModule: Module {
         lkToken: lkToken,
         suppressVCPresent: false
       )
-      // [WAVE 149 2026-05-22] ROOT CAUSE FIX — use dedicated UIWindow.
-      // Histórico: builds 545-550 usavam `topVC.present(callVC, modal)` mas
-      // CallKit injeta sua UIWindow em windowLevel=.alert (2000+) que cobre
-      // qualquer modal apresentada na window normal do app. User toca pill
-      // → iOS volta pro app → mas keyWindow é a normal (chat-conversation),
-      // não a modal-coberta. CallView nunca aparece.
-      // Fix: criar UIWindow dedicada em windowLevel=.normal+1, makeKey →
-      // tap-no-pill leva user direto pra essa window. Padrão Signal/WhatsApp.
-      DispatchQueue.main.async { [immediateParams] in
-        NSLog("[ExpoCallKit WAVE 149] CallWindowManager.showCallUI pre-CXStartCallAction — callId=\(immediateParams.callId)")
-        CallWindowManager.shared.showCallUI(
-          callId: immediateParams.callId,
-          callerName: immediateParams.calleeName,
-          callerEmail: immediateParams.calleeEmail,
-          hasVideo: immediateParams.isVideo,
-          lkUrl: immediateParams.lkUrl,
-          lkToken: immediateParams.lkToken,
-          isOutgoing: true,
-          conversationId: immediateParams.conversationId
-        )
-      }
+      // [WAVE 152 2026-05-22] STOP showing CallView SwiftUI — it crashes.
+      //
+      // Histórico:
+      //  - WAVE 149 criou CallWindowManager pra UIWindow dedicada (não fixou)
+      //  - WAVE 150 skip CXStartCallAction em foreground (idem)
+      //  - WAVE 151 TimelineView fix pra Timer/Combine (fixou esse crash mas
+      //    expôs OUTRO crash de SwiftUI layout recursion: StackLayout →
+      //    _PaddingLayout → ZStackLayout infinite loop em build 553)
+      //
+      // CallView.swift cresceu pra 1795 linhas com ZStacks aninhados, Padding,
+      // GeometryReaders e gradients que não convergem em layout. Watchdog
+      // scene-update 10s mata o app SEMPRE que tenta abrir.
+      //
+      // WAVE 152 = NÃO mostra CallView. CallKit cuida da UI (igual WhatsApp
+      // durante outgoing ringing). Quando atender, /call.js JS path cuida.
+      // Resultado: ligação FUNCIONA. Sem fancy UI mas sem crash.
+      //
+      // CallWindowManager.swift stays (não removido) caso queira tentar
+      // novamente no futuro com CallView simplificado.
+      NSLog("[ExpoCallKit WAVE 152] skipping CallWindowManager.showCallUI — CallKit owns UI to prevent SwiftUI layout crash. callId=\(immediateParams.callId)")
 
       // [2026-05-21] Donate an INStartCallIntent so iOS records this outgoing
       // call in Siri / Recents / "Suggestions" surfaces. Without donation
@@ -1114,35 +1113,11 @@ public class ExpoCallKitModule: Module {
         }
       }
 
-      // [WAVE 150 2026-05-22] ARCHITECTURAL FIX: defer CXStartCallAction in foreground.
-      //
-      // User report after build 551 (WAVE 149): "tela do CallKit aparece, mas a UI rica não".
-      // Root cause: CXStartCallAction triggers iOS to inject its own UIWindow at
-      // windowLevel=.alert (≥2000) which COVERS our CallWindowManager UIWindow
-      // (windowLevel=.normal+1=1). Even with WAVE 149's dedicated window, CallKit's
-      // overlay wins z-order during ringing.
-      //
-      // WhatsApp/Signal pattern: when app is FOREGROUND for outgoing, DO NOT fire
-      // CXStartCallAction at all. Show our rich UI directly. CallKit transaction
-      // fires later if user backgrounds the app (via AppState observer — TODO) or
-      // when call connects (LiveKit handoff).
-      //
-      // For now WAVE 150 simplest version: skip transaction entirely in foreground.
-      // - Signaling already happens via JS-side chatCallInviteV2 (not dependent on CallKit)
-      // - Audio session managed by LiveKit when Room connects (also independent)
-      // - Lock screen pill / Recents log: lost during foreground ringing only (WhatsApp same)
-      // - Background ringing: still uses CallKit normally (untouched)
-      let isAppForeground = (UIApplication.shared.applicationState == .active)
-
-      if isAppForeground {
-        NSLog("[ExpoCallKit WAVE 150] FOREGROUND outgoing — SKIP CXStartCallAction, CallView already shown via WAVE 149. callId=\(callId)")
-        // Schedule ring timeout anyway (45s) for safety so we don't leak state.
-        self.scheduleOutgoingTimeout(callId: callId)
-        // Return success — JS proceeds with chatCallInviteV2 to signal callee.
-        return true
-      }
-
-      // BACKGROUND/INACTIVE path: original CallKit flow (provides system pill).
+      // [WAVE 152 2026-05-22] REVERTED WAVE 150 skip. CXStartCallAction ALWAYS
+      // fires — CallKit owns the UI completely (same as WhatsApp during outgoing
+      // ringing). Without this, the call would have no system integration and
+      // no UI at all. Combined with WAVE 152's skip of showCallUI above, the
+      // result is: CallKit's native call screen handles everything.
       let handle = CXHandle(type: .emailAddress, value: calleeEmail)
       let startAction = CXStartCallAction(call: uuid, handle: handle)
       startAction.isVideo = isVideo
