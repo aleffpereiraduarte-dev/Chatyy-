@@ -2464,18 +2464,16 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     lkUrl: String?,
     lkToken: String?
   ) {
-    // [#1208 2026-05-19 foreground-outgoing gate] If JS flagged this call as
-    // foreground-initiated, skip presenting the native CallViewController —
-    // the JS /call.js screen is the source of truth for UX (it has features
-    // the SwiftUI screen lacks). The CXStartCallAction transaction has
-    // already been fulfilled by the delegate, so CallKit's accounting is
-    // intact (Recents, lock-screen pill, audio session). JS will adopt the
-    // LiveKit Room via `adoptNativeRoom` if/when the answer path pre-connects
-    // it, or it'll connect its own Room via @livekit/react-native.
-    if params.suppressVCPresent {
-      print("[ExpoCallKit #1208] presentOutgoingCallVC: suppressed for foreground call \(params.callId) — JS owns UI")
-      return
-    }
+    // [WAVE 144 2026-05-22] DEAD-GATE REMOVAL. #1208 was reverted in #1217
+    // (full native, retire JS /call.js mobile) and the caller now ALWAYS
+    // passes suppressVCPresent=false (line ~938). User report 2026-05-22:
+    // "página não tá abrindo dentro do app — UI conectada direto com o
+    // nativo". Even with the call-site hardcoded false, leaving the gate
+    // here means any edge path that constructs OutgoingCallParams with
+    // suppressVCPresent=true (legacy push payload, JS-set field) silently
+    // kills the WhatsApp-style rich UI. Kill the gate entirely so the
+    // native CallView ALWAYS presents on outgoing — no escape hatch.
+    NSLog("[ExpoCallKit WAVE 144] presentOutgoingCallVC: gate removed — always presenting native UI for callId=\(params.callId)")
     // [#1171 redux dismiss, 2026-05-19] Same race guard as presentNativeCallVC.
     // If the user tapped hangup on the CallKit outgoing-call sheet (system
     // pill on the lock screen, or the green status-bar pill) BEFORE the
