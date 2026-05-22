@@ -200,6 +200,22 @@ public class ExpoCallKitModule: Module {
   }
   private var pendingOutgoingCalls: [UUID: OutgoingCallParams] = [:]
 
+  // [2026-05-22 outgoing ring timeout] If the callee never answers within
+  // 45s, auto-cancel the outgoing call so CallKit doesn't stay on
+  // "Connecting..." forever (root cause: 3-day C++ WS envelope bug dropped
+  // every call_invite → callee never rang → caller stuck). Even after the
+  // envelope fix, network drops / app-killed callees / VoIP push misses
+  // need this safety net.
+  //
+  // Lifecycle:
+  //   - scheduled in startOutgoingCall after the transaction is queued.
+  //   - cancelled in callAnswered (success) or callEnded (manual hangup or
+  //     remote reject).
+  //   - fires → endCallActionWithReason(callId, "unanswered") which submits
+  //     CXEndCallAction so CallKit dismisses, JS gets onCallEnded with
+  //     reason:"unanswered", caller sees "Não atendeu" toast.
+  private var outgoingCallTimers: [String: DispatchSourceTimer] = [:]
+
   internal func consumeOutgoingCallParams(uuid: UUID) -> OutgoingCallParams? {
     return stateQueue.sync {
       let params = pendingOutgoingCalls[uuid]
@@ -892,6 +908,11 @@ public class ExpoCallKitModule: Module {
             continuation.resume(throwing: error)
           } else {
             print("[ExpoCallKit] startOutgoingCall: transaction queued for callId=\(callId)")
+            // [2026-05-22 outgoing timeout] Schedule a 45s ring-timeout so
+            // if the callee never answers (network drop, app killed, FCM
+            // throttled, WS dropped, etc) we don't stay parasitic on
+            // "Connecting..." forever.
+            self.scheduleOutgoingTimeout(callId: callId)
             continuation.resume(returning: true)
           }
         }
@@ -1659,9 +1680,40 @@ public class ExpoCallKitModule: Module {
       return (callId, eventData)
     }
     if let (callId, eventData) = result {
+      // [2026-05-22 outgoing timeout] Call connected — kill the 45s ring
+      // timeout so it can't fire AFTER the call started.
+      cancelOutgoingTimeout(callId: callId)
       print("[ExpoCallKit] callAnswered: callId=\(callId), jsReady=\(jsListenersReady)")
       safeSendEvent("onCallAnswered", eventData)
     }
+  }
+
+  /// [2026-05-22 outgoing timeout helpers]
+  /// Schedule a 45s timer that auto-ends the outgoing call if no answer
+  /// arrives. Caller-side equivalent of WhatsApp's "Não atendeu" auto-cancel.
+  internal func scheduleOutgoingTimeout(callId: String) {
+    let timer = DispatchSource.makeTimerSource(queue: stateQueue)
+    timer.schedule(deadline: .now() + 45.0)
+    timer.setEventHandler { [weak self] in
+      guard let self = self else { return }
+      // Still tracked as active? If not, was already ended cleanly.
+      let stillActive = self.stateQueue.sync { self.activeCalls[callId] != nil }
+      guard stillActive else { return }
+      NSLog("[ExpoCallKit][outgoing-timeout] 45s — auto-ending unanswered callId=\(callId)")
+      // Run on main to be safe with CallKit APIs.
+      DispatchQueue.main.async {
+        self.endCallActionWithReason(callId: callId, reasonRaw: "unanswered")
+      }
+      // Clear the timer ref so callEnded cleanup is idempotent.
+      self.stateQueue.sync { _ = self.outgoingCallTimers.removeValue(forKey: callId) }
+    }
+    timer.resume()
+    stateQueue.sync { outgoingCallTimers[callId] = timer }
+  }
+
+  internal func cancelOutgoingTimeout(callId: String) {
+    let removed = stateQueue.sync { outgoingCallTimers.removeValue(forKey: callId) }
+    removed?.cancel()
   }
 
   func callEnded(uuid: UUID) {
@@ -1671,6 +1723,10 @@ public class ExpoCallKitModule: Module {
       callPayloads.removeValue(forKey: callId)
       return callId
     }
+    // [2026-05-22 outgoing timeout] Always cancel the ring timeout — call
+    // ended by any path (answered, manual hangup, remote reject, timeout
+    // itself) means the timer is no longer needed.
+    if let cid = callId { cancelOutgoingTimeout(callId: cid) }
     // [#1184 dismiss fix, 2026-05-19] Mirror remove so a stale UUID stash
     // can't accidentally drive a dismiss on the next call's surface.
     if let cid = callId { ExpoCallKitModule._shared_setUUID(nil, forCallId: cid) }
