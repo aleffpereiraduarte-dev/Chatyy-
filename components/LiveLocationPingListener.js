@@ -17,7 +17,6 @@
 // requester side; this is defensive.
 import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
-import { mailWs } from '../services/api';
 import * as api from '../services/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -28,6 +27,14 @@ export default function LiveLocationPingListener() {
   useEffect(() => {
     if (!user?.email) return;
     if (Platform.OS === 'web') return; // web doesn't background-share
+
+    // mailWs is a default export of services/websocket.js, NOT named from
+    // services/api.js. Use require() inside the effect so a missing module
+    // throws here instead of at module load (otherwise root layout crashes
+    // with "Cannot read property 'on' of undefined").
+    let mailWs;
+    try { mailWs = require('../services/websocket').default; } catch { return; }
+    if (!mailWs || typeof mailWs.on !== 'function') return;
 
     const unsub = mailWs.on('location_ping_request', async () => {
       const now = Date.now();
@@ -42,11 +49,13 @@ export default function LiveLocationPingListener() {
           accuracy: Location.Accuracy.Balanced,
         });
         if (!loc?.coords) return;
-        // Push to the global share — `chat_update_live_location` with no
-        // conversation_id, which goes into chat_friend_location_shares (the
-        // table the snap-map reads). Backend keeps the existing
-        // is_unlimited/expires_at flags from the user's last share.
-        await api.apiCall('chat_update_live_location', {
+        // Push to the global snap-map table directly. The legacy
+        // chat_update_live_location requires a conversation_id and returns
+        // 400 without one — useless from a WS-wake context where we only
+        // have GPS. chat_friend_location_share_update is the pure-global
+        // path: writes only to chat_friend_location_shares, preserves the
+        // user's existing is_unlimited/expires_at flags.
+        await api.apiCall('chat_friend_location_share_update', {
           latitude: loc.coords.latitude,
           longitude: loc.coords.longitude,
           accuracy: loc.coords.accuracy || null,
