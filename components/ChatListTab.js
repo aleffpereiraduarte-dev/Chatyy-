@@ -4900,19 +4900,28 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={t?.('chat.reorderPinned') || 'Reorganizar fixados'}
+                hitSlop={10}
                 style={({ pressed }) => ({
-                  paddingHorizontal: 14, paddingVertical: 8, borderRadius: 14,
-                  minHeight: 32,
-                  flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+                  width: 32, height: 32, borderRadius: 16,
+                  alignItems: 'center', justifyContent: 'center',
                   backgroundColor: pressed
                     ? (isDark ? 'rgba(124,58,237,0.32)' : 'rgba(124,58,237,0.20)')
-                    : (isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)'),
+                    : 'transparent',
                   ...(Platform.OS === 'web' ? { cursor: 'pointer', userSelect: 'none' } : {}),
                 })}
               >
-                <Text style={{ fontSize: 12, fontWeight: '700', color: '#7C3AED', letterSpacing: 0.3 }}>
-                  {t?.('chat.editPinned') || 'Editar'}
-                </Text>
+                {/* [7172 polish 2026-05-22] Replaced "Editar" text with pencil SVG.
+                    User wanted a discreet icon, matching iOS/WhatsApp where pinned
+                    sections don't have a labeled button. */}
+                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+                  <Path
+                    d="M16.475 5.408l2.117 2.117M14.69 7.193l-9.39 9.39a1.5 1.5 0 00-.421.815l-.5 2.5a.5.5 0 00.59.59l2.5-.5a1.5 1.5 0 00.815-.42l9.39-9.39M14.69 7.193l1.785-1.785a1.5 1.5 0 012.117 0l0 0a1.5 1.5 0 010 2.117l-1.785 1.785M14.69 7.193l2.117 2.117"
+                    stroke={isDark ? '#A78BFA' : '#7C3AED'}
+                    strokeWidth={1.8}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </Svg>
               </Pressable>
             ) : (
               <TouchableOpacity

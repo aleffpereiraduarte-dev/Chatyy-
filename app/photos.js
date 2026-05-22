@@ -480,6 +480,14 @@ export default function PhotosScreen() {
     // Guard against parallel/stale requests on first page load
     const requestId = (pageNum === 1 && !append) ? ++cloudLoadRequestIdRef.current : cloudLoadRequestIdRef.current;
     const userToken = user?.email || '';
+    // [PERF 2026-05-21] Track if THIS invocation set the loading flag. If so,
+    // the finally block must clear it even when the request goes stale —
+    // otherwise the spinner is stranded forever (root cause of "Photos tela
+    // travada" bug: cache-miss path setLoading(true), api roundtrip becomes
+    // stale because a newer mount fires, finally's `requestId === current`
+    // gate fails → loading stays true with no future call to reset it).
+    let weSetLoading = false;
+    let weSetLoadingMore = false;
     try {
       // Show cached photos instantly on first load
       if (pageNum === 1 && !append) {
@@ -492,9 +500,11 @@ export default function PhotosScreen() {
           // Still fetch fresh in background (don't return, continue below)
         } else {
           setLoading(true);
+          weSetLoading = true;
         }
       } else if (pageNum > 1) {
         setLoadingMore(true);
+        weSetLoadingMore = true;
       }
 
       const res = await api.filePhotos('all', pageNum, PAGE_SIZE);
@@ -546,8 +556,16 @@ export default function PhotosScreen() {
       console.warn('Failed to load cloud photos:', e);
       if (!append) setCloudPhotos([]);
     } finally {
-      if (requestId === cloudLoadRequestIdRef.current) {
+      // [PERF 2026-05-21] If we set loading/loadingMore on THIS invocation,
+      // always clear them — even when a newer request bumped the ref. The
+      // previous gate skipped cleanup on stale requests and stranded the
+      // spinner permanently. A concurrent newer request will set them back
+      // to true on its own setLoading(true) and clear them on its own
+      // finally, so this is safe.
+      if (weSetLoading || requestId === cloudLoadRequestIdRef.current) {
         setLoading(false);
+      }
+      if (weSetLoadingMore || requestId === cloudLoadRequestIdRef.current) {
         setLoadingMore(false);
       }
     }

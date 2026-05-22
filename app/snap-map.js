@@ -452,9 +452,14 @@ window.addEventListener('message', function(ev) {
 });
 
 // ──────────────────────────── Loader ─────────────────────────────────────
-// Google Maps JS API path — billing was enabled 2026-05-18. The script
-// tag is injected at runtime so we can fall back to Leaflet if the
-// network blocks googleapis.com or the key is mid-rotation.
+// Google Maps JS API path. Billing was enabled 2026-05-18 and verified again
+// 2026-05-22 via direct API probe (Maps JS API + Geocoding both 200 OK).
+// [BUG FIX 2026-05-22] Removed `loading=async` query param. When combined
+// with `callback=initMap`, Google's loader IGNORES the legacy callback —
+// async mode requires `google.maps.importLibrary()` instead. Result was:
+// `initMap` never fired → 6s safety-net timeout → bootLeaflet() →
+// OSM/Leaflet tiles shown to user even with billing fully enabled. Without
+// `loading=async`, the classic callback pattern works reliably.
 function initMap() { try { bootGmaps(); } catch (e) { bootLeaflet(); } }
 
 (function loadGoogleMaps() {
@@ -462,13 +467,13 @@ function initMap() { try { bootGmaps(); } catch (e) { bootLeaflet(); } }
   var s = document.createElement('script');
   s.async = true;
   s.defer = true;
-  s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(API_KEY) + '&callback=initMap&loading=async';
+  s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(API_KEY) + '&callback=initMap';
   s.onerror = function() { bootLeaflet(); };
   document.head.appendChild(s);
-  // Safety net: if Google never calls initMap within 6s (CDN block,
+  // Safety net: if Google never calls initMap within 8s (CDN block,
   // network flake), fall back to Leaflet so the user isn't stuck on a
   // blank map.
-  setTimeout(function(){ if (__backend === null) bootLeaflet(); }, 6000);
+  setTimeout(function(){ if (__backend === null) bootLeaflet(); }, 8000);
 })();
 
 // gm_authFailure is the runtime signal Google fires when the JS API
