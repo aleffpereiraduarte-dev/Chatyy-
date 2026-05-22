@@ -12,8 +12,10 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Platform, StyleSheet, RefreshControl,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Redirect } from 'expo-router';
 import Svg, { Path, Circle } from 'react-native-svg';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { MONETIZATION_ENABLED } from '../constants/featureFlags';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
@@ -65,6 +67,12 @@ function Sparkline({ data, color = ACCENT, width = 260, height = 64 }) {
 }
 
 export default function CreatorDashboardScreen() {
+  // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+  // the whole dashboard is paid-monetization aggregates (tips, payouts,
+  // subscribers). Redirect away while monetization is paused.
+  if (!MONETIZATION_ENABLED) {
+    return <Redirect href="/chat" />;
+  }
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();

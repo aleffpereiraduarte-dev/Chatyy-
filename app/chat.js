@@ -1373,7 +1373,11 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
         // 2026-05-21 — WAVE 57 wallet redesign: single-currency "saldo".
         // Removed duplicate "Diamantes" Apps drawer entry — /wallet is the
         // single source of truth now (Adicionar sheet handles top-ups).
-        { key: 'wallet',        label: t('apps.wallet') || 'Carteira',           ic: I(IconCreditCard, '#7C3AED'), route: '/wallet' },
+        // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+        // "Carteira" tile dropped from the Apps drawer; the wallet screen
+        // itself redirects to /chat now, so leaving the tile would just
+        // bounce users. Spread keeps it gone from sort/search arrays too.
+        ...(WALLET_ENABLED ? [{ key: 'wallet', label: t('apps.wallet') || 'Carteira', ic: I(IconCreditCard, '#7C3AED'), route: '/wallet' }] : []),
         { key: 'settings',      label: t('sidebar.settings') || 'Configurações', ic: I(IconSettings, '#475569'), action: () => { onClose(); try { router.push('/settings'); } catch (e) { console.warn('[chat] router.push failed:', e); } } },
         { key: 'notifications', label: t('sidebar.notifications') || 'Alertas',  ic: I(IconBell, '#f97316'),     route: '/notifications' },
         { key: 'backup',        label: t('sidebar.backup') || 'Backup',          ic: I(IconShield, '#0ea5e9'),   route: '/backup' },

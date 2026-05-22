@@ -11,6 +11,8 @@ import { View, Text, TouchableOpacity, Modal, Animated, Dimensions, StyleSheet, 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as api from '../services/api';
 import { IconPhone, IconSparkles, IconVideo, IconStar, IconShield, IconArrowLeft } from './Icons';
+// [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
+import { PLANS_ENABLED } from '../constants/featureFlags';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 const SEEN_KEY = 'plus_onboarding_seen_v1';
@@ -24,6 +26,11 @@ const SLIDES = [
 ];
 
 export async function checkShouldShowPlusOnboarding() {
+  // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
+  // Tour celebrates a paid-plan upgrade; with plans hidden there is no
+  // such upgrade so always skip. Kept short-circuit here so callers don't
+  // need to know about the flag.
+  if (!PLANS_ENABLED) return false;
   try {
     const seen = await AsyncStorage.getItem(SEEN_KEY);
     if (seen === '1') return false;

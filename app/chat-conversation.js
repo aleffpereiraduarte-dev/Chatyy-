@@ -3560,11 +3560,12 @@ window.addEventListener('message', function(e){var d=e&&e.data; if(d&&d.type==='
   // We keep `gmapsHtml` + `gKeylessEmbed` ready behind a feature flag so
   // re-enabling billing is a one-line revert.
   const gKeylessEmbed = `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#000}iframe{border:0;width:100%;height:100%;display:block}</style></head><body><iframe loading="lazy" allowfullscreen referrerpolicy="no-referrer-when-downgrade" src="https://maps.google.com/maps?q=${numLat},${numLng}&z=17&output=embed"></iframe></body></html>`;
-  // [bug 2026-05-15] User screenshots mostram "This page can't load Google
-  // Maps correctly" + "For development purposes only" watermark — key foi
-  // re-rejeitada (billing flap ou quota). Voltar pro Leaflet/OSM até GCP
-  // confirmar billing estável. Leaflet tem mesma UX, sem key, sem rejeição.
-  const USE_GMAPS_JS = false;
+  // [2026-05-22 #1356] GCP billing now stable (snap-map renders Google
+  // Maps fine since WAVE 49). Flipping back to Google Maps inside chat
+  // for visual consistency — user expects one map provider across the
+  // whole app, not "snap-map = Google, chat = OSM". Keeps the leaflet
+  // path alive as a last-resort fallback when _gKey is missing.
+  const USE_GMAPS_JS = true;
   const html = USE_GMAPS_JS && gmapsHtml ? gmapsHtml : leafletHtml;
 
   return (
