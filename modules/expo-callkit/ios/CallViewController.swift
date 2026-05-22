@@ -156,6 +156,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var ringbackEngine: AVAudioEngine?
     private var ringbackPlayer: AVAudioPlayerNode?
     private var ringbackResignObserver: NSObjectProtocol?
+
+    // [WAVE 156 2026-05-22] Combine subscription that mirrors
+    // session.status (@Published) into the UIKit statusLabel.
+    private var statusObserver: AnyCancellable?
     private var ringbackActive: Bool = false
 
     // [DTMF, 2026-05-19] Listen for ExpoCallKitPlayDTMF (posted by the
@@ -421,6 +425,18 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             endSubLabel.topAnchor.constraint(equalTo: endButton.bottomAnchor, constant: 6),
             endSubLabel.centerXAnchor.constraint(equalTo: endButton.centerXAnchor),
         ])
+
+        // [WAVE 156 2026-05-22] Sync session.status → UIKit statusLabel.
+        // Without this the label froze at "Chamando…" forever (bug user
+        // reported: "ui não atualiza quando estado muda"). Combine
+        // subscription mirrors every @Published change onto main thread.
+        statusObserver = session.$status
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newStatus in
+                guard let self = self,
+                      let lbl = self.view.viewWithTag(9001) as? UILabel else { return }
+                lbl.text = newStatus
+            }
 
         // [STAGE-A 2026-05-20] GAP #2 — If preconnectRoom (push-receive path)
         // already published a Room for this callId, adopt it instead of
@@ -1456,6 +1472,18 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             print("[CallVC] remote-answered \(self.callId) — stopping ringback + flipping status")
             self.stopRingbackTone(reason: "remote_answered")
             self.session.status = "Conectado"
+
+            // [WAVE 156 2026-05-22] Moved here from roomDidConnect.
+            // CallKit only learns "the remote answered" AFTER the WS frame
+            // arrives — otherwise the pill says "Conectado" the moment our
+            // SFU join completes (before the callee accepts), which is the
+            // root cause of the caller hearing audio before answer.
+            if self.isOutgoing,
+               let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: self.callId),
+               let provider = VoipPushAppDelegateSubscriber.earlyProvider {
+                provider.reportOutgoingCall(with: uuid, connectedAt: nil)
+                print("[CallVC] remote-answered: reportOutgoingCall(connectedAt:nil) uuid=\(uuid)")
+            }
         }
     }
 
@@ -1941,20 +1969,25 @@ extension CallViewController: RoomDelegate {
         // [CALL-TRACE 2026-05-20 WAVE42] Step 9/12 — RoomDelegate.connected.
         NSLog("[CallTrace][9/12] RoomEvent type=Connected callId=\(callId) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         print("[CallVC] roomDidConnect — callId=\(callId)")
-        DispatchQueue.main.async { [weak self] in
-            self?.session.status = "Conectado"
-        }
-        // [2026-05-21] On outgoing calls we MUST tell CallKit "the remote
-        // answered" via reportOutgoingCall(with:connectedAt:). Without it,
-        // CallKit keeps the lock-screen pill saying "Calling…" forever and
-        // never starts the in-call duration timer. We reuse the early VoIP
-        // provider (same pattern as didDisconnectWithError below).
-        if isOutgoing,
-           let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId),
-           let provider = VoipPushAppDelegateSubscriber.earlyProvider {
-            provider.reportOutgoingCall(with: uuid, connectedAt: nil)
-            print("[CallVC] roomDidConnect: reportOutgoingCall(connectedAt:nil) uuid=\(uuid)")
-        }
+
+        // [WAVE 156 2026-05-22] CRITICAL fix audio leak: do NOT flip session.status
+        // to "Conectado" and do NOT call reportOutgoingCall(connectedAt:) here.
+        //
+        // Bug user reported: "outro celular tá em casa começa a chamar e EU já
+        // escuto barulho como se atenderam". Root cause: roomDidConnect fires
+        // when the LiveKit SFU acknowledges OUR join (not when the callee
+        // accepted) — and we were prematurely telling CallKit + UI "Connected",
+        // which (a) opens the audio session fully on both sides, (b) starts the
+        // in-call duration timer, and (c) primes the caller speaker so any
+        // remote audio plays immediately. Even though the callee hasn't tapped
+        // Accept, our mic is hot and the SFU forwards anything to other peers
+        // in the room.
+        //
+        // Correct behavior (WhatsApp parity): keep status = "Chamando…" until
+        // the WS receives the `call_answered` frame from the callee's device.
+        // The CallSignalWs notification flips status AND calls
+        // reportOutgoingCall(connectedAt:) — see installRemoteAnsweredObserver
+        // below (line ~1438) where the proper transition lives now.
         // [#1207 NativeCallRoom REAL] Fanout to JS via the singleton listener
         // so the JS-side /call.js sees onLkConnected and renders peers from
         // the snapshot without spinning up a duplicate Room.
