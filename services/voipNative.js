@@ -463,6 +463,40 @@ export async function startOutgoingCall({
       ts: Date.now(),
     });
   } catch {}
+  // [WAVE 136 2026-05-22] Pre-flush zombie CallKit UUIDs before requesting
+  // a new outgoing call. Symptom: user retries a call → iOS rejects with
+  // `com.apple.CallKit.error.requesttransaction error 7` =
+  // CXErrorCodeRequestTransactionErrorMaximumCallGroupsReached, because
+  // the CXProvider still holds a "live" reference to a previous call
+  // whose end-action was never dispatched (JS hangup didn't propagate to
+  // native — see WAVE 135 CallContext fix). v2.5.0 has the native-side
+  // cleanup but until that ships, sweep AsyncStorage for any stale UUIDs
+  // and tell CallKit to release them before requesting a fresh one. Idempotent
+  // and safe even when the list is empty.
+  try {
+    const AS = require('@react-native-async-storage/async-storage').default;
+    const raw = await AS.getItem('recent_callkit_uuids');
+    if (raw) {
+      try {
+        const ids = JSON.parse(raw);
+        if (Array.isArray(ids)) {
+          for (const oldId of ids) {
+            if (oldId && oldId !== cid) {
+              try { ExpoCallKit.endCall(String(oldId), 'failed'); } catch {}
+            }
+          }
+        }
+      } catch {}
+    }
+    // Track this new UUID so the next retry can flush it too if user closes
+    // the app or the hangup doesn't propagate. Capped at 10 to avoid bloat.
+    try {
+      const existing = raw ? (JSON.parse(raw) || []) : [];
+      const next = Array.isArray(existing) ? [cid, ...existing.filter(x => x !== cid)].slice(0, 10) : [cid];
+      await AS.setItem('recent_callkit_uuids', JSON.stringify(next));
+    } catch {}
+  } catch {}
+
   const nativePresent = ExpoCallKit.startOutgoingCall(nativePayload);
 
   // Background: mint LK token then forward it to native.
