@@ -721,7 +721,7 @@ struct CallView: View {
             AnimatedDotsText(
                 base: session.status
                     .replacingOccurrences(of: "\u{2026}", with: "")
-                    .replacingOccurrences(of: "...", with ""),
+                    .replacingOccurrences(of: "...", with: ""),
                 color: secondaryText,
                 font: .system(size: 16, weight: .medium)
             )
