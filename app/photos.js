@@ -871,9 +871,22 @@ export default function PhotosScreen() {
       })();
     }
 
+    // P1 FIX (2026-05-21): always kick a cloud-photos refresh on mount even
+    // when context is "warm" (devicePhotos populated from a prior visit). The
+    // old short-circuit would set loading=false and never re-fetch
+    // cloudPhotos, so a user who landed on Photos with empty cloud (transient
+    // 401/timeout on first try, or device had a few photos that hid cloud
+    // via the old allPhotos exclusive logic) would see an empty grid forever
+    // until the app was killed. Cloud refetch is cheap (cached + paginated).
     if (loadedRef.current && (devicePhotos.length > 0 || cloudPhotos.length > 0)) {
       setLoading(false);
       api.apiCall('drive_backup_count').then(r => { const t = r?.data?.count || 0; if (t > 0) setBackedUpTotal(t); }).catch(() => {});
+      // Re-fire cloud fetch when cloudPhotos is empty but device has items
+      // (covers "merge" path so backed-up photos surface even on revisit).
+      if (cloudPhotos.length === 0) {
+        if (Platform.OS === 'web') loadCloudPhotos(1);
+        else setTimeout(() => loadCloudPhotos(1), 500);
+      }
       const timer = setInterval(() => {
         api.apiCall('drive_backup_count').then(r => { const t = r?.data?.count || 0; if (t > 0) setBackedUpTotal(t); }).catch(() => {});
       }, 5000);
@@ -885,9 +898,16 @@ export default function PhotosScreen() {
       loadCloudPhotos(1);
       loadStorageInfo();
     } else {
-      // Mobile: device photos first, cloud in background
+      // Mobile: device photos + cloud in parallel.
+      // P1 FIX (2026-05-21): was `setTimeout(loadCloudPhotos, 2000)` which
+      // left users with no photo permission staring at an empty illustration
+      // for 2s+ before the cloud fetch even kicked off. Now both fire on
+      // mount so the grid paints as soon as either resolves. Combined with
+      // the new merge-based allPhotos, the user always sees their backed-up
+      // photos regardless of device photo permission state.
       loadDevicePhotos();
-      setTimeout(() => { loadCloudPhotos(1); loadStorageInfo(); }, 2000);
+      loadCloudPhotos(1);
+      loadStorageInfo();
     }
     // Load all preferences in parallel
     Promise.all([
@@ -1153,12 +1173,32 @@ export default function PhotosScreen() {
   // ============================================================
   // COMBINED PHOTOS
   // ============================================================
+  // P1 FIX (2026-05-21): MERGE device + cloud (Google Photos / iCloud parity).
+  // Previously: `if (devicePhotos.length > 0) return devicePhotos;` HID all cloud
+  // photos as soon as the user had a single device photo. Worse, when the
+  // user denied / limited photo permission AND the cloud fetch hadn't returned
+  // yet (or returned empty due to a transient error), allPhotos stayed [] and
+  // the screen rendered the empty illustration — even though the account had
+  // tens of thousands of photos backed up to R2. Now: merge by a stable key
+  // (device photos preferred over their cloud copy when both exist, matched by
+  // basename) so the grid surfaces EVERY photo the user has. Web stays cloud-only.
   const allPhotos = useMemo(() => {
     if (Platform.OS === 'web') return cloudPhotos;
-    // On mobile: show ONLY device photos (like Google Photos)
-    // Cloud photos only shown on web or if no device photos
-    if (devicePhotos.length > 0) return devicePhotos;
-    return cloudPhotos;
+    if (devicePhotos.length === 0) return cloudPhotos;
+    if (cloudPhotos.length === 0) return devicePhotos;
+    // Merge: device first (live ph:// uri = faster preview), then any cloud
+    // photo whose name isn't already represented on-device. Use lowercased
+    // basename (strip server-added hash suffix) so "IMG_7160_6937a7fdb0.PNG"
+    // dedupes against the device's "IMG_7160.PNG" / "IMG_7160.HEIC".
+    const stripHashSuffix = (n) => {
+      if (!n) return '';
+      const s = String(n).toLowerCase();
+      // strip "_<hex8+>.ext" tail added by backup upload
+      return s.replace(/_[a-f0-9]{6,}(\.[a-z0-9]+)$/, '$1');
+    };
+    const deviceNames = new Set(devicePhotos.map(p => stripHashSuffix(p.name)));
+    const cloudOnly = cloudPhotos.filter(p => !deviceNames.has(stripHashSuffix(p.name)));
+    return [...devicePhotos, ...cloudOnly];
   }, [cloudPhotos, devicePhotos]);
 
   // Memories: TIER 1 — backend-driven "On this day" (DOY ±3 days vs prev years).

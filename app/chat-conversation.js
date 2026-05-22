@@ -26553,18 +26553,48 @@ export default function ChatConversationScreen() {
                 // Direct chats apenas — não faz sentido em grupo/canal/saved.
                 ...(conversationType === 'direct' && params.email && (params.email || '').toLowerCase() !== (currentEmail || '').toLowerCase() ? [{ divider: true, items: [
                   { Icon: IconMapPin, tint: '#10B981', label: t('location.requestLive') || 'Pedir localização ao vivo', onPress: async () => {
+                    // [BUG B fix 2026-05-21] Silent-fail root cause was the iOS
+                    // Modal-over-Modal race (see memory note
+                    // ios_modal_over_modal_race.md): closing the 3-dot menu
+                    // Modal and immediately calling Alert.alert/safeAlert in
+                    // the same tick made UIKit drop the alert with no error.
+                    // Result: user tapped "Pedir localização ao vivo", menu
+                    // closed, NOTHING showed — perceived as silent fail even
+                    // though the backend request did go through.
+                    // Fix: defer the alert past the modal dismiss animation,
+                    // and (defensively) catch the case where api or the helper
+                    // is missing so we can surface that to the user too.
                     setShowHeaderMenu(false);
                     const otherEmail = (params.email || '').toLowerCase();
-                    if (!otherEmail) return;
+                    if (!otherEmail) {
+                      setTimeout(() => safeAlert(t('common.error') || 'Erro', 'No peer email — open this chat from contacts or chat list and try again.'), 350);
+                      return;
+                    }
+                    if (typeof api?.friendLocationRequest !== 'function') {
+                      setTimeout(() => safeAlert(t('common.error') || 'Erro', 'Esta versão do app não suporta pedir localização. Atualize e tente novamente.'), 350);
+                      return;
+                    }
+                    let r = null;
+                    let errText = '';
                     try {
-                      const r = await api.friendLocationRequest(otherEmail, '');
-                      if (r?.success) {
-                        safeAlert(t('location.requestLive') || 'Pedir localização ao vivo', t('location.requestSent') || 'Pedido enviado');
-                      } else {
-                        safeAlert(t('common.error') || 'Erro', r?.message || (t('location.requestFailed') || 'Não foi possível enviar o pedido'));
-                      }
+                      r = await api.friendLocationRequest(otherEmail, '');
                     } catch (e) {
-                      safeAlert(t('common.error') || 'Erro', String(e?.message || e));
+                      errText = String(e?.message || e || 'network error');
+                    }
+                    // Defer the alert so the Header menu Modal has fully
+                    // unmounted before UIKit/RN tries to mount the alert
+                    // sheet. 350ms matches the AppContext picker→modal
+                    // fix already documented in memory.
+                    const showLater = (title, msg) => {
+                      if (Platform.OS === 'ios') setTimeout(() => safeAlert(title, msg), 350);
+                      else safeAlert(title, msg);
+                    };
+                    if (errText) {
+                      showLater(t('common.error') || 'Erro', errText);
+                    } else if (r?.success) {
+                      showLater(t('location.requestLive') || 'Pedir localização ao vivo', t('location.requestSent') || 'Pedido enviado');
+                    } else {
+                      showLater(t('common.error') || 'Erro', r?.message || (t('location.requestFailed') || 'Não foi possível enviar o pedido'));
                     }
                   }},
                 ]}] : []),

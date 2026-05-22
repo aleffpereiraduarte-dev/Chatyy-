@@ -32,7 +32,21 @@ export function PhotosProvider({ children }) {
       // Restore cached cloud photos só se ainda não temos nada — antes
       // o closure capturava cloudPhotos vazio e podia sobrescrever fotos
       // recém carregadas se o import resolvesse depois.
-      const cachedPhotos = await c.getCached('cloud_photos');
+      // P1 FIX (2026-05-21): photos.js writes to `cloud_photos_<email>` (it
+      // user-namespaces the key on top of cache.js's per-user prefix because
+      // PhotosContext mounts BEFORE auth hydrates and the cache prefix would
+      // be wrong). Try both legacy `cloud_photos` and the namespaced fallback
+      // — whichever the active user has. Without this fallback, hydration
+      // here never matched what photos.js wrote and the grid always had to
+      // wait for a fresh network fetch (visible empty flash + slow paint).
+      let cachedPhotos = await c.getCached('cloud_photos');
+      if (!cachedPhotos || cachedPhotos.length === 0) {
+        try {
+          const { getActiveAccountEmail } = require('../services/api');
+          const email = (typeof getActiveAccountEmail === 'function' ? getActiveAccountEmail() : '') || '';
+          if (email) cachedPhotos = await c.getCached(`cloud_photos_${email}`);
+        } catch {}
+      }
       if (cachedPhotos && cachedPhotos.length > 0) {
         setCloudPhotos(prev => (prev.length === 0 ? cachedPhotos : prev));
       }
