@@ -51,8 +51,14 @@ export function CallProvider({ children }) {
           if (ck?.endCall) ck.endCall(callId, 'remoteEnded');
         } catch {}
         try {
+          // [WAVE 139, GPT-5.5-pro C1.3] `chatEndCall` NÃO EXISTE em services/api.js —
+          // a função certa é `chatCallActiveClose`. Antes esta chamada falhava
+          // silenciosamente (api?.chatEndCall falsy → no-op), então o peer
+          // `chat_call_state` row ficava até o GC cron de 60s timeout marcar
+          // dead. Agora chama o endpoint real com reason="hangup".
           const api = require('../services/api');
-          if (api?.chatEndCall) api.chatEndCall(callId).catch(() => {});
+          const close = api?.chatCallActiveClose || api?.chatEndCall;
+          if (close) close(callId, 'hangup').catch(() => {});
         } catch {}
       }
     } catch {}
