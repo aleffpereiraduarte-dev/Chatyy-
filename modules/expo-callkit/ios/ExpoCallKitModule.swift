@@ -77,12 +77,40 @@ public class ExpoCallKitModule: Module {
 
   // Serial queue for thread-safe access to activeCalls, callPayloads, pendingEvents
   private let stateQueue = DispatchQueue(label: "com.onemundo.callkit.state")
+  // [2026-05-22 reentrancy-safe sync] DispatchSpecificKey set on stateQueue so
+  // we can detect when we're ALREADY running on it and avoid `dispatch_sync`
+  // deadlock (libdispatch traps EXC_BREAKPOINT if you sync into the queue you
+  // currently own — happens when a source/timer callback nests another sync,
+  // see crash thread 22 trace from 2026-05-22). Used by `safeStateSync`.
+  private let stateQueueKey = DispatchSpecificKey<Void>()
+  // Set to true once `stateQueue.setSpecific(...)` has run (idempotent guard).
+  private var stateQueueKeyInstalled = false
+
+  /// Reentrancy-safe wrapper around `stateQueue.sync`. If we're already on
+  /// stateQueue (detected via DispatchSpecific), runs the block inline so we
+  /// don't deadlock. Otherwise dispatches synchronously like the bare call.
+  @inline(__always)
+  private func safeStateSync<T>(_ block: () -> T) -> T {
+    if DispatchQueue.getSpecific(key: stateQueueKey) != nil {
+      return block()
+    }
+    return stateQueue.sync(execute: block)
+  }
+
+  /// Install the DispatchSpecific marker on stateQueue. Safe to call multiple
+  /// times — guarded by `stateQueueKeyInstalled`. Called from OnCreate (and
+  /// defensively from any early path that might race ahead of OnCreate).
+  private func installStateQueueKey() {
+    if stateQueueKeyInstalled { return }
+    stateQueueKeyInstalled = true
+    stateQueue.setSpecific(key: stateQueueKey, value: ())
+  }
 
   /// Look up the original server-side callId for a CallKit UUID. Used by
   /// the delegate to keep CXAction events keyed by call_id (what JS sees)
   /// instead of the opaque UUID.
   internal func callIdForUUID(_ uuid: UUID) -> String? {
-    return stateQueue.sync {
+    return safeStateSync {
       for (cid, u) in activeCalls where u == uuid { return cid }
       return nil
     }
@@ -226,7 +254,7 @@ public class ExpoCallKitModule: Module {
   private var outgoingCallTimers: [String: DispatchSourceTimer] = [:]
 
   internal func consumeOutgoingCallParams(uuid: UUID) -> OutgoingCallParams? {
-    return stateQueue.sync {
+    return safeStateSync {
       let params = pendingOutgoingCalls[uuid]
       pendingOutgoingCalls.removeValue(forKey: uuid)
       return params
@@ -275,7 +303,7 @@ public class ExpoCallKitModule: Module {
   /// Update the snapshot when the call advances. Called from CallKit
   /// delegate callbacks and NativeCallRoom listener. Never called from JS.
   internal func updateCurrentCallContext(_ mutate: (inout CurrentCallContext?) -> Void) {
-    stateQueue.sync {
+    safeStateSync {
       mutate(&currentCallContext)
     }
   }
@@ -342,6 +370,9 @@ public class ExpoCallKitModule: Module {
 
     // Auto-initialize on module load (skip CallKit in China per Apple requirement)
     OnCreate {
+      // [2026-05-22 reentrancy-safe sync] Install the DispatchSpecific marker
+      // FIRST, before any other setup that might dispatch onto stateQueue.
+      self.installStateQueueKey()
       var region = ""
       if #available(iOS 16.0, *) {
         region = Locale.current.region?.identifier ?? ""
@@ -375,7 +406,7 @@ public class ExpoCallKitModule: Module {
 
     OnStartObserving {
       print("[ExpoCallKit] JS listeners registered — flushing pending events")
-      self.stateQueue.sync {
+      self.safeStateSync {
         self.jsListenersReady = true
       }
       self.flushPendingEvents()
@@ -407,7 +438,7 @@ public class ExpoCallKitModule: Module {
 
     // JS calls this on mount to get any events that fired before JS was ready
     Function("consumePendingEvents") { () -> [[String: Any]] in
-      return self.stateQueue.sync {
+      return self.safeStateSync {
         let events = self.pendingEvents.map { (name, data) -> [String: Any] in
           var result = data
           result["_eventName"] = name
@@ -753,7 +784,7 @@ public class ExpoCallKitModule: Module {
     }
 
     Function("getDiagnostics") { () -> [String: Any] in
-      let callCount = self.stateQueue.sync { self.activeCalls.count }
+      let callCount = self.safeStateSync { self.activeCalls.count }
       let hasToken: Bool = {
         if let ud = UserDefaults(suiteName: kAppGroupId) {
           return ud.string(forKey: "voipToken") != nil
@@ -793,7 +824,7 @@ public class ExpoCallKitModule: Module {
     // and either add it to CallStateSnapshot intentionally or push the
     // logic into native instead.
     Function("getCurrentCallSnapshot") { () -> [String: Any]? in
-      return self.stateQueue.sync { () -> [String: Any]? in
+      return self.safeStateSync { () -> [String: Any]? in
         guard let ctx = self.currentCallContext else { return nil }
         let duration: Int = {
           guard let start = ctx.startedAt else { return 0 }
@@ -909,7 +940,7 @@ public class ExpoCallKitModule: Module {
       // Stash params for the delegate path AND register the callId↔UUID map
       // so callAnswered/callEnded/endCall route correctly once the callee
       // accepts (the answer event comes through the same CallKit channel).
-      self.stateQueue.sync {
+      self.safeStateSync {
         self.activeCalls[callId] = uuid
         // [#1184 dismiss fix, 2026-05-19] Mirror to static map so CallSignalWs
         // can dismiss CallKit when a `call_end` frame arrives.
@@ -1007,12 +1038,12 @@ public class ExpoCallKitModule: Module {
         // Clear in-memory maps; the provider delegate's CXEndCallAction
         // handlers may also fire and remove these, but doing it here keeps
         // state coherent in case the delegate is delayed.
-        self.stateQueue.sync {
+        self.safeStateSync {
           self.activeCalls.removeAll()
           self.pendingOutgoingCalls.removeAll()
         }
         // Re-stash the new pending entry — the removeAll above wiped it.
-        self.stateQueue.sync {
+        self.safeStateSync {
           self.activeCalls[callId] = uuid
           ExpoCallKitModule._shared_setUUID(uuid, forCallId: callId)
           self.pendingOutgoingCalls[uuid] = OutgoingCallParams(
@@ -1045,7 +1076,7 @@ public class ExpoCallKitModule: Module {
           if let error = error {
             print("[ExpoCallKit] startOutgoingCall: transaction failed: \(error.localizedDescription)")
             // Clean up the stashed state on failure so we don't leak.
-            self.stateQueue.sync {
+            self.safeStateSync {
               self.activeCalls.removeValue(forKey: callId)
               self.pendingOutgoingCalls.removeValue(forKey: uuid)
             }
@@ -1424,7 +1455,7 @@ public class ExpoCallKitModule: Module {
       // maps here is idempotent vs. the local CXEndCallAction path
       // (callEnded already cleared them) — both paths converge.
       if let self = self {
-        let uuid: UUID? = self.stateQueue.sync {
+        let uuid: UUID? = self.safeStateSync {
           let u = self.activeCalls[callId]
           self.activeCalls.removeValue(forKey: callId)
           self.callPayloads.removeValue(forKey: callId)
@@ -1584,7 +1615,7 @@ public class ExpoCallKitModule: Module {
     let hasVideo = (entry["hasVideo"] as? Bool) ?? false
     let payload = (entry["payload"] as? [String: Any]) ?? [:]
 
-    stateQueue.sync {
+    safeStateSync {
       activeCalls[callId] = uuid
       callPayloads[callId] = payload
     }
@@ -1616,7 +1647,7 @@ public class ExpoCallKitModule: Module {
         status = "offline"
       }
       // Thread-safe check via stateQueue (pathUpdateHandler runs on monitorQueue)
-      let shouldNotify = self.stateQueue.sync { () -> Bool in
+      let shouldNotify = self.safeStateSync { () -> Bool in
         if status != self.lastNetworkStatus {
           self.lastNetworkStatus = status
           return true
@@ -1698,7 +1729,7 @@ public class ExpoCallKitModule: Module {
     }
 
     // Deduplicate: reuse existing UUID if callId already tracked
-    let uuid: UUID = stateQueue.sync {
+    let uuid: UUID = safeStateSync {
       if let existing = activeCalls[callId] { return existing }
       let newUUID = UUID()
       activeCalls[callId] = newUUID
@@ -1737,7 +1768,7 @@ public class ExpoCallKitModule: Module {
     // stays visible after the user taps the JS hangup button — exactly the
     // user report: "desligando quando desliga a chamada no app" the native
     // CallKit UI doesn't sync.
-    var resolvedUUID: UUID? = stateQueue.sync { activeCalls[callId] }
+    var resolvedUUID: UUID? = safeStateSync { activeCalls[callId] }
     if resolvedUUID == nil {
       resolvedUUID = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId)
     }
@@ -1822,7 +1853,7 @@ public class ExpoCallKitModule: Module {
     // Clean bookkeeping so a stale UUID stash can't drive a dismiss on the
     // next call. Safe to clear unconditionally — if the entry wasn't there,
     // removeValue is a no-op. Mirror static map.
-    stateQueue.sync {
+    safeStateSync {
       activeCalls.removeValue(forKey: callId)
       callPayloads.removeValue(forKey: callId)
     }
@@ -1844,9 +1875,9 @@ public class ExpoCallKitModule: Module {
   }
 
   /// Send event to JS, buffering if JS isn't ready yet (cold start)
-  /// IMPORTANT: sendEvent must be called OUTSIDE stateQueue.sync to avoid deadlock
+  /// IMPORTANT: sendEvent must be called OUTSIDE safeStateSync/stateQueue.sync to avoid deadlock
   func safeSendEvent(_ eventName: String, _ body: [String: Any]) {
-    let shouldSend = stateQueue.sync { () -> Bool in
+    let shouldSend = safeStateSync { () -> Bool in
       if jsListenersReady {
         return true
       } else {
@@ -1865,7 +1896,7 @@ public class ExpoCallKitModule: Module {
   }
 
   private func flushPendingEvents() {
-    let toFlush: [(String, [String: Any])] = stateQueue.sync {
+    let toFlush: [(String, [String: Any])] = safeStateSync {
       guard jsListenersReady, !pendingEvents.isEmpty else { return [] }
       let events = pendingEvents
       pendingEvents.removeAll()
@@ -1900,7 +1931,7 @@ public class ExpoCallKitModule: Module {
   //            the deprecated direct event fields. By then the snapshot
   //            read path is the source of truth.
   func callAnswered(uuid: UUID) {
-    let result: (String, [String: Any])? = stateQueue.sync {
+    let result: (String, [String: Any])? = safeStateSync {
       guard let callId = activeCalls.first(where: { $0.value == uuid })?.key else { return nil }
       var eventData: [String: Any] = ["callId": callId]
       if let payload = callPayloads[callId] {
@@ -1930,7 +1961,7 @@ public class ExpoCallKitModule: Module {
     timer.setEventHandler { [weak self] in
       guard let self = self else { return }
       // Still tracked as active? If not, was already ended cleanly.
-      let stillActive = self.stateQueue.sync { self.activeCalls[callId] != nil }
+      let stillActive = self.safeStateSync { self.activeCalls[callId] != nil }
       guard stillActive else { return }
       NSLog("[ExpoCallKit][outgoing-timeout] 45s — auto-ending unanswered callId=\(callId)")
       // Run on main to be safe with CallKit APIs.
@@ -1938,19 +1969,19 @@ public class ExpoCallKitModule: Module {
         self.endCallActionWithReason(callId: callId, reasonRaw: "unanswered")
       }
       // Clear the timer ref so callEnded cleanup is idempotent.
-      self.stateQueue.sync { _ = self.outgoingCallTimers.removeValue(forKey: callId) }
+      self.safeStateSync { _ = self.outgoingCallTimers.removeValue(forKey: callId) }
     }
     timer.resume()
-    stateQueue.sync { outgoingCallTimers[callId] = timer }
+    safeStateSync { outgoingCallTimers[callId] = timer }
   }
 
   internal func cancelOutgoingTimeout(callId: String) {
-    let removed = stateQueue.sync { outgoingCallTimers.removeValue(forKey: callId) }
+    let removed = safeStateSync { outgoingCallTimers.removeValue(forKey: callId) }
     removed?.cancel()
   }
 
   func callEnded(uuid: UUID) {
-    let callId: String? = stateQueue.sync {
+    let callId: String? = safeStateSync {
       guard let callId = activeCalls.first(where: { $0.value == uuid })?.key else { return nil }
       activeCalls.removeValue(forKey: callId)
       callPayloads.removeValue(forKey: callId)
@@ -2002,10 +2033,10 @@ public class ExpoCallKitModule: Module {
   /// (declined elsewhere, no-answer, peer hung up first, etc.).
   func endCallActionWithReason(callId: String, reasonRaw: String) {
     let mapped = Self.mapEndedReason(reasonRaw)
-    let uuid = stateQueue.sync { activeCalls[callId] }
+    let uuid = safeStateSync { activeCalls[callId] }
     if let uuid = uuid {
       provider?.reportCall(with: uuid, endedAt: Date(), reason: mapped)
-      stateQueue.sync {
+      safeStateSync {
         activeCalls.removeValue(forKey: callId)
         callPayloads.removeValue(forKey: callId)
       }
@@ -2064,7 +2095,7 @@ public class ExpoCallKitModule: Module {
   /// Wipe our bookkeeping so we don't leak ghost calls.
   func handleProviderReset() {
     print("[ExpoCallKit] Provider reset — clearing all active calls")
-    let toEnd: [String] = stateQueue.sync {
+    let toEnd: [String] = safeStateSync {
       let ids = Array(activeCalls.keys)
       activeCalls.removeAll()
       callPayloads.removeAll()
