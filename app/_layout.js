@@ -257,6 +257,7 @@ import CallStatusBar from '../components/CallStatusBar';
 
 // Lazy-load call components to break circular dependency
 const IncomingCallListener = React.lazy(() => import('../components/IncomingCallListener'));
+const LiveLocationPingListener = React.lazy(() => import('../components/LiveLocationPingListener'));
 // [decline-with-message iOS, 2026-05-17] CallKit can't carry custom buttons,
 // so we surface a JS sheet right after the system decline action fires.
 // The Android equivalent is inline in IncomingCallActivity.kt.
@@ -1508,6 +1509,9 @@ export default function RootLayout() {
                 <CallStatusBar />
                 <Suspense fallback={null}>
                   <IncomingCallListener />
+                </Suspense>
+                <Suspense fallback={null}>
+                  <LiveLocationPingListener />
                 </Suspense>
                 <Suspense fallback={null}>
                   <DeclineWithMessageSheet />

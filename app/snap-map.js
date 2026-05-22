@@ -1020,6 +1020,37 @@ export default function SnapMapScreen() {
         };
       })
   ), [filteredShares, nowTick]);
+
+  // [7181 fix 2026-05-22] Wake stale sharers. When iOS sleeps a friend's
+  // app or Android force-stops it, the location row sits frozen in PG and
+  // we render a "Sem atualização há 23h" badge. Fire a silent push to the
+  // sharer so their app wakes, re-runs getCurrentPosition, and posts a
+  // fresh chat_update_live_location — receiver's map then updates real-time
+  // via WS broadcast. Frontend throttles 90s per (sharer) to avoid burning
+  // APNs background quota. Backend has a 60s server-side throttle too.
+  const lastPingedRef = useRef({});
+  useEffect(() => {
+    const STALE_PING_MS = 5 * 60 * 1000; // wake after 5min of silence
+    const COOLDOWN_MS = 90 * 1000;
+    const now = Date.now();
+    pinsPayload.forEach((p) => {
+      if (!p.is_stale || !p.email) return;
+      // Skip pinging self (you can't wake your own app from your own app).
+      if (user?.email && p.email.toLowerCase() === user.email.toLowerCase()) return;
+      // Re-derive age from updated_at since pinsPayload only kept ago_label.
+      const share = filteredShares.find((s) => s.email === p.email);
+      if (!share?.updated_at) return;
+      let ageMs = 0;
+      try { ageMs = now - new Date(share.updated_at.replace(' ', 'T') + 'Z').getTime(); } catch { return; }
+      if (ageMs < STALE_PING_MS) return;
+      const last = lastPingedRef.current[p.email] || 0;
+      if (now - last < COOLDOWN_MS) return;
+      lastPingedRef.current[p.email] = now;
+      // Fire-and-forget; backend handles throttle + grant check.
+      api.friendLocationPing(p.email).catch(() => {});
+    });
+  }, [pinsPayload, filteredShares, user]);
+
   const mePayload = useMemo(() => (
     myLocation ? { lat: myLocation.lat, lng: myLocation.lng } : null
   ), [myLocation]);

@@ -4200,6 +4200,15 @@ export async function friendLocationDecline(requesterEmail) {
   return apiCall('chat_friend_location_decline', { requester_email: requesterEmail }, 'POST');
 }
 
+// [7181 fix 2026-05-22] Wake a stale sharer. Snap-map fires this when a
+// friend's pin has been silent >5min — backend dispatches a silent push
+// (iOS apns-push-type=background + Android FCM data-only) so the sharer's
+// app wakes, re-runs getCurrentPosition, and posts a fresh location. 60s
+// server-side throttle + 90s client-side throttle protect APNs quota.
+export async function friendLocationPing(sharerEmail) {
+  return apiCall('chat_friend_location_ping', { sharer_email: sharerEmail }, 'POST');
+}
+
 /**
  * Either side ends an active grant. `peerEmail` = the other party.
  */
