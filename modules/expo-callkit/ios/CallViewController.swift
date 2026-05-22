@@ -1776,7 +1776,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             isOutgoing: isOutgoing,
             conversationId: conversationId
         )
-        top.present(vc, animated: true, completion: nil)
+        // [WAVE 146 2026-05-22] Completion handler tells us if UIKit actually
+        // attached the view to the window hierarchy. Without it, present can
+        // silently no-op (already presenting, view not in scene) and the
+        // user sees nothing. Now any drop logs visibly in Console.app.
+        NSLog("[CallVC.present] about to present top=\(type(of: top)) callId=\(callId)")
+        top.present(vc, animated: true, completion: {
+            NSLog("[CallVC.present] completion fired callId=\(callId) window=\(vc.view.window != nil)")
+        })
     }
 
     private static func topMostViewController(from base: UIViewController) -> UIViewController {

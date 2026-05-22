@@ -2508,45 +2508,80 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // suppressVCPresent=true (legacy push payload, JS-set field) silently
     // kills the WhatsApp-style rich UI. Kill the gate entirely so the
     // native CallView ALWAYS presents on outgoing — no escape hatch.
-    NSLog("[ExpoCallKit WAVE 144] presentOutgoingCallVC: gate removed — always presenting native UI for callId=\(params.callId)")
-    // [#1171 redux dismiss, 2026-05-19] Same race guard as presentNativeCallVC.
-    // If the user tapped hangup on the CallKit outgoing-call sheet (system
-    // pill on the lock screen, or the green status-bar pill) BEFORE the
-    // LK token fetch resolved, CXEndCallAction fired, callEnded(uuid:)
-    // cleared activeCalls + sharedUUIDByCallId, and presenting now would
-    // leave a stranded "Conectando…" VC the user can't dismiss cleanly
-    // (no UUID = handleHangup's CXEndCallAction is a no-op; only
-    // self.dismiss covers it and that has its own failure modes — see
-    // CallViewController.forceDismissSelf).
-    guard ExpoCallKitModule.isCallStillActive(callId: params.callId) else {
-      print("[ExpoCallKit] presentOutgoingCallVC: call \(params.callId) already ended — skipping stale present")
+    NSLog("[CallTrace][PRESENT-1] presentOutgoingCallVC ENTRY callId=\(params.callId) hasUrl=\(lkUrl != nil) hasToken=\(lkToken != nil) thread=\(Thread.isMainThread ? "main" : "bg")")
+
+    // [WAVE 146 2026-05-22] Defensive main-thread guard. UIKit `present(_:)`
+    // MUST run on main; warm-path callsite uses DispatchQueue.main.async but
+    // we double-guard here in case a future callsite forgets.
+    if !Thread.isMainThread {
+      DispatchQueue.main.async {
+        Self.presentOutgoingCallVC(params: params, lkUrl: lkUrl, lkToken: lkToken)
+      }
       return
     }
-    // [#1172 fix, 2026-05-18] resolvePresentingViewController — see helper.
-    // [#1192 cold-start fix, 2026-05-19] retry path for outgoing on cold-start.
+
+    guard ExpoCallKitModule.isCallStillActive(callId: params.callId) else {
+      NSLog("[CallTrace][PRESENT-2-ABORT] callId=\(params.callId) ended (isCallStillActive=false) — UI WILL NOT APPEAR")
+      return
+    }
     let callId = params.callId
     let presentBlock: (UIViewController) -> Void = { root in
       guard ExpoCallKitModule.isCallStillActive(callId: callId) else {
-        print("[ExpoCallKit] presentOutgoingCallVC(retry): call \(callId) ended during wait — abort")
+        NSLog("[CallTrace][PRESENT-3-ABORT] callId=\(callId) ended during retry wait")
         return
       }
-      CallViewController.present(
-        from: root,
-        callId: params.callId,
-        callerName: params.calleeName,
-        callerEmail: params.calleeEmail,
-        hasVideo: params.isVideo,
-        lkUrl: lkUrl,
-        lkToken: lkToken,
-        isOutgoing: true,
-        conversationId: params.conversationId
-      )
+      NSLog("[CallTrace][PRESENT-4] resolved root=\(type(of: root)) presented=\(root.presentedViewController.map { String(describing: type(of: $0)) } ?? "nil")")
+
+      // [WAVE 146] Walk to top — BUT if top is mid-transition / an unrelated
+      // sheet/modal (image picker, contact details, etc.), dismiss it forcibly
+      // so we can present the CallVC over the scene root. User intent =
+      // "show CallView NOW".
+      var top: UIViewController = root
+      while let p = top.presentedViewController, !p.isBeingDismissed {
+        top = p
+      }
+      if top !== root && !(top is CallViewController) {
+        NSLog("[CallTrace][PRESENT-5] dismissing stale top=\(type(of: top)) before presenting CallVC")
+        top.dismiss(animated: false) {
+          Self._actuallyPresentOutgoing(from: root, params: params, lkUrl: lkUrl, lkToken: lkToken, callId: callId)
+        }
+        return
+      }
+      Self._actuallyPresentOutgoing(from: top, params: params, lkUrl: lkUrl, lkToken: lkToken, callId: callId)
     }
     if let root = resolvePresentingViewController() {
       presentBlock(root)
     } else {
-      print("[ExpoCallKit] presentOutgoingCallVC: no presenting VC yet (cold-start) — retrying")
+      NSLog("[CallTrace][PRESENT-6] no root VC yet — retrying for cold-start")
       retryPresent(reason: "presentOutgoingCallVC:\(callId)", block: presentBlock)
+    }
+  }
+
+  // [WAVE 146 2026-05-22] Final present helper — guaranteed main-thread,
+  // .fullScreen re-asserted, completion handler logs UIKit accept/reject.
+  // Splits out the actual UIKit call so the stale-modal dismiss path above
+  // can reuse it without duplicating logic.
+  fileprivate static func _actuallyPresentOutgoing(
+    from presenter: UIViewController,
+    params: OutgoingCallParams,
+    lkUrl: String?, lkToken: String?,
+    callId: String
+  ) {
+    let vc = CallViewController(
+      callId: callId,
+      callerName: params.calleeName,
+      callerEmail: params.calleeEmail,
+      hasVideo: params.isVideo,
+      lkUrl: lkUrl,
+      lkToken: lkToken,
+      isOutgoing: true,
+      conversationId: params.conversationId
+    )
+    vc.modalPresentationStyle = .fullScreen  // belt + suspenders (init also sets)
+    vc.isModalInPresentation = true
+    NSLog("[CallTrace][PRESENT-7] calling present from=\(type(of: presenter)) callId=\(callId)")
+    presenter.present(vc, animated: true) {
+      NSLog("[CallTrace][PRESENT-8-DONE] CallViewController.present completion fired callId=\(callId) window=\(vc.view.window != nil)")
     }
   }
 
