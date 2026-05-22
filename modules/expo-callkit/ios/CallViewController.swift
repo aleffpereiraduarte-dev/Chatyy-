@@ -287,78 +287,139 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // independently. CallKit native UI shows during ringing as before.
         // When user opens app foreground during call, this minimal UIKit
         // screen shows — no rich animations but zero crash.
+        // [WAVE 155 2026-05-22] UIKit call screen — WhatsApp-style polish.
+        // Avatar circle + name + status + 3 buttons. Zero SwiftUI.
+
+        // Gradient background (CALayer, no SwiftUI)
+        let gradient = CAGradientLayer()
+        gradient.colors = [
+            UIColor(red: 0x1A/255.0, green: 0x0F/255.0, blue: 0x2E/255.0, alpha: 1.0).cgColor,
+            UIColor(red: 0x0B/255.0, green: 0x14/255.0, blue: 0x1A/255.0, alpha: 1.0).cgColor
+        ]
+        gradient.startPoint = CGPoint(x: 0.5, y: 0.0)
+        gradient.endPoint = CGPoint(x: 0.5, y: 1.0)
+        gradient.frame = UIScreen.main.bounds
+        view.layer.insertSublayer(gradient, at: 0)
+
+        // Avatar circle — gradient purple, initial letter inside
+        let avatarSize: CGFloat = 132
+        let avatarView = UIView()
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        avatarView.backgroundColor = UIColor(red: 0x7C/255.0, green: 0x3A/255.0, blue: 0xED/255.0, alpha: 1.0)
+        avatarView.layer.cornerRadius = avatarSize / 2
+        avatarView.clipsToBounds = true
+        view.addSubview(avatarView)
+
+        let initial = String((callerName.isEmpty ? callerEmail : callerName).trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
+        let initialLabel = UILabel()
+        initialLabel.translatesAutoresizingMaskIntoConstraints = false
+        initialLabel.text = initial
+        initialLabel.textColor = .white
+        initialLabel.font = .systemFont(ofSize: 52, weight: .semibold)
+        initialLabel.textAlignment = .center
+        avatarView.addSubview(initialLabel)
+
         let nameLabel = UILabel()
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.text = callerName.isEmpty ? callerEmail : callerName
         nameLabel.textColor = .white
         nameLabel.font = .systemFont(ofSize: 28, weight: .semibold)
         nameLabel.textAlignment = .center
+        nameLabel.tag = 9000
         view.addSubview(nameLabel)
 
         let statusLabel = UILabel()
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.text = isOutgoing ? "Chamando…" : "Conectando…"
-        statusLabel.textColor = UIColor.white.withAlphaComponent(0.7)
-        statusLabel.font = .systemFont(ofSize: 16, weight: .regular)
+        statusLabel.textColor = UIColor.white.withAlphaComponent(0.72)
+        statusLabel.font = .systemFont(ofSize: 17, weight: .regular)
         statusLabel.textAlignment = .center
         statusLabel.tag = 9001
         view.addSubview(statusLabel)
 
-        let endButton = UIButton(type: .system)
-        endButton.translatesAutoresizingMaskIntoConstraints = false
-        endButton.backgroundColor = UIColor(red: 0xE6/255.0, green: 0x3A/255.0, blue: 0x3A/255.0, alpha: 1.0)
-        endButton.setTitle("Encerrar", for: .normal)
-        endButton.setTitleColor(.white, for: .normal)
-        endButton.titleLabel?.font = .systemFont(ofSize: 18, weight: .semibold)
-        endButton.layer.cornerRadius = 36
-        endButton.addTarget(self, action: #selector(uikitOnHangupTap), for: .touchUpInside)
-        view.addSubview(endButton)
+        // Helper to build round symbol buttons
+        func roundButton(symbol: String, title: String, tag: Int, action: Selector, isDestructive: Bool = false) -> UIButton {
+            let btn = UIButton(type: .system)
+            btn.translatesAutoresizingMaskIntoConstraints = false
+            btn.backgroundColor = isDestructive
+                ? UIColor(red: 0xE6/255.0, green: 0x3A/255.0, blue: 0x3A/255.0, alpha: 1.0)
+                : UIColor.white.withAlphaComponent(0.16)
+            btn.tintColor = .white
+            let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
+            btn.setImage(UIImage(systemName: symbol, withConfiguration: cfg), for: .normal)
+            btn.layer.cornerRadius = isDestructive ? 36 : 32
+            btn.tag = tag
+            btn.addTarget(self, action: action, for: .touchUpInside)
+            view.addSubview(btn)
+            return btn
+        }
 
-        let muteButton = UIButton(type: .system)
-        muteButton.translatesAutoresizingMaskIntoConstraints = false
-        muteButton.backgroundColor = UIColor.white.withAlphaComponent(0.15)
-        muteButton.setTitle("Mute", for: .normal)
-        muteButton.setTitleColor(.white, for: .normal)
-        muteButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .medium)
-        muteButton.layer.cornerRadius = 32
-        muteButton.tag = 9002
-        muteButton.addTarget(self, action: #selector(uikitOnMuteTap), for: .touchUpInside)
-        view.addSubview(muteButton)
+        let muteButton = roundButton(symbol: "mic.slash.fill", title: "Mute", tag: 9002, action: #selector(uikitOnMuteTap))
+        let speakerButton = roundButton(symbol: "speaker.wave.2.fill", title: "Speaker", tag: 9003, action: #selector(uikitOnSpeakerTap))
+        let endButton = roundButton(symbol: "phone.down.fill", title: "Encerrar", tag: 9004, action: #selector(uikitOnHangupTap), isDestructive: true)
 
-        let speakerButton = UIButton(type: .system)
-        speakerButton.translatesAutoresizingMaskIntoConstraints = false
-        speakerButton.backgroundColor = UIColor.white.withAlphaComponent(0.15)
-        speakerButton.setTitle("Speaker", for: .normal)
-        speakerButton.setTitleColor(.white, for: .normal)
-        speakerButton.titleLabel?.font = .systemFont(ofSize: 14, weight: .medium)
-        speakerButton.layer.cornerRadius = 32
-        speakerButton.tag = 9003
-        speakerButton.addTarget(self, action: #selector(uikitOnSpeakerTap), for: .touchUpInside)
-        view.addSubview(speakerButton)
+        // Mute/Speaker labels (below buttons)
+        func subLabel(_ text: String) -> UILabel {
+            let l = UILabel()
+            l.translatesAutoresizingMaskIntoConstraints = false
+            l.text = text
+            l.textColor = UIColor.white.withAlphaComponent(0.7)
+            l.font = .systemFont(ofSize: 12, weight: .medium)
+            l.textAlignment = .center
+            view.addSubview(l)
+            return l
+        }
+        let muteSubLabel = subLabel("Silenciar")
+        let speakerSubLabel = subLabel("Áudio")
+        let endSubLabel = subLabel("Encerrar")
 
         NSLayoutConstraint.activate([
+            // Avatar
+            avatarView.widthAnchor.constraint(equalToConstant: avatarSize),
+            avatarView.heightAnchor.constraint(equalToConstant: avatarSize),
+            avatarView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            avatarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 96),
+
+            initialLabel.centerXAnchor.constraint(equalTo: avatarView.centerXAnchor),
+            initialLabel.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
+
+            // Name
+            nameLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 24),
             nameLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            nameLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: -100),
             nameLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
 
-            statusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            // Status
             statusLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 8),
+            statusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
 
+            // Mute button (left)
             muteButton.widthAnchor.constraint(equalToConstant: 64),
             muteButton.heightAnchor.constraint(equalToConstant: 64),
-            muteButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -40),
+            muteButton.centerYAnchor.constraint(equalTo: speakerButton.centerYAnchor),
             muteButton.trailingAnchor.constraint(equalTo: view.centerXAnchor, constant: -56),
 
+            // Speaker button (right)
             speakerButton.widthAnchor.constraint(equalToConstant: 64),
             speakerButton.heightAnchor.constraint(equalToConstant: 64),
-            speakerButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -40),
+            speakerButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -160),
             speakerButton.leadingAnchor.constraint(equalTo: view.centerXAnchor, constant: 56),
 
+            // End button (centered, bigger, below)
             endButton.widthAnchor.constraint(equalToConstant: 72),
             endButton.heightAnchor.constraint(equalToConstant: 72),
             endButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            endButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -130),
+            endButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -60),
+
+            // Sub labels under buttons
+            muteSubLabel.topAnchor.constraint(equalTo: muteButton.bottomAnchor, constant: 6),
+            muteSubLabel.centerXAnchor.constraint(equalTo: muteButton.centerXAnchor),
+
+            speakerSubLabel.topAnchor.constraint(equalTo: speakerButton.bottomAnchor, constant: 6),
+            speakerSubLabel.centerXAnchor.constraint(equalTo: speakerButton.centerXAnchor),
+
+            endSubLabel.topAnchor.constraint(equalTo: endButton.bottomAnchor, constant: 6),
+            endSubLabel.centerXAnchor.constraint(equalTo: endButton.centerXAnchor),
         ])
 
         // [STAGE-A 2026-05-20] GAP #2 — If preconnectRoom (push-receive path)
