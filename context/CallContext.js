@@ -29,6 +29,34 @@ export function CallProvider({ children }) {
   }, []);
 
   const endCall = useCallback(() => {
+    // [WAVE 135 2026-05-22] Before flipping JS state, tell the native
+    // CallKit (iOS) / ConnectionService (Android) the call is over.
+    // Without this dispatch the native call UI stays mounted forever —
+    // user reports "se desliga a ligacao pelo app o nativo ainda fica
+    // aberto" because the in-app hangup button only cleared CallContext
+    // and the OS-managed call screen never got reportEndCallWithUUID.
+    // Two systems in conflict: JS hangup must propagate to the native side.
+    //
+    // Also fire chatEndCall to the backend so the peer's chat_call_state
+    // row flips to ended and the global GC cron doesn't have to wait for
+    // its 60s heartbeat-timeout to mark this call dead.
+    try {
+      const callId = callDataRef.current?.callId;
+      if (callId) {
+        // Lazy-require both modules to avoid circular import + so a missing
+        // native binding (e.g. on web) silently degrades to JS-only cleanup
+        // instead of throwing and breaking the hangup flow entirely.
+        try {
+          const ck = require('../modules/expo-callkit').default || require('../modules/expo-callkit');
+          if (ck?.endCall) ck.endCall(callId, 'remoteEnded');
+        } catch {}
+        try {
+          const api = require('../services/api');
+          if (api?.chatEndCall) api.chatEndCall(callId).catch(() => {});
+        } catch {}
+      }
+    } catch {}
+
     setCallData(null);
     setCallStartTime(null);
     callDataRef.current = null;

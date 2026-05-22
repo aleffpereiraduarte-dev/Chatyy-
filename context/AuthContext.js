@@ -523,11 +523,19 @@ export function AuthProvider({ children }) {
             setReporterIdentity({ email: r.data.email, bearer: tok });
             reportStep('hydrate_checkAuth_ok', `email=${r.data.email}`);
           } catch {}
-          // [#1175 2026-05-18] Persist bearer into native SharedPreferences
-          // on cold-start hydrate. checkAuth succeeded → user has a valid
-          // bearer in memory + storage; ensure LkTokenFetcher can find it
-          // in the "expo_callkit_prefs" SharedPreferences for the next
-          // incoming call.
+          // [#1175 2026-05-18 / #1183 regression 2026-05-22] AWAIT
+          // persistAuthForNativeCall on cold-start hydrate. checkAuth
+          // succeeded → user has a valid bearer in memory + storage; ensure
+          // LkTokenFetcher can find it in the "expo_callkit_prefs"
+          // SharedPreferences BEFORE the user has a chance to tap "Ligar".
+          // Previously this was fire-and-forget, so an outgoing call within
+          // ~50-300ms of mount would hit a race: SharedPrefs empty →
+          // enrichIntentWithAuth supplies no intent extras → all 4
+          // LkTokenFetcher sources fail except SecureStore (encrypted, no
+          // cleartext) → `Sessao expirada` banner on a perfectly valid
+          // session. Bounded to 600ms — identical pattern to login() /
+          // signup() / completeLoginAfterChallenge() so the bridge being
+          // slow can never stall app boot.
           try {
             if (Platform.OS !== 'web') {
               const tok = (r.data?.token || api.getAuthToken?.() || '').toString();
@@ -536,7 +544,10 @@ export function AuthProvider({ children }) {
                 const mod = require('../modules/expo-callkit');
                 const persist = mod?.persistAuthForNativeCall;
                 if (typeof persist === 'function') {
-                  persist(tok, baseUrl).catch(() => {});
+                  await Promise.race([
+                    Promise.resolve(persist(tok, baseUrl)).catch(() => {}),
+                    new Promise((r) => setTimeout(r, 600)),
+                  ]);
                 }
               }
             }
