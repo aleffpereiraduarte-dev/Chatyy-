@@ -999,9 +999,16 @@ public class ExpoCallKitModule: Module {
         lkToken: lkToken,
         suppressVCPresent: false
       )
-      DispatchQueue.main.async {
-        NSLog("[ExpoCallKit WAVE 145] immediate present pre-CXStartCallAction — callId=\(callId)")
-        ExpoCallKitModule.presentOutgoingCallVC(params: immediateParams, lkUrl: lkUrl, lkToken: lkToken)
+      DispatchQueue.main.async { [immediateParams] in
+        NSLog("[ExpoCallKit WAVE 145] immediate present pre-CXStartCallAction — callId=\(immediateParams.callId)")
+        // presentOutgoingCallVC lives in ProviderDelegate (file-private),
+        // not in ExpoCallKitModule. Access via the class qualifier — fileprivate
+        // access works because this call is in the same file.
+        ProviderDelegate.presentOutgoingCallVC(
+          params: immediateParams,
+          lkUrl: immediateParams.lkUrl,
+          lkToken: immediateParams.lkToken
+        )
       }
 
       // [2026-05-21] Donate an INStartCallIntent so iOS records this outgoing
