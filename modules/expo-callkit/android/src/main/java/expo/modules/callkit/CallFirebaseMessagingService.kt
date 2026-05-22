@@ -117,19 +117,23 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
 
             Log.d(TAG, "Incoming call from $callerName ($callerEmail) callId=$callId video=$hasVideo avatar=${callerAvatar.isNotEmpty()} autoAccept=$autoAccept")
 
-            // If the app is foreground, JS Modal (IncomingCallListener) handles
-            // the call UI via the WS `call_invite` event. Showing the native
-            // IncomingCallActivity on top results in BOTH screens stacking and
-            // confusing the user (incidente 2026-05-12).
+            // [2026-05-21 FIX foreground-no-ring] Previously: skipped native
+            // ringing if app was foreground, deferring to "JS Modal
+            // (IncomingCallListener) handles the call UI". BUT
+            // IncomingCallListener.js:271 returns null on mobile (only
+            // renders on web), so the call rang NOWHERE when the app was
+            // open. User report: "quando eu ligo pro android e o app ta
+            // aberto n chama".
             //
-            // Use ActivityManager to ask the OS — relying only on
-            // ExpoCallKitModule.isAppForeground had a race: FCM arrives BEFORE
-            // OnActivityEntersForeground fires on cold open, so the flag was
-            // still false. Combine both signals + a real ActivityManager
-            // check so we catch ALL foreground cases.
+            // Now: native ringing flow runs regardless of foreground state.
+            // CallRingingService + IncomingCallActivity will show on top of
+            // the current activity — same behavior as WhatsApp/iMessage
+            // when you're already inside their app and a call arrives.
+            // The "2 systems" issue this gate was meant to prevent no
+            // longer applies because IncomingCallListener.js is dead on
+            // mobile (#1026 retired it).
             if (ExpoCallKitModule.isAppForeground || isProcessForeground()) {
-                Log.d(TAG, "App is foreground — skipping native ring service, JS will handle")
-                return
+                Log.d(TAG, "App is foreground — native ringing still fires (JS listener was retired in #1026)")
             }
 
             // [2026-05-16 Stage 4] Cold-start auto-accept: bypass the
