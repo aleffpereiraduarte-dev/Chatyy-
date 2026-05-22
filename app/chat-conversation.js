@@ -16163,23 +16163,26 @@ export default function ChatConversationScreen() {
       // CallActivity (Android Compose). No more JS /call.js on mobile. Web
       // still falls through to /call.js via onWebFallback.
       const voipNative = require('../services/voipNative');
+      const _jsRoute = (cid) => {
+        router.push(`/call?callId=${cid}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
+      };
       const callResult = await voipNative.startOutgoingCall({
         calleeEmail: otherEmail,
         calleeName: otherName,
         callerName: currentEmail || '',
         isVideo: !!videoEnabled,
         conversationId,
-        onWebFallback: (cid) => {
-          // [WAVE 117A] Web only — mobile uses 100% native call screen.
-          if (Platform.OS === 'web') {
-            router.push(`/call?callId=${cid}&contactName=${encodeURIComponent(otherName)}&contactEmail=${encodeURIComponent(otherEmail)}&isVideo=${videoEnabled ? '1' : '0'}&conversationId=${conversationId}&isCaller=1`);
-          }
-        },
+        onWebFallback: _jsRoute,
+        // [WhatsApp-parity hybrid restore 2026-05-22] App foreground on
+        // mobile → rich JS /call.js (same route as web). voipNative gates
+        // this on AppState=active; background/killed still goes native.
+        onForegroundJsRoute: _jsRoute,
       });
       const { native, error: nativeErr } = callResult || {};
-      if (!native && (Platform.OS === 'ios' || Platform.OS === 'android')) {
-        // [WAVE 117A] Mobile = 100% native. If native module failed, show the
-        // real error reason so we can diagnose without a device plugged in.
+      // native=false is expected when foreground mobile takes the JS path
+      // OR on web. Only surface an error when native genuinely failed
+      // (mobile + background-or-killed + native module rejected).
+      if (!native && nativeErr && (Platform.OS === 'ios' || Platform.OS === 'android')) {
         const reason = nativeErr?.message || String(nativeErr || 'native=false');
         console.warn('[startCall] native=false reason:', reason);
         safeAlert(

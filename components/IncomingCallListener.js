@@ -262,13 +262,44 @@ export default function IncomingCallListener() {
   // Note on hooks: Platform.OS is stable for the lifetime of the JS VM,
   // so this early-return never reorders hook calls across renders of the
   // same mounted instance — React's rules-of-hooks invariant holds.
-  // [WAVE 117, 2026-05-21] User mandate "tudo nativo no mobile" — re-add the
-  // hard gate so this JS overlay NEVER renders on mobile (iOS/Android). Native
-  // CallKit (iOS) + IncomingCallActivity (Android) own 100% of incoming-call UI.
-  // WAVE 113 had tried foreground=JS hybrid but user kept reporting "2 telas",
-  // "JS misturado com nativo", phantom calls — full native wins. Web keeps using
-  // this overlay since browser has no CallKit equivalent.
-  if (Platform.OS !== 'web') return null;
+  // [WhatsApp-parity hybrid restore, 2026-05-22]
+  // User mandate: "quando a ligacao e feita e o app ta aberto nos n
+  // prescisamos de nativo, so se o app tiver minimizado ou fechado ai
+  // o nativo atende a chamada abre o app e vc ver a ligacao la iqual
+  // whatsapp".
+  //
+  // Routing matrix:
+  //   - Web: always JS (no native CallKit available).
+  //   - Mobile + AppState=active: JS in-app modal owns the ringing UI.
+  //     Native CallKit/IncomingCallActivity is still reported (iOS REQUIRES
+  //     reportNewIncomingCall within ~2s of PKPushRegistry payload — see
+  //     Phase 2 Swift change which auto-fulfills CXAnswerCallAction +
+  //     dismisses the UI in this case). Android: IncomingCallActivity's
+  //     onCreate self-finishes when foreground (Phase 2 Kotlin change).
+  //   - Mobile + AppState=background/inactive: native owns the UI.
+  //     When user taps Accept on the native screen, AppDelegate / IncomingCall-
+  //     Activity bring the app to foreground and emit onCallAnswered → the
+  //     existing onAnswer handler below navigates to /call.js.
+  //
+  // History:
+  //   - WAVE 113 tried foreground=JS hybrid → reverted (WAVE 117) due to
+  //     dual-mount bugs (both JS modal AND native screen visible).
+  //   - The double-UI fix is now belt-and-suspenders: native side suppresses
+  //     itself when foreground (Phase 2) + JS side calls
+  //     dismissNativeIncomingUi on call_invite (existing) + isNativeRinging-
+  //     Active guard prevents JS from killing real ringing native UI.
+  //
+  // Implementation: we DON'T early-return; we let all the WS / CallKit
+  // listeners wire up (so background→foreground transition picks up active
+  // ringing). The render block at the bottom gates the modal on
+  // AppState.currentState — when background, render null (native owns UI).
+  // The AppState change listener forces a re-render so the modal pops up
+  // the moment the app comes to foreground while a call is still ringing.
+  const [appState, setAppState] = useState(AppState.currentState);
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (s) => setAppState(s));
+    return () => { try { sub.remove(); } catch {} };
+  }, []);
 
   const { colors } = useTheme();
   const { user } = useAuth();
@@ -1796,6 +1827,16 @@ export default function IncomingCallListener() {
   handleDeclineRef.current = handleDecline;
 
   if (!call) return null;
+
+  // [WhatsApp-parity hybrid, 2026-05-22] On mobile, only render the JS modal
+  // when the app is foreground (AppState=active). Background/inactive: native
+  // CallKit / IncomingCallActivity owns the UI. We still keep the call state
+  // (callStateRef, listeners) alive so that when the user brings the app to
+  // foreground via the native answer button, the existing onAnswer handler
+  // (line ~1088) navigates to /call.js with the ringing call's metadata.
+  if (Platform.OS !== 'web' && appState !== 'active') {
+    return null;
+  }
 
   // Caller display name with device-book override.
   // Precedence: (1) name saved in this device's address book against the

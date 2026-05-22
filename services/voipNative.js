@@ -119,6 +119,12 @@ function generateCallId() {
  * @param {string} [params.callId]           Pin a callId; otherwise generated.
  * @param {function} [params.onWebFallback]  Called on web with the generated callId
  *                                           so the caller can router.push('/call').
+ * @param {function} [params.onForegroundJsRoute]  WhatsApp-parity hybrid (2026-05-22):
+ *                                           Called on iOS/Android when AppState is
+ *                                           `active` so the rich JS /call.js UI is
+ *                                           used instead of bare-bones native CallKit
+ *                                           / CallActivity. Falls back to onWebFallback
+ *                                           when not provided.
  * @returns {Promise<{callId: string, native: boolean}>}
  *          callId is the canonical server-side identifier. `native` is true when
  *          the call was handed off to the native flow; false on web / native
@@ -133,6 +139,7 @@ export async function startOutgoingCall({
   conversationId,
   callId,
   onWebFallback,
+  onForegroundJsRoute,
 } = {}) {
   // [CALL-TRACE 2026-05-21 ROUND3] Step 2a/12 — voipNative entry. Snapshot
   // every field BEFORE any coercion / validation so we can see exactly what
@@ -402,6 +409,52 @@ export async function startOutgoingCall({
   // regardless of app state. The rich JS /call.js screen is Web-only.
   // onWebFallback callers are also gated with Platform.OS === 'web' so
   // this is belt-and-suspenders — calling onWebFallback on mobile is a no-op.
+  //
+  // [WhatsApp-parity hybrid restore, 2026-05-22]
+  // User mandate: "quando a ligacao e feita e o app ta aberto nos n
+  // prescisamos de nativo, so se o app tiver minimizado ou fechado".
+  // App foreground on mobile → /call.js JS UI (the rich screen with
+  // invite-friend, audio↔video upgrade, screenshare, grid). The peer is
+  // still rung via call_invite_v2 / callNotify above, and the callee's
+  // CallKit / IncomingCallActivity still fires normally (independent of
+  // our caller-side UI choice). Native is reserved for outgoing calls
+  // from background/killed states — extremely rare in practice (Siri
+  // shortcut, share-extension dialing, cold-start "Call again" pill).
+  //
+  // History: #1208 introduced this gate. #1217 ripped it out (WAVE 117A)
+  // because the native↔JS handoff had dual-mount bugs (CallActivity AND
+  // /call.js both visible). The Phase 2 native changes below (Swift +
+  // Kotlin) close that gap by short-circuiting the native UI when JS
+  // owns the foreground. Phase 1 (this commit) is OTA-able and ships
+  // the JS side of the contract; Phase 2 lands in the next native build.
+  if (isAppForeground()) {
+    try {
+      console.log('[CALL-TRACE][3.5/12] foreground → JS /call.js path', {
+        cid, calleeEmail, isVideo: !!isVideo, ts: Date.now(),
+      });
+    } catch {}
+    // Flip the AsyncStorage flag so the next incoming call_invite WS frame
+    // (during the brief window between caller minting and callee receiving)
+    // routes through the JS sheet rather than CallKit popup. The native
+    // CallFirebaseMessagingService / VoipPushAppDelegateSubscriber observe
+    // this flag (Phase 2) and bail out when ON + AppState=active.
+    try {
+      const AS = require('@react-native-async-storage/async-storage').default;
+      AS.setItem('prefer_js_call_ui', '1').catch(() => {});
+    } catch {}
+    const route = typeof onForegroundJsRoute === 'function'
+      ? onForegroundJsRoute
+      : onWebFallback;
+    if (typeof route === 'function') {
+      try { route(cid); } catch (e) {
+        console.warn(TAG, 'onForegroundJsRoute threw:', e?.message || e);
+      }
+      return { callId: cid, native: false };
+    }
+    // Caller didn't supply a JS-route callback — fall through to native
+    // (preserves existing behavior for any callsite that hasn't migrated).
+    console.warn(TAG, 'foreground but no onForegroundJsRoute supplied — falling back to native');
+  }
 
   // Pre-resolve the callee avatar URL so the native screen can paint a real
   // avatar (not just the initial letter) before LK Room is even up. The URL

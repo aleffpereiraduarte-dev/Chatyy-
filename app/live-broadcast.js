@@ -13,6 +13,7 @@ import * as api from '../services/api';
 import LiveChat from '../components/LiveChat'; // eslint-disable-line no-unused-vars -- kept for fallback
 import LiveChatOverlay from '../components/live/LiveChatOverlay';
 import AvatarCircle from '../components/AvatarCircle';
+import { cleanParticipantName, prettifyHandle } from '../services/displayName';
 import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark, IconChevronRight, IconChevronDown, IconBarChart, IconBrush, IconBookmarkFilled, IconPlay } from '../components/Icons';
 import { useTheme } from '../context/ThemeContext';
 import AnimatedViewerCount from '../components/AnimatedViewerCount';
@@ -887,7 +888,10 @@ export default function LiveBroadcastScreen() {
             const entry = new Animated.Value(0);
             appendChatMessage({
               id: 'gj_' + String(++chatIdRef.current),
-              name: msg.guest_name || (msg.guest_email || '').split('@')[0] || '?',
+              // BUG (2026-05-22) — was showing raw "suporte@boraum.com.br" on
+              // the "X juntou-se ao colab" chip. prettifyHandle gives a clean
+              // first-name display from the email local-part.
+              name: msg.guest_name || prettifyHandle((msg.guest_email || '').split('@')[0]) || '?',
               email: msg.guest_email,
               type: 'system',
               text: t('live.joinedColab') || 'juntou-se ao colab',
@@ -1169,7 +1173,11 @@ export default function LiveBroadcastScreen() {
     // Track unique viewers across the entire run — survives churn (viewer
     // leaves & rejoins still counts once). Feeds the end-card summary.
     const joinedEmail = (msg.viewer_email || '').toLowerCase();
-    const joinedName = msg.viewer_name || msg.viewer_email?.split('@')[0] || '?';
+    // BUG (2026-05-22) — "X entrou na live" chip was showing the raw email.
+    // The viewer_name from the WS server is now resolved server-side from
+    // user_profiles, but if it's missing fall back to a pretty local-part
+    // instead of the bare email.
+    const joinedName = msg.viewer_name || prettifyHandle(msg.viewer_email?.split('@')[0] || '') || '?';
     if (joinedEmail && !uniqueViewersRef.current.has(joinedEmail)) {
       uniqueViewersRef.current.add(joinedEmail);
       setUniqueViewers(uniqueViewersRef.current.size);
@@ -1654,7 +1662,11 @@ export default function LiveBroadcastScreen() {
                     if (!id) return;
                     setLkViewers(prev => {
                       if (prev.some(v => v.identity === id)) return prev;
-                      return [...prev, { identity: id, name: p?.name || id.split('#')[0] || id, joinedAt: Date.now() }];
+                      // BUG (2026-05-22) — was leaking `email#hash` into the
+                      // "X entrou" chip. cleanParticipantName strips both the
+                      // `#<hash>` suffix and the email domain, capitalising the
+                      // local-part ("suporte@boraum#abc" → "Suporte").
+                      return [...prev, { identity: id, name: cleanParticipantName(p), joinedAt: Date.now() }];
                     });
                   } catch {}
                 });
@@ -2677,7 +2689,11 @@ export default function LiveBroadcastScreen() {
           const idx = prev.findIndex(p => p.identity === participant.identity);
           const entry = {
             identity: participant.identity,
-            name: participant.name || participant.identity,
+            // BUG (2026-05-22) — `participant.identity` is `email#hash` for our
+            // LK rooms. Render it raw and the cohost PiP label was leaking the
+            // person's email + a hash. cleanParticipantName falls back through
+            // metadata.displayName → identity local-part → "Convidado".
+            name: cleanParticipantName(participant),
             videoTrack: videoTrack || null,
           };
           if (idx === -1) return [...prev, entry];
@@ -4690,7 +4706,12 @@ export default function LiveBroadcastScreen() {
                   paddingHorizontal: 4, paddingVertical: 2,
                 }}>
                   <Text style={{ color: '#fff', fontSize: 9, fontWeight: '700' }} numberOfLines={1}>
-                    {p.name?.split('@')[0] || p.identity?.split('@')[0]}
+                    {/* BUG (2026-05-22) — fallback to identity could surface
+                        the LK `email#hash` identity in the cohost PiP label.
+                        p.name is already cleaned via cleanParticipantName in
+                        the upsert; this guard handles any race where it's
+                        empty momentarily. */}
+                    {p.name || cleanParticipantName(p)}
                   </Text>
                 </View>
               </View>

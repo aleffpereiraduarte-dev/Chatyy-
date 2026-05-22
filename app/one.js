@@ -2312,17 +2312,17 @@ export default function OneScreen() {
                   } catch {}
                   return;
                 }
+                const _jsRoute = (cid) => {
+                  router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${cid}`);
+                };
                 const { native } = await voipNative.startOutgoingCall({
                   calleeEmail: contactEmail,
                   calleeName: contactName,
                   isVideo: !!params.video,
                   callId,
-                  onWebFallback: (cid) => {
-                    // [WAVE 117A] Web only — mobile uses 100% native call screen.
-                    if (Platform.OS === 'web') {
-                      router.push(`/call?contactEmail=${encodeURIComponent(contactEmail)}&contactName=${encodeURIComponent(contactName)}&isVideo=${video}&isCaller=1&callId=${cid}`);
-                    }
-                  },
+                  onWebFallback: _jsRoute,
+                  // [WhatsApp-parity hybrid restore 2026-05-22] foreground → JS /call.js
+                  onForegroundJsRoute: _jsRoute,
                 });
                 if (!native) {
                   // onWebFallback already handled the navigation. No-op here.

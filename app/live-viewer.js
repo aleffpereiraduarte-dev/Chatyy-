@@ -1566,7 +1566,9 @@ export default function LiveViewerScreen() {
               if (exists) return prev;
               const next = [{
                 email: msg.viewer_email,
-                name: msg.viewer_name || msg.viewer_email.split('@')[0],
+                // BUG (2026-05-22) — viewers were seeing "suporte@boraum.com.br"
+                // as the join chip; prettifyHandle gives a clean first-name.
+                name: msg.viewer_name || prettifyHandle(msg.viewer_email.split('@')[0]),
                 joinedAt: Date.now(),
               }, ...prev].slice(0, 100); // cap at 100 most-recent
               // Round 66 (2026-05-18, bug #3) fix — viewer count fallback.
@@ -1590,7 +1592,9 @@ export default function LiveViewerScreen() {
               {
                 id: 'sys_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
                 email: msg.viewer_email,
-                name: msg.viewer_name || msg.viewer_email.split('@')[0],
+                // BUG (2026-05-22) — same fix as the viewers list above:
+                // never surface raw email/identity on the system-event chip.
+                name: msg.viewer_name || prettifyHandle(msg.viewer_email.split('@')[0]),
                 text: (t?.('live.entered') || t?.('live.joined') || 'entrou'),
                 ts: Date.now(),
               },

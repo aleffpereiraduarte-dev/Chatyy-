@@ -3310,17 +3310,17 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
             );
             return;
           }
+          const _jsRoute = (cid) => {
+            router.push(`/call?callId=${cid}&contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&conversationId=${conversationId}&isCaller=1`);
+          };
           const { callId, native } = await voipNative.startOutgoingCall({
             calleeEmail: email,
             calleeName: name,
             isVideo: !!item.video,
             conversationId,
-            onWebFallback: (cid) => {
-              // [WAVE 117A] Web only — mobile uses 100% native call screen.
-              if (Platform.OS === 'web') {
-                router.push(`/call?callId=${cid}&contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo}&conversationId=${conversationId}&isCaller=1`);
-              }
-            },
+            onWebFallback: _jsRoute,
+            // [WhatsApp-parity hybrid restore 2026-05-22] foreground → JS /call.js
+            onForegroundJsRoute: _jsRoute,
           });
           if (!native) {
             // [WAVE 117A] Mobile = 100% native. onWebFallback already gated.
