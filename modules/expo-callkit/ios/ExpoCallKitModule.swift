@@ -2570,7 +2570,7 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
   // can reuse it without duplicating logic.
   fileprivate static func _actuallyPresentOutgoing(
     from presenter: UIViewController,
-    params: OutgoingCallParams,
+    params: ExpoCallKitModule.OutgoingCallParams,
     lkUrl: String?, lkToken: String?,
     callId: String
   ) {
@@ -2584,7 +2584,7 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       isOutgoing: true,
       conversationId: params.conversationId
     )
-    vc.modalPresentationStyle = .fullScreen  // belt + suspenders (init also sets)
+    vc.modalPresentationStyle = UIModalPresentationStyle.fullScreen  // belt + suspenders (init also sets)
     vc.isModalInPresentation = true
     NSLog("[CallTrace][PRESENT-7] calling present from=\(type(of: presenter)) callId=\(callId)")
     presenter.present(vc, animated: true) {
