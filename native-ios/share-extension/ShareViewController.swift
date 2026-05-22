@@ -155,6 +155,17 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
     /// explicit "abre Fotos e deixa baixar" message instead of leaving
     /// the user staring at the spinner forever.
     private let contentLoadTimeoutSec: TimeInterval = 20
+    /// Active iCloud download Progress objects returned by
+    /// `loadFileRepresentation`. We observe `fractionCompleted` so the
+    /// user sees real download % instead of an opaque spinner, and so
+    /// the Cancel button can `.cancel()` the in-flight network ops on
+    /// dismiss (Apple's NSItemProvider routes the cancel signal through
+    /// to the underlying iCloud asset request).
+    private var loadProgresses: [Progress] = []
+    private var progressObservations: [NSKeyValueObservation] = []
+    /// Stable reference to the pending-send card so the Cancel button
+    /// can tear it down without hideSending() racing the dismissal.
+    private var pendingCancelButton: UIButton?
 
     // MARK: Lifecycle
 
@@ -321,20 +332,23 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         // See: https://developer.apple.com/documentation/foundation/
         //   nsitemprovider/loadfilerepresentation
         if attachment.hasItemConformingToTypeIdentifier(videoType) {
-            attachment.loadFileRepresentation(forTypeIdentifier: videoType) { [weak self] url, err in
+            let p = attachment.loadFileRepresentation(forTypeIdentifier: videoType) { [weak self] url, err in
                 if let err = err { ShareDiag.recordError("video loadFileRepresentation: \(err.localizedDescription)") }
                 self?.consumeVideoFileURL(url); done()
             }
+            trackLoadProgress(p)
         } else if attachment.hasItemConformingToTypeIdentifier(imageType) {
-            attachment.loadFileRepresentation(forTypeIdentifier: imageType) { [weak self] url, err in
+            let p = attachment.loadFileRepresentation(forTypeIdentifier: imageType) { [weak self] url, err in
                 if let err = err { ShareDiag.recordError("image loadFileRepresentation: \(err.localizedDescription)") }
                 self?.consumeImageFileURL(url); done()
             }
+            trackLoadProgress(p)
         } else if attachment.hasItemConformingToTypeIdentifier(fileURLType) {
-            attachment.loadFileRepresentation(forTypeIdentifier: fileURLType) { [weak self] url, err in
+            let p = attachment.loadFileRepresentation(forTypeIdentifier: fileURLType) { [weak self] url, err in
                 if let err = err { ShareDiag.recordError("file loadFileRepresentation: \(err.localizedDescription)") }
                 self?.consumeGenericFileURL(url); done()
             }
+            trackLoadProgress(p)
         } else if attachment.hasItemConformingToTypeIdentifier(urlType) {
             // Web URLs: legacy loadItem is fine — these are just strings.
             attachment.loadItem(forTypeIdentifier: urlType, options: nil) { [weak self] data, _ in
@@ -359,6 +373,59 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         } else {
             done()
         }
+    }
+
+    // MARK: iCloud download progress
+    //
+    // `loadFileRepresentation` returns a `Progress` whose
+    // `fractionCompleted` advances as iCloud streams the asset to the
+    // extension's sandbox. We observe it so the user sees real % under
+    // the "Preparando…" spinner — without this, large iCloud videos
+    // (200MB+) look identical to a hung download and the user force-
+    // dismisses the share sheet, losing the upload. Matches WhatsApp.
+    private func trackLoadProgress(_ p: Progress) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.loadProgresses.append(p)
+            let obs = p.observe(\.fractionCompleted, options: [.new]) { [weak self] _, _ in
+                DispatchQueue.main.async { self?.refreshLoadingProgressUI() }
+            }
+            self.progressObservations.append(obs)
+            self.refreshLoadingProgressUI()
+        }
+    }
+
+    /// Aggregate iCloud download %; called when any observed Progress
+    /// ticks. We update both the inline preview label and (if visible)
+    /// the "Preparando mídia…" overlay shown after a queued send.
+    private func refreshLoadingProgressUI() {
+        guard !contentLoaded, !contentLoadFailed, !loadProgresses.isEmpty else { return }
+        let total = loadProgresses.reduce(0.0) { $0 + $1.fractionCompleted } / Double(loadProgresses.count)
+        let pct = Int((total * 100).rounded())
+        // 0% before iCloud responds — show a friendlier copy than "0%".
+        let suffix = pct < 1 ? "" : " \(pct)%"
+        // Inline preview block under the contact list.
+        if previewLabel.textColor != .systemRed {
+            previewLabel.text = "Baixando do iCloud…\(suffix)"
+        }
+        // Overlay shown after the user already tapped Enviar.
+        if pendingSendAfterLoad {
+            progressLabel?.text = "Baixando do iCloud…\(suffix)"
+        }
+    }
+
+    /// User tapped Cancel on the pending-send overlay. Abort in-flight
+    /// iCloud downloads (Apple wires NSItemProvider Progress.cancel()
+    /// through to the underlying CKAsset request), tear down the
+    /// overlay, and reset state so the user can pick again — without
+    /// dismissing the whole share sheet (that's what the top-bar
+    /// Cancelar already does).
+    @objc private func pendingSendCancelTapped() {
+        ShareDiag.recordInfo("user cancelled pending-send overlay")
+        pendingSendAfterLoad = false
+        for p in loadProgresses { p.cancel() }
+        hideSending()
+        // Don't surface an error — user explicitly cancelled.
     }
 
     // MARK: file-rep consumers (work synchronously inside the completion
@@ -977,6 +1044,11 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         // timeout fallback already ran).
         if contentLoaded || contentLoadFailed { return }
         contentLoaded = true
+        // Tear down Progress observers — load is done, we don't need
+        // more KVO callbacks (and the Progress objects will be released
+        // as the NSItemProvider drops them).
+        progressObservations.forEach { $0.invalidate() }
+        progressObservations.removeAll()
         // If extraction completed but yielded nothing (rare — usually
         // an unsupported UTI), flag as failure so user gets a clear
         // error instead of a permanently disabled Send button.
@@ -1002,6 +1074,11 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
     private func onContentLoadTimedOut() {
         if contentLoaded || contentLoadFailed { return }
         contentLoadFailed = true
+        // Cancel still-in-flight iCloud requests so the system can
+        // release the underlying CKAssetRequest network connections.
+        for p in loadProgresses { p.cancel() }
+        progressObservations.forEach { $0.invalidate() }
+        progressObservations.removeAll()
         refreshPreviewBlock()
         updateSendBar()
         if pendingSendAfterLoad {
@@ -1239,9 +1316,15 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
             ShareDiag.recordInfo("sendTapped: queued (waiting for extraction)")
             pendingSendAfterLoad = true
             // Show the same overlay used for actual sending so the user
-            // gets immediate feedback that their tap registered.
-            showSending(total: selectedIds.count)
-            progressLabel?.text = "Preparando mídia…"
+            // gets immediate feedback that their tap registered. We
+            // include a Cancel button here (only on the
+            // pending-extraction path) so iCloud hangs don't leave the
+            // user staring at a spinner with no escape route — the root
+            // cause of bug 7170. The Cancel button cancels the in-flight
+            // Progress objects too.
+            showSending(total: selectedIds.count, cancellable: true)
+            progressLabel?.text = loadProgresses.isEmpty ? "Preparando mídia…" : "Baixando do iCloud…"
+            refreshLoadingProgressUI()
             return
         }
         let caption = captionField.text ?? ""
@@ -1250,7 +1333,7 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         // is uploaded separately to each destination so a 5-photo share to
         // 3 contacts = 15 uploads (matches WhatsApp's behaviour).
         let total = selectedIds.count * payloads.count
-        showSending(total: total)
+        showSending(total: total, cancellable: false)
 
         // BUG #1: in an app extension we have no UIApplication-style
         // beginBackgroundTask. The reliable way to keep the URL session
@@ -1400,12 +1483,19 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
 
     // MARK: Loading + finish
 
-    private func showSending(total: Int) {
+    private func showSending(total: Int, cancellable: Bool = false) {
         // PERF FIX (2026-05-21): idempotent — if an overlay already
         // exists (e.g. a queued send is upgrading from "Preparando…" to
         // "Enviando 0/N"), reuse it instead of stacking a second one.
         if sendingOverlay != nil {
             progressLabel?.text = "Enviando 0 de \(total)…"
+            // Once we move from "waiting" → "uploading", drop the
+            // Cancel button — cancelling mid-upload would leave partial
+            // sends, which is worse UX than letting them finish.
+            if !cancellable, let btn = pendingCancelButton {
+                btn.removeFromSuperview()
+                pendingCancelButton = nil
+            }
             return
         }
         let overlay = UIView(frame: view.bounds)
@@ -1429,15 +1519,40 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         lbl.font = .systemFont(ofSize: 15, weight: .semibold)
         lbl.textColor = .label
         lbl.textAlignment = .center
+        lbl.numberOfLines = 2
         lbl.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(lbl)
         progressLabel = lbl
 
+        // BUG 7170 FIX (2026-05-22): pending-extraction overlay must
+        // surface a Cancel button. Without it, an iCloud-hosted photo
+        // that fails to download (no signal, iCloud throttle, etc.)
+        // leaves the user staring at a white spinner with the only
+        // escape being a full force-dismiss of the share sheet. That's
+        // exactly the "trava com spinner branco infinito" symptom the
+        // user reported.
+        let cardHeight: CGFloat = cancellable ? 180 : 130
+        if cancellable {
+            let btn = UIButton(type: .system)
+            btn.setTitle("Cancelar", for: .normal)
+            btn.setTitleColor(chatyyPurple, for: .normal)
+            btn.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
+            btn.addTarget(self, action: #selector(pendingSendCancelTapped), for: .touchUpInside)
+            btn.translatesAutoresizingMaskIntoConstraints = false
+            card.addSubview(btn)
+            pendingCancelButton = btn
+            NSLayoutConstraint.activate([
+                btn.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+                btn.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
+                btn.heightAnchor.constraint(equalToConstant: 32),
+            ])
+        }
+
         NSLayoutConstraint.activate([
             card.centerXAnchor.constraint(equalTo: overlay.centerXAnchor),
             card.centerYAnchor.constraint(equalTo: overlay.centerYAnchor),
-            card.widthAnchor.constraint(equalToConstant: 240),
-            card.heightAnchor.constraint(equalToConstant: 130),
+            card.widthAnchor.constraint(equalToConstant: 260),
+            card.heightAnchor.constraint(equalToConstant: cardHeight),
             spinner.centerXAnchor.constraint(equalTo: card.centerXAnchor),
             spinner.topAnchor.constraint(equalTo: card.topAnchor, constant: 22),
             lbl.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 14),
@@ -1452,6 +1567,7 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         sendingOverlay?.removeFromSuperview()
         sendingOverlay = nil
         progressLabel = nil
+        pendingCancelButton = nil
     }
 
     private func showError(_ msg: String) {

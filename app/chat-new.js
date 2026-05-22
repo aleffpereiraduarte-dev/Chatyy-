@@ -511,6 +511,12 @@ export default function ChatNewScreen() {
   }, [recentContacts, phoneContacts, directoryUsers, pickMode]);
 
   // Build sections - MUST be declared before handleAlphabetPress
+  // WhatsApp parity (print 7175):
+  //   - "Message yourself" pinned at the top of the on-Chatyy bucket
+  //   - Contacts grouped A-Z (each letter is its own section so the
+  //     sticky header doubles as the alphabet-jump target)
+  //   - Invite section at the bottom; tapping a row opens the OS share
+  //     sheet so the user can pick SMS / WhatsApp / etc.
   const buildSections = useCallback(() => {
     const sections = [];
     // Suggestions section — curated top-N by the backend (friends-of-friends,
@@ -524,14 +530,68 @@ export default function ChatNewScreen() {
         data: suggestions,
       });
     }
+    // "Message yourself" — pinned top entry into the on-Chatyy bucket.
+    // Mirrors WhatsApp's "(You) - Message yourself" row at the top of
+    // the contacts list. Tapping it opens the Saved Messages thread
+    // (chat with self) via the existing chatSaved endpoint. Hidden in
+    // pickMode (adding someone else to a group, doesn't make sense).
+    const onChatyyBucket = [];
+    if (!pickMode && user?.email) {
+      onChatyyBucket.push({
+        _isMessageYourself: true,
+        email: user.email,
+        name: user.name || (user.email || '').split('@')[0],
+        isRegistered: true,
+      });
+    }
     // WhatsApp parity: "Contacts on Chatyy" = contacts from MY phone book
     // who are registered, not the global directory. This is what users
-    // expect when scanning the section header.
+    // expect when scanning the section header. We now bucket them under
+    // A-Z sub-sections so the AlphabetSidebar can jump precisely to a letter.
     if (phoneContacts.length > 0) {
+      // Sort A-Z by name (or email username when name missing)
+      const sorted = [...phoneContacts].sort((a, b) => {
+        const an = (a.name || a.email || '').toLowerCase();
+        const bn = (b.name || b.email || '').toLowerCase();
+        return an.localeCompare(bn);
+      });
+      // First section keeps the "Contacts on Chatyy (N)" hero header +
+      // the pinned "Message yourself" row + every contact whose first
+      // letter is non-alphabetic (numbers/emojis etc.). This way the
+      // count chip + Saved Messages stay anchored at the top.
+      const buckets = new Map(); // letter -> array
+      const nonAlpha = [];
+      for (const c of sorted) {
+        const first = ((c.name || c.email || '?')[0] || '?').toUpperCase();
+        if (first >= 'A' && first <= 'Z') {
+          if (!buckets.has(first)) buckets.set(first, []);
+          buckets.get(first).push(c);
+        } else {
+          nonAlpha.push(c);
+        }
+      }
+      // Hero section: "Contacts on Chatyy (N)" + "Message yourself" + non-alpha rest
       sections.push({
         key: 'phone_chatyy',
         title: `${t('chat.contactsOnChatyy')} (${phoneContacts.length})`,
-        data: phoneContacts,
+        data: [...onChatyyBucket, ...nonAlpha],
+      });
+      // Letter sub-sections — sticky headers act as A, B, C, ... jump points.
+      const letters = Array.from(buckets.keys()).sort();
+      for (const letter of letters) {
+        sections.push({
+          key: `phone_chatyy_${letter}`,
+          title: letter,
+          data: buckets.get(letter),
+          _letterBucket: true,
+        });
+      }
+    } else if (onChatyyBucket.length > 0) {
+      // No phone contacts matched, but still show Message yourself at top.
+      sections.push({
+        key: 'phone_chatyy',
+        title: t('chat.contactsOnChatyy'),
+        data: onChatyyBucket,
       });
     }
     // Then show the broader directory under a separate header so users can
@@ -561,7 +621,7 @@ export default function ChatNewScreen() {
       });
     }
     return sections;
-  }, [allChatyyUsers, otherContacts, suggestions, t]);
+  }, [allChatyyUsers, otherContacts, phoneContacts, suggestions, pickMode, user?.email, user?.name, t]);
 
   const sections = buildSections();
 
@@ -985,27 +1045,47 @@ export default function ChatNewScreen() {
     }
   };
 
-  // Build alphabet index from allChatyyUsers
+  // Build alphabet index — prefer phone contacts (the WhatsApp-style
+  // primary list with letter buckets); fall back to directory users on
+  // web where the phone book isn't available.
   const alphabetLetters = useMemo(() => {
     const letterSet = new Set();
-    for (const u of allChatyyUsers) {
-      const first = (u.name || u.email || '?')[0].toUpperCase();
+    const source = phoneContacts.length > 0 ? phoneContacts : allChatyyUsers;
+    for (const u of source) {
+      const first = ((u.name || u.email || '?')[0] || '?').toUpperCase();
       if (first >= 'A' && first <= 'Z') letterSet.add(first);
     }
     return Array.from(letterSet).sort();
-  }, [allChatyyUsers]);
+  }, [phoneContacts, allChatyyUsers]);
 
-  // Handle alphabet press - scroll to section
+  // Handle alphabet press - scroll to the matching letter bucket. When
+  // phoneContacts power the sidebar (native), we hop directly to the
+  // `phone_chatyy_X` sub-section the new bucket builder emits. On web
+  // (no phone book), we fall back to the legacy "chatyy" directory
+  // section and scan for the first user whose name starts with the
+  // requested letter.
   const handleAlphabetPress = useCallback((letter) => {
     if (!sectionListRef.current) return;
-    // Find the section index for this letter
-    const sections = buildSections();
-    // The Chatyy users section (index varies)
-    const chatyySection = sections.find(s => s.key === 'chatyy');
+    const built = buildSections();
+    // Native: jump straight to phone_chatyy_<L> letter bucket.
+    const letterSectionIdx = built.findIndex(s => s.key === `phone_chatyy_${letter}`);
+    if (letterSectionIdx >= 0) {
+      try {
+        sectionListRef.current.scrollToLocation({
+          sectionIndex: letterSectionIdx,
+          itemIndex: 0,
+          animated: true,
+          viewOffset: 0,
+        });
+      } catch {}
+      return;
+    }
+    // Web fallback: jump within the directory list.
+    const chatyySection = built.find(s => s.key === 'chatyy');
     if (!chatyySection) return;
-    const sectionIdx = sections.indexOf(chatyySection);
+    const sectionIdx = built.indexOf(chatyySection);
     const itemIdx = chatyySection.data.findIndex(u => {
-      const first = (u.name || u.email || '?')[0].toUpperCase();
+      const first = ((u.name || u.email || '?')[0] || '?').toUpperCase();
       return first >= letter;
     });
     if (itemIdx >= 0) {
@@ -1018,7 +1098,7 @@ export default function ChatNewScreen() {
         });
       } catch {}
     }
-  }, [allChatyyUsers]);
+  }, [buildSections]);
 
   // ---- Render public channel discovery card ----
   const renderChannelCard = (channel) => {
@@ -1186,8 +1266,58 @@ export default function ChatNewScreen() {
     </TouchableOpacity>
   );
 
+  // "Message yourself" handler — opens (or creates) the Saved Messages
+  // thread, which is the canonical "chat with self" surface. Reuses the
+  // same chatSaved endpoint already wired up by the Quick Actions row.
+  const handleMessageYourself = useCallback(async () => {
+    try {
+      const r = await api.chatSaved();
+      if (r?.success && r.data?.id) {
+        router.replace({
+          pathname: '/chat-conversation',
+          params: {
+            id: String(r.data.id),
+            name: t('chat.savedMessages') || 'Saved Messages',
+          },
+        });
+      }
+    } catch {}
+  }, [router, t]);
+
   // ---- Render contact row ----
   const renderContact = ({ item }) => {
+    // "Message yourself" pinned row — WhatsApp parity (print 7175 top entry).
+    // Renders as a Chatyy-styled contact row with the brand purple ring and
+    // a "(You)" suffix so it's unambiguous.
+    if (item._isMessageYourself) {
+      return (
+        <TouchableOpacity
+          style={[sty.contactRow, { borderBottomColor: colors.border }]}
+          onPress={handleMessageYourself}
+          activeOpacity={0.7}
+          accessibilityLabel={t('chat.messageYourself') || 'Message yourself'}
+          accessibilityRole="button"
+        >
+          <View style={sty.contactAvatarRing}>
+            <AvatarCircle email={item.email} name={item.name} size={40} colors={colors} />
+          </View>
+          <View style={sty.contactInfo}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <Text style={[sty.contactName, { color: colors.text, fontWeight: '700' }]} numberOfLines={1}>
+                {item.name} {''}
+                <Text style={{ color: colors.textTertiary, fontWeight: '500' }}>
+                  ({t('chat.youSelf') || t('common.you') || 'Você'})
+                </Text>
+              </Text>
+            </View>
+            <Text style={[sty.contactSub, { color: colors.textTertiary }]} numberOfLines={1}>
+              {t('chat.messageYourself') || 'Message yourself'}
+            </Text>
+          </View>
+        </TouchableOpacity>
+      );
+    }
+
     // Placeholder item for web invite section
     if (item._isInvitePlaceholder) {
       return (
@@ -1654,14 +1784,28 @@ export default function ChatNewScreen() {
               sections={sections}
               keyExtractor={(item, idx) => item.email || item.phone || String(idx)}
               renderItem={renderContact}
-              renderSectionHeader={({ section: { title } }) => (
-                <View style={[sty.sectionHeader, { backgroundColor: isDark ? '#111' : '#f8f8fa' }]}>
-                  <View style={sty.sectionAccentLine} />
-                  {/* Brand subtle in dark mode (rgba), full brand in light. Matches
-                      the polish spec for "uppercase letter-spacing 0.5 brand subtle". */}
-                  <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>{title}</Text>
-                </View>
-              )}
+              renderSectionHeader={({ section }) => {
+                // Slim A-Z letter bucket — single letter, lighter background,
+                // smaller padding so the on-Chatyy list breathes between
+                // letters without dominating the page.
+                if (section._letterBucket) {
+                  return (
+                    <View style={[sty.letterHeader, { backgroundColor: isDark ? '#0d0d0d' : '#fafafc' }]}>
+                      <Text style={[sty.letterHeaderText, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>
+                        {section.title}
+                      </Text>
+                    </View>
+                  );
+                }
+                return (
+                  <View style={[sty.sectionHeader, { backgroundColor: isDark ? '#111' : '#f8f8fa' }]}>
+                    <View style={sty.sectionAccentLine} />
+                    {/* Brand subtle in dark mode (rgba), full brand in light. Matches
+                        the polish spec for "uppercase letter-spacing 0.5 brand subtle". */}
+                    <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>{section.title}</Text>
+                  </View>
+                );
+              }}
               contentContainerStyle={sty.contactList}
               stickySectionHeadersEnabled
               ListHeaderComponent={
@@ -2391,6 +2535,15 @@ const sty = StyleSheet.create({
     width: 0, height: 0,
   },
   sectionTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, color: '#7C3AED' },
+  // WhatsApp-style single-letter mini header for A-Z grouping. Slimmer
+  // than the full sectionHeader so the on-Chatyy list doesn't feel
+  // chopped up — just a tiny brand-colored letter pinned at the top
+  // of each letter bucket.
+  letterHeader: {
+    paddingHorizontal: Spacing.md, paddingVertical: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: 'rgba(124,58,237,0.10)',
+  },
+  letterHeaderText: { fontSize: 13, fontWeight: '700', letterSpacing: 0.5 },
   createBtnWrap: { paddingHorizontal: Spacing.md, paddingTop: Spacing.sm },
   createBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',

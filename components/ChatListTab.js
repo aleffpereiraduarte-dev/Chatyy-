@@ -4261,6 +4261,9 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const [pinDraggingId, setPinDraggingId] = useState(null);
   const pinDragTxRef = useRef(new Map());                      // id → Animated.Value(translateX)
   const pinWiggleAnim = useRef(new Animated.Value(0)).current; // shared wiggle driver
+  // [7173 polish 2026-05-22] Subtle spring "pop" when long-press enters edit
+  // mode — matches iOS Home-screen jiggle entrance. One-shot 1 → 1.04 → 1.
+  const pinEntrancePop = useRef(new Animated.Value(1)).current;
   // Hydrate prefs on mount.
   useEffect(() => {
     let cancelled = false;
@@ -4333,8 +4336,16 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     } catch {}
     if (!pinnedEditMode) {
       pinWiggleAnim.setValue(0);
+      // Reset entrance pop so next enter replays cleanly.
+      try { pinEntrancePop.setValue(1); } catch {}
       return undefined;
     }
+    // [7173 polish 2026-05-22] One-shot spring pop on edit-mode entry.
+    // 1 → 1.04 → 1, ~280ms total. Runs ONCE per entry, not in the loop.
+    Animated.sequence([
+      Animated.spring(pinEntrancePop, { toValue: 1.04, tension: 260, friction: 7, useNativeDriver: true }),
+      Animated.spring(pinEntrancePop, { toValue: 1, tension: 200, friction: 8, useNativeDriver: true }),
+    ]).start();
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pinWiggleAnim, { toValue: 1, duration: 110, useNativeDriver: true }),
@@ -4344,7 +4355,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     );
     loop.start();
     return () => loop.stop();
-  }, [pinnedEditMode, pinWiggleAnim]);
+  }, [pinnedEditMode, pinWiggleAnim, pinEntrancePop]);
 
   // ─── Draft indicators (AsyncStorage-backed) ───
   // Live-updated via DeviceEventEmitter: every keystroke that autosaves a
@@ -4758,7 +4769,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // tamanho proprio (user pediu "individual"). Drag math usa MAIOR size
       // como SLOT_W aproximado — ordem fica perfeita; offsets visuais durante
       // drag podem ficar 0-15px off em mix S/L mas compromete mais que faz mal.
-      const SIZE_OF = (sz) => sz === 's' ? 52 : sz === 'l' ? 80 : 64;
+      // [7173 polish 2026-05-22] Bumped sizes for iMessage-style presence.
+      // M (default) jumped 64→72 — matches iOS Messages pinned tiles. S kept
+      // close to old M (60) so users who downsized don't lose their layout.
+      // L grew 80→84 for visual impact in 1-2 pin layouts.
+      const SIZE_OF = (sz) => sz === 's' ? 60 : sz === 'l' ? 84 : 72;
       const sizePx = SIZE_OF(pinnedSize);
       const SLOT_W = sizePx + 14;
       const wiggleRotate = pinWiggleAnim.interpolate({
@@ -4860,9 +4875,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       });
       return (
         <View style={{
-          paddingVertical: 14,
+          // [7173 polish 2026-05-22] Dropped purple tint wash + bumped vertical
+          // padding (14→16) to give bigger avatars breathing room. iOS Messages
+          // has no chip/background around pinned tiles — just clean separation.
+          paddingTop: 16,
+          paddingBottom: 18,
           paddingLeft: 14,
-          backgroundColor: isDark ? 'rgba(124,58,237,0.04)' : 'rgba(124,58,237,0.02)',
+          backgroundColor: 'transparent',
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)',
         }}>
@@ -4989,6 +5008,9 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                       { translateX: tx },
                       { rotate: pinnedEditMode ? wiggleRotate : '0deg' },
                       { scale: isDragging ? 1.08 : 1 },
+                      // [7173 polish 2026-05-22] entrance pop layered last so
+                      // it composes on top of drag scale without conflicting.
+                      { scale: pinnedEditMode ? pinEntrancePop : 1 },
                     ],
                     zIndex: isDragging ? 10 : 1,
                     ...(isDragging ? Platform.select({
@@ -5094,9 +5116,14 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                     </View>
                     <Text
                       numberOfLines={1}
+                      ellipsizeMode="tail"
                       style={{
-                        marginTop: 6, fontSize: 11, fontWeight: '600',
-                        color: colors.text, textAlign: 'center', maxWidth: Math.max(SLOT_W, 56),
+                        // [7173 polish 2026-05-22] iMessage-style label: 12px,
+                        // centered, single line ellipsized. Bump fontSize 11→12
+                        // since avatars grew 64→72 — proportional balance.
+                        marginTop: 6, fontSize: 12, fontWeight: '500',
+                        color: colors.text, textAlign: 'center',
+                        maxWidth: Math.max(SLOT_W + 8, 64),
                       }}
                     >
                       {name}

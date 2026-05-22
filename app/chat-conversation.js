@@ -21142,17 +21142,20 @@ export default function ChatConversationScreen() {
                   borderLeftColor: replySenderColor,
                 }]}
               >
-                {(() => {
-                  // WAVE 71 (2026-05-22): reply quote was capped at maxWidth:'70%'
-                  // unconditionally, leaving the text column ~50% of screen even
-                  // when there was no thumbnail beside it. That truncated lines
-                  // mid-word ("você N tá atualizando pra tu ne ver aqui o pq" bug
-                  // #7168). Constrain to 70% ONLY when a real image/video thumb
-                  // renders to the right; otherwise let the text fill the bubble.
-                  const hasReplyThumb = (msg.reply_to?.type === 'image' || msg.reply_to?.type === 'video') && msg.reply_to?.file_url && !msg.reply_to?.deleted_at;
-                  return (
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                  <View style={{ flex: 1, ...(hasReplyThumb ? { maxWidth: '70%', marginRight: 8 } : null) }}>
+                  {/* WAVE 128 (2026-05-22): #7168 reply quote width fix without IIFE wrap.
+                      Apply maxWidth+marginRight ONLY when an image/video thumb actually
+                      renders to the right; otherwise let the text fill the full bubble.
+                      Previous IIFE wrap shipped in WAVE 127 was suspected of causing a
+                      hooks-order violation crash on group open ("Rendered fewer hooks
+                      than previous render"). Inline ternary keeps the same visual fix
+                      without any function-wrapping that might confuse the renderer. */}
+                  <View style={{
+                    flex: 1,
+                    ...((msg.reply_to?.type === 'image' || msg.reply_to?.type === 'video') && msg.reply_to?.file_url && !msg.reply_to?.deleted_at
+                      ? { maxWidth: '70%', marginRight: 8 }
+                      : null)
+                  }}>
                     <Text style={[styles.replyName, { color: replySenderColor }]} numberOfLines={1}>
                       {replyDisplayName}
                     </Text>

@@ -3820,7 +3820,7 @@ export default function LiveBroadcastScreen() {
               }]} />
               <View style={styles.durationDot} />
             </View>
-            <Text style={styles.durationText}>{formatDuration(liveDuration)}</Text>
+            <Text style={styles.durationText} numberOfLines={1}>{formatDuration(liveDuration)}</Text>
           </View>
           {/* Red end-live button — destaque visual (vs the cinza closeBtn2)
               so the host immediately knows where to tap to end. Uses IconStop
@@ -5235,11 +5235,14 @@ const connStyles = StyleSheet.create({
   wrap: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    gap: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 12,
+    gap: 5,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 11,
     backgroundColor: 'rgba(0,0,0,0.35)',
+    // Bug 7169 — never shrink the signal-bars chip; it lives in the right
+    // cluster which is fixed-width by design.
+    flexShrink: 0,
   },
   bars: {
     flexDirection: 'row',
@@ -5601,7 +5604,7 @@ const styles = StyleSheet.create({
     right: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 10,
     paddingBottom: 14,
     zIndex: 10,
     // Round 65 #1135 (2026-05-18) — KILLED the full-width black strip on
@@ -5643,10 +5646,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.35)',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 14,
-    gap: 6,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    borderRadius: 12,
+    gap: 5,
+    flexShrink: 0,
   },
   durationDotWrap: {
     width: 10, height: 10,
@@ -5665,7 +5669,7 @@ const styles = StyleSheet.create({
   },
   durationText: {
     color: '#fff',
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '700',
     fontVariant: ['tabular-nums'],
   },
@@ -5840,27 +5844,37 @@ const styles = StyleSheet.create({
   viewerPill: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 5,
+    gap: 4,
     backgroundColor: 'rgba(0,0,0,0.5)',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
     alignSelf: 'flex-start',
+    // Bug 7169 — allow the "N assistindo" pill to shrink + truncate so it
+    // doesn't push the duration/close out of the visible area.
+    flexShrink: 1,
+    minWidth: 0,
   },
   viewerDot: {
     width: 6, height: 6, borderRadius: 3, backgroundColor: LIVE_RED,
   },
   viewerCountText: {
-    color: '#fff', fontSize: 13, fontWeight: '800',
+    color: '#fff', fontSize: 12, fontWeight: '800',
     fontVariant: ['tabular-nums'],
   },
   viewerWatchText: {
-    color: 'rgba(255,255,255,0.75)', fontSize: 13, fontWeight: '600',
+    color: 'rgba(255,255,255,0.75)', fontSize: 12, fontWeight: '600',
+    // flexShrink lets the label give up width before the count digits.
+    flexShrink: 1,
+    minWidth: 0,
   },
   topRight: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
+    // Right cluster (signal bars + duration + end-live) is the action zone;
+    // never shrink it — the left cluster yields instead (see topLeft).
+    flexShrink: 0,
   },
 
   // Pinned comment
