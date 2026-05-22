@@ -1617,52 +1617,92 @@ export default function LiveBroadcastScreen() {
           const lkRoom = res.data.lk_room;
           const lkToken = res.data.lk_token;
           console.log('[LIVE-TRACE] live_start_lk response — room=' + lkRoom + ' url=' + lkUrl + ' session=' + sid);
+          // [2026-05-21 ROOT CAUSE FIX — agent dual-emul diagnosed]
+          // Previously: host.Room.connect failures were swallowed; audio
+          // createLocalAudioTrack failed silently 100% of the time but the
+          // sessionId/AO VIVO badge had already flipped on backend response,
+          // so viewers saw an "AO VIVO" with zero tracks → "Conectando..."
+          // forever. PG showed status='live' but LK showed host_join=0 for
+          // 4/7 recent sessions.
+          //
+          // Fix surface area:
+          //   1) Connect failure → auto-end the LK row server-side so
+          //      viewers don't try to join a dead room.
+          //   2) Audio + video published independently with try/catch
+          //      EACH — audio mic-permission failure no longer kills video.
+          //   3) Track if ANY track published — if both failed, end the
+          //      live + surface error.
+          let lkConnectOk = false;
+          let lkVideoOk = false;
+          let lkAudioOk = false;
           try {
             if (!_loadLkBroadcast()) throw new Error('LK SDK not available');
-            const room = new _LK_Room({
-              adaptiveStream: true,
-              dynacast: true,
-            });
+            const room = new _LK_Room({ adaptiveStream: true, dynacast: true });
             lkRoomRef.current = room;
             console.log('[LIVE-TRACE] host Room.connect start — ' + lkUrl);
             await room.connect(lkUrl, lkToken);
+            lkConnectOk = true;
             console.log('[LIVE-TRACE] host Room.connect resolved');
-            // Always go through the explicit createLocalVideoTrack /
-            // createLocalAudioTrack path — passing raw MediaStreamTrack into
-            // publishTrack is unreliable across LK SDK versions (silent no-op
-            // on iOS RN). The explicit path gives us a proper LocalAudioTrack
-            // / LocalVideoTrack which the SDK then wires into the publish
-            // pipeline + publishes to the SFU.
             if (!_LK_createLocalAudioTrack || !_LK_createLocalVideoTrack) {
               throw new Error('LK createLocalVideoTrack / createLocalAudioTrack missing');
             }
-            console.log('[LIVE-TRACE] host mic publish start');
-            const aTrack = await _LK_createLocalAudioTrack();
-            await room.localParticipant.publishTrack(aTrack);
-            console.log('[LIVE-TRACE] host mic publish end');
-            console.log('[LIVE-TRACE] host camera publish start');
-            const vTrack = await _LK_createLocalVideoTrack({ facingMode: 'user' });
-            await room.localParticipant.publishTrack(vTrack);
-            console.log('[LIVE-TRACE] host camera publish end');
-            console.log('[WAVE-110] LK host publish OK — room', lkRoom);
-            try { liveDiagAppend('info', 'LK host publish OK', { sessionId: sid, room: lkRoom }); } catch {}
+            // Publish video FIRST (more critical — without video the live
+            // is useless), then audio. Each in its own try/catch.
+            try {
+              console.log('[LIVE-TRACE] host camera publish start');
+              const vTrack = await _LK_createLocalVideoTrack({ facingMode: 'user' });
+              await room.localParticipant.publishTrack(vTrack);
+              lkVideoOk = true;
+              console.log('[LIVE-TRACE] host camera publish end');
+            } catch (vErr) {
+              const vMsg = vErr?.message || String(vErr);
+              console.warn('[LIVE-TRACE] host camera publish FAILED:', vMsg);
+              try { liveDiagAppend('error', 'host video publish failed: ' + vMsg, { sessionId: sid }); } catch {}
+            }
+            try {
+              console.log('[LIVE-TRACE] host mic publish start');
+              const aTrack = await _LK_createLocalAudioTrack();
+              await room.localParticipant.publishTrack(aTrack);
+              lkAudioOk = true;
+              console.log('[LIVE-TRACE] host mic publish end');
+            } catch (aErr) {
+              const aMsg = aErr?.message || String(aErr);
+              console.warn('[LIVE-TRACE] host mic publish FAILED:', aMsg);
+              try { liveDiagAppend('error', 'host audio publish failed: ' + aMsg, { sessionId: sid }); } catch {}
+            }
+            console.log('[WAVE-110] LK host publish — connect=' + lkConnectOk + ' video=' + lkVideoOk + ' audio=' + lkAudioOk);
+            try { liveDiagAppend('info', 'LK host publish summary', { sessionId: sid, room: lkRoom, connect: lkConnectOk, video: lkVideoOk, audio: lkAudioOk }); } catch {}
           } catch (e) {
             const msg = e?.message || String(e);
-            console.warn('[WAVE-110] LK host publish failed:', msg);
-            try { liveDiagAppend('error', 'LK host publish failed: ' + msg, { sessionId: sid }); } catch {}
-            // Surface a real error to the user — previously a silent warn
-            // left the host on AO VIVO with zero viewers ever connecting.
-            // Round 3 fix: setError so the host UI shows what broke and can
-            // bail/retry instead of pretending everything's fine.
+            console.warn('[WAVE-110] LK host outer fail (connect or SDK):', msg);
+            try { liveDiagAppend('error', 'LK host outer fail: ' + msg, { sessionId: sid }); } catch {}
+            lkRoomRef.current = null;
+          }
+
+          // CRITICAL: if Room.connect resolved but ZERO tracks published
+          // (both video AND audio failed), or if connect itself failed,
+          // auto-end the session server-side so viewers don't get stuck
+          // joining a publisher-less room. Otherwise the row stays
+          // status='live' forever and viewers eternally see "Conectando...".
+          if (!lkConnectOk || (!lkVideoOk && !lkAudioOk)) {
+            const reason = !lkConnectOk
+              ? (t('live.lkConnectFailed') || 'Não foi possível conectar ao servidor de mídia')
+              : (t('live.lkPublishFailed') || 'Falha ao publicar áudio/vídeo (permissões de câmera/mic?)');
+            try { setError(reason); } catch {}
             try {
-              setError((t('live.lkPublishFailed') || 'Falha ao publicar no servidor de mídia (LiveKit)') + ': ' + msg.slice(0, 160));
+              // Fire-and-forget — best-effort cleanup, don't block the UI.
+              api.liveEndLk?.(sid).catch(() => {});
             } catch {}
-            // Non-fatal in terms of teardown: LK failure doesn't kill the
-            // session — WS P2P viewers still get the offer from the normal
-            // signaling path. Flag lkMode=false so the rest of the flow
-            // doesn't expect the SFU to be alive.
+            // Flag local state as not-live so the UI bails out of AO VIVO.
             lkModeRef.current = false;
             lkRoomRef.current = null;
+          } else if (!lkVideoOk) {
+            // Partial: audio OK, video failed — show non-fatal warning
+            // but keep the live running (audio-only live still useful).
+            try { setError(t('live.videoPublishFailed') || 'Vídeo não disponível — transmitindo áudio apenas'); } catch {}
+          } else if (!lkAudioOk) {
+            // Partial: video OK, audio failed — also non-fatal.
+            try { setError(t('live.audioPublishFailed') || 'Microfone indisponível — transmitindo só vídeo'); } catch {}
           }
         }
 
