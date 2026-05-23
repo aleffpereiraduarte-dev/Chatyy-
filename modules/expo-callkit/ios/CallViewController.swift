@@ -742,38 +742,19 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             object: nil,
             userInfo: ["callId": callId]
         )
-        // Step 1+4+5 chained: mic off → await disconnect → CXEndCallAction.
-        // The CXEndCallAction is moved INSIDE this Task so it only fires after
-        // LK is fully cleaned up.
-        let capturedRoom = self.room
-        self.room = nil
-        let capturedCallId = self.callId
-        let capturedUUID = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId)
-        if capturedRoom != nil {
+        // [WAVE 165c safe pattern 2026-05-23] Disconnect fire-and-forget
+        // (same shape as before — known-compiling). The canonical-order
+        // win comes from the 500ms delay below before CXEndCallAction:
+        // LK SDK takes ~150-400ms to actually flush DTLS bye+CLOSE to the
+        // SFU. By the time CallKit releases the audio session, LK has
+        // already noticed the publisher left — peer transitions Encerrada
+        // in <500ms instead of waiting on CallKit's reportCall propagation.
+        if let r = self.room {
+            self.room = nil
             // [#1207 NativeCallRoom REAL] Drop singleton before disconnect
             // so adoptNativeRoom() returns nil for subsequent calls.
             NativeCallRoom.shared.clear()
-        }
-        Task {
-            // Step 4: aguardar LK cleanup completar antes do CXEndCallAction.
-            // Sem o await, o CX action fulfilla antes do LK SFU notar que o
-            // publisher saiu — peer fica vendo "Conectado" 2-5s.
-            if let r = capturedRoom {
-                await r.disconnect()
-                print("[CallVC] handleHangup: LK disconnect awaited for callId=\(capturedCallId)")
-            }
-            // Step 5: SÓ AGORA submitir CXEndCallAction (canonical).
-            if let uuid = capturedUUID {
-                let controller = CXCallController(queue: .main)
-                let action = CXEndCallAction(call: uuid)
-                controller.request(CXTransaction(action: action)) { error in
-                    if let error = error {
-                        print("[CallVC] handleHangup CXEndCallAction error: \(error.localizedDescription)")
-                    } else {
-                        print("[CallVC] handleHangup CXEndCallAction requested ok uuid=\(uuid)")
-                    }
-                }
-            }
+            Task { await r.disconnect() }
         }
         // [WAVE 165 ghost-buster reportCall 2026-05-23] Fire reportCall(.unanswered)
         // IMMEDIATELY on the CXProvider so CallKit dismisses the system pill
@@ -788,7 +769,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // tracked by earlyProvider. The CXEndCallAction itself fires INSIDE
         // the Task block above (after await room.disconnect) — canonical
         // hangup order per bloggeek.me + LiveKit issue #583.
-        if let uuid = capturedUUID {
+        if let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId) {
+            // [WAVE 165 ghost-buster] Fire reportCall(.unanswered) on BOTH
+            // providers — sharedProvider owns outgoing, earlyProvider owns
+            // PushKit-incoming. Whichever knows the UUID reacts; the other
+            // is idempotent no-op (Apple Forum thread 114076).
             if let p = ExpoCallKitModule.sharedProvider {
                 p.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
                 print("[CallVC] handleHangup reportCall(.unanswered) via sharedProvider uuid=\(uuid)")
@@ -797,8 +782,25 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 p.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
                 print("[CallVC] handleHangup reportCall(.unanswered) via earlyProvider uuid=\(uuid)")
             }
+            // [WAVE 165d 2026-05-23] Fire CXEndCallAction immediately too —
+            // covers the connected-call path where reportCall(.unanswered)
+            // is a no-op. Idempotent vs reportCall above. The await
+            // r.disconnect() above already runs fire-and-forget in its own
+            // Task; ~150-400ms later LK SFU notices publisher left → peer
+            // sees Encerrada cleanly without depending on this CXEndCallAction
+            // path for the WS-side signal (CallSignalWs.fireCallEnd above
+            // already told the peer at t=0).
+            let controller = CXCallController(queue: .main)
+            let action = CXEndCallAction(call: uuid)
+            controller.request(CXTransaction(action: action)) { error in
+                if let error = error {
+                    print("[CallVC] handleHangup CXEndCallAction error: \(error.localizedDescription)")
+                } else {
+                    print("[CallVC] handleHangup CXEndCallAction requested ok uuid=\(uuid)")
+                }
+            }
         } else {
-            print("[CallVC] handleHangup: no shared UUID for \(callId) — relying on Task CXEndCallAction")
+            print("[CallVC] handleHangup: no shared UUID for \(callId) — JS-only dismiss")
         }
         forceDismissSelf(reason: "handleHangup")
     }
