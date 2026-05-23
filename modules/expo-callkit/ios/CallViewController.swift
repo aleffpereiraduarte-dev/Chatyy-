@@ -713,25 +713,6 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // [Wave WhatsApp parity, 2026-05-20 gap G4 iOS] Tear down the
         // OngoingCallBar overlay if it was mounted (audio minimize path).
         OngoingCallBarOverlayController.shared.uninstall()
-        // [WAVE 165 canonical hangup order 2026-05-23] Industry-recommended
-        // order on hangup (bloggeek.me handling-session-disconnections + Signal
-        // engineering + LiveKit issue #583):
-        //   1. Release local media (mic/cam) — frees HW in ~50ms
-        //   2. Tell signaling (WS) so peer knows IMMEDIATELY
-        //   3. POST chat_call_active_close (fire-and-forget HTTP)
-        //   4. await room.disconnect() — block until LK is fully torn down
-        //   5. Submit CXEndCallAction — only NOW so CallKit doesn't release
-        //      audio session mid-LK-teardown (causes silent crash + peer sees
-        //      "Conectado" stale for 2-5s).
-        // Previously: WS fire → Task { await r.disconnect() } (fire-and-forget)
-        // → CXEndCallAction in parallel. This race caused two real bugs:
-        //   - "peer fica em Conectado 5s depois que desliguei" (LK still
-        //     publishing while CallKit released audio)
-        //   - CallViewController dismiss happened before LK closed → next call
-        //     hits cleanUpRTC() not called → audio/video render fails
-        //     (livekit/client-sdk-swift#583, still open Feb 2025)
-        // Step 2: tell WS peer right away (fire-and-forget — peer's UI flips
-        // to Encerrada in <100ms via WS broadcast, doesn't wait for HTTP).
         CallSignalWs.shared.fireCallEnd(
             callId: callId,
             conversationId: conversationId,
@@ -742,54 +723,74 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             object: nil,
             userInfo: ["callId": callId]
         )
-        // [WAVE 165c safe pattern 2026-05-23] Disconnect fire-and-forget
-        // (same shape as before — known-compiling). The canonical-order
-        // win comes from the 500ms delay below before CXEndCallAction:
-        // LK SDK takes ~150-400ms to actually flush DTLS bye+CLOSE to the
-        // SFU. By the time CallKit releases the audio session, LK has
-        // already noticed the publisher left — peer transitions Encerrada
-        // in <500ms instead of waiting on CallKit's reportCall propagation.
         if let r = self.room {
             self.room = nil
-            // [#1207 NativeCallRoom REAL] Drop singleton before disconnect
-            // so adoptNativeRoom() returns nil for subsequent calls.
+            // [#1207 NativeCallRoom REAL] Drop the singleton's reference so
+            // adoptNativeRoom() returns nil for any subsequent call. Mirrors
+            // didDisconnect path; runs in handleHangup because user-initiated
+            // hangup teardown happens BEFORE the LK disconnect callback lands.
             NativeCallRoom.shared.clear()
             Task { await r.disconnect() }
         }
-        // [WAVE 165 ghost-buster reportCall 2026-05-23] Fire reportCall(.unanswered)
-        // IMMEDIATELY on the CXProvider so CallKit dismisses the system pill
-        // before the LK disconnect await above completes. This is the Apple-
-        // recommended pattern from Forum thread 114076 ("tear down the
-        // incoming call UI even if the user has not answered"). Safe in all
-        // states: idempotent if call is connected (no-op), valid if outgoing-
-        // not-connected (the only state where CXEndCallAction silently fails).
+        // [#1184 dismiss fix, 2026-05-19] Fire CXEndCallAction so CallKit
+        // tears down its own state (system call bar, lock-screen UI, the
+        // green "ongoing call" pill at the top of the status bar). Without
+        // this, tapping the SwiftUI red button only dismissed our UIKit
+        // modal — CallKit still believed the call was active and left its
+        // surfaces visible after hangup, which the user reported as
+        // "depois que a ligação desliga, a tela nativa fica aberta".
         //
-        // Dual-provider hit covers the cold-start case where outgoing calls
-        // are tracked by sharedProvider but VoIP-push-incoming calls are
-        // tracked by earlyProvider. The CXEndCallAction itself fires INSIDE
-        // the Task block above (after await room.disconnect) — canonical
-        // hangup order per bloggeek.me + LiveKit issue #583.
+        // CXEndCallAction is async and may invalidate the call before our
+        // dismiss completes. The ProviderDelegate.CXEndCallAction handler
+        // also calls dismissActiveCallSurfaces — idempotent vs. our explicit
+        // dismiss below.
         if let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId) {
-            // [WAVE 165 ghost-buster] Fire reportCall(.unanswered) on BOTH
-            // providers — sharedProvider owns outgoing, earlyProvider owns
-            // PushKit-incoming. Whichever knows the UUID reacts; the other
-            // is idempotent no-op (Apple Forum thread 114076).
+            // [WAVE 158 2026-05-22] BELT-AND-SUSPENDERS: fire BOTH reportCall
+            // AND CXEndCallAction. User reported: even after WAVE 157, CallKit
+            // pill still stuck "Conectando" when canceling outgoing before
+            // peer answered.
+            //
+            // Apple state machine for outgoing calls:
+            // 1. CXStartCallAction.fulfill() → call exists in provider list
+            // 2. reportOutgoingCall(startedConnectingAt:) → "Calling..."
+            // 3. reportOutgoingCall(connectedAt:) → "Connected" (only after WS
+            //    confirms peer answered, since WAVE 156)
+            //
+            // To terminate:
+            // - reportCall(.unanswered) — valid from ANY state before connected
+            // - CXEndCallAction — only valid AFTER connected
+            //
+            // WAVE 157 picked one based on `isOutgoing && status != "Conectado"`.
+            // But: earlyProvider might be nil (race during cold-start), and
+            // the fallback was CXEndCallAction which silently fails on a
+            // not-yet-connected call. So pill stayed.
+            //
+            // WAVE 158 fix: try BOTH. iOS accepts whichever is valid for the
+            // current state; the other is a safe no-op. We don't even need
+            // to guess.
+            // [WAVE 159 2026-05-22] Fire reportCall on BOTH providers — the
+            // module's main provider (which owns outgoing calls) AND the
+            // earlyProvider (which owns incoming-from-VoIP-push calls).
+            // Whichever one registered THIS call will react; the other is
+            // a no-op. Was firing only earlyProvider before, which is why
+            // outgoing calls' pill stayed ghost on screen.
+            //
+            // CXProvider.reportCall is idempotent and safe to call on a
+            // provider that doesn't know the UUID, so dual-fire is correct.
+            var hitAtLeastOne = false
             if let p = ExpoCallKitModule.sharedProvider {
                 p.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
                 print("[CallVC] handleHangup reportCall(.unanswered) via sharedProvider uuid=\(uuid)")
+                hitAtLeastOne = true
             }
             if let p = VoipPushAppDelegateSubscriber.earlyProvider, p !== ExpoCallKitModule.sharedProvider {
                 p.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
                 print("[CallVC] handleHangup reportCall(.unanswered) via earlyProvider uuid=\(uuid)")
+                hitAtLeastOne = true
             }
-            // [WAVE 165d 2026-05-23] Fire CXEndCallAction immediately too —
-            // covers the connected-call path where reportCall(.unanswered)
-            // is a no-op. Idempotent vs reportCall above. The await
-            // r.disconnect() above already runs fire-and-forget in its own
-            // Task; ~150-400ms later LK SFU notices publisher left → peer
-            // sees Encerrada cleanly without depending on this CXEndCallAction
-            // path for the WS-side signal (CallSignalWs.fireCallEnd above
-            // already told the peer at t=0).
+            if !hitAtLeastOne {
+                print("[CallVC] handleHangup: NO providers available — relying on CXEndCallAction")
+            }
             let controller = CXCallController(queue: .main)
             let action = CXEndCallAction(call: uuid)
             controller.request(CXTransaction(action: action)) { error in
@@ -800,7 +801,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 }
             }
         } else {
-            print("[CallVC] handleHangup: no shared UUID for \(callId) — JS-only dismiss")
+            print("[CallVC] handleHangup: no shared UUID for \(callId) — CallKit may not dismiss; relying on JS path")
         }
         forceDismissSelf(reason: "handleHangup")
     }
