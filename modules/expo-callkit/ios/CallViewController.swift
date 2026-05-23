@@ -2197,6 +2197,36 @@ extension CallViewController: RoomDelegate {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             self.stopRingbackTone(reason: "participantDidConnect")
+            // [WAVE 161 2026-05-23] Restore the status-flip fallback that WAVE 156
+            // accidentally removed. WAVE 156 correctly stopped roomDidConnect (=
+            // OUR join, premature) from flipping status, but it ALSO removed the
+            // participantDidConnect path — leaving the WS `call_answered` frame
+            // as the ONLY source for "Chamando…→Conectado". When that frame is
+            // lost (cold-start auth race, network blip, or the bug where Android
+            // CallSignalWs doesn't unwrap the C++ envelope), iOS sat in
+            // "Chamando…" for the full 45s.
+            //
+            // ParticipantConnected is the TRUTHFUL "peer joined" event — it
+            // fires on the caller's RoomDelegate only when the remote peer's
+            // device successfully connects to the LK SFU, which happens AFTER
+            // they tap Accept (Android sends call_answered → CXAnswer →
+            // room.connect → join confirmed = this event). It is NOT premature
+            // and does NOT cause the audio-leak that WAVE 156 was fixing.
+            //
+            // Idempotent: if WS `call_answered` already flipped status earlier,
+            // setting it to "Conectado" again is a no-op. Same for
+            // reportOutgoingCall(connectedAt:) — CallKit dedups internally.
+            if self.session.status != "Conectado" {
+                self.session.status = "Conectado"
+                NSLog("[CallVC][WAVE161] flip status Conectado on ParticipantConnected (fallback)")
+            }
+            // Also flip CallKit pill from "Connecting…" → in-call duration timer.
+            if let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: self.callId) {
+                if let p = ExpoCallKitModule.sharedProvider {
+                    p.reportOutgoingCall(with: uuid, connectedAt: Date())
+                    NSLog("[CallVC][WAVE161] reportOutgoingCall(connectedAt:) on ParticipantConnected")
+                }
+            }
         }
         // [#1207 NativeCallRoom REAL] Fanout so JS chat header / call grid
         // can mark the peer as joined.

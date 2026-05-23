@@ -64,15 +64,15 @@
         "CFBundleDisplayName": "Chatyy",
         "CFBundleName": "Chatyy",
         "ITSAppUsesNonExemptEncryption": false,
-        "NSCameraUsageDescription": "Chatyy needs camera access so you can take a new photo or record a short video to send in a chat — for example, open a conversation with a friend, tap the camera icon, snap a selfie, and send it instantly. The camera is also used during video calls to appear on screen when you tap the video button, to record 15-second stories shared with your followers, and to scan a QR code to pair a new device or add a contact by QR.",
+        "NSCameraUsageDescription": "Chatyy needs camera access so you can take a new photo or record a short video to send in a chat \u2014 for example, open a conversation with a friend, tap the camera icon, snap a selfie, and send it instantly. The camera is also used during video calls to appear on screen when you tap the video button, to record 15-second stories shared with your followers, and to scan a QR code to pair a new device or add a contact by QR.",
         "NSMicrophoneUsageDescription": "Chatyy uses your microphone to record voice messages (hold the mic button in a chat), make voice and video calls, and broadcast audio during live streams when you tap Go Live.",
         "NSContactsUsageDescription": "Chatyy uploads your contacts' phone numbers and emails (in encrypted/hashed SHA-256 form, only after you tap Continue on our in-app disclosure) to our servers solely to check which of them already use Chatyy. Contacts are not stored after the lookup and never shared with anyone. You can revoke this permission anytime from iOS Settings or in-app Privacy settings.",
         "NSCalendarsUsageDescription": "Chatyy reads and writes to your calendar to show your agenda inside the app, add Chatyy meetings automatically, and set reminders five minutes before each meeting starts.",
         "NSCalendarsFullAccessUsageDescription": "Chatyy accesses your calendar to sync and manage your events.",
-        "NSPhotoLibraryUsageDescription": "Chatyy needs access to your photo library so you can pick an existing photo or video from your gallery to share in the app — for example, open a chat conversation, tap the paperclip attachment button, choose a vacation photo from last weekend, and send it to a friend. Photos you select are also used to set your profile picture, post as a feed publication, create a 24-hour story, and (only if you turn it on in Settings → Storage → Backup) automatically upload your camera roll to your own private Chatyy cloud so you can browse it from any device.",
-        "NSPhotoLibraryAddUsageDescription": "Chatyy needs permission to save items to your photo library so that media a friend sends you can be downloaded to your device — for example, a friend shares a photo of their birthday party in chat and you tap the Save button at the bottom of the image to store it in your iPhone's Photos app. Also used when you take a photo inside Chatyy and choose Save to keep a copy in your gallery.",
+        "NSPhotoLibraryUsageDescription": "Chatyy needs access to your photo library so you can pick an existing photo or video from your gallery to share in the app \u2014 for example, open a chat conversation, tap the paperclip attachment button, choose a vacation photo from last weekend, and send it to a friend. Photos you select are also used to set your profile picture, post as a feed publication, create a 24-hour story, and (only if you turn it on in Settings \u2192 Storage \u2192 Backup) automatically upload your camera roll to your own private Chatyy cloud so you can browse it from any device.",
+        "NSPhotoLibraryAddUsageDescription": "Chatyy needs permission to save items to your photo library so that media a friend sends you can be downloaded to your device \u2014 for example, a friend shares a photo of their birthday party in chat and you tap the Save button at the bottom of the image to store it in your iPhone's Photos app. Also used when you take a photo inside Chatyy and choose Save to keep a copy in your gallery.",
         "NSLocationWhenInUseUsageDescription": "Chatyy uses your current location only when you tap 'Share Location' in a chat so the recipient sees a pin of where you are right now.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Chatyy keeps your live location updating in the background ONLY while you are actively sharing it with a friend (the green pin you see at the top of the chat). Example: you tap 'Share Live Location' in a conversation, choose a duration (15 minutes, 1 hour, 8 hours, or until you stop), and walk to a restaurant — your friend's map updates in real time so they can meet you, even if you put the phone in your pocket and the screen turns off. The instant you tap 'Stop Sharing' in that chat (or the duration expires), background location stops completely. Chatyy never reads your location in the background for any other purpose — no analytics, no advertising, no tracking. You can revoke at any time in iOS Settings → Privacy → Location.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Chatyy keeps your live location updating in the background ONLY while you are actively sharing it with a friend (the green pin you see at the top of the chat). Example: you tap 'Share Live Location' in a conversation, choose a duration (15 minutes, 1 hour, 8 hours, or until you stop), and walk to a restaurant \u2014 your friend's map updates in real time so they can meet you, even if you put the phone in your pocket and the screen turns off. The instant you tap 'Stop Sharing' in that chat (or the duration expires), background location stops completely. Chatyy never reads your location in the background for any other purpose \u2014 no analytics, no advertising, no tracking. You can revoke at any time in iOS Settings \u2192 Privacy \u2192 Location.",
         "NSLocationAlwaysUsageDescription": "Chatyy keeps your live location updating in the background ONLY while you are actively sharing it with a friend in a chat. The moment you stop the share, background location stops. Used solely to keep the friend you chose seeing your real-time pin (like WhatsApp Live Location).",
         "NSFaceIDUsageDescription": "Chatyy uses Face ID to unlock the app after you enable the biometric lock in Settings, keeping your chats, emails and photos private from anyone else who picks up your device.",
         "UIBackgroundModes": [
@@ -103,11 +103,11 @@
           "INSendMessageIntent"
         ]
       },
-      "buildNumber": "208"
+      "buildNumber": "210"
     },
     "android": {
       "package": "com.onemundo.mail",
-      "versionCode": 442,
+      "versionCode": 443,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.VIBRATE",
@@ -251,22 +251,22 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Chatyy needs access to your photo library so you can pick an existing photo or video from your gallery to share in the app — for example, open a chat conversation, tap the paperclip attachment button, choose a vacation photo from last weekend, and send it to a friend. Photos you select are also used to set your profile picture, post as a feed publication, create a 24-hour story, and (only if you turn it on in Settings → Storage → Backup) automatically upload your camera roll to your own private Chatyy cloud so you can browse it from any device.",
-          "cameraPermission": "Chatyy needs camera access so you can take a new photo or record a short video to send in a chat — for example, open a conversation with a friend, tap the camera icon, snap a selfie, and send it instantly. The camera is also used during video calls to appear on screen when you tap the video button, to record 15-second stories shared with your followers, and to scan a QR code to pair a new device or add a contact by QR."
+          "photosPermission": "Chatyy needs access to your photo library so you can pick an existing photo or video from your gallery to share in the app \u2014 for example, open a chat conversation, tap the paperclip attachment button, choose a vacation photo from last weekend, and send it to a friend. Photos you select are also used to set your profile picture, post as a feed publication, create a 24-hour story, and (only if you turn it on in Settings \u2192 Storage \u2192 Backup) automatically upload your camera roll to your own private Chatyy cloud so you can browse it from any device.",
+          "cameraPermission": "Chatyy needs camera access so you can take a new photo or record a short video to send in a chat \u2014 for example, open a conversation with a friend, tap the camera icon, snap a selfie, and send it instantly. The camera is also used during video calls to appear on screen when you tap the video button, to record 15-second stories shared with your followers, and to scan a QR code to pair a new device or add a contact by QR."
         }
       ],
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Chatyy needs access to your current location only when you explicitly share it in a chat — for example, open a conversation, tap the attachment button, choose Location, and send a live pin of where you are right now so your friend can find the restaurant you're waiting at. Your location is never read or sent in the background.",
-          "locationWhenInUsePermission": "Chatyy needs access to your current location only when you explicitly share it in a chat — for example, open a conversation, tap the attachment button, choose Location, and send a live pin of where you are right now so your friend can find the restaurant you're waiting at. Your location is never read or sent in the background."
+          "locationAlwaysAndWhenInUsePermission": "Chatyy needs access to your current location only when you explicitly share it in a chat \u2014 for example, open a conversation, tap the attachment button, choose Location, and send a live pin of where you are right now so your friend can find the restaurant you're waiting at. Your location is never read or sent in the background.",
+          "locationWhenInUsePermission": "Chatyy needs access to your current location only when you explicitly share it in a chat \u2014 for example, open a conversation, tap the attachment button, choose Location, and send a live pin of where you are right now so your friend can find the restaurant you're waiting at. Your location is never read or sent in the background."
         }
       ],
       [
         "expo-media-library",
         {
-          "photosPermission": "Chatyy needs access to your photo library so you can pick an existing photo or video from your gallery to share in the app — for example, open a chat conversation, tap the paperclip attachment button, choose a vacation photo from last weekend, and send it to a friend. Photos you select are also used to set your profile picture, post as a feed publication, create a 24-hour story, and (only if you turn it on in Settings → Storage → Backup) automatically upload your camera roll to your own private Chatyy cloud so you can browse it from any device.",
-          "savePhotosPermission": "Chatyy needs permission to save items to your photo library so that media a friend sends you can be downloaded to your device — for example, a friend shares a photo of their birthday party in chat and you tap the Save button at the bottom of the image to store it in your iPhone's Photos app. Also used when you take a photo inside Chatyy and choose Save to keep a copy in your gallery.",
+          "photosPermission": "Chatyy needs access to your photo library so you can pick an existing photo or video from your gallery to share in the app \u2014 for example, open a chat conversation, tap the paperclip attachment button, choose a vacation photo from last weekend, and send it to a friend. Photos you select are also used to set your profile picture, post as a feed publication, create a 24-hour story, and (only if you turn it on in Settings \u2192 Storage \u2192 Backup) automatically upload your camera roll to your own private Chatyy cloud so you can browse it from any device.",
+          "savePhotosPermission": "Chatyy needs permission to save items to your photo library so that media a friend sends you can be downloaded to your device \u2014 for example, a friend shares a photo of their birthday party in chat and you tap the Save button at the bottom of the image to store it in your iPhone's Photos app. Also used when you take a photo inside Chatyy and choose Save to keep a copy in your gallery.",
           "preventAutomaticLimitedAccessAlert": true
         }
       ],
@@ -275,14 +275,14 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Chatyy needs camera access so you can take a new photo or record a short video to send in a chat — for example, open a conversation with a friend, tap the camera icon, snap a selfie, and send it instantly. The camera is also used during video calls to appear on screen when you tap the video button, to record 15-second stories shared with your followers, and to scan a QR code to pair a new device or add a contact by QR."
+          "cameraPermission": "Chatyy needs camera access so you can take a new photo or record a short video to send in a chat \u2014 for example, open a conversation with a friend, tap the camera icon, snap a selfie, and send it instantly. The camera is also used during video calls to appear on screen when you tap the video button, to record 15-second stories shared with your followers, and to scan a QR code to pair a new device or add a contact by QR."
         }
       ],
       [
         "@livekit/react-native-expo-plugin",
         {
-          "cameraPermission": "Chatyy needs camera access so you can take a new photo or record a short video to send in a chat — for example, open a conversation with a friend, tap the camera icon, snap a selfie, and send it instantly. The camera is also used during video calls to appear on screen when you tap the video button, to record 15-second stories shared with your followers, and to scan a QR code to pair a new device or add a contact by QR.",
-          "microphonePermission": "Chatyy needs microphone access so you can record voice messages to send in chat — for example, open a conversation, press and hold the microphone button at the bottom, say a message out loud, then release to send it as an audio message. The microphone is also used to speak during voice and video calls and to broadcast audio during Live streams when you tap Go Live."
+          "cameraPermission": "Chatyy needs camera access so you can take a new photo or record a short video to send in a chat \u2014 for example, open a conversation with a friend, tap the camera icon, snap a selfie, and send it instantly. The camera is also used during video calls to appear on screen when you tap the video button, to record 15-second stories shared with your followers, and to scan a QR code to pair a new device or add a contact by QR.",
+          "microphonePermission": "Chatyy needs microphone access so you can record voice messages to send in chat \u2014 for example, open a conversation, press and hold the microphone button at the bottom, say a message out loud, then release to send it as an audio message. The microphone is also used to speak during voice and video calls and to broadcast audio during Live streams when you tap Go Live."
         }
       ],
       "./plugins/fix-jitpack",

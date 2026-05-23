@@ -360,6 +360,41 @@ object CallSignalWs {
                 // suspenders so the callee always rings.
                 handleIncomingCallInvite(obj)
             }
+            "call_accepted", "call_answered" -> {
+                // [WAVE 161 2026-05-23] Paridade com iOS WAVE 1349.
+                // Caller-side handler when callee taps Accept — flip the
+                // outgoing-call native UI from "Chamando…" to "Conectado"
+                // BEFORE LK ParticipantConnected fires (saves 200-2000ms).
+                //
+                // Antes: Android só tinha handlers de call_invite + call_end.
+                // call_accepted (sent by callee → relayed by server to caller)
+                // foi silenciosamente dropado. Caller ficava em "Chamando…"
+                // até LK RoomEvent.ParticipantConnected disparar — funciona
+                // mas é mais lento que WhatsApp porque a UI espera o handshake
+                // SFU completo. iOS já tinha esse pre-empt (#1349); Android
+                // perdeu o paralelo.
+                //
+                // Agora: broadcast ACTION_CALL_ANSWERED → CallActivity escuta
+                // e flippa status imediatamente. Idempotente com o
+                // RoomEvent.Connected fallback.
+                val callId = obj.optString("call_id").ifEmpty { obj.optString("room_id") }
+                Log.d(TAG, "$type $callId — broadcasting ACTION_CALL_ANSWERED")
+                try {
+                    val intent = Intent("expo.modules.callkit.CALL_ANSWERED")
+                    intent.putExtra("call_id", callId)
+                    appContext?.sendBroadcast(intent)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "broadcast CALL_ANSWERED failed: ${t.message}")
+                }
+            }
+            "call_declined", "call_rejected", "call_cancel" -> {
+                // [WAVE 161 2026-05-23] Callee rejected, OR caller cancelled
+                // before pickup. Tear down native call UI same as call_end.
+                // (call_cancel is fired by caller's WS to all callee devices
+                // when caller hangs up before pickup — sibling-cancel pattern.)
+                Log.d(TAG, "$type — treating as call_end equivalent")
+                handleIncomingCallEnd(obj)
+            }
             "call_end" -> {
                 // [#1179 cleanup, 2026-05-19] Native dismissal fallback for
                 // REMOTE hangup.

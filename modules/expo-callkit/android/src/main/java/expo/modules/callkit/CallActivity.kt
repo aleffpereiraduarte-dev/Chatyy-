@@ -308,6 +308,27 @@ class CallActivity : ComponentActivity() {
     }
   }
 
+  /** [WAVE 161, 2026-05-23] Caller-side pre-empt — flip status to "Conectado"
+   *  as soon as CallSignalWs receives `call_accepted`/`call_answered` from
+   *  the server, BEFORE LK SFU handshake finishes (200-2000ms faster). The
+   *  RoomEvent.Connected path stays as the truthful fallback for cases where
+   *  WS frame is lost (network blip during answer). Idempotent: status flip
+   *  is a no-op if already "Conectado". Paridade com iOS WAVE 1349 +
+   *  WAVE 161 ParticipantConnected fallback. */
+  private val callAnsweredReceiver = object : BroadcastReceiver() {
+    override fun onReceive(ctx: Context?, intent: Intent?) {
+      val incomingCallId = intent?.getStringExtra("call_id") ?: ""
+      if (incomingCallId.isNotEmpty() && incomingCallId != callId) {
+        Log.d(TAG, "callAnsweredReceiver: callId mismatch ($incomingCallId vs $callId), ignoring")
+        return
+      }
+      Log.d(TAG, "[WAVE161] callAnsweredReceiver: flipping status to Conectado")
+      stopRingbackTone()
+      state.status = "Conectado"
+      state.startedAt = System.currentTimeMillis()
+    }
+  }
+
   // ────────────── Lifecycle
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -732,6 +753,17 @@ class CallActivity : ComponentActivity() {
       registerReceiver(dtmfReceiver, dtmfFilter)
     }
 
+    // [WAVE 161, 2026-05-23] Caller-side pre-empt: register the
+    // CALL_ANSWERED receiver. Fired by CallSignalWs.kt when the server
+    // relays a `call_accepted`/`call_answered` frame from the callee.
+    val answeredFilter = IntentFilter("expo.modules.callkit.CALL_ANSWERED")
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      registerReceiver(callAnsweredReceiver, answeredFilter, Context.RECEIVER_NOT_EXPORTED)
+    } else {
+      @Suppress("UnspecifiedRegisterReceiverFlag")
+      registerReceiver(callAnsweredReceiver, answeredFilter)
+    }
+
     // Bring up LiveKit. If url/token missing, try the 4-source fallback
     // (LkTokenFetcher.fetchToken with intentExtras) before giving up. Only
     // if NO source has the bearer do we surface the humanized banner.
@@ -868,6 +900,7 @@ class CallActivity : ComponentActivity() {
   override fun onDestroy() {
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(dtmfReceiver) } catch (_: Exception) {}
+    try { unregisterReceiver(callAnsweredReceiver) } catch (_: Exception) {}
     // [2026-05-21] Release proximity wake-lock if held.
     try {
       if (proximityWakeLock?.isHeld == true) {
