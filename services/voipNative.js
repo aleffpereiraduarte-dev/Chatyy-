@@ -65,7 +65,7 @@ const TAG = '[voipNative]';
 // Toggle at runtime via setRelayFirstV2Enabled(true|false). Default OFF for
 // canary rollout; flip to true after 5%/50%/100% measurements look healthy
 // (see /var/www/mail/docs/relay-first-migration.md §Verification).
-let RELAY_FIRST_V2_ENABLED = false;
+let RELAY_FIRST_V2_ENABLED = true;
 export function setRelayFirstV2Enabled(v) { RELAY_FIRST_V2_ENABLED = !!v; }
 export function isRelayFirstV2Enabled() { return RELAY_FIRST_V2_ENABLED; }
 
