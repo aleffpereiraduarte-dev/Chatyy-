@@ -1447,7 +1447,12 @@ class CallActivity : ComponentActivity() {
       // re-triggering on manual reconnect paths).
       if (attempt == 0) {
         lifecycleScope.launch {
-          delay(1000L)
+          // [WAVE 162 2026-05-23] Was 1000L (WAVE 119). Caused "chiada"
+          // — DTLS re-negotiate + audio path swap mid-frame within
+          // 200-800ms of connect. Move to 5000L (WAVE 115 timing) so
+          // audio is settled before P2P attempt; swap is silent or
+          // fails silently keeping relay leg.
+          delay(5000L)
           if (isFinishing || isDestroyed) return@launch
           try {
             // Walk Room internals to reach the publisher RTCPeerConnection.

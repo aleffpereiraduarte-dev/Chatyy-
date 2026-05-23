@@ -2051,7 +2051,12 @@ extension CallViewController: RoomDelegate {
         // invisible to the user.
         // LK Swift exposes room.engine.publisher which is an RTCPeerConnection
         // wrapper — call restartIce() on it directly.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self, weak room] in
+        // [WAVE 162 2026-05-23] Was 1s in WAVE 119 — caused "chiada quando
+        // conectou" because DTLS re-negotiate + audio path swap mid-frame
+        // (200-800ms window). Move back to 5s (WAVE 115 timing) — most
+        // calls have stable relay by then, audio settled, swap to P2P happens
+        // silently or fails silently keeping relay leg.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.0) { [weak self, weak room] in
             guard let self = self, let r = room else { return }
             // [6th Swift compile cause, build cd37bbe] didHangup is on the VC, not session.
             guard !self.didHangup else { return }

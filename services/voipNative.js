@@ -577,6 +577,24 @@ export async function startOutgoingCall({
     } catch {}
   } catch {}
 
+  // [WAVE 162 2026-05-23] CRITICAL Android→iOS "Sessão expirada" root cause:
+  // ExpoCallKitModule.kt:1125-1204 (startOutgoingCall) calls enrichIntentWithAuth
+  // which reads from `expo_callkit_prefs` SharedPrefs. If that's empty (cold
+  // start, after install, after token rotation) → LkTokenFetcher's 4 sources
+  // all return null → banner fires WITHOUT trying HTTP. The native module's
+  // own persistAuthForNativeCall is the ONLY way to refresh this stash, and
+  // it only ran from storeToken() which doesn't fire on every call.
+  //
+  // Fix: ALWAYS refresh the prefs stash with the CURRENT bearer right before
+  // launching CallActivity. Fire-and-forget; ~5ms.
+  try {
+    const tok = api.getToken && api.getToken();
+    const base = api.BASE_URL || 'https://chatyy.com.br';
+    if (tok && ExpoCallKit.persistAuthForNativeCall) {
+      ExpoCallKit.persistAuthForNativeCall(tok, base).catch(() => {});
+    }
+  } catch {}
+
   const nativePresent = ExpoCallKit.startOutgoingCall(nativePayload);
 
   // Background: mint LK token then forward it to native.
