@@ -144,6 +144,11 @@ jobs:
           # so we feed all three.
           ANDROID_HOME: /Users/runner/Library/Android/sdk
           ANDROID_SDK_ROOT: /Users/runner/Library/Android/sdk
+          # [2026-05-22] Bump Gradle heap on macos-latest-xlarge.
+          # Default 2GB caused D8 OOM in :app:mergeDexRelease (100+ native
+          # modules). macos-latest-xlarge has 14GB total — 6GB heap is safe.
+          GRADLE_OPTS: '-Xmx6144m -XX:MaxMetaspaceSize=1024m -Dorg.gradle.jvmargs=-Xmx6144m'
+          _JAVA_OPTIONS: '-Xmx6144m'
           SENTRY_DISABLE_AUTO_UPLOAD: 'true'
           SENTRY_ALLOW_FAILURE: 'true'
         run: |
