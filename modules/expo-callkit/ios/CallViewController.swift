@@ -160,6 +160,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // [WAVE 156 2026-05-22] Combine subscription that mirrors
     // session.status (@Published) into the UIKit statusLabel.
     private var statusObserver: AnyCancellable?
+    private var dotsTimer: Timer?
+    private var durationTimer: Timer?
+    private var callConnectedAt: Date?
+    private var dotCount = 0
     private var ringbackActive: Bool = false
 
     // [DTMF, 2026-05-19] Listen for ExpoCallKitPlayDTMF (posted by the
@@ -294,28 +298,69 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // [WAVE 155 2026-05-22] UIKit call screen — WhatsApp-style polish.
         // Avatar circle + name + status + 3 buttons. Zero SwiftUI.
 
-        // ── WAVE 172 — UIKit Telegram-style call screen ──────────────────
+        // ── WAVE 173 — Full Android-parity UIKit call screen ──────────────
         // Zero SwiftUI. Pure CALayer + UIView + UILabel + UIButton.
-        // Matches Android Compose CallScreen visual: gradient BG, 180pt
-        // avatar with pulse rings, glassmorphism buttons, animated dots.
+        // Matches Android Compose CallScreen: gradient BG, 180pt avatar with
+        // pulse rings, glassmorphism buttons, animated dots, top bar with
+        // connection bars, duration timer, E2E lock icon, minimize chevron.
 
         let bounds = UIScreen.main.bounds
 
-        // 1. Gradient background
+        // 1. Gradient background (3-stop like Android)
         let gradient = CAGradientLayer()
         gradient.colors = [
             UIColor(red: 0x1A/255.0, green: 0x0F/255.0, blue: 0x2E/255.0, alpha: 1.0).cgColor,
+            UIColor(red: 0x12/255.0, green: 0x0E/255.0, blue: 0x24/255.0, alpha: 1.0).cgColor,
             UIColor(red: 0x0B/255.0, green: 0x14/255.0, blue: 0x1A/255.0, alpha: 1.0).cgColor
         ]
+        gradient.locations = [0.0, 0.5, 1.0]
         gradient.startPoint = CGPoint(x: 0.5, y: 0.0)
         gradient.endPoint = CGPoint(x: 0.5, y: 1.0)
         gradient.frame = bounds
         view.layer.insertSublayer(gradient, at: 0)
 
-        // 2. Pulse rings container (3 rings, CAReplicatorLayer + CABasicAnimation)
+        // ── TOP BAR (minimize + connection bars + E2E lock) ──
+        let topBar = UIView()
+        topBar.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(topBar)
+
+        let minimizeBtn = UIButton(type: .system)
+        minimizeBtn.translatesAutoresizingMaskIntoConstraints = false
+        minimizeBtn.tintColor = .white
+        let chevCfg = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        minimizeBtn.setImage(UIImage(systemName: "chevron.down", withConfiguration: chevCfg), for: .normal)
+        minimizeBtn.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        minimizeBtn.layer.cornerRadius = 18
+        minimizeBtn.clipsToBounds = true
+        minimizeBtn.addTarget(self, action: #selector(uikitOnHangupTap), for: .touchUpInside)
+        topBar.addSubview(minimizeBtn)
+
+        let barsContainer = UIView()
+        barsContainer.translatesAutoresizingMaskIntoConstraints = false
+        barsContainer.tag = 9010
+        topBar.addSubview(barsContainer)
+        for i in 0..<3 {
+            let bar = UIView()
+            bar.tag = 9011 + i
+            bar.backgroundColor = UIColor(red: 0x2E/255.0, green: 0xCC/255.0, blue: 0x71/255.0, alpha: 1.0)
+            bar.layer.cornerRadius = 2
+            let h: CGFloat = CGFloat(8 + i * 4)
+            bar.frame = CGRect(x: CGFloat(i) * 6, y: 16 - h, width: 4, height: h)
+            barsContainer.addSubview(bar)
+        }
+
+        let lockIcon = UIImageView()
+        lockIcon.translatesAutoresizingMaskIntoConstraints = false
+        lockIcon.image = UIImage(systemName: "lock.fill")
+        lockIcon.tintColor = UIColor.white.withAlphaComponent(0.5)
+        lockIcon.contentMode = .scaleAspectFit
+        topBar.addSubview(lockIcon)
+
+        // 2. Pulse rings container
         let pulseContainer = UIView()
         pulseContainer.translatesAutoresizingMaskIntoConstraints = false
         pulseContainer.isUserInteractionEnabled = false
+        pulseContainer.tag = 9020
         view.addSubview(pulseContainer)
 
         func addPulseRing(delay: CFTimeInterval) {
@@ -349,7 +394,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         addPulseRing(delay: 0.6)
         addPulseRing(delay: 1.2)
 
-        // 3. Avatar circle — 180pt, gradient purple
+        // 3. Avatar circle — 180pt, gradient purple + real photo async
         let avatarSize: CGFloat = 180
         let avatarView = UIView()
         avatarView.translatesAutoresizingMaskIntoConstraints = false
@@ -363,41 +408,78 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         avatarView.layer.addSublayer(avatarGradient)
         avatarView.layer.cornerRadius = avatarSize / 2
         avatarView.clipsToBounds = true
-        avatarView.layer.shadowColor = UIColor.black.cgColor
-        avatarView.layer.shadowOpacity = 0.5
-        avatarView.layer.shadowRadius = 16
-        avatarView.layer.shadowOffset = CGSize(width: 0, height: 8)
         view.addSubview(avatarView)
 
-        let initial = String((callerName.isEmpty ? callerEmail : callerName).trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
+        let avatarImageView = UIImageView()
+        avatarImageView.translatesAutoresizingMaskIntoConstraints = false
+        avatarImageView.contentMode = .scaleAspectFill
+        avatarImageView.layer.cornerRadius = avatarSize / 2
+        avatarImageView.clipsToBounds = true
+        avatarImageView.tag = 9030
+        avatarImageView.alpha = 0
+        avatarView.addSubview(avatarImageView)
+
+        let displayName = callerName.isEmpty ? callerEmail : callerName
+        let initial = String(displayName.trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
         let initialLabel = UILabel()
         initialLabel.translatesAutoresizingMaskIntoConstraints = false
         initialLabel.text = initial
         initialLabel.textColor = .white
         initialLabel.font = .systemFont(ofSize: 72, weight: .semibold)
         initialLabel.textAlignment = .center
+        initialLabel.tag = 9031
         avatarView.addSubview(initialLabel)
+
+        // Async avatar photo fetch
+        let avatarEmail = callerEmail
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard !avatarEmail.isEmpty,
+                  let url = URL(string: "https://chatyy.com.br/api/email.php?action=get_avatar&email=\(avatarEmail)"),
+                  let data = try? Data(contentsOf: url),
+                  let img = UIImage(data: data) else { return }
+            DispatchQueue.main.async {
+                guard let self = self,
+                      let iv = self.view.viewWithTag(9030) as? UIImageView else { return }
+                iv.image = img
+                UIView.animate(withDuration: 0.3) {
+                    iv.alpha = 1
+                    if let lbl = self.view.viewWithTag(9031) { lbl.alpha = 0 }
+                }
+            }
+        }
 
         // 4. Name + Status labels
         let nameLabel = UILabel()
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
-        nameLabel.text = callerName.isEmpty ? callerEmail : callerName
+        nameLabel.text = displayName
         nameLabel.textColor = .white
         nameLabel.font = .systemFont(ofSize: 28, weight: .semibold)
         nameLabel.textAlignment = .center
+        nameLabel.numberOfLines = 1
         nameLabel.tag = 9000
         view.addSubview(nameLabel)
 
         let statusLabel = UILabel()
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.text = isOutgoing ? "Chamando…" : "Conectando…"
+        statusLabel.text = isOutgoing ? "Chamando" : "Conectando"
         statusLabel.textColor = UIColor.white.withAlphaComponent(0.65)
         statusLabel.font = .systemFont(ofSize: 16, weight: .medium)
         statusLabel.textAlignment = .center
         statusLabel.tag = 9001
         view.addSubview(statusLabel)
 
-        // 5. Glass-morphism buttons (UIVisualEffectView + tinted overlay)
+        // Start animated dots timer (420ms cadence like Android)
+        dotsTimer = Timer.scheduledTimer(withTimeInterval: 0.42, repeats: true) { [weak self] _ in
+            guard let self = self,
+                  let lbl = self.view.viewWithTag(9001) as? UILabel else { return }
+            if self.callConnectedAt != nil { return }
+            self.dotCount = (self.dotCount + 1) % 4
+            let base = self.isOutgoing ? "Chamando" : "Conectando"
+            let dots = String(repeating: ".", count: self.dotCount)
+            lbl.text = base + dots
+        }
+
+        // 5. Glass-morphism buttons
         func glassButton(symbol: String, size: CGFloat, tag: Int, action: Selector, tint: UIColor = UIColor.white.withAlphaComponent(0.16), iconTint: UIColor = .white) -> UIButton {
             let btn = UIButton(type: .system)
             btn.translatesAutoresizingMaskIntoConstraints = false
@@ -429,8 +511,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             return btn
         }
 
-        let muteButton = glassButton(symbol: "mic.slash.fill", size: 64, tag: 9002, action: #selector(uikitOnMuteTap))
+        // Row 1: mute + speaker + video toggle (3 buttons)
+        let muteButton = glassButton(symbol: "mic.fill", size: 64, tag: 9002, action: #selector(uikitOnMuteTap))
         let speakerButton = glassButton(symbol: "speaker.wave.2.fill", size: 64, tag: 9003, action: #selector(uikitOnSpeakerTap))
+        let videoButton = glassButton(symbol: "video.fill", size: 64, tag: 9005, action: #selector(uikitOnVideoToggle))
+
+        // Row 2: hangup (center, red, bigger)
         let endButton = glassButton(symbol: "phone.down.fill", size: 72, tag: 9004, action: #selector(uikitOnHangupTap), tint: UIColor(red: 0xE5/255.0, green: 0x39/255.0, blue: 0x35/255.0, alpha: 1.0))
 
         // 6. Sub-labels
@@ -445,15 +531,59 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             return l
         }
         let muteSubLabel = subLabel("Silenciar")
-        let speakerSubLabel = subLabel("Áudio")
+        let speakerSubLabel = subLabel("Alto-falante")
+        let videoSubLabel = subLabel("Video")
         let endSubLabel = subLabel("Encerrar")
 
+        // 7. E2E encryption badge
+        let e2eBadge = UIView()
+        e2eBadge.translatesAutoresizingMaskIntoConstraints = false
+        e2eBadge.backgroundColor = UIColor.white.withAlphaComponent(0.08)
+        e2eBadge.layer.cornerRadius = 14
+        e2eBadge.layer.borderWidth = 0.5
+        e2eBadge.layer.borderColor = UIColor.white.withAlphaComponent(0.15).cgColor
+        view.addSubview(e2eBadge)
+
+        let e2eLock = UIImageView(image: UIImage(systemName: "lock.fill"))
+        e2eLock.translatesAutoresizingMaskIntoConstraints = false
+        e2eLock.tintColor = UIColor.white.withAlphaComponent(0.5)
+        e2eLock.contentMode = .scaleAspectFit
+        e2eBadge.addSubview(e2eLock)
+
+        let e2eLabel = UILabel()
+        e2eLabel.translatesAutoresizingMaskIntoConstraints = false
+        e2eLabel.text = "Criptografada"
+        e2eLabel.textColor = UIColor.white.withAlphaComponent(0.5)
+        e2eLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        e2eBadge.addSubview(e2eLabel)
+
         NSLayoutConstraint.activate([
+            // Top bar
+            topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            topBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            topBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            topBar.heightAnchor.constraint(equalToConstant: 36),
+
+            minimizeBtn.leadingAnchor.constraint(equalTo: topBar.leadingAnchor),
+            minimizeBtn.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            minimizeBtn.widthAnchor.constraint(equalToConstant: 36),
+            minimizeBtn.heightAnchor.constraint(equalToConstant: 36),
+
+            barsContainer.leadingAnchor.constraint(equalTo: minimizeBtn.trailingAnchor, constant: 12),
+            barsContainer.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            barsContainer.widthAnchor.constraint(equalToConstant: 22),
+            barsContainer.heightAnchor.constraint(equalToConstant: 16),
+
+            lockIcon.trailingAnchor.constraint(equalTo: topBar.trailingAnchor),
+            lockIcon.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            lockIcon.widthAnchor.constraint(equalToConstant: 16),
+            lockIcon.heightAnchor.constraint(equalToConstant: 16),
+
             // Pulse container
             pulseContainer.widthAnchor.constraint(equalToConstant: 210),
             pulseContainer.heightAnchor.constraint(equalToConstant: 210),
             pulseContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            pulseContainer.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 80),
+            pulseContainer.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 48),
 
             // Avatar (centered inside pulse)
             avatarView.widthAnchor.constraint(equalToConstant: avatarSize),
@@ -461,11 +591,16 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             avatarView.centerXAnchor.constraint(equalTo: pulseContainer.centerXAnchor),
             avatarView.centerYAnchor.constraint(equalTo: pulseContainer.centerYAnchor),
 
+            avatarImageView.topAnchor.constraint(equalTo: avatarView.topAnchor),
+            avatarImageView.bottomAnchor.constraint(equalTo: avatarView.bottomAnchor),
+            avatarImageView.leadingAnchor.constraint(equalTo: avatarView.leadingAnchor),
+            avatarImageView.trailingAnchor.constraint(equalTo: avatarView.trailingAnchor),
+
             initialLabel.centerXAnchor.constraint(equalTo: avatarView.centerXAnchor),
             initialLabel.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
 
             // Name
-            nameLabel.topAnchor.constraint(equalTo: pulseContainer.bottomAnchor, constant: 16),
+            nameLabel.topAnchor.constraint(equalTo: pulseContainer.bottomAnchor, constant: 20),
             nameLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             nameLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
@@ -474,23 +609,41 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             statusLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 8),
             statusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
 
-            // Mute button (left)
+            // E2E badge (below status)
+            e2eBadge.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 16),
+            e2eBadge.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            e2eBadge.heightAnchor.constraint(equalToConstant: 28),
+
+            e2eLock.leadingAnchor.constraint(equalTo: e2eBadge.leadingAnchor, constant: 10),
+            e2eLock.centerYAnchor.constraint(equalTo: e2eBadge.centerYAnchor),
+            e2eLock.widthAnchor.constraint(equalToConstant: 12),
+            e2eLock.heightAnchor.constraint(equalToConstant: 12),
+
+            e2eLabel.leadingAnchor.constraint(equalTo: e2eLock.trailingAnchor, constant: 6),
+            e2eLabel.trailingAnchor.constraint(equalTo: e2eBadge.trailingAnchor, constant: -10),
+            e2eLabel.centerYAnchor.constraint(equalTo: e2eBadge.centerYAnchor),
+
+            // Button row 1 (3 buttons evenly spaced)
             muteButton.widthAnchor.constraint(equalToConstant: 64),
             muteButton.heightAnchor.constraint(equalToConstant: 64),
-            muteButton.centerYAnchor.constraint(equalTo: speakerButton.centerYAnchor),
-            muteButton.trailingAnchor.constraint(equalTo: view.centerXAnchor, constant: -56),
+            muteButton.bottomAnchor.constraint(equalTo: endButton.topAnchor, constant: -32),
+            muteButton.trailingAnchor.constraint(equalTo: speakerButton.leadingAnchor, constant: -24),
 
-            // Speaker button (right)
             speakerButton.widthAnchor.constraint(equalToConstant: 64),
             speakerButton.heightAnchor.constraint(equalToConstant: 64),
-            speakerButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -160),
-            speakerButton.leadingAnchor.constraint(equalTo: view.centerXAnchor, constant: 56),
+            speakerButton.centerYAnchor.constraint(equalTo: muteButton.centerYAnchor),
+            speakerButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+
+            videoButton.widthAnchor.constraint(equalToConstant: 64),
+            videoButton.heightAnchor.constraint(equalToConstant: 64),
+            videoButton.centerYAnchor.constraint(equalTo: muteButton.centerYAnchor),
+            videoButton.leadingAnchor.constraint(equalTo: speakerButton.trailingAnchor, constant: 24),
 
             // End button (centered, bigger, below)
             endButton.widthAnchor.constraint(equalToConstant: 72),
             endButton.heightAnchor.constraint(equalToConstant: 72),
             endButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            endButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -60),
+            endButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -40),
 
             // Sub labels
             muteSubLabel.topAnchor.constraint(equalTo: muteButton.bottomAnchor, constant: 6),
@@ -499,20 +652,52 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             speakerSubLabel.topAnchor.constraint(equalTo: speakerButton.bottomAnchor, constant: 6),
             speakerSubLabel.centerXAnchor.constraint(equalTo: speakerButton.centerXAnchor),
 
+            videoSubLabel.topAnchor.constraint(equalTo: videoButton.bottomAnchor, constant: 6),
+            videoSubLabel.centerXAnchor.constraint(equalTo: videoButton.centerXAnchor),
+
             endSubLabel.topAnchor.constraint(equalTo: endButton.bottomAnchor, constant: 6),
             endSubLabel.centerXAnchor.constraint(equalTo: endButton.centerXAnchor),
         ])
 
-        // [WAVE 156 2026-05-22] Sync session.status → UIKit statusLabel.
-        // Without this the label froze at "Chamando…" forever (bug user
-        // reported: "ui não atualiza quando estado muda"). Combine
-        // subscription mirrors every @Published change onto main thread.
+        // [WAVE 173] Sync session.status → UIKit statusLabel + duration timer.
         statusObserver = session.$status
             .receive(on: DispatchQueue.main)
             .sink { [weak self] newStatus in
-                guard let self = self,
-                      let lbl = self.view.viewWithTag(9001) as? UILabel else { return }
-                lbl.text = newStatus
+                guard let self = self else { return }
+
+                if newStatus == "Conectado" && self.callConnectedAt == nil {
+                    self.callConnectedAt = Date()
+                    self.dotsTimer?.invalidate()
+                    self.dotsTimer = nil
+
+                    // Hide pulse rings when connected
+                    if let pc = self.view.viewWithTag(9020) {
+                        UIView.animate(withDuration: 0.4) { pc.alpha = 0 }
+                    }
+
+                    // Start duration timer (1s tick)
+                    self.durationTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+                        guard let self = self,
+                              let connAt = self.callConnectedAt,
+                              let lbl = self.view.viewWithTag(9001) as? UILabel else { return }
+                        let elapsed = Int(Date().timeIntervalSince(connAt))
+                        let h = elapsed / 3600
+                        let m = (elapsed % 3600) / 60
+                        let s = elapsed % 60
+                        if h > 0 {
+                            lbl.text = String(format: "Conectado %d:%02d:%02d", h, m, s)
+                        } else {
+                            lbl.text = String(format: "Conectado %02d:%02d", m, s)
+                        }
+                    }
+                    if let lbl = self.view.viewWithTag(9001) as? UILabel {
+                        lbl.text = "Conectado 00:00"
+                    }
+                } else if newStatus != "Conectado" {
+                    if let lbl = self.view.viewWithTag(9001) as? UILabel {
+                        lbl.text = newStatus
+                    }
+                }
             }
 
         // [STAGE-A 2026-05-20] GAP #2 — If preconnectRoom (push-receive path)
@@ -2142,8 +2327,20 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         let next = !session.speakerOn
         applySpeaker(next)
         if let btn = view.viewWithTag(9003) as? UIButton {
-            btn.setTitle(next ? "Earpiece" : "Speaker", for: .normal)
+            let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
+            btn.setImage(UIImage(systemName: next ? "speaker.wave.2.fill" : "speaker.slash.fill", withConfiguration: cfg), for: .normal)
         }
+    }
+
+    @objc private func uikitOnVideoToggle() {
+        print("[CallVC] video toggle tapped — not wired yet")
+    }
+
+    private func cleanupCallTimers() {
+        dotsTimer?.invalidate()
+        dotsTimer = nil
+        durationTimer?.invalidate()
+        durationTimer = nil
     }
 }
 
