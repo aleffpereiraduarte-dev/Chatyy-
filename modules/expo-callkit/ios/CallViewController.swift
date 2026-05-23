@@ -242,11 +242,6 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         super.viewDidLoad()
         view.backgroundColor = UIColor(red: 0x0B/255.0, green: 0x14/255.0, blue: 0x1A/255.0, alpha: 1.0)
 
-        // [WAVE 163] Match Android: outgoing = "Chamando…", incoming = "Conectando…"
-        if isOutgoing {
-            session.status = "Chamando\u{2026}"
-        }
-
         if isOutgoing {
             CallSignalWs.shared.fireCallInvite(
                 callId: callId,
@@ -281,52 +276,167 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // ringback engine the moment the callee's WS accept frame lands.
         installRemoteAnsweredObserver()
 
-        // [WAVE 163 2026-05-23] SwiftUI CallView RESTORED. WAVE 154 removed it
-        // entirely due to layout-loop crashes. Root causes were:
-        //   1. Button + StyleBodyAccessor recursion (fixed: all Buttons replaced
-        //      with plain Views + .onTapGesture)
-        //   2. GeometryReader in PiP tile (fixed: replaced with VStack/HStack)
-        //   3. .sheet(isPresented:) anchor (fixed: replaced with overlay)
-        //   4. Timer.publish (already fixed WAVE 151 via TimelineView)
-        //   5. .frame(width: dynamic) in PulseRings (already fixed WAVE 148)
+        // [WAVE 154 2026-05-22] NUCLEAR — SwiftUI CallView removed entirely.
         //
-        // All call functionality (hangup, mute, cam, speaker, DTMF, reactions,
-        // PiP, ringback, observers, signaling) is unchanged — only the visual
-        // presentation changes back from UIKit to the rich SwiftUI surface.
-        let callView = CallView(
-            callId: callId,
-            callerName: callerName,
-            callerEmail: callerEmail,
-            hasVideo: hasVideo,
-            session: session,
-            onHangup: { [weak self] in self?.handleHangup() },
-            onToggleMute: { [weak self] desired in self?.applyMicEnabled(desired) },
-            onToggleCam: { [weak self] desired in self?.applyCamEnabled(desired) },
-            onToggleSpeaker: { [weak self] desired in self?.applySpeaker(desired) },
-            onSwitchCamera: { [weak self] in self?.switchCamera() },
-            onScreenShare: { /* Screen share requires ReplayKit refactor — no-op for now */ },
-            onAddMember: { /* Add member not yet wired — no-op */ },
-            onMinimize: { [weak self] in self?.handleMinimize() },
-            onSendReaction: { [weak self] emoji in self?.sendReaction(emoji) },
-            onToggleNoiseSuppression: { [weak self] enabled in self?.applyNoiseSuppression(enabled) },
-            onCycleBackground: { [weak self] in self?.cycleBackground() },
-            onToggleHold: { [weak self] held in self?.applyHold(held) },
-            onPlayDTMF: { [weak self] digit in self?.handlePlayDTMF(digit) },
-            onOpenChat: { [weak self] in self?.openChat() }
-        )
+        // Builds 552-555 ALL crashed in SwiftUI _UIHostingView.layoutSubviews
+        // with various flavors of layout/metadata/style recursion. WAVE 153
+        // disabled CallView body to Color.black but a CUSTOM ButtonStyle
+        // somewhere ELSE in the tree (StyleBodyAccessor) still caused stack
+        // overflow in iOS 26.5.
+        //
+        // Total exhaustion strategy: NO SwiftUI at all in the call screen.
+        // Pure UIKit — name label + 3 buttons (mute / speaker / end). All
+        // the audio session, AVAudioSession, LiveKit Room, signaling,
+        // observers, and hangup logic stays intact and continues to work
+        // independently. CallKit native UI shows during ringing as before.
+        // When user opens app foreground during call, this minimal UIKit
+        // screen shows — no rich animations but zero crash.
+        // [WAVE 155 2026-05-22] UIKit call screen — WhatsApp-style polish.
+        // Avatar circle + name + status + 3 buttons. Zero SwiftUI.
 
-        let hostingController = UIHostingController(rootView: callView)
-        hostingController.view.backgroundColor = .clear
-        addChild(hostingController)
-        hostingController.view.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(hostingController.view)
+        // Gradient background (CALayer, no SwiftUI)
+        let gradient = CAGradientLayer()
+        gradient.colors = [
+            UIColor(red: 0x1A/255.0, green: 0x0F/255.0, blue: 0x2E/255.0, alpha: 1.0).cgColor,
+            UIColor(red: 0x0B/255.0, green: 0x14/255.0, blue: 0x1A/255.0, alpha: 1.0).cgColor
+        ]
+        gradient.startPoint = CGPoint(x: 0.5, y: 0.0)
+        gradient.endPoint = CGPoint(x: 0.5, y: 1.0)
+        gradient.frame = UIScreen.main.bounds
+        view.layer.insertSublayer(gradient, at: 0)
+
+        // Avatar circle — gradient purple, initial letter inside
+        let avatarSize: CGFloat = 132
+        let avatarView = UIView()
+        avatarView.translatesAutoresizingMaskIntoConstraints = false
+        avatarView.backgroundColor = UIColor(red: 0x7C/255.0, green: 0x3A/255.0, blue: 0xED/255.0, alpha: 1.0)
+        avatarView.layer.cornerRadius = avatarSize / 2
+        avatarView.clipsToBounds = true
+        view.addSubview(avatarView)
+
+        let initial = String((callerName.isEmpty ? callerEmail : callerName).trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
+        let initialLabel = UILabel()
+        initialLabel.translatesAutoresizingMaskIntoConstraints = false
+        initialLabel.text = initial
+        initialLabel.textColor = .white
+        initialLabel.font = .systemFont(ofSize: 52, weight: .semibold)
+        initialLabel.textAlignment = .center
+        avatarView.addSubview(initialLabel)
+
+        let nameLabel = UILabel()
+        nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        nameLabel.text = callerName.isEmpty ? callerEmail : callerName
+        nameLabel.textColor = .white
+        nameLabel.font = .systemFont(ofSize: 28, weight: .semibold)
+        nameLabel.textAlignment = .center
+        nameLabel.tag = 9000
+        view.addSubview(nameLabel)
+
+        let statusLabel = UILabel()
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.text = isOutgoing ? "Chamando…" : "Conectando…"
+        statusLabel.textColor = UIColor.white.withAlphaComponent(0.72)
+        statusLabel.font = .systemFont(ofSize: 17, weight: .regular)
+        statusLabel.textAlignment = .center
+        statusLabel.tag = 9001
+        view.addSubview(statusLabel)
+
+        // Helper to build round symbol buttons
+        func roundButton(symbol: String, title: String, tag: Int, action: Selector, isDestructive: Bool = false) -> UIButton {
+            let btn = UIButton(type: .system)
+            btn.translatesAutoresizingMaskIntoConstraints = false
+            btn.backgroundColor = isDestructive
+                ? UIColor(red: 0xE6/255.0, green: 0x3A/255.0, blue: 0x3A/255.0, alpha: 1.0)
+                : UIColor.white.withAlphaComponent(0.16)
+            btn.tintColor = .white
+            let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
+            btn.setImage(UIImage(systemName: symbol, withConfiguration: cfg), for: .normal)
+            btn.layer.cornerRadius = isDestructive ? 36 : 32
+            btn.tag = tag
+            btn.addTarget(self, action: action, for: .touchUpInside)
+            view.addSubview(btn)
+            return btn
+        }
+
+        let muteButton = roundButton(symbol: "mic.slash.fill", title: "Mute", tag: 9002, action: #selector(uikitOnMuteTap))
+        let speakerButton = roundButton(symbol: "speaker.wave.2.fill", title: "Speaker", tag: 9003, action: #selector(uikitOnSpeakerTap))
+        let endButton = roundButton(symbol: "phone.down.fill", title: "Encerrar", tag: 9004, action: #selector(uikitOnHangupTap), isDestructive: true)
+
+        // Mute/Speaker labels (below buttons)
+        func subLabel(_ text: String) -> UILabel {
+            let l = UILabel()
+            l.translatesAutoresizingMaskIntoConstraints = false
+            l.text = text
+            l.textColor = UIColor.white.withAlphaComponent(0.7)
+            l.font = .systemFont(ofSize: 12, weight: .medium)
+            l.textAlignment = .center
+            view.addSubview(l)
+            return l
+        }
+        let muteSubLabel = subLabel("Silenciar")
+        let speakerSubLabel = subLabel("Áudio")
+        let endSubLabel = subLabel("Encerrar")
+
         NSLayoutConstraint.activate([
-            hostingController.view.topAnchor.constraint(equalTo: view.topAnchor),
-            hostingController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            hostingController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            hostingController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            // Avatar
+            avatarView.widthAnchor.constraint(equalToConstant: avatarSize),
+            avatarView.heightAnchor.constraint(equalToConstant: avatarSize),
+            avatarView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            avatarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 96),
+
+            initialLabel.centerXAnchor.constraint(equalTo: avatarView.centerXAnchor),
+            initialLabel.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
+
+            // Name
+            nameLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 24),
+            nameLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            nameLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
+            nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
+
+            // Status
+            statusLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 8),
+            statusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+
+            // Mute button (left)
+            muteButton.widthAnchor.constraint(equalToConstant: 64),
+            muteButton.heightAnchor.constraint(equalToConstant: 64),
+            muteButton.centerYAnchor.constraint(equalTo: speakerButton.centerYAnchor),
+            muteButton.trailingAnchor.constraint(equalTo: view.centerXAnchor, constant: -56),
+
+            // Speaker button (right)
+            speakerButton.widthAnchor.constraint(equalToConstant: 64),
+            speakerButton.heightAnchor.constraint(equalToConstant: 64),
+            speakerButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -160),
+            speakerButton.leadingAnchor.constraint(equalTo: view.centerXAnchor, constant: 56),
+
+            // End button (centered, bigger, below)
+            endButton.widthAnchor.constraint(equalToConstant: 72),
+            endButton.heightAnchor.constraint(equalToConstant: 72),
+            endButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            endButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -60),
+
+            // Sub labels under buttons
+            muteSubLabel.topAnchor.constraint(equalTo: muteButton.bottomAnchor, constant: 6),
+            muteSubLabel.centerXAnchor.constraint(equalTo: muteButton.centerXAnchor),
+
+            speakerSubLabel.topAnchor.constraint(equalTo: speakerButton.bottomAnchor, constant: 6),
+            speakerSubLabel.centerXAnchor.constraint(equalTo: speakerButton.centerXAnchor),
+
+            endSubLabel.topAnchor.constraint(equalTo: endButton.bottomAnchor, constant: 6),
+            endSubLabel.centerXAnchor.constraint(equalTo: endButton.centerXAnchor),
         ])
-        hostingController.didMove(toParent: self)
+
+        // [WAVE 156 2026-05-22] Sync session.status → UIKit statusLabel.
+        // Without this the label froze at "Chamando…" forever (bug user
+        // reported: "ui não atualiza quando estado muda"). Combine
+        // subscription mirrors every @Published change onto main thread.
+        statusObserver = session.$status
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] newStatus in
+                guard let self = self,
+                      let lbl = self.view.viewWithTag(9001) as? UILabel else { return }
+                lbl.text = newStatus
+            }
 
         // [STAGE-A 2026-05-20] GAP #2 — If preconnectRoom (push-receive path)
         // already published a Room for this callId, adopt it instead of
@@ -552,7 +662,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
 
         // Ringback only fires for the caller side, while we're still waiting.
-        if isOutgoing && (session.status == "Chamando\u{2026}" || session.status == "Conectando\u{2026}") {
+        if isOutgoing && session.status == "Conectando\u{2026}" {
             startRingbackTone()
             installBackgroundObserverForRingback()
         }
