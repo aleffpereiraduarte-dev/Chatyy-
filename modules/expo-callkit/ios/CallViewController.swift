@@ -754,12 +754,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // so adoptNativeRoom() returns nil for subsequent calls.
             NativeCallRoom.shared.clear()
         }
-        Task { [weak self] in
-            // Step 1: release mic ASAP (libera HW em ~50ms).
-            if let r = capturedRoom {
-                _ = try? await r.localParticipant.setMicrophone(enabled: false)
-            }
-            // Step 4: aguardar LK cleanup completar.
+        Task {
+            // Step 4: aguardar LK cleanup completar antes do CXEndCallAction.
+            // Sem o await, o CX action fulfilla antes do LK SFU notar que o
+            // publisher saiu — peer fica vendo "Conectado" 2-5s.
             if let r = capturedRoom {
                 await r.disconnect()
                 print("[CallVC] handleHangup: LK disconnect awaited for callId=\(capturedCallId)")
@@ -776,7 +774,6 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     }
                 }
             }
-            _ = self // silence weak-self warning
         }
         // [WAVE 165 ghost-buster reportCall 2026-05-23] Fire reportCall(.unanswered)
         // IMMEDIATELY on the CXProvider so CallKit dismisses the system pill
