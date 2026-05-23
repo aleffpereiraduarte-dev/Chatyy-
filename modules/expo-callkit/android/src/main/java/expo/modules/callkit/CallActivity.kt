@@ -259,6 +259,15 @@ class CallActivity : ComponentActivity() {
    *  released on stopRingback() / onDestroy. */
   private var toneGen: ToneGenerator? = null
 
+  /** [WAVE 163 Android, 2026-05-22] Outgoing call 45s no-answer timeout.
+   *  Paridade com iOS VoipPushAppDelegateSubscriber.scheduleOutgoingTimeout.
+   *  Without this, an outgoing call to an offline peer would ring forever:
+   *  the ringback TONE_SUP_RINGTONE stops at 30s but the Activity stays
+   *  showing "Chamando..." until the user manually taps hangup. Cancelled
+   *  the moment status flips to Conectado (callAnsweredReceiver / LK
+   *  ParticipantConnected) or finishCall() runs for any reason. */
+  private var outgoingTimeoutJob: Job? = null
+
   /** [2026-05-21] Proximity wake-lock for audio calls. Mirrors iOS proximity
    *  monitoring: when the user holds the phone to their ear, the screen turns
    *  off (saving battery + preventing cheek-touches on UI). Released in
@@ -1679,14 +1688,38 @@ class CallActivity : ComponentActivity() {
       Log.w(TAG, "ringback init failed: ${t.message}")
       toneGen = null
     }
+    scheduleOutgoingTimeout()
   }
 
   private fun stopRingback() {
+    cancelOutgoingTimeout()
     val tg = toneGen ?: return
     toneGen = null
     try { tg.stopTone() } catch (_: Throwable) {}
     try { tg.release() } catch (_: Throwable) {}
     Log.d(TAG, "ringback: stopped")
+  }
+
+  /** [WAVE 163 Android, 2026-05-22] Schedule 45s outgoing no-answer timeout.
+   *  If callee hasn't moved status to "Conectado" by then we treat as
+   *  unanswered and tear down via finishCall("unanswered") — paridade com
+   *  iOS reportCall(.unanswered). lifecycleScope binds the job to Activity
+   *  lifecycle so process death automatically kills it (no zombie callback
+   *  firing after CallActivity is gone). */
+  private fun scheduleOutgoingTimeout() {
+    outgoingTimeoutJob?.cancel()
+    outgoingTimeoutJob = lifecycleScope.launch {
+      kotlinx.coroutines.delay(45_000)
+      if (!finishing && state.status != "Conectado") {
+        Log.w(TAG, "[WAVE163] outgoing 45s timeout — unanswered, finishing")
+        finishCall(reason = "unanswered")
+      }
+    }
+  }
+
+  private fun cancelOutgoingTimeout() {
+    outgoingTimeoutJob?.cancel()
+    outgoingTimeoutJob = null
   }
 
   // ────────────── Hangup
