@@ -1551,13 +1551,16 @@ class CallActivity : ComponentActivity() {
       is RoomEvent.ParticipantDisconnected -> {
         val identity = event.participant.identity?.value ?: ""
         Log.d(TAG, "ParticipantDisconnected $identity")
-        // [Wave C-2] Remove from group grid. Release the renderer to prevent
-        // leak; LK SurfaceViewRenderer must be released when no longer used.
         val idx = state.groupParticipants.indexOfFirst { it.identity == identity }
         if (idx >= 0) {
           val old = state.groupParticipants[idx]
           try { old.renderer?.release() } catch (_: Throwable) {}
           state.groupParticipants.removeAt(idx)
+        }
+        val remaining = room?.remoteParticipants?.size ?: 0
+        if (remaining == 0 && !isFinishing) {
+          Log.d(TAG, "Last remote participant left — finishing 1:1 call")
+          finishCall(reason = "peer_left")
         }
       }
       is RoomEvent.TrackSubscribed -> {
