@@ -745,25 +745,42 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // also calls dismissActiveCallSurfaces — idempotent vs. our explicit
         // dismiss below.
         if let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId) {
-            // [WAVE 157 2026-05-22] If outgoing call wasn't yet connected
-            // (peer hasn't tapped Accept — status still "Chamando…"),
-            // CallKit treats CXEndCallAction as a no-op because it expects
-            // the call to be in connected state. Result user reported:
-            // "depois que clico em desligar a chamada o nativo ainda fica
-            // la conectando". Fix: use provider.reportCall(.unanswered)
-            // which tears down the system pill without requiring a prior
-            // Connected transition.
-            let isUnanswered = isOutgoing && session.status != "Conectado"
-            if isUnanswered, let provider = VoipPushAppDelegateSubscriber.earlyProvider {
+            // [WAVE 158 2026-05-22] BELT-AND-SUSPENDERS: fire BOTH reportCall
+            // AND CXEndCallAction. User reported: even after WAVE 157, CallKit
+            // pill still stuck "Conectando" when canceling outgoing before
+            // peer answered.
+            //
+            // Apple state machine for outgoing calls:
+            // 1. CXStartCallAction.fulfill() → call exists in provider list
+            // 2. reportOutgoingCall(startedConnectingAt:) → "Calling..."
+            // 3. reportOutgoingCall(connectedAt:) → "Connected" (only after WS
+            //    confirms peer answered, since WAVE 156)
+            //
+            // To terminate:
+            // - reportCall(.unanswered) — valid from ANY state before connected
+            // - CXEndCallAction — only valid AFTER connected
+            //
+            // WAVE 157 picked one based on `isOutgoing && status != "Conectado"`.
+            // But: earlyProvider might be nil (race during cold-start), and
+            // the fallback was CXEndCallAction which silently fails on a
+            // not-yet-connected call. So pill stayed.
+            //
+            // WAVE 158 fix: try BOTH. iOS accepts whichever is valid for the
+            // current state; the other is a safe no-op. We don't even need
+            // to guess.
+            if let provider = VoipPushAppDelegateSubscriber.earlyProvider {
                 provider.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
-                print("[CallVC] handleHangup reportCall(.unanswered) uuid=\(uuid) — outgoing canceled before answer")
+                print("[CallVC] handleHangup reportCall(.unanswered) uuid=\(uuid)")
             } else {
-                let controller = CXCallController(queue: .main)
-                let action = CXEndCallAction(call: uuid)
-                controller.request(CXTransaction(action: action)) { error in
-                    if let error = error {
-                        print("[CallVC] handleHangup CXEndCallAction error: \(error.localizedDescription)")
-                    }
+                print("[CallVC] handleHangup: earlyProvider nil — skipping reportCall, relying on CXEndCallAction")
+            }
+            let controller = CXCallController(queue: .main)
+            let action = CXEndCallAction(call: uuid)
+            controller.request(CXTransaction(action: action)) { error in
+                if let error = error {
+                    print("[CallVC] handleHangup CXEndCallAction error: \(error.localizedDescription)")
+                } else {
+                    print("[CallVC] handleHangup CXEndCallAction requested ok uuid=\(uuid)")
                 }
             }
         } else {
