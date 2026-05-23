@@ -50,6 +50,18 @@ private var kRingTimers: [UUID: DispatchSourceTimer] = [:]
 private let kRingTimersLock = NSLock()
 private let kRingTimeoutSeconds: Int = 30
 
+// [WAVE 163 2026-05-23 GHOST FIX] Outgoing-side timers, parallel to kRingTimers.
+// Lives at FILE scope (NOT inside ExpoCallKitModule) so the DispatchSource
+// timer survives module/bridge teardown when user swipe-kills the app while
+// the dialer is still "Connecting...". Without this, the timer on
+// ExpoCallKitModule.stateQueue is freed with the process and CallKit never
+// gets reportCall(.failed) → ghost pill stays on lock screen for 30-90s
+// until iOS's internal timeout. CXProvider state lives in callservicesd
+// (separate process), so the reportCall MUST come from somewhere alive.
+private var kOutgoingTimers: [String: DispatchSourceTimer] = [:]
+private let kOutgoingTimersLock = NSLock()
+private let kOutgoingTimeoutSeconds: Int = 45
+
 public class VoipPushAppDelegateSubscriber: ExpoAppDelegateSubscriber {
 
     // PushKit registry and stub CallKit provider live for the lifetime of the
@@ -559,6 +571,49 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         kRingTimersLock.lock()
         let t = kRingTimers.removeValue(forKey: uuid)
         kRingTimersLock.unlock()
+        t?.cancel()
+    }
+
+    // ─── [WAVE 163 2026-05-23 GHOST FIX] Outgoing-side timer (caller side)
+    //
+    // Mirrors scheduleRingTimeout but keyed by callId (the outgoing path
+    // doesn't have a single canonical UUID at scheduling time — JS owns the
+    // callId, ExpoCallKitModule owns the UUID, and we want the timer
+    // independent of either to survive process kill).
+    //
+    // Why static/file-scope: when user swipe-kills the app during "Connecting…",
+    // the iOS process dies. CXProvider state lives in callservicesd (separate
+    // process) and KEEPS the call alive showing the pill on the lock screen
+    // until something explicitly calls reportCall(.failed). The previous
+    // DispatchSource on ExpoCallKitModule.stateQueue died with the process,
+    // leaving the ghost. This timer lives on a global queue and the closure
+    // captures only ExpoCallKitModule.sharedProvider (weak class-static), so
+    // it survives bridge teardown.
+    public static func scheduleOutgoingTimeout(callId: String, uuid: UUID) {
+        cancelOutgoingTimeout(callId: callId) // idempotent re-arm
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + .seconds(kOutgoingTimeoutSeconds))
+        timer.setEventHandler {
+            kOutgoingTimersLock.lock()
+            let stillArmed = (kOutgoingTimers[callId] != nil)
+            kOutgoingTimers.removeValue(forKey: callId)
+            kOutgoingTimersLock.unlock()
+            guard stillArmed else { return }
+            NSLog("[VoipSubscriber][WAVE163] outgoing timeout 45s for \(callId) — reportCall(.unanswered)")
+            if let provider = ExpoCallKitModule.sharedProvider {
+                provider.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
+            }
+        }
+        kOutgoingTimersLock.lock()
+        kOutgoingTimers[callId] = timer
+        kOutgoingTimersLock.unlock()
+        timer.resume()
+    }
+
+    public static func cancelOutgoingTimeout(callId: String) {
+        kOutgoingTimersLock.lock()
+        let t = kOutgoingTimers.removeValue(forKey: callId)
+        kOutgoingTimersLock.unlock()
         t?.cancel()
     }
 

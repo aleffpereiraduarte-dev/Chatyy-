@@ -408,6 +408,17 @@ public class ExpoCallKitModule: Module {
         self.installShareDidSendObserver()
         self.flushVoipTokenFromAppGroup()
         self.adoptPendingCallsFromAppGroup()
+        // [WAVE 163 2026-05-23 GHOST FIX] Register willTerminate observer so
+        // swipe-kill while a call is "Connecting…" doesn't leave a CallKit
+        // ghost on the lock screen. CXProvider state lives in callservicesd
+        // (separate process) — reportCall MUST happen before SIGKILL.
+        // iOS gives ~5s in willTerminate which is enough for sync reportCall.
+        NotificationCenter.default.addObserver(
+          self,
+          selector: #selector(self.handleAppWillTerminate),
+          name: UIApplication.willTerminateNotification,
+          object: nil
+        )
         // [bug 2026-05-15 #4] Removed AVAudioSession pre-arm.
         // Pre-arming with .playAndRecord/.voiceChat at module load stole
         // audio focus from Spotify/Music every app launch (user complaint:
@@ -1777,6 +1788,25 @@ public class ExpoCallKitModule: Module {
     pathMonitor?.cancel()
   }
 
+  /// [WAVE 163 2026-05-23 GHOST FIX] willTerminate selector — fires before
+  /// SIGKILL when user swipes the app away. We have ~5s to walk activeCalls
+  /// and reportCall(.failed) for any "Connecting…" call before iOS kills us.
+  /// Without this, CallKit's callservicesd keeps the pill on lock screen
+  /// until its own internal timeout (~30-90s).
+  @objc private func handleAppWillTerminate() {
+    NSLog("[ExpoCallKit][WAVE163] willTerminate — failing any in-flight outgoing calls")
+    let snapshot: [String: UUID] = safeStateSync { activeCalls }
+    let prov = self.provider ?? ExpoCallKitModule.sharedProvider
+    guard let provider = prov else {
+      NSLog("[ExpoCallKit][WAVE163] willTerminate: no provider available")
+      return
+    }
+    for (callId, uuid) in snapshot {
+      provider.reportCall(with: uuid, endedAt: Date(), reason: .failed)
+      NSLog("[ExpoCallKit][WAVE163] willTerminate — reportCall(.failed) \(callId)")
+    }
+  }
+
   private func handleAudioInterruption(_ notification: Notification) {
     guard let userInfo = notification.userInfo,
           let typeValue = userInfo[AVAudioSessionInterruptionTypeKey] as? UInt,
@@ -2029,32 +2059,30 @@ public class ExpoCallKitModule: Module {
     }
   }
 
-  /// [2026-05-22 outgoing timeout helpers]
-  /// Schedule a 45s timer that auto-ends the outgoing call if no answer
-  /// arrives. Caller-side equivalent of WhatsApp's "Não atendeu" auto-cancel.
+  /// [WAVE 163 2026-05-23 GHOST FIX] Outgoing timeout helpers — moved to a
+  /// static, process-scope DispatchSource in VoipPushAppDelegateSubscriber.
+  ///
+  /// Previously the timer lived on this module's stateQueue. When the user
+  /// swipe-kills the app while CallKit is showing "Connecting…", the JS
+  /// bridge tears down and stateQueue is freed → timer never fires →
+  /// CXProvider in callservicesd (separate process) keeps the call alive
+  /// → ghost pill on lock screen for 30-90s until iOS internal timeout.
+  ///
+  /// Fix: delegate to VoipPushAppDelegateSubscriber.scheduleOutgoingTimeout
+  /// which uses DispatchQueue.global(qos: .utility) — survives bridge
+  /// teardown. The closure captures only ExpoCallKitModule.sharedProvider
+  /// (weak class-static), so it can fire reportCall(.unanswered) even
+  /// after this instance dies.
   internal func scheduleOutgoingTimeout(callId: String) {
-    let timer = DispatchSource.makeTimerSource(queue: stateQueue)
-    timer.schedule(deadline: .now() + 45.0)
-    timer.setEventHandler { [weak self] in
-      guard let self = self else { return }
-      // Still tracked as active? If not, was already ended cleanly.
-      let stillActive = self.safeStateSync { self.activeCalls[callId] != nil }
-      guard stillActive else { return }
-      NSLog("[ExpoCallKit][outgoing-timeout] 45s — auto-ending unanswered callId=\(callId)")
-      // Run on main to be safe with CallKit APIs.
-      DispatchQueue.main.async {
-        self.endCallActionWithReason(callId: callId, reasonRaw: "unanswered")
-      }
-      // Clear the timer ref so callEnded cleanup is idempotent.
-      self.safeStateSync { _ = self.outgoingCallTimers.removeValue(forKey: callId) }
+    guard let uuid = safeStateSync({ activeCalls[callId] }) else {
+      NSLog("[ExpoCallKit][WAVE163] scheduleOutgoingTimeout: no UUID for callId=\(callId)")
+      return
     }
-    timer.resume()
-    safeStateSync { outgoingCallTimers[callId] = timer }
+    VoipPushAppDelegateSubscriber.scheduleOutgoingTimeout(callId: callId, uuid: uuid)
   }
 
   internal func cancelOutgoingTimeout(callId: String) {
-    let removed = safeStateSync { outgoingCallTimers.removeValue(forKey: callId) }
-    removed?.cancel()
+    VoipPushAppDelegateSubscriber.cancelOutgoingTimeout(callId: callId)
   }
 
   func callEnded(uuid: UUID) {
