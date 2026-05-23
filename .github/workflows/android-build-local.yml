@@ -142,8 +142,8 @@ jobs:
           # step env guarantees the immediate child process sees it. Gradle
           # falls back from ANDROID_HOME → ANDROID_SDK_ROOT → local.properties,
           # so we feed all three.
-          ANDROID_HOME: $ANDROID_HOME
-          ANDROID_SDK_ROOT: $ANDROID_HOME
+          ANDROID_HOME: /Users/runner/Library/Android/sdk
+          ANDROID_SDK_ROOT: /Users/runner/Library/Android/sdk
           SENTRY_DISABLE_AUTO_UPLOAD: 'true'
           SENTRY_ALLOW_FAILURE: 'true'
         run: |
