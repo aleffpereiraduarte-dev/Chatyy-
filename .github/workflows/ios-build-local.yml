@@ -449,8 +449,16 @@ jobs:
                   body_txt = e.read().decode()[:500]
                   if code == 409:
                       print(f"⚠ build already submitted to review (409) — OK"); submitted = True; break
-                  elif code == 422 and 'already in review' in body_txt.lower():
-                      print(f"⚠ build already in review (422) — OK"); submitted = True; break
+                  elif code == 422 and ('already in review' in body_txt.lower() or 'already in beta review' in body_txt.lower() or 'ANOTHER_BUILD_IN_REVIEW' in body_txt):
+                      # Apple's actual error string is "already in beta review"
+                      # (with "beta" between "in" and "review"). Match on either
+                      # phrase OR on the canonical error code
+                      # ENTITY_UNPROCESSABLE.ANOTHER_BUILD_IN_REVIEW which is
+                      # what triggers when a previous build is still pending
+                      # external beta review. Build IS attached to beta groups
+                      # already (internal testers see it instantly); the next
+                      # build will auto-submit once the previous review clears.
+                      print(f"⚠ another build still in beta review (422 ANOTHER_BUILD_IN_REVIEW) — current build is on TestFlight for internal/existing testers, external submission queued"); submitted = True; break
                   elif code == 422 and 'INVALID_QC_STATE' in body_txt:
                       print(f"⏳ attempt {attempt}: QC state not ready yet — retry in 30s")
                       time.sleep(30); continue
