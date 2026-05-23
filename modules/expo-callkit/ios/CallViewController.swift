@@ -745,11 +745,25 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // also calls dismissActiveCallSurfaces — idempotent vs. our explicit
         // dismiss below.
         if let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId) {
-            let controller = CXCallController(queue: .main)
-            let action = CXEndCallAction(call: uuid)
-            controller.request(CXTransaction(action: action)) { error in
-                if let error = error {
-                    print("[CallVC] handleHangup CXEndCallAction error: \(error.localizedDescription)")
+            // [WAVE 157 2026-05-22] If outgoing call wasn't yet connected
+            // (peer hasn't tapped Accept — status still "Chamando…"),
+            // CallKit treats CXEndCallAction as a no-op because it expects
+            // the call to be in connected state. Result user reported:
+            // "depois que clico em desligar a chamada o nativo ainda fica
+            // la conectando". Fix: use provider.reportCall(.unanswered)
+            // which tears down the system pill without requiring a prior
+            // Connected transition.
+            let isUnanswered = isOutgoing && session.status != "Conectado"
+            if isUnanswered, let provider = VoipPushAppDelegateSubscriber.earlyProvider {
+                provider.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
+                print("[CallVC] handleHangup reportCall(.unanswered) uuid=\(uuid) — outgoing canceled before answer")
+            } else {
+                let controller = CXCallController(queue: .main)
+                let action = CXEndCallAction(call: uuid)
+                controller.request(CXTransaction(action: action)) { error in
+                    if let error = error {
+                        print("[CallVC] handleHangup CXEndCallAction error: \(error.localizedDescription)")
+                    }
                 }
             }
         } else {
