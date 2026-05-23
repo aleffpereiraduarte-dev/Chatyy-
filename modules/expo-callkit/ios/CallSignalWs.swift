@@ -620,14 +620,42 @@ final class CallSignalWs: NSObject {
 
             // 2. If CallKit is currently showing this call (incoming RING
             //    that the user hasn't answered yet, or active call), report
-            //    the remote end so the system UI dismisses. We use the early
-            //    provider because it's installed before the module is loaded
-            //    in the cold-start path; the live module's provider takes
-            //    over once RN finishes loading and adopts pending calls.
-            if let uuid = stashedUUID,
-               let provider = VoipPushAppDelegateSubscriber.earlyProvider {
-                provider.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
+            //    the remote end so the system UI dismisses.
+            //    [WAVE 169 fix] Fire on BOTH providers — outgoing calls live
+            //    on sharedProvider, incoming (VoIP push) on earlyProvider.
+            //    Firing only earlyProvider left outgoing-call CallKit pill
+            //    stuck after the remote peer hung up (same WAVE 159 pattern).
+            if let uuid = stashedUUID {
+                var hit = false
+                if let p = ExpoCallKitModule.sharedProvider {
+                    p.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
+                    NSLog("[CallSignalWs] call_end \(callId) reportCall(.remoteEnded) via sharedProvider")
+                    hit = true
+                }
+                if let p = VoipPushAppDelegateSubscriber.earlyProvider, p !== ExpoCallKitModule.sharedProvider {
+                    p.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
+                    NSLog("[CallSignalWs] call_end \(callId) reportCall(.remoteEnded) via earlyProvider")
+                    hit = true
+                }
+                if !hit {
+                    NSLog("[CallSignalWs] call_end \(callId) NO providers — relying on JS path")
+                }
             }
+            // 3. Belt-and-suspenders: also fire CXEndCallAction so CallKit
+            //    state machine transitions correctly for connected calls
+            //    (reportCall .remoteEnded is only valid pre-answer).
+            if let uuid = stashedUUID {
+                let ctrl = CXCallController(queue: .main)
+                let action = CXEndCallAction(call: uuid)
+                ctrl.request(CXTransaction(action: action)) { error in
+                    if let error = error {
+                        NSLog("[CallSignalWs] call_end CXEndCallAction error: \(error.localizedDescription)")
+                    }
+                }
+            }
+            // 4. Force-dismiss any lingering native call VC in case CallKit
+            //    didn't cascade the dismissal (e.g. presentation chain race).
+            ProviderDelegate.dismissActiveCallSurfaces(reason: "ws_call_end_\(callId)")
         }
     }
 
