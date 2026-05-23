@@ -481,8 +481,11 @@ jobs:
           retention-days: 7
 
       - name: Commit bumped buildNumber back to repo
-        # Only after successful submit, so failed builds don't burn build numbers.
-        if: ${{ success() && (github.event_name == 'push' || inputs.submit == 'true') }}
+        # Runs even if later steps (beta-submit) fail — once altool uploads the
+        # IPA, Apple has burned that buildNumber. Without committing, next CI run
+        # reads stale app.json, bumps to the SAME number, altool rejects
+        # "build already exists" → infinite lockup. (Happened 2026-05-23.)
+        if: ${{ !cancelled() && steps.bump.outputs.build != '' && (github.event_name == 'push' || inputs.submit == 'true') }}
         run: |
           git config user.email "actions@github.com"
           git config user.name "github-actions[bot]"
