@@ -768,11 +768,28 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // WAVE 158 fix: try BOTH. iOS accepts whichever is valid for the
             // current state; the other is a safe no-op. We don't even need
             // to guess.
-            if let provider = VoipPushAppDelegateSubscriber.earlyProvider {
-                provider.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
-                print("[CallVC] handleHangup reportCall(.unanswered) uuid=\(uuid)")
-            } else {
-                print("[CallVC] handleHangup: earlyProvider nil — skipping reportCall, relying on CXEndCallAction")
+            // [WAVE 159 2026-05-22] Fire reportCall on BOTH providers — the
+            // module's main provider (which owns outgoing calls) AND the
+            // earlyProvider (which owns incoming-from-VoIP-push calls).
+            // Whichever one registered THIS call will react; the other is
+            // a no-op. Was firing only earlyProvider before, which is why
+            // outgoing calls' pill stayed ghost on screen.
+            //
+            // CXProvider.reportCall is idempotent and safe to call on a
+            // provider that doesn't know the UUID, so dual-fire is correct.
+            var hitAtLeastOne = false
+            if let p = ExpoCallKitModule.sharedProvider {
+                p.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
+                print("[CallVC] handleHangup reportCall(.unanswered) via sharedProvider uuid=\(uuid)")
+                hitAtLeastOne = true
+            }
+            if let p = VoipPushAppDelegateSubscriber.earlyProvider, p !== ExpoCallKitModule.sharedProvider {
+                p.reportCall(with: uuid, endedAt: Date(), reason: .unanswered)
+                print("[CallVC] handleHangup reportCall(.unanswered) via earlyProvider uuid=\(uuid)")
+                hitAtLeastOne = true
+            }
+            if !hitAtLeastOne {
+                print("[CallVC] handleHangup: NO providers available — relying on CXEndCallAction")
             }
             let controller = CXCallController(queue: .main)
             let action = CXEndCallAction(call: uuid)

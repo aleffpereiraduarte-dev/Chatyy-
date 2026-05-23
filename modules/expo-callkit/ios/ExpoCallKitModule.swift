@@ -134,6 +134,21 @@ public class ExpoCallKitModule: Module {
   /// access time).
   private static var sharedUUIDLock = NSLock()
   private static var sharedUUIDByCallId: [String: UUID] = [:]
+
+  // [WAVE 159 2026-05-22] Expose the module's CXProvider so CallViewController
+  // (which is created by the module and lives in a different file) can call
+  // reportCall(with:endedAt:reason:) on the SAME provider that owns the call.
+  //
+  // Apple constraint: reportCall is a no-op if called on a different provider
+  // than the one that registered the call. We had 3 providers (module main +
+  // earlyProvider + ephemeral fallback), so the user-hangup branch was firing
+  // reportCall on the WRONG one and CallKit's pill stayed on screen.
+  //
+  // Now CallViewController.handleHangup falls back to this shared reference
+  // when earlyProvider is nil OR when the call was created via the module's
+  // own provider (the common case for outgoing calls).
+  static weak var sharedProvider: CXProvider?
+
   static func sharedCallKitUUID(forCallId callId: String) -> UUID? {
     sharedUUIDLock.lock()
     defer { sharedUUIDLock.unlock() }
@@ -1422,6 +1437,12 @@ public class ExpoCallKitModule: Module {
     }
 
     provider = CXProvider(configuration: config)
+    // [WAVE 159 2026-05-22] Publish the module's provider so CallViewController
+    // (in another file) can call reportCall on the SAME instance that owns
+    // the call. Without this, reportCall(.unanswered) was firing on
+    // earlyProvider — a different CXProvider — and CallKit ignored it,
+    // leaving the system pill ghost on screen.
+    ExpoCallKitModule.sharedProvider = provider
     providerDelegate = ProviderDelegate(module: self)
     provider?.setDelegate(providerDelegate, queue: DispatchQueue.main)
     callController = CXCallController()
