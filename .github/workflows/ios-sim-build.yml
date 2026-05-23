@@ -99,7 +99,7 @@ jobs:
           echo "tarball=$RUNNER_TEMP/chatyy-sim.tar.gz" >> $GITHUB_OUTPUT
 
       - name: Upload .app as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chatyy-ios-sim
           path: ${{ steps.pkg.outputs.tarball }}
