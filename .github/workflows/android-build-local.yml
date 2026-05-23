@@ -2,7 +2,7 @@ name: Android Build (self-hosted, prod 18-vCPU)
 
 # Builds .aab on the self-hosted runner running on chatyy-prod
 # (217.216.67.99, 18 vCPU / 94GB RAM, Ubuntu 26.04, Android SDK preinstalled
-# at /opt/android-sdk). Expected build time ~5-8min cold, ~3-5min warm cache.
+# at $ANDROID_HOME). Expected build time ~5-8min cold, ~3-5min warm cache.
 # No per-minute cost — server is already paid for.
 #
 # Hosted GitHub runners (ubuntu-latest 2-core, macos-latest 3-core) both
@@ -32,11 +32,11 @@ permissions:
 
 jobs:
   build:
-    # 2026-05-20: voltei pro self-hosted (chatyy prod server 217.216.67.99).
-    # GitHub Large Runners requerem billing pago — user prefere usar próprio
-    # servidor mesmo que 40min vs 8min. Ubuntu-latest standard só dá 2-core
-    # em private repos = na verdade mais lento que self-hosted Ryzen.
-    runs-on: [self-hosted, linux, android-build]
+    # 2026-05-22: switched to macos-latest-xlarge (same as iOS workflow).
+    # User reported self-hosted Ryzen too slow today (~17-40min runs).
+    # macos-latest-xlarge has Android SDK pre-installed and 6 vCPU =
+    # ~8-12min builds. Billing already paid via iOS workflow.
+    runs-on: macos-latest-xlarge
     timeout-minutes: 60
     steps:
       - name: Sanity check — required secrets
@@ -64,15 +64,17 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
 
-      # Self-hosted runner has Android SDK at /opt/android-sdk preinstalled.
-      # No setup-android step needed — just point EAS/Gradle at it.
+      # macos-latest-xlarge has Android SDK pre-installed at
+      # /Users/runner/Library/Android/sdk via ANDROID_HOME env var.
       - name: Configure Android SDK env
         run: |
-          echo "ANDROID_HOME=/opt/android-sdk" >> $GITHUB_ENV
-          echo "ANDROID_SDK_ROOT=/opt/android-sdk" >> $GITHUB_ENV
-          echo "/opt/android-sdk/cmdline-tools/latest/bin" >> $GITHUB_PATH
-          echo "/opt/android-sdk/platform-tools" >> $GITHUB_PATH
-          ls /opt/android-sdk/platform-tools 2>/dev/null | head -3 || echo "WARN: platform-tools missing"
+          : "${ANDROID_HOME:=/Users/runner/Library/Android/sdk}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "$ANDROID_HOME/platform-tools" >> $GITHUB_PATH
+          echo "Resolved ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/platform-tools" 2>/dev/null | head -3 || echo "WARN: platform-tools missing"
 
       # gcloud-sa-key.json e asc_key.p8 estao gitignored, entao checkout nao
       # tem esses arquivos. Copiar de /var/lib/ghrunner-secrets/ (path
@@ -140,8 +142,8 @@ jobs:
           # step env guarantees the immediate child process sees it. Gradle
           # falls back from ANDROID_HOME → ANDROID_SDK_ROOT → local.properties,
           # so we feed all three.
-          ANDROID_HOME: /opt/android-sdk
-          ANDROID_SDK_ROOT: /opt/android-sdk
+          ANDROID_HOME: $ANDROID_HOME
+          ANDROID_SDK_ROOT: $ANDROID_HOME
           SENTRY_DISABLE_AUTO_UPLOAD: 'true'
           SENTRY_ALLOW_FAILURE: 'true'
         run: |
