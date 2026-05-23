@@ -116,6 +116,18 @@ public class ExpoCallKitModule: Module {
     }
   }
 
+  /// [WAVE 164 instant-end 2026-05-22] Internal helper for ProviderDelegate
+  /// to read conversation_id from the stored callPayloads (private) without
+  /// breaking encapsulation. Called from the CXEndCallAction handler so it
+  /// can fire `call_end` via CallSignalWs with the right routing channel
+  /// BEFORE `callEnded(uuid:)` purges the payload.
+  internal func conversationIdForCall(_ callId: String) -> String {
+    return safeStateSync {
+      guard let payload = callPayloads[callId] else { return "" }
+      return (payload["conversation_id"] as? String) ?? ""
+    }
+  }
+
   /// [#1184 dismiss fix, 2026-05-19] Shared snapshot of `callId → UUID` so
   /// non-module static contexts (CallSignalWs.handleIncomingCallEndLocked,
   /// CallViewController.room(_:didDisconnectWithError:)) can fall back to
@@ -2730,6 +2742,26 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // from JS-driven ones (the latter go through endCall → endCallAction).
     CallSessionObserver.shared.markEnded(uuid: action.callUUID)
     let callIdForEnd = module?.callIdForUUID(action.callUUID) ?? action.callUUID.uuidString
+    // [WAVE 164 instant-end 2026-05-22] Fire call_end via WS to the peer
+    // IMMEDIATELY when the user taps the CallKit red button. Without this
+    // the WS frame only went out via JS / CallViewController.handleHangup,
+    // which is NOT reachable from three CXEndCallAction paths:
+    //   1. User taps red on the lock-screen CallKit UI (app backgrounded)
+    //   2. User taps red on the in-call CallKit native sheet
+    //   3. CallKit-driven decline from a different sibling device
+    // In all three cases the peer used to keep "Conectado" / ringing for
+    // ~30s until chat_call_state GC marked the row ended. Telegram parity:
+    // phone.discardCall is fired the instant CXEndCallAction handler runs.
+    // Pull conversation_id from the stored payload BEFORE callEnded()
+    // drops it from callPayloads.
+    let convIdForEnd: String = module?.conversationIdForCall(callIdForEnd) ?? ""
+    if !callIdForEnd.isEmpty {
+      CallSignalWs.shared.fireCallEnd(
+        callId: callIdForEnd,
+        conversationId: convIdForEnd,
+        reason: "user_hangup_callkit"
+      )
+    }
     module?.safeSendEvent("onCallEnded", [
       "uuid": action.callUUID.uuidString,
       "callId": callIdForEnd,
