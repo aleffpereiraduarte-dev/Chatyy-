@@ -199,6 +199,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // Cleared in deinit.
     private var remoteAnsweredObserver: NSObjectProtocol?
 
+    private var remoteParticipantCount: Int = 0
+
     // Stash for the mic-enabled state we owned right before an AVAudioSession
     // interruption. Read back when the interruption ends so the user comes
     // out in the same state they went in.
@@ -557,6 +559,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         e2eLabel.font = .systemFont(ofSize: 11, weight: .medium)
         e2eBadge.addSubview(e2eLabel)
 
+        let participantCountLabel = UILabel()
+        participantCountLabel.translatesAutoresizingMaskIntoConstraints = false
+        participantCountLabel.textColor = UIColor.white.withAlphaComponent(0.7)
+        participantCountLabel.font = .systemFont(ofSize: 14, weight: .medium)
+        participantCountLabel.textAlignment = .center
+        participantCountLabel.tag = 9040
+        participantCountLabel.isHidden = !session.isGroup
+        view.addSubview(participantCountLabel)
+
         NSLayoutConstraint.activate([
             // Top bar
             topBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
@@ -622,6 +633,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             e2eLabel.leadingAnchor.constraint(equalTo: e2eLock.trailingAnchor, constant: 6),
             e2eLabel.trailingAnchor.constraint(equalTo: e2eBadge.trailingAnchor, constant: -10),
             e2eLabel.centerYAnchor.constraint(equalTo: e2eBadge.centerYAnchor),
+
+            // Participant count (group calls)
+            participantCountLabel.topAnchor.constraint(equalTo: e2eBadge.bottomAnchor, constant: 12),
+            participantCountLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
 
             // Button row 1 (3 buttons evenly spaced)
             muteButton.widthAnchor.constraint(equalToConstant: 64),
@@ -2333,7 +2348,27 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     }
 
     @objc private func uikitOnVideoToggle() {
-        print("[CallVC] video toggle tapped — not wired yet")
+        let desired = !session.camEnabled
+        session.camEnabled = desired
+        applyCamEnabled(desired)
+        if let btn = view.viewWithTag(9005) as? UIButton {
+            let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
+            btn.setImage(UIImage(systemName: desired ? "video.fill" : "video.slash.fill", withConfiguration: cfg), for: .normal)
+        }
+    }
+
+    private func updateParticipantCountLabel() {
+        guard let lbl = view.viewWithTag(9040) as? UILabel else { return }
+        let total = remoteParticipantCount + 1
+        if session.isGroup && remoteParticipantCount > 0 {
+            lbl.text = "\(total) participantes"
+            lbl.isHidden = false
+        } else if session.isGroup {
+            lbl.text = "Aguardando participantes..."
+            lbl.isHidden = false
+        } else {
+            lbl.isHidden = true
+        }
     }
 
     private func cleanupCallTimers() {
@@ -2567,6 +2602,8 @@ extension CallViewController: RoomDelegate {
                     NSLog("[CallVC][WAVE161] reportOutgoingCall(connectedAt:) on ParticipantConnected")
                 }
             }
+            self.remoteParticipantCount += 1
+            self.updateParticipantCountLabel()
         }
         // [#1207 NativeCallRoom REAL] Fanout so JS chat header / call grid
         // can mark the peer as joined.
@@ -2583,6 +2620,8 @@ extension CallViewController: RoomDelegate {
             guard let self = self else { return }
             // 1:1 fallback: clear the remote video track when the peer leaves.
             self.session.remoteVideoTrack = nil
+            self.remoteParticipantCount = max(0, self.remoteParticipantCount - 1)
+            self.updateParticipantCountLabel()
         }
         // [#1207 NativeCallRoom REAL] Fanout so JS can drop the peer tile.
         NativeCallRoom.shared.participantDisconnected(identity: identity)

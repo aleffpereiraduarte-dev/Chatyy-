@@ -522,6 +522,7 @@ export async function startOutgoingCall({
   // camelCase→snake_case remap with the `s()` coercion fixed in the
   // earlier round. Logging the exact payload sent to the wrapper makes
   // any subsequent "Value is undefined" trivial to root-cause.
+  const v2Data = v2Resp?.data || {};
   const nativePayload = {
     calleeEmail: String(calleeEmail ?? ''),
     calleeName: String(calleeName || calleeEmail || ''),
@@ -531,6 +532,8 @@ export async function startOutgoingCall({
     roomName: String(cid ?? ''),
     conversationId: String(conversationId ?? ''),
     callId: String(cid ?? ''),
+    lkUrl: v2Data.lk_url ? String(v2Data.lk_url) : '',
+    lkToken: v2Data.lk_token ? String(v2Data.lk_token) : '',
   };
   try {
     console.log('[CALL-TRACE][4/12] ExpoCallKit.startOutgoingCall payload', {
