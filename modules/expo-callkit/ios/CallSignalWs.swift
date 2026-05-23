@@ -655,7 +655,7 @@ final class CallSignalWs: NSObject {
             }
             // 4. Force-dismiss any lingering native call VC in case CallKit
             //    didn't cascade the dismissal (e.g. presentation chain race).
-            ProviderDelegate.dismissActiveCallSurfaces(reason: "ws_call_end_\(callId)")
+            ExpoCallKitModule.dismissActiveCallSurfacesFromVC(reason: "ws_call_end_\(callId)")
         }
     }
 
