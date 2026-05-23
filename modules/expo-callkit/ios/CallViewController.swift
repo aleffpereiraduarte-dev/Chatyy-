@@ -730,7 +730,42 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // didDisconnect path; runs in handleHangup because user-initiated
             // hangup teardown happens BEFORE the LK disconnect callback lands.
             NativeCallRoom.shared.clear()
-            Task { await r.disconnect() }
+            // [WAVE 166 battle-tested disconnect 2026-05-23] Task.detached +
+            // timeout + retry pattern from LiveKit Swift SDK Issues #583,
+            // #729, #757 (officially recommended workaround thread maintainer
+            // 2025-08). Replaces fire-and-forget `Task { await r.disconnect() }`
+            // which had 3 known failure modes:
+            //   #583 — cleanUpRTC() not called when Task is interrupted →
+            //          next Room.connect() fails (audio/video render dies).
+            //          Fix: drop strong refs BEFORE await (self.room = nil above).
+            //   #729 — disconnect() never returns on flaky network → Task
+            //          leaks holding Room ref → memory grows + peer sees
+            //          "Conectado" stale forever. Fix: 3s timeout via
+            //          withTaskGroup, cancel and move on.
+            //   #757 — SignalClient.socket = nil race during reconnect →
+            //          sendLeave() fails silently → peer thinks we're still
+            //          connected. Maintainer workaround: call disconnect()
+            //          again if connectionState != .disconnected after first.
+            // Room is @unchecked Sendable (Room.swift line 31: `public class
+            // Room: NSObject, @unchecked Sendable, ...`) so the cross-actor
+            // capture is safe under Swift 6 strict concurrency. Task.detached
+            // breaks the @MainActor isolation chain inherited from
+            // CallViewController so the disconnect doesn't race the audio
+            // session teardown that CallKit does in provider:didDeactivate:.
+            Task.detached(priority: .userInitiated) {
+                await withTaskGroup(of: Void.self) { group in
+                    group.addTask { await r.disconnect() }
+                    group.addTask {
+                        try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    }
+                    _ = await group.next()
+                    group.cancelAll()
+                }
+                if r.connectionState != .disconnected {
+                    print("[CallVC] handleHangup: LK disconnect retry — connectionState=\(r.connectionState)")
+                    await r.disconnect()
+                }
+            }
         }
         // [#1184 dismiss fix, 2026-05-19] Fire CXEndCallAction so CallKit
         // tears down its own state (system call bar, lock-screen UI, the
