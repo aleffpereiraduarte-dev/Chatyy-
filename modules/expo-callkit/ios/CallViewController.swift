@@ -294,7 +294,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // [WAVE 155 2026-05-22] UIKit call screen — WhatsApp-style polish.
         // Avatar circle + name + status + 3 buttons. Zero SwiftUI.
 
-        // Gradient background (CALayer, no SwiftUI)
+        // ── WAVE 172 — UIKit Telegram-style call screen ──────────────────
+        // Zero SwiftUI. Pure CALayer + UIView + UILabel + UIButton.
+        // Matches Android Compose CallScreen visual: gradient BG, 180pt
+        // avatar with pulse rings, glassmorphism buttons, animated dots.
+
+        let bounds = UIScreen.main.bounds
+
+        // 1. Gradient background
         let gradient = CAGradientLayer()
         gradient.colors = [
             UIColor(red: 0x1A/255.0, green: 0x0F/255.0, blue: 0x2E/255.0, alpha: 1.0).cgColor,
@@ -302,16 +309,64 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         ]
         gradient.startPoint = CGPoint(x: 0.5, y: 0.0)
         gradient.endPoint = CGPoint(x: 0.5, y: 1.0)
-        gradient.frame = UIScreen.main.bounds
+        gradient.frame = bounds
         view.layer.insertSublayer(gradient, at: 0)
 
-        // Avatar circle — gradient purple, initial letter inside
-        let avatarSize: CGFloat = 132
+        // 2. Pulse rings container (3 rings, CAReplicatorLayer + CABasicAnimation)
+        let pulseContainer = UIView()
+        pulseContainer.translatesAutoresizingMaskIntoConstraints = false
+        pulseContainer.isUserInteractionEnabled = false
+        view.addSubview(pulseContainer)
+
+        func addPulseRing(delay: CFTimeInterval) {
+            let ring = CAShapeLayer()
+            ring.path = UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: 210, height: 210)).cgPath
+            ring.fillColor = UIColor.clear.cgColor
+            ring.strokeColor = UIColor.white.cgColor
+            ring.lineWidth = 2
+            ring.frame = CGRect(x: 0, y: 0, width: 210, height: 210)
+            ring.opacity = 0
+
+            let scaleAnim = CABasicAnimation(keyPath: "transform.scale")
+            scaleAnim.fromValue = 0.76
+            scaleAnim.toValue = 1.42
+            scaleAnim.duration = 1.8
+            scaleAnim.repeatCount = .infinity
+            scaleAnim.beginTime = CACurrentMediaTime() + delay
+
+            let fadeAnim = CABasicAnimation(keyPath: "opacity")
+            fadeAnim.fromValue = 0.44
+            fadeAnim.toValue = 0.0
+            fadeAnim.duration = 1.8
+            fadeAnim.repeatCount = .infinity
+            fadeAnim.beginTime = CACurrentMediaTime() + delay
+
+            ring.add(scaleAnim, forKey: "pulse-scale")
+            ring.add(fadeAnim, forKey: "pulse-fade")
+            pulseContainer.layer.addSublayer(ring)
+        }
+        addPulseRing(delay: 0)
+        addPulseRing(delay: 0.6)
+        addPulseRing(delay: 1.2)
+
+        // 3. Avatar circle — 180pt, gradient purple
+        let avatarSize: CGFloat = 180
         let avatarView = UIView()
         avatarView.translatesAutoresizingMaskIntoConstraints = false
-        avatarView.backgroundColor = UIColor(red: 0x7C/255.0, green: 0x3A/255.0, blue: 0xED/255.0, alpha: 1.0)
+        let avatarGradient = CAGradientLayer()
+        avatarGradient.colors = [
+            UIColor(red: 0x7C/255.0, green: 0x3A/255.0, blue: 0xED/255.0, alpha: 1.0).cgColor,
+            UIColor(red: 0x5B/255.0, green: 0x21/255.0, blue: 0xB6/255.0, alpha: 1.0).cgColor
+        ]
+        avatarGradient.frame = CGRect(x: 0, y: 0, width: avatarSize, height: avatarSize)
+        avatarGradient.cornerRadius = avatarSize / 2
+        avatarView.layer.addSublayer(avatarGradient)
         avatarView.layer.cornerRadius = avatarSize / 2
         avatarView.clipsToBounds = true
+        avatarView.layer.shadowColor = UIColor.black.cgColor
+        avatarView.layer.shadowOpacity = 0.5
+        avatarView.layer.shadowRadius = 16
+        avatarView.layer.shadowOffset = CGSize(width: 0, height: 8)
         view.addSubview(avatarView)
 
         let initial = String((callerName.isEmpty ? callerEmail : callerName).trimmingCharacters(in: .whitespaces).prefix(1)).uppercased()
@@ -319,10 +374,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         initialLabel.translatesAutoresizingMaskIntoConstraints = false
         initialLabel.text = initial
         initialLabel.textColor = .white
-        initialLabel.font = .systemFont(ofSize: 52, weight: .semibold)
+        initialLabel.font = .systemFont(ofSize: 72, weight: .semibold)
         initialLabel.textAlignment = .center
         avatarView.addSubview(initialLabel)
 
+        // 4. Name + Status labels
         let nameLabel = UILabel()
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.text = callerName.isEmpty ? callerEmail : callerName
@@ -335,34 +391,49 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         let statusLabel = UILabel()
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.text = isOutgoing ? "Chamando…" : "Conectando…"
-        statusLabel.textColor = UIColor.white.withAlphaComponent(0.72)
-        statusLabel.font = .systemFont(ofSize: 17, weight: .regular)
+        statusLabel.textColor = UIColor.white.withAlphaComponent(0.65)
+        statusLabel.font = .systemFont(ofSize: 16, weight: .medium)
         statusLabel.textAlignment = .center
         statusLabel.tag = 9001
         view.addSubview(statusLabel)
 
-        // Helper to build round symbol buttons
-        func roundButton(symbol: String, title: String, tag: Int, action: Selector, isDestructive: Bool = false) -> UIButton {
+        // 5. Glass-morphism buttons (UIVisualEffectView + tinted overlay)
+        func glassButton(symbol: String, size: CGFloat, tag: Int, action: Selector, tint: UIColor = UIColor.white.withAlphaComponent(0.16), iconTint: UIColor = .white) -> UIButton {
             let btn = UIButton(type: .system)
             btn.translatesAutoresizingMaskIntoConstraints = false
-            btn.backgroundColor = isDestructive
-                ? UIColor(red: 0xE6/255.0, green: 0x3A/255.0, blue: 0x3A/255.0, alpha: 1.0)
-                : UIColor.white.withAlphaComponent(0.16)
-            btn.tintColor = .white
-            let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
-            btn.setImage(UIImage(systemName: symbol, withConfiguration: cfg), for: .normal)
-            btn.layer.cornerRadius = isDestructive ? 36 : 32
+            btn.layer.cornerRadius = size / 2
+            btn.clipsToBounds = true
             btn.tag = tag
             btn.addTarget(self, action: action, for: .touchUpInside)
+
+            let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
+            blur.frame = CGRect(x: 0, y: 0, width: size, height: size)
+            blur.isUserInteractionEnabled = false
+            blur.layer.cornerRadius = size / 2
+            blur.clipsToBounds = true
+            btn.insertSubview(blur, at: 0)
+
+            let overlay = UIView()
+            overlay.frame = CGRect(x: 0, y: 0, width: size, height: size)
+            overlay.backgroundColor = tint
+            overlay.isUserInteractionEnabled = false
+            btn.insertSubview(overlay, at: 1)
+
+            btn.layer.borderWidth = 1
+            btn.layer.borderColor = UIColor.white.withAlphaComponent(0.22).cgColor
+
+            btn.tintColor = iconTint
+            let cfg = UIImage.SymbolConfiguration(pointSize: size * 0.36, weight: .medium)
+            btn.setImage(UIImage(systemName: symbol, withConfiguration: cfg), for: .normal)
             view.addSubview(btn)
             return btn
         }
 
-        let muteButton = roundButton(symbol: "mic.slash.fill", title: "Mute", tag: 9002, action: #selector(uikitOnMuteTap))
-        let speakerButton = roundButton(symbol: "speaker.wave.2.fill", title: "Speaker", tag: 9003, action: #selector(uikitOnSpeakerTap))
-        let endButton = roundButton(symbol: "phone.down.fill", title: "Encerrar", tag: 9004, action: #selector(uikitOnHangupTap), isDestructive: true)
+        let muteButton = glassButton(symbol: "mic.slash.fill", size: 64, tag: 9002, action: #selector(uikitOnMuteTap))
+        let speakerButton = glassButton(symbol: "speaker.wave.2.fill", size: 64, tag: 9003, action: #selector(uikitOnSpeakerTap))
+        let endButton = glassButton(symbol: "phone.down.fill", size: 72, tag: 9004, action: #selector(uikitOnHangupTap), tint: UIColor(red: 0xE5/255.0, green: 0x39/255.0, blue: 0x35/255.0, alpha: 1.0))
 
-        // Mute/Speaker labels (below buttons)
+        // 6. Sub-labels
         func subLabel(_ text: String) -> UILabel {
             let l = UILabel()
             l.translatesAutoresizingMaskIntoConstraints = false
@@ -378,17 +449,23 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         let endSubLabel = subLabel("Encerrar")
 
         NSLayoutConstraint.activate([
-            // Avatar
+            // Pulse container
+            pulseContainer.widthAnchor.constraint(equalToConstant: 210),
+            pulseContainer.heightAnchor.constraint(equalToConstant: 210),
+            pulseContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            pulseContainer.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 80),
+
+            // Avatar (centered inside pulse)
             avatarView.widthAnchor.constraint(equalToConstant: avatarSize),
             avatarView.heightAnchor.constraint(equalToConstant: avatarSize),
-            avatarView.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            avatarView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 96),
+            avatarView.centerXAnchor.constraint(equalTo: pulseContainer.centerXAnchor),
+            avatarView.centerYAnchor.constraint(equalTo: pulseContainer.centerYAnchor),
 
             initialLabel.centerXAnchor.constraint(equalTo: avatarView.centerXAnchor),
             initialLabel.centerYAnchor.constraint(equalTo: avatarView.centerYAnchor),
 
             // Name
-            nameLabel.topAnchor.constraint(equalTo: avatarView.bottomAnchor, constant: 24),
+            nameLabel.topAnchor.constraint(equalTo: pulseContainer.bottomAnchor, constant: 16),
             nameLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             nameLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
             nameLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24),
@@ -415,7 +492,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             endButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             endButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -60),
 
-            // Sub labels under buttons
+            // Sub labels
             muteSubLabel.topAnchor.constraint(equalTo: muteButton.bottomAnchor, constant: 6),
             muteSubLabel.centerXAnchor.constraint(equalTo: muteButton.centerXAnchor),
 
