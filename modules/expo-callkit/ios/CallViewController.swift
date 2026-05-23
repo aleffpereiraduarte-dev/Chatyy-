@@ -836,7 +836,33 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 }
             }
         } else {
-            print("[CallVC] handleHangup: no shared UUID for \(callId) — CallKit may not dismiss; relying on JS path")
+            print("[CallVC] handleHangup: no shared UUID for \(callId) — NUCLEAR: ending ALL CXCalls")
+        }
+        // [WAVE 170 nuclear fallback] Enumerate ALL active CXCalls and end
+        // each one. Covers the case where our callId→UUID map is stale or
+        // never populated (outgoing calls started from JS with a different
+        // ID format). CXCallObserver.calls is synchronous and returns every
+        // call CallKit knows about. Ending a call that's already ended is
+        // a no-op (CXCallController dedupes). This is the same approach
+        // WhatsApp uses — they end ALL calls on hangup, never look up by ID.
+        let observer = CXCallObserver()
+        let activeCalls = observer.calls.filter { !$0.hasEnded }
+        if !activeCalls.isEmpty {
+            print("[CallVC] handleHangup: NUCLEAR ending \(activeCalls.count) active CXCall(s)")
+            let ctrl = CXCallController(queue: .main)
+            for call in activeCalls {
+                let endAction = CXEndCallAction(call: call.uuid)
+                ctrl.request(CXTransaction(action: endAction)) { error in
+                    if let error = error {
+                        print("[CallVC] NUCLEAR CXEndCallAction \(call.uuid) error: \(error.localizedDescription)")
+                    } else {
+                        print("[CallVC] NUCLEAR CXEndCallAction \(call.uuid) OK")
+                    }
+                }
+                // Also report on both providers as belt-and-suspenders
+                ExpoCallKitModule.sharedProvider?.reportCall(with: call.uuid, endedAt: Date(), reason: .remoteEnded)
+                VoipPushAppDelegateSubscriber.earlyProvider?.reportCall(with: call.uuid, endedAt: Date(), reason: .remoteEnded)
+            }
         }
         forceDismissSelf(reason: "handleHangup")
     }
