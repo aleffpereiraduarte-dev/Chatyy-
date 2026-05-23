@@ -323,9 +323,9 @@ class CallActivity : ComponentActivity() {
         return
       }
       Log.d(TAG, "[WAVE161] callAnsweredReceiver: flipping status to Conectado")
-      stopRingbackTone()
+      stopRingback()
       state.status = "Conectado"
-      state.startedAt = System.currentTimeMillis()
+      state.connectionStartedAt = System.currentTimeMillis()
     }
   }
 
