@@ -144,7 +144,7 @@ private struct AvatarBlurBackground: View {
 // Auto-removed when `active == false`.
 private struct ThreePulseRings: View {
     let active: Bool
-    var baseSize: CGFloat = 182
+    var baseSize: CGFloat = 210
 
     var body: some View {
         if active {
@@ -226,10 +226,8 @@ private struct AnimatedDotsText: View {
     }
 }
 
-// [WAVE 142 GPT-5.5-pro] Snippet 8 — 132pt avatar circle with deterministic
-// gradient fill + initial letter + AsyncImage overlay. Replaces the inline
-// stack inside `avatarBlock` so the new pulse rings + speaker glow can
-// compose around it cleanly.
+// [WAVE 163] 180pt avatar circle matching Android's 180dp AvatarCircle.
+// Deterministic gradient fill + initial letter 72sp + AsyncImage overlay.
 private struct PolishedAvatarCircle: View {
     let name: String
     let email: String
@@ -253,7 +251,7 @@ private struct PolishedAvatarCircle: View {
                 .shadow(color: .black.opacity(0.5), radius: 16, x: 0, y: 8)
 
             Text(initial.isEmpty ? "?" : initial)
-                .font(.system(size: 54, weight: .semibold, design: .rounded))
+                .font(.system(size: 72, weight: .semibold, design: .rounded))
                 .foregroundColor(.white)
 
             if !avatarUrl.isEmpty, let url = URL(string: avatarUrl) {
@@ -268,7 +266,7 @@ private struct PolishedAvatarCircle: View {
                 }
             }
         }
-        .frame(width: 132, height: 132)
+        .frame(width: 180, height: 180)
     }
 }
 
@@ -419,36 +417,31 @@ struct CallView: View {
 
     // MARK: - Body
 
-    // [WAVE 153 2026-05-22] NUCLEAR FIX — CallView SwiftUI inteiro renderiza
-    // EmptyView. Crash em build 552/553/554 todos no _UIHostingView.layoutSubviews
-    // → DynamicBody.updateValue → metadata cache infinite loop. CallView (1795
-    // linhas, ZStacks aninhados, GeometryReaders, Pulse rings, glassmorphism)
-    // não converge no layout SwiftUI. WAVE 152 desabilitou só uma das 5 entradas
-    // de criação de CallViewController; CXStartCallAction continuava criando.
+    // [WAVE 163 2026-05-23] REWRITE — Rich SwiftUI UI restored. WAVE 153/154
+    // disabled it due to layout-loop crashes (builds 552-555). Root causes:
+    //   1. Timer.publish().autoconnect() → fixed in WAVE 151 via TimelineView
+    //   2. .frame(width: baseSize * p) in PulseRings → fixed WAVE 148 via scaleEffect
+    //   3. Button + StyleBodyAccessor recursion → fixed HERE by replacing ALL
+    //      Button views with plain Views + .onTapGesture / .highPriorityGesture.
+    //      SwiftUI's internal StyleBodyAccessor resolves the full ButtonStyle
+    //      tree on every layout pass; with ~30 buttons in a deep ZStack this
+    //      caused metadata-cache infinite loops. Plain views + tap gestures
+    //      bypass the entire ButtonStyle subsystem.
+    //   4. GeometryReader in localPreviewTile caused re-layout cascades →
+    //      replaced with fixed offset positioning.
+    //   5. .sheet(isPresented:) kept a lingering presentation anchor in the
+    //      view tree → replaced with overlay-based audio picker.
     //
-    // WAVE 153 mata pela raiz: body = EmptyView. CallViewController + UIHostingController
-    // ainda são instanciados (pra não quebrar callsites) mas renderizam NADA.
-    // Zero SwiftUI tree = zero layout loop = zero crash.
-    //
-    // Resultado: durante call, app não mostra a UI rica (apenas CallKit nativa).
-    // Ligação FUNCIONA. Hangup FUNCIONA. Sem crash.
-    //
-    // TODO: reescrever CallView em UIKit puro (estilo Telegram, ~200 linhas)
-    // pra ter UI bonita SEM SwiftUI layout-loop. Próxima sessão.
+    // All existing functionality (hangup, mute, cam, speaker, reactions,
+    // DTMF keypad, audio picker, etc.) is preserved. Only the SwiftUI
+    // rendering approach changes.
     var body: some View {
-        Color.black.ignoresSafeArea()
-    }
-
-    private var _legacyBodyDisabled: some View {
         ZStack {
             // ── 1. Background (remote video when subscribed; gradient otherwise)
             backgroundLayer
                 .ignoresSafeArea()
 
-            // ── 2. Subtle glassmorphism overlay so the avatar / status text
-            //      stay readable even when the remote feed is bright. Skipped
-            //      when there's no video so the dark color shows through.
-            // [WAVE 142 GPT-5.5-pro] Snippet 10 — gate on first-frame too.
+            // ── 2. Dim overlay for readability (audio or pre-first-frame)
             if !hasVideo || !session.remoteVideoFirstFrame {
                 LinearGradient(
                     colors: [
@@ -461,25 +454,17 @@ struct CallView: View {
                 .ignoresSafeArea()
             }
 
-            // ── 3. Main content stack (avatar + name + status + controls)
+            // ── 3. Main content column
             VStack(spacing: 0) {
                 topBar
                     .padding(.horizontal, 16)
                     .padding(.top, 12)
                     .opacity(controlsVisible ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.25), value: controlsVisible)
 
                 Spacer().frame(height: 24)
 
-                // 1:1 layout: show avatar block when no remote video.
-                // [WAVE 142 GPT-5.5-pro] Snippet 10 — gate on
-                // `remoteVideoFirstFrame` (not just track presence) so the
-                // crossfade ducks the avatar AFTER the first decoded frame
-                // arrives. `.transition(.opacity + scale)` softens the swap.
                 if !hasVideo || !session.remoteVideoFirstFrame {
                     avatarBlock
-                        .transition(.opacity.combined(with: .scale(scale: 0.985)))
-                        .animation(.easeInOut(duration: 0.30), value: session.remoteVideoFirstFrame)
                 }
 
                 Spacer()
@@ -488,10 +473,9 @@ struct CallView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 36)
                     .opacity(controlsVisible ? 1 : 0)
-                    .animation(.easeInOut(duration: 0.25), value: controlsVisible)
             }
 
-            // ── 4. Local preview PiP (draggable, top-right by default)
+            // ── 4. Local preview PiP (top-right, draggable)
             if hasVideo, session.camEnabled, let local = session.localVideoTrack {
                 localPreviewTile(local)
             }
@@ -504,7 +488,7 @@ struct CallView: View {
             }
             .allowsHitTesting(false)
 
-            // ── 6. Quick-reactions emoji bar (slides up from bottom)
+            // ── 6. Quick-reactions emoji bar
             if showEmojiBar {
                 VStack {
                     Spacer()
@@ -514,28 +498,28 @@ struct CallView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            // ── 7. More sheet overlay (raise hand, recording, hold)
+            // ── 7. More sheet overlay
             if showMoreSheet {
                 moreSheetOverlay
                     .transition(.opacity)
             }
 
-            // ── 8. [DTMF, 2026-05-19] Keypad overlay. Sits between the
-            // background and the action bar so the user can still see the
-            // hangup button (the overlay leaves the bottom of the action bar
-            // exposed via padding). Tap outside the keypad card dismisses.
+            // ── 8. DTMF Keypad overlay
             if showKeypad {
                 keypadOverlay
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            // ── 9. Audio picker overlay (replaces .sheet to avoid
+            //       presentation-anchor layout recursion)
+            if showAudioPicker {
+                audioPickerOverlay
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .preferredColorScheme(.dark)
         .contentShape(Rectangle())
         .onTapGesture {
-            // Single tap on the call body toggles control visibility — matches
-            // the JS /call.js handleScreenTap behavior. Only applies once video
-            // is up and the peer is connected; otherwise the controls stay
-            // pinned so the user can hang up from the ringing state.
             if hasVideo && session.remoteVideoTrack != nil {
                 toggleControls()
             }
@@ -545,25 +529,13 @@ struct CallView: View {
             startPulseAnimation()
             startSpeakerPulseAnimation()
             scheduleControlsHide()
-            // [#1176 polish, 2026-05-18] Pull the avatar URL stashed by
-            // ExpoCallKitModule.startOutgoingCall (App Group UserDefaults
-            // key `callAvatar:<callId>`). For the answer (incoming) path the
-            // key isn't populated today — initial-letter stays the fallback.
             if let ud = UserDefaults(suiteName: "group.com.onemundo.mail"),
                let url = ud.string(forKey: "callAvatar:\(callId)"),
                !url.isEmpty {
                 avatarUrl = url
             }
-            // [WAVE 142 GPT-5.5-pro] Snippet 3 — bind the shared observer to
-            // this call so its Published surface starts emitting status /
-            // duration / mute signals from CallKit. Idempotent.
             callKit.attach(callId: callId, uuid: session.callUUID, hasVideo: hasVideo)
         }
-        // [WAVE 142 GPT-5.5-pro] Snippet 3 — mirror observer state back into
-        // the VC's session so the SwiftUI flags update without a JS round trip.
-        // `removeDuplicates()` avoids redundant view diffs when the observer
-        // republishes the same value (e.g. the per-second duration tick when
-        // we're still on the same second integer).
         .onReceive(callKit.$statusText.removeDuplicates()) { value in
             if !value.isEmpty { session.status = value }
         }
@@ -573,35 +545,16 @@ struct CallView: View {
         .onReceive(callKit.$duration.removeDuplicates()) { seconds in
             elapsedSeconds = seconds
         }
-        // [WAVE 142 GPT-5.5-pro] Snippet 14 — apply the spring/haptic
-        // celebration whenever `session.status` flips to "Conectado".
         .modifier(ConnectedCelebrationModifier(status: session.status))
         .onDisappear {
             timer?.invalidate()
             timer = nil
             controlsHideTask?.cancel()
-            // [#1176 polish, 2026-05-18] Clear the App Group avatar key for
-            // this callId so consecutive calls don't leak URLs into a
-            // dangling cache. The next outgoing call writes a fresh entry.
             UserDefaults(suiteName: "group.com.onemundo.mail")?
                 .removeObject(forKey: "callAvatar:\(callId)")
         }
-        // Re-run the auto-hide cycle whenever connection state flips — once
-        // the call connects we want a hide-after-5s, but during ringing the
-        // controls should stay glued.
         .onChange(of: session.status) { _ in
             scheduleControlsHide()
-        }
-        // Sheets are presented via `.sheet` so they get the native iOS feel
-        // (drag-to-dismiss, blur backing) without us re-implementing them.
-        .sheet(isPresented: $showAudioPicker) {
-            Group {
-                if #available(iOS 16.0, *) {
-                    audioPickerSheet.presentationDetents([.height(280)])
-                } else {
-                    audioPickerSheet
-                }
-            }
         }
     }
 
@@ -703,42 +656,39 @@ struct CallView: View {
         }
     }
 
-    /// Small circular chip used in the top bar. 36×36 SF Symbol over a faded
-    /// black background — lets the icon read clearly over both the dark grad
-    /// and over the remote video.
+    /// Small circular chip used in the top bar. 36x36 SF Symbol over a faded
+    /// black background. [WAVE 163] Uses onTapGesture instead of Button to
+    /// avoid StyleBodyAccessor layout recursion.
     @ViewBuilder
     private func iconChip(systemName: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(Color.black.opacity(0.45))
-                    .frame(width: 36, height: 36)
-                Image(systemName: systemName)
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.white)
-            }
+        ZStack {
+            Circle()
+                .fill(Color.black.opacity(0.45))
+                .frame(width: 36, height: 36)
+            Image(systemName: systemName)
+                .font(.system(size: 16, weight: .medium))
+                .foregroundColor(.white)
         }
-        .buttonStyle(.plain)
+        .contentShape(Circle())
+        .onTapGesture { action() }
     }
 
     // MARK: - Avatar block (1:1 audio / pre-remote video)
 
-    // [WAVE 142 GPT-5.5-pro] Snippet 9 — replace the inline avatar stack with
-    // the polished helpers: ThreePulseRings (white, staggered) + speaker glow
-    // (green, modulated by `speakerPulse`) + PolishedAvatarCircle (132pt
-    // gradient w/ shadow). Name uses 28pt semibold rounded for visual weight
-    // parity with WhatsApp 2025 / iOS Phone. Status switches between the
-    // dotted "Chamando..." and the formatted duration once connected.
+    // [WAVE 163] Avatar block matching Android AvatarBlock (lines 2680-2745).
+    // 220pt container with 3 staggered pulse rings + speaker glow ring +
+    // 180pt avatar circle. Name 28sp SemiBold, animated dots subtitle.
     private var avatarBlock: some View {
         VStack(spacing: 16) {
             ZStack {
-                ThreePulseRings(active: session.status != "Conectado")
+                ThreePulseRings(active: session.status != "Conectado", baseSize: 210)
 
                 if session.remoteIsActiveSpeaker {
-                    // [WAVE 148] same layout-loop fix — fixed frame + scaleEffect.
+                    // Breathing green speaker ring matching Android SpeakerRingComposable.
+                    // Fixed frame + scaleEffect to avoid layout loop (WAVE 148 pattern).
                     Circle()
-                        .stroke(Color(rgb: 0x25D366).opacity(0.82), lineWidth: 4)
-                        .frame(width: 154, height: 154)
+                        .stroke(Color(rgb: 0x25D366).opacity(0.75), lineWidth: 4)
+                        .frame(width: 190, height: 190)
                         .scaleEffect(speakerPulse)
                         .shadow(color: Color(rgb: 0x25D366).opacity(0.7), radius: 14)
                 }
@@ -761,13 +711,12 @@ struct CallView: View {
         }
     }
 
-    // [WAVE 142 GPT-5.5-pro] Snippet 9 — subtitle: monospaced timer when
-    // connected, animated dotted base otherwise. Transitions via opacity so
-    // the swap feels smooth instead of cutting.
+    // [WAVE 163] Subtitle matches Android: "Conectado 00:00" when connected,
+    // animated dots otherwise.
     @ViewBuilder
     private var subtitleView: some View {
         if session.status == "Conectado" {
-            Text(formatDuration(elapsedSeconds))
+            Text("Conectado \(formatDuration(elapsedSeconds))")
                 .font(.system(size: 16, weight: .medium))
                 .foregroundColor(secondaryText)
                 .monospacedDigit()
@@ -795,63 +744,59 @@ struct CallView: View {
 
     // MARK: - Local preview PiP
 
-    /// Draggable local-camera tile. 100×140, rounded-12, top-right by default.
-    /// Snaps to the nearest screen edge on release (mirrors the JS PanResponder
-    /// behavior in /call.js).
+    /// Draggable local-camera tile. 100x140, rounded-12, top-right default.
+    /// [WAVE 163] Replaced GeometryReader with VStack/HStack alignment to
+    /// avoid layout re-entry cascades that contributed to the crash.
     @ViewBuilder
     private func localPreviewTile(_ track: LocalVideoTrack) -> some View {
         let baseWidth: CGFloat = 100
         let baseHeight: CGFloat = 140
-        GeometryReader { proxy in
-            SwiftUIVideoView(track)
-                .frame(width: baseWidth, height: baseHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.white.opacity(0.25), lineWidth: 1)
-                )
-                // [WAVE 142 GPT-5.5-pro] Snippet 13 — active-speaker glow ring
-                // over the local PiP tile. Driven by `session.localIsActiveSpeaker`
-                // + `session.localSpeakerLevel`, set by the VC's LK audio-level
-                // delegate (snippet 2 added the @Published flags).
-                .overlay {
-                    ActiveSpeakerGlowRing(
-                        active: session.localIsActiveSpeaker,
-                        level: session.localSpeakerLevel
+        VStack {
+            HStack {
+                Spacer()
+                SwiftUIVideoView(track)
+                    .frame(width: baseWidth, height: baseHeight)
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(Color.white.opacity(0.25), lineWidth: 1)
                     )
-                }
-                .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 4)
-                .offset(
-                    x: pipOffset.width + pipDragOffset.width,
-                    y: pipOffset.height + pipDragOffset.height
-                )
-                .position(
-                    x: proxy.size.width - baseWidth / 2 - 16,
-                    y: baseHeight / 2 + 72
-                )
-                .gesture(
-                    DragGesture()
-                        .onChanged { value in
-                            pipDragOffset = value.translation
-                        }
-                        .onEnded { value in
-                            // Snap to nearest edge horizontally; clamp Y to the
-                            // visible safe area minus the bottom bar so the
-                            // tile never gets stuck under the controls.
-                            let predictedX = proxy.size.width - baseWidth / 2 - 16
-                                + pipOffset.width + value.translation.width
-                            let snapToRight = predictedX > proxy.size.width / 2
-                            let targetX: CGFloat = snapToRight
-                                ? 0
-                                : -(proxy.size.width - baseWidth - 32)
-                            let predictedY = pipOffset.height + value.translation.height
-                            let clampedY = max(0, min(proxy.size.height - baseHeight - 200, predictedY))
-                            withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                                pipOffset = CGSize(width: targetX, height: clampedY)
-                                pipDragOffset = .zero
+                    .overlay {
+                        ActiveSpeakerGlowRing(
+                            active: session.localIsActiveSpeaker,
+                            level: session.localSpeakerLevel
+                        )
+                    }
+                    .shadow(color: .black.opacity(0.4), radius: 8, x: 0, y: 4)
+                    .offset(
+                        x: pipOffset.width + pipDragOffset.width,
+                        y: pipOffset.height + pipDragOffset.height
+                    )
+                    .gesture(
+                        DragGesture()
+                            .onChanged { value in
+                                pipDragOffset = value.translation
                             }
-                        }
-                )
+                            .onEnded { value in
+                                let screen = UIScreen.main.bounds
+                                let currentX = screen.width - baseWidth / 2 - 16
+                                    + pipOffset.width + value.translation.width
+                                let snapToRight = currentX > screen.width / 2
+                                let targetX: CGFloat = snapToRight
+                                    ? 0
+                                    : -(screen.width - baseWidth - 32)
+                                let predictedY = pipOffset.height + value.translation.height
+                                let clampedY = max(0, min(screen.height - baseHeight - 200, predictedY))
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                                    pipOffset = CGSize(width: targetX, height: clampedY)
+                                    pipDragOffset = .zero
+                                }
+                            }
+                    )
+                    .padding(.trailing, 16)
+            }
+            .padding(.top, 72)
+            Spacer()
         }
     }
 
@@ -1039,10 +984,8 @@ struct CallView: View {
     /// When `active` is true (e.g. noise suppression ON, background blur ON)
     /// the pill renders with a green tint so users can see the toggle state
     /// without opening a menu.
-    // [WAVE 142 GPT-5.5-pro] Snippet 12 — glassmorphism capsule: stacked
-    // `.ultraThinMaterial` + chipColor/white tint + hairline border. Active
-    // state lightens the tint to 0.28 white so the user sees the toggle
-    // without staring at the icon color alone.
+    // [WAVE 163] Glassmorphism capsule pill for secondary actions. Uses
+    // onTapGesture instead of Button to avoid StyleBodyAccessor recursion.
     @ViewBuilder
     private func actionPillButton(
         icon: String,
@@ -1051,28 +994,26 @@ struct CallView: View {
         active: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            VStack(spacing: 6) {
-                ZStack {
-                    Capsule().fill(.ultraThinMaterial)
-                    Capsule().fill((active ? Color.white : chipColor).opacity(active ? 0.28 : 0.42))
-                    Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
+        VStack(spacing: 6) {
+            ZStack {
+                Capsule().fill(.ultraThinMaterial)
+                Capsule().fill((active ? Color.white : chipColor).opacity(active ? 0.28 : 0.42))
+                Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1)
 
-                    Image(systemName: icon)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-                .frame(width: 58, height: 42)
-
-                Text(label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.white.opacity(enabled ? 0.92 : 0.35))
-                    .lineLimit(1)
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.white)
             }
+            .frame(width: 58, height: 42)
+
+            Text(label)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundColor(.white.opacity(enabled ? 0.92 : 0.35))
+                .lineLimit(1)
         }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
         .opacity(enabled ? 1 : 0.45)
+        .contentShape(Rectangle())
+        .onTapGesture { if enabled { action() } }
     }
 
     // [MediaPipe, 2026-05-17] Helpers for the background pill label + icon.
@@ -1096,11 +1037,8 @@ struct CallView: View {
 
     /// Generic circular control button. Used for mic, cam, speaker, hangup,
     /// hand raise. Supports an optional long-press handler (speaker uses it).
-    // [WAVE 142 GPT-5.5-pro] Snippet 11 — glassmorphism styling: stack a
-    // `.ultraThinMaterial` blur + the tint at 62% opacity + a hairline white
-    // border + the SF Symbol. Shadow at 28%/16pt grounds the button on top of
-    // the avatar-blur background. `onLongPress` is preserved so the speaker
-    // button can still open the AVRoutePicker sheet.
+    // [WAVE 163] Glassmorphism circular control button. Uses onTapGesture +
+    // LongPressGesture instead of Button to avoid StyleBodyAccessor recursion.
     @ViewBuilder
     private func circleButton(
         size: CGFloat,
@@ -1110,27 +1048,25 @@ struct CallView: View {
         action: @escaping () -> Void,
         onLongPress: (() -> Void)? = nil
     ) -> some View {
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(.ultraThinMaterial)
+        ZStack {
+            Circle()
+                .fill(.ultraThinMaterial)
 
-                Circle()
-                    .fill(background.opacity(0.62))
+            Circle()
+                .fill(background.opacity(0.62))
 
-                Circle()
-                    .strokeBorder(Color.white.opacity(0.24), lineWidth: 1)
+            Circle()
+                .strokeBorder(Color.white.opacity(0.24), lineWidth: 1)
 
-                Image(systemName: systemName)
-                    .font(.system(size: size * 0.34, weight: .semibold))
-                    .foregroundColor(foreground)
-            }
-            .frame(width: size, height: size)
-            .shadow(color: .black.opacity(0.28), radius: 16, x: 0, y: 8)
-            .contentShape(Circle())
+            Image(systemName: systemName)
+                .font(.system(size: size * 0.34, weight: .semibold))
+                .foregroundColor(foreground)
         }
-        .buttonStyle(.plain)
-        .simultaneousGesture(
+        .frame(width: size, height: size)
+        .shadow(color: .black.opacity(0.28), radius: 16, x: 0, y: 8)
+        .contentShape(Circle())
+        .onTapGesture { action() }
+        .highPriorityGesture(
             LongPressGesture(minimumDuration: 0.5)
                 .onEnded { _ in onLongPress?() }
         )
@@ -1147,21 +1083,20 @@ struct CallView: View {
     private var emojiQuickBar: some View {
         HStack(spacing: 12) {
             ForEach(quickEmojis, id: \.self) { emoji in
-                Button(action: {
-                    hapticTap()
-                    onSendReaction(emoji)
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        showEmojiBar = false
+                Text(emoji)
+                    .font(.system(size: 30))
+                    .frame(width: 48, height: 48)
+                    .background(
+                        Circle().fill(Color.white.opacity(0.12))
+                    )
+                    .contentShape(Circle())
+                    .onTapGesture {
+                        hapticTap()
+                        onSendReaction(emoji)
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            showEmojiBar = false
+                        }
                     }
-                }) {
-                    Text(emoji)
-                        .font(.system(size: 30))
-                        .frame(width: 48, height: 48)
-                        .background(
-                            Circle().fill(Color.white.opacity(0.12))
-                        )
-                }
-                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 12)
@@ -1229,25 +1164,24 @@ struct CallView: View {
     }
 
     private func moreRow(icon: String, title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                Image(systemName: icon)
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundColor(.white)
-                    .frame(width: 28)
-                Text(title)
-                    .font(.system(size: 16))
-                    .foregroundColor(.white)
-                Spacer()
-            }
-            .padding(.vertical, 10)
-            .padding(.horizontal, 14)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.white.opacity(0.06))
-            )
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 18, weight: .medium))
+                .foregroundColor(.white)
+                .frame(width: 28)
+            Text(title)
+                .font(.system(size: 16))
+                .foregroundColor(.white)
+            Spacer()
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 10)
+        .padding(.horizontal, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.06))
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { action() }
     }
 
     // MARK: - Audio picker
@@ -1262,81 +1196,91 @@ struct CallView: View {
     // by sending the underlying button a touchUpInside on first appear, so
     // the sheet doesn't show two pickers stacked. The wrapper is also
     // visible inline as a normal labelled row so users can re-trigger it.
-    private var audioPickerSheet: some View {
-        VStack(spacing: 0) {
-            Capsule()
-                .fill(Color.white.opacity(0.3))
-                .frame(width: 40, height: 4)
-                .padding(.top, 10)
-
-            Text("Saída de áudio")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundColor(.white)
-                .padding(.top, 14)
-                .padding(.bottom, 8)
-
-            // Quick toggles for the two routes AVRoutePickerView won't
-            // surface (earpiece via override + loudspeaker). BT/wired/AirPlay
-            // are listed automatically by the system picker triggered below.
-            VStack(spacing: 8) {
-                audioRouteRow(icon: "speaker.wave.3.fill", title: "Alto-falante", selected: session.speakerOn) {
-                    session.speakerOn = true
-                    onToggleSpeaker(true)
-                    showAudioPicker = false
-                }
-                audioRouteRow(icon: "iphone", title: "Telefone", selected: !session.speakerOn) {
-                    session.speakerOn = false
-                    onToggleSpeaker(false)
-                    showAudioPicker = false
+    // [WAVE 163] Audio picker as overlay instead of .sheet to avoid
+    // presentation-anchor layout recursion that contributed to the crash.
+    private var audioPickerOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.45)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showAudioPicker = false
+                    }
                 }
 
-                // Real system picker entry — opens the iOS-native list of
-                // every available output (AirPods, car BT, USB-C headphones,
-                // AirPlay receivers, …). Wrapped via UIViewRepresentable so
-                // SwiftUI can host the UIKit AVRoutePickerView. Tapping the
-                // row sends a touch to the embedded picker (which is sized
-                // to fill the row), so the system sheet appears.
-                AVRoutePickerRow()
-                    .frame(height: 48)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 0)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.white.opacity(0.04))
-                    )
+            VStack {
+                Spacer()
+                VStack(spacing: 0) {
+                    Capsule()
+                        .fill(Color.white.opacity(0.3))
+                        .frame(width: 40, height: 4)
+                        .padding(.top, 10)
+
+                    Text("Saida de audio")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.top, 14)
+                        .padding(.bottom, 8)
+
+                    VStack(spacing: 8) {
+                        audioRouteRow(icon: "speaker.wave.3.fill", title: "Alto-falante", selected: session.speakerOn) {
+                            session.speakerOn = true
+                            onToggleSpeaker(true)
+                            showAudioPicker = false
+                        }
+                        audioRouteRow(icon: "iphone", title: "Telefone", selected: !session.speakerOn) {
+                            session.speakerOn = false
+                            onToggleSpeaker(false)
+                            showAudioPicker = false
+                        }
+
+                        AVRoutePickerRow()
+                            .frame(height: 48)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 0)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(Color.white.opacity(0.04))
+                            )
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24)
+                }
+                .frame(maxWidth: .infinity)
+                .background(
+                    RoundedRectangle(cornerRadius: 24)
+                        .fill(Color(red: 0x14/255.0, green: 0x1F/255.0, blue: 0x27/255.0))
+                )
+                .padding(.horizontal, 8)
+                .padding(.bottom, 24)
             }
-            .padding(.horizontal, 20)
-
-            Spacer()
         }
-        .background(Color(red: 0x14/255.0, green: 0x1F/255.0, blue: 0x27/255.0))
     }
 
     @ViewBuilder
     private func audioRouteRow(icon: String, title: String, selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.system(size: 18))
-                    .foregroundColor(selected ? speakerRingColor : .white)
-                    .frame(width: 28)
-                Text(title)
-                    .font(.system(size: 16))
-                    .foregroundColor(.white)
-                Spacer()
-                if selected {
-                    Image(systemName: "checkmark")
-                        .foregroundColor(speakerRingColor)
-                }
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundColor(selected ? speakerRingColor : .white)
+                .frame(width: 28)
+            Text(title)
+                .font(.system(size: 16))
+                .foregroundColor(.white)
+            Spacer()
+            if selected {
+                Image(systemName: "checkmark")
+                    .foregroundColor(speakerRingColor)
             }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 14)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.white.opacity(selected ? 0.1 : 0.04))
-            )
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 14)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(selected ? 0.1 : 0.04))
+        )
+        .contentShape(Rectangle())
+        .onTapGesture { action() }
     }
 
     // MARK: - DTMF keypad overlay
@@ -1398,25 +1342,23 @@ struct CallView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
 
-                    // Close pill — explicit dismissal so users who don't
-                    // discover the tap-outside gesture still have a way out.
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showKeypad = false
-                            dtmfBuffer = ""
+                    // Close pill
+                    Text("Fechar")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 28)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule().fill(Color.white.opacity(0.12))
+                        )
+                        .contentShape(Capsule())
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                showKeypad = false
+                                dtmfBuffer = ""
+                            }
                         }
-                    }) {
-                        Text("Fechar")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 28)
-                            .padding(.vertical, 10)
-                            .background(
-                                Capsule().fill(Color.white.opacity(0.12))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.bottom, 24)
+                        .padding(.bottom, 24)
                 }
                 .frame(maxWidth: .infinity)
                 .background(
@@ -1432,33 +1374,32 @@ struct CallView: View {
     /// One key on the DTMF pad. 68pt circle, digit + letter group below.
     @ViewBuilder
     private func dtmfButton(digit: String, letters: String) -> some View {
-        Button(action: {
-            hapticTap()
-            dtmfBuffer = String((dtmfBuffer + digit).suffix(24)) // cap to avoid horizontal overflow
-            onPlayDTMF?(digit)
-        }) {
-            VStack(spacing: 2) {
-                Text(digit)
-                    .font(.system(size: 30, weight: .regular, design: .rounded))
-                    .foregroundColor(.white)
-                if !letters.isEmpty {
-                    Text(letters)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.55))
-                        .tracking(1)
-                } else {
-                    Spacer().frame(height: 12)
-                }
+        VStack(spacing: 2) {
+            Text(digit)
+                .font(.system(size: 30, weight: .regular, design: .rounded))
+                .foregroundColor(.white)
+            if !letters.isEmpty {
+                Text(letters)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.55))
+                    .tracking(1)
+            } else {
+                Spacer().frame(height: 12)
             }
-            .frame(width: 68, height: 68)
-            .background(
-                Circle().fill(Color.white.opacity(0.08))
-            )
-            .overlay(
-                Circle().stroke(Color.white.opacity(0.06), lineWidth: 1)
-            )
         }
-        .buttonStyle(.plain)
+        .frame(width: 68, height: 68)
+        .background(
+            Circle().fill(Color.white.opacity(0.08))
+        )
+        .overlay(
+            Circle().stroke(Color.white.opacity(0.06), lineWidth: 1)
+        )
+        .contentShape(Circle())
+        .onTapGesture {
+            hapticTap()
+            dtmfBuffer = String((dtmfBuffer + digit).suffix(24))
+            onPlayDTMF?(digit)
+        }
     }
 
     // MARK: - Animations & helpers
@@ -1713,37 +1654,36 @@ struct OngoingCallBarOverlay: View {
     private let barColor = Color(red: 0x12/255.0, green: 0xB7/255.0, blue: 0x6A/255.0)
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 12) {
-                // Pulsing dot — visual cue the call is live.
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: 8, height: 8)
-                    .opacity(elapsed % 2 == 0 ? 1.0 : 0.5)
+        HStack(spacing: 12) {
+            // Pulsing dot — visual cue the call is live.
+            Circle()
+                .fill(Color.white)
+                .frame(width: 8, height: 8)
+                .opacity(elapsed % 2 == 0 ? 1.0 : 0.5)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(callerName)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(.white)
-                        .lineLimit(1)
-                    Text(Self.formatElapsed(elapsed))
-                        .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.85))
-                        .monospacedDigit()
-                }
-
-                Spacer(minLength: 8)
-
-                Text("Toque para voltar")
-                    .font(.system(size: 12, weight: .medium))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(callerName)
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white)
+                    .lineLimit(1)
+                Text(Self.formatElapsed(elapsed))
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.85))
+                    .monospacedDigit()
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-            .background(barColor)
+
+            Spacer(minLength: 8)
+
+            Text("Toque para voltar")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.white)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(barColor)
+        .contentShape(Rectangle())
+        .onTapGesture { onTap() }
         .onAppear {
             elapsed = max(0, Int(Date().timeIntervalSince(startedAt)))
             timer?.invalidate()
