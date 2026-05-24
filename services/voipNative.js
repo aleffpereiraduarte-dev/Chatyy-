@@ -377,6 +377,22 @@ export async function startOutgoingCall({
         } catch (e) {
           console.warn(TAG, '[v2] persistPendingLkToken failed:', e?.message || e);
         }
+        // [2026-05-24 hybrid v2] iOS hybrid: native CallViewController is now
+        // suppressed for outgoing too, so the LK token persisted natively never
+        // reaches a Room. Mirror IncomingCallListener and stash the token to a
+        // global JS slot so /call.js fetchLivekitToken can adopt it instantly
+        // (saves a 2nd chat_livekit_token round-trip and ensures both sides
+        // land in the same LK room).
+        try {
+          globalThis.__chatyy_prefetched_lk_token = {
+            call_id: cid,
+            token: d.lk_token,
+            url: d.lk_url,
+            room: String(cid),
+            iceServers: Array.isArray(d.iceServers) ? d.iceServers : [],
+            ts: Date.now(),
+          };
+        } catch {}
       }
       // Stash TURN creds on globalThis so the native bridge can read them
       // without yet another async hop. Both platforms can pick this up via
