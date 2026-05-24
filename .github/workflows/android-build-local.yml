@@ -18,11 +18,11 @@ on:
       submit:
         description: 'Submit to Google Play after build?'
         required: true
-        default: 'false'
+        default: 'true'
         type: choice
         options:
-          - 'false'
           - 'true'
+          - 'false'
   push:
     paths:
       - '.github/triggers/mobile-build.txt'
@@ -76,20 +76,26 @@ jobs:
           echo "Resolved ANDROID_HOME=$ANDROID_HOME"
           ls "$ANDROID_HOME/platform-tools" 2>/dev/null | head -3 || echo "WARN: platform-tools missing"
 
-      # gcloud-sa-key.json e asc_key.p8 estao gitignored, entao checkout nao
-      # tem esses arquivos. Copiar de /var/lib/ghrunner-secrets/ (path
-      # readable pelo user ghrunner sem sudo) pro working dir antes do
-      # submit. Sem isso o submit pulava silencioso (hashFiles vazio).
-      - name: Stage Play SA key + ASC key from runner secrets
+      - name: Stage Play SA key + ASC key from secrets
+        env:
+          GOOGLE_PLAY_SA_KEY_BASE64: ${{ secrets.GOOGLE_PLAY_SA_KEY_BASE64 }}
+          ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
         run: |
-          if [ -f /var/lib/ghrunner-secrets/gcloud-sa-key.json ]; then
+          if [ -n "$GOOGLE_PLAY_SA_KEY_BASE64" ]; then
+            echo "$GOOGLE_PLAY_SA_KEY_BASE64" | base64 -d > ./gcloud-sa-key.json
+            chmod 600 ./gcloud-sa-key.json
+            echo "Play SA key staged from secret."
+          elif [ -f /var/lib/ghrunner-secrets/gcloud-sa-key.json ]; then
             cp /var/lib/ghrunner-secrets/gcloud-sa-key.json ./gcloud-sa-key.json
             chmod 600 ./gcloud-sa-key.json
-            echo "Play SA key staged."
+            echo "Play SA key staged from filesystem."
           else
-            echo "::warning::/var/lib/ghrunner-secrets/gcloud-sa-key.json missing — Play submit will be skipped."
+            echo "::warning::No Play SA key found — Play submit will be skipped."
           fi
-          if [ -f /var/lib/ghrunner-secrets/asc_key.p8 ]; then
+          if [ -n "$ASC_KEY_P8_BASE64" ]; then
+            echo "$ASC_KEY_P8_BASE64" | base64 -d > ./asc_key.p8
+            chmod 600 ./asc_key.p8
+          elif [ -f /var/lib/ghrunner-secrets/asc_key.p8 ]; then
             cp /var/lib/ghrunner-secrets/asc_key.p8 ./asc_key.p8
             chmod 600 ./asc_key.p8
           fi

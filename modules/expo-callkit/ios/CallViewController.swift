@@ -157,6 +157,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var ringbackPlayer: AVAudioPlayerNode?
     private var ringbackResignObserver: NSObjectProtocol?
 
+    // [WAVE 177] Video views — remote fullscreen + local PiP corner
+    private var remoteVideoView: VideoView?
+    private var localVideoView: VideoView?
+    private var remoteVideoObserver: AnyCancellable?
+    private var localVideoObserver: AnyCancellable?
+
     // [WAVE 156 2026-05-22] Combine subscription that mirrors
     // session.status (@Published) into the UIKit statusLabel.
     private var statusObserver: AnyCancellable?
