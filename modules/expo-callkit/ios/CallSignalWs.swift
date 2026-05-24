@@ -176,13 +176,23 @@ final class CallSignalWs: NSObject {
         enqueue(dict)
     }
 
-    func fireCallAnswered(callId: String, conversationId: String) {
-        let dict: [String: Any] = [
+    func fireCallAnswered(callId: String, conversationId: String, callerEmail: String = "") {
+        // [2026-05-24] target_email is REQUIRED so the C++ WS server can
+        // relay this frame to the caller's chat_user_<email> channel —
+        // without it the server logs "no target — drop" and the iOS
+        // caller stays stuck on "Chamando" after the callee picks up.
+        // Mirror Android fireCallAnswered in CallSignalWs.kt.
+        var dict: [String: Any] = [
             "type": "call_answered",
             "call_id": callId,
             "conversation_id": conversationId,
             "ts": Int(Date().timeIntervalSince1970 * 1000)
         ]
+        if !callerEmail.isEmpty {
+            let em = callerEmail.lowercased()
+            dict["target_email"] = em
+            dict["caller_email"] = em
+        }
         // [2026-05-22 #1349 fix] Remember we answered this callId locally so
         // the server-fanned-out call_cancel{accepted_by_client_id} that goes
         // to every sibling session of this user gets self-suppressed by the

@@ -90,7 +90,10 @@ class CallActionReceiver : BroadcastReceiver() {
         // IncomingCallActivity.onAccept); both fire call_answered, which
         // is fine — server dedupes by call_id. Empty conversation_id is
         // tolerated for dialer-style calls.
-        CallSignalWs.fireCallAnswered(context.applicationContext, callId, conversationId)
+        // [2026-05-24] target_email (callerEmail) REQUIRED — without it
+        // the C++ WS logs "no target — drop" and iOS caller stays stuck
+        // on "Chamando" even though Android answered.
+        CallSignalWs.fireCallAnswered(context.applicationContext, callId, conversationId, callerEmail)
       }
 
       "expo.modules.callkit.PIP_MUTE" -> {

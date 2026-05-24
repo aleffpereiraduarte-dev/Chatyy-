@@ -2298,9 +2298,12 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // ~ms after CallKit answer, well before the JS bundle would parse
     // the bridge event. Empty conversationId is tolerated (dialer flow).
     if !callId.isEmpty {
+      // [2026-05-24] Pass caller_email so the WS relay can find the
+      // caller's channel — root cause of iOS-stuck-on-"Chamando".
       CallSignalWs.shared.fireCallAnswered(
         callId: callId,
-        conversationId: snapshot.conversationId
+        conversationId: snapshot.conversationId,
+        callerEmail: snapshot.callerEmail
       )
     }
 
