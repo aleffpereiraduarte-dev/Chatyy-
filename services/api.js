@@ -188,8 +188,14 @@ let sessionCookie = '';
 let authToken = '';
 let csrfToken = ''; // CSRF protection token from server
 let savedCredentials = null; // For auto-relogin on session expiry
+// Refresh token (180d, rotated on each use). Exchanges for fresh access token
+// without requiring password. Persisted in SecureStore via storeRefreshToken.
+let refreshToken = '';
+let refreshDeviceId = '';
+let _authRefreshInFlight = null; // single-flight promise for /auth_refresh endpoint
 export function getSavedEmail() { return savedCredentials?.email || ''; }
 export function getSavedPassword() { return savedCredentials?.password || ''; }
+export function hasRefreshToken() { return !!refreshToken; }
 
 // Go Fast Auth endpoints (100x faster than PHP)
 function goAuthUrl(path) {
@@ -539,6 +545,64 @@ async function storeTrustToken(token) {
   try {
     const stored = await getStoredTrustToken();
     if (stored) deviceTrustToken = stored;
+  } catch {}
+})();
+
+// --- Refresh token persistence (SecureStore on native, localStorage on web) ---
+// Refresh token (180d, rotated on use) is the *only* path to silent re-auth
+// when the access token (bearer) goes 401. Stored encrypted at rest on iOS/Android
+// via expo-secure-store. On web, localStorage (which is per-origin sandboxed).
+async function storeRefreshToken(token, deviceId) {
+  try {
+    if (Platform.OS === 'web') {
+      if (typeof localStorage !== 'undefined') {
+        if (token) {
+          localStorage.setItem('refresh_token', token);
+          if (deviceId) localStorage.setItem('refresh_device_id', deviceId);
+        } else {
+          localStorage.removeItem('refresh_token');
+          localStorage.removeItem('refresh_device_id');
+        }
+      }
+      return;
+    }
+    const SecureStore = require('expo-secure-store');
+    if (token) {
+      await SecureStore.setItemAsync('refresh_token', token);
+      if (deviceId) await SecureStore.setItemAsync('refresh_device_id', deviceId);
+    } else {
+      await SecureStore.deleteItemAsync('refresh_token').catch(() => {});
+      await SecureStore.deleteItemAsync('refresh_device_id').catch(() => {});
+    }
+  } catch (e) {
+    try { console.warn('[refresh] storeRefreshToken err:', e?.message); } catch {}
+  }
+}
+
+async function getStoredRefreshToken() {
+  try {
+    if (Platform.OS === 'web') {
+      if (typeof localStorage === 'undefined') return null;
+      const t = localStorage.getItem('refresh_token');
+      const d = localStorage.getItem('refresh_device_id');
+      return t ? { token: t, deviceId: d || '' } : null;
+    }
+    const SecureStore = require('expo-secure-store');
+    const t = await SecureStore.getItemAsync('refresh_token');
+    const d = await SecureStore.getItemAsync('refresh_device_id');
+    return t ? { token: t, deviceId: d || '' } : null;
+  } catch { return null; }
+}
+
+// Load refresh token on startup so on cold-start we can silently refresh if
+// the in-memory bearer (also loaded from storage) turns out to be 401.
+(async () => {
+  try {
+    const stored = await getStoredRefreshToken();
+    if (stored?.token) {
+      refreshToken = stored.token;
+      refreshDeviceId = stored.deviceId || '';
+    }
   } catch {}
 })();
 
@@ -1105,6 +1169,56 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       }
     } catch {}
 
+    // [refresh token, 2026-05-24] Silent refresh BEFORE password fallback.
+    // This is the WhatsApp/Telegram pattern: a long-lived refresh token in
+    // SecureStore exchanges for a fresh access bearer without the user typing
+    // a password. No more "ghost logged-in" 401 spirals — the app self-heals.
+    // Single-flight: if multiple 401s come in concurrently, all wait on one
+    // refresh attempt instead of stampeding the endpoint.
+    if (refreshToken && refreshDeviceId) {
+      try {
+        if (!_authRefreshInFlight) {
+          _authRefreshInFlight = (async () => {
+            try {
+              const r = await _rawApiCall('auth_refresh', {
+                refresh_token: refreshToken,
+                device_id: refreshDeviceId,
+              }, 'POST');
+              const newAccess = r?.data?.data?.token || r?.data?.token;
+              const newRefresh = r?.data?.data?.refresh_token || r?.data?.refresh_token;
+              if (newAccess && r.status >= 200 && r.status < 300) {
+                authToken = newAccess;
+                await storeToken(newAccess).catch(() => {});
+                if (newRefresh) {
+                  refreshToken = newRefresh;
+                  await storeRefreshToken(newRefresh, refreshDeviceId).catch(() => {});
+                }
+                return true;
+              }
+              // Server says refresh is invalid/revoked → nuke it so we don't
+              // keep retrying. Fall through to password path or user-prompt.
+              if (r?.data?.data?.error === 'revoked' || r?.data?.data?.error === 'expired') {
+                refreshToken = '';
+                await storeRefreshToken(null).catch(() => {});
+              }
+              return false;
+            } catch { return false; }
+          })().finally(() => { _authRefreshInFlight = null; });
+        }
+        const refreshed = await _authRefreshInFlight;
+        if (refreshed) {
+          const retry = await _rawApiCall(action, params, method);
+          if (retry.status !== 401) {
+            _consecutive401 = 0;
+            if (retry.status >= 200 && retry.status < 300) {
+              try { _noteAuthOk(); } catch {}
+            }
+            return retry.data;
+          }
+        }
+      } catch {}
+    }
+
     const creds = savedCredentials;
     if (creds?.email && creds?.password) {
       if (!_reloginPromise) {
@@ -1418,13 +1532,17 @@ export async function login(email, password) {
   // Go Fast Auth for token (< 50ms) + PHP login in background for full session
   let r;
   try {
+    // Pass device_id so PHP can mint a refresh_token bound to this device.
+    // _getDeviceIdSafe is defined later in this file but is hoisted (async function).
+    const _devIdForLogin = await _getDeviceIdSafe().catch(() => null);
+    const _loginPayload = _devIdForLogin ? { email, password, device_id: _devIdForLogin } : { email, password };
     const [goRes, phpRes] = await Promise.all([
       fetch(goAuthUrl('login'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       }).then(res => res.json()).catch(() => null),
-      apiCall('login', { email, password }, 'POST').catch(() => null),
+      apiCall('login', _loginPayload, 'POST').catch(() => null),
     ]);
     // Use Go response (faster) but PHP runs in parallel to create full session.
     // When BOTH fail, prefer the real error message over generic
@@ -1444,6 +1562,17 @@ export async function login(email, password) {
     };
     if (goRes?.success) {
       r = goRes;
+      // [refresh token] Go auth doesn't issue refresh tokens — graft the
+      // refresh fields from the parallel PHP login if it succeeded too.
+      // Both paths share the same auth backend so the PHP refresh works
+      // with the Go-issued access bearer (validation goes through PG).
+      const phpRefresh = phpRes?.data?.refresh_token;
+      const phpDev = phpRes?.data?.refresh_device_id;
+      if (phpRefresh && phpDev) {
+        r.data = r.data || {};
+        if (!r.data.refresh_token) r.data.refresh_token = phpRefresh;
+        if (!r.data.refresh_device_id) r.data.refresh_device_id = phpDev;
+      }
     } else if (phpRes?.success) {
       r = phpRes;
     } else {
@@ -1460,6 +1589,16 @@ export async function login(email, password) {
     // Save credentials for auto-relogin when session expires
     savedCredentials = { email, password };
     storeCredentials(email, password);
+    // Capture refresh_token (180d, persisted in SecureStore).
+    // Server returns it in login response when device_id was passed.
+    // Without refresh_token the app falls back to password-based relogin (legacy).
+    const newRefresh = r?.data?.refresh_token || r?.refresh_token;
+    const newRefreshDev = r?.data?.refresh_device_id || r?.refresh_device_id;
+    if (newRefresh && newRefreshDev) {
+      refreshToken = newRefresh;
+      refreshDeviceId = newRefreshDev;
+      storeRefreshToken(newRefresh, newRefreshDev).catch(() => {});
+    }
     const token = r?.data?.token || r?.token;
     if (token) {
       authToken = token;
@@ -1536,6 +1675,9 @@ export function clearAuthToken() {
   sessionCookie = '';
   csrfToken = '';
   savedCredentials = null;
+  refreshToken = '';
+  refreshDeviceId = '';
+  storeRefreshToken(null).catch(() => {});
   // Reset meta so the next account starts with a clean slate. Audit
   // entry is written by AuthContext / 401 handler before this call.
   _tokenMeta = { last_auth_ok_at: 0, created_at: 0, email: '' };
