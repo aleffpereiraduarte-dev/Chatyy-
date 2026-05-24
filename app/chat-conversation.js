@@ -16175,7 +16175,15 @@ export default function ChatConversationScreen() {
         onWebFallback: _jsRoute,
         // [WAVE 141] WhatsApp arch: native owns call UI, no JS route foreground.
       });
-      const { native, error: nativeErr } = callResult || {};
+      const { native, error: nativeErr, callId: outCallId } = callResult || {};
+      // [2026-05-24 hybrid v2] iOS: after native CXStartCallAction is
+      // submitted (CallKit owns audio + Recents), navigate JS to /call so
+      // the rich screen renders. NativeCallRoom keeps the LK Room alive;
+      // /call.js adopts it via adoptNativeRoom on mount. Android keeps
+      // native CallActivity for now.
+      if (native && Platform.OS === 'ios' && outCallId) {
+        _jsRoute(outCallId);
+      }
       // native=false is expected when foreground mobile takes the JS path
       // OR on web. Only surface an error when native genuinely failed
       // (mobile + background-or-killed + native module rejected).

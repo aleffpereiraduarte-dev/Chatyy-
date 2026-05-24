@@ -896,14 +896,11 @@ public class ExpoCallKitModule: Module {
         // [#1172 fix, 2026-05-18] resolvePresentingViewController handles
         // backgrounded scenes, CallKit ring-sheet contention, and multi-scene
         // iPad windows — see helper docstring.
-        guard let root = resolvePresentingViewController() else {
-          print("[ExpoCallKit] openNativeCall: no presenting VC available — call will not foreground")
-          return
-        }
-        CallViewController.present(from: root,
-            callId: callId, callerName: callerName,
-            callerEmail: callerEmail, hasVideo: hasVideo,
-            lkUrl: lkUrl, lkToken: lkToken)
+        // [2026-05-24 hybrid v2] JS /call.js owns the in-call UI now.
+        // openNativeCall used to present CallViewController for legacy
+        // dialer paths; suppressed so JS rich screen renders instead.
+        print("[ExpoCallKit] openNativeCall: hybrid mode — skipping native VC; JS owns UI for \(callId)")
+        return
       }
     }
 
@@ -2614,6 +2611,16 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // kills the WhatsApp-style rich UI. Kill the gate entirely so the
     // native CallView ALWAYS presents on outgoing — no escape hatch.
     NSLog("[CallTrace][PRESENT-1] presentOutgoingCallVC ENTRY callId=\(params.callId) hasUrl=\(lkUrl != nil) hasToken=\(lkToken != nil) thread=\(Thread.isMainThread ? "main" : "bg")")
+    // [2026-05-24 hybrid v2] JS /call.js owns the in-call UI for outgoing too.
+    // CXStartCallAction still triggers (CallKit needs it for system call UI,
+    // Recents, audio routing), but we suppress the native CallViewController
+    // presentation. JS chat-conversation.js fires router.push('/call?...')
+    // after voipNative.startOutgoingCall returns; /call.js adopts the LK
+    // Room via adoptNativeRoom (NativeCallRoom owns the actual connection,
+    // pre-connected by JS or NativeCallTokenFetcher). Mirror of the gate
+    // in presentNativeCallVC for incoming calls.
+    NSLog("[ExpoCallKit] presentOutgoingCallVC: hybrid mode — skipping native VC; JS /call.js owns UI for \(params.callId)")
+    return
 
     // [WAVE 147 2026-05-22 DOUBLE-PRESENT GUARD — ROOT CAUSE FIX]
     // Deep audit identified: WAVE 145 added immediate present in
