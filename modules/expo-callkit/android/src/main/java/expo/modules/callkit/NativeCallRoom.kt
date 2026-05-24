@@ -66,6 +66,80 @@ object NativeCallRoom {
     // Native bridge) happen on the JS main thread.
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
+    // [echo fix 2026-05-24] Hardware audio effects (AEC/NS/AGC) attached after
+    // mic publish. The WARM incoming path (preconnect → adoptForCall) used bare
+    // LiveKit.create() and NEVER installed these — only the legacy CallActivity
+    // cold path did (CallActivity.installHwAudioEffects). Result: callee on the
+    // warm path echoed the caller's voice back ("escuto minha voz de retorno").
+    // This ports the exact same effect attach so the warm path matches.
+    private val hwAudioEffects = mutableListOf<android.media.audiofx.AudioEffect>()
+
+    /** Resolve the WebRTC AudioRecord session id (reflective walk of LK's
+     *  JavaAudioDeviceModule) and attach hardware AEC/NS/AGC. Mirror of
+     *  CallActivity.installHwAudioEffects — graceful no-op if the session id
+     *  can't be resolved. Must run AFTER setMicEnabled(true) so the mic
+     *  AudioRecord actually exists. */
+    private fun installHwAudioEffects(ctx: Context) {
+        if (hwAudioEffects.isNotEmpty()) return // idempotent — already attached
+        try {
+            var sid = 0
+            try {
+                val r = room
+                val candidates = listOfNotNull(
+                    try { r?.javaClass?.getDeclaredField("engine")?.apply { isAccessible = true }?.get(r) } catch (_: Throwable) { null },
+                    try { r?.javaClass?.declaredFields?.firstOrNull { it.name.contains("audioDeviceModule", true) }?.apply { isAccessible = true }?.get(r) } catch (_: Throwable) { null },
+                )
+                for (root in candidates) {
+                    if (sid != 0) break
+                    val visited = mutableSetOf<Any>()
+                    fun walk(node: Any?, depth: Int) {
+                        if (node == null || depth > 4 || sid != 0) return
+                        if (!visited.add(node)) return
+                        try {
+                            for (f in node.javaClass.declaredFields) {
+                                f.isAccessible = true
+                                val v = try { f.get(node) } catch (_: Throwable) { null } ?: continue
+                                if (v is android.media.AudioRecord) {
+                                    val s = v.audioSessionId
+                                    if (s > 0) { sid = s; return }
+                                } else if (f.name.contains("audioRecord", true) ||
+                                           f.name.contains("audioRecorder", true) ||
+                                           f.name.contains("audioDevice", true) ||
+                                           f.name.contains("engine", true)) {
+                                    walk(v, depth + 1)
+                                }
+                            }
+                        } catch (_: Throwable) {}
+                    }
+                    walk(root, 0)
+                }
+            } catch (_: Throwable) {}
+            if (sid == 0) {
+                try {
+                    val am = ctx.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? android.media.AudioManager
+                    sid = am?.generateAudioSessionId() ?: 0
+                } catch (_: Throwable) {}
+            }
+            if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
+                android.media.audiofx.AcousticEchoCanceler.create(sid)?.apply { enabled = true }?.let(hwAudioEffects::add)
+            }
+            if (android.media.audiofx.NoiseSuppressor.isAvailable()) {
+                android.media.audiofx.NoiseSuppressor.create(sid)?.apply { enabled = true }?.let(hwAudioEffects::add)
+            }
+            if (android.media.audiofx.AutomaticGainControl.isAvailable()) {
+                android.media.audiofx.AutomaticGainControl.create(sid)?.apply { enabled = true }?.let(hwAudioEffects::add)
+            }
+            Log.d(TAG, "installHwAudioEffects: ${hwAudioEffects.size} attached (sid=$sid)")
+        } catch (t: Throwable) {
+            Log.w(TAG, "installHwAudioEffects fail (graceful): ${t.message}")
+        }
+    }
+
+    private fun releaseHwAudioEffects() {
+        for (fx in hwAudioEffects) { try { fx.release() } catch (_: Throwable) {} }
+        hwAudioEffects.clear()
+    }
+
     // ────────────── Public state ──────────────
 
     fun isConnected(): Boolean {
@@ -153,6 +227,7 @@ object NativeCallRoom {
         preconnectJob?.cancel()
         preconnectJob = null
         preconnectingCallId = null
+        releaseHwAudioEffects()
         room = null
         callId = null
         roomName = null
@@ -532,6 +607,15 @@ object NativeCallRoom {
                 setMicEnabled(!startMuted)
                 if (hasVideo) setCameraEnabled(true)
                 if (startMuted) Log.i(TAG, "adoptForCall: published mic muted (pending_call_mic_muted=true)")
+                // [echo fix 2026-05-24] Attach HW AEC/NS/AGC now that the mic
+                // AudioRecord exists. Synchronous attach (mirror CallActivity);
+                // a delayed retry catches devices where the AudioRecord opens a
+                // beat later. Idempotent — releaseHwAudioEffects() runs in clear().
+                try { installHwAudioEffects(ctx) } catch (_: Throwable) {}
+                scope.launch {
+                    kotlinx.coroutines.delay(900)
+                    try { installHwAudioEffects(ctx) } catch (_: Throwable) {}
+                }
             } catch (t: Throwable) {
                 Log.w(TAG, "adoptForCall: setMic/Cam failed: ${t.message}")
             }
