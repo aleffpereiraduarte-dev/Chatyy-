@@ -2462,6 +2462,16 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       print("[ExpoCallKit] presentNativeCallVC: call \(callId) already ended — skipping stale present")
       return
     }
+    // [2026-05-24 hybrid v2] JS /call.js now owns the in-call UI on iOS.
+    // CXAnswer still fires onCallAnswered which JS handles by navigating
+    // to /call → calling adoptNativeRoom to bind to the pre-connected
+    // NativeCallRoom (from STAGE-A push pre-warm). The Swift UI here
+    // (CallViewController) is suppressed to avoid double-presentation.
+    // STAGE-A continues to pre-connect Room on push receipt so the JS
+    // screen mounts to an already-live audio path.
+    print("[ExpoCallKit] presentNativeCallVC: hybrid mode — skipping native VC; JS /call.js owns UI for \(callId)")
+    return
+    // (unreachable below — kept for reference; rip when JS adopt path is stable)
     // [#1172 fix, 2026-05-18] resolvePresentingViewController is robust to
     // backgrounded scenes + CallKit ring-sheet contention; the old
     // keyWindow-first chain silently bailed when the app was cold-starting

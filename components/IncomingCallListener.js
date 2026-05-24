@@ -1330,15 +1330,14 @@ function IncomingCallListenerWeb() {
             // IncomingCallActivity stay for ringing/lock-screen, but the
             // in-call screen is /call.js with WhatsApp-grade features.
             voipDiag('push_js_call_hybrid', callId);
-            // [WAVE 117A] Mobile = 100% native. On iOS/Android the native
-            // CallViewController / IncomingCallActivity is already presented
-            // by CallKit / FullScreenIntent at this point — pushing /call.js
-            // on top would show a blank JS screen over the native UI.
-            // Web still needs the router.push to show /call.js.
-            if (Platform.OS === 'web') {
+            // [2026-05-24 hybrid v2] iOS now uses JS /call.js for the rich UI.
+            // ExpoCallKitModule.CXAnswer skips CallViewController.present on iOS,
+            // and JS adopts the pre-connected NativeCallRoom via adoptNativeRoom.
+            // Android keeps native CallActivity for now — only iOS + web push.
+            if (Platform.OS === 'web' || Platform.OS === 'ios') {
               router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0`);
             }
-            // Mobile: native call screen takes over. No router.push needed.
+            // Android: native CallActivity (Compose) still owns the UI.
           };
 
           // Navigate immediately — don't gate on WS connection.
