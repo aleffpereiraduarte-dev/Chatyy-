@@ -66,6 +66,19 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 let _triggerIncomingCall = null;
 // Buffer for incoming call data when component isn't mounted yet (cold start from push)
 let _pendingCallTrigger = null;
+
+// [WAVE 161B 2026-05-24 group-answer gap] Detect a group call from the
+// incoming payload so the answer routes to the multi-cam grid (/call?groupCall=1
+// → group renderer) instead of the 1:1 surface. Backend stamps is_group='1'
+// + type='incoming_group_call' + group_name (chat.php:8204). Without this the
+// answerer of a group call only saw the first peer (1:1 layout).
+function _payloadIsGroupCall(d) {
+  if (!d) return false;
+  return d.is_group === '1' || d.is_group === true || d.is_group === 1
+    || d.type === 'incoming_group_call'
+    || (typeof d.group_name === 'string' && d.group_name.length > 0);
+}
+
 export function triggerIncomingCall(data) {
   // Don't force-reset _callActive: a real call already in progress must
   // suppress further triggers (was a primary contributor to the double-UI
@@ -1335,7 +1348,8 @@ function IncomingCallListenerWeb() {
             // and JS adopts the pre-connected NativeCallRoom via adoptNativeRoom.
             // Android keeps native CallActivity for now — only iOS + web push.
             if (Platform.OS === 'web' || Platform.OS === 'ios') {
-              router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0`);
+              const _grp = _payloadIsGroupCall(updatedCall) || _payloadIsGroupCall(data) ? '&groupCall=1' : '';
+              router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0${_grp}`);
             }
             // Android: native CallActivity (Compose) still owns the UI.
           };
@@ -1571,7 +1585,8 @@ function IncomingCallListenerWeb() {
             // screen reports. Mobile must go ONLY through the native call UI.
             // Web still needs the JS push since there's no native CallKit there.
             if (Platform.OS === 'web') {
-              router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
+              const _grp = (_payloadIsGroupCall(pending) || _payloadIsGroupCall(callStateRef.current)) ? '&groupCall=1' : '';
+              router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1${_grp}`);
             }
             // (mobile already gets full native CallKit / IncomingCallActivity)
 
@@ -1781,10 +1796,12 @@ function IncomingCallListenerWeb() {
     callStateRef.current = null;
     setCall(null);
 
-    // Navigate to call screen as callee
+    // Navigate to call screen as callee. Capture group flag from currentCall
+    // before callStateRef is nulled above (group-answer grid routing).
+    const _grpParam = _payloadIsGroupCall(currentCall) ? '&groupCall=1' : '';
     setTimeout(() => {
       try {
-        const url = `/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&callerVerified=${callerVerifiedParam}`;
+        const url = `/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&callerVerified=${callerVerifiedParam}${_grpParam}`;
         router.push(url);
       } catch {}
       // DON'T reset handlingRef here — keep it true to block any late decline
