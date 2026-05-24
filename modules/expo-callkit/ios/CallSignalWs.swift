@@ -197,14 +197,25 @@ final class CallSignalWs: NSObject {
         enqueue(dict)
     }
 
-    func fireCallEnd(callId: String, conversationId: String, reason: String) {
-        let dict: [String: Any] = [
+    func fireCallEnd(callId: String, conversationId: String, reason: String, targetEmail: String = "") {
+        // [2026-05-24] CRITICAL: target_email is REQUIRED for the C++ WS server
+        // to relay the call_end frame to the peer. Without it the server logs
+        // "no target — drop" and the OTHER side never sees the hangup, leaving
+        // them stranded on the call screen indefinitely.
+        var dict: [String: Any] = [
             "type": "call_end",
             "call_id": callId,
             "conversation_id": conversationId,
             "reason": reason,
             "ts": Int(Date().timeIntervalSince1970 * 1000)
         ]
+        if !targetEmail.isEmpty {
+            dict["target_email"] = targetEmail.lowercased()
+            // Mirror as caller_email so the server's secondary fallback also
+            // resolves (the call_end branch in main.cpp uses caller_email
+            // when target_email is missing).
+            dict["caller_email"] = targetEmail.lowercased()
+        }
         enqueue(dict)
     }
 

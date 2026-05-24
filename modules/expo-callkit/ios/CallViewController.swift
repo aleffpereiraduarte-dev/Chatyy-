@@ -314,14 +314,16 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
         let bounds = UIScreen.main.bounds
 
-        // 1. Gradient background (3-stop like Android)
+        // 1. Gradient background — WhatsApp-grade cinematic deep purple → near-black
+        // [WAVE 178 2026-05-24] Tighter contrast, more saturation up top, deeper
+        // black at the bottom so the buttons and avatar pop more dramatically.
         let gradient = CAGradientLayer()
         gradient.colors = [
-            UIColor(red: 0x1A/255.0, green: 0x0F/255.0, blue: 0x2E/255.0, alpha: 1.0).cgColor,
-            UIColor(red: 0x12/255.0, green: 0x0E/255.0, blue: 0x24/255.0, alpha: 1.0).cgColor,
-            UIColor(red: 0x0B/255.0, green: 0x14/255.0, blue: 0x1A/255.0, alpha: 1.0).cgColor
+            UIColor(red: 0x2D/255.0, green: 0x12/255.0, blue: 0x5C/255.0, alpha: 1.0).cgColor,  // royal purple
+            UIColor(red: 0x1A/255.0, green: 0x0A/255.0, blue: 0x33/255.0, alpha: 1.0).cgColor,  // deep violet
+            UIColor(red: 0x07/255.0, green: 0x05/255.0, blue: 0x14/255.0, alpha: 1.0).cgColor   // near-black
         ]
-        gradient.locations = [0.0, 0.5, 1.0]
+        gradient.locations = [0.0, 0.55, 1.0]
         gradient.startPoint = CGPoint(x: 0.5, y: 0.0)
         gradient.endPoint = CGPoint(x: 0.5, y: 1.0)
         gradient.frame = bounds
@@ -373,11 +375,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
         func addPulseRing(delay: CFTimeInterval) {
             let ring = CAShapeLayer()
-            ring.path = UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: 210, height: 210)).cgPath
+            ring.path = UIBezierPath(ovalIn: CGRect(x: 0, y: 0, width: 245, height: 245)).cgPath
             ring.fillColor = UIColor.clear.cgColor
             ring.strokeColor = UIColor.white.cgColor
             ring.lineWidth = 2
-            ring.frame = CGRect(x: 0, y: 0, width: 210, height: 210)
+            ring.frame = CGRect(x: 0, y: 0, width: 245, height: 245)
             ring.opacity = 0
 
             let scaleAnim = CABasicAnimation(keyPath: "transform.scale")
@@ -402,8 +404,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         addPulseRing(delay: 0.6)
         addPulseRing(delay: 1.2)
 
-        // 3. Avatar circle — 180pt, gradient purple + real photo async
-        let avatarSize: CGFloat = 180
+        // 3. Avatar circle — 210pt, gradient purple + real photo async
+        // [WAVE 178 2026-05-24] Bumped 180→210 for WhatsApp-grade presence.
+        let avatarSize: CGFloat = 210
         let avatarView = UIView()
         avatarView.translatesAutoresizingMaskIntoConstraints = false
         let avatarGradient = CAGradientLayer()
@@ -433,7 +436,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         initialLabel.translatesAutoresizingMaskIntoConstraints = false
         initialLabel.text = initial
         initialLabel.textColor = .white
-        initialLabel.font = .systemFont(ofSize: 72, weight: .semibold)
+        initialLabel.font = .systemFont(ofSize: 84, weight: .medium)
         initialLabel.textAlignment = .center
         initialLabel.tag = 9031
         avatarView.addSubview(initialLabel)
@@ -461,7 +464,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
         nameLabel.text = displayName
         nameLabel.textColor = .white
-        nameLabel.font = .systemFont(ofSize: 28, weight: .semibold)
+        nameLabel.font = .systemFont(ofSize: 32, weight: .regular)
         nameLabel.textAlignment = .center
         nameLabel.numberOfLines = 1
         nameLabel.tag = 9000
@@ -596,9 +599,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             lockIcon.widthAnchor.constraint(equalToConstant: 16),
             lockIcon.heightAnchor.constraint(equalToConstant: 16),
 
-            // Pulse container
-            pulseContainer.widthAnchor.constraint(equalToConstant: 210),
-            pulseContainer.heightAnchor.constraint(equalToConstant: 210),
+            // Pulse container (sized to fit the bigger avatar + breathing ring)
+            pulseContainer.widthAnchor.constraint(equalToConstant: 245),
+            pulseContainer.heightAnchor.constraint(equalToConstant: 245),
             pulseContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             pulseContainer.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 48),
 
@@ -999,7 +1002,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         CallSignalWs.shared.fireCallEnd(
             callId: callId,
             conversationId: conversationId,
-            reason: "user_hangup"
+            reason: "user_hangup",
+            targetEmail: callerEmail
         )
         NotificationCenter.default.post(
             name: CallViewController.callEndedNotification,
@@ -2330,7 +2334,24 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     // [WAVE 154 2026-05-22] UIKit-only button handlers (no SwiftUI).
 
+    // [WAVE 178 2026-05-24] Haptic + scale press feedback for WhatsApp-grade
+    // tactile response. Layered so every call-control button has a 100ms
+    // dimming scale-down before firing the actual action.
+    private func tapFeedback(_ btn: UIButton?) {
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        guard let btn = btn else { return }
+        UIView.animate(withDuration: 0.08, animations: {
+            btn.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
+        }, completion: { _ in
+            UIView.animate(withDuration: 0.12, delay: 0, usingSpringWithDamping: 0.55, initialSpringVelocity: 0.8, options: [.allowUserInteraction], animations: {
+                btn.transform = .identity
+            })
+        })
+    }
+
     @objc private func uikitOnHangupTap() {
+        UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+        tapFeedback(view.viewWithTag(9004) as? UIButton)
         handleHangup()
     }
 
@@ -2338,7 +2359,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // session.micEnabled = mic ENABLED. Mute = micEnabled false.
         let newMicEnabled = !session.micEnabled
         applyMicEnabled(newMicEnabled)
-        if let btn = view.viewWithTag(9002) as? UIButton {
+        let btn = view.viewWithTag(9002) as? UIButton
+        tapFeedback(btn)
+        if let btn = btn {
             let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
             btn.setImage(UIImage(systemName: newMicEnabled ? "mic.fill" : "mic.slash.fill", withConfiguration: cfg), for: .normal)
         }
@@ -2347,7 +2370,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     @objc private func uikitOnSpeakerTap() {
         let next = !session.speakerOn
         applySpeaker(next)
-        if let btn = view.viewWithTag(9003) as? UIButton {
+        let btn = view.viewWithTag(9003) as? UIButton
+        tapFeedback(btn)
+        if let btn = btn {
             let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
             btn.setImage(UIImage(systemName: next ? "speaker.wave.2.fill" : "speaker.slash.fill", withConfiguration: cfg), for: .normal)
         }
@@ -2357,7 +2382,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         let desired = !session.camEnabled
         session.camEnabled = desired
         applyCamEnabled(desired)
-        if let btn = view.viewWithTag(9005) as? UIButton {
+        let btn = view.viewWithTag(9005) as? UIButton
+        tapFeedback(btn)
+        if let btn = btn {
             let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
             btn.setImage(UIImage(systemName: desired ? "video.fill" : "video.slash.fill", withConfiguration: cfg), for: .normal)
         }

@@ -155,14 +155,25 @@ object CallSignalWs {
         context: Context,
         callId: String,
         conversationId: String,
-        reason: String
+        reason: String,
+        targetEmail: String = ""
     ) {
+        // [2026-05-24] CRITICAL: target_email is REQUIRED so the C++ WS server
+        // can relay the call_end frame to the peer. Without it the server logs
+        // "no target — drop" and the OTHER side stays stranded on the call
+        // screen — root cause of the "desligo de um lado e o outro nao recebe"
+        // bug.
         val payload = JSONObject().apply {
             put("type", "call_end")
             put("call_id", callId)
             put("conversation_id", conversationId)
             put("reason", reason)
             put("ts", System.currentTimeMillis())
+            if (targetEmail.isNotEmpty()) {
+                val em = targetEmail.lowercase()
+                put("target_email", em)
+                put("caller_email", em)
+            }
         }.toString()
         enqueueAndShip(context, payload)
     }

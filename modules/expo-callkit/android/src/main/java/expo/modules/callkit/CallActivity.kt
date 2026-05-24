@@ -1756,7 +1756,10 @@ class CallActivity : ComponentActivity() {
     stopRingback()
 
     // Notify the WS server first so the peer sees call_end with low latency.
-    CallSignalWs.fireCallEnd(this, callId, conversationId, reason)
+    // [2026-05-24] Pass callerEmail (the peer) as target so the C++ WS can
+    // route the frame — without it the server drops with "no target — drop"
+    // and the OTHER side stays stuck on the call screen.
+    CallSignalWs.fireCallEnd(this, callId, conversationId, reason, callerEmail)
 
     // Broadcast for any JS subscribers that still want the legacy hook.
     try {
