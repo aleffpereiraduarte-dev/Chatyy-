@@ -2468,44 +2468,6 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // screen mounts to an already-live audio path.
     print("[ExpoCallKit] presentNativeCallVC: hybrid mode — skipping native VC; JS /call.js owns UI for \(callId)")
     return
-    // (unreachable below — kept for reference; rip when JS adopt path is stable)
-    // [#1172 fix, 2026-05-18] resolvePresentingViewController is robust to
-    // backgrounded scenes + CallKit ring-sheet contention; the old
-    // keyWindow-first chain silently bailed when the app was cold-starting
-    // from a VoIP push and the user had not yet returned to foreground.
-    // [#1192 cold-start fix, 2026-05-19] If the immediate lookup misses
-    // (rootVC not yet attached during cold-start from VoIP push), retry
-    // up to ~3s waiting for RN bootstrap to attach the rootVC.
-    let presentBlock: (UIViewController) -> Void = { root in
-      // [2026-05-16 Stage 2] isOutgoing stays false for the CXAnswer path —
-      // we're presenting because the callee just answered, NOT because they
-      // initiated. The native call_answered fire happens up in the CXAnswer
-      // handler; we just need conversationId here so CallViewController's
-      // hangup path can fire call_end with the correct (call_id, conv_id).
-      // Re-check active state under retry — the call may have been ended by
-      // peer / network / hangup during the wait window.
-      guard ExpoCallKitModule.isCallStillActive(callId: callId) else {
-        print("[ExpoCallKit] presentNativeCallVC(retry): call \(callId) ended during wait — abort")
-        return
-      }
-      CallViewController.present(
-        from: root,
-        callId: callId,
-        callerName: callerName,
-        callerEmail: callerEmail,
-        hasVideo: hasVideo,
-        lkUrl: lkUrl,
-        lkToken: lkToken,
-        isOutgoing: false,
-        conversationId: conversationId
-      )
-    }
-    if let root = resolvePresentingViewController() {
-      presentBlock(root)
-    } else {
-      print("[ExpoCallKit] presentNativeCallVC: no presenting VC yet (cold-start) — retrying")
-      retryPresent(reason: "presentNativeCallVC:\(callId)", block: presentBlock)
-    }
   }
 
   // [Stage #996 outgoing native flow, 2026-05-17] CXStartCallAction is the
@@ -2621,73 +2583,6 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // in presentNativeCallVC for incoming calls.
     NSLog("[ExpoCallKit] presentOutgoingCallVC: hybrid mode — skipping native VC; JS /call.js owns UI for \(params.callId)")
     return
-
-    // [WAVE 147 2026-05-22 DOUBLE-PRESENT GUARD — ROOT CAUSE FIX]
-    // Deep audit identified: WAVE 145 added immediate present in
-    // AsyncFunction("startOutgoingCall") body, BUT did NOT remove the
-    // existing presentOutgoingCallVC calls in CXStartCallAction handler
-    // (lines ~2433, ~2452, ~2457). Both code paths fire unconditionally
-    // — first WAVE 145 (~0ms after JS call), then CXStartCallAction
-    // (~200-500ms later). UIKit silently rejects the second present
-    // with "Attempt to present X on Y which is already presenting Z"
-    // → the rich SwiftUI CallView never renders (either clobbered or
-    // never reaches the window).
-    //
-    // Fix: short-circuit if a CallVC is ALREADY presented for this callId.
-    // _activePresentedCallIds is mutated on _actuallyPresentOutgoing
-    // completion (after window attachment confirmed) and cleared in
-    // CXEndCallAction. Static Set<String> is thread-safe via main-thread
-    // dispatch convention (all callers wrap in DispatchQueue.main.async).
-    if Self._activePresentedCallIds.contains(params.callId) {
-      NSLog("[CallTrace][PRESENT-1B-SKIP] WAVE 147: CallVC already presented for callId=\(params.callId) — skipping duplicate present (double-present collision avoided)")
-      return
-    }
-
-    // [WAVE 146 2026-05-22] Defensive main-thread guard. UIKit `present(_:)`
-    // MUST run on main; warm-path callsite uses DispatchQueue.main.async but
-    // we double-guard here in case a future callsite forgets.
-    if !Thread.isMainThread {
-      DispatchQueue.main.async {
-        Self.presentOutgoingCallVC(params: params, lkUrl: lkUrl, lkToken: lkToken)
-      }
-      return
-    }
-
-    guard ExpoCallKitModule.isCallStillActive(callId: params.callId) else {
-      NSLog("[CallTrace][PRESENT-2-ABORT] callId=\(params.callId) ended (isCallStillActive=false) — UI WILL NOT APPEAR")
-      return
-    }
-    let callId = params.callId
-    let presentBlock: (UIViewController) -> Void = { root in
-      guard ExpoCallKitModule.isCallStillActive(callId: callId) else {
-        NSLog("[CallTrace][PRESENT-3-ABORT] callId=\(callId) ended during retry wait")
-        return
-      }
-      NSLog("[CallTrace][PRESENT-4] resolved root=\(type(of: root)) presented=\(root.presentedViewController.map { String(describing: type(of: $0)) } ?? "nil")")
-
-      // [WAVE 146] Walk to top — BUT if top is mid-transition / an unrelated
-      // sheet/modal (image picker, contact details, etc.), dismiss it forcibly
-      // so we can present the CallVC over the scene root. User intent =
-      // "show CallView NOW".
-      var top: UIViewController = root
-      while let p = top.presentedViewController, !p.isBeingDismissed {
-        top = p
-      }
-      if top !== root && !(top is CallViewController) {
-        NSLog("[CallTrace][PRESENT-5] dismissing stale top=\(type(of: top)) before presenting CallVC")
-        top.dismiss(animated: false) {
-          Self._actuallyPresentOutgoing(from: root, params: params, lkUrl: lkUrl, lkToken: lkToken, callId: callId)
-        }
-        return
-      }
-      Self._actuallyPresentOutgoing(from: top, params: params, lkUrl: lkUrl, lkToken: lkToken, callId: callId)
-    }
-    if let root = resolvePresentingViewController() {
-      presentBlock(root)
-    } else {
-      NSLog("[CallTrace][PRESENT-6] no root VC yet — retrying for cold-start")
-      retryPresent(reason: "presentOutgoingCallVC:\(callId)", block: presentBlock)
-    }
   }
 
   // [WAVE 146 2026-05-22] Final present helper — guaranteed main-thread,
