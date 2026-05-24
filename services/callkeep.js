@@ -394,7 +394,20 @@ let _diag = () => {};
 try { _diag = require('./voipDiag').default; } catch {}
 
 export function addCallKeepListeners({ onAnswer, onEnd }) {
-  if (!loadModule()) return () => {};
+  // [DIAG 2026-05-24] Full-path instrumentation. Logs BEFORE the loadModule
+  // gate so we can tell apart "module failed to load" from "listeners never
+  // wired". Captures whether the native ExpoCallKit + onCallAnswered exist.
+  const _modOk = loadModule();
+  try {
+    _diag('callkeep_addlisteners_entry', '', {
+      platform: Platform.OS,
+      moduleLoaded: _modOk,
+      hasExpoCallKit: !!ExpoCallKit,
+      hasOnCallAnswered: !!(ExpoCallKit && typeof ExpoCallKit.onCallAnswered === 'function'),
+      hasConsumePending: !!(ExpoCallKit && typeof ExpoCallKit.consumePendingEvents === 'function'),
+    });
+  } catch {}
+  if (!_modOk) return () => {};
 
   _diag('callkeep_listeners_register', '', { hasOnAnswer: !!onAnswer, hasOnEnd: !!onEnd });
 

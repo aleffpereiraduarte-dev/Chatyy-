@@ -1347,8 +1347,11 @@ function IncomingCallListenerWeb() {
             // ExpoCallKitModule.CXAnswer skips CallViewController.present on iOS,
             // and JS adopts the pre-connected NativeCallRoom via adoptNativeRoom.
             // Android keeps native CallActivity for now — only iOS + web push.
+            const _routeGroup = _payloadIsGroupCall(updatedCall) || _payloadIsGroupCall(data);
+            try { voipDiag('donavigate_reached', callId, { platform: Platform.OS, willPushJs: (Platform.OS === 'web' || Platform.OS === 'ios'), group: _routeGroup }); } catch {}
             if (Platform.OS === 'web' || Platform.OS === 'ios') {
-              const _grp = _payloadIsGroupCall(updatedCall) || _payloadIsGroupCall(data) ? '&groupCall=1' : '';
+              const _grp = _routeGroup ? '&groupCall=1' : '';
+              try { voipDiag('router_push_call', callId, { platform: Platform.OS, group: _routeGroup }); } catch {}
               router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0${_grp}`);
             }
             // Android: native CallActivity (Compose) still owns the UI.
