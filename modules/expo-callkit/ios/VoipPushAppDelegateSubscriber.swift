@@ -48,7 +48,10 @@ private let kPendingAnswerPayloadsLock = NSLock()
 // the user has no recovery path from the lock screen).
 private var kRingTimers: [UUID: DispatchSourceTimer] = [:]
 private let kRingTimersLock = NSLock()
-private let kRingTimeoutSeconds: Int = 30
+// [WAVE 161B 2026-05-24] Aligned with Android RINGING_TIMEOUT_MS=45_000 and
+// caller-side outgoing 45s. Used to be 30s here, Android 60s, outgoing 45s —
+// three independent timers drifting produced tardy "missed call" surfaces.
+private let kRingTimeoutSeconds: Int = 45
 
 // [WAVE 163 2026-05-23 GHOST FIX] Outgoing-side timers, parallel to kRingTimers.
 // Lives at FILE scope (NOT inside ExpoCallKitModule) so the DispatchSource

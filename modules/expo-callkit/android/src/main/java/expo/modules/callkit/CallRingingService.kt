@@ -38,7 +38,11 @@ class CallRingingService : Service() {
 
     companion object {
         private const val TAG = "CallRingingService"
-        private const val RINGING_TIMEOUT_MS = 60_000L // 60 seconds
+        // [WAVE 161B 2026-05-24] Aligned with iOS kRingTimeoutSeconds=45 and
+        // caller-side outgoing 45s. Three independent timers used to drift
+        // (iOS 30s, Android 60s, outgoing 45s) producing tardy "missed call"
+        // and orphan ring states. Single source: 45s end-to-end.
+        private const val RINGING_TIMEOUT_MS = 45_000L
 
         // Track the currently ringing call so we can stop from outside (thread-safe).
         // Mirrors the last call set as primary — kept for backward compat with

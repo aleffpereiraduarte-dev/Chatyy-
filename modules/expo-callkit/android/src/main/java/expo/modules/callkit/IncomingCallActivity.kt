@@ -48,9 +48,20 @@ class IncomingCallActivity : AppCompatActivity() {
   private var avatarSizePx: Int = 0
   private val mainHandler = Handler(Looper.getMainLooper())
 
-  // Receiver to close this activity when call is handled from notification
+  // Receiver to close this activity when call is handled from notification.
+  // [WAVE 161B 2026-05-24] Guard on call_id: a close broadcast for a stale
+  // call (e.g., previous call was cancelled while a new invite landed) used
+  // to finish() this Activity unconditionally, killing the new incoming
+  // ring. CallActivity.closeReceiver already has this guard (#867 era fix);
+  // the IncomingCallActivity path was missed.
   private val closeReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+      val broadcastCallId = intent.getStringExtra("call_id")
+      val myId = callId
+      if (broadcastCallId != null && myId != null && broadcastCallId != myId) {
+        Log.d("IncomingCallActivity", "closeReceiver: ignoring close for stale call_id=$broadcastCallId (mine=$myId)")
+        return
+      }
       stopRinging()
       finish()
     }

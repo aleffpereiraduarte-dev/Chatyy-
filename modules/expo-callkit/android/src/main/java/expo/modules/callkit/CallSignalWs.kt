@@ -93,6 +93,35 @@ object CallSignalWs {
     private val seenIncomingInvites: MutableSet<String> =
         java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
 
+    // [WAVE 161B 2026-05-24] Mirror of iOS CallSignalWs.swift selfAnsweredCallIds.
+    // When this device answers a call via fireCallAnswered, the server fans out
+    // a call_cancel{reason:answered_elsewhere} to ALL sibling sessions of the
+    // callee — including the device that just answered. Without a self-suppress
+    // gate, the call_cancel handler tears down the freshly-active call. iOS
+    // had this guard since #1349; Android did not, so multi-device Android
+    // users saw the call drop immediately after Accept.
+    private const val SELF_ANSWERED_MAX = 16
+    private val selfAnsweredCallIds: java.util.ArrayDeque<String> = java.util.ArrayDeque()
+    private val selfAnsweredLock = Any()
+
+    private fun markSelfAnswered(callId: String) {
+        if (callId.isEmpty()) return
+        synchronized(selfAnsweredLock) {
+            selfAnsweredCallIds.remove(callId)
+            selfAnsweredCallIds.addLast(callId)
+            while (selfAnsweredCallIds.size > SELF_ANSWERED_MAX) {
+                selfAnsweredCallIds.removeFirst()
+            }
+        }
+    }
+
+    private fun consumeSelfAnswered(callId: String): Boolean {
+        if (callId.isEmpty()) return false
+        synchronized(selfAnsweredLock) {
+            return selfAnsweredCallIds.remove(callId)
+        }
+    }
+
     // [P0 2026-05-18 #1132] When true, the WS stays connected even with an
     // empty outgoing queue, so inbound `call_invite` frames can be received
     // by the callee (who has nothing to send). Flipped on by `warmConnect()`.
@@ -148,6 +177,9 @@ object CallSignalWs {
             if (callerEmail.isNotEmpty()) put("target_email", callerEmail)
             put("ts", System.currentTimeMillis())
         }.toString()
+        // [WAVE 161B 2026-05-24] Stamp BEFORE shipping so the sibling-cancel
+        // fan-out (which can land within ~30ms on fast WS) finds the marker.
+        markSelfAnswered(callId)
         enqueueAndShip(context, payload)
     }
 
@@ -403,6 +435,20 @@ object CallSignalWs {
                 // before pickup. Tear down native call UI same as call_end.
                 // (call_cancel is fired by caller's WS to all callee devices
                 // when caller hangs up before pickup — sibling-cancel pattern.)
+                //
+                // [WAVE 161B 2026-05-24] Self-suppress for "answered_elsewhere"
+                // fan-outs: if THIS device just answered, the server still
+                // ships call_cancel to it as part of the sibling fan-out.
+                // Don't tear down our own active call. Mirrors iOS pattern in
+                // CallSignalWs.swift:543.
+                val cancelId = obj.optString("call_id").ifEmpty { obj.optString("room_id") }
+                val reason = obj.optString("reason")
+                val acceptedByClientId = obj.optString("accepted_by_client_id")
+                if ((reason == "answered_elsewhere" || acceptedByClientId.isNotEmpty()) &&
+                    consumeSelfAnswered(cancelId)) {
+                    Log.d(TAG, "$type $cancelId: we answered locally — self-suppress (reason=$reason)")
+                    return
+                }
                 Log.d(TAG, "$type — treating as call_end equivalent")
                 handleIncomingCallEnd(obj)
             }

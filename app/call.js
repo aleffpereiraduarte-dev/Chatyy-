@@ -970,10 +970,14 @@ function CallScreenInner() {
       const r = roomRef.current;
       if (!r) return;
       if (nextState === 'background' || nextState === 'inactive') {
-        try { r.localParticipant.setCameraEnabled(false); } catch {}
+        try { r.localParticipant.setCameraEnabled(false); } catch (e) {
+          try { _callDiagAppend('warn', 'setCameraEnabled(false) failed on background', { call_id: callId, msg: String(e?.message || e).slice(0, 200) }); } catch {}
+        }
       } else if (nextState === 'active') {
         if (videoEnabledRef.current && !onHold) {
-          try { r.localParticipant.setCameraEnabled(true); } catch {}
+          try { r.localParticipant.setCameraEnabled(true); } catch (e) {
+            try { _callDiagAppend('warn', 'setCameraEnabled(true) failed on foreground resume', { call_id: callId, msg: String(e?.message || e).slice(0, 200) }); } catch {}
+          }
         }
       }
     });
@@ -2821,7 +2825,9 @@ function CallScreenInner() {
         try {
           const r = roomRef.current;
           if (r && r.localParticipant) {
-            r.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+            r.localParticipant.setMicrophoneEnabled(false).catch((e) => {
+              try { _callDiagAppend('warn', 'host force-mute setMicrophoneEnabled(false) failed', { call_id: callId, msg: String(e?.message || e).slice(0, 200) }); } catch {}
+            });
           }
         } catch {}
         try { setAudioMuted(true); audioMutedRef.current = true; } catch {}

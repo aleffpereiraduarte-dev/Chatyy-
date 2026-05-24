@@ -520,12 +520,23 @@ object NativeCallRoom {
         Log.i(TAG, "adoptForCall: callId=$callId preconnected=${isPreconnected(callId)}")
         if (isPreconnected(callId)) {
             // Warm path. Just attach the mic and we're done.
+            // [WAVE 161B 2026-05-24] Respect the JS-persisted mute snapshot
+            // when present. Prevents 200-1500ms of hot-mic leak between the
+            // Accept tap and the JS lkSetMicEnabled(false) catching up (e.g.
+            // host force-mute via WS landed before pickup, or user has the
+            // "answer muted" preference). Defaults to UNMUTED when key is
+            // absent, matching legacy behavior.
+            val prefs = ctx.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+            val startMuted = prefs.getBoolean("pending_call_mic_muted", false)
             try {
-                setMicEnabled(true)
+                setMicEnabled(!startMuted)
                 if (hasVideo) setCameraEnabled(true)
+                if (startMuted) Log.i(TAG, "adoptForCall: published mic muted (pending_call_mic_muted=true)")
             } catch (t: Throwable) {
                 Log.w(TAG, "adoptForCall: setMic/Cam failed: ${t.message}")
             }
+            // Clear the flag so it doesn't bleed into the next call.
+            try { prefs.edit().remove("pending_call_mic_muted").apply() } catch (_: Throwable) {}
             // Fire-and-forget signal to caller.
             // [WAVE 104C] Pass callerEmail so C++ WS relay routes the frame.
             try {

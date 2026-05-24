@@ -248,6 +248,14 @@ class CallActivity : ComponentActivity() {
   private var isOutgoing: Boolean = false
   private var conversationId: String = ""
 
+  // [WAVE 161B 2026-05-24] Outgoing-call: callee actually tapped Accept.
+  // Set by callAnsweredReceiver on WS call_accepted. Used to gate the
+  // RoomEvent.Connected/ParticipantConnected status flip — own-side LK
+  // connection (caller joining SFU) or callee's preconnect-driven LK join
+  // are NOT proof the user picked up. Mirrors the JS-side fix in
+  // app/call.js where callAcceptedRef gates the "Conectado" UI flip.
+  @Volatile private var peerAnswered: Boolean = false
+
   // ────────────── LiveKit / lifecycle
 
   private var room: Room? = null
@@ -345,6 +353,7 @@ class CallActivity : ComponentActivity() {
         return
       }
       Log.d(TAG, "[WAVE161] callAnsweredReceiver: flipping status to Conectado")
+      peerAnswered = true
       stopRingback()
       state.status = "Conectado"
       state.connectionStartedAt = System.currentTimeMillis()
@@ -1528,10 +1537,20 @@ class CallActivity : ComponentActivity() {
     when (event) {
       is RoomEvent.Connected -> {
         Log.d(TAG, "RoomEvent.Connected")
-        state.status = "Conectado"
-        state.isReconnecting = false
-        if (state.connectionStartedAt == 0L) {
-          state.connectionStartedAt = System.currentTimeMillis()
+        // [WAVE 161B 2026-05-24] On the caller side this fires when WE
+        // joined the SFU (often ~200ms after tapping Call) — NOT when the
+        // callee picked up. Keep the "Chamando…" label until the real
+        // call_accepted WS arrives (callAnsweredReceiver). For the callee
+        // side or after Accept the flip is correct.
+        if (isOutgoing && !peerAnswered) {
+          Log.d(TAG, "RoomEvent.Connected (caller, awaiting peer answer) — keep Chamando…")
+          state.isReconnecting = false
+        } else {
+          state.status = "Conectado"
+          state.isReconnecting = false
+          if (state.connectionStartedAt == 0L) {
+            state.connectionStartedAt = System.currentTimeMillis()
+          }
         }
       }
       is RoomEvent.Reconnecting -> {
@@ -1553,12 +1572,24 @@ class CallActivity : ComponentActivity() {
         val identity = event.participant.identity?.value ?: ""
         val name = event.participant.name ?: ""
         Log.d(TAG, "ParticipantConnected $identity")
-        stopRingback()
         state.peerIdentity = identity
         // [Wave C-2] Add to the group grid if not already present.
         // Video track starts null — wired in on TrackSubscribed.
         if (state.groupParticipants.none { it.identity == identity }) {
           state.groupParticipants.add(GroupParticipantAndroid(identity = identity, name = name))
+        }
+        // [WAVE 161B 2026-05-24] Stop ringback + flip status only when the
+        // peer's presence in the SFU represents a REAL accept. For caller
+        // side, the callee's preconnect (FCM-driven, subscribe-only) also
+        // joins the room before user pickup. Gate on `peerAnswered` (WS
+        // call_accepted). For incoming side or after Accept, fire eagerly.
+        if (isOutgoing && !peerAnswered) {
+          Log.d(TAG, "ParticipantConnected (caller, awaiting peer answer) — keep ringback")
+        } else {
+          stopRingback()
+          if (isOutgoing) {
+            // We got here via callAnsweredReceiver already; nothing extra.
+          }
         }
       }
       is RoomEvent.ParticipantDisconnected -> {
