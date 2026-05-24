@@ -459,16 +459,15 @@ object NativeCallRoom {
                 // before our listener attaches and JS would miss it.
                 publish(r, callId, callId, ctx.applicationContext)
                 r.connect(url, token)
-                Log.i(TAG, "preconnect: Room.connect returned, state=${r.state}")
-                // [2026-05-21] Publish mic during preconnect (parity with iOS:1638). Without
-                // this, accept-fast races where adoptForCall sets mic AFTER user pickup
-                // produce one-way audio (callee receives but caller never hears them).
-                try {
-                  r.localParticipant.setMicrophoneEnabled(true)
-                  Log.i(TAG, "preconnect: mic published")
-                } catch (e: Exception) {
-                  Log.w(TAG, "preconnect: setMicrophoneEnabled failed: ${e.message}")
-                }
+                Log.i(TAG, "preconnect: Room.connect returned subscribe-only, state=${r.state}")
+                // [bug 2026-05-24 ios-caller-auto-answers] DO NOT publish mic
+                // during preconnect. This matches iOS (CallViewController.swift:
+                // "subscribe-only, mic publish deferred to answer"). Publishing
+                // pre-accept makes the caller's `ParticipantConnected` handler
+                // think the callee already answered — caller UI flips to
+                // "Conectado" + CallKit reports answered while the callee
+                // phone is still ringing. Mic is published in adoptForCall
+                // after the user actually taps Accept.
             } catch (t: Throwable) {
                 Log.w(TAG, "preconnect failed for callId=$callId: ${t.message}")
                 // Don't clear() — the cached token still lets onAnswer's

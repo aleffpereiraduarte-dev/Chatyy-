@@ -543,6 +543,21 @@ function CallScreenInner() {
   const handRaiseTimerRef = useRef(null);
   const handLowerTimersRef = useRef(new Map());
 
+  // [bug 2026-05-24 ios-caller-auto-answers]
+  // Caller side must NOT treat ParticipantConnected as "answered" by itself.
+  // Android's CallFirebaseMessagingService preconnects the LK Room (joins SFU
+  // + publishes mic) the instant FCM lands, BEFORE the user taps Accept. The
+  // caller would otherwise see ParticipantConnected, flip peerConnected,
+  // report CallKit connected, and stop the ringback — all while the callee
+  // phone is still ringing. Gate the answered side-effects on the WS
+  // call_accepted event (fired by adoptForCall AFTER real Accept tap). A
+  // 12s fallback unblocks the UI in case the WS event is dropped — the
+  // physical presence of a remote participant for 12s is a strong-enough
+  // signal that they're really in the call.
+  const callAcceptedRef = useRef(false);
+  const peerParticipantConnectedAtRef = useRef(0);
+  const pendingPeerConnectedFallbackRef = useRef(null);
+
   // Remote/local LiveKit tracks → RN VideoView refs.
   const [remoteParticipant, setRemoteParticipant] = useState(null);
   const [remoteVideoTrack, setRemoteVideoTrack] = useState(null);
@@ -1623,10 +1638,19 @@ function CallScreenInner() {
       try {
         const others = Array.from(r.remoteParticipants?.values?.() || []);
         if (others.length > 0) {
-          setPeerConnected(true);
+          // [bug 2026-05-24] Same gate as ParticipantConnected handler — if
+          // we're the caller and haven't seen WS call_accepted yet, the
+          // remote is just a pre-connect warm-up (Android FCM preconnect
+          // joins LK before user taps Accept). Don't flip UI to connected.
+          const remoteIsTrulyConnected = !isCaller || callAcceptedRef.current || isGroupCall;
           setRemoteParticipant(others[0]);
           _refreshRemoteTracks(others[0]);
-          callKeep.reportConnected(callId);
+          if (remoteIsTrulyConnected) {
+            setPeerConnected(true);
+            callKeep.reportConnected(callId);
+          } else {
+            peerParticipantConnectedAtRef.current = Date.now();
+          }
         }
         for (const p of others) {
           _updateGroupPeer(p.identity, { participant: p, name: p.name || p.identity });
@@ -1733,19 +1757,50 @@ function CallScreenInner() {
       // [WAVE 109 2026-05-21] Primary callee-accepted signal: LK ParticipantConnected
       // fires as soon as the callee joins the SFU room, which is faster and more
       // reliable than WS call_accepted (which requires a healthy WS socket on the
-      // callee side — can be dead on cold-start from VoIP push). This is the
-      // WhatsApp pattern: caller detects answer via media-layer join, not signaling.
-      // Also set peerRinging=true so callerTimeoutRef is cleared (it checks peerConnected
-      // which is set below, but peerRinging clears it in the WS handler too — belt+suspenders).
-      setPeerConnected(true);
-      setPeerRinging(true);
-      if (callerTimeoutRef.current) { clearTimeout(callerTimeoutRef.current); callerTimeoutRef.current = null; }
-      peerJoinedAtRef.current = Date.now();
+      // callee side — can be dead on cold-start from VoIP push).
+      //
+      // [bug 2026-05-24 ios-caller-auto-answers] BUT: Android preconnect
+      // (CallFirebaseMessagingService → NativeCallRoom.preconnect) joins the
+      // LK room BEFORE the user taps Accept. So for the CALLER side this
+      // event is "callee_ready", not "answered". Gate the answered-side
+      // effects on `callAcceptedRef` (set by WS call_accepted on real
+      // Accept tap). For the CALLEE side, this event still means the
+      // remote (the caller) joined — eager flip is correct.
       setRemoteParticipant(participant);
       _refreshRemoteTracks(participant);
       _updateGroupPeer(participant.identity, { participant, name: participant.name || participant.identity });
-      callKeep.reportConnected(callId);
-      try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
+
+      const remoteIsTrulyConnected = !isCaller || callAcceptedRef.current || isGroupCall;
+      if (remoteIsTrulyConnected) {
+        setPeerConnected(true);
+        setPeerRinging(true);
+        if (callerTimeoutRef.current) { clearTimeout(callerTimeoutRef.current); callerTimeoutRef.current = null; }
+        peerJoinedAtRef.current = Date.now();
+        callKeep.reportConnected(callId);
+        try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
+      } else {
+        // Caller side, no WS call_accepted yet — peer is in LK room as a
+        // pre-connect warm-up but hasn't tapped Accept. Don't flip UI to
+        // "Conectado", don't stop ringback, don't tell CallKit yet. Stamp
+        // the time so call_accepted (if it arrives) knows we already saw
+        // ParticipantConnected, and arm a 12s fallback in case WS drops
+        // the call_accepted broadcast.
+        peerParticipantConnectedAtRef.current = Date.now();
+        try { _callDiagAppend('info', 'caller ParticipantConnected — awaiting WS call_accepted', { call_id: callId, peer: participant.identity }); } catch {}
+        if (!pendingPeerConnectedFallbackRef.current) {
+          pendingPeerConnectedFallbackRef.current = setTimeout(() => {
+            pendingPeerConnectedFallbackRef.current = null;
+            if (endedRef.current || callAcceptedRef.current) return;
+            try { _callDiagAppend('warn', 'caller WS call_accepted fallback — flipping connected via LK presence', { call_id: callId, ms_since_lk_join: Date.now() - peerParticipantConnectedAtRef.current }); } catch {}
+            setPeerConnected(true);
+            setPeerRinging(true);
+            if (callerTimeoutRef.current) { clearTimeout(callerTimeoutRef.current); callerTimeoutRef.current = null; }
+            peerJoinedAtRef.current = Date.now();
+            try { callKeep.reportConnected(callId); } catch {}
+            try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
+          }, 12000);
+        }
+      }
     });
 
     r.on(RoomEvent.ParticipantDisconnected, (participant) => {
@@ -2280,6 +2335,10 @@ function CallScreenInner() {
     if (callerTimeoutRef.current) clearTimeout(callerTimeoutRef.current);
     if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (pendingPeerConnectedFallbackRef.current) {
+      try { clearTimeout(pendingPeerConnectedFallbackRef.current); } catch {}
+      pendingPeerConnectedFallbackRef.current = null;
+    }
 
     try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
 
@@ -2634,8 +2693,6 @@ function CallScreenInner() {
     let mailWs;
     try { mailWs = require('../services/websocket').default; } catch {}
 
-    const callAcceptedRef = { current: false };
-
     // Subscribe to WS for ring-phase + voicemail.
     let unsubAccepted = () => {};
     let unsubEnd = () => {};
@@ -2648,6 +2705,18 @@ function CallScreenInner() {
           if (callerTimeoutRef.current) clearTimeout(callerTimeoutRef.current);
           try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
           setPeerRinging(true);
+          // Real Accept tap. If the peer was already in the LK Room (warm
+          // preconnect on the callee side), flip caller UI to connected now.
+          if (peerParticipantConnectedAtRef.current > 0 && !endedRef.current) {
+            setPeerConnected(true);
+            peerJoinedAtRef.current = Date.now();
+            try { callKeep.reportConnected(callId); } catch {}
+            try { _callDiagAppend('info', 'caller flip connected via WS call_accepted', { call_id: callId }); } catch {}
+          }
+          if (pendingPeerConnectedFallbackRef.current) {
+            try { clearTimeout(pendingPeerConnectedFallbackRef.current); } catch {}
+            pendingPeerConnectedFallbackRef.current = null;
+          }
         }
       });
 
