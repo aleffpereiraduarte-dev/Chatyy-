@@ -302,7 +302,20 @@ class CallActivity : ComponentActivity() {
 
   private val closeReceiver = object : BroadcastReceiver() {
     override fun onReceive(ctx: Context?, intent: Intent?) {
-      Log.d(TAG, "closeReceiver: finishing activity")
+      // [2026-05-24] Ghost-disconnect fix: only finish if the broadcast is
+      // for OUR call_id. Without this, a stale server `call_end` for an old
+      // call_id (or a different conversation on the same WS) tore down an
+      // in-flight outgoing call mid-handshake — the user saw the activity
+      // open, ringback start, then the screen vanish within seconds with no
+      // explanation. Broadcasts without a call_id extra are treated as
+      // "close any" (preserves the legacy notifyAppReady / endCall paths
+      // that genuinely want to dismiss any visible call UI).
+      val broadcastCallId = intent?.getStringExtra("call_id") ?: ""
+      if (broadcastCallId.isNotEmpty() && broadcastCallId != callId) {
+        Log.d(TAG, "closeReceiver: ignoring CLOSE for $broadcastCallId (our call=$callId)")
+        return
+      }
+      Log.d(TAG, "closeReceiver: finishing activity (broadcast call_id=$broadcastCallId)")
       finishCall(reason = "close_broadcast")
     }
   }

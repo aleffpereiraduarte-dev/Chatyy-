@@ -440,8 +440,14 @@ object CallSignalWs {
         //    (CallActivity.closeReceiver → finishCall("close_broadcast")
         //    which tears down LK Room + ongoing FGS; IncomingCallActivity.
         //    closeReceiver → finish()).
+        // [2026-05-24] Ghost-disconnect fix: stamp call_id on the broadcast
+        // so the receiver only finishes if it matches its OWN active call.
+        // Without this, a stale server `call_end` for an old/cancelled call
+        // (or a multi-device fan-out from the callee declining a previous
+        // session) was tearing down an in-flight outgoing call mid-handshake.
         try {
             val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY")
+            if (callId.isNotEmpty()) closeIntent.putExtra("call_id", callId)
             ctx.sendBroadcast(closeIntent)
         } catch (t: Throwable) {
             Log.w(TAG, "broadcast CLOSE_CALL_ACTIVITY failed: ${t.message}")
