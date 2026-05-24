@@ -60,7 +60,7 @@
         "serviceAccountKeyPath": "./gcloud-sa-key.json",
         "track": "internal",
         "releaseStatus": "completed",
-        "changesNotSentForReview": false
+        "changesNotSentForReview": true
       }
     }
   }
