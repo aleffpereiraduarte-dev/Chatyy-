@@ -2363,12 +2363,25 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // safely under Swift 6 strict concurrency.
     weak var moduleRef = self.module
     Task.detached(priority: .userInitiated) {
-      do {
-        let result = try await NativeCallTokenFetcher.shared.fetchToken(
-          roomName: callId,
-          identity: identity,
-          role: "publisher"
-        )
+      var lastError: Error?
+      var result: NativeCallTokenFetcher.TokenResult?
+      for attempt in 1...4 {
+        do {
+          result = try await NativeCallTokenFetcher.shared.fetchToken(
+            roomName: callId,
+            identity: identity,
+            role: "publisher"
+          )
+          break
+        } catch {
+          lastError = error
+          NSLog("[ExpoCallKit] Token fetch attempt \(attempt)/4 failed: \(error)")
+          if attempt < 4 {
+            try? await Task.sleep(nanoseconds: UInt64(attempt) * 800_000_000)
+          }
+        }
+      }
+      if let result = result {
         await MainActor.run {
           Self.presentNativeCallVC(callId: callId,
                                    callerName: snapshot.callerName,
@@ -2378,15 +2391,8 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
                                    lkToken: result.token,
                                    conversationId: snapshot.conversationId)
         }
-      } catch {
-        // [2026-05-21] Without ending the call, the user is stuck on the lock
-        // screen with phantom ringing while CallKit thinks the call is active
-        // but no UI ever surfaces. End cleanly so iOS rolls back to the lock
-        // screen / Recents with a typed `.failed` reason. We funnel through
-        // the existing endCallActionWithReason path so all the bookkeeping
-        // (activeCalls cleanup, App Group LK token purge, onCallEnded JS event)
-        // fires consistently with peer-end / decline.
-        print("[ExpoCallKit] LK token fetch failed in CXAnswer: \(error) — ending call")
+      } else {
+        print("[ExpoCallKit] LK token fetch failed after 4 attempts: \(lastError ?? NSError()) — ending call")
         await MainActor.run {
           moduleRef?.endCallActionWithReason(callId: callId, reasonRaw: "failed")
         }
