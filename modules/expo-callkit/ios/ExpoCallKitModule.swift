@@ -2459,15 +2459,47 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       print("[ExpoCallKit] presentNativeCallVC: call \(callId) already ended — skipping stale present")
       return
     }
-    // [2026-05-24 hybrid v2] JS /call.js now owns the in-call UI on iOS.
-    // CXAnswer still fires onCallAnswered which JS handles by navigating
-    // to /call → calling adoptNativeRoom to bind to the pre-connected
-    // NativeCallRoom (from STAGE-A push pre-warm). The Swift UI here
-    // (CallViewController) is suppressed to avoid double-presentation.
-    // STAGE-A continues to pre-connect Room on push receipt so the JS
-    // screen mounts to an already-live audio path.
-    print("[ExpoCallKit] presentNativeCallVC: hybrid mode — skipping native VC; JS /call.js owns UI for \(callId)")
-    return
+    // [2026-05-24 hybrid v2 REVERTED] The hybrid v2 attempt suppressed the
+    // native CallViewController here, expecting JS /call.js (via
+    // IncomingCallListener → onCallAnswered → navigate) to render the in-call
+    // UI and adopt the pre-connected NativeCallRoom. That path is DEAD on
+    // mobile: `IncomingCallListener` returns null on Platform.OS !== 'web'
+    // (WAVE 141), so the JS that was supposed to navigate never mounts. The
+    // callee answered, CallKit brought the app foreground, but NOTHING
+    // presented the call UI → "abriu o app e não fez nada". The audio path
+    // WAS live (STAGE-A preconnect → caller saw remotes=1), only the UI was
+    // missing. Android never broke because it presents the native
+    // CallActivity on answer. Restore the proven native presentation: the
+    // CallViewController adopts the pre-connected NativeCallRoom (see
+    // CallViewController `isPreconnected` branch) so there is no dual-Room
+    // conflict (#1207) and the mic publishes on answer (#1330).
+    let presentBlock: (UIViewController) -> Void = { root in
+      // Re-check active state under retry — the call may have been ended by
+      // peer / network / hangup during the cold-start wait window.
+      guard ExpoCallKitModule.isCallStillActive(callId: callId) else {
+        print("[ExpoCallKit] presentNativeCallVC(retry): call \(callId) ended during wait — abort")
+        return
+      }
+      // isOutgoing=false: we're presenting because the callee just answered,
+      // not because they initiated. call_answered already fired up in CXAnswer.
+      CallViewController.present(
+        from: root,
+        callId: callId,
+        callerName: callerName,
+        callerEmail: callerEmail,
+        hasVideo: hasVideo,
+        lkUrl: lkUrl,
+        lkToken: lkToken,
+        isOutgoing: false,
+        conversationId: conversationId
+      )
+    }
+    if let root = resolvePresentingViewController() {
+      presentBlock(root)
+    } else {
+      print("[ExpoCallKit] presentNativeCallVC: no presenting VC yet (cold-start) — retrying")
+      retryPresent(reason: "presentNativeCallVC:\(callId)", block: presentBlock)
+    }
   }
 
   // [Stage #996 outgoing native flow, 2026-05-17] CXStartCallAction is the
