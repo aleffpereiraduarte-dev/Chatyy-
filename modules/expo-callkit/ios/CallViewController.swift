@@ -163,6 +163,32 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private var remoteVideoObserver: AnyCancellable?
     private var localVideoObserver: AnyCancellable?
 
+    // [#1358 video parity 2026-05-25] Floating-reaction renderer state.
+    private var reactionsObserver: AnyCancellable?
+    private var animatedReactionIds: Set<UUID> = []
+
+    // [#1358 video parity 2026-05-25] Container for the local-camera PiP tile
+    // (rounded card holding `localVideoView` + a small flip button). Draggable
+    // with FaceTime-style edge snap. Held separately from `localVideoView` so
+    // the corner radius / border / shadow / pan gesture live on the wrapper and
+    // the VideoView stays a plain fill renderer inside it.
+    private var localPipContainer: UIView?
+    private var pipPanOrigin: CGPoint = .zero
+    // Whether the remote camera is currently rendering full-bleed video. Drives
+    // the controls-scrim layout switch + auto-hide timer (video mode only).
+    private var remoteVideoActive: Bool = false
+    // Scrim behind the controls when remote video is full-bleed, so the glass
+    // buttons stay legible over arbitrary camera frames (mirrors JS
+    // translucent gradient under the controls row).
+    private var controlsScrim: UIView?
+    // Auto-hide controls timer (video mode). Tap toggles; 5s of inactivity hides.
+    private var controlsHideTimer: Timer?
+    private var controlsHidden: Bool = false
+    // Tap + pinch gestures installed once on first remote-video activation.
+    private var videoTapGesture: UITapGestureRecognizer?
+    private var remotePinchGesture: UIPinchGestureRecognizer?
+    private var remoteZoomScale: CGFloat = 1.0
+
     // [WAVE 156 2026-05-22] Combine subscription that mirrors
     // session.status (@Published) into the UIKit statusLabel.
     private var statusObserver: AnyCancellable?
@@ -366,6 +392,24 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         lockIcon.contentMode = .scaleAspectFit
         topBar.addSubview(lockIcon)
 
+        // [#1358 video parity 2026-05-25] "More" overflow button (top-right,
+        // left of the lock badge). Presents an action sheet wiring the existing
+        // native call tools (reactions, screen share, noise suppression,
+        // background blur, hold, add member) that the dead SwiftUI CallView
+        // used to surface. No new native infra — pure re-wiring of methods that
+        // already exist on this VC.
+        let moreBtn = UIButton(type: .system)
+        moreBtn.translatesAutoresizingMaskIntoConstraints = false
+        moreBtn.tintColor = .white
+        let moreCfg = UIImage.SymbolConfiguration(pointSize: 16, weight: .semibold)
+        moreBtn.setImage(UIImage(systemName: "ellipsis", withConfiguration: moreCfg), for: .normal)
+        moreBtn.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        moreBtn.layer.cornerRadius = 18
+        moreBtn.clipsToBounds = true
+        moreBtn.tag = 9007
+        moreBtn.addTarget(self, action: #selector(uikitOnMoreTap), for: .touchUpInside)
+        topBar.addSubview(moreBtn)
+
         // 2. Pulse rings container
         let pulseContainer = UIView()
         pulseContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -527,6 +571,16 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         let speakerButton = glassButton(symbol: "speaker.wave.2.fill", size: 64, tag: 9003, action: #selector(uikitOnSpeakerTap))
         let videoButton = glassButton(symbol: "video.fill", size: 64, tag: 9005, action: #selector(uikitOnVideoToggle))
 
+        // [#1358 video parity 2026-05-25] Camera-flip button — only meaningful
+        // while the local camera is enabled. Built here (tag 9006) but hidden
+        // until camera is on; applyCamEnabled + the localVideoTrack sink toggle
+        // its visibility. Positioned in the controls row by the constraints
+        // block below (to the right of the video toggle). Calls switchCamera()
+        // which does the smooth in-place capturer swap.
+        let flipCamButton = glassButton(symbol: "arrow.triangle.2.circlepath.camera.fill", size: 64, tag: 9006, action: #selector(uikitOnFlipCamera))
+        flipCamButton.isHidden = true
+        flipCamButton.alpha = 0
+
         // Row 2: hangup (center, red, bigger)
         let endButton = glassButton(symbol: "phone.down.fill", size: 72, tag: 9004, action: #selector(uikitOnHangupTap), tint: UIColor(red: 0xE5/255.0, green: 0x39/255.0, blue: 0x35/255.0, alpha: 1.0))
 
@@ -599,6 +653,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             lockIcon.widthAnchor.constraint(equalToConstant: 16),
             lockIcon.heightAnchor.constraint(equalToConstant: 16),
 
+            // [#1358] More overflow button, left of the lock badge.
+            moreBtn.trailingAnchor.constraint(equalTo: lockIcon.leadingAnchor, constant: -14),
+            moreBtn.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            moreBtn.widthAnchor.constraint(equalToConstant: 36),
+            moreBtn.heightAnchor.constraint(equalToConstant: 36),
+
             // Pulse container (sized to fit the bigger avatar + breathing ring)
             pulseContainer.widthAnchor.constraint(equalToConstant: 245),
             pulseContainer.heightAnchor.constraint(equalToConstant: 245),
@@ -663,6 +723,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             videoButton.centerYAnchor.constraint(equalTo: muteButton.centerYAnchor),
             videoButton.leadingAnchor.constraint(equalTo: speakerButton.trailingAnchor, constant: 24),
 
+            // [#1358] Flip-camera button — centered above the row-1 controls so
+            // the 3-button mute/speaker/video row stays visually balanced. Only
+            // visible while the camera is on (toggled in applyCamEnabled +
+            // the localVideoTrack sink).
+            flipCamButton.widthAnchor.constraint(equalToConstant: 56),
+            flipCamButton.heightAnchor.constraint(equalToConstant: 56),
+            flipCamButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            flipCamButton.bottomAnchor.constraint(equalTo: muteButton.topAnchor, constant: -28),
+
             // End button (centered, bigger, below)
             endButton.widthAnchor.constraint(equalToConstant: 72),
             endButton.heightAnchor.constraint(equalToConstant: 72),
@@ -723,6 +792,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     }
                 }
             }
+
+        // [#1358 video parity 2026-05-25] Build the remote full-bleed VideoView
+        // + the draggable local PiP tile + the controls scrim, then wire the
+        // Combine sinks that bind session.$remoteVideoTrack / $localVideoTrack
+        // into them. This is the heart of the #1358 fix: receiving a video call
+        // now actually renders the peer's camera (was an avatar-only screen).
+        setupVideoViews()
 
         // [STAGE-A 2026-05-20] GAP #2 — If preconnectRoom (push-receive path)
         // already published a Room for this callId, adopt it instead of
@@ -1321,6 +1397,18 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 await MainActor.run { self.session.camEnabled = !enabled }
             }
         }
+        // [#1358 video parity 2026-05-25] Reflect the toggle into the local PiP
+        // tile + the flip-camera button visibility on the main thread.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            // PiP visible only when camera on AND a local track exists.
+            if enabled, self.session.localVideoTrack != nil {
+                self.showLocalPip(true)
+            } else if !enabled {
+                self.showLocalPip(false)
+            }
+            self.updateFlipButtonVisibility(enabled)
+        }
         // __chatyy_native_call_sync 2026-05-19 — mirror to JS so peer-video
         // gating + recording banner + post-call rating see the toggle.
         NotificationCenter.default.post(
@@ -1328,6 +1416,20 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             object: nil,
             userInfo: ["enabled": enabled]
         )
+    }
+
+    /// [#1358] Show / hide the camera-flip control (tag 9006). Only meaningful
+    /// while the local camera is enabled.
+    private func updateFlipButtonVisibility(_ camEnabled: Bool) {
+        guard let btn = view.viewWithTag(9006) as? UIButton else { return }
+        if camEnabled {
+            btn.isHidden = false
+            UIView.animate(withDuration: 0.2) { btn.alpha = self.controlsHidden ? 0 : 1 }
+        } else {
+            UIView.animate(withDuration: 0.2, animations: { btn.alpha = 0 }) { _ in
+                if btn.alpha == 0 { btn.isHidden = true }
+            }
+        }
     }
 
     /// [Wave B audio, 2026-05-18 / restored 2026-05-19] Speaker toggle now
@@ -2210,6 +2312,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         pipRenderer = nil
         stopRingbackTone(reason: "deinit")
         if let obs = ringbackResignObserver { NotificationCenter.default.removeObserver(obs) }
+        // [#1358 video parity 2026-05-25] Tear down the video-mode controls
+        // auto-hide timer + detach the video tracks so LK doesn't keep
+        // rendering into dead views. Combine cancellables auto-cancel on
+        // dealloc; the Timer must be invalidated explicitly.
+        controlsHideTimer?.invalidate()
+        controlsHideTimer = nil
+        remoteVideoView?.track = nil
+        localVideoView?.track = nil
         // [Wave B audio, 2026-05-18 / restored 2026-05-19] Belt-and-braces —
         // handleHangup tears down the router on user-initiated end, deinit
         // covers room-disconnect / PiP dismiss paths.
@@ -2433,6 +2543,72 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
+    // [#1358 video parity 2026-05-25] "More" action sheet — re-wires the
+    // existing native call tools that the dead SwiftUI CallView used to surface.
+    // Every action here calls a method that ALREADY exists on this VC; no new
+    // native infra is introduced. Reactions open a nested emoji sheet.
+    @objc private func uikitOnMoreTap() {
+        tapFeedback(view.viewWithTag(9007) as? UIButton)
+        resetControlsAutoHide()
+        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+
+        // Reactions → nested emoji picker (sendReaction exists).
+        sheet.addAction(UIAlertAction(title: "Reações", style: .default) { [weak self] _ in
+            self?.presentReactionPicker()
+        })
+        // Screen share (toggleScreenShare exists; surfaces ReplayKit picker).
+        sheet.addAction(UIAlertAction(title: screenSharing ? "Parar compartilhamento" : "Compartilhar tela", style: .default) { [weak self] _ in
+            self?.toggleScreenShare()
+        })
+        // Noise suppression toggle (applyNoiseSuppression exists).
+        sheet.addAction(UIAlertAction(title: session.noiseSuppression ? "Desligar redução de ruído" : "Ligar redução de ruído", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            self.applyNoiseSuppression(!self.session.noiseSuppression)
+        })
+        // Background effect cycle (cycleBackground exists; MediaPipe blur).
+        sheet.addAction(UIAlertAction(title: "Efeito de fundo", style: .default) { [weak self] _ in
+            self?.cycleBackground()
+        })
+        // Hold (applyHold exists; routes through CallKit).
+        sheet.addAction(UIAlertAction(title: session.onHold ? "Retomar" : "Colocar em espera", style: .default) { [weak self] _ in
+            guard let self = self else { return }
+            self.session.onHold = !self.session.onHold
+            self.applyHold(self.session.onHold)
+        })
+        // Add member (handleAddMember exists; posts JS notification).
+        if session.isGroup {
+            sheet.addAction(UIAlertAction(title: "Adicionar participante", style: .default) { [weak self] _ in
+                self?.handleAddMember()
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "Cancelar", style: .cancel, handler: nil))
+
+        // iPad popover anchor (no-op on iPhone). Anchor to the More button.
+        if let pop = sheet.popoverPresentationController, let anchor = view.viewWithTag(9007) {
+            pop.sourceView = anchor
+            pop.sourceRect = anchor.bounds
+        }
+        present(sheet, animated: true, completion: nil)
+    }
+
+    /// Nested emoji picker for the More → Reactions path. Each emoji calls the
+    /// existing sendReaction(_:) which bursts locally + publishes over the LK
+    /// data channel + fires the parity WS event.
+    private func presentReactionPicker() {
+        let sheet = UIAlertController(title: "Enviar reação", message: nil, preferredStyle: .actionSheet)
+        for emoji in ["❤️", "😂", "👍", "🎉", "😮", "🖐️"] {
+            sheet.addAction(UIAlertAction(title: emoji, style: .default) { [weak self] _ in
+                self?.sendReaction(emoji)
+            })
+        }
+        sheet.addAction(UIAlertAction(title: "Cancelar", style: .cancel, handler: nil))
+        if let pop = sheet.popoverPresentationController, let anchor = view.viewWithTag(9007) {
+            pop.sourceView = anchor
+            pop.sourceRect = anchor.bounds
+        }
+        present(sheet, animated: true, completion: nil)
+    }
+
     private func updateParticipantCountLabel() {
         guard let lbl = view.viewWithTag(9040) as? UILabel else { return }
         let total = remoteParticipantCount + 1
@@ -2452,6 +2628,444 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         dotsTimer = nil
         durationTimer?.invalidate()
         durationTimer = nil
+    }
+
+    // MARK: - Video rendering (#1358, 2026-05-25)
+    //
+    // FULL video-call parity on the native iOS call screen. Receiving a video
+    // call now renders the peer's camera full-bleed + a draggable local PiP
+    // tile + a camera-flip control + auto-hiding controls in video mode —
+    // matching the JS /call.js outgoing screen.
+    //
+    // Pure UIKit. Uses LiveKit's `VideoView` (a UIView subclass) — never
+    // SwiftUI. The remote view sits ABOVE the gradient/avatar layers but BELOW
+    // the controls + top bar; the local PiP floats on top.
+
+    /// z-order helper: the remote video view must sit above the CAGradientLayer
+    /// (inserted at index 0 in viewDidLoad) and the avatar/pulse UIViews, but
+    /// below the controls/top-bar. We insert it just above the pulseContainer
+    /// (tag 9020) so it covers the avatar block when active, then send the
+    /// controls + PiP back to front as needed.
+    private func setupVideoViews() {
+        // Remote full-bleed renderer — hidden until a remote video track lands.
+        let remote = VideoView()
+        remote.translatesAutoresizingMaskIntoConstraints = false
+        remote.layoutMode = .fill          // aspect-fill, like JS objectFit:"cover"
+        remote.mirrorMode = .off           // remote is NEVER mirrored
+        remote.backgroundColor = .clear
+        remote.isHidden = true
+        remote.isUserInteractionEnabled = false
+        // Insert ABOVE the gradient + avatar (avatarView/pulse were addSubview'd
+        // after the gradient layer) but BELOW everything we add afterwards.
+        // Place it just above the pulse container so the avatar is covered when
+        // video is live; the controls + top bar were added before this point in
+        // viewDidLoad, so we must push them back to front.
+        if let pulse = view.viewWithTag(9020) {
+            view.insertSubview(remote, aboveSubview: pulse)
+        } else {
+            view.insertSubview(remote, at: 1)
+        }
+        NSLayoutConstraint.activate([
+            remote.topAnchor.constraint(equalTo: view.topAnchor),
+            remote.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            remote.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            remote.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+        self.remoteVideoView = remote
+
+        // Local-camera PiP tile — rounded card holding a fill VideoView + a tiny
+        // flip button. Draggable (FaceTime-style edge snap). Hidden until the
+        // local camera publishes AND camEnabled is true.
+        let pip = UIView()
+        pip.translatesAutoresizingMaskIntoConstraints = false
+        pip.backgroundColor = UIColor(red: 0x10/255.0, green: 0x10/255.0, blue: 0x18/255.0, alpha: 1.0)
+        pip.layer.cornerRadius = 18
+        pip.clipsToBounds = true
+        pip.layer.borderWidth = 1.5
+        pip.layer.borderColor = UIColor.white.withAlphaComponent(0.9).cgColor
+        // Shadow needs to be on a non-clipped layer; clipsToBounds clips it, so
+        // we mirror the shadow on the layer and accept the rounded clip — iOS
+        // still draws the shadow outside the bounds because shadow is composited
+        // separately from content clip on CALayer. Keep masksToBounds false at
+        // the layer level while clipsToBounds rounds the content via cornerRadius
+        // + a content sublayer mask. Simpler: wrap shadow on the layer.
+        pip.layer.shadowColor = UIColor.black.cgColor
+        pip.layer.shadowOpacity = 0.45
+        pip.layer.shadowRadius = 8
+        pip.layer.shadowOffset = CGSize(width: 0, height: 3)
+        pip.layer.masksToBounds = false
+        pip.isHidden = true
+        pip.alpha = 0
+
+        // PiP size + default position (top-right, below the top bar). The
+        // container + its children use frame-based layout (autoresizing masks)
+        // so the pan gesture can move the tile freely without fighting Auto
+        // Layout. The VideoView fills the container; the flip button sits
+        // bottom-right and stays pinned via a flexible-margin autoresizing mask.
+        let pipW: CGFloat = 110
+        let pipH: CGFloat = 156
+        pip.translatesAutoresizingMaskIntoConstraints = true
+        let bounds = UIScreen.main.bounds
+        let topInset = view.safeAreaInsets.top
+        let initialX = bounds.width - pipW - 14
+        let initialY = max(topInset, 20) + 56
+        pip.frame = CGRect(x: initialX, y: initialY, width: pipW, height: pipH)
+
+        let local = VideoView()
+        local.translatesAutoresizingMaskIntoConstraints = true
+        local.frame = CGRect(x: 0, y: 0, width: pipW, height: pipH)
+        local.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        local.layoutMode = .fill
+        local.mirrorMode = .auto           // front camera mirrors automatically
+        local.backgroundColor = .clear
+        local.isUserInteractionEnabled = false
+        pip.addSubview(local)
+
+        // Tiny flip button on the PiP tile (bottom-right) — convenient swap.
+        let pipFlip = UIButton(type: .system)
+        pipFlip.translatesAutoresizingMaskIntoConstraints = true
+        pipFlip.frame = CGRect(x: pipW - 26 - 6, y: pipH - 26 - 6, width: 26, height: 26)
+        pipFlip.autoresizingMask = [.flexibleLeftMargin, .flexibleTopMargin]
+        pipFlip.tintColor = .white
+        let fcfg = UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+        pipFlip.setImage(UIImage(systemName: "arrow.triangle.2.circlepath", withConfiguration: fcfg), for: .normal)
+        pipFlip.backgroundColor = UIColor.black.withAlphaComponent(0.4)
+        pipFlip.layer.cornerRadius = 13
+        pipFlip.clipsToBounds = true
+        pipFlip.addTarget(self, action: #selector(uikitOnFlipCamera), for: .touchUpInside)
+        pip.addSubview(pipFlip)
+
+        view.addSubview(pip)
+        self.localVideoView = local
+        self.localPipContainer = pip
+
+        // Drag gesture (FaceTime edge-snap).
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePipPan(_:)))
+        pip.addGestureRecognizer(pan)
+        pip.isUserInteractionEnabled = true
+
+        // Make sure controls + top bar render ABOVE the remote video. The
+        // controls/top-bar subviews were added before `remote`; bring them
+        // forward. Tags: 9002-9006 controls, 9004 end, 9000/9001 labels, top
+        // bar has no tag but holds minimizeBtn(no tag). We bring the known
+        // control + label views to front; the top bar is a plain UIView added
+        // early — bring every button/label tag we own to front.
+        for tag in [9000, 9001, 9002, 9003, 9004, 9005, 9006, 9040] {
+            if let v = view.viewWithTag(tag) { view.bringSubviewToFront(v) }
+        }
+        // Top bar (minimize chevron + connection bars + lock) — find via the
+        // barsContainer tag 9010's superview, which is the topBar UIView.
+        if let bars = view.viewWithTag(9010), let topBar = bars.superview {
+            view.bringSubviewToFront(topBar)
+        }
+        // PiP always on top.
+        view.bringSubviewToFront(pip)
+
+        // ── Combine sinks ──────────────────────────────────────────────────
+        // Remote track: render full-bleed + hide avatar UI; nil → detach + show
+        // avatar again.
+        remoteVideoObserver = session.$remoteVideoTrack
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] track in
+                self?.applyRemoteVideoTrack(track)
+            }
+
+        // Local track: render in the PiP tile (visible only while camEnabled).
+        localVideoObserver = session.$localVideoTrack
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] track in
+                self?.applyLocalVideoTrack(track)
+            }
+
+        // Floating emoji reactions (local send + incoming data-channel). The
+        // dead SwiftUI CallView used to render session.floatingReactions; do it
+        // in UIKit with a rise-and-fade animation. We diff by id so each
+        // reaction animates exactly once.
+        reactionsObserver = session.$floatingReactions
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] reactions in
+                guard let self = self else { return }
+                for r in reactions where !self.animatedReactionIds.contains(r.id) {
+                    self.animatedReactionIds.insert(r.id)
+                    self.spawnFloatingReaction(r.emoji, xOffset: r.xOffset)
+                }
+            }
+    }
+
+    /// Animate a single floating emoji label: rise ~220pt while fading out.
+    private func spawnFloatingReaction(_ emoji: String, xOffset: CGFloat) {
+        let label = UILabel()
+        label.text = emoji
+        label.font = .systemFont(ofSize: 44)
+        label.textAlignment = .center
+        label.sizeToFit()
+        let startX = view.bounds.width / 2 + xOffset - label.bounds.width / 2
+        let startY = view.bounds.height - view.safeAreaInsets.bottom - 200
+        label.frame.origin = CGPoint(x: startX, y: startY)
+        view.addSubview(label)
+        view.bringSubviewToFront(label)
+        UIView.animate(withDuration: 2.6, delay: 0, options: [.curveEaseOut], animations: {
+            label.frame.origin.y -= 220
+            label.alpha = 0
+        }, completion: { _ in
+            label.removeFromSuperview()
+        })
+    }
+
+    /// Bind / unbind the remote camera. Drives the avatar↔video crossfade +
+    /// the video-mode controls scrim + auto-hide timer.
+    private func applyRemoteVideoTrack(_ track: VideoTrack?) {
+        guard let remote = remoteVideoView else { return }
+        if let track = track {
+            remote.track = track
+            remote.isHidden = false
+            remoteVideoActive = true
+            // Hide avatar + pulse rings + initial label — video owns the screen.
+            UIView.animate(withDuration: 0.3) {
+                remote.alpha = 1
+                if let av = self.avatarContainerView() { av.alpha = 0 }
+                if let pulse = self.view.viewWithTag(9020) { pulse.alpha = 0 }
+            }
+            // Switch the controls to video mode (scrim + auto-hide + tap toggle).
+            enterVideoControlsMode()
+        } else {
+            remote.track = nil
+            remote.isHidden = true
+            remoteVideoActive = false
+            // Mid-call camera-off (it WAS a video call): show avatar over a dim
+            // background instead of a black screen (P1 item 6).
+            UIView.animate(withDuration: 0.3) {
+                remote.alpha = 0
+                if let av = self.avatarContainerView() { av.alpha = 1 }
+                // Only un-hide pulse rings if the call hasn't connected yet;
+                // once connected the statusObserver fades them out and we leave
+                // them hidden. Re-show avatar regardless.
+            }
+            // Leave video controls mode → controls stay visible (no auto-hide).
+            exitVideoControlsMode()
+        }
+    }
+
+    /// The avatar wrapper UIView. We don't tag it, so locate it via the tagged
+    /// initial label (9031) / image (9030) superview.
+    private func avatarContainerView() -> UIView? {
+        if let iv = view.viewWithTag(9030) { return iv.superview }
+        if let lbl = view.viewWithTag(9031) { return lbl.superview }
+        return nil
+    }
+
+    /// Bind / unbind the local camera into the PiP tile. Visible only while the
+    /// camera is enabled (session.camEnabled). Mirrors the front camera.
+    private func applyLocalVideoTrack(_ track: LocalVideoTrack?) {
+        guard let local = localVideoView, localPipContainer != nil else { return }
+        if let track = track, session.camEnabled {
+            local.track = track
+            // mirrorMode = .auto handles front-camera mirroring; pin explicitly
+            // as defense-in-depth across LK Swift revs where .auto regressed.
+            local.mirrorMode = (currentCameraPosition == .front) ? .mirror : .off
+            showLocalPip(true)
+            // First publish on a video call: surface the flip control too.
+            updateFlipButtonVisibility(true)
+        } else {
+            // Detach when no track; keep the tile hidden when cam disabled.
+            if track == nil { local.track = nil }
+            showLocalPip(false)
+            updateFlipButtonVisibility(false)
+        }
+    }
+
+    /// Show / hide the local PiP tile with a fade.
+    private func showLocalPip(_ show: Bool) {
+        guard let pip = localPipContainer else { return }
+        if show {
+            pip.isHidden = false
+            view.bringSubviewToFront(pip)
+            UIView.animate(withDuration: 0.2) { pip.alpha = 1 }
+        } else {
+            UIView.animate(withDuration: 0.2, animations: { pip.alpha = 0 }) { _ in
+                if pip.alpha == 0 { pip.isHidden = true }
+            }
+        }
+    }
+
+    // ── Local PiP drag + edge snap ──────────────────────────────────────────
+    @objc private func handlePipPan(_ gr: UIPanGestureRecognizer) {
+        guard let pip = localPipContainer else { return }
+        switch gr.state {
+        case .began:
+            pipPanOrigin = pip.center
+        case .changed:
+            let t = gr.translation(in: view)
+            pip.center = CGPoint(x: pipPanOrigin.x + t.x, y: pipPanOrigin.y + t.y)
+        case .ended, .cancelled:
+            // Clamp vertically inside safe-ish bounds, snap horizontally L/R.
+            let margin: CGFloat = 14
+            let halfW = pip.bounds.width / 2
+            let halfH = pip.bounds.height / 2
+            let topLimit = view.safeAreaInsets.top + halfH + 8
+            let bottomLimit = view.bounds.height - view.safeAreaInsets.bottom - halfH - 120
+            var cy = pip.center.y
+            cy = min(max(cy, topLimit), max(topLimit, bottomLimit))
+            let snapLeft = pip.center.x < view.bounds.width / 2
+            let cx = snapLeft ? (margin + halfW) : (view.bounds.width - margin - halfW)
+            UIView.animate(withDuration: 0.25, delay: 0, usingSpringWithDamping: 0.75, initialSpringVelocity: 0.6, options: [.allowUserInteraction]) {
+                pip.center = CGPoint(x: cx, y: cy)
+            }
+        default:
+            break
+        }
+    }
+
+    // ── Camera flip ─────────────────────────────────────────────────────────
+    @objc private func uikitOnFlipCamera() {
+        tapFeedback(view.viewWithTag(9006) as? UIButton)
+        switchCamera()
+        // Update local mirror immediately for snappy feel; switchCamera flips
+        // currentCameraPosition synchronously before the async swap.
+        if let local = localVideoView {
+            local.mirrorMode = (currentCameraPosition == .front) ? .mirror : .off
+        }
+        // Keep controls visible after interacting.
+        resetControlsAutoHide()
+    }
+
+    // ── Video-mode controls: scrim + auto-hide + tap-to-toggle ───────────────
+    private func enterVideoControlsMode() {
+        // Install a translucent bottom scrim behind the controls so the glass
+        // buttons stay legible over arbitrary camera frames.
+        if controlsScrim == nil {
+            let scrim = UIView()
+            scrim.translatesAutoresizingMaskIntoConstraints = false
+            scrim.isUserInteractionEnabled = false
+            let g = CAGradientLayer()
+            g.colors = [
+                UIColor.clear.cgColor,
+                UIColor.black.withAlphaComponent(0.55).cgColor,
+            ]
+            g.locations = [0.0, 1.0]
+            g.frame = CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 280)
+            scrim.layer.addSublayer(g)
+            // Insert just below the controls (above remote video).
+            if let remote = remoteVideoView {
+                view.insertSubview(scrim, aboveSubview: remote)
+            } else {
+                view.addSubview(scrim)
+            }
+            NSLayoutConstraint.activate([
+                scrim.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                scrim.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                scrim.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                scrim.heightAnchor.constraint(equalToConstant: 280),
+            ])
+            controlsScrim = scrim
+            // Re-front the controls/labels we own so they sit above the scrim.
+            for tag in [9000, 9001, 9002, 9003, 9004, 9005, 9006, 9040] {
+                if let v = view.viewWithTag(tag) { view.bringSubviewToFront(v) }
+            }
+            if let bars = view.viewWithTag(9010), let topBar = bars.superview {
+                view.bringSubviewToFront(topBar)
+            }
+            if let pip = localPipContainer { view.bringSubviewToFront(pip) }
+        }
+        // Tap-to-toggle gesture (installed once).
+        if videoTapGesture == nil {
+            let tap = UITapGestureRecognizer(target: self, action: #selector(handleVideoScreenTap))
+            tap.cancelsTouchesInView = false
+            tap.delegate = self
+            view.addGestureRecognizer(tap)
+            videoTapGesture = tap
+        }
+        // Pinch-to-zoom on the remote video (installed once).
+        if remotePinchGesture == nil, let remote = remoteVideoView {
+            remote.isUserInteractionEnabled = true
+            let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handleRemotePinch(_:)))
+            remote.addGestureRecognizer(pinch)
+            remotePinchGesture = pinch
+        }
+        controlsHidden = false
+        resetControlsAutoHide()
+    }
+
+    private func exitVideoControlsMode() {
+        controlsHideTimer?.invalidate()
+        controlsHideTimer = nil
+        // Always show controls when not in video mode.
+        setControlsHidden(false, animated: true)
+        // Drop the scrim.
+        controlsScrim?.removeFromSuperview()
+        controlsScrim = nil
+    }
+
+    /// Restart the 5s inactivity timer (video mode only).
+    private func resetControlsAutoHide() {
+        guard remoteVideoActive else { return }
+        setControlsHidden(false, animated: true)
+        controlsHideTimer?.invalidate()
+        controlsHideTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+            self?.setControlsHidden(true, animated: true)
+        }
+    }
+
+    @objc private func handleVideoScreenTap() {
+        guard remoteVideoActive else { return }
+        if controlsHidden {
+            setControlsHidden(false, animated: true)
+            resetControlsAutoHide()
+        } else {
+            setControlsHidden(true, animated: true)
+        }
+    }
+
+    /// Fade the control + label + top-bar + scrim views in/out (video mode).
+    private func setControlsHidden(_ hidden: Bool, animated: Bool) {
+        controlsHidden = hidden
+        let targetAlpha: CGFloat = hidden ? 0 : 1
+        // Control tags we own. Skip the flip button (9006) if camera is off —
+        // it stays hidden independently.
+        var tags = [9000, 9001, 9002, 9003, 9004, 9005, 9040]
+        if session.camEnabled { tags.append(9006) }
+        let topBar: UIView? = {
+            if let bars = view.viewWithTag(9010) { return bars.superview }
+            return nil
+        }()
+        let work = {
+            for tag in tags { self.view.viewWithTag(tag)?.alpha = targetAlpha }
+            topBar?.alpha = targetAlpha
+            self.controlsScrim?.alpha = targetAlpha
+            // Sub-labels aren't tagged; they live as siblings — fade them with
+            // the controls by toggling on their owning buttons' alpha is enough
+            // visually since labels sit directly under each button.
+        }
+        if animated {
+            UIView.animate(withDuration: 0.25, animations: work)
+        } else {
+            work()
+        }
+    }
+
+    // ── Pinch-to-zoom on remote video (1×–3×, spring back) ───────────────────
+    @objc private func handleRemotePinch(_ gr: UIPinchGestureRecognizer) {
+        guard let remote = remoteVideoView else { return }
+        switch gr.state {
+        case .changed:
+            let proposed = remoteZoomScale * gr.scale
+            let clamped = min(max(proposed, 1.0), 3.0)
+            remote.transform = CGAffineTransform(scaleX: clamped, y: clamped)
+        case .ended, .cancelled:
+            // Commit the clamped scale; if at/below 1× spring back to identity.
+            let current = remoteZoomScale * gr.scale
+            let clamped = min(max(current, 1.0), 3.0)
+            if clamped <= 1.01 {
+                remoteZoomScale = 1.0
+                UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0.5, options: []) {
+                    remote.transform = .identity
+                }
+            } else {
+                remoteZoomScale = clamped
+            }
+        default:
+            break
+        }
     }
 }
 
@@ -2875,6 +3489,30 @@ extension CallViewController: AVPictureInPictureControllerDelegate {
         } else {
             completionHandler(false)
         }
+    }
+}
+
+// MARK: - Video-mode tap gesture delegate (#1358, 2026-05-25)
+
+extension CallViewController: UIGestureRecognizerDelegate {
+    /// The tap-to-toggle-controls gesture lives on the root `view`. Don't fire
+    /// it when the touch lands on an interactive control (any UIButton) or on
+    /// the local PiP tile — those have their own actions / drag gesture. This
+    /// keeps "tap controls" from immediately hiding the controls the user just
+    /// reached for, and keeps the PiP draggable without toggling.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldReceive touch: UITouch) -> Bool {
+        guard gestureRecognizer === videoTapGesture else { return true }
+        if let hit = touch.view {
+            if hit is UIControl { return false }
+            // Walk up to see if the touch is inside the PiP tile.
+            var v: UIView? = hit
+            while let cur = v {
+                if cur === localPipContainer { return false }
+                v = cur.superview
+            }
+        }
+        return true
     }
 }
 

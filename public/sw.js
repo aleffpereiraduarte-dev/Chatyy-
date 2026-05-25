@@ -28,7 +28,7 @@
 // SW cache while the network refresh happens in the background. Cuts
 // the visible round-trip on cold tab open from ~150 ms to ~5 ms.
 
-const CACHE_NAME  = 'chatyy-v10';
+const CACHE_NAME  = 'chatyy-v11';
 const API_CACHE   = 'chatyy-api-v4';
 const MEDIA_CACHE = 'chatyy-media-v1';
 
