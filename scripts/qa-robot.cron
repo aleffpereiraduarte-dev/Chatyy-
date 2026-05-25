@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Chatyy QA Robot — runs every 30 min, tests the whole app, posts report to @duarte in Chatyy.
+# Install:  crontab -l | { cat; echo "*/30 * * * * /root/webmail-app/scripts/qa-robot.cron"; } | crontab -
+set -euo pipefail
+cd /root/webmail-app
+LOG=/var/log/qa-robot.log
+echo "===== $(date -u +%FT%TZ) run start =====" >> "$LOG"
+timeout 1000 /usr/bin/node scripts/qa-robot.js >> "$LOG" 2>&1 || echo "(exit $?)" >> "$LOG"

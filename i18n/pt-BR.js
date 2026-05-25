@@ -1,4 +1,6 @@
 export default {
+  'calendar.quickAdd': 'Adicionar',
+  'chatConv.loadingImage': 'Carregando imagem...',
   // ── Privacy / Security (close-to-100% milestone) ─────────────────────
   'settings.activityLog': 'Histórico de atividades',
   'settings.activityLogDesc': 'Veja logins, mudanças de senha, novos dispositivos e outras ações de segurança.',

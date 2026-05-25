@@ -631,6 +631,43 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     setRecording(false);
   }, [recording, onCapture]);
 
+  // Tracks whether the current recording started via long-press (hold-to-
+  // record). When true, releasing the button stops recording. When false
+  // (tapped in video mode to toggle), releasing must NOT stop — otherwise
+  // the user can't lift their finger between start-tap and stop-tap.
+  const holdRecordingRef = useRef(false);
+  // Segment-mode start timestamp. We use it to compute durationMs for the
+  // finished clip so the carousel can show per-clip elapsed in the viewer.
+  const segmentStartRef = useRef(0);
+
+  // Record one segment (max 20s) and push it onto the segments stack
+  // instead of emitting onCapture immediately. Returns once recordAsync
+  // resolves — caller should keep recording state coherent.
+  // NOTE: declared ABOVE handleCapturePress — it appears in that callback's
+  // dependency array, and a const-in-deps used before its declaration is a
+  // TDZ ("Cannot access 'recordSegment' before initialization") that crashes
+  // StatusCamera on first render. Keep this order.
+  const recordSegment = useCallback(async () => {
+    if (!cameraRef.current || recording) return;
+    if (segments.length >= MAX_SEGMENTS) {
+      try { Linking.openURL('chatyy://noop'); } catch {} // no-op anchor
+      return;
+    }
+    setRecording(true);
+    segmentStartRef.current = Date.now();
+    try {
+      const cap = Math.ceil(MAX_SEGMENT_MS / 1000);
+      const video = await cameraRef.current.recordAsync({ maxDuration: cap, quality: '720p' });
+      if (video?.uri) {
+        const dur = Math.max(0, Date.now() - segmentStartRef.current);
+        setSegments(prev => [...prev, { uri: video.uri, type: 'video', durationMs: dur }]);
+      }
+    } catch (e) {
+      console.warn('[StatusCamera] segment record error:', e);
+    }
+    setRecording(false);
+  }, [recording, segments.length]);
+
   const handleCapturePress = useCallback(async () => {
     haptic('light');
     if (captureMode === 'photo') {
@@ -660,39 +697,6 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       else { haptic('medium'); startRecording(); }
     }
   }, [captureMode, recording, timerDelay, takePhoto, startRecording, stopRecording, recordSegment, segments.length]);
-
-  // Tracks whether the current recording started via long-press (hold-to-
-  // record). When true, releasing the button stops recording. When false
-  // (tapped in video mode to toggle), releasing must NOT stop — otherwise
-  // the user can't lift their finger between start-tap and stop-tap.
-  const holdRecordingRef = useRef(false);
-  // Segment-mode start timestamp. We use it to compute durationMs for the
-  // finished clip so the carousel can show per-clip elapsed in the viewer.
-  const segmentStartRef = useRef(0);
-
-  // Record one segment (max 20s) and push it onto the segments stack
-  // instead of emitting onCapture immediately. Returns once recordAsync
-  // resolves — caller should keep recording state coherent.
-  const recordSegment = useCallback(async () => {
-    if (!cameraRef.current || recording) return;
-    if (segments.length >= MAX_SEGMENTS) {
-      try { Linking.openURL('chatyy://noop'); } catch {} // no-op anchor
-      return;
-    }
-    setRecording(true);
-    segmentStartRef.current = Date.now();
-    try {
-      const cap = Math.ceil(MAX_SEGMENT_MS / 1000);
-      const video = await cameraRef.current.recordAsync({ maxDuration: cap, quality: '720p' });
-      if (video?.uri) {
-        const dur = Math.max(0, Date.now() - segmentStartRef.current);
-        setSegments(prev => [...prev, { uri: video.uri, type: 'video', durationMs: dur }]);
-      }
-    } catch (e) {
-      console.warn('[StatusCamera] segment record error:', e);
-    }
-    setRecording(false);
-  }, [recording, segments.length]);
 
   // Publish the accumulated segment stack. Preferred path: ffmpeg-kit
   // stitches all N clips into a single seamless mp4 (native concat
