@@ -1678,6 +1678,11 @@ public class ExpoCallKitModule: Module {
     if let acceptUUID = ud.string(forKey: "pendingAcceptUUID"),
        let uuid = UUID(uuidString: acceptUUID) {
       print("[ExpoCallKit] AppDelegate accepted UUID \(acceptUUID) before RN ready — replaying")
+      // [2026-05-25] Confirms the warm-path handoff actually fires: the stub
+      // bails on CXAnswer trusting THIS replay to present the call UI. If this
+      // diag never lands after voipstub_bail_modulebound, the replay isn't
+      // being triggered → that's why "atendo e não abre nada".
+      nativeCallDiag("module_replay_callanswered", acceptUUID)
       callAnswered(uuid: uuid)
       ud.removeObject(forKey: "pendingAcceptUUID")
     }

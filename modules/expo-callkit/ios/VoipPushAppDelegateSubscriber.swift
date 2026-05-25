@@ -429,13 +429,11 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                                                        callerEmail: String,
                                                        hasVideo: Bool,
                                                        payload: [AnyHashable: Any]) {
-        // [STAGE-A 2026-05-20] GAP #3 — Bail if the module's ProviderDelegate
-        // is already live; the module owns presentation in that case and a
-        // stub-side present would double-mount CallViewController.
-        if ExpoCallKitModule.hasBoundProviderDelegate() {
-            print("[VoipSubscriber] STAGE-A startAutoAcceptNativeCall: module owns provider — bailing")
-            return
-        }
+        // [2026-05-25 ROOT-CAUSE FIX] Do NOT bail when the module is bound. The
+        // module never presents push calls — callAnswered only emits the
+        // onCallAnswered JS event and the JS IncomingCallListener is dead on
+        // mobile (WAVE 141). The stub is the sole presenter; CallViewController.
+        // present de-dupes by callId so a stray double-call is harmless.
         // Cached LK token short-circuit (server may have published one via
         // the existing `persistPendingLkToken` JS function before the push).
         if let ud = UserDefaults(suiteName: kAppGroupId),
@@ -484,12 +482,11 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                                                  hasVideo: Bool,
                                                  lkUrl: String,
                                                  lkToken: String) {
-        // [STAGE-A 2026-05-20] GAP #3 — Last-line defense: if the module is
-        // bound between the async hop and present, abort cleanly.
-        if ExpoCallKitModule.hasBoundProviderDelegate() {
-            print("[VoipSubscriber] STAGE-A presentAutoAcceptVC: module owns provider — bailing")
-            return
-        }
+        // [2026-05-25 ROOT-CAUSE FIX] Removed the module-bound bail — the module
+        // does not present push calls (callAnswered only emits the dead-on-mobile
+        // onCallAnswered JS event, WAVE 141). The stub must present. Idempotent:
+        // CallViewController.present de-dupes by callId.
+        nativeCallDiag("voipstub_present_autoaccept", callId, "hasVideo=\(hasVideo) urlLen=\(lkUrl.count)")
         // [#1172 fix, 2026-05-18] Robust window/VC resolver — falls back
         // across scene activation states and presented VCs so a cold-start
         // VoIP push auto-accept actually surfaces CallViewController instead
@@ -665,6 +662,8 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
     }
 
     public func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
+        nativeCallDiag("voipstub_cxanswer_entry", action.callUUID.uuidString,
+                       "isEarly=\(provider === Self.earlyProvider) moduleBound=\(ExpoCallKitModule.hasBoundProviderDelegate())")
         // [STAGE-A 2026-05-20] GAP #3 — Gate against dual-present race. Once
         // the real ExpoCallKitModule.ProviderDelegate is bound (RN bundle
         // booted), the module owns CXAnswer handling end-to-end. The stub
@@ -675,14 +674,26 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         // CallViewController.
         guard provider === Self.earlyProvider else {
             print("[VoipSubscriber] STAGE-A: CXAnswer on non-early provider — module owns it; stub fulfilling and bailing")
+            nativeCallDiag("voipstub_bail_nonearly", action.callUUID.uuidString)
             action.fulfill()
             return
         }
         if ExpoCallKitModule.hasBoundProviderDelegate() {
-            print("[VoipSubscriber] STAGE-A: ExpoCallKitModule has ProviderDelegate bound — stub fulfilling and bailing")
-            action.fulfill()
-            return
+            // [2026-05-25 ROOT-CAUSE FIX] Previously bailed here (fulfill+return)
+            // trusting the module to present. But the VoIP-push call is owned by
+            // `earlyProvider` (this delegate), NOT the module's CXProvider — so
+            // the module's CXProviderDelegate NEVER receives this CXAnswer. The
+            // only module-side handling is the pendingAcceptUUID replay →
+            // callAnswered, which ONLY emits the onCallAnswered JS event. And the
+            // JS IncomingCallListener is DEAD on mobile (WAVE 141) → NOBODY
+            // presented the native call UI → "atendo e não abre nada" on EVERY
+            // warm-app answer (cold-start happened to work because the module
+            // wasn't bound yet so the stub presented). Fix: the stub presents
+            // unconditionally. No double-present: callAnswered does not present,
+            // and CallViewController.present de-dupes by callId.
+            nativeCallDiag("voipstub_modulebound_present_anyway", action.callUUID.uuidString)
         }
+        nativeCallDiag("voipstub_cxanswer_handling", action.callUUID.uuidString, "stub will present")
         print("[VoipSubscriber] stub CXAnswerCallAction — marking pending accept + native LK pre-connect")
         let uuid = action.callUUID
         // [Wave WhatsApp parity, 2026-05-20 gap A1 iOS] User answered — kill
@@ -872,8 +883,21 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
     }
 
     public func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-        print("[VoipSubscriber] stub didActivate — enabling RTCAudioSession")
+        print("[VoipSubscriber] stub didActivate — configuring route + enabling RTCAudioSession")
+        // [2026-05-25 speaker-only ROOT CAUSE] The push-answer path runs THIS
+        // didActivate (earlyProvider owns the call), not ExpoCallKitModule's.
+        // Previously it only enabled the WebRTC VPIO unit and never configured
+        // the AVAudioSession route — so the ONLY configureForCall was in
+        // CallViewController.viewDidLoad, which runs AFTER the VPIO unit started
+        // → its setCategory breaks the earpiece route and audio gets stuck on
+        // the loudspeaker ("só funciona no viva voz"). Fix: configure the
+        // category + route HERE first (AudioRouter guards setCategory to run
+        // once), THEN start VPIO. viewDidLoad's later call only re-applies the
+        // port override, never setCategory-after-VPIO.
+        AudioRouter.shared.configureForCall(hasVideo: AudioRouter.shared.hasVideo)
         VoipPushAppDelegateSubscriber.setRTCAudioEnabled(true)
+        let route = audioSession.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
+        nativeCallDiag("voipstub_didactivate", "-", "route=\(route) hasVideo=\(AudioRouter.shared.hasVideo)")
     }
 
     public func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {

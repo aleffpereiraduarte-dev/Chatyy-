@@ -2304,6 +2304,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         conversationId: String = ""
     ) {
         let top = topMostViewController(from: base)
+        // [2026-05-25] Dedup guard. Now that BOTH the cold-start stub and the
+        // warm-app path present for VoIP-push calls (the module-bound bail was
+        // removed because the module never actually presented), guarantee we
+        // never stack two CallViewControllers for the same call. Reads the live
+        // presented-VC chain (no stored state that could go stale), so it's
+        // self-correcting across call lifecycles.
+        if let existing = existingCallVC(from: base), existing.callId == callId {
+            NSLog("[CallVC.present] already presenting callId=\(callId) — skipping duplicate")
+            nativeCallDiag("callvc_present_dedup_skip", callId)
+            return
+        }
         let vc = CallViewController(
             callId: callId,
             callerName: callerName,
@@ -2333,6 +2344,19 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             top = presented
         }
         return top
+    }
+
+    /// [2026-05-25] Walk the presented-VC chain looking for a live
+    /// CallViewController so present() can dedup. Returns nil if none on screen.
+    private static func existingCallVC(from base: UIViewController) -> CallViewController? {
+        var node: UIViewController? = base
+        while let cur = node {
+            if let call = cur as? CallViewController, !cur.isBeingDismissed {
+                return call
+            }
+            node = cur.presentedViewController
+        }
+        return nil
     }
 
     // [WAVE 154 2026-05-22] UIKit-only button handlers (no SwiftUI).
