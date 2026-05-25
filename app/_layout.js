@@ -542,6 +542,45 @@ function AppInit({ onNotification, setOtaToast }) {
     return () => { if (otaToastTimer.current) clearTimeout(otaToastTimer.current); };
   }, [setOtaToast]);
 
+  // [2026-05-25] iOS answer → open the rich /call.js. The native CallKit answer
+  // presents an INSTANT native screen (the reliable "floor", incl. cold-start);
+  // here we wire the LIVE listener that navigates to the pretty /call.js, which
+  // adopts the pre-connected room and then dismisses the native screen
+  // (ExpoCallKit.dismissNativeCallVC, seamless handoff). This is the missing
+  // piece: IncomingCallListener's own onCallAnswered→push is gated OFF on mobile
+  // (returns null), so the JS call screen never opened on answer. Surgical +
+  // isolated — does NOT enable the 1900-line web listener. Caller side is
+  // unaffected (it navigates via chat-conversation; the module's onCallAnswered
+  // only fires on the device that ANSWERED).
+  useEffect(() => {
+    if (Platform.OS !== 'ios') return;
+    let lastNavCallId = null;
+    let lastNavAt = 0;
+    let unsub = () => {};
+    try {
+      const ExpoCallKit = require('../modules/expo-callkit');
+      const { router } = require('expo-router');
+      unsub = ExpoCallKit.onCallAnswered?.((data) => {
+        try {
+          const callId = data?.callId || '';
+          if (!callId) return;
+          // Dedup: the event can replay on cold-start (flushPendingEvents) and
+          // fire alongside the warm path — ignore repeats of the same call
+          // within 8s so we never stack two /call screens.
+          const now = Date.now();
+          if (callId === lastNavCallId && (now - lastNavAt) < 8000) return;
+          lastNavCallId = callId; lastNavAt = now;
+          const isVideo = data?.hasVideo ? '1' : '0';
+          const nm = encodeURIComponent(data?.callerName || '');
+          const em = encodeURIComponent(data?.callerEmail || '');
+          const cv = encodeURIComponent(data?.conversationId || '');
+          router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${nm}&contactEmail=${em}&isVideo=${isVideo}&conversationId=${cv}&isCaller=0&adoptNative=1`);
+        } catch {}
+      }) || (() => {});
+    } catch {}
+    return () => { try { unsub(); } catch {} };
+  }, []);
+
   // Pre-fetch key data after login so screens load instantly from cache
   useEffect(() => {
     if (prefetchedRef.current) return;

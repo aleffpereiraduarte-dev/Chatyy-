@@ -477,6 +477,13 @@ public class ExpoCallKitModule: Module {
       }
     }
 
+    // [2026-05-25] JS (/call.js) calls this once it has mounted + adopted the
+    // pre-connected NativeCallRoom, to dismiss the instant native call screen so
+    // the rich JS UI shows. Safe no-op if no native screen is up.
+    Function("dismissNativeCallVC") { () -> Void in
+      CallViewController.dismissIfPresented()
+    }
+
     AsyncFunction("displayIncomingCall") { (callId: String, callerName: String, hasVideo: Bool, callerEmail: String?, conversationId: String?) -> Void in
       try await self.reportIncomingCall(callId: callId, callerName: callerName, hasVideo: hasVideo)
     }

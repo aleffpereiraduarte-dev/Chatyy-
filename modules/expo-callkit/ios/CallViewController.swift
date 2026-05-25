@@ -2359,6 +2359,22 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         return nil
     }
 
+    /// [2026-05-25] Dismiss the native call screen. JS calls this via
+    /// ExpoCallKit.dismissNativeCallVC() once /call.js has mounted + adopted the
+    /// pre-connected room — the rich JS UI replaces this instant native
+    /// placeholder. Animated:false so the handoff is seamless (no flash). The
+    /// native screen is the "floor": if JS never mounts (cold-start that fails),
+    /// it stays up, so this is purely additive — never a regression.
+    @objc static func dismissIfPresented() {
+        DispatchQueue.main.async {
+            guard let root = resolvePresentingViewController() else { return }
+            if let vc = existingCallVC(from: root) {
+                nativeCallDiag("callvc_dismiss_for_js", vc.callId)
+                vc.dismiss(animated: false, completion: nil)
+            }
+        }
+    }
+
     // [WAVE 154 2026-05-22] UIKit-only button handlers (no SwiftUI).
 
     // [WAVE 178 2026-05-24] Haptic + scale press feedback for WhatsApp-grade

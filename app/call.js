@@ -1392,6 +1392,12 @@ function CallScreenInner() {
         if (adopted) {
           console.log('[Call] adopting native Room — skip JS Room.connect', { callId, snap });
           _diag('adopted_native_room', { snap_keys: Object.keys(snap || {}).join(',') });
+          // [2026-05-25] We've adopted the pre-connected native room and this
+          // rich JS UI is now live → dismiss the instant native call screen
+          // that the answer path presented as the "floor". Seamless handoff:
+          // native covered the warm-up gap (incl. cold-start), now the pretty
+          // /call.js takes over. No-op on Android / if no native screen up.
+          try { ExpoCallKit.dismissNativeCallVC?.(); } catch {}
           setPeerConnected(true);
           // Flip the global flag so the WS chat_call_end gate
           // (isNativeRoomConnected helper below) knows the native side owns

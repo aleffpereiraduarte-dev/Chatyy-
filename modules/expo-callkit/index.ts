@@ -80,6 +80,10 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   persistPendingLkToken(roomName: string, token: string, url: string): Promise<void>;
   isNativeRoomConnected(): boolean;
   adoptNativeRoom(callId: string): Promise<Record<string, any> | null>;
+  // [2026-05-25] Dismiss the instant native call screen once /call.js has
+  // mounted + adopted the room, so the rich JS UI replaces it. iOS-only no-op
+  // elsewhere.
+  dismissNativeCallVC?(): void;
   lkConnect(url: string, token: string, callId: string, hasVideo: boolean): Promise<void>;
   lkDisconnect(): Promise<void>;
   lkSetMicEnabled(enabled: boolean): Promise<void>;
@@ -267,6 +271,17 @@ export function endCall(callId: string): void {
   if (!m) return;
   try {
     m.endCall(callId);
+  } catch {}
+}
+
+// [2026-05-25] /call.js calls this after it mounts + adopts the pre-connected
+// native room, to dismiss the instant native call screen so the rich JS UI
+// shows. Safe no-op if the native function isn't present (Android / older).
+export function dismissNativeCallVC(): void {
+  const m = getModule();
+  if (!m) return;
+  try {
+    m.dismissNativeCallVC?.();
   } catch {}
 }
 
