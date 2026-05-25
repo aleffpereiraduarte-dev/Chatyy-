@@ -218,6 +218,31 @@ function qualityToLabel(q) {
   }
 }
 
+// [gap D4 2026-05-25 fix] Force the SFU to push a fresh I-frame for a remote
+// VIDEO publication. livekit-client 2.19's RemoteTrackPublication has NO
+// requestKeyFrame() — the old `pub?.requestKeyFrame?.()` was a silent no-op, so
+// remote video stayed frozen on the last frame for 4-8s (until the next natural
+// GOP) on camera re-enable / reconnect / first subscribe. Toggling the
+// subscription off→on makes the SFU re-send a keyframe (PLI) almost instantly.
+// setSubscribed(boolean) IS present on RemoteTrackPublication in 2.19 (verified
+// in node_modules/livekit-client RemoteTrackPublication.d.ts); setEnabled is the
+// fallback. We only do this for VIDEO — never audio (would cause an audible blip).
+function _nudgeKeyframe(pub) {
+  try {
+    if (!pub) return;
+    // Guard to video only — kind may live on the pub or its track.
+    const kind = pub.kind || pub.track?.kind;
+    if (kind && kind !== 'video' && kind !== Track.Kind.Video) return;
+    if (typeof pub.setSubscribed === 'function') {
+      pub.setSubscribed(false);
+      setTimeout(() => { try { pub.setSubscribed(true); } catch {} }, 150);
+    } else if (typeof pub.setEnabled === 'function') {
+      pub.setEnabled(false);
+      setTimeout(() => { try { pub.setEnabled(true); } catch {} }, 150);
+    }
+  } catch {}
+}
+
 function CallScreenInner() {
   useEffect(() => { initCallModules(); }, []);
 
@@ -1658,22 +1683,36 @@ function CallScreenInner() {
           const pcm = eng?.pcManager || eng;
           const pub = pcm?.publisher || eng?.publisher;
           const pc = pub?.pc || pub?.peerConnection;
-          if (pc && typeof pc.setConfiguration === 'function') {
-            const currentCfg = pc.getConfiguration?.() || {};
-            const allCfg = { ...currentCfg, iceTransportPolicy: 'all' };
+          // [bug 2026-05-25] @livekit/react-native-webrtc has NO getConfiguration(),
+          // so the old `...(pc.getConfiguration?.() || {})` spread resolved to {} and
+          // the RTCConfiguration handed to native carried NO iceServers — that wiped
+          // the coturn HMAC TURN creds the call connected on, and on strict NAT the
+          // P2P-upgrade restartIce() then had no relay to fall back to. Re-pass the
+          // SAME iceServers array used to build roomOpts.rtcConfig at connect time so
+          // the TURN creds survive the policy flip. If we don't have an explicit
+          // iceServers array, SKIP the setConfiguration entirely rather than wipe the
+          // relay config that's already working (relay leg stays intact).
+          const haveIce = Array.isArray(iceServers) && iceServers.length > 0;
+          if (pc && typeof pc.setConfiguration === 'function' && haveIce) {
+            const allCfg = { iceServers, iceTransportPolicy: 'all' };
             pc.setConfiguration(allCfg);
-            console.log('[Call][relay-first] Phase-2: setConfiguration iceTransportPolicy=all, cfg=', JSON.stringify(allCfg));
-            _diag('relay_first_p2p_upgrade_start', { policy: 'all', ts: Date.now() });
+            console.log('[Call][relay-first] Phase-2: setConfiguration iceTransportPolicy=all, iceServers=', iceServers.length);
+            _diag('relay_first_p2p_upgrade_start', { policy: 'all', iceServers: iceServers.length, ts: Date.now() });
+          } else if (pc && !haveIce) {
+            console.log('[Call][relay-first] Phase-2: no in-scope iceServers — skipping setConfiguration to preserve TURN relay');
+            _diag('relay_first_p2p_upgrade_skip_no_ice', { ts: Date.now() });
           }
-          // Also upgrade subscriber PC if it exists (for receiving media).
+          // Also upgrade subscriber PC if it exists (for receiving media). Same
+          // TURN-preservation rule — only flip policy when we can re-supply iceServers.
           const sub = pcm?.subscriber || eng?.subscriber;
           const subPc = sub?.pc || sub?.peerConnection;
-          if (subPc && typeof subPc.setConfiguration === 'function') {
-            const subCfg = { ...(subPc.getConfiguration?.() || {}), iceTransportPolicy: 'all' };
-            subPc.setConfiguration(subCfg);
+          if (subPc && typeof subPc.setConfiguration === 'function' && haveIce) {
+            subPc.setConfiguration({ iceServers, iceTransportPolicy: 'all' });
           }
           // Trigger ICE restart so new candidates are gathered with 'all' policy.
-          if (pc && typeof pc.restartIce === 'function') {
+          // Only restart when we actually flipped to 'all' above — restarting under
+          // the unchanged relay policy gains nothing and risks a transient blip.
+          if (pc && typeof pc.restartIce === 'function' && haveIce) {
             pc.restartIce();
             console.log('[Call][relay-first] Phase-2: restartIce() called on publisher PC');
           }
@@ -1741,17 +1780,20 @@ function CallScreenInner() {
         try { clearTimeout(reconnectGraceTimerRef.current); } catch {}
         reconnectGraceTimerRef.current = null;
       }
-      // [gap D4 2026-05-20] After a reconnect, the SFU may not push a
+      // [gap D4 2026-05-25 fix] After a reconnect, the SFU may not push a
       // fresh keyframe until the next GOP (4-8s on a 30fps publisher).
       // Until then remote video stays frozen on the last received frame.
-      // Pinging requestKeyFrame on every remote video publication makes
-      // the I-frame land in <300ms in practice. The optional chain is
-      // load-bearing — older livekit-client versions don't expose it.
+      // requestKeyFrame() does NOT exist on livekit-client 2.19's
+      // RemoteTrackPublication — the optional chain silently swallowed the
+      // call and the keyframe was never requested. Instead nudge the SFU with
+      // a real PLI by toggling the remote subscription off→on, which forces a
+      // fresh I-frame to land in <300ms. Video publications only — never
+      // toggle audio (would cause an audible blip).
       try {
         r.remoteParticipants?.forEach?.((p) => {
           try {
             p.videoTracks?.forEach?.((t) => {
-              try { t.publication?.requestKeyFrame?.(); } catch {}
+              _nudgeKeyframe(t.publication);
             });
           } catch {}
         });
@@ -1885,14 +1927,15 @@ function CallScreenInner() {
         participant,
         videoTrack: publication.source === Track.Source.Camera ? track : (groupPeersRef.current.get(participant.identity)?.videoTrack || null),
       });
-      // [gap D4 2026-05-25] Ask the SFU for a fresh keyframe the moment a
+      // [gap D4 2026-05-25 fix] Ask the SFU for a fresh keyframe the moment a
       // remote VIDEO track is subscribed. Otherwise the renderer waits for the
       // next GOP (4-8s on a 30fps publisher) before the first decodable I-frame
-      // lands and the tile stays black/frozen until then. Guard to remote video
-      // only; optional chain is load-bearing (older SDKs lack requestKeyFrame).
+      // lands and the tile stays black/frozen until then. requestKeyFrame() is
+      // a no-op (doesn't exist on livekit-client 2.19 RemoteTrackPublication),
+      // so we nudge a real PLI via a subscription off→on toggle. Remote video only.
       try {
         if (participant !== r.localParticipant && (track?.kind === 'video' || publication?.kind === 'video')) {
-          publication?.requestKeyFrame?.();
+          _nudgeKeyframe(publication);
         }
       } catch {}
     });
@@ -1924,14 +1967,14 @@ function CallScreenInner() {
             _callDiagAppend('info', 'remote audio track unmuted', { call_id: callId, participant: participant.identity });
           }
         } catch {}
-        // [gap D4 2026-05-25] When a peer re-enables their camera the track
+        // [gap D4 2026-05-25 fix] When a peer re-enables their camera the track
         // unmutes but the SFU won't push an I-frame until the next GOP — the
-        // tile stays frozen on the last frame for 4-8s. Force a keyframe now so
-        // the renderer refreshes in <300ms. Remote VIDEO only; optional chain
-        // is load-bearing (older livekit-client builds lack requestKeyFrame).
+        // tile stays frozen on the last frame for 4-8s. requestKeyFrame() is a
+        // no-op on livekit-client 2.19, so nudge a real PLI by toggling the
+        // remote subscription off→on. Remote VIDEO only (never audio).
         try {
           if (publication?.track?.kind === 'video' || publication?.kind === 'video') {
-            publication?.requestKeyFrame?.();
+            _nudgeKeyframe(publication);
           }
         } catch {}
       }

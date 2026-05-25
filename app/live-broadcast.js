@@ -14,6 +14,7 @@ import LiveChat from '../components/LiveChat'; // eslint-disable-line no-unused-
 import LiveChatOverlay from '../components/live/LiveChatOverlay';
 import AvatarCircle from '../components/AvatarCircle';
 import { cleanParticipantName, prettifyHandle } from '../services/displayName';
+import formatLiveChatContent from '../utils/formatLiveChatContent';
 import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark, IconChevronRight, IconChevronDown, IconBarChart, IconBrush, IconBookmarkFilled, IconPlay } from '../components/Icons';
 import { useTheme } from '../context/ThemeContext';
 import AnimatedViewerCount from '../components/AnimatedViewerCount';
@@ -3924,7 +3925,7 @@ export default function LiveBroadcastScreen() {
             </View>
             <View style={styles.pinnedBody}>
               <Text style={styles.pinnedName} numberOfLines={1}>{pinnedComment.name}</Text>
-              <Text style={styles.pinnedContent} numberOfLines={2}>{pinnedComment.content}</Text>
+              <Text style={styles.pinnedContent} numberOfLines={2}>{formatLiveChatContent(pinnedComment.content)}</Text>
             </View>
             <TouchableOpacity
               onPress={() => {

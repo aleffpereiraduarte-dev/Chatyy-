@@ -104,6 +104,16 @@ const RECONNECT_MAX = 3000;     // Max 3s between retries (was 30s)
 // kill 100% of the time. WhatsApp uses ~5s keepalive.
 const PING_INTERVAL = 5000;
 const PING_TIMEOUT = 18000;
+// [P0 2026-05-25 auth-reject storm] After this many consecutive
+// refreshed-but-still-rejected auth attempts, stop auto-reconnecting and
+// force a real re-login instead of storming the server. A single transient
+// 401 (token just expired, refresh succeeds, server accepts) never reaches
+// this threshold — only a token the server keeps rejecting does.
+const AUTH_REJECT_STOP = 3;
+// Exponential backoff (with cap) BETWEEN auth-driven reconnects so even
+// before we hard-stop we're not hammering: 2s → 4s → 8s … capped at 60s.
+const AUTH_REJECT_BACKOFF_BASE = 2000;
+const AUTH_REJECT_BACKOFF_MAX = 60000;
 const MAX_QUEUE_SIZE = 100;
 const TYPING_DEBOUNCE = 3000;   // Send typing every 3s max
 const TYPING_STOP_DELAY = 3000; // Send stopped_typing after 3s idle
@@ -183,6 +193,27 @@ class MailWebSocket {
     this._eventIdSinceFlush = 0;
     this._resumeInFlight = false;
     this._loadLastEventId(); // Fire-and-forget — populates this._lastEventId
+
+    // ─── Auth-reject storm guard (P0 2026-05-25) ───
+    // Distinct from `_authFailStreak`, which counts ALL auth_errors (including
+    // transient edge-hub hiccups, in-call races, etc). This counter ONLY
+    // increments when we did a token refresh, the refresh SUCCEEDED (handed us
+    // a token, possibly a brand-new one), and the server STILL rejected it on
+    // the very next connect. That is the signature of a genuinely dead session
+    // (revoked/rotated server-side) and is what produced the ~38 failed-auth/min
+    // reconnect storm: refresh kept "succeeding" so the old code reset backoff
+    // to 0 and reconnected instantly, forever, never holding the
+    // chat_user_<email> subscription long enough to receive messages.
+    //
+    // After AUTH_REJECT_STOP consecutive refreshed-but-still-rejected attempts
+    // we enter `_authReloginStopped`: clear the reconnect timer, STOP all
+    // auto-reconnect (connect() becomes a no-op), and surface the same
+    // chatyy:authFailure signal the app already listens to so it forces a real
+    // re-login. The stop is only cleared by an explicit re-auth path
+    // (reset(), resurrect(), or manualReconnect()).
+    this._authRejectStreak = 0;       // refreshed-but-still-rejected count
+    this._authReloginStopped = false; // hard-stop: no auto-reconnect until re-auth
+    this._authRejectBackoff = 0;      // exponential backoff between auth retries (ms)
 
 
     // Pause/resume on visibility change (web only)
@@ -381,6 +412,15 @@ class MailWebSocket {
 
   connect(token) {
     if (this.destroyed) return;
+    // [P0 2026-05-25] In the auth-reject "needs re-login" stopped state, do NOT
+    // reconnect — that's the whole point of the circuit-breaker. The flag is
+    // cleared only by an explicit re-auth (reset/resurrect/manualReconnect),
+    // each of which sets it false BEFORE calling connect(), so those paths
+    // still work. Any stray timer/watchdog firing connect() here is a no-op.
+    if (this._authReloginStopped) {
+      try { console.warn('[WS] connect() ignored — in needs-relogin stop state'); } catch {}
+      return;
+    }
     // WhatsApp-grade token refresh: always prefer the freshest token from
     // the API layer over whatever caller passed in. After a sliding
     // renewal, the in-memory bearer can be newer than the one we hold,
@@ -603,6 +643,11 @@ class MailWebSocket {
     this._droppedCount = 0;
     this._authFailStreak = 0;
     this._authErrorBackoff = 0;
+    // [P0 2026-05-25] reset() is a re-auth boundary (logout→login, account
+    // switch). Lift the auth-reject hard-stop so the fresh session can connect.
+    this._authRejectStreak = 0;
+    this._authRejectBackoff = 0;
+    this._authReloginStopped = false;
     this._seenMsgIds.clear();
     this._seenMsgIdQueue = [];
     if (fullWipe) {
@@ -636,6 +681,27 @@ class MailWebSocket {
     try {
       const apiMod = require('./api');
       const token = apiMod.getAuthToken?.();
+      // [P0 2026-05-25] If we hard-stopped on the auth-reject storm, the
+      // periodic self-heal / foreground watchdog must NOT just reconnect with
+      // the same token the server keeps rejecting — that re-arms the storm.
+      // Only lift the stop when the in-memory token has ACTUALLY changed
+      // (the app did a real re-login). Otherwise stay stopped and signal the
+      // app again so it surfaces the re-login prompt.
+      if (this._authReloginStopped) {
+        if (token && token !== this.token) {
+          this._authReloginStopped = false;
+          this._authRejectStreak = 0;
+          this._authRejectBackoff = 0;
+        } else {
+          this._logGhost?.('resurrect_blocked_relogin_stop', { reason });
+          try {
+            if (typeof globalThis !== 'undefined' && globalThis.dispatchEvent) {
+              globalThis.dispatchEvent(new Event('chatyy:authFailure'));
+            }
+          } catch {}
+          return false;
+        }
+      }
       if (!token) {
         // [WAVE 66] No token in memory yet (hydrate race). Schedule a retry
         // so we don't sit dead until the next watchdog tick (10s).
@@ -1011,8 +1077,64 @@ class MailWebSocket {
     this.pingTimer = null;
   }
 
+  // [P0 2026-05-25] Enter the "needs re-login" hard-stop. Called when the
+  // server keeps rejecting a freshly-refreshed token (auth-reject storm).
+  // Stops all auto-reconnect: clears the reconnect timer, sets the stop flag
+  // (which gates connect() and every scheduled reconnect callback), and
+  // surfaces the SAME chatyy:authFailure signal the app already listens to
+  // (AuthContext / MailContext) so the app forces a real re-login instead of
+  // storming. The stop is only cleared by an explicit re-auth path:
+  // reset(), resurrect(), or manualReconnect() — i.e. on the next foreground
+  // with a fresh login or a manual reconnect call.
+  _enterReloginStopped(reason) {
+    this._authReloginStopped = true;
+    clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this._stopPing();
+    try { console.warn('[WS] auth-reject storm stop — needs re-login (' + reason + ', strike ' + this._authRejectStreak + ')'); } catch {}
+    try { this._logGhost?.('auth_relogin_stop', { reason, streak: this._authRejectStreak }); } catch {}
+    // Tell the app to force a real re-login (same signal as the 8-strike
+    // tombstone path so existing listeners pick it up with no new wiring).
+    try {
+      const apiMod = require('./api');
+      apiMod.recordLogoutAttempt?.(reason, { source: 'websocket', streak: this._authRejectStreak });
+    } catch {}
+    try {
+      if (typeof globalThis !== 'undefined') {
+        globalThis.__chatyy_authFailure = Date.now();
+        if (globalThis.dispatchEvent) globalThis.dispatchEvent(new Event('chatyy:authFailure'));
+      }
+    } catch {}
+    this._emit('connection', { status: 'needs_relogin', reason });
+  }
+
+  // [P0 2026-05-25] Explicit manual reconnect / re-auth entry point. Lifts the
+  // auth-reject hard-stop and re-arms the socket with the freshest token. Use
+  // from a login-success handler or a user-initiated "reconnect" action. Safe
+  // to call when not stopped (acts like a normal ensureHealthy). Returns true
+  // if a reconnect was kicked off.
+  manualReconnect() {
+    this._authReloginStopped = false;
+    this._authRejectStreak = 0;
+    this._authRejectBackoff = 0;
+    this._authFailStreak = 0;
+    this.destroyed = false;
+    this.reconnectAttempt = 0;
+    let token = this.token;
+    try {
+      const apiMod = require('./api');
+      const fresh = apiMod.getAuthToken?.();
+      if (fresh && fresh.length > 0) token = fresh;
+    } catch {}
+    if (!token) return false;
+    this.token = token;
+    try { this._cleanup(); } catch {}
+    this.connect(token);
+    return true;
+  }
+
   _scheduleReconnect() {
-    if (this.destroyed || this._hidden) return;
+    if (this.destroyed || this._hidden || this._authReloginStopped) return;
     // Don't burn retries while the device is offline — the OS will fire a
     // 'resume' event when connectivity returns, at which point we blow the
     // attempt counter away and reconnect immediately.
@@ -1112,6 +1234,12 @@ class MailWebSocket {
       case 'auth_success':
         this.authenticated = true;
         this._authFailStreak = 0;
+        // [P0 2026-05-25] Any successful auth clears the storm guard: the
+        // session is alive, so reset the refreshed-but-still-rejected streak,
+        // its backoff, and lift the "needs re-login" hard-stop.
+        this._authRejectStreak = 0;
+        this._authRejectBackoff = 0;
+        this._authReloginStopped = false;
         this.userId = msg.user_id || msg.account_id;
         this.email = msg.email;
         // Seed lastPongTime so the ping-timeout watchdog has a valid baseline.
@@ -1208,13 +1336,48 @@ class MailWebSocket {
                   setTimeout(() => { if (!this.destroyed) this.connect(this.token); }, this._authErrorBackoff);
                   return;
                 }
-                // Successful refresh → reset auth-error backoff and reconnect now.
+                // Refresh "succeeded" (handed us a token). But landing in this
+                // branch on a REPEAT auth_error — with no intervening
+                // auth_success to reset the counter — means the server keeps
+                // rejecting the refreshed token. That is the auth-reject storm.
+                // [P0 2026-05-25] Count it, back off exponentially, and after
+                // AUTH_REJECT_STOP strikes hard-stop instead of storming.
                 this._authErrorBackoff = 0;
                 const freshToken = apiMod.getAuthToken?.();
                 if (freshToken && freshToken.length > 0 && freshToken !== this.token) {
                   this.token = freshToken;
                 }
-                this._scheduleReconnect();
+                // In-call grace (#1165): don't escalate the storm guard while a
+                // call is active — the parallel CallSignalWs session + paused JS
+                // thread legitimately race a couple of auth_errors. The reconnect
+                // still fires; a truly dead session escalates once the call ends.
+                if (callActive) {
+                  try { console.warn('[WS] auth refreshed during active call — reconnecting without storm escalation'); } catch {}
+                  this._scheduleReconnect();
+                  return;
+                }
+                this._authRejectStreak = (this._authRejectStreak || 0) + 1;
+                if (this._authRejectStreak >= AUTH_REJECT_STOP) {
+                  // Refreshed token rejected AUTH_REJECT_STOP times in a row →
+                  // the session is genuinely dead. Stop auto-reconnecting and
+                  // force a real re-login. This is the storm circuit-breaker.
+                  this._enterReloginStopped('ws_auth_reject_storm');
+                  return;
+                }
+                // Below the hard-stop threshold: a genuinely transient single
+                // 401 recovers here (streak 1, server accepts on reconnect →
+                // auth_success resets to 0). Only the repeated case climbs.
+                // Apply exponential backoff (2s,4s,8s…60s) BETWEEN these
+                // auth-driven reconnects so we never storm even pre-stop.
+                const prev = this._authRejectBackoff || 0;
+                this._authRejectBackoff = prev
+                  ? Math.min(prev * 2, AUTH_REJECT_BACKOFF_MAX)
+                  : AUTH_REJECT_BACKOFF_BASE;
+                try { console.warn('[WS] auth refreshed but server may reject — reconnect in ' + this._authRejectBackoff + 'ms (strike ' + this._authRejectStreak + '/' + AUTH_REJECT_STOP + ')'); } catch {}
+                clearTimeout(this.reconnectTimer);
+                this.reconnectTimer = setTimeout(() => {
+                  if (this.token && !this.destroyed && !this._authReloginStopped) this.connect(this.token);
+                }, this._authRejectBackoff);
               });
             // Don't fall through to the legacy reconnect path while refresh
             // is in-flight — we'll reconnect from inside the .then().

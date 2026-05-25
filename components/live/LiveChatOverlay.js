@@ -24,6 +24,7 @@ import {
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
 import { IconHeart, IconStar, IconUserPlus } from '../Icons';
+import formatLiveChatContent from '../../utils/formatLiveChatContent';
 
 // Tier accent — matches the rest of the live UI brand palette.
 const LIVE_RED = '#dc2626';
@@ -67,23 +68,11 @@ const TopFadeGradient = memo(function TopFadeGradient({ width = 280, height = 56
   );
 });
 
-// [7184 fix 2026-05-22] Live chat content cleaner. Users can paste raw
-// Chatyy invite/deep-link URLs ("https://chatyy.com.br/j/<32-hex>" or any
-// long hash) into live chat — they render as 60+ char gibberish that
-// breaks the TikTok overlay aesthetic. Strip Chatyy deep-link URLs to a
-// "🔗 Link compartilhado" tag and trim anything else over 100 chars.
-function formatLiveChatContent(raw) {
-  if (!raw || typeof raw !== 'string') return raw || '';
-  const trimmed = raw.trim();
-  // Pure Chatyy deep link → friendly chip
-  if (/^https?:\/\/(www\.)?chatyy\.com\.br\/[a-zA-Z0-9\-_/]+$/i.test(trimmed)) {
-    return '🔗 Link compartilhado';
-  }
-  // Inline URL: replace with shortened token
-  const urlPattern = /https?:\/\/\S+/g;
-  const replaced = trimmed.replace(urlPattern, '🔗 link');
-  return replaced;
-}
+// [7184 / #1346 fix 2026-05-25] Live chat content cleaner now lives in
+// utils/formatLiveChatContent.js so the floating overlay AND the expanded
+// comment sheet (app/live-viewer.js) + pinned chips share ONE source of
+// truth. Previously this was a local copy and the sheet rendered raw, so
+// invite URLs (incl. scheme-less chatyy.com.br/g|j/<token>) leaked through.
 
 // CommentRow — memoized so the row only re-reconciles when its own props
 // change (entry anim value, content, tier). Without this every parent

@@ -8932,6 +8932,12 @@ export default function ChatConversationScreen() {
   // "..." placeholder so a later run can decrypt.
   const decryptMessages = useCallback((msgs) => {
     return msgs.map(msg => {
+      // Null/undefined guard — match normalizeMessageTypes (line ~9041).
+      // On reconnect, delta re-sync / echoed-queued-message merges can feed a
+      // sparse/null row into this map; without this guard `msg.type` throws
+      // "undefined is not an object" inside an async WS callback → hard crash.
+      // Repro: send offline → turn internet back on → drain+resync → crash.
+      if (!msg) return msg;
       if (msg.type !== 'text') return msg;
       // Find the raw envelope: prefer _e2eRaw (preserved by normalizer),
       // otherwise look at live content for {"e2e":1,...} pattern.
@@ -17909,7 +17915,7 @@ export default function ChatConversationScreen() {
               delayLongPress={350}
               activeOpacity={0.9}
               style={{ marginHorizontal: -13, marginTop: -8, marginBottom: hasCaption ? 0 : -8 }}>
-              <View style={{ overflow: 'hidden', width: imgBoxW, height: imgBoxH, backgroundColor: (() => {
+              <View style={{ overflow: 'hidden', width: imgBoxW, height: imgBoxH, maxHeight: 380, maxWidth: 300, backgroundColor: (() => {
                 // [WAVE 77 2026-05-21] HSL base painted on the WRAPPER itself so
                 // that even when every internal layer is transparent (e.g. during
                 // ExpoImage's cross-dissolve transition on Android where the

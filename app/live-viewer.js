@@ -11,6 +11,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useTheme } from '../context/ThemeContext';
 import * as api from '../services/api';
 import { prettifyHandle } from '../services/displayName';
+import formatLiveChatContent from '../utils/formatLiveChatContent';
 import AvatarCircle from '../components/AvatarCircle';
 import {
   IconX, IconHeart, IconShare, IconStar,
@@ -190,7 +191,7 @@ const SheetCommentRow = memo(function SheetCommentRow({ item }) {
         >
           {item.name}
         </Text>
-        <Text style={{ color: '#fff', fontSize: 14, lineHeight: 18 }}>{item.content}</Text>
+        <Text style={{ color: '#fff', fontSize: 14, lineHeight: 18 }}>{formatLiveChatContent(item.content)}</Text>
       </View>
     </View>
   );
@@ -1429,7 +1430,7 @@ export default function LiveViewerScreen() {
           // who joined mid-broadcast see the same overlays as in-session ones.
           if (msg.pinned_comment) {
             setPinnedMsg({
-              content: String(msg.pinned_comment),
+              content: formatLiveChatContent(String(msg.pinned_comment)),
               name: msg.pinned_comment_by || '?',
               email: '',
             });
@@ -1471,7 +1472,7 @@ export default function LiveViewerScreen() {
           // Kept for back-compat with hosts still on the WS path.
           if (msg.content) {
             setPinnedMsg({
-              content: String(msg.content),
+              content: formatLiveChatContent(String(msg.content)),
               name: msg.sender_name || (msg.sender_email || '').split('@')[0] || '?',
               email: msg.sender_email || '',
             });
@@ -1485,7 +1486,7 @@ export default function LiveViewerScreen() {
           // the current pin from live_join's payload (read in handleJoinResponse).
           if (msg.comment_text) {
             setPinnedMsg({
-              content: String(msg.comment_text),
+              content: formatLiveChatContent(String(msg.comment_text)),
               name: msg.comment_author_name || '?',
               email: '',
             });

@@ -24,6 +24,7 @@ import { Platform, AppState } from 'react-native';
 import messageOutbox, {
   enqueue,
   dequeueNext,
+  getPending,
   markSending,
   markSent,
   markFailed,
@@ -98,36 +99,69 @@ export function poke(conversationId = null) {
 }
 
 async function _drainLoop(conversationId) {
-  // Loop until no more due rows. We loop instead of recursing so we don't
-  // hammer the call stack on a flush of dozens of queued messages.
-  let safetyCounter = 200; // catastrophic backstop, drain at most 200 per pass
-  while (safetyCounter-- > 0) {
-    const row = await dequeueNext(conversationId);
-    if (!row) break;
-    if (_inflight.has(row.conversation_id)) {
-      // Another send is in flight for this conv — skip and look elsewhere.
-      // When ALL active convs are blocked, dequeueNext keeps returning the
-      // same row, so we break to avoid a tight loop.
-      if (conversationId != null) break;
-      // For global drain, advance past this row by claiming we tried it.
-      // We can't easily SKIP per-conv in pure SQL without temp table; the
-      // simpler path is: break out, let the next poke re-evaluate after
-      // the in-flight send resolves.
-      break;
-    }
-    _inflight.add(row.conversation_id);
-    // Don't await — let each conversation drain in parallel. The per-conv
-    // FIFO guarantee comes from the _inflight set + dequeueNext ordering.
-    _processRow(row).finally(() => {
-      _inflight.delete(row.conversation_id);
-      // Self-rearm: as soon as one row finishes, look for the next in the
-      // same conversation. This is what keeps the queue draining without
-      // waiting on the periodic timer.
-      setTimeout(() => { poke(row.conversation_id); }, 0);
-    });
-    // Yield to event loop so multiple convs can fan out.
-    if (conversationId != null) break; // single-conv drain handled above
+  if (conversationId != null) {
+    await _drainOneConversation(conversationId);
+    return;
   }
+  await _drainAllConversations();
+}
+
+// Single-conversation drain: claim the lowest-due row, fan it out, and let
+// the per-conv self-rearm (in _kickoff's finally) chase the next seq. We take
+// at most one row here because the in-flight guard enforces strict FIFO — the
+// next row only goes out after this one resolves.
+async function _drainOneConversation(conversationId) {
+  if (_inflight.has(Number(conversationId)) || _inflight.has(conversationId)) return;
+  const row = await dequeueNext(conversationId);
+  if (!row) return;
+  if (_inflight.has(row.conversation_id)) return;
+  _kickoff(row);
+}
+
+// Global drain (conversationId == null). [#bugfix 2026-05-25] Previously this
+// called dequeueNext(null) in a loop; that orders by conversation_id ASC, so
+// if the lowest-id conversation was already _inflight the loop BROKE outright,
+// starving every higher-id conversation until the 60s periodic timer. Now we
+// snapshot all pending rows once (already ordered conversation_id ASC, seq
+// ASC), then fan out the FIRST due row of each NOT-already-in-flight
+// conversation — one in-flight per conversation, many conversations at once.
+// A per-pass skip set keeps us from launching two sends for the same conv.
+async function _drainAllConversations() {
+  const pending = await getPending(null); // ordered conv ASC, seq ASC
+  if (!pending || pending.length === 0) return;
+  const now = Date.now();
+  const startedThisPass = new Set();
+  let launched = 0;
+  for (const row of pending) {
+    if (launched >= 200) break; // catastrophic backstop
+    if (row.state !== 'queued') continue;       // skip sending/failed-waiting
+    if ((row.next_retry_at | 0) > now) continue; // backoff not elapsed yet
+    const conv = row.conversation_id;
+    if (_inflight.has(conv) || startedThisPass.has(conv)) continue; // one per conv
+    // First due row encountered for this conv wins (lowest seq → FIFO).
+    startedThisPass.add(conv);
+    _kickoff(row);
+    launched++;
+  }
+}
+
+// Claim a row in-flight and process it. On completion, self-rearm the SAME
+// conversation so its remaining backlog drains without waiting on the timer.
+function _kickoff(row) {
+  _inflight.add(row.conversation_id);
+  // Don't await — let each conversation drain in parallel. The per-conv
+  // FIFO guarantee comes from the _inflight set + seq ordering.
+  _processRow(row).finally(() => {
+    _inflight.delete(row.conversation_id);
+    // Self-rearm with a GLOBAL poke. A global drain re-evaluates every
+    // conversation (including this one's next seq) and fans out one row per
+    // not-in-flight conversation — so this both chases the same conv's
+    // backlog AND unblocks any conversation that was skipped earlier because
+    // it was momentarily in-flight. We deliberately do NOT use a single-conv
+    // poke here: poke() coalesces through the mutex, and a single-conv drain
+    // would swallow the global re-poke and re-starve higher-id conversations.
+    setTimeout(() => { poke(); }, 0);
+  });
 }
 
 // Media types we treat as "needs upload before chat_send".
@@ -148,17 +182,15 @@ async function _processRow(row) {
     return;
   }
 
-  // Try WS-first when authenticated and we have a chat_send-shaped payload.
-  // Falls back to HTTP on timeout/error/socket-down.
-  const wsResult = await _tryWsSend(row);
-  if (wsResult === 'ok') return; // markSent fired inside ack listener
-  if (wsResult === 'rejected') {
-    // Server explicitly rejected over WS — don't HTTP-retry the same payload
-    // immediately, schedule a backoff. UI will surface state='failed'.
-    await markFailed(cmi, 'ws_rejected');
-    return;
-  }
-  // WS path didn't land in time → HTTP fallback.
+  // [#bugfix 2026-05-25] WS-first is DISABLED. The C++ WS server has NO
+  // `chat_send` handler — every frame we'd send is silently dropped, so
+  // _tryWsSend ALWAYS times out (WS_ACK_TIMEOUT_MS) and then falls to HTTP.
+  // That's a guaranteed ~250ms of dead latency on every outbox-drained
+  // send (queued / retry). Go straight to HTTP instead. _tryWsSend is left
+  // intact below as dead code: re-enable this call only once the server
+  // actually implements a `case "chat_send":` and replies `message_ack`.
+  // (The foreground path in app/chat-conversation.js is unaffected — it
+  // does not use this worker.)
   await _httpSend(row);
 }
 
