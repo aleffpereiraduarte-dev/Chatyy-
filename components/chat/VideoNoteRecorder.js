@@ -384,13 +384,26 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
         {/* Camera preview clipped to a perfect circle */}
         <View style={s.previewWrap}>
           <View style={s.previewCircle}>
-            <CameraView
-              ref={cameraRef}
-              style={{ width: SIZE, height: SIZE }}
-              facing={facing}
-              mode="video"
-              videoQuality="720p"
-            />
+            {/* CRITICAL (iOS crash guard): only mount the native CameraView
+                AFTER camera permission is granted. expo-camera's CameraView
+                hard-crashes the app on iOS if it initializes while the user
+                has camera permission OFF. The perms useEffect above requests
+                access on open; until `permission.granted` flips true we show a
+                dark placeholder. If denied, error='camera' shows the hint and
+                CameraView is never mounted — no crash. */}
+            {permission?.granted ? (
+              <CameraView
+                ref={cameraRef}
+                style={{ width: SIZE, height: SIZE }}
+                facing={facing}
+                mode="video"
+                videoQuality="720p"
+              />
+            ) : (
+              <View style={{ width: SIZE, height: SIZE, backgroundColor: '#1a1a1a', alignItems: 'center', justifyContent: 'center' }}>
+                <ActivityIndicator color="#fff" />
+              </View>
+            )}
           </View>
           {/* Radial progress ring around the preview */}
           {recording && (
