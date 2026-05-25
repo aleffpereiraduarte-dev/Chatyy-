@@ -1164,6 +1164,44 @@ export default function PhotosScreen() {
     return () => { cancelled = true; };
   }, [devicePhotos.length, cloudPhotos.length, backupEnabled, deviceTotalCount, backedUpTotal, backupStatus]);
 
+  // Declared ABOVE onRefresh on purpose: onRefresh references refreshMemories
+  // in its body + dependency array. Declaring it below caused a TDZ
+  // ("Cannot access 'refreshMemories' before initialization") that crashed
+  // Photos on first render. Keep this order.
+  const memCacheKey = `photo_memories_v1_${user?.email || 'anon'}`;
+  const refreshMemories = useCallback(async () => {
+    try {
+      const r = await api.driveMemories();
+      const buckets = r?.success && Array.isArray(r.data?.buckets) ? r.data.buckets : null;
+      if (!buckets || buckets.length === 0) return null;
+      const yearsCards = [];
+      const thisWeek = buckets.find(b => b?.type === 'this_week');
+      buckets.forEach(b => {
+        if (!b || !Array.isArray(b.photos) || b.photos.length === 0) return;
+        if (b.type === 'years_ago') {
+          yearsCards.push({
+            yearsAgo: Number(b.years) || 1,
+            photos: b.photos,
+            memoryKey: b.memory_key || `ya_${b.years || 1}`,
+          });
+        }
+      });
+      yearsCards.sort((a, b) => a.yearsAgo - b.yearsAgo);
+      let next = yearsCards;
+      if (yearsCards.length === 0 && thisWeek?.photos?.length) {
+        next = [{
+          yearsAgo: 0,
+          photos: thisWeek.photos,
+          memoryKey: thisWeek.memory_key || 'wk_current',
+        }];
+      }
+      try { await AsyncStorage.setItem(memCacheKey, JSON.stringify(next)); } catch {}
+      return next;
+    } catch (e) {
+      return null;
+    }
+  }, [memCacheKey]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     setPage(1);
@@ -1236,41 +1274,8 @@ export default function PhotosScreen() {
   const [memoriesData, setMemoriesData] = useState([]);
   const [mutedMemoryKeys, setMutedMemoryKeys] = useState(() => new Set());
   const memoriesLoadedRef = useRef(false);
-  const memCacheKey = `photo_memories_v1_${user?.email || 'anon'}`;
   const memMuteKey = `photo_memories_muted_v1_${user?.email || 'anon'}`;
-
-  const refreshMemories = useCallback(async () => {
-    try {
-      const r = await api.driveMemories();
-      const buckets = r?.success && Array.isArray(r.data?.buckets) ? r.data.buckets : null;
-      if (!buckets || buckets.length === 0) return null;
-      const yearsCards = [];
-      const thisWeek = buckets.find(b => b?.type === 'this_week');
-      buckets.forEach(b => {
-        if (!b || !Array.isArray(b.photos) || b.photos.length === 0) return;
-        if (b.type === 'years_ago') {
-          yearsCards.push({
-            yearsAgo: Number(b.years) || 1,
-            photos: b.photos,
-            memoryKey: b.memory_key || `ya_${b.years || 1}`,
-          });
-        }
-      });
-      yearsCards.sort((a, b) => a.yearsAgo - b.yearsAgo);
-      let next = yearsCards;
-      if (yearsCards.length === 0 && thisWeek?.photos?.length) {
-        next = [{
-          yearsAgo: 0,
-          photos: thisWeek.photos,
-          memoryKey: thisWeek.memory_key || 'wk_current',
-        }];
-      }
-      try { await AsyncStorage.setItem(memCacheKey, JSON.stringify(next)); } catch {}
-      return next;
-    } catch (e) {
-      return null;
-    }
-  }, [memCacheKey]);
+  // memCacheKey + refreshMemories moved above onRefresh (TDZ fix) — see note there.
 
   useEffect(() => {
     let cancelled = false;
