@@ -28,6 +28,17 @@ import AVFoundation
 
     private(set) var hasVideo: Bool = false
     private(set) var speakerOn: Bool = false
+    // [2026-05-25 speaker-only fix] Set once per call, the first time we
+    // configure the category. configureForCall runs TWICE per answered call
+    // (CXProvider.didActivate, then CallViewController.viewDidLoad). Calling
+    // setCategory() a SECOND time — after CallKit's didActivate already flipped
+    // WebRTC's manual-audio gate ON and the VPIO audio unit started — silently
+    // breaks the earpiece route: audio then only plays on the loudspeaker
+    // ("só funciona no viva voz"). Apple's own guidance is explicit: do NOT
+    // call setCategory after joining the WebRTC audio unit. So we set the
+    // category exactly once; subsequent configureForCall calls only re-apply
+    // the route override (overrideOutputAudioPort), which is safe mid-call.
+    private var categoryConfigured = false
     private var routeObserver: NSObjectProtocol?
     private let lockQueue = DispatchQueue(label: "com.onemundo.mail.audioRouter")
 
@@ -47,48 +58,60 @@ import AVFoundation
             self.speakerOn = hasVideo  // video → speaker, audio → earpiece
         }
         let session = AVAudioSession.sharedInstance()
-        do {
-            try session.setCategory(
-                .playAndRecord,
-                mode: .voiceChat,
-                // `.allowBluetooth` is deprecated since iOS 8; A2DP + HFP
-                // covers modern BT headsets without the warning. `.duckOthers`
-                // lowers Spotify/Podcast volume during call setup.
-                options: [.allowBluetoothA2DP, .allowBluetoothHFP, .duckOthers]
-            )
-        } catch {
-            print("[AudioRouter] setCategory failed: \(error)")
-        }
+        // [2026-05-25 speaker-only fix] Only touch the category/mode + the
+        // preferred-format hints ONCE per call. Re-running setCategory after
+        // CallKit's didActivate started the WebRTC VPIO audio unit is exactly
+        // what breaks the earpiece route (audio stuck on loudspeaker). On the
+        // second+ configureForCall we fall straight through to applyInitialRoute
+        // below, which only flips overrideOutputAudioPort — safe at any time.
+        let needsCategory = lockQueue.sync { !categoryConfigured }
+        if needsCategory {
+            do {
+                try session.setCategory(
+                    .playAndRecord,
+                    mode: .voiceChat,
+                    // `.allowBluetooth` is deprecated since iOS 8; A2DP + HFP
+                    // covers modern BT headsets without the warning. `.duckOthers`
+                    // lowers Spotify/Podcast volume during call setup.
+                    options: [.allowBluetoothA2DP, .allowBluetoothHFP, .duckOthers]
+                )
+                lockQueue.sync { self.categoryConfigured = true }
+            } catch {
+                print("[AudioRouter] setCategory failed: \(error)")
+            }
 
-        // [WAVE 44B, 2026-05-21 gap A1] Pin AVAudioSession to 48kHz mono with
-        // a short IO buffer for WhatsApp-grade audio. Without these prefs:
-        //   • older iPhones default to 44.1kHz → LK resamples (CPU + jitter)
-        //   • IO buffer can be 23ms → adds round-trip latency
-        //   • input channels can be 2 (stereo mic on iPhone Pro) → wastes
-        //     bandwidth, downmixed mono is what voice codec wants anyway
-        // All three are PREFERRED hints — iOS may ignore on hardware that
-        // can't honor (BT headset locks at 16kHz). We do NOT setActive; CallKit
-        // owns activation. Failure is logged but non-fatal.
-        do {
-            try session.setPreferredSampleRate(48_000)
-        } catch {
-            print("[AudioRouter] setPreferredSampleRate failed: \(error)")
+            // [WAVE 44B, 2026-05-21 gap A1] Pin AVAudioSession to 48kHz mono with
+            // a short IO buffer for WhatsApp-grade audio. Without these prefs:
+            //   • older iPhones default to 44.1kHz → LK resamples (CPU + jitter)
+            //   • IO buffer can be 23ms → adds round-trip latency
+            //   • input channels can be 2 (stereo mic on iPhone Pro) → wastes
+            //     bandwidth, downmixed mono is what voice codec wants anyway
+            // All three are PREFERRED hints — iOS may ignore on hardware that
+            // can't honor (BT headset locks at 16kHz). We do NOT setActive; CallKit
+            // owns activation. Failure is logged but non-fatal.
+            do {
+                try session.setPreferredSampleRate(48_000)
+            } catch {
+                print("[AudioRouter] setPreferredSampleRate failed: \(error)")
+            }
+            do {
+                // 10ms IO buffer — matches WebRTC's internal frame size. iOS
+                // rounds to nearest hardware-supported value (typically 0.01s
+                // on A12+, 0.02s on older).
+                try session.setPreferredIOBufferDuration(0.01)
+            } catch {
+                print("[AudioRouter] setPreferredIOBufferDuration failed: \(error)")
+            }
+            do {
+                try session.setPreferredInputNumberOfChannels(1)
+            } catch {
+                // Some BT headsets only expose stereo — non-fatal, LK downmixes.
+                print("[AudioRouter] setPreferredInputNumberOfChannels failed: \(error)")
+            }
+            print("[AudioRouter] category configured (once): rate=\(session.sampleRate)Hz buf=\(session.ioBufferDuration)s inCh=\(session.inputNumberOfChannels)")
+        } else {
+            print("[AudioRouter] category already configured — skipping setCategory (re-applying route only, avoids breaking VPIO earpiece route)")
         }
-        do {
-            // 10ms IO buffer — matches WebRTC's internal frame size. iOS
-            // rounds to nearest hardware-supported value (typically 0.01s
-            // on A12+, 0.02s on older).
-            try session.setPreferredIOBufferDuration(0.01)
-        } catch {
-            print("[AudioRouter] setPreferredIOBufferDuration failed: \(error)")
-        }
-        do {
-            try session.setPreferredInputNumberOfChannels(1)
-        } catch {
-            // Some BT headsets only expose stereo — non-fatal, LK downmixes.
-            print("[AudioRouter] setPreferredInputNumberOfChannels failed: \(error)")
-        }
-        print("[AudioRouter] preferred: rate=\(session.sampleRate)Hz buf=\(session.ioBufferDuration)s inCh=\(session.inputNumberOfChannels)")
 
         // Pick the initial route. If a wired/BT headset is connected we let
         // that win (don't override). Otherwise: speaker for video, earpiece
@@ -130,6 +153,8 @@ import AVFoundation
         lockQueue.sync {
             self.hasVideo = false
             self.speakerOn = false
+            // Reset so the NEXT call re-runs setCategory exactly once.
+            self.categoryConfigured = false
         }
         print("[AudioRouter] teardown")
     }

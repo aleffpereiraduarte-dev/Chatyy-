@@ -2888,12 +2888,24 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // will call configureForCall(hasVideo:true) seconds later which
     // idempotently overrides to speaker. WhatsApp pattern: ring-time audio
     // never blasts the speaker.
-    AudioRouter.shared.configureForCall(hasVideo: false)
+    // [2026-05-25] Don't hardcode hasVideo:false. If CallViewController.viewDidLoad
+    // already ran (present raced ahead of didActivate) and configured a VIDEO
+    // route, passing false here would clobber the loudspeaker default back to
+    // earpiece. Preserve whatever AudioRouter already knows — a brand-new call
+    // that hasn't been configured yet still reads false (its default), giving
+    // the WhatsApp ring-time earpiece behaviour. The categoryConfigured guard
+    // inside configureForCall ensures setCategory still runs exactly once.
+    AudioRouter.shared.configureForCall(hasVideo: AudioRouter.shared.hasVideo)
     do {
       try audioSession.setActive(true, options: [])
     } catch {
       print("[ExpoCallKit] STAGE-A: setActive(true) post-router failed: \(error)")
     }
+    // [2026-05-25] Confirm on the server that the answer path reached audio
+    // activation + what route resulted — this is the missing link for "atende
+    // mas só funciona no viva voz". Reads the resulting output port.
+    let route = audioSession.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
+    nativeCallDiag("audio_didactivate", "-", "route=\(route) hasVideo=\(AudioRouter.shared.hasVideo)")
     // [bug 2026-05-14 uplink-mic-silent] When user accepts via native CallKit
     // UI, AVAudioSession.didActivate fires BEFORE JS creates the
     // RTCPeerConnection (cold-start path: onCallAnswered → router.push → JS
@@ -3029,7 +3041,7 @@ func nativeCallDiag(_ event: String, _ callId: String, _ detail: String = "") {
     var req = URLRequest(url: url)
     req.httpMethod = "POST"
     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-    req.timeoutInterval = 4
+    req.timeoutInterval = 8
     let payload: [String: Any] = [
         "event": "native_ios_\(event)",
         "call_id": callId,
@@ -3039,7 +3051,29 @@ func nativeCallDiag(_ event: String, _ callId: String, _ detail: String = "") {
         "ts": Int(Date().timeIntervalSince1970 * 1000),
     ]
     req.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
-    URLSession.shared.dataTask(with: req).resume()
+    // [2026-05-25 diag-never-landed fix] CXAnswerCallAction fires while the app
+    // is still in the background (answer from the lock screen). A plain
+    // fire-and-forget dataTask is killed when iOS suspends us before the
+    // request flushes — which is why NONE of these native_ios_* events EVER
+    // reached the server even on builds that contained this code. Hold a
+    // UIBackgroundTask around the request so iOS grants the ~30s needed to
+    // flush from the background; end it in the completion handler. Reading the
+    // trace is the only way we can debug the answer path on TestFlight (no Mac
+    // attached), so it MUST survive backgrounding.
+    var bgTask: UIBackgroundTaskIdentifier = .invalid
+    bgTask = UIApplication.shared.beginBackgroundTask(withName: "nativeCallDiag") {
+        if bgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
+    }
+    let task = URLSession.shared.dataTask(with: req) { _, _, _ in
+        if bgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
+    }
+    task.resume()
 }
 
 // MARK: - Window/RootVC resolver
