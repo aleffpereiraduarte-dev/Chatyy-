@@ -2399,6 +2399,16 @@ export default {
   'docs.untitledDrawing': 'Desenho sem título',
 
   // Settings extras
+  'settings.group.account': 'Conta',
+  'settings.group.privacy': 'Privacidade',
+  'settings.group.security': 'Segurança',
+  'settings.group.notifications': 'Notificações',
+  'settings.group.chats': 'Conversas',
+  'settings.group.storage': 'Armazenamento e dados',
+  'settings.group.appearance': 'Aparência e idioma',
+  'settings.group.email': 'Email',
+  'settings.group.assistant': 'Assistente & IA',
+  'settings.group.help': 'Ajuda & Sobre',
   'settings.security': 'Segurança',
   'settings.changePassword': 'Alterar senha',
   'settings.changePasswordDesc': 'Atualize sua senha de acesso',

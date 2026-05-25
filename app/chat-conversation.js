@@ -7014,6 +7014,69 @@ export default function ChatConversationScreen() {
     }).catch(() => {});
   }, []);
 
+  // ── Device-local composer/appearance prefs (settings.js KV consumers) ─────
+  // These keys are written by /settings via the same localStorage (web) /
+  // AsyncStorage (native) layer. They had NO consumer before — wired here so
+  // the toggles actually take effect inside the conversation:
+  //   enter_sends         — Enter key sends (default: web true / native false)
+  //   autocorrect_enabled — composer autoCorrect/autoCapitalize (default true)
+  //   bubble_shape        — message bubble corners (rounded|square|classic)
+  //   wallpaper_default   — global wallpaper fallback for unset conversations
+  // All defensive: a missing key leaves the sensible default in place.
+  const [enterSends, setEnterSends] = useState(Platform.OS === 'web');
+  const [autocorrectOn, setAutocorrectOn] = useState(true);
+  const [bubbleShape, setBubbleShape] = useState('rounded');
+  const [wallpaperDefaultPref, setWallpaperDefaultPref] = useState(null);
+  const _hydrateLocalPrefs = useCallback(() => {
+    const apply = (kv) => {
+      try {
+        if (kv.enter_sends === 'true') setEnterSends(true);
+        else if (kv.enter_sends === 'false') setEnterSends(false);
+        if (kv.autocorrect_enabled === 'false') setAutocorrectOn(false);
+        else if (kv.autocorrect_enabled === 'true') setAutocorrectOn(true);
+        if (kv.bubble_shape === 'rounded' || kv.bubble_shape === 'square' || kv.bubble_shape === 'classic') {
+          setBubbleShape(kv.bubble_shape);
+        }
+        if (typeof kv.wallpaper_default === 'string' && kv.wallpaper_default.length > 0) {
+          setWallpaperDefaultPref(kv.wallpaper_default);
+        }
+      } catch {}
+    };
+    const KEYS = ['enter_sends', 'autocorrect_enabled', 'bubble_shape', 'wallpaper_default'];
+    if (Platform.OS === 'web') {
+      try {
+        const kv = {};
+        if (typeof localStorage !== 'undefined') for (const k of KEYS) kv[k] = localStorage.getItem(k);
+        apply(kv);
+      } catch {}
+    } else {
+      try {
+        const AS = require('@react-native-async-storage/async-storage').default;
+        Promise.all(KEYS.map(k => AS.getItem(k))).then(vals => {
+          const kv = {};
+          KEYS.forEach((k, i) => { kv[k] = vals[i]; });
+          apply(kv);
+        }).catch(() => {});
+      } catch {}
+    }
+  }, []);
+  useEffect(() => {
+    _hydrateLocalPrefs();
+    // Data Saver (settings.js `data_saver`) is consumed inside mediaCache's
+    // auto-download gate. Refresh its cached value on mount + whenever the app
+    // returns to foreground so a toggle flipped in /settings takes effect for
+    // this conversation's media downloads without a relaunch. mediaCache owns
+    // the actual gating logic; here we just keep its cache fresh.
+    try { require('../services/mediaCache').refreshDataSaver?.(); } catch {}
+    const sub = AppState.addEventListener('change', (s) => {
+      if (s === 'active') {
+        _hydrateLocalPrefs();
+        try { require('../services/mediaCache').refreshDataSaver?.(); } catch {}
+      }
+    });
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, [_hydrateLocalPrefs]);
+
   const fontSizeMap = { small: 13, medium: 15, large: 18 };
   const lineHeightMap = { small: 19, medium: 21, large: 26 };
   const msgFontSize = fontSizeMap[chatyySettings.font_size] || 15;
@@ -7048,6 +7111,32 @@ export default function ChatConversationScreen() {
   // WhatsApp 2026: own bubble text color depends on theme
   const ownTextColor = isDark ? '#E9EDEF' : '#111B21';
   const ownMetaColor = isDark ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
+
+  // Bubble shape (settings.js `bubble_shape`, default 'rounded'). Maps the
+  // enum to a corner radius. The styles.bubble* defaults bake in radius 18,
+  // so we layer an override AFTER them in the bubble style array:
+  //   rounded → 18 (WhatsApp default, unchanged look)
+  //   square  → 4  (sharp corners)
+  //   classic → 10 (softer; keeps the WhatsApp "tail" corner small)
+  // `tailRadius` is the value used for the bubble's tail corner (own =
+  // bottom-right, other = bottom-left) so the tail stays visually attached
+  // regardless of the overall radius.
+  const bubbleRadius = bubbleShape === 'square' ? 4 : (bubbleShape === 'classic' ? 10 : 18);
+  const bubbleTailRadius = bubbleShape === 'square' ? 2 : (bubbleShape === 'classic' ? 4 : 5);
+  // Per-side override: all corners get bubbleRadius, the tail corner shrinks.
+  // Recomputed only when the shape changes.
+  const ownBubbleShapeStyle = useMemo(() => ({
+    borderTopLeftRadius: bubbleRadius,
+    borderTopRightRadius: bubbleRadius,
+    borderBottomLeftRadius: bubbleRadius,
+    borderBottomRightRadius: bubbleTailRadius,
+  }), [bubbleRadius, bubbleTailRadius]);
+  const otherBubbleShapeStyle = useMemo(() => ({
+    borderTopLeftRadius: bubbleRadius,
+    borderTopRightRadius: bubbleRadius,
+    borderBottomLeftRadius: bubbleTailRadius,
+    borderBottomRightRadius: bubbleRadius,
+  }), [bubbleRadius, bubbleTailRadius]);
 
   // Native chat cache (iOS only) — synchronous SQLite read in Swift.
   // Used by both the initial render (useState initializer below) and by
@@ -8242,9 +8331,13 @@ export default function ChatConversationScreen() {
     })();
     return () => { alive = false; };
   }, [conversationId]);
+  // Resolution order: per-conversation override → account-wide chat setting →
+  // device-local `wallpaper_default` KV (written by /settings, previously had
+  // no consumer) → 'none'. The KV fallback lets a freshly-opened/unset
+  // conversation pick up the global default the user picked in settings.
   const wallpaperColor = (perConvWallpaper && perConvWallpaper !== '__global__')
     ? perConvWallpaper
-    : (chatyySettings.wallpaper || 'none');
+    : (chatyySettings.wallpaper || wallpaperDefaultPref || 'none');
   const [showWallpaperPicker, setShowWallpaperPicker] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   // Safety-number / E2E verification sheet — opened from the encryption
@@ -21057,6 +21150,11 @@ export default function ChatConversationScreen() {
               // so the contrast against the background is stronger.
               ? [styles.bubbleOwn, { backgroundColor: isDark ? '#5B21B6' : '#E6DBFF' }]
               : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#231835' : '#FFFFFF'), ...(isDark ? {} : { borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.06)' }) }],
+            // Bubble shape (settings.js `bubble_shape`). Layered AFTER the
+            // default bubbleOwn/bubbleOther corner radii so it overrides them,
+            // but BEFORE the isFirstInGroup tail override below so the tail
+            // corner still flattens correctly.
+            isOwn ? ownBubbleShapeStyle : otherBubbleShapeStyle,
             // [VISUAL-G2, 2026-05-19] Tail moved to TOP (isFirstInGroup) — WA places tail on first-of-group.
             isFirstInGroup && (isOwn ? { borderTopRightRadius: 0 } : { borderTopLeftRadius: 0 }),
             isDeleted && styles.bubbleDeleted,
@@ -24158,6 +24256,13 @@ export default function ChatConversationScreen() {
               placeholderTextColor={isDark ? '#8696a0' : '#8696a0'}
               keyboardAppearance={isDark ? 'dark' : 'light'}
               selectionColor={colors.primary}
+              // Auto-correct gate (settings.js `autocorrect_enabled`, default
+              // ON). Applies only to the main message composer — search inputs
+              // keep autoCorrect={false}. When the user turns it off we also
+              // drop auto-capitalization so the keyboard stops "fixing" their
+              // typing entirely, matching the WhatsApp/Telegram toggle behavior.
+              autoCorrect={autocorrectOn}
+              autoCapitalize={autocorrectOn ? 'sentences' : 'none'}
               value={inputText}
               onChangeText={(text) => {
                 setInputText(text);
@@ -24277,8 +24382,16 @@ export default function ChatConversationScreen() {
               // multiple messages back-to-back. Double-send is already
               // guarded inside handleSend via the sending ref.
               editable={true}
-              onSubmitEditing={Platform.OS === 'web' ? () => { if (!sending) handleSend(); } : undefined}
-              blurOnSubmit={Platform.OS === 'web'}
+              // Enter-to-send gate (settings.js `enter_sends`). Previously
+              // hardcoded to web-only; now honors the user pref on every
+              // platform. When enterSends is on we wire onSubmitEditing→send
+              // and blurOnSubmit so the keyboard's return key fires a send
+              // instead of inserting a newline. When off, multiline keeps the
+              // newline behavior (blurOnSubmit=false) and the Return key is a
+              // literal newline. Default: web true / native false. The guard
+              // against `sending` prevents a double-send race.
+              onSubmitEditing={enterSends ? () => { if (!sending) handleSend(); } : undefined}
+              blurOnSubmit={enterSends}
               onFocus={() => setInputFocused(true)}
               onBlur={() => setInputFocused(false)}
               onSelectionChange={(e) => {

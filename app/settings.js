@@ -17,6 +17,7 @@ import {
   IconFilter, IconChevronRight, IconGlobe, IconTrash, IconBell, IconForward,
   IconShield, IconFileText, IconUser, IconUsers, IconPlus, IconShare, IconCheck,
   IconMail, IconPhone, IconAlertTriangle, IconCopy, IconDatabase, IconRefresh,
+  IconX, IconChevronDown,
 } from '../components/Icons';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect, Circle as SvgCircle } from 'react-native-svg';
 import { useBiometric } from '../context/BiometricContext';
@@ -264,8 +265,43 @@ function HistoryDownloadRow() {
   );
 }
 
+// Collapsible group header that shows/hides its children. Each group owns one
+// useState. When `forceOpen` is true (search query active) it ignores the
+// collapsed state so search results stay visible. SVG chevron rotates via a
+// simple conditional (no Animated dep — keeps the in-file component light).
+function CollapsibleGroup({ title, icon: Icon, defaultOpen = false, forceOpen = false, children }) {
+  const { colors } = useTheme();
+  const [open, setOpen] = useState(defaultOpen);
+  const visible = forceOpen || open;
+  return (
+    <View style={{ marginBottom: Spacing.md }}>
+      <TouchableOpacity
+        onPress={() => setOpen(o => !o)}
+        activeOpacity={0.7}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: visible }}
+        accessibilityLabel={title}
+        style={{
+          flexDirection: 'row', alignItems: 'center',
+          paddingVertical: 12, paddingHorizontal: 4,
+        }}
+      >
+        {Icon ? <Icon size={18} color={colors.primary} style={{ marginRight: 10 }} /> : null}
+        <Text style={{ flex: 1, color: colors.text, fontSize: FontSize.md, fontWeight: '700' }}>
+          {title}
+        </Text>
+        {/* Chevron points down when open, right when collapsed. */}
+        {visible
+          ? <IconChevronDown size={18} color={colors.textTertiary} />
+          : <IconChevronRight size={18} color={colors.textTertiary} />}
+      </TouchableOpacity>
+      {visible ? <View>{children}</View> : null}
+    </View>
+  );
+}
+
 function SettingsScreenInner() {
-  const { colors, isDark, toggle, density, setDensity } = useTheme();
+  const { colors, isDark, toggle, density, setDensity, themeMode, setThemeMode: setThemeModeCtx } = useTheme();
   const { t, language, changeLanguage } = useLanguage();
   const { currency: userCurrency, setCurrency: setUserCurrency, resetCurrency: resetUserCurrency, autoDetected: currencyAutoDetected, supported: supportedCurrencies, symbols: currencySymbols } = useCurrency();
   const { biometricEnabled, biometricAvailable, toggleBiometric, autoLockInterval, setAutoLockInterval } = useBiometric();
@@ -360,7 +396,9 @@ function SettingsScreenInner() {
   // the source-of-truth is the device — backend sync only if/when a feature
   // calls for it (e.g. theme follows device on mobile, bubble shape is
   // device-local). Defaults match the per-row spec in the task brief.
-  const [themeMode, setThemeMode] = useState('system'); // 'light' | 'dark' | 'system'
+  // themeMode + setThemeMode now come from ThemeContext (3-state setter is
+  // real). The local shadow state was removed — the active pill reads
+  // `themeMode` from context and the picker calls setThemeModeCtx().
   const [enterSends, setEnterSends] = useState(Platform.OS === 'web');
   const [autocorrectOn, setAutocorrectOn] = useState(true);
   const [voiceSpeedDefault, setVoiceSpeedDefault] = useState(1); // 0.5 | 1 | 1.5 | 2
@@ -442,6 +480,77 @@ function SettingsScreenInner() {
   const [referralCount, setReferralCount] = useState(0);
   const [referralLoading, setReferralLoading] = useState(false);
 
+  // Auto-reply (vacation responder) — loads via vacation_get, saves via
+  // vacation_set. Previously the UI wrote to settings.auto_reply* which went
+  // nowhere; now it persists server-side.
+  const [vacation, setVacation] = useState({ enabled: false, subject: '', body: '', start_date: null, end_date: null });
+  const _vacationSaveTimer = useRef(null);
+  useEffect(() => {
+    let alive = true;
+    api.vacationGet?.().then(r => {
+      if (!alive) return;
+      const d = r?.data || r;
+      if (d && (r?.success || d.enabled !== undefined)) {
+        setVacation({
+          enabled: !!d.enabled,
+          subject: d.subject || '',
+          body: d.body || '',
+          start_date: d.start_date || null,
+          end_date: d.end_date || null,
+        });
+      }
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const saveVacation = useCallback((patch) => {
+    setVacation(prev => {
+      const next = { ...prev, ...patch };
+      if (_vacationSaveTimer.current) clearTimeout(_vacationSaveTimer.current);
+      _vacationSaveTimer.current = setTimeout(() => {
+        api.vacationSet?.({
+          enabled: next.enabled,
+          subject: next.subject,
+          body: next.body,
+          start_date: next.start_date,
+          end_date: next.end_date,
+        }).catch(() => {});
+      }, 500);
+      return next;
+    });
+  }, []);
+  useEffect(() => () => { if (_vacationSaveTimer.current) clearTimeout(_vacationSaveTimer.current); }, []);
+
+  // ── Notification preferences (server-backed) ────────────────────────
+  // chat_user_notif_prefs_get/set is the single source of truth for:
+  //   push_notif_level, hide_reactions_in_notifs, led_color_default,
+  //   morning_briefing, font_size.
+  // We hydrate these on mount (overriding the local-storage defaults set
+  // elsewhere) and write through chatSetNotifPrefs on change. Helper below
+  // is used by every consumer so the backend always sees the change.
+  const saveNotifPref = useCallback((patch) => {
+    try { api.chatSetNotifPrefs?.(patch).catch(() => {}); } catch {}
+  }, []);
+  useEffect(() => {
+    let alive = true;
+    api.chatGetNotifPrefs?.().then(r => {
+      if (!alive) return;
+      const d = r?.data || (r?.success ? r : null);
+      if (!d) return;
+      if (typeof d.push_notif_level === 'string') setPushNotifLevel(d.push_notif_level);
+      if (typeof d.led_color_default === 'string' && /^#[0-9a-fA-F]{6}$/.test(d.led_color_default)) setNotifLedColor(d.led_color_default);
+      if (d.hide_reactions_in_notifs !== undefined && d.hide_reactions_in_notifs !== null) {
+        setChatPrivacy(prev => ({ ...prev, hide_reactions_in_notifs: !!d.hide_reactions_in_notifs }));
+      }
+      setSettings(prev => {
+        const next = { ...prev };
+        if (d.morning_briefing !== undefined && d.morning_briefing !== null) next.morning_briefing = !!d.morning_briefing;
+        if (typeof d.font_size === 'string') next.font_size = d.font_size;
+        return next;
+      });
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
   useEffect(() => {
     if (Platform.OS === 'web') {
       const oe = getStorage('one_enabled');
@@ -473,7 +582,7 @@ function SettingsScreenInner() {
   // ThemeContext owns that — this row is purely a forcing-knob).
   useEffect(() => {
     const apply = (kv) => {
-      if (kv.theme_mode === 'light' || kv.theme_mode === 'dark' || kv.theme_mode === 'system') setThemeMode(kv.theme_mode);
+      // theme_mode is owned by ThemeContext now — no local hydration here.
       if (kv.enter_sends === 'true') setEnterSends(true);
       else if (kv.enter_sends === 'false') setEnterSends(false);
       if (kv.autocorrect_enabled === 'false') setAutocorrectOn(false);
@@ -489,7 +598,7 @@ function SettingsScreenInner() {
       if (kv.chatyy_low_data_calls === 'true' || kv.chatyy_low_data_calls === '1') setLowDataCalls(true);
     };
     const KEYS = [
-      'theme_mode', 'enter_sends', 'autocorrect_enabled', 'voice_speed_default',
+      'enter_sends', 'autocorrect_enabled', 'voice_speed_default',
       'beta_features', 'language_auto', 'data_saver', 'bubble_shape',
       'notif_led_color', 'media_auto_dl_roaming', 'wallpaper_default',
       'chatyy_low_data_calls',
@@ -554,7 +663,6 @@ function SettingsScreenInner() {
     forwarding_email: '',
     forwarding_enabled: false,
     font_size: 'medium',
-    read_receipts: false,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -574,16 +682,22 @@ function SettingsScreenInner() {
   // sending so the backend can store minutes *east* of UTC).
   const [dnd, setDnd] = useState({ enabled: false, start_time: '22:00', end_time: '07:00', tz_offset: 0 });
   const [dndSaving, setDndSaving] = useState(false);
+  // [dedupe 2026-05-25] The push gate honors chat_user_defaults.dnd_* (set by
+  // /notification-preferences), NOT the legacy chat_user_dnd table that
+  // chatDndGet/Set wrote to. Switched this inline DND UI to read/write
+  // chat_user_defaults.{dnd_enabled,dnd_start_time,dnd_end_time} via
+  // chatUserDefaultsGet/Set so the toggle here actually mutes pushes.
   useEffect(() => {
     (async () => {
       try {
-        const r = await api.chatDndGet?.();
-        if (r?.success && r.data) {
+        const r = await api.chatUserDefaultsGet?.();
+        const d = r?.data;
+        if (r?.success && d) {
           setDnd({
-            enabled: !!r.data.enabled,
-            start_time: r.data.start_time || '22:00',
-            end_time: r.data.end_time || '07:00',
-            tz_offset: Number.isFinite(+r.data.tz_offset) ? +r.data.tz_offset : 0,
+            enabled: !!d.dnd_enabled,
+            start_time: d.dnd_start_time || '22:00',
+            end_time: d.dnd_end_time || '07:00',
+            tz_offset: 0,
           });
         }
       } catch {}
@@ -592,12 +706,15 @@ function SettingsScreenInner() {
   const saveDnd = useCallback(async (patch) => {
     setDnd(prev => {
       const next = { ...prev, ...patch };
-      // Capture current tz_offset (minutes east of UTC) on save.
-      const tz = -new Date().getTimezoneOffset();
-      const payload = { ...next, tz_offset: tz };
       (async () => {
         setDndSaving(true);
-        try { await api.chatDndSet?.(payload); } catch {}
+        try {
+          await api.chatUserDefaultsSet?.({
+            dnd_enabled: next.enabled,
+            dnd_start_time: next.start_time,
+            dnd_end_time: next.end_time,
+          });
+        } catch {}
         setDndSaving(false);
       })();
       return next;
@@ -1083,7 +1200,7 @@ function SettingsScreenInner() {
               accessibilityLabel={t('common.clear') || 'Limpar'}
               accessibilityRole="button"
             >
-              <Text style={{ color: colors.textTertiary, fontSize: 16, fontWeight: '700' }}>{'✕'}</Text>
+              <IconX size={16} color={colors.textTertiary} />
             </TouchableOpacity>
           )}
         </View>
@@ -1183,14 +1300,8 @@ function SettingsScreenInner() {
                     themeMode === opt.val && { backgroundColor: colors.primary, borderColor: colors.primary },
                   ]}
                   onPress={() => {
-                    setThemeMode(opt.val);
-                    setStorage('theme_mode', opt.val);
-                    // Drive ThemeContext: only 'light'/'dark' force a flip
-                    // when the current state disagrees. 'system' leaves the
-                    // existing flag alone (best-effort default until
-                    // ThemeContext grows a 3-state API).
-                    if (opt.val === 'light' && isDark) toggle();
-                    else if (opt.val === 'dark' && !isDark) toggle();
+                    // ThemeContext owns the 3-state mode + persistence.
+                    setThemeModeCtx(opt.val);
                   }}
                 >
                   <Text style={[
@@ -1239,6 +1350,11 @@ function SettingsScreenInner() {
           </View>
         </View>
         )}
+
+        {/* ── GROUP: Email (Phase-1 collapsible). Wraps the contiguous
+            email-related blocks: Undo Send, Email prefs, Morning Briefing,
+            Signatures, Email tools. forceOpen when searching. ── */}
+        <CollapsibleGroup title={t('settings.group.email') || 'Email'} icon={IconMail} forceOpen={!!_q}>
 
         {/* Undo Send */}
         {sectionMatches(t('settings.undoSend'), t('settings.undoSendDesc')) && (
@@ -1336,7 +1452,7 @@ function SettingsScreenInner() {
                     Só de menções, palavras-chave, soneca...
                   </Text>
                 </View>
-                <Text style={{ color: colors.textTertiary, fontSize: 18 }}>›</Text>
+                <IconChevronRight size={18} color={colors.textTertiary} />
               </TouchableOpacity>
 
               <View style={[s.settingRow, { borderBottomColor: colors.borderLight, paddingLeft: Spacing.xl }]}>
@@ -1462,7 +1578,7 @@ function SettingsScreenInner() {
             </View>
             <Switch
               value={settings.morning_briefing !== false}
-              onValueChange={(v) => setSettings(prev => ({ ...prev, morning_briefing: v }))}
+              onValueChange={(v) => { setSettings(prev => ({ ...prev, morning_briefing: v })); saveNotifPref({ morning_briefing: v }); }}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
               thumbColor={settings.morning_briefing !== false ? colors.primary : '#fff'}
             />
@@ -1566,7 +1682,7 @@ function SettingsScreenInner() {
                 {t('settings.importFromOthersDesc') || 'Gmail, Outlook ou Microsoft 365'}
               </Text>
             </View>
-            <Text style={{ color: colors.textTertiary, fontSize: 18 }}>›</Text>
+            <IconChevronRight size={18} color={colors.textTertiary} />
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -1582,7 +1698,7 @@ function SettingsScreenInner() {
                 {t('settings.pgpKeysDesc') || 'Criptografia ponta-a-ponta de emails'}
               </Text>
             </View>
-            <Text style={{ color: colors.textTertiary, fontSize: 18 }}>›</Text>
+            <IconChevronRight size={18} color={colors.textTertiary} />
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -1598,10 +1714,13 @@ function SettingsScreenInner() {
                 {t('settings.tasksDesc') || 'Tarefas pessoais e convertidas de emails'}
               </Text>
             </View>
-            <Text style={{ color: colors.textTertiary, fontSize: 18 }}>›</Text>
+            <IconChevronRight size={18} color={colors.textTertiary} />
           </TouchableOpacity>
         </View>
         )}
+
+        </CollapsibleGroup>
+        {/* ── END GROUP: Email ── */}
 
         {/* Language */}
         {sectionMatches(t('settings.language'), t('settings.languageLabel'), t('settings.language.autoDetect')) && (
@@ -1652,7 +1771,7 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <View style={s.perPageBtns}>
-              {[{ val: 'pt-BR', label: '🇧🇷 PT' }, { val: 'en', label: '🇺🇸 EN' }, { val: 'es', label: '🇪🇸 ES' }].map(l => (
+              {[{ val: 'pt-BR', label: 'PT' }, { val: 'en', label: 'EN' }, { val: 'es', label: 'ES' }].map(l => (
                 <TouchableOpacity
                   key={l.val}
                   disabled={languageAuto}
@@ -1732,26 +1851,38 @@ function SettingsScreenInner() {
               <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.autoReplyEnable')}</Text>
             </View>
             <Switch
-              value={settings.auto_reply}
-              onValueChange={(v) => setSettings(prev => ({ ...prev, auto_reply: v }))}
+              value={vacation.enabled}
+              onValueChange={(v) => saveVacation({ enabled: v })}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={settings.auto_reply ? colors.primary : '#fff'}
+              thumbColor={vacation.enabled ? colors.primary : '#fff'}
             />
           </View>
-          {settings.auto_reply && (
-            <TextInput
-              style={[
-                s.signatureInput,
-                { color: colors.text, borderColor: colors.divider, backgroundColor: colors.surfaceVariant, marginTop: Spacing.md },
-              ]}
-              value={settings.auto_reply_message}
-              onChangeText={(v) => setSettings(prev => ({ ...prev, auto_reply_message: v }))}
-              placeholder={t('settings.autoReplyPlaceholder')}
-              placeholderTextColor={colors.textTertiary}
-              multiline
-              numberOfLines={3}
-              textAlignVertical="top"
-            />
+          {vacation.enabled && (
+            <>
+              <TextInput
+                style={[
+                  s.signatureInput,
+                  { color: colors.text, borderColor: colors.divider, backgroundColor: colors.surfaceVariant, marginTop: Spacing.md, minHeight: 44 },
+                ]}
+                value={vacation.subject}
+                onChangeText={(v) => saveVacation({ subject: v })}
+                placeholder={t('settings.autoReplySubjectPlaceholder') || 'Assunto (opcional)'}
+                placeholderTextColor={colors.textTertiary}
+              />
+              <TextInput
+                style={[
+                  s.signatureInput,
+                  { color: colors.text, borderColor: colors.divider, backgroundColor: colors.surfaceVariant, marginTop: Spacing.md },
+                ]}
+                value={vacation.body}
+                onChangeText={(v) => saveVacation({ body: v })}
+                placeholder={t('settings.autoReplyPlaceholder')}
+                placeholderTextColor={colors.textTertiary}
+                multiline
+                numberOfLines={3}
+                textAlignVertical="top"
+              />
+            </>
           )}
         </View>
         )}
@@ -2033,7 +2164,7 @@ function SettingsScreenInner() {
               return (
                 <TouchableOpacity
                   key={c}
-                  onPress={() => { setNotifLedColor(c); setStorage('notif_led_color', c); }}
+                  onPress={() => { setNotifLedColor(c); setStorage('notif_led_color', c); saveNotifPref({ led_color_default: c }); }}
                   activeOpacity={0.7}
                   style={{ alignItems: 'center', width: 56 }}
                   accessibilityRole="button"
@@ -2175,33 +2306,11 @@ function SettingsScreenInner() {
         </View>
         )}
 
-        {/* Backup key rotation — entry into the rotate flow. */}
-        {sectionMatches(t('settings.backupKey.title') || 'Senha do backup', 'backup key', 'redefinir senha') && (
-        <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
-          <View style={s.sectionTitleRow}>
-            <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.backupKey.title') || 'Senha do backup'}</Text>
-          </View>
-          <TouchableOpacity
-            style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, marginTop: Spacing.md }]}
-            onPress={() => {
-              setBackupKeyPass('');
-              setBackupKeyPass2('');
-              setBackupKeyMsg('');
-              setBackupKeyOpen(true);
-            }}
-            activeOpacity={0.65}
-          >
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.backupKey.rotate') || 'Redefinir senha do backup'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.backupKey.subtitle') || 'Troque a frase secreta que protege seu backup criptografado. Backups antigos deixam de ser restauráveis.'}
-              </Text>
-            </View>
-            <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
-        </View>
-        )}
+        {/* Backup key rotation — DEDUPED. The standalone "Senha do backup"
+            section was merged into the Security → "Backup com criptografia"
+            row, which now offers both create AND rotate (rotate opens the
+            backupKey modal). The rotation modal at the bottom of the file is
+            reused by that row. */}
 
         {/* Network usage stats — lifetime up/down bytes for chat media. */}
         {sectionMatches(t('settings.networkUsage.title') || 'Uso de rede', 'network usage', 'uso de rede') && (
@@ -2252,13 +2361,15 @@ function SettingsScreenInner() {
             <IconMail size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.help.title') || 'Central de ajuda'}</Text>
           </View>
+          {/* /ajuda loads the SPA 404 — repointed to the working support
+              mailto (same target as the row below). */}
           <TouchableOpacity
             style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}
-            onPress={() => { Linking.openURL('https://chatyy.com.br/ajuda').catch(() => {}); }}
+            onPress={() => { Linking.openURL('mailto:support@chatyy.com.br').catch(() => {}); }}
           >
             <View style={s.settingInfo}>
               <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.help.title') || 'Central de ajuda'}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>chatyy.com.br/ajuda</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>support@chatyy.com.br</Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
           </TouchableOpacity>
@@ -2424,7 +2535,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Security — Biometric Lock + Parental Controls (native only; biometric items below self-gate on biometricAvailable) */}
-        {Platform.OS !== 'web' && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança') && (
+        {Platform.OS !== 'web' && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança', 'senha', 'password', t('settings.changePassword'), '2fa', t('settings.twoFactor'), 'pin', 'backup', t('settings.e2eBackup'), t('settings.backupKey.rotate'), t('settings.activityLog'), 'byok', t('settings.advancedKey')) && (
           <View ref={registerSectionRef('security')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
             {/* Família — Apple Family Sharing-style hub */}
             <TouchableOpacity
@@ -2506,7 +2617,7 @@ function SettingsScreenInner() {
                     })()}
                   </Text>
                 </View>
-                <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+                <IconChevronRight size={18} color={colors.textTertiary} />
               </TouchableOpacity>
             )}
 
@@ -2524,7 +2635,7 @@ function SettingsScreenInner() {
                   {t('settings.changePasswordDesc') || 'Atualize sua senha de acesso a qualquer momento'}
                 </Text>
               </View>
-              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+              <IconChevronRight size={18} color={colors.textTertiary} />
             </TouchableOpacity>
 
             {/* End-to-end encrypted backup — opens the escrow flow. The
@@ -2545,7 +2656,26 @@ function SettingsScreenInner() {
                   {t('settings.e2eBackupDesc') || 'Salve suas chaves protegidas por uma frase secreta'}
                 </Text>
               </View>
-              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+              <IconChevronRight size={18} color={colors.textTertiary} />
+            </TouchableOpacity>
+
+            {/* Redefinir senha do backup — merged here from the old standalone
+                "Senha do backup" section (dedupe). Opens the rotate modal,
+                which versions the new escrow blob and revokes prior ones. */}
+            <TouchableOpacity
+              style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+              onPress={() => { setBackupKeyPass(''); setBackupKeyPass2(''); setBackupKeyMsg(''); setBackupKeyOpen(true); }}
+              activeOpacity={0.65}
+            >
+              <View style={s.settingInfo}>
+                <Text style={[s.settingLabel, { color: colors.text }]}>
+                  {t('settings.backupKey.rotate') || 'Redefinir senha do backup'}
+                </Text>
+                <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                  {t('settings.backupKey.subtitle') || 'Troque a frase secreta que protege seu backup criptografado. Backups antigos deixam de ser restauráveis.'}
+                </Text>
+              </View>
+              <IconChevronRight size={18} color={colors.textTertiary} />
             </TouchableOpacity>
 
             {/* 2FA PIN — opens 4-digit entry modal */}
@@ -2571,7 +2701,7 @@ function SettingsScreenInner() {
                   </Text>
                 </View>
               </View>
-              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+              <IconChevronRight size={18} color={colors.textTertiary} />
             </TouchableOpacity>
 
             {/* Registration Lock (anti-SIM-swap) — separate concept from 2FA.
@@ -2601,7 +2731,7 @@ function SettingsScreenInner() {
                   </Text>
                 </View>
               </View>
-              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+              <IconChevronRight size={18} color={colors.textTertiary} />
             </TouchableOpacity>
 
             {/* Alterar número de telefone (SIM swap recovery, WhatsApp pattern).
@@ -2624,7 +2754,7 @@ function SettingsScreenInner() {
                   </Text>
                 </View>
               </View>
-              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+              <IconChevronRight size={18} color={colors.textTertiary} />
             </TouchableOpacity>
 
             {/* Histórico de atividades — unified audit log surface. The list
@@ -2647,7 +2777,7 @@ function SettingsScreenInner() {
                   </Text>
                 </View>
               </View>
-              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+              <IconChevronRight size={18} color={colors.textTertiary} />
             </TouchableOpacity>
 
             {/* Chave avançada (BYOK) — opt-in per-user master key, generated
@@ -2670,7 +2800,7 @@ function SettingsScreenInner() {
                   </Text>
                 </View>
               </View>
-              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+              <IconChevronRight size={18} color={colors.textTertiary} />
             </TouchableOpacity>
 
             {/* Alertas de login — notify when a NEW device signs into this
@@ -2735,7 +2865,7 @@ function SettingsScreenInner() {
                   </Text>
                 </View>
               </View>
-              <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+              <IconChevronRight size={18} color={colors.textTertiary} />
             </TouchableOpacity>
           </View>
         )}
@@ -2799,7 +2929,7 @@ function SettingsScreenInner() {
                     { borderColor: colors.divider },
                     settings.font_size === f.val && { backgroundColor: colors.primary, borderColor: colors.primary },
                   ]}
-                  onPress={() => setSettings(prev => ({ ...prev, font_size: f.val }))}
+                  onPress={() => { setSettings(prev => ({ ...prev, font_size: f.val })); saveNotifPref({ font_size: f.val }); }}
                 >
                   <Text style={[
                     s.perPageText, { color: colors.text },
@@ -2812,20 +2942,8 @@ function SettingsScreenInner() {
             </View>
           </View>
 
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.readReceipts')}</Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {t('settings.readReceiptsDesc')}
-              </Text>
-            </View>
-            <Switch
-              value={!!chatPrivacy.read_receipts}
-              onValueChange={(v) => saveChatPrivacy({ read_receipts: !!v })}
-              trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={chatPrivacy.read_receipts ? colors.primary : '#fff'}
-            />
-          </View>
+          {/* Read-receipts moved to the single Privacy-section copy below
+              (dedupe — was duplicated here). */}
         </View>
         )}
 
@@ -2938,7 +3056,12 @@ function SettingsScreenInner() {
             </View>
             <Switch
               value={!!chatPrivacy.hide_reactions_in_notifs}
-              onValueChange={(v) => saveChatPrivacy({ hide_reactions_in_notifs: !!v })}
+              onValueChange={(v) => {
+                // Keep local UI state in sync, and route the persisted value
+                // through chat_user_notif_prefs_set (the push-gate source).
+                setChatPrivacy(prev => ({ ...prev, hide_reactions_in_notifs: !!v }));
+                saveNotifPref({ hide_reactions_in_notifs: !!v });
+              }}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
               thumbColor={chatPrivacy.hide_reactions_in_notifs ? colors.primary : '#fff'}
             />
@@ -3020,6 +3143,7 @@ function SettingsScreenInner() {
                 onPress={() => {
                   setPushNotifLevel(opt.val);
                   setStorage('push_notif_level', opt.val);
+                  saveNotifPref({ push_notif_level: opt.val });
                 }}
                 style={[
                   s.settingRow,
@@ -3040,6 +3164,11 @@ function SettingsScreenInner() {
           })}
         </View>
         )}
+
+        {/* ── GROUP: Armazenamento e dados (native only — both child blocks
+            are Platform.OS !== 'web'). Wraps Media auto-download + Storage. ── */}
+        {Platform.OS !== 'web' && (
+        <CollapsibleGroup title={t('settings.group.storage') || 'Armazenamento e dados'} icon={IconDatabase} forceOpen={!!_q}>
 
         {/* Mídia automática — WhatsApp Settings → Storage and Data parity.
             4 buckets (photos, audio, videos, docs) × 3 modes (Wi-Fi / Wi-Fi+Móvel
@@ -3358,6 +3487,10 @@ function SettingsScreenInner() {
           })()}
         </View>
         )}
+
+        </CollapsibleGroup>
+        )}
+        {/* ── END GROUP: Armazenamento e dados ── */}
 
         {/* Mensagens temporárias por padrão — WhatsApp Settings → Privacy →
             Default Disappearing Messages. Applied at chat_create time only
@@ -3926,7 +4059,7 @@ function SettingsScreenInner() {
                   activeOpacity={0.6}
                 >
                   <Text style={{ color: colors.text, fontSize: 15 }}>{opt.label}</Text>
-                  {active && <Text style={{ color: colors.primary, fontSize: 18 }}>✓</Text>}
+                  {active && <IconCheck size={18} color={colors.primary} />}
                 </TouchableOpacity>
               );
             })}
@@ -4241,9 +4374,12 @@ function SettingsScreenInner() {
               <Text style={{ color: colors.error, fontSize: 13, marginTop: 4 }}>{cpError}</Text>
             ) : null}
             {cpSuccess ? (
-              <Text style={{ color: '#16A34A', fontSize: 13, marginTop: 4, fontWeight: '600' }}>
-                ✓ {t('settings.passwordChanged') || 'Senha alterada com sucesso'}
-              </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                <IconCheck size={14} color="#16A34A" />
+                <Text style={{ color: '#16A34A', fontSize: 13, fontWeight: '600' }}>
+                  {t('settings.passwordChanged') || 'Senha alterada com sucesso'}
+                </Text>
+              </View>
             ) : null}
 
             {/* Actions */}
@@ -4647,22 +4783,18 @@ function SettingsScreenInner() {
               style={{ paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
             >
               <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.terms') || 'Termos de uso'}</Text>
-              <Text style={{ color: colors.textTertiary }}>›</Text>
+              <IconChevronRight size={16} color={colors.textTertiary} />
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => { setAboutOpen(false); setTimeout(() => setShowPrivacy(true), 200); }}
               style={{ paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
             >
               <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.privacy') || 'Política de privacidade'}</Text>
-              <Text style={{ color: colors.textTertiary }}>›</Text>
+              <IconChevronRight size={16} color={colors.textTertiary} />
             </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => { Linking.openURL('https://chatyy.com.br/licenses').catch(() => {}); }}
-              style={{ paddingVertical: 12, borderBottomWidth: 0, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}
-            >
-              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>{t('settings.about.licenses') || 'Licenças de código aberto'}</Text>
-              <Text style={{ color: colors.textTertiary }}>›</Text>
-            </TouchableOpacity>
+            {/* Open-source licenses row removed: /licenses returned the SPA
+                404. Re-add with a real in-app modal if/when a licenses
+                manifest exists. */}
 
             <TouchableOpacity
               onPress={() => setAboutOpen(false)}

@@ -505,6 +505,52 @@ export function setMediaDownloadPrefs(patch) {
     }
   }
   if (dirty) _persistMediaDlPrefs();
+  // ── Translate the legacy enum prefs into the matrix policy ──────────────
+  // settings.js writes these `media_auto_dl_*` enums via this setter, but the
+  // real gate (shouldAutoDownload) reads the `_autoDlPolicy` MATRIX set by
+  // setAutoDownloadPolicy. Without this bridge the settings pills did nothing.
+  // We start from the CURRENT matrix (so untouched buckets keep their cells)
+  // and overlay the columns the enum/roaming flag imply, then push the result
+  // through setAutoDownloadPolicy — the single source of truth for the gate.
+  _syncEnumPrefsToPolicy();
+}
+
+// Bucket enum → matrix columns. wifi-only, wifi+mobile, or none. Roaming is
+// folded in separately from the media_auto_dl_roaming flag so the user's
+// "auto-download while roaming" master switch controls the roaming column
+// across every bucket at once.
+const _ENUM_TO_COLUMNS = {
+  wifi:   { wifi: 1, mobile: 0 },
+  mobile: { wifi: 1, mobile: 1 },
+  never:  { wifi: 0, mobile: 0 },
+};
+// Map the legacy pref key → matrix bucket name.
+const _PREF_KEY_TO_BUCKET = {
+  media_auto_dl_photos: 'photos',
+  media_auto_dl_audio:  'audio',
+  media_auto_dl_videos: 'videos',
+  media_auto_dl_docs:   'documents',
+};
+
+function _syncEnumPrefsToPolicy() {
+  // Clone the current matrix so untouched cells survive the merge.
+  const next = JSON.parse(JSON.stringify(_autoDlPolicy || _defaultPolicy));
+  const roamingOn = _mediaDlPrefs.media_auto_dl_roaming === true ? 1 : 0;
+  for (const [prefKey, bucket] of Object.entries(_PREF_KEY_TO_BUCKET)) {
+    const cols = _ENUM_TO_COLUMNS[_mediaDlPrefs[prefKey]];
+    if (!next[bucket]) next[bucket] = { mobile: 0, wifi: 0, roaming: 0 };
+    if (cols) {
+      next[bucket].wifi = cols.wifi;
+      next[bucket].mobile = cols.mobile;
+    }
+    // The roaming flag drives the roaming column across ALL buckets. We only
+    // allow roaming where the bucket also permits mobile (roaming IS mobile,
+    // just metered) — so a 'wifi'/'never' bucket stays off while roaming.
+    next[bucket].roaming = (roamingOn && cols && cols.mobile) ? 1 : 0;
+  }
+  // Route through the single source of truth so the gate + persistence stay
+  // consistent with direct setAutoDownloadPolicy() callers.
+  setAutoDownloadPolicy(next);
 }
 
 // Read-only accessor — used by debug screens / settings preview.
@@ -633,6 +679,175 @@ export function getAutoDownloadPolicy() {
   return JSON.parse(JSON.stringify(_autoDlPolicy));
 }
 
+// ── Data Saver master flag (settings.js `data_saver`) ─────────────────────
+// When ON this is the most-restrictive override: auto-download behaves as if
+// the network were Wi-Fi-only (mobile + roaming columns forced OFF) AND video
+// pre-cache/preload is skipped entirely. ADDITIVE to the matrix policy — the
+// strictest of (matrix cell, data_saver) wins. Persisted under the same plain
+// `data_saver` key settings.js writes (localStorage on web, AsyncStorage on
+// native), so flipping the toggle takes effect without a relaunch.
+const DATA_SAVER_KEY = 'data_saver';
+let _dataSaver = false;
+let _dataSaverHydrated = false;
+
+function _coerceDataSaver(v) {
+  return v === true || v === 'true' || v === '1';
+}
+
+function _hydrateDataSaver() {
+  if (_dataSaverHydrated) return;
+  _dataSaverHydrated = true;
+  if (Platform.OS === 'web') {
+    try { if (typeof localStorage !== 'undefined') _dataSaver = _coerceDataSaver(localStorage.getItem(DATA_SAVER_KEY)); } catch {}
+    return;
+  }
+  try {
+    import('@react-native-async-storage/async-storage').then(m => {
+      m.default.getItem(DATA_SAVER_KEY).then(raw => {
+        if (raw != null) _dataSaver = _coerceDataSaver(raw);
+      }).catch(() => {});
+    }).catch(() => {});
+  } catch {}
+}
+_hydrateDataSaver();
+
+// Public read/refresh hooks. `refreshDataSaver` lets a screen re-read the KV
+// on focus (settings.js writes it on toggle) so the gate stays fresh without
+// a relaunch. Returns the resulting boolean.
+export function isDataSaverOn() {
+  _hydrateDataSaver();
+  return _dataSaver;
+}
+export function setDataSaver(on) {
+  _dataSaver = !!on;
+  _dataSaverHydrated = true;
+  if (Platform.OS === 'web') {
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem(DATA_SAVER_KEY, String(_dataSaver)); } catch {}
+  } else {
+    try {
+      import('@react-native-async-storage/async-storage').then(m => {
+        m.default.setItem(DATA_SAVER_KEY, String(_dataSaver)).catch(() => {});
+      }).catch(() => {});
+    } catch {}
+  }
+  return _dataSaver;
+}
+export function refreshDataSaver() {
+  // Force a re-read from storage (used on screen focus). Web is synchronous;
+  // native is best-effort async (updates the cached flag when it lands).
+  if (Platform.OS === 'web') {
+    try { if (typeof localStorage !== 'undefined') _dataSaver = _coerceDataSaver(localStorage.getItem(DATA_SAVER_KEY)); } catch {}
+    return _dataSaver;
+  }
+  try {
+    import('@react-native-async-storage/async-storage').then(m => {
+      m.default.getItem(DATA_SAVER_KEY).then(raw => {
+        if (raw != null) _dataSaver = _coerceDataSaver(raw);
+      }).catch(() => {});
+    }).catch(() => {});
+  } catch {}
+  return _dataSaver;
+}
+
+// ── Cumulative network-usage counter (settings.js getNetStats()) ──────────
+// settings.js calls mediaCache.getNetStats() to render "Network usage", but
+// the function didn't exist (always showed "—"). We maintain a persisted
+// running total of download (`down`) + upload (`up`) bytes. Downloads are
+// counted here in the media download paths (cacheMedia / saveMediaPermanent);
+// callers elsewhere (e.g. the upload pipeline) can feed the `up` side via
+// addNetStats(up, down). Persisted under a stable AsyncStorage key, debounced.
+const NET_STATS_KEY = 'media_dl_stats';
+let _netStats = { up: 0, down: 0 };
+let _netStatsHydrated = false;
+let _netStatsPersistTimer = null;
+
+function _hydrateNetStats() {
+  if (_netStatsHydrated) return;
+  _netStatsHydrated = true;
+  const apply = (raw) => {
+    if (!raw) return;
+    try {
+      const o = JSON.parse(raw);
+      const up = Number(o && o.up);
+      const down = Number(o && o.down);
+      if (Number.isFinite(up) && up >= 0) _netStats.up = up;
+      if (Number.isFinite(down) && down >= 0) _netStats.down = down;
+    } catch {}
+  };
+  if (Platform.OS === 'web') {
+    try { if (typeof localStorage !== 'undefined') apply(localStorage.getItem(NET_STATS_KEY)); } catch {}
+    return;
+  }
+  try {
+    import('@react-native-async-storage/async-storage').then(m => {
+      m.default.getItem(NET_STATS_KEY).then(apply).catch(() => {});
+    }).catch(() => {});
+  } catch {}
+}
+_hydrateNetStats();
+
+function _scheduleNetStatsPersist() {
+  if (_netStatsPersistTimer) return;
+  _netStatsPersistTimer = setTimeout(() => {
+    _netStatsPersistTimer = null;
+    const payload = JSON.stringify(_netStats);
+    if (Platform.OS === 'web') {
+      try { if (typeof localStorage !== 'undefined') localStorage.setItem(NET_STATS_KEY, payload); } catch {}
+      return;
+    }
+    try {
+      import('@react-native-async-storage/async-storage').then(m => {
+        m.default.setItem(NET_STATS_KEY, payload).catch(() => {});
+      }).catch(() => {});
+    } catch {}
+  }, 4000);
+}
+
+// Increment the running totals. Either arg may be 0. Negative/NaN ignored.
+export function addNetStats(up = 0, down = 0) {
+  _hydrateNetStats();
+  const u = Number(up), d = Number(down);
+  let changed = false;
+  if (Number.isFinite(u) && u > 0) { _netStats.up += u; changed = true; }
+  if (Number.isFinite(d) && d > 0) { _netStats.down += d; changed = true; }
+  if (changed) _scheduleNetStatsPersist();
+}
+
+// settings.js consumer — returns cumulative { up, down } byte totals.
+export function getNetStats() {
+  _hydrateNetStats();
+  return { up: _netStats.up, down: _netStats.down };
+}
+
+// Reset both counters (e.g. a "clear usage" button). Persists immediately.
+export function resetNetStats() {
+  _netStats = { up: 0, down: 0 };
+  _netStatsHydrated = true;
+  if (Platform.OS === 'web') {
+    try { if (typeof localStorage !== 'undefined') localStorage.setItem(NET_STATS_KEY, JSON.stringify(_netStats)); } catch {}
+  } else {
+    try {
+      import('@react-native-async-storage/async-storage').then(m => {
+        m.default.setItem(NET_STATS_KEY, JSON.stringify(_netStats)).catch(() => {});
+      }).catch(() => {});
+    } catch {}
+  }
+}
+
+// Best-effort: stat a just-downloaded file and add its size to the `down`
+// total. Called fire-and-forget from the download paths so a failed stat
+// never blocks the download return.
+function _countDownloadedBytes(fs, localPath) {
+  if (!fs || !localPath || Platform.OS === 'web') return;
+  try {
+    fs.getInfoAsync(localPath).then(info => {
+      if (info && info.exists && typeof info.size === 'number' && info.size > 0) {
+        addNetStats(0, info.size);
+      }
+    }).catch(() => {});
+  } catch {}
+}
+
 // Map external media-type names → matrix bucket. Accepts both the external
 // 'photo' / 'video' / 'document' singulars (per task spec) and the internal
 // plurals used by _bucketForUrl.
@@ -677,9 +892,23 @@ export function shouldAutoDownload(mediaType) {
   // Disconnected — nothing to download.
   if (column === 'none') return false;
 
+  // Data Saver master override (ADDITIVE, most-restrictive wins):
+  //  - videos never auto-download (skip pre-cache/preload entirely)
+  //  - everything else is Wi-Fi only (mobile + roaming behave as 'never')
+  // Evaluated BEFORE the matrix so a permissive matrix cell can't re-enable
+  // cellular downloads while the user has Data Saver on.
+  if (isDataSaverOn()) {
+    if (bucket === 'videos') return false;
+    if (column !== 'wifi') return false;
+    // On Wi-Fi: still respect the user's matrix (they may have a bucket OFF
+    // even on Wi-Fi). Fall through to the matrix check below.
+  }
+
   // Network unknown (NetInfo still probing) — be conservative: only allow
   // the lightweight buckets that are ON for BOTH mobile and wifi columns.
-  // This is the same fail-safe the legacy gate used.
+  // This is the same fail-safe the legacy gate used. With Data Saver on the
+  // block above already returned false for non-wifi, so 'unknown' here means
+  // Data Saver is off.
   if (column === 'unknown') {
     const cell = _autoDlPolicy[bucket] || _defaultPolicy[bucket];
     return !!(cell.mobile && cell.wifi);
@@ -798,7 +1027,13 @@ export async function cacheMedia(url, opts = {}) {
             fs.downloadAsync(url, localPath),
             new Promise((_, rej) => setTimeout(() => rej(new Error('download_timeout')), 20000)),
           ]);
-          if (download?.status === 200) { registerSyncKey(url, localPath); return localPath; }
+          if (download?.status === 200) {
+            registerSyncKey(url, localPath);
+            // Count the downloaded bytes toward the network-usage total
+            // (settings.js getNetStats). Fire-and-forget stat.
+            _countDownloadedBytes(fs, localPath);
+            return localPath;
+          }
           lastStatus = download?.status || 0;
           try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
           // Abort em 4xx — não vai mudar com retry. Recursos ausentes /
@@ -907,7 +1142,11 @@ export async function saveMediaPermanent(url) {
     await _acquireDownloadSlot();
     try {
       const download = await fs.downloadAsync(url, localPath);
-      if (download.status === 200) { registerSyncKey(url, localPath); return localPath; }
+      if (download.status === 200) {
+        registerSyncKey(url, localPath);
+        _countDownloadedBytes(fs, localPath); // network-usage counter (getNetStats)
+        return localPath;
+      }
       try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
     } finally {
       _releaseDownloadSlot();
@@ -1011,6 +1250,9 @@ export function prefetchIncomingMessageMedia(message) {
   // Also: when the message has BOTH a file_url (mp4) and a hlsUrl, the
   // hlsUrl is the preferred player source — try that first so the offline
   // copy matches what ChatMediaViewer will mount.
+  // Data Saver: skip ALL video pre-cache/preload (both HLS + progressive mp4).
+  // The user can still tap-to-download in the bubble (force:true bypasses).
+  if ((isVideo) && isDataSaverOn()) return;
   const hlsCandidate = (isVideo && typeof message.hlsUrl === 'string' && message.hlsUrl)
     ? (message.hlsUrl.startsWith('http') ? message.hlsUrl : `https://chatyy.com.br${message.hlsUrl}`)
     : (isVideo && isHlsUrl(url) ? url : null);
