@@ -26,9 +26,8 @@ import { IconX, IconDiamond } from './Icons';
 import { formatInt } from '../utils/dateFormat';
 import { Linking } from 'react-native';
 import * as api from '../services/api';
-import { getBaseUrl } from '../services/api';
 import {
-  DIAMOND_PACKS, getDiamondLocalizedPrice, initIAP, isDiamondSkuAvailable,
+  DIAMOND_PACKS, getDiamondLocalizedPrice, getDiamondCheckoutUrl, initIAP, isDiamondSkuAvailable,
   purchaseDiamonds,
 } from '../services/iap';
 
@@ -94,11 +93,9 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
   const onBuy = useCallback(async (pack) => {
     if (pendingSku) return;
     if (Platform.OS === 'web') {
-      // Web has no billing client; deep-link to web checkout. Same backend
-      // wallet_topup_verify lands the balance.
-      const base = (typeof getBaseUrl === 'function' && getBaseUrl()) || 'https://chatyy.com.br';
-      const webUrl = `${base}/#/diamond-shop?sku=${encodeURIComponent(pack.sku)}`;
-      try { Linking.openURL(webUrl); } catch {}
+      // Web has no billing client; deep-link to the canonical checkout.
+      // Same backend wallet_topup_verify lands the balance.
+      try { Linking.openURL(getDiamondCheckoutUrl({ sku: pack.sku })); } catch {}
       return;
     }
     setPendingSku(pack.sku);
@@ -121,7 +118,7 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
         // a deeplink to chatyy.com.br/diamantes where Stripe handles checkout.
         // iOS doesn't get this branch — App Store policy bans steering off-platform.
         if (Platform.OS === 'android') {
-          const buyUrl = `${(typeof getBaseUrl === 'function' ? getBaseUrl() : 'https://chatyy.com.br').replace(/\/$/, '')}/diamantes${pack?.sku ? `?sku=${encodeURIComponent(pack.sku)}` : ''}`;
+          const buyUrl = getDiamondCheckoutUrl({ sku: pack?.sku });
           Alert.alert(
             t('wallet.topupUnavailableTitle') || 'Compra indisponível',
             t('wallet.androidWebBuyBody') || 'A compra direta no Android chega em breve. Quer abrir a loja no navegador para comprar agora?',

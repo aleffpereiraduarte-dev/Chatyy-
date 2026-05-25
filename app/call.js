@@ -763,6 +763,12 @@ function CallScreenInner() {
 
   // ───── Refs ─────
   const roomRef = useRef(null);
+  // [2026-05-25] In-flight guard for connectToRoom. roomRef.current is only
+  // assigned AFTER up-to-4s adopt polling + token fetch + 15s connect, so a
+  // second call (handleReconnect, retry) entering connectToRoom mid-flight
+  // would spawn a duplicate `new Room()` and orphan the first. This ref gates
+  // re-entry until the first attempt resolves (success OR failure).
+  const connectingRef = useRef(false);
   const timerRef = useRef(null);
   const callerTimeoutRef = useRef(null);
   const controlsTimerRef = useRef(null);
@@ -1240,6 +1246,18 @@ function CallScreenInner() {
   // ───── Connect to LiveKit Room ─────
   const connectToRoom = useCallback(async () => {
     if (endedRef.current) return;
+    // [2026-05-25] In-flight + already-connected guard. Without this, a
+    // reconnect/retry firing while the first attempt is still in its
+    // ~4s adopt poll + token fetch + 15s connect window would call
+    // `new Room()` a second time, orphaning the first Room (leaked socket +
+    // mic publisher fighting the SFU). Bail if a connect is in progress or a
+    // Room is already live.
+    if (connectingRef.current || roomRef.current) {
+      try { console.log('[Call] connectToRoom re-entry skipped', { connecting: connectingRef.current, hasRoom: !!roomRef.current }); } catch {}
+      return;
+    }
+    connectingRef.current = true;
+    try {
     ensureLiveKitRegistered();
 
     // [bug 2026-05-15 #7 + #9] LiveKit AudioSession lifecycle vs. CallKit.
@@ -1411,6 +1429,17 @@ function CallScreenInner() {
         // still works for users on builds without the native call screen.
         _diag('adopt_native_room_err', { msg: String(e?.message || e).slice(0, 200) });
       }
+      // [2026-05-25] Reaching here on mobile means adopt FAILED/exhausted — we
+      // did NOT early-return from the `if (adopted)` branch (which dismisses
+      // the native screen on success). We're about to spawn a JS `new Room()`.
+      // If the native call screen presented by the answer path is still up, we
+      // now have TWO call screens AND will get two LK Rooms fighting for the
+      // mic. Dismiss the native floor BEFORE creating the JS Room so only one
+      // screen/room exists. No-op on Android / if no native screen is up.
+      try {
+        const ExpoCallKit = require('../modules/expo-callkit');
+        ExpoCallKit.dismissNativeCallVC?.();
+      } catch {}
     }
 
     let token, url, room, iceServers;
@@ -2197,6 +2226,12 @@ function CallScreenInner() {
         }
       }
     }
+    } finally {
+      // [2026-05-25] Always release the in-flight guard — whether we adopted
+      // the native room (early return), connected a JS Room, or bailed on any
+      // failure path. Reconnect/retry can now safely re-enter.
+      connectingRef.current = false;
+    }
   }, [callId, contactEmail, conversationId, isVideoCall, isGroupCall, fetchLivekitToken, t, _refreshRemoteTracks, _updateGroupPeer, _removeGroupPeer]);
 
   // ───── In-band data channel handler (in-call signaling) ─────
@@ -2311,7 +2346,23 @@ function CallScreenInner() {
   // Helper to send an in-band data message via LiveKit.
   const sendData = useCallback((payload) => {
     const r = roomRef.current;
-    if (!r || !r.localParticipant) return;
+    if (!r || !r.localParticipant) {
+      // [2026-05-25] Adopted-native-room path: the JS Room is null because the
+      // native side owns the LK Room (and its data channel). The native bridge
+      // does NOT expose a data-publish API, so there is nothing to forward to
+      // here — peer mute/video state is mirrored natively via the onLk* events.
+      // Guard so callers (handleToggleMute/Video adopt branch) don't throw on a
+      // null Room; degrade to a graceful no-op instead of crashing.
+      if (globalThis.__chatyyNativeCallActive === true) {
+        try {
+          const ExpoCallKit = require('../modules/expo-callkit');
+          if (typeof ExpoCallKit.lkPublishData === 'function') {
+            ExpoCallKit.lkPublishData(JSON.stringify(payload));
+          }
+        } catch {}
+      }
+      return;
+    }
     try {
       const bytes = new TextEncoder().encode(JSON.stringify(payload));
       r.localParticipant.publishData(bytes, { reliable: true });
@@ -3052,7 +3103,6 @@ function CallScreenInner() {
   // ───── Toggles ─────
   const handleToggleMute = useCallback(async () => {
     const r = roomRef.current;
-    if (!r) return;
     const newMuted = !audioMutedRef.current;
     // [bug 2026-05-18 web-mic-permission] If the user un-mutes mid-call on
     // web and permission was previously denied/unavailable, pre-flight again
@@ -3060,6 +3110,28 @@ function CallScreenInner() {
     if (!newMuted && Platform.OS === 'web') {
       const micOk = await _ensureWebMicPermission();
       if (!micOk) return;
+    }
+    // [2026-05-25] Adopted-native-room path. On the iOS CallKit-answer path
+    // connectToRoom adopts the pre-connected native LK Room and returns early
+    // WITHOUT setting roomRef.current — so the JS Room is null even though the
+    // call is fully live (native owns the publisher). Routing the mic toggle
+    // through the native bridge here is what keeps mute working after a
+    // CallKit answer; otherwise this used to early-return and silently no-op.
+    if (!r) {
+      if (globalThis.__chatyyNativeCallActive === true) {
+        // Optimistic UI flip first so the icon responds instantly.
+        setAudioMuted(newMuted);
+        audioMutedRef.current = newMuted;
+        try {
+          const ExpoCallKit = require('../modules/expo-callkit');
+          await ExpoCallKit.lkSetMicEnabled?.(!newMuted);
+        } catch (e) {
+          console.warn('[Call] native lkSetMicEnabled err:', e?.message);
+        }
+        sendData({ type: 'audio_muted', muted: newMuted });
+        resetControlsTimer();
+      }
+      return;
     }
     setAudioMuted(newMuted);
     audioMutedRef.current = newMuted;
@@ -3216,7 +3288,29 @@ function CallScreenInner() {
 
   const handleToggleVideo = useCallback(async () => {
     const r = roomRef.current;
-    if (!r) return;
+    // [2026-05-25] Adopted-native-room path. Same root cause as the mute
+    // toggle: after a CallKit answer the JS Room is null (native owns the
+    // publisher) yet the call is live. Route camera on/off through the native
+    // bridge instead of silently early-returning. Native owns the local video
+    // renderer, so we only flip UI state + notify the peer here.
+    if (!r) {
+      if (globalThis.__chatyyNativeCallActive === true) {
+        const newVideoEnabled = !videoEnabled;
+        // Optimistic UI flip first so the icon responds instantly.
+        setVideoEnabled(newVideoEnabled);
+        videoEnabledRef.current = newVideoEnabled;
+        if (!newVideoEnabled) setLocalVideoTrack(null);
+        try {
+          const ExpoCallKit = require('../modules/expo-callkit');
+          await ExpoCallKit.lkSetCameraEnabled?.(newVideoEnabled);
+        } catch (e) {
+          console.warn('[Call] native lkSetCameraEnabled err:', e?.message);
+        }
+        sendData({ type: 'video_toggle', enabled: newVideoEnabled });
+        resetControlsTimer();
+      }
+      return;
+    }
 
     if (videoEnabled) {
       // Turn off.

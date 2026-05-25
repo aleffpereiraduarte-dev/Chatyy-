@@ -7,6 +7,7 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AvatarCircle from './AvatarCircle';
+import FeedComments from './FeedComments';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // [#1231 2026-05-20] useIsFocused para pausar reel quando user troca de aba
 // (Conversas/Apps/etc.). Bug: vídeo continuava tocando áudio no background
@@ -397,142 +398,12 @@ function LikersSheet({ visible, post, colors, isDark, t, onClose }) {
 }
 
 // ── Comments Bottom Sheet ──
-function CommentsSheet({ visible, post, colors, isDark, t, user, onClose }) {
-  const [comments, setComments] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
-  const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
-
-  useEffect(() => {
-    if (visible && post) {
-      loadComments();
-      Animated.spring(slideAnim, {
-        toValue: 0,
-        tension: 65,
-        friction: 11,
-        useNativeDriver: true,
-      }).start();
-    } else {
-      Animated.timing(slideAnim, {
-        toValue: SCREEN_HEIGHT,
-        duration: 250,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [visible, post]);
-
-  const loadComments = async () => {
-    if (!post) return;
-    setLoading(true);
-    try {
-      const r = await api.feedComments(post.id);
-      if (r.success && r.data) {
-        setComments(Array.isArray(r.data.comments) ? r.data.comments : (Array.isArray(r.data) ? r.data : []));
-      }
-    } catch {} finally { setLoading(false); }
-  };
-
-  const sendComment = async () => {
-    if (!text.trim() || sending || !post) return;
-    setSending(true);
-    try {
-      const r = await api.feedComment(post.id, text.trim());
-      if (r.success) {
-        setText('');
-        loadComments();
-      }
-    } catch {} finally { setSending(false); }
-  };
-
-  if (!visible) return null;
-
-  return (
-    <Modal transparent visible={visible} animationType="none" onRequestClose={onClose} statusBarTranslucent>
-      <Pressable style={styles.sheetBackdrop} onPress={onClose}>
-        <Animated.View
-          style={[styles.sheetContainer, {
-            transform: [{ translateY: slideAnim }],
-          }]}
-        >
-          <Pressable onPress={() => {}}>
-            {/* Handle bar */}
-            <View style={styles.sheetHandle}>
-              <View style={styles.sheetHandleBar} />
-            </View>
-            <View style={styles.sheetHeader}>
-              <Text style={styles.sheetTitle}>
-                {t('feed.comments') || 'Comments'}
-              </Text>
-              <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <IconX size={22} color="#999" />
-              </TouchableOpacity>
-            </View>
-
-            {loading ? (
-              <View style={styles.sheetLoading}>
-                <ActivityIndicator size="small" color="#fff" />
-              </View>
-            ) : comments.length === 0 ? (
-              <View style={styles.sheetEmpty}>
-                <Text style={styles.sheetEmptyText}>
-                  {t('feed.noComments') || 'Sem comentarios'}
-                </Text>
-              </View>
-            ) : (
-              <ScrollView style={styles.sheetList} showsVerticalScrollIndicator={false}>
-                {comments.map((c, idx) => (
-                  <View key={c.id || idx} style={styles.commentRow}>
-                    <AvatarCircle email={c.author_email} name={c.author_name} size={32} />
-                    <View style={styles.commentContent}>
-                      <Text style={styles.commentAuthor}>
-                        {c.author_name || c.author_email?.split('@')[0] || '?'}
-                        <Text style={styles.commentText}>
-                          {'  '}{c.content}
-                        </Text>
-                      </Text>
-                      <Text style={styles.commentTime}>
-                        {timeAgo(c.created_at, t)}
-                      </Text>
-                    </View>
-                  </View>
-                ))}
-                <View style={{ height: 20 }} />
-              </ScrollView>
-            )}
-
-            {/* Input */}
-            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-              <View style={styles.sheetInput}>
-                <AvatarCircle email={user?.email} name={user?.name} size={30} />
-                <TextInput
-                  style={styles.sheetTextInput}
-                  placeholder={t('feed.writeComment') || 'Adicionar comentario...'}
-                  placeholderTextColor="#666"
-                  value={text}
-                  onChangeText={setText}
-                  returnKeyType="send"
-                  onSubmitEditing={sendComment}
-                />
-                <TouchableOpacity
-                  onPress={sendComment}
-                  disabled={!text.trim() || sending}
-                  style={{ opacity: text.trim() ? 1 : 0.4 }}
-                >
-                  {sending ? (
-                    <ActivityIndicator size="small" color="#fff" />
-                  ) : (
-                    <IconSend size={22} color="#fff" />
-                  )}
-                </TouchableOpacity>
-              </View>
-            </KeyboardAvoidingView>
-          </Pressable>
-        </Animated.View>
-      </Pressable>
-    </Modal>
-  );
-}
+// [2026-05-25] Replaced by the full-featured <FeedComments> component
+// (pagination, threading, voice/sticker/video replies, WS live comments,
+// onCommentCountChange) wired into ReelsViewer below. The old inline
+// CommentsSheet never bumped reel.comment_count and lacked all of those, so
+// it was removed. Shared sheet styles (sheetBackdrop/commentRow/…) stay —
+// LikersSheet + the Share/Speed sheets still use them.
 
 // ── Spinning Album Art ──
 const SpinningDisc = memo(function SpinningDisc({ authorEmail, authorName }) {
@@ -1307,6 +1178,11 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     });
   }, []);
   const transcribeFiredRef = useRef(false);
+  // Fire feedView at most once per reel id per mount. The effect below reran
+  // every time `isActive` flipped, so swiping back to a reel re-counted a view
+  // and inflated the number. Mirror transcribeFiredRef's fire-once pattern but
+  // keep a Set so a pooled/recycled ReelItem covers each id it has seen.
+  const viewedRef = useRef(new Set());
 
   const videoRef = useRef(null);
   const lastTapRef = useRef(0);
@@ -1429,9 +1305,11 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     setBookmarked(!!reel.user_bookmarked);
   }, [reel.user_liked, reel.like_count, reel.user_bookmarked]);
 
-  // Track view when reel becomes active
+  // Track view when reel becomes active — guarded so swiping back doesn't
+  // re-fire feedView for an id already counted this mount.
   useEffect(() => {
-    if (isActive && reel.id) {
+    if (isActive && reel.id && !viewedRef.current.has(reel.id)) {
+      viewedRef.current.add(reel.id);
       api.feedView?.(reel.id).catch(() => {});
     }
   }, [isActive, reel.id]);
@@ -2534,6 +2412,21 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     setLikersReel(reel);
   }, []);
 
+  // FeedComments fires this whenever a comment is added/removed so the
+  // right-rail count (reads reel.comment_count at ~2030) refreshes live.
+  // Update both feed arrays + the open commentsReel so the sheet header
+  // and the rail stay in sync.
+  const handleCommentCountChange = useCallback((newCount) => {
+    setCommentsReel(prev => {
+      if (!prev) return prev;
+      const id = prev.id;
+      const patch = (p) => (p.id === id ? { ...p, comment_count: newCount } : p);
+      setReels(rs => rs.map(patch));
+      setFollowingReels(rs => rs.map(patch));
+      return { ...prev, comment_count: newCount };
+    });
+  }, []);
+
   const onLayout = useCallback((e) => {
     const h = e.nativeEvent.layout.height;
     if (h > 0) setContainerHeight(h);
@@ -2740,8 +2633,11 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         }
       />
 
-      {/* Comments bottom sheet */}
-      <CommentsSheet
+      {/* Comments bottom sheet — full-featured FeedComments (pagination,
+          threading, voice/sticker/video replies, WS live comments, count
+          sync). Visibility still keyed off commentsReel so overlayOpen keeps
+          auto-pausing the active reel while the sheet is open. */}
+      <FeedComments
         visible={!!commentsReel}
         post={commentsReel}
         colors={colors}
@@ -2749,6 +2645,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         t={t}
         user={user}
         onClose={() => setCommentsReel(null)}
+        onCommentCountChange={handleCommentCountChange}
       />
 
       {/* Likers bottom sheet */}

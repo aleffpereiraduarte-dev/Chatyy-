@@ -146,13 +146,21 @@ export async function getBackupStats() {
     });
 
     const backedUpMap = await getBackedUpMap();
-    const backedUp = Object.keys(backedUpMap).length;
     const lastBackupDate = await getLastSync();
 
+    const totalOnDevice = totalCount || 0;
+    // backedUpMap can hold ids of the WRONG type (videos when includeVideos is
+    // off), deleted assets, or ids from a previous library/account, so the raw
+    // key count routinely exceeds the typed device total → remaining clamps to
+    // 0 and the UI shows "complete" while pending photos remain (#451/#469/#934).
+    // Cap to the typed device total so backedUp can never exceed what the same
+    // typed query counts on the device.
+    const backedUp = Math.min(Object.keys(backedUpMap).length, totalOnDevice);
+
     return {
-      totalOnDevice: totalCount || 0,
+      totalOnDevice,
       backedUp,
-      remaining: Math.max(0, (totalCount || 0) - backedUp),
+      remaining: Math.max(0, totalOnDevice - backedUp),
       lastBackupDate,
     };
   } catch (err) {

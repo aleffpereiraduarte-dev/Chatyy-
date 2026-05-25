@@ -30,11 +30,20 @@ import {
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useCurrency } from '../context/CurrencyContext';
 import { IconX, IconDiamond } from './Icons';
 import { formatInt } from '../utils/dateFormat';
 import AvatarCircle from './AvatarCircle';
 import * as api from '../services/api';
 import DiamondTopUpSheet from './DiamondTopUpSheet';
+import { DIAMOND_PACKS } from '../services/iap';
+
+// Per-diamond price in BRL centavos, derived from the shared shop catalog
+// (DIAMOND_PACKS) instead of a magic number. Uses the base (no-bonus) pack so
+// the estimate tracks the real list price. Currency conversion + symbol are
+// handled by useCurrency().format() — BRL centavos are the canonical unit.
+const _basePack = DIAMOND_PACKS[0] || { priceBrl: 4.99, diamonds: 100 };
+const DIAMOND_PRICE_CENTS = (_basePack.priceBrl * 100) / _basePack.diamonds;
 
 const QUICK_AMOUNTS = [10, 50, 100, 500];
 
@@ -48,6 +57,7 @@ export default function SendDiamondSheet({
 }) {
   const { colors, isDark } = useTheme();
   const { t, language } = useLanguage();
+  const { format: formatMoney } = useCurrency(language);
 
   const [balance, setBalance] = useState(0);
   const [loadingBal, setLoadingBal] = useState(false);
@@ -177,8 +187,13 @@ export default function SendDiamondSheet({
   const sendOpacity = sendAnim.interpolate({ inputRange: [0, 0.7, 1], outputRange: [0, 1, 0] });
   const sendScale = sendAnim.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.6] });
 
-  // Amount in BRL terms — rough $0.0099/diamond rate (matches feed tip math).
-  const approxBrl = useMemo(() => (amount * 0.0099 * 5.0).toFixed(2).replace('.', ','), [amount]);
+  // Fiat estimate — derived from the shared shop catalog price-per-diamond
+  // (DIAMOND_PRICE_CENTS, in BRL centavos) and rendered in the user's chosen
+  // currency via useCurrency().format(), instead of a hard-coded USD/BRL rate.
+  const approxFiat = useMemo(
+    () => formatMoney(Math.round(amount * DIAMOND_PRICE_CENTS)),
+    [amount, formatMoney]
+  );
 
   return (
     <>
@@ -302,7 +317,7 @@ export default function SendDiamondSheet({
 
             {/* Approx fiat hint */}
             <Text style={[styles.approxNote, { color: colors.textTertiary }]}>
-              ≈ R$ {approxBrl} {t('walletSend.approxNote') || '(estimativa)'}
+              ≈ {approxFiat} {t('walletSend.approxNote') || '(estimativa)'}
             </Text>
 
             {/* Optional message */}

@@ -2820,10 +2820,10 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <Switch
-              value={settings.read_receipts}
-              onValueChange={(v) => setSettings(prev => ({ ...prev, read_receipts: v }))}
+              value={!!chatPrivacy.read_receipts}
+              onValueChange={(v) => saveChatPrivacy({ read_receipts: !!v })}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
-              thumbColor={settings.read_receipts ? colors.primary : '#fff'}
+              thumbColor={chatPrivacy.read_receipts ? colors.primary : '#fff'}
             />
           </View>
         </View>

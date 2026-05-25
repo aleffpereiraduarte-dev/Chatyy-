@@ -11933,9 +11933,24 @@ export default function ChatConversationScreen() {
         }
         const r = await api.chatEdit(editingMsg.id, editContent);
         if (r.success) {
-          setMessages(prev => prev.map(m =>
-            m.id === editingMsg.id ? { ...m, content: text, edited_at: new Date().toISOString() } : m
-          ));
+          const editedAt = new Date().toISOString();
+          let editedRow = null;
+          setMessages(prev => prev.map(m => {
+            if (m.id !== editingMsg.id) return m;
+            editedRow = { ...m, content: text, edited_at: editedAt };
+            return editedRow;
+          }));
+          // Persist the edit to ALL local cache layers — same as handleDelete.
+          // Without this the WS `_onEdit` echo-filters the sender's own edit
+          // (no self-echo), so a cold reopen / offline read showed the OLD
+          // text. Mirror handleDelete: cacheSingleMessage (chatCache +
+          // SmartCache + web IndexedDB via _cacheOne) plus the SmartCache
+          // partial update.
+          if (editedRow) { try { _cacheOne(conversationId, editedRow); } catch {} }
+          try {
+            const SmartCache = require('../services/smartChatCache');
+            SmartCache.updateCachedMessage?.(conversationId, editingMsg.id, { content: text, edited_at: editedAt });
+          } catch {}
           setEditingMsg(null);
           setInputText('');
         } else {
@@ -14866,13 +14881,28 @@ export default function ChatConversationScreen() {
     setMessages(prev => prev.map(m => {
       if (m.id !== msgId) return m;
       prevReactions = m.reactions || [];
-      const next = [...prevReactions];
-      // toggle: se ja reagi com esse emoji, remove; senao adiciona.
-      const myIdx = next.findIndex(r => r.user_email === currentEmail && r.emoji === emoji);
-      if (myIdx >= 0) {
-        next.splice(myIdx, 1);
+      // Build with the AGGREGATED shape the renderer + server use:
+      // { emoji, count, users: [email,...] }. The old flat shape
+      // { user_email, emoji } never rendered (chip reader keys off
+      // r.users and drops groups with users.length===0), so the
+      // optimistic reaction only appeared once the server echoed back
+      // ~200-500ms later. Toggle by adding/removing currentEmail from
+      // the matching emoji group instead of splicing a flat row.
+      const next = (prevReactions || []).map(r => ({ ...r, users: Array.isArray(r.users) ? [...r.users] : (typeof r.users === 'string' ? r.users.split(',') : []) }));
+      const gIdx = next.findIndex(r => (r.emoji || r.reaction) === emoji);
+      if (gIdx >= 0) {
+        const group = next[gIdx];
+        const uIdx = group.users.findIndex(u => (u || '').toLowerCase() === (currentEmail || '').toLowerCase());
+        if (uIdx >= 0) {
+          group.users.splice(uIdx, 1);
+          group.count = group.users.length;
+          if (!group.users.length) next.splice(gIdx, 1);
+        } else {
+          group.users.push(currentEmail);
+          group.count = group.users.length;
+        }
       } else {
-        next.push({ user_email: currentEmail, emoji, sticker_url: isSticker ? stickerUrl : null });
+        next.push({ emoji, count: 1, users: [currentEmail], sticker_url: isSticker ? stickerUrl : null });
       }
       return { ...m, reactions: next };
     }));

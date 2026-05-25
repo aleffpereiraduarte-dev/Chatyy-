@@ -1051,6 +1051,14 @@ export function AuthProvider({ children }) {
     const shouldNuke = isAccountSwitch || !prevEmail;
     if (shouldNuke) {
       await clearAccountScopedMmkv();
+      // WEB: clearAccountScopedMmkv() doesn't reach the SW CacheStorage or
+      // IndexedDB. On an account switch (or cold start onto a different
+      // identity) the SW would otherwise serve the previous account's cached
+      // chat_list / chat_messages. Nuke both so the new identity starts clean.
+      if (Platform.OS === 'web') {
+        try { navigator.serviceWorker?.controller?.postMessage({ type: 'NUKE_CACHES' }); } catch {}
+        try { require('../services/localDb').webClearAll?.(); } catch {}
+      }
     }
     setCacheUser(data.email || email);
     setUser(data);
@@ -1075,6 +1083,20 @@ export function AuthProvider({ children }) {
             ]);
           }
         }
+      }
+    } catch {}
+    // Persist Face ID credentials for phone-first / QR logins. The password
+    // login path (login.js) writes bio_email + bio_token, but phone-signup
+    // (phone_signup → loginWithToken) and QR login never did — so Face ID
+    // silently never worked for phone-first users (the majority). Mirror the
+    // same SecureStore keys here, native-only. Best-effort; never block login.
+    try {
+      if (Platform.OS !== 'web') {
+        const SecureStore = require('expo-secure-store');
+        const bioEmail = (data.email || email || '').toString();
+        const bioTok = (authToken || api.getAuthToken?.() || '').toString();
+        if (bioEmail) { try { await SecureStore.setItemAsync('bio_email', bioEmail); } catch {} }
+        if (bioTok) { try { await SecureStore.setItemAsync('bio_token', bioTok); } catch {} }
       }
     } catch {}
     // First-launch cloud-restore — same prompt path as login(). Only fires
@@ -1204,9 +1226,23 @@ export function AuthProvider({ children }) {
       if (Platform.OS !== 'web') {
         const SecureStore = require('expo-secure-store');
         SecureStore.deleteItemAsync('bio_password').catch(() => {}); // legacy cleanup
-        SecureStore.deleteItemAsync('bio_token').catch(() => {});    // SECURITY: kill auto-relogin
+        // AWAIT bio_token delete — it's an auth credential (same race-window
+        // fix as the bearer/active-marker deletes above). Fire-and-forget left
+        // a window where a fast app-kill skipped the keychain delete and the
+        // next cold start re-entered the just-logged-out account via Face ID.
+        try { await SecureStore.deleteItemAsync('bio_token'); } catch {} // SECURITY: kill auto-relogin
       }
     } catch {}
+    // 3c. WEB: clearAllPerAccountCaches only wipes MMKV/AsyncStorage shims —
+    //     it never touches the Service Worker's CacheStorage or IndexedDB.
+    //     Without this the SW keeps serving the previous account's cached
+    //     chat_list / chat_messages (and IDB keeps their blobs) after logout,
+    //     leaking conversations into the next account that signs in on this
+    //     browser. Post NUKE_CACHES to the SW + clear the web IndexedDB store.
+    if (Platform.OS === 'web') {
+      try { navigator.serviceWorker?.controller?.postMessage({ type: 'NUKE_CACHES' }); } catch {}
+      try { require('../services/localDb').webClearAll?.(); } catch {}
+    }
     // 4. Tear down background services so the NEXT account doesn't inherit
     //    WebSocket listeners, MQTT subscriptions, push registrations, or the
     //    edge-detection interval from the previous user.
@@ -1312,6 +1348,31 @@ export function AuthProvider({ children }) {
             const currentToken = api.getAuthToken();
             if (currentToken) {
               api.upsertAccount(check.data.email, currentToken, check.data.name || check.data.email);
+            }
+            // Re-arm the once-per-process auth-failure guard — login(),
+            // loginWithToken() and completeLoginAfterChallenge() all do this.
+            // Without it, if the switched-to account's token expires later the
+            // global 401 handler swallows it (guard still `true` from a prior
+            // expiry) and the user sees empty chat instead of /login.
+            try { api.resetAuthFailureSignal?.(); } catch {}
+            // Refresh Face ID credentials to the switched-to account so a cold
+            // start unlocks the CURRENT account, not the previous one. Mirrors
+            // the bio_email/bio_token writes in loginWithToken / login.js.
+            try {
+              if (Platform.OS !== 'web') {
+                const SecureStore = require('expo-secure-store');
+                const bioEmail = (check.data.email || '').toString();
+                const bioTok = (currentToken || '').toString();
+                if (bioEmail) { try { await SecureStore.setItemAsync('bio_email', bioEmail); } catch {} }
+                if (bioTok) { try { await SecureStore.setItemAsync('bio_token', bioTok); } catch {} }
+              }
+            } catch {}
+            // WEB: the cache wipe above (clearAllCache + clearChatCache) doesn't
+            // reach the SW CacheStorage or IndexedDB — nuke both so the switched
+            // -to account doesn't see the previous account's cached chat data.
+            if (Platform.OS === 'web') {
+              try { navigator.serviceWorker?.controller?.postMessage({ type: 'NUKE_CACHES' }); } catch {}
+              try { require('../services/localDb').webClearAll?.(); } catch {}
             }
             loadAccounts();
             prefetchAvatar(check.data.email);

@@ -506,6 +506,19 @@ export function getStorageLocalizedPrice(sku) {
   return p?.localizedPrice || p?.displayPrice || '';
 }
 
+/** Canonical web checkout URL for diamond top-ups.
+ *  The historical literals /comprar-diamantes and /diamantes were never
+ *  deployed as static HTML (both return 404), so every caller must use the
+ *  Expo Router SPA route /#/diamond-shop — the only surface that actually
+ *  loads (and matches the /#/plans, /#/storage fallbacks already in this
+ *  file). Pass { sku } to deep-link straight to a pack.
+ */
+export function getDiamondCheckoutUrl(opts = {}) {
+  const base = ((typeof getBaseUrl === 'function' && getBaseUrl()) || 'https://chatyy.com.br').replace(/\/$/, '');
+  const sku = opts.sku;
+  return `${base}/#/diamond-shop${sku ? `?sku=${encodeURIComponent(sku)}` : ''}`;
+}
+
 /** Start a consumable diamond top-up purchase via StoreKit sheet.
  *  Resolves once the purchase listener fires (success/fail). Web/Android-
  *  unsupported callers get web_fallback so the UI can route to /plans.

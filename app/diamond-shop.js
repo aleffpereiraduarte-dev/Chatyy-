@@ -20,11 +20,10 @@ import { useTheme } from '../context/ThemeContext';
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
-import { getBaseUrl } from '../services/api';
 import { IconArrowLeft, IconDiamond } from '../components/Icons';
 import { formatInt } from '../utils/dateFormat';
 import {
-  DIAMOND_PACKS, getDiamondLocalizedPrice, initIAP, purchaseDiamonds,
+  DIAMOND_PACKS, getDiamondLocalizedPrice, getDiamondCheckoutUrl, initIAP, purchaseDiamonds,
 } from '../services/iap';
 
 function formatBrl(v) {
@@ -111,14 +110,13 @@ export default function DiamondShopScreen() {
   }, [refreshBalance]);
 
   const openWebCheckout = useCallback((sku) => {
-    // chatyy.com.br/comprar-diamantes hosts the Stripe Elements page.
-    // iOS App Store 3.1.1 forbids charging digital goods via card
-    // INSIDE the app — but a web link is fine. Android tags along on
-    // the same flow for now (a native Stripe Payment Sheet integration
-    // can ship later — Phase 2 from WAVE 43E plan).
-    const base = (typeof getBaseUrl === 'function' && getBaseUrl()) || 'https://chatyy.com.br';
-    const url = `${base.replace(/\/$/, '')}/comprar-diamantes${sku ? `?sku=${encodeURIComponent(sku)}` : ''}`;
-    try { Linking.openURL(url); } catch {}
+    // iOS App Store 3.1.1 forbids charging digital goods via card INSIDE
+    // the app — but a web link is fine. Android tags along on the same
+    // flow for now (a native Stripe Payment Sheet integration can ship
+    // later — Phase 2 from WAVE 43E plan). Use the single canonical
+    // checkout URL helper (the old /comprar-diamantes + /diamantes literals
+    // both 404 — only the /#/diamond-shop SPA route actually serves).
+    try { Linking.openURL(getDiamondCheckoutUrl({ sku })); } catch {}
   }, []);
 
   const packs = useMemo(() => DIAMOND_PACKS, []);
@@ -126,11 +124,9 @@ export default function DiamondShopScreen() {
   const onBuy = useCallback(async (pack) => {
     if (pendingSku) return;
     if (Platform.OS === 'web') {
-      // Web has no billing client; deep-link to /diamond-shop on the
-      // public site (same backend wallet_topup_verify credits the wallet).
-      const base = (typeof getBaseUrl === 'function' && getBaseUrl()) || 'https://chatyy.com.br';
-      const webUrl = `${base}/#/diamond-shop?sku=${encodeURIComponent(pack.sku)}`;
-      try { Linking.openURL(webUrl); } catch {}
+      // Web has no billing client; deep-link to the canonical checkout
+      // (same backend wallet_topup_verify credits the wallet).
+      try { Linking.openURL(getDiamondCheckoutUrl({ sku: pack.sku })); } catch {}
       return;
     }
     setPendingSku(pack.sku);
@@ -148,8 +144,7 @@ export default function DiamondShopScreen() {
         // [WAVE 36 2026-05-20] Android: surface web-checkout fallback instead
         // of dead-ending. See DiamondTopUpSheet for matching logic.
         if (Platform.OS === 'android') {
-          const base = (typeof getBaseUrl === 'function' ? getBaseUrl() : 'https://chatyy.com.br').replace(/\/$/, '');
-          const buyUrl = `${base}/diamantes${pack?.sku ? `?sku=${encodeURIComponent(pack.sku)}` : ''}`;
+          const buyUrl = getDiamondCheckoutUrl({ sku: pack?.sku });
           Alert.alert(
             t('wallet.topupUnavailableTitle') || 'Compra indisponível',
             t('wallet.androidWebBuyBody') || 'A compra direta no Android chega em breve. Quer abrir a loja no navegador para comprar agora?',
@@ -171,8 +166,7 @@ export default function DiamondShopScreen() {
         // TODO: pedir ao founder pra finalizar registro dos SKUs no ASC/Play.
         if (Platform.OS === 'android') {
           // Android: offer web checkout fallback since the SKU isn't live in Play.
-          const base = (typeof getBaseUrl === 'function' ? getBaseUrl() : 'https://chatyy.com.br').replace(/\/$/, '');
-          const buyUrl = `${base}/diamantes${pack?.sku ? `?sku=${encodeURIComponent(pack.sku)}` : ''}`;
+          const buyUrl = getDiamondCheckoutUrl({ sku: pack?.sku });
           Alert.alert(
             t('wallet.topupUnavailableTitle') || 'Pacote indisponível',
             t('wallet.androidWebBuyBody') || 'Este pacote ainda não está disponível na Play Store. Quer abrir a loja no navegador para comprar agora?',

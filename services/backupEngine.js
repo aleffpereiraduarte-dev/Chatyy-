@@ -1190,30 +1190,44 @@ export class BackupEngine {
           // embedding extraction in the background. The embedding pipeline is
           // a no-op when MediaPipe / ONNX deps are missing, so this is safe
           // to call unconditionally.
-          api.apiCall('drive_register_uploaded', {
-            filename: uploadFilename,
-            cdn_url: cdn,
-            size: r.size || fileSize,
-            mime_type: r.mime_type || mimeType,
-            content_hash: r.content_hash || item.hash || '',
-            asset_id: item.id || item.asset?.id || '',
-          }, 'POST').then((regRes) => {
-            try {
-              const fileId = regRes?.data?.id || regRes?.data?.file_id;
-              const isPhoto = String(mimeType || '').startsWith('image/');
-              if (fileId && isPhoto && Platform.OS !== 'web') {
-                // Defer to next idle frame so it doesn't compete with the
-                // uploader's CPU budget. Fire-and-forget — the embedding
-                // pipeline retries on its own next backup pass.
-                setTimeout(() => {
-                  try {
-                    const fe = require('./faceEmbeddings');
-                    fe.extractAndUploadEmbeddings?.(fileId, uploadUri).catch(() => {});
-                  } catch {}
-                }, 250);
-              }
-            } catch {}
-          }).catch(() => {});
+          // AWAIT the register call. Previously this was fire-and-forget
+          // (.then().catch()) and we returned success immediately — if the
+          // POST timed out on weak cellular the R2 object had no drive_files
+          // row (orphan) AND the item was marked backed-up so it was never
+          // retried. That produced the 67k-orphan cleanup (#524). Only mark
+          // success AFTER the row is confirmed; on failure throw so the worker
+          // counts the item as failed and leaves backedUpIds untouched.
+          let regRes;
+          try {
+            regRes = await api.apiCall('drive_register_uploaded', {
+              filename: uploadFilename,
+              cdn_url: cdn,
+              size: r.size || fileSize,
+              mime_type: r.mime_type || mimeType,
+              content_hash: r.content_hash || item.hash || '',
+              asset_id: item.id || item.asset?.id || '',
+            }, 'POST');
+          } catch (regErr) {
+            throw new Error(`register_failed|${regErr?.message || 'unknown'}`);
+          }
+          if (!regRes?.success) {
+            throw new Error(`register_failed|${regRes?.error || 'no_success'}`);
+          }
+          try {
+            const fileId = regRes?.data?.id || regRes?.data?.file_id;
+            const isPhoto = String(mimeType || '').startsWith('image/');
+            if (fileId && isPhoto && Platform.OS !== 'web') {
+              // Defer to next idle frame so it doesn't compete with the
+              // uploader's CPU budget. Fire-and-forget — the embedding
+              // pipeline retries on its own next backup pass.
+              setTimeout(() => {
+                try {
+                  const fe = require('./faceEmbeddings');
+                  fe.extractAndUploadEmbeddings?.(fileId, uploadUri).catch(() => {});
+                } catch {}
+              }, 250);
+            }
+          } catch {}
 
           this.stats.uploadedBytes += fileSize;
           this._updateSpeed(fileSize);
@@ -1415,14 +1429,25 @@ export class BackupEngine {
       throw new Error('S3 upload failed');
     }
 
-    // Confirm upload on server — fire and forget so worker can grab next photo immediately.
-    // The server creates the DB record from a HEAD on R2; if it fails, the photo is still
-    // safely in R2 and a later reconciliation pass will pick it up.
-    api.apiCall('drive_complete_upload', {
-      file_id: presigned.data.file_id || 0,
-      s3_key: presigned.data.s3_key || '',
-      content_hash: item.hash || '',
-    }, 'POST').catch(() => {});
+    // Confirm upload on server — AWAIT it. Previously fire-and-forget, which
+    // left the R2 object orphaned (no drive_files row) when the POST failed on
+    // weak cellular, while the worker still marked the item completed + set
+    // backedUpIds so it was never retried (#524). Throw on failure so the
+    // worker re-queues it and we do NOT mark it backed-up or drop the resume
+    // session below.
+    let completeRes;
+    try {
+      completeRes = await api.apiCall('drive_complete_upload', {
+        file_id: presigned.data.file_id || 0,
+        s3_key: presigned.data.s3_key || '',
+        content_hash: item.hash || '',
+      }, 'POST');
+    } catch (compErr) {
+      throw new Error(`complete_failed|${compErr?.message || 'unknown'}`);
+    }
+    if (!completeRes?.success) {
+      throw new Error(`complete_failed|${completeRes?.error || 'no_success'}`);
+    }
 
     // Track bytes
     this.stats.uploadedBytes += fileSize;

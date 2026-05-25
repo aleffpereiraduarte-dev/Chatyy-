@@ -279,6 +279,88 @@ function formatViewedAt(viewedAt) {
   } catch { return ''; }
 }
 
+// Native expo-video player for status videos. HOISTED to module level (vs the
+// old inline definition inside renderMedia) so React sees a STABLE component
+// type across the frequent progress-driven re-renders — otherwise every tick
+// minted a fresh function object → unmount/remount of VideoView+player → the
+// buffering flash + player churn users reported. Memoized so it only re-renders
+// when its props actually change.
+//
+// `mod` (the resolved expo-video module) is passed in by the caller so we don't
+// pay a require() on every render and so the caller can fall through to expo-av
+// when expo-video is unavailable. `liveMuted` is the live mute toggle (caller
+// flips it; we push it to the player); `initialMuted`/`loop` seed the player.
+const StatusVideoPlayer = React.memo(function StatusVideoPlayer({
+  mod, uri, loop, initialMuted, liveMuted, poster, onEnd, onError, onReady,
+}) {
+  const { useVideoPlayer, VideoView } = mod;
+  // [WAVE 93 2026-05-21] Seed loop + mute from the CURRENT item's props so each
+  // advance to a new video gets the right semantics (not the first item's,
+  // which the old inline closure captured).
+  const player = useVideoPlayer(uri, (p) => {
+    try { p.loop = !!loop; p.muted = !!initialMuted; p.play(); } catch {}
+  });
+  const endedRef = useRef(false);
+  // Sync mute toggle live — caller flips liveMuted, we push it down.
+  useEffect(() => { try { player.muted = !!liveMuted; } catch {} }, [player, liveMuted]);
+  // Sync loop flag too — a status carousel can mix boomerang + normal clips,
+  // so update player.loop when it changes between idx steps without recreating.
+  useEffect(() => { try { player.loop = !!loop; } catch {} }, [player, loop]);
+  // Listen for status updates to detect load errors + ready state.
+  useEffect(() => {
+    const sub = player.addListener?.('statusChange', (s) => {
+      const status = s?.status || s;
+      if (s?.error || status === 'error') { onError?.(); }
+      // expo-video reports 'readyToPlay' once the first frame is decoded —
+      // that's when we hide the spinner.
+      if (status === 'readyToPlay' || status === 'playing') { onReady?.(); }
+    });
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, [player, onError, onReady]);
+  // [PRIMARY AUTO-ADVANCE] expo-video fires 'ended' at end-of-playback for a
+  // non-looping clip. The old inline path had NO end listener so native video
+  // stories hung forever. Belt-and-suspenders: also arm a max-duration timeout
+  // from player.duration once known, in case the 'ended' event is dropped.
+  useEffect(() => {
+    if (loop) return undefined; // boomerang/looping clips never auto-advance here
+    endedRef.current = false;
+    const fire = () => { if (!endedRef.current) { endedRef.current = true; onEnd?.(); } };
+    const sub = player.addListener?.('ended', fire);
+    let maxTimer = null;
+    const armMaxTimer = () => {
+      try {
+        const dur = player.duration;
+        if (Number.isFinite(dur) && dur > 0 && !maxTimer) {
+          maxTimer = setTimeout(fire, dur * 1000 + 600);
+        }
+      } catch {}
+    };
+    armMaxTimer();
+    // duration is often unknown at mount; re-check once playback is ready.
+    const subReady = player.addListener?.('statusChange', (s) => {
+      const status = s?.status || s;
+      if (status === 'readyToPlay' || status === 'playing') armMaxTimer();
+    });
+    return () => {
+      try { sub?.remove?.(); } catch {}
+      try { subReady?.remove?.(); } catch {}
+      if (maxTimer) clearTimeout(maxTimer);
+    };
+  }, [player, loop, onEnd]);
+  // Defensive teardown on unmount — reclaim AVPlayer/MediaCodec buffers.
+  useEffect(() => () => {
+    try { player.pause?.(); } catch {}
+    try { player.replace?.(null); } catch {}
+    try { player.release?.(); } catch {}
+  }, [player]);
+  return (
+    <View style={{ flex: 1, backgroundColor: '#000' }}>
+      {poster}
+      <VideoView player={player} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} contentFit="contain" nativeControls={false} />
+    </View>
+  );
+});
+
 export default function StoryViewer({
   visible,
   stories: storiesProp,
@@ -858,6 +940,12 @@ export default function StoryViewer({
     });
   }, [stories, onClose, caughtUp, caughtUpAnim, onNextGroup, groupIndex, groupCount]);
 
+  // Stable callbacks handed to the hoisted StatusVideoPlayer so React.memo can
+  // skip re-renders on progress ticks. onError clears the spinner + flips the
+  // fail card; onReady hides the spinner once the first frame decodes.
+  const _onVideoError = useCallback(() => { setVideoError(true); setVideoLoading(false); }, []);
+  const _onVideoReady = useCallback(() => { setVideoLoading(false); }, []);
+
   // Backward navigation: at item 0, if there's a previous group, jump to it.
   // Otherwise stay put (current behavior). Boundary haptic mirrors `advance`.
   const goPrev = useCallback(() => {
@@ -1220,49 +1308,29 @@ export default function StoryViewer({
         );
       }
       // Prefer expo-video (SDK 55+); fall back to expo-av for older bundles.
+      // The player itself lives in the module-level <StatusVideoPlayer> so it
+      // doesn't get remounted on every progress tick (the hook used to be
+      // defined inside this render fn → new component type each render). For
+      // a non-boomerang clip we pass `onEnd={advance}` so it auto-advances at
+      // end-of-playback (the inline path had no end listener → native video
+      // stories hung forever).
       try {
-        const { useVideoPlayer, VideoView } = require('expo-video');
-        const InnerVideo = ({ uri, loop, initialMuted }) => {
-          // [WAVE 93 2026-05-21] Pass `loop` + `initialMuted` as props so the
-          // useVideoPlayer init callback reads the CURRENT idx's values (vs
-          // the captured first-render values when stale). Was: every advance
-          // to a new video item kept the FIRST item's mute + loop semantics
-          // because `isBoomerang` and `videoMuted` were closed over in the
-          // outer render.
-          const player = useVideoPlayer(uri, (p) => {
-            try { p.loop = !!loop; p.muted = !!initialMuted; p.play(); } catch {}
-          });
-          // Sync mute toggle live — caller flips videoMuted, we push it down.
-          useEffect(() => { try { player.muted = videoMuted; } catch {} }, [videoMuted]); // eslint-disable-line react-hooks/exhaustive-deps
-          // Sync loop flag too — a status carousel can mix boomerang + normal
-          // clips, so we have to update player.loop when isBoomerang changes
-          // between idx steps without the player being recreated.
-          useEffect(() => { try { player.loop = !!loop; } catch {} }, [loop]); // eslint-disable-line react-hooks/exhaustive-deps
-          // Listen for status updates to detect load errors + ready state.
-          useEffect(() => {
-            const sub = player.addListener?.('statusChange', (s) => {
-              if (s?.error) { setVideoError(true); setVideoLoading(false); }
-              // expo-video reports 'readyToPlay' once the first frame is
-              // decoded — that's when we hide the spinner.
-              if (s?.status === 'readyToPlay' || s?.status === 'playing') {
-                setVideoLoading(false);
-              }
-            });
-            return () => { try { sub?.remove?.(); } catch {} };
-          }, []); // eslint-disable-line react-hooks/exhaustive-deps
-          useEffect(() => () => {
-            try { player.pause?.(); } catch {}
-            try { player.replace?.(null); } catch {}
-            try { player.release?.(); } catch {}
-          }, []); // eslint-disable-line react-hooks/exhaustive-deps
+        const _expoVideoMod = require('expo-video');
+        if (_expoVideoMod?.useVideoPlayer && _expoVideoMod?.VideoView) {
           return (
-            <View style={{ flex: 1, backgroundColor: '#000' }}>
-              {PosterOverlay}
-              <VideoView player={player} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} contentFit="contain" nativeControls={false} />
-            </View>
+            <StatusVideoPlayer
+              mod={_expoVideoMod}
+              uri={mediaUrl}
+              loop={isBoomerang}
+              initialMuted={videoMuted}
+              liveMuted={videoMuted}
+              poster={PosterOverlay}
+              onEnd={advance}
+              onError={_onVideoError}
+              onReady={_onVideoReady}
+            />
           );
-        };
-        return <InnerVideo uri={mediaUrl} loop={isBoomerang} initialMuted={videoMuted} />;
+        }
       } catch {}
       try {
         const V = require('expo-av').Video;

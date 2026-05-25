@@ -30,7 +30,18 @@ const BRAND = '#7C3AED';
 const HINT_KEY = '@chatyy:reels_hint_seen_v1';
 const { height: SCREEN_H } = Dimensions.get('window');
 
-export default function ChatReelsTab() {
+export default function ChatReelsTab({ active, parentActive: parentActiveProp, tabActive } = {}) {
+  // [#1247 / WAVE 43B parity] Forward an active signal to ReelsViewer so the
+  // native ShortsPlayer pool drains its audio when this tab is a hidden
+  // sibling (display:none) instead of leaking sound in the background. Mirror
+  // ChatFeedTab's pattern: accept whatever active signal the parent provides
+  // (`active`, `parentActive`, or `tabActive === 'reels'`). Default true so the
+  // standalone full-screen usage keeps playing.
+  const parentActive =
+    parentActiveProp != null ? parentActiveProp
+    : active != null ? active
+    : tabActive != null ? tabActive === 'reels'
+    : true;
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const { t } = useLanguage();
@@ -138,6 +149,7 @@ export default function ChatReelsTab() {
         user={user}
         router={router}
         feedMode={activeTab}
+        parentActive={parentActive}
         onPullRefresh={handlePullRefresh}
         onAvatarTap={handleAvatarTap}
         showLiveRing

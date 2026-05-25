@@ -212,7 +212,20 @@ function _normalize(raw, currentEmail) {
   const _expiredCutoff = Date.now() - 24 * 3600 * 1000;
   const _isFresh = (it) => {
     try {
+      // Prefer a server-provided expires_at when present — it's already the
+      // authoritative TTL boundary, no client-side age math needed.
+      if (it.expires_at) {
+        let exp = String(it.expires_at).replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
+        if (!/[zZ]|[+-]\d{2}:\d{2}$/.test(exp)) exp += 'Z';
+        const expMs = new Date(exp).getTime();
+        if (Number.isFinite(expMs)) return expMs >= Date.now();
+      }
+      // Backend stores some timestamps as `(now() AT TIME ZONE 'UTC')::text`
+      // with NO offset suffix; JS would parse those as LOCAL time and shift
+      // the perceived age (premature ghosting for users east of UTC). When
+      // there's no `Z` or `±HH:MM` offset, treat the string as UTC.
       let iso = String(it.created_at || '').replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
+      if (iso && !/[zZ]|[+-]\d{2}:\d{2}$/.test(iso)) iso += 'Z';
       const ms = new Date(iso).getTime();
       return Number.isFinite(ms) ? ms >= _expiredCutoff : true;
     } catch { return true; }

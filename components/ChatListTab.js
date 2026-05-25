@@ -3300,6 +3300,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             nextArch.splice(ai, 1);
             return nextArch;
           });
+          let nextConvsForCache = null;
           setConversations(prev => {
             const idx = prev.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
             if (idx === -1 && unarchivedConv) {
@@ -3324,7 +3325,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               };
               const pinned = prev.filter(c => !!c.pinned);
               const unpinned = prev.filter(c => !c.pinned);
-              return [...pinned, promoted, ...unpinned];
+              nextConvsForCache = [...pinned, promoted, ...unpinned];
+              return nextConvsForCache;
             }
             if (idx === -1) {
               // Conversation not in local cache — common when the user was
@@ -3386,10 +3388,21 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             const pinned = prev.filter((c, i) => i !== idx && !!c.pinned);
             const unpinned = prev.filter((c, i) => i !== idx && !c.pinned);
             if (updated.pinned) {
-              return [updated, ...pinned.filter(c => c.id !== updated.id), ...unpinned];
+              nextConvsForCache = [updated, ...pinned.filter(c => c.id !== updated.id), ...unpinned];
+              return nextConvsForCache;
             }
-            return [...pinned, updated, ...unpinned];
+            nextConvsForCache = [...pinned, updated, ...unpinned];
+            return nextConvsForCache;
           });
+          // Web: persist the incrementally-updated list to IndexedDB so a page
+          // reload paints the moved conversation + new last_message instantly
+          // instead of re-fetching (skeleton flash / "perpetual re-sync").
+          // Native reloads via loadConversations elsewhere; the idx===-1
+          // placeholder branch already triggers loadConversations(false), which
+          // caches on its own — so only the promoted/updated paths need this.
+          if (Platform.OS === 'web' && nextConvsForCache) {
+            try { cacheConversations(nextConvsForCache).catch(() => {}); } catch {}
+          }
         }, 0);
       };
       unsubs.push(mailWs.on('chat_message', onIncomingForList));
