@@ -368,7 +368,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         minimizeBtn.backgroundColor = UIColor.black.withAlphaComponent(0.45)
         minimizeBtn.layer.cornerRadius = 18
         minimizeBtn.clipsToBounds = true
-        minimizeBtn.addTarget(self, action: #selector(uikitOnHangupTap), for: .touchUpInside)
+        // [UI rewrite 2026-05-25] The chevron-down minimizes the call (PiP /
+        // floating bar), NOT hangup. Prior wiring fired uikitOnHangupTap which
+        // ended the call on a "minimize" gesture — a real bug. Route to the
+        // existing handleMinimize() plumbing (untouched).
+        minimizeBtn.addTarget(self, action: #selector(uikitOnMinimizeTap), for: .touchUpInside)
         topBar.addSubview(minimizeBtn)
 
         let barsContainer = UIView()
@@ -534,71 +538,133 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             lbl.text = base + dots
         }
 
-        // 5. Glass-morphism buttons
-        func glassButton(symbol: String, size: CGFloat, tag: Int, action: Selector, tint: UIColor = UIColor.white.withAlphaComponent(0.16), iconTint: UIColor = .white) -> UIButton {
+        // 5. ── Bottom control bar (WhatsApp-grade, ALWAYS visible) ───────────
+        //
+        // [UI rewrite 2026-05-25] Root cause of "os botões nem aparecem": the
+        // prior layout chained the row-1 buttons off each other + off the
+        // hangup button with relative constraints, and built a separate
+        // floating flip button + four free-floating sub-labels. That fragile
+        // web of constraints could land off-screen / collapse, and there was
+        // no single safe-area-pinned container guaranteeing visibility.
+        //
+        // New approach: ONE horizontal UIStackView pinned to the safe-area
+        // bottom with hard constraints. Each control is a vertical cell
+        // (round glass button + caption) so the whole bar lays out
+        // deterministically and is ALWAYS on screen. SF Symbols, translucent
+        // glass via UIVisualEffectView, hangup stands out (red, larger). All
+        // view tags preserved (9002 mute / 9003 speaker / 9004 hangup /
+        // 9005 video / 9006 flip) so every selector + viewWithTag lookup
+        // elsewhere in this file keeps resolving.
+
+        // Round glass button. The blur + tint overlay are pinned to the
+        // button's edges with Auto Layout (NOT manual frames) so they always
+        // fill the circle regardless of when layout runs.
+        func glassButton(symbol: String,
+                         size: CGFloat,
+                         tag: Int,
+                         action: Selector,
+                         tint: UIColor = UIColor.white.withAlphaComponent(0.16),
+                         iconTint: UIColor = .white) -> UIButton {
             let btn = UIButton(type: .system)
             btn.translatesAutoresizingMaskIntoConstraints = false
             btn.layer.cornerRadius = size / 2
             btn.clipsToBounds = true
             btn.tag = tag
             btn.addTarget(self, action: action, for: .touchUpInside)
+            btn.widthAnchor.constraint(equalToConstant: size).isActive = true
+            btn.heightAnchor.constraint(equalToConstant: size).isActive = true
 
             let blur = UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterialDark))
-            blur.frame = CGRect(x: 0, y: 0, width: size, height: size)
+            blur.translatesAutoresizingMaskIntoConstraints = false
             blur.isUserInteractionEnabled = false
             blur.layer.cornerRadius = size / 2
             blur.clipsToBounds = true
             btn.insertSubview(blur, at: 0)
 
             let overlay = UIView()
-            overlay.frame = CGRect(x: 0, y: 0, width: size, height: size)
+            overlay.translatesAutoresizingMaskIntoConstraints = false
             overlay.backgroundColor = tint
             overlay.isUserInteractionEnabled = false
-            btn.insertSubview(overlay, at: 1)
+            overlay.tag = 7   // stable in-button tag so setControlActive finds it
+            btn.insertSubview(overlay, aboveSubview: blur)
+
+            NSLayoutConstraint.activate([
+                blur.topAnchor.constraint(equalTo: btn.topAnchor),
+                blur.bottomAnchor.constraint(equalTo: btn.bottomAnchor),
+                blur.leadingAnchor.constraint(equalTo: btn.leadingAnchor),
+                blur.trailingAnchor.constraint(equalTo: btn.trailingAnchor),
+                overlay.topAnchor.constraint(equalTo: btn.topAnchor),
+                overlay.bottomAnchor.constraint(equalTo: btn.bottomAnchor),
+                overlay.leadingAnchor.constraint(equalTo: btn.leadingAnchor),
+                overlay.trailingAnchor.constraint(equalTo: btn.trailingAnchor),
+            ])
 
             btn.layer.borderWidth = 1
             btn.layer.borderColor = UIColor.white.withAlphaComponent(0.22).cgColor
-
             btn.tintColor = iconTint
-            let cfg = UIImage.SymbolConfiguration(pointSize: size * 0.36, weight: .medium)
+            let cfg = UIImage.SymbolConfiguration(pointSize: size * 0.36, weight: .semibold)
             btn.setImage(UIImage(systemName: symbol, withConfiguration: cfg), for: .normal)
-            view.addSubview(btn)
+            // Keep the glyph above the blur + overlay.
+            btn.imageView?.layer.zPosition = 2
             return btn
         }
 
-        // Row 1: mute + speaker + video toggle (3 buttons)
-        let muteButton = glassButton(symbol: "mic.fill", size: 64, tag: 9002, action: #selector(uikitOnMuteTap))
-        let speakerButton = glassButton(symbol: "speaker.wave.2.fill", size: 64, tag: 9003, action: #selector(uikitOnSpeakerTap))
-        let videoButton = glassButton(symbol: "video.fill", size: 64, tag: 9005, action: #selector(uikitOnVideoToggle))
-
-        // [#1358 video parity 2026-05-25] Camera-flip button — only meaningful
-        // while the local camera is enabled. Built here (tag 9006) but hidden
-        // until camera is on; applyCamEnabled + the localVideoTrack sink toggle
-        // its visibility. Positioned in the controls row by the constraints
-        // block below (to the right of the video toggle). Calls switchCamera()
-        // which does the smooth in-place capturer swap.
-        let flipCamButton = glassButton(symbol: "arrow.triangle.2.circlepath.camera.fill", size: 64, tag: 9006, action: #selector(uikitOnFlipCamera))
-        flipCamButton.isHidden = true
-        flipCamButton.alpha = 0
-
-        // Row 2: hangup (center, red, bigger)
-        let endButton = glassButton(symbol: "phone.down.fill", size: 72, tag: 9004, action: #selector(uikitOnHangupTap), tint: UIColor(red: 0xE5/255.0, green: 0x39/255.0, blue: 0x35/255.0, alpha: 1.0))
-
-        // 6. Sub-labels
-        func subLabel(_ text: String) -> UILabel {
-            let l = UILabel()
-            l.translatesAutoresizingMaskIntoConstraints = false
-            l.text = text
-            l.textColor = UIColor.white.withAlphaComponent(0.7)
-            l.font = .systemFont(ofSize: 12, weight: .medium)
-            l.textAlignment = .center
-            view.addSubview(l)
-            return l
+        // A control cell = round button on top + caption beneath, in a tight
+        // vertical stack. Returned as the stack so the bar arranges cells
+        // evenly. The button keeps its own tag for selector lookups.
+        func controlCell(symbol: String,
+                         size: CGFloat,
+                         tag: Int,
+                         caption: String,
+                         action: Selector,
+                         tint: UIColor = UIColor.white.withAlphaComponent(0.16),
+                         iconTint: UIColor = .white) -> (cell: UIStackView, button: UIButton) {
+            let btn = glassButton(symbol: symbol, size: size, tag: tag, action: action, tint: tint, iconTint: iconTint)
+            let cap = UILabel()
+            cap.translatesAutoresizingMaskIntoConstraints = false
+            cap.text = caption
+            cap.textColor = UIColor.white.withAlphaComponent(0.85)
+            cap.font = .systemFont(ofSize: 12, weight: .medium)
+            cap.textAlignment = .center
+            cap.numberOfLines = 1
+            let cell = UIStackView(arrangedSubviews: [btn, cap])
+            cell.translatesAutoresizingMaskIntoConstraints = false
+            cell.axis = .vertical
+            cell.alignment = .center
+            cell.spacing = 7
+            return (cell, btn)
         }
-        let muteSubLabel = subLabel("Silenciar")
-        let speakerSubLabel = subLabel("Alto-falante")
-        let videoSubLabel = subLabel("Video")
-        let endSubLabel = subLabel("Encerrar")
+
+        // Build cells. Hangup is the visual anchor (red, bigger). Mute /
+        // speaker / video are the standard 64pt controls. Flip-camera cell is
+        // built but hidden until the camera turns on (applyCamEnabled +
+        // localVideoTrack sink toggle its visibility via tag 9006 lookups).
+        let hangupColor = UIColor(red: 0xE5/255.0, green: 0x39/255.0, blue: 0x35/255.0, alpha: 1.0)
+        let muteCell    = controlCell(symbol: "mic.fill", size: 64, tag: 9002, caption: "Mudo", action: #selector(uikitOnMuteTap))
+        let videoCell   = controlCell(symbol: "video.fill", size: 64, tag: 9005, caption: "Vídeo", action: #selector(uikitOnVideoToggle))
+        let flipCell    = controlCell(symbol: "arrow.triangle.2.circlepath.camera.fill", size: 64, tag: 9006, caption: "Girar", action: #selector(uikitOnFlipCamera))
+        let speakerCell = controlCell(symbol: "speaker.wave.2.fill", size: 64, tag: 9003, caption: "Alto-falante", action: #selector(uikitOnSpeakerTap))
+        let hangupCell  = controlCell(symbol: "phone.down.fill", size: 72, tag: 9004, caption: "Encerrar", action: #selector(uikitOnHangupTap), tint: hangupColor, iconTint: .white)
+
+        // Flip starts hidden (whole cell) until the camera publishes. The
+        // button keeps tag 9006 so applyCamEnabled / the localVideoTrack sink
+        // resolve + reveal its cell via updateFlipButtonVisibility.
+        flipCell.cell.isHidden = true
+        flipCell.cell.alpha = 0
+
+        // Horizontal bar holding every cell, evenly distributed. Pinned to the
+        // safe-area bottom by the constraints block below — this is the single
+        // source of truth that guarantees the controls are always visible.
+        let controlBar = UIStackView(arrangedSubviews: [
+            muteCell.cell, videoCell.cell, flipCell.cell, speakerCell.cell, hangupCell.cell
+        ])
+        controlBar.translatesAutoresizingMaskIntoConstraints = false
+        controlBar.axis = .horizontal
+        controlBar.alignment = .top
+        controlBar.distribution = .equalSpacing
+        controlBar.spacing = 12
+        controlBar.tag = 9008   // bar container — bring-to-front + fade target
+        view.addSubview(controlBar)
 
         // 7. E2E encryption badge
         let e2eBadge = UIView()
@@ -707,49 +773,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             participantCountLabel.topAnchor.constraint(equalTo: e2eBadge.bottomAnchor, constant: 12),
             participantCountLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
 
-            // Button row 1 (3 buttons evenly spaced)
-            muteButton.widthAnchor.constraint(equalToConstant: 64),
-            muteButton.heightAnchor.constraint(equalToConstant: 64),
-            muteButton.bottomAnchor.constraint(equalTo: endButton.topAnchor, constant: -32),
-            muteButton.trailingAnchor.constraint(equalTo: speakerButton.leadingAnchor, constant: -24),
-
-            speakerButton.widthAnchor.constraint(equalToConstant: 64),
-            speakerButton.heightAnchor.constraint(equalToConstant: 64),
-            speakerButton.centerYAnchor.constraint(equalTo: muteButton.centerYAnchor),
-            speakerButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-
-            videoButton.widthAnchor.constraint(equalToConstant: 64),
-            videoButton.heightAnchor.constraint(equalToConstant: 64),
-            videoButton.centerYAnchor.constraint(equalTo: muteButton.centerYAnchor),
-            videoButton.leadingAnchor.constraint(equalTo: speakerButton.trailingAnchor, constant: 24),
-
-            // [#1358] Flip-camera button — centered above the row-1 controls so
-            // the 3-button mute/speaker/video row stays visually balanced. Only
-            // visible while the camera is on (toggled in applyCamEnabled +
-            // the localVideoTrack sink).
-            flipCamButton.widthAnchor.constraint(equalToConstant: 56),
-            flipCamButton.heightAnchor.constraint(equalToConstant: 56),
-            flipCamButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            flipCamButton.bottomAnchor.constraint(equalTo: muteButton.topAnchor, constant: -28),
-
-            // End button (centered, bigger, below)
-            endButton.widthAnchor.constraint(equalToConstant: 72),
-            endButton.heightAnchor.constraint(equalToConstant: 72),
-            endButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            endButton.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -40),
-
-            // Sub labels
-            muteSubLabel.topAnchor.constraint(equalTo: muteButton.bottomAnchor, constant: 6),
-            muteSubLabel.centerXAnchor.constraint(equalTo: muteButton.centerXAnchor),
-
-            speakerSubLabel.topAnchor.constraint(equalTo: speakerButton.bottomAnchor, constant: 6),
-            speakerSubLabel.centerXAnchor.constraint(equalTo: speakerButton.centerXAnchor),
-
-            videoSubLabel.topAnchor.constraint(equalTo: videoButton.bottomAnchor, constant: 6),
-            videoSubLabel.centerXAnchor.constraint(equalTo: videoButton.centerXAnchor),
-
-            endSubLabel.topAnchor.constraint(equalTo: endButton.bottomAnchor, constant: 6),
-            endSubLabel.centerXAnchor.constraint(equalTo: endButton.centerXAnchor),
+            // ── Bottom control bar — pinned to the safe-area bottom. THIS is
+            // the fix: one constraint-driven container guarantees the controls
+            // are always laid out on screen, evenly spaced, never off-screen.
+            controlBar.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 28),
+            controlBar.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -28),
+            controlBar.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -24),
         ])
 
         // [WAVE 173] Sync session.status → UIKit statusLabel + duration timer.
@@ -1422,12 +1451,18 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// while the local camera is enabled.
     private func updateFlipButtonVisibility(_ camEnabled: Bool) {
         guard let btn = view.viewWithTag(9006) as? UIButton else { return }
+        // [UI rewrite 2026-05-25] The flip control lives inside a cell stack
+        // (button + "Girar" caption) within the bottom control bar. Toggle the
+        // whole CELL so the horizontal stack reflows (no empty gap) when the
+        // camera is off. Fall back to the button itself if the cell can't be
+        // resolved.
+        let cell: UIView = btn.superview ?? btn
         if camEnabled {
-            btn.isHidden = false
-            UIView.animate(withDuration: 0.2) { btn.alpha = self.controlsHidden ? 0 : 1 }
+            cell.isHidden = false
+            UIView.animate(withDuration: 0.2) { cell.alpha = self.controlsHidden ? 0 : 1 }
         } else {
-            UIView.animate(withDuration: 0.2, animations: { btn.alpha = 0 }) { _ in
-                if btn.alpha == 0 { btn.isHidden = true }
+            UIView.animate(withDuration: 0.2, animations: { cell.alpha = 0 }) { _ in
+                if cell.alpha == 0 { cell.isHidden = true }
             }
         }
     }
@@ -2508,16 +2543,42 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         handleHangup()
     }
 
+    // [UI rewrite 2026-05-25] Minimize chevron → PiP / floating bar. Delegates
+    // to the existing handleMinimize() plumbing (PiP when supported, else the
+    // OngoingCallBar overlay + dismiss). NOT hangup.
+    @objc private func uikitOnMinimizeTap() {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        handleMinimize()
+    }
+
+    // [UI rewrite 2026-05-25] Active-state tint for a glass control button:
+    // "active" (muted / cam-off / speaker-on) brightens the overlay; the
+    // default state is the subtle translucent white. The overlay is the
+    // subview inserted just above the blur in glassButton(). Icon point size
+    // matches the initial render (~size*0.36, semibold).
+    private func setControlActive(_ btn: UIButton?, active: Bool, symbol: String) {
+        guard let btn = btn else { return }
+        let side = btn.bounds.width > 0 ? btn.bounds.width : 64
+        let cfg = UIImage.SymbolConfiguration(pointSize: side * 0.36, weight: .semibold)
+        btn.setImage(UIImage(systemName: symbol, withConfiguration: cfg), for: .normal)
+        // overlay = the tint view tagged 7 inside glassButton().
+        let overlay = btn.subviews.first { $0.tag == 7 }
+        UIView.animate(withDuration: 0.18) {
+            overlay?.backgroundColor = active
+                ? UIColor.white.withAlphaComponent(0.92)
+                : UIColor.white.withAlphaComponent(0.16)
+            btn.tintColor = active ? UIColor(red: 0x14/255.0, green: 0x10/255.0, blue: 0x22/255.0, alpha: 1.0) : .white
+        }
+    }
+
     @objc private func uikitOnMuteTap() {
         // session.micEnabled = mic ENABLED. Mute = micEnabled false.
         let newMicEnabled = !session.micEnabled
         applyMicEnabled(newMicEnabled)
         let btn = view.viewWithTag(9002) as? UIButton
         tapFeedback(btn)
-        if let btn = btn {
-            let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
-            btn.setImage(UIImage(systemName: newMicEnabled ? "mic.fill" : "mic.slash.fill", withConfiguration: cfg), for: .normal)
-        }
+        // Active (filled) when MUTED.
+        setControlActive(btn, active: !newMicEnabled, symbol: newMicEnabled ? "mic.fill" : "mic.slash.fill")
     }
 
     @objc private func uikitOnSpeakerTap() {
@@ -2525,10 +2586,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         applySpeaker(next)
         let btn = view.viewWithTag(9003) as? UIButton
         tapFeedback(btn)
-        if let btn = btn {
-            let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
-            btn.setImage(UIImage(systemName: next ? "speaker.wave.2.fill" : "speaker.slash.fill", withConfiguration: cfg), for: .normal)
-        }
+        // Active (filled) when speaker is ON.
+        setControlActive(btn, active: next, symbol: next ? "speaker.wave.2.fill" : "speaker.slash.fill")
     }
 
     @objc private func uikitOnVideoToggle() {
@@ -2537,10 +2596,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         applyCamEnabled(desired)
         let btn = view.viewWithTag(9005) as? UIButton
         tapFeedback(btn)
-        if let btn = btn {
-            let cfg = UIImage.SymbolConfiguration(pointSize: 26, weight: .medium)
-            btn.setImage(UIImage(systemName: desired ? "video.fill" : "video.slash.fill", withConfiguration: cfg), for: .normal)
-        }
+        // Active (filled) when the camera is ON.
+        setControlActive(btn, active: desired, symbol: desired ? "video.fill" : "video.slash.fill")
     }
 
     // [#1358 video parity 2026-05-25] "More" action sheet — re-wires the
@@ -2745,12 +2802,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         pip.isUserInteractionEnabled = true
 
         // Make sure controls + top bar render ABOVE the remote video. The
-        // controls/top-bar subviews were added before `remote`; bring them
-        // forward. Tags: 9002-9006 controls, 9004 end, 9000/9001 labels, top
-        // bar has no tag but holds minimizeBtn(no tag). We bring the known
-        // control + label views to front; the top bar is a plain UIView added
-        // early — bring every button/label tag we own to front.
-        for tag in [9000, 9001, 9002, 9003, 9004, 9005, 9006, 9040] {
+        // control bar (9008), name/status labels (9000/9001), participant
+        // count (9040) and the top bar were all added before `remote`; bring
+        // them forward. [UI rewrite 2026-05-25] The control buttons now live
+        // inside the controlBar stack (9008), so we front the bar — NOT the
+        // individual button tags (those are nested and fronting them is a
+        // no-op).
+        for tag in [9000, 9001, 9008, 9040] {
             if let v = view.viewWithTag(tag) { view.bringSubviewToFront(v) }
         }
         // Top bar (minimize chevron + connection bars + lock) — find via the
@@ -2958,8 +3016,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 scrim.heightAnchor.constraint(equalToConstant: 280),
             ])
             controlsScrim = scrim
-            // Re-front the controls/labels we own so they sit above the scrim.
-            for tag in [9000, 9001, 9002, 9003, 9004, 9005, 9006, 9040] {
+            // Re-front the control bar (9008) + labels so they sit above the
+            // scrim. [UI rewrite 2026-05-25] Buttons live inside the bar stack.
+            for tag in [9000, 9001, 9008, 9040] {
                 if let v = view.viewWithTag(tag) { view.bringSubviewToFront(v) }
             }
             if let bars = view.viewWithTag(9010), let topBar = bars.superview {
@@ -3020,10 +3079,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private func setControlsHidden(_ hidden: Bool, animated: Bool) {
         controlsHidden = hidden
         let targetAlpha: CGFloat = hidden ? 0 : 1
-        // Control tags we own. Skip the flip button (9006) if camera is off —
-        // it stays hidden independently.
-        var tags = [9000, 9001, 9002, 9003, 9004, 9005, 9040]
-        if session.camEnabled { tags.append(9006) }
+        // [UI rewrite 2026-05-25] Fade the whole control bar (9008) + the
+        // name/status labels + participant count + top bar + scrim together.
+        // The bar holds every button + its caption, so a single alpha on the
+        // stack hides/reveals all controls (and their captions) at once. The
+        // flip-camera cell stays hidden independently when the camera is off.
+        let tags = [9000, 9001, 9008, 9040]
         let topBar: UIView? = {
             if let bars = view.viewWithTag(9010) { return bars.superview }
             return nil
@@ -3032,9 +3093,6 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             for tag in tags { self.view.viewWithTag(tag)?.alpha = targetAlpha }
             topBar?.alpha = targetAlpha
             self.controlsScrim?.alpha = targetAlpha
-            // Sub-labels aren't tagged; they live as siblings — fade them with
-            // the controls by toggling on their owning buttons' alpha is enough
-            // visually since labels sit directly under each button.
         }
         if animated {
             UIView.animate(withDuration: 0.25, animations: work)
