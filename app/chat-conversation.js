@@ -25850,37 +25850,13 @@ export default function ChatConversationScreen() {
                 <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.select') || 'Selecionar'}</Text>
               </TouchableOpacity>
 
-              {/* Mark as unread (per-message). WhatsApp surfaces this on
-                  incoming messages only — rolling our last_read pointer back
-                  to before this bubble reopens the thread with an unread dot.
-                  Skip for own outbound messages (no semantics) and for tmp/
-                  unsynced rows (no server id yet). */}
-              {selectedMsg?.sender_email && selectedMsg.sender_email !== currentEmail && typeof selectedMsg?.id === 'number' && selectedMsg.id > 0 && !selectedMsg?.deleted_at && (
-                <TouchableOpacity
-                  style={styles.ctxSecondaryItem}
-                  onPress={async () => {
-                    const msgId = selectedMsg.id;
-                    setSelectedMsg(null);
-                    try {
-                      await api.chatMarkMessageUnread(conversationId, msgId);
-                      try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
-                      // Hint to the user the thread will reopen unread elsewhere
-                      safeAlert(
-                        t('chatConv.markedUnreadTitle') || 'Marcada como não lida',
-                        t('chatConv.markedUnreadMsg') || 'Esta conversa vai aparecer não lida na lista.'
-                      );
-                      // Back-nav so the user sees the chat list pick up the unread badge
-                      try { goBack?.(); } catch {}
-                    } catch (e) {
-                      console.warn('mark_message_unread error:', e);
-                    }
-                  }}
-                  activeOpacity={0.6}
-                >
-                  <IconMessageSquare size={18} color={colors.text} />
-                  <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.markUnread') || 'Marcar como não lida'}</Text>
-                </TouchableOpacity>
-              )}
+              {/* Per-message "mark as unread" REMOVED 2026-05-25 (dev/owner
+                  feedback: confusing — it rolled the whole thread's last_read
+                  back from a single bubble, fighting the ✓✓ read state). Mark
+                  as unread now lives only at the CONVERSATION level (long-press
+                  a chat in the list → "Marcar como não lida"), matching
+                  WhatsApp. Re-add here only if per-message semantics are
+                  designed properly. */}
 
               {/* Keep message (in disappearing chats) */}
               {disappearingTimer > 0 && selectedMsg?.id && typeof selectedMsg.id === 'number' && (
