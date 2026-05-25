@@ -1494,6 +1494,15 @@ function CallScreenInner() {
       },
       publishDefaults: {
         ...audioOpts.publishDefaults,
+        // [2026-05-25] Force VP9 to match the native pin. Without an explicit
+        // videoCodec LiveKit defaults to VP8 (defaultVideoCodec='vp8'), so the
+        // JS Room (web + mobile-fallback paths) was publishing VP8 while the
+        // native Room pins VP9 → codec downgrade / quality loss on any peer
+        // that negotiates down to the lowest common codec. backupCodec ships a
+        // VP8 simulcast stream for clients that can't decode VP9 (older Safari)
+        // so we keep universal compatibility without losing VP9 where it works.
+        videoCodec: 'vp9',
+        backupCodec: { codec: 'vp8', simulcast: true },
         videoSimulcastLayers: [
           { width: 320, height: 180, encoding: { maxBitrate: 150_000, maxFramerate: 15 } },
           { width: 640, height: 360, encoding: { maxBitrate: 500_000, maxFramerate: 25 } },
@@ -1876,6 +1885,16 @@ function CallScreenInner() {
         participant,
         videoTrack: publication.source === Track.Source.Camera ? track : (groupPeersRef.current.get(participant.identity)?.videoTrack || null),
       });
+      // [gap D4 2026-05-25] Ask the SFU for a fresh keyframe the moment a
+      // remote VIDEO track is subscribed. Otherwise the renderer waits for the
+      // next GOP (4-8s on a 30fps publisher) before the first decodable I-frame
+      // lands and the tile stays black/frozen until then. Guard to remote video
+      // only; optional chain is load-bearing (older SDKs lack requestKeyFrame).
+      try {
+        if (participant !== r.localParticipant && (track?.kind === 'video' || publication?.kind === 'video')) {
+          publication?.requestKeyFrame?.();
+        }
+      } catch {}
     });
 
     r.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
@@ -1903,6 +1922,16 @@ function CallScreenInner() {
         try {
           if (publication?.track?.kind === 'audio' || publication?.kind === 'audio') {
             _callDiagAppend('info', 'remote audio track unmuted', { call_id: callId, participant: participant.identity });
+          }
+        } catch {}
+        // [gap D4 2026-05-25] When a peer re-enables their camera the track
+        // unmutes but the SFU won't push an I-frame until the next GOP — the
+        // tile stays frozen on the last frame for 4-8s. Force a keyframe now so
+        // the renderer refreshes in <300ms. Remote VIDEO only; optional chain
+        // is load-bearing (older livekit-client builds lack requestKeyFrame).
+        try {
+          if (publication?.track?.kind === 'video' || publication?.kind === 'video') {
+            publication?.requestKeyFrame?.();
           }
         } catch {}
       }

@@ -72,10 +72,15 @@ export function buildAudioRoomOptions({ initialBitrate = 48000, videoCall = fals
       latency: 0.01,
     },
     // Publish defaults: DTX on so silent periods don't burn bandwidth.
-    // RED off (LiveKit defaults to RED-on at high bitrates, but RED doubles
-    // packet rate which is bad for cellular). FEC on so 1-packet loss
-    // doesn't cause audible artifacts. Bitrate starts mid-ladder and the
-    // adaptive loop nudges up/down based on connection stats.
+    // [2026-05-25] RED on as the baseline. RED roughly doubles the audio
+    // packet rate, but voice is tiny (~32-64 kbps mono) so the absolute
+    // overhead is negligible — and the redundant payload recovers single &
+    // short-burst packet loss that FEC alone misses, which is exactly the
+    // "voz cortando" users hear on cellular. The adaptive loop
+    // (applyAdaptiveBitrate) still toggles `red` per-level later, but we want
+    // resilience from the very first packet, not only after the 5s stats warm-up.
+    // FEC on so 1-packet loss doesn't cause audible artifacts. Bitrate starts
+    // mid-ladder and the adaptive loop nudges up/down based on connection stats.
     //
     // The actual keys LK respects are: `dtx`, `red`, `audioPreset` (or
     // `audioBitrate` for finer control). `audioPreset` accepts a preset
@@ -83,7 +88,7 @@ export function buildAudioRoomOptions({ initialBitrate = 48000, videoCall = fals
     // adaptive loop can re-publish with a different bitrate later.
     publishDefaults: {
       dtx: true,
-      red: false,
+      red: true,
       // FEC is implicit when using Opus and the SDP includes `useinbandfec=1`
       // (LiveKit emits this by default). We keep an explicit flag here so
       // the adaptive loop can flip it off if RED ever beats FEC in the wild.

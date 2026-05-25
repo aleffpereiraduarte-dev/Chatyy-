@@ -67,11 +67,12 @@ let _triggerIncomingCall = null;
 // Buffer for incoming call data when component isn't mounted yet (cold start from push)
 let _pendingCallTrigger = null;
 
-// [WAVE 161B 2026-05-24 group-answer gap] Detect a group call from the
-// incoming payload so the answer routes to the multi-cam grid (/call?groupCall=1
-// → group renderer) instead of the 1:1 surface. Backend stamps is_group='1'
-// + type='incoming_group_call' + group_name (chat.php:8204). Without this the
-// answerer of a group call only saw the first peer (1:1 layout).
+// [WAVE 161B 2026-05-24 group-answer gap; #1359 routing fix 2026-05-25]
+// Detect a group call from the incoming payload so the answer routes to the
+// LiveKit multi-cam grid at /group-call (grid + active-speaker + add-member)
+// instead of /call, which only renders a single full-screen remote video.
+// Backend stamps is_group='1' + type='incoming_group_call' + group_name.
+// Without this the answerer of a group call only saw the first peer.
 function _payloadIsGroupCall(d) {
   if (!d) return false;
   return d.is_group === '1' || d.is_group === true || d.is_group === 1
@@ -1350,9 +1351,19 @@ function IncomingCallListenerWeb() {
             const _routeGroup = _payloadIsGroupCall(updatedCall) || _payloadIsGroupCall(data);
             try { voipDiag('donavigate_reached', callId, { platform: Platform.OS, willPushJs: (Platform.OS === 'web' || Platform.OS === 'ios'), group: _routeGroup }); } catch {}
             if (Platform.OS === 'web' || Platform.OS === 'ios') {
-              const _grp = _routeGroup ? '&groupCall=1' : '';
               try { voipDiag('router_push_call', callId, { platform: Platform.OS, group: _routeGroup }); } catch {}
-              router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0${_grp}`);
+              if (_routeGroup) {
+                // [#1359 group-answer routing] /call.js renders only a single
+                // full-screen remote video — the answerer of a GROUP call saw
+                // just the first peer. /group-call.js has the LiveKit grid +
+                // active-speaker + add-member UI. The answerer is a joiner
+                // (NOT isCaller), and the backend call_id IS the LK room
+                // (`group_<conversationId>`), so pass it straight through as
+                // `room`; group-call.js mints its own token for that room.
+                router.push(`/group-call?conversation_id=${encodeURIComponent(finalConversationId)}&room=${encodeURIComponent(callId)}&video=${isVideo}`);
+              } else {
+                router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0`);
+              }
             }
             // Android: native CallActivity (Compose) still owns the UI.
           };
@@ -1588,8 +1599,15 @@ function IncomingCallListenerWeb() {
             // screen reports. Mobile must go ONLY through the native call UI.
             // Web still needs the JS push since there's no native CallKit there.
             if (Platform.OS === 'web') {
-              const _grp = (_payloadIsGroupCall(pending) || _payloadIsGroupCall(callStateRef.current)) ? '&groupCall=1' : '';
-              router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1${_grp}`);
+              const _routeGroup = _payloadIsGroupCall(pending) || _payloadIsGroupCall(callStateRef.current);
+              if (_routeGroup) {
+                // [#1359 group-answer routing] Route group answers to the
+                // LiveKit grid screen, not the 1:1 single-video /call. Answerer
+                // joins (no isCaller); backend call_id IS the LK room.
+                router.push(`/group-call?conversation_id=${encodeURIComponent(conversationId)}&room=${encodeURIComponent(callId)}&video=${isVideo}`);
+              } else {
+                router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
+              }
             }
             // (mobile already gets full native CallKit / IncomingCallActivity)
 
@@ -1801,10 +1819,17 @@ function IncomingCallListenerWeb() {
 
     // Navigate to call screen as callee. Capture group flag from currentCall
     // before callStateRef is nulled above (group-answer grid routing).
-    const _grpParam = _payloadIsGroupCall(currentCall) ? '&groupCall=1' : '';
+    const _routeGroup = _payloadIsGroupCall(currentCall);
     setTimeout(() => {
       try {
-        const url = `/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&callerVerified=${callerVerifiedParam}${_grpParam}`;
+        // [#1359 group-answer routing] Group answers → /group-call (LiveKit
+        // grid). /call.js only renders one remote video so the answerer of a
+        // group call saw a single peer. Answerer is a joiner (no isCaller);
+        // the backend call_id IS the LK room (`group_<conversationId>`), so
+        // pass it through as `room` — group-call.js mints its own token.
+        const url = _routeGroup
+          ? `/group-call?conversation_id=${encodeURIComponent(conversationId)}&room=${encodeURIComponent(callId)}&video=${isVideo}`
+          : `/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&callerVerified=${callerVerifiedParam}`;
         router.push(url);
       } catch {}
       // DON'T reset handlingRef here — keep it true to block any late decline

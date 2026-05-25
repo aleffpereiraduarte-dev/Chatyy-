@@ -7806,7 +7806,19 @@ export default function ChatConversationScreen() {
   const markReadUpTo = useCallback((msgId) => {
     if (!msgId || typeof msgId !== 'number' || msgId <= (lastReadAckRef.current || 0)) return;
     lastReadAckRef.current = msgId;
-    api.chatRead(conversationId, msgId).catch(() => {});
+    // [read-regress fix 2026-05-25] Don't swallow the failure. If this HTTP
+    // write never lands, the server's last_read_message_id never advances
+    // and is never retried, so on the peer's next cold load their read
+    // state REGRESSES (blue ticks revert to grey). On failure, enqueue a
+    // `chat_read` offline action so the offlineCache replay drains it on
+    // the next reconnect — same action type other call sites use
+    // (api.js chatRead, pushNotifications quick-reply).
+    api.chatRead(conversationId, msgId).catch(() => {
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        queueOfflineAction({ type: 'chat_read', conversation_id: conversationId }).catch(() => {});
+      } catch {}
+    });
     try {
       const mailWs = require('../services/websocket').default;
       const emailInline = user?.email || '';
@@ -10740,12 +10752,27 @@ export default function ChatConversationScreen() {
       const unsubDelivered = mailWs.on('message_delivered', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) === String(conversationId) && Array.isArray(data?.message_ids)) {
-          const deliveredSet = new Set(data.message_ids);
-          setMessages(prev => prev.map(m =>
-            deliveredSet.has(m.id) && m.status !== 'read'
-              ? { ...m, status: 'delivered', _delivered: true }
-              : m
-          ));
+          // [delivered-batch id-mismatch fix 2026-05-25] message_ids are
+          // server NUMERIC ids. The sender's own just-sent bubble is keyed
+          // `tmp_…` (string) or carries the CMI in _client_id, so a raw
+          // Set.has(m.id) never matched the optimistic row → ✓✓ never
+          // landed until reload. Mirror the single chat_delivered /
+          // message_read handlers: coerce ids to Number AND also match on
+          // the client_message_id the server echoes back.
+          const deliveredSet = new Set(data.message_ids.map(Number).filter(n => !Number.isNaN(n)));
+          const deliveredCids = new Set(
+            (Array.isArray(data?.client_message_ids) ? data.client_message_ids : [])
+              .map(String)
+          );
+          setMessages(prev => prev.map(m => {
+            if (m.status === 'read') return m;
+            const numId = Number(m.id);
+            const matched =
+              (!Number.isNaN(numId) && deliveredSet.has(numId)) ||
+              (m._client_id && deliveredCids.has(String(m._client_id))) ||
+              (m.client_message_id && deliveredCids.has(String(m.client_message_id)));
+            return matched ? { ...m, status: 'delivered', _delivered: true } : m;
+          }));
         }
       });
       wsUnsubs.push(unsubDelivered);
@@ -12075,6 +12102,15 @@ export default function ChatConversationScreen() {
           sender_email: currentEmail,
           created_at: optimisticMsg.created_at,
         });
+        // [double-send race fix 2026-05-25] The foreground OWNS the HTTP
+        // send for this row (api.chatSend fires below). CLAIM the row
+        // immediately so a concurrent sendWorker.poke() — fired on
+        // WS-auth / AppState-active / NetInfo events while our HTTP is
+        // still in flight — can't dequeueNext() this still-'queued' row
+        // and send it a SECOND time. dequeueNext filters out 'sending'
+        // rows, so marking it 'sending' here is the claim. On success we
+        // markSent below; on failure we leave it for the worker to retry.
+        await messageOutbox.markSending(msgId);
       } catch {}
     } else {
       try { await savePendingMessage(conversationId, pendingData); } catch {}
