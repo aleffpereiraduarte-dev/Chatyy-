@@ -3123,7 +3123,9 @@ func nativeCallDiag(_ event: String, _ callId: String, _ detail: String = "") {
 // a wider refactor for no real benefit — UIApplication.shared APIs are
 // main-thread-safe at runtime in practice and Apple's runtime check is
 // only enforced under Swift 6 strict concurrency.
-fileprivate func resolvePresentingViewController() -> UIViewController? {
+// [2026-05-25] internal (was fileprivate) so CallViewController.dismissIfPresented()
+// in the sibling file can resolve the root VC to find + dismiss the call screen.
+func resolvePresentingViewController() -> UIViewController? {
   let scenes = UIApplication.shared.connectedScenes
 
   func windowFrom(_ scene: UIWindowScene) -> UIWindow? {
