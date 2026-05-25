@@ -302,7 +302,12 @@ object CallNotificationService {
     cachedAvatarBitmap: Bitmap? = null,
     // [mute-call-ringtone, 2026-05-19] When true, route the notification
     // through the silent channel instead of the default ringing one.
-    muteRingtone: Boolean = false
+    muteRingtone: Boolean = false,
+    // [#1359 group-answer routing 2026-05-25] When true, the FSI + accept
+    // intents carry is_group=true so IncomingCallActivity.onAccept routes to
+    // GroupCallActivity (N-way grid) instead of CallActivity (1:1).
+    isGroup: Boolean = false,
+    groupName: String = ""
   ): Notification {
     val notificationId = callId.hashCode()
 
@@ -314,6 +319,8 @@ object CallNotificationService {
       putExtra("conversation_id", conversationId)
       putExtra("has_video", hasVideo)
       putExtra("caller_avatar", callerAvatarUrl)
+      putExtra("is_group", isGroup)
+      putExtra("group_name", groupName)
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
     }
     val fullScreenPendingIntent = PendingIntent.getActivity(
@@ -333,6 +340,8 @@ object CallNotificationService {
       putExtra("conversation_id", conversationId)
       putExtra("has_video", hasVideo)
       putExtra("caller_avatar", callerAvatarUrl)
+      putExtra("is_group", isGroup)
+      putExtra("group_name", groupName)
       putExtra("auto_accept", true)
       addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
     }

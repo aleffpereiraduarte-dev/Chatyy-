@@ -142,7 +142,8 @@
     -->
     <service
       android:name=".CallFirebaseMessagingService"
-      android:exported="false">
+      android:exported="false"
+      android:directBootAware="true">
       <intent-filter android:priority="10">
         <action android:name="com.google.firebase.MESSAGING_EVENT" />
       </intent-filter>
@@ -156,6 +157,7 @@
     <service
       android:name=".CallRingingService"
       android:exported="false"
+      android:directBootAware="true"
       android:foregroundServiceType="phoneCall" />
 
     <!--

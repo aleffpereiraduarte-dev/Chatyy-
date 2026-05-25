@@ -59,7 +59,13 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
-        if (type == "incoming_call") {
+        // [#1359 group-answer routing 2026-05-25] The backend sends group calls
+        // either as type="incoming_group_call" OR type="incoming_call" with
+        // is_group="1" (see chat.php chat_group_call / call_notify). Previously
+        // only "incoming_call" was handled here, so "incoming_group_call" fell
+        // through to the Expo delegate → a plain notification with NO ring and
+        // NO group UI. Treat both as a call.
+        if (type == "incoming_call" || type == "incoming_group_call") {
             val callId = data["call_id"] ?: data["room_id"] ?: return
             val callerEmail = data["caller_email"] ?: ""
             // [bug 2026-05-15 #978-2 root-fix] Previously defaulted to literal
@@ -114,8 +120,16 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             // the user enabled auto-pickup for a trusted contact). Skips
             // the ringing UI and goes STRAIGHT to CallActivity.
             val autoAccept = data["auto_accept"] == "1" || data["auto_accept"] == "true"
+            // [#1359 group-answer routing 2026-05-25] Honor is_group from the
+            // payload so the callee opens GroupCallActivity (N-way grid) instead
+            // of CallActivity (1:1). The flag is forwarded to CallRingingService
+            // → IncomingCallActivity which routes the accept to the right
+            // screen. group_name labels the ringing UI ("Chamada em grupo").
+            val isGroup = data["is_group"] == "1" || data["is_group"] == "true" ||
+                type == "incoming_group_call"
+            val groupName = data["group_name"]?.takeIf { it.isNotBlank() } ?: ""
 
-            Log.d(TAG, "Incoming call from $callerName ($callerEmail) callId=$callId video=$hasVideo avatar=${callerAvatar.isNotEmpty()} autoAccept=$autoAccept")
+            Log.d(TAG, "Incoming call from $callerName ($callerEmail) callId=$callId video=$hasVideo isGroup=$isGroup avatar=${callerAvatar.isNotEmpty()} autoAccept=$autoAccept")
 
             // [2026-05-21 FIX foreground-no-ring] Previously: skipped native
             // ringing if app was foreground, deferring to "JS Modal
@@ -161,6 +175,16 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                     putExtra("conversation_id", conversationId)
                     putExtra("has_video", hasVideo)
                     putExtra("caller_avatar", callerAvatar)
+                    // [Goal 1 ring-fix 2026-05-25] Forward the mute flag so the
+                    // FGS routes to the silent channel AND skips the
+                    // authoritative MediaPlayer ringtone.
+                    putExtra("mute_ringtone", muteRingtone)
+                    // [#1359 group-answer routing 2026-05-25] Forward group flag
+                    // + name. CallRingingService stashes them in the
+                    // IncomingCallActivity launch intent so onAccept routes to
+                    // GroupCallActivity.
+                    putExtra("is_group", isGroup)
+                    putExtra("group_name", groupName)
                 }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -247,6 +271,25 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                     callerAvatar,
                     muteRingtone
                 )
+                // [Goal 1 ring-fix 2026-05-25] CRITICAL: the FGS never started
+                // here (ForegroundServiceStartNotAllowedException / FGS-type
+                // policy / SecurityException), so CallRingingService.onStartCommand
+                // — which owns the authoritative MediaPlayer ringtone — never
+                // ran. Start the ringer directly from the fallback path so the
+                // phone STILL rings. IncomingRinger holds the player as a process
+                // singleton; it is stopped via CALL_END / decline (see below) and
+                // on a safety timeout. Ringer-mode + mute aware. Idempotent.
+                try {
+                    IncomingRinger.start(applicationContext, muteRingtone)
+                    // Safety stop after the standard ring window so the fallback
+                    // ringtone can't loop forever if no FGS/Activity ever owns
+                    // teardown (the FGS path stops it in onDestroy at 45s).
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        try { IncomingRinger.stop() } catch (_: Throwable) {}
+                    }, 45_000L)
+                } catch (t: Throwable) {
+                    Log.w(TAG, "fallback IncomingRinger.start failed: ${t.message}")
+                }
             }
         } else {
             // [notif-p0p1] Chat MessagingStyle: render chat_message /

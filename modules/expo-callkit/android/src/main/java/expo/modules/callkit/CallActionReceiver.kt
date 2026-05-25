@@ -75,6 +75,12 @@ class CallActionReceiver : BroadcastReceiver() {
         ExpoCallKitModule.emitCallAnswered(callId)
 
         // Tear down ring UI before launching CallActivity to avoid stacking.
+        // [Goal 1 ring-fix 2026-05-25] Stop the authoritative ringtone
+        // explicitly: stopRingingService → onDestroy stops it when the FGS was
+        // running, but in the FCM fallback path (FGS never started) the ringer
+        // was launched directly from CallFirebaseMessagingService, so its
+        // teardown isn't tied to the service lifecycle. Idempotent.
+        try { IncomingRinger.stop() } catch (_: Throwable) {}
         CallNotificationService.cancelNotification(context, callId)
         stopRingingService(context)
 
@@ -162,6 +168,11 @@ class CallActionReceiver : BroadcastReceiver() {
           Log.d(TAG, "ACTION_DECLINE_CALL suppressed for callId=$callId (accept in flight)")
           return
         }
+
+        // [Goal 1 ring-fix 2026-05-25] Stop the authoritative ringtone — same
+        // belt-and-suspenders as the accept path (covers the FCM-fallback
+        // branch where no FGS owns its lifecycle). Idempotent.
+        try { IncomingRinger.stop() } catch (_: Throwable) {}
 
         // Cancel the notification
         CallNotificationService.cancelNotification(context, callId)

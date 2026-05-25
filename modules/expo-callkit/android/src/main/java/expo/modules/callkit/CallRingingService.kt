@@ -66,6 +66,11 @@ class CallRingingService : Service() {
     private var callerName: String = ""
     private var conversationId: String = ""
     private var callerAvatar: String = ""
+    // [#1359 group-answer routing 2026-05-25] Group-call flag + label threaded
+    // from the FCM payload so the FSI/accept intents launch IncomingCallActivity
+    // with is_group=true → onAccept routes to GroupCallActivity.
+    private var isGroup: Boolean = false
+    private var groupName: String = ""
     // [STAGE-B 2026-05-20] Vibrator handle. Moved here from
     // IncomingCallActivity so vibration survives the user dismissing the
     // FSI without accepting (which previously killed the activity but
@@ -146,6 +151,13 @@ class CallRingingService : Service() {
         conversationId = intent.getStringExtra("conversation_id") ?: ""
         callerAvatar = intent.getStringExtra("caller_avatar") ?: ""
         val hasVideo = intent.getBooleanExtra("has_video", false)
+        // [Goal 1 ring-fix 2026-05-25] "Modo silencioso para ligações" — server
+        // sets mute_ringtone=1 (forwarded by CallFirebaseMessagingService /
+        // displayIncomingCall). Routes the notification through the silent twin
+        // channel AND suppresses our authoritative MediaPlayer ringtone below.
+        val muteRingtone = intent.getBooleanExtra("mute_ringtone", false)
+        isGroup = intent.getBooleanExtra("is_group", false)
+        groupName = intent.getStringExtra("group_name") ?: ""
 
         // [2026-05-15] Add to the Set FIRST (allows concurrent rings to be
         // reasoned about), then use compareAndSet on currentCallId so we
@@ -169,7 +181,10 @@ class CallRingingService : Service() {
             callerEmail,
             conversationId,
             hasVideo,
-            callerAvatar
+            callerAvatar,
+            muteRingtone = muteRingtone,
+            isGroup = isGroup,
+            groupName = groupName
         )
 
         // Start as foreground with the call notification.
@@ -203,7 +218,10 @@ class CallRingingService : Service() {
                         val updated = CallNotificationService.buildIncomingCallNotification(
                             this@CallRingingService,
                             safeCallId, callerName, callerEmail, conversationId,
-                            hasVideo, callerAvatar, bmp
+                            hasVideo, callerAvatar, bmp,
+                            muteRingtone = muteRingtone,
+                            isGroup = isGroup,
+                            groupName = groupName
                         )
                         val nm = getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager
                         nm.notify("call_notification", safeCallId.hashCode(), updated)
@@ -214,7 +232,11 @@ class CallRingingService : Service() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start foreground", e)
-            // Even if foreground fails, try to show the notification directly
+            // Even if foreground fails, try to show the notification directly.
+            // [Goal 1 ring-fix 2026-05-25] Also start the authoritative ringer
+            // here — the FGS failed but the process is alive long enough to play
+            // sound (the FCM fallback path also starts it; IncomingRinger.start
+            // is idempotent so the duplicate is a no-op).
             CallNotificationService.showIncomingCallNotification(
                 this,
                 safeCallId,
@@ -222,10 +244,25 @@ class CallRingingService : Service() {
                 hasVideo,
                 callerEmail,
                 conversationId,
-                callerAvatar
+                callerAvatar,
+                muteRingtone
             )
+            try { IncomingRinger.start(applicationContext, muteRingtone) } catch (_: Throwable) {}
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        // [Goal 1 ring-fix 2026-05-25] AUTHORITATIVE looping ringtone. Start it
+        // the instant the FGS is up — BEFORE the FCM service hands the call to
+        // Telecom (addNewIncomingCall fires AFTER startForegroundService
+        // returns). Our MediaPlayer owns the sound on STREAM_RING /
+        // USAGE_NOTIFICATION_RINGTONE, so the ring no longer depends on the
+        // NotificationChannel sound posting (which goes silent when FSI is
+        // denied, the FGS-from-background start is blocked, or the Telecom
+        // self-managed Connection grabs/changes voice-call audio focus).
+        // Ringer-mode + mute-flag aware inside IncomingRinger. Idempotent.
+        try { IncomingRinger.start(applicationContext, muteRingtone) } catch (t: Throwable) {
+            Log.w(TAG, "IncomingRinger.start failed: ${t.message}")
         }
 
         // [STAGE-B 2026-05-20] Vibrate from the FGS, not the Activity.
@@ -267,6 +304,12 @@ class CallRingingService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        // [Goal 1 ring-fix 2026-05-25] Stop + release the authoritative ringtone.
+        // onDestroy fires on every teardown path: answer (IncomingCallActivity
+        // .onAccept → stopRingingService), decline (CallActionReceiver →
+        // stopSelf), stopRingingForCall, and the 45s missed-call timeout. So
+        // this single stop() covers answer / decline / destroy / timeout.
+        try { IncomingRinger.stop() } catch (_: Throwable) {}
         // [STAGE-B 2026-05-20] Stop vibration alongside FGS teardown.
         try {
             vibrator?.cancel()

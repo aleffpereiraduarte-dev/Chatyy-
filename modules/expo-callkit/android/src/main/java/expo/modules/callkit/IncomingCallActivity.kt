@@ -44,6 +44,10 @@ class IncomingCallActivity : AppCompatActivity() {
   private var callerAvatar: String? = null
   private var conversationId: String? = null
   private var hasVideo: Boolean = false
+  // [#1359 group-answer routing 2026-05-25] When true, onAccept() routes to
+  // GroupCallActivity (N-way grid) instead of CallActivity (1:1).
+  private var isGroup: Boolean = false
+  private var groupName: String = ""
   private var avatarTextView: TextView? = null
   private var avatarSizePx: Int = 0
   private val mainHandler = Handler(Looper.getMainLooper())
@@ -81,6 +85,8 @@ class IncomingCallActivity : AppCompatActivity() {
     callerAvatar = intent.getStringExtra("caller_avatar") ?: ""
     conversationId = intent.getStringExtra("conversation_id") ?: ""
     hasVideo = intent.getBooleanExtra("has_video", false)
+    isGroup = intent.getBooleanExtra("is_group", false)
+    groupName = intent.getStringExtra("group_name") ?: ""
     val autoAccept = intent.getBooleanExtra("auto_accept", false)
 
     // Register receiver to close from notification action buttons
@@ -505,6 +511,11 @@ class IncomingCallActivity : AppCompatActivity() {
   }
 
   private fun stopRinging() {
+    // [Goal 1 ring-fix 2026-05-25] Stop the authoritative looping ringtone
+    // owned by the FGS / FCM fallback. onAccept() and onDecline() both call
+    // stopRinging() before tearing down, so this guarantees sound stops the
+    // instant the user acts even if the FGS teardown lags. Idempotent.
+    try { IncomingRinger.stop() } catch (_: Exception) {}
     try {
       ringtone?.stop()
       ringtone = null
@@ -710,6 +721,39 @@ class IncomingCallActivity : AppCompatActivity() {
     url: String?,
     token: String?
   ) {
+    // [#1359 group-answer routing 2026-05-25] If the incoming call is a group
+    // call, route the accept to GroupCallActivity (N-way grid) instead of the
+    // 1:1 CallActivity. Memory #1359: native must honor is_group from the FCM
+    // payload. GroupCallActivity tolerates an empty participants list —
+    // placeholder/remote tiles are created on RoomEvent.ParticipantConnected,
+    // so we don't need the roster up-front (the LK Room discovers it). The
+    // room name is the callId (matches the SFU room the backend minted).
+    if (isGroup) {
+      try {
+        val gIntent = Intent(this, GroupCallActivity::class.java).apply {
+          addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK
+              or Intent.FLAG_ACTIVITY_SINGLE_TOP
+              or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+              or Intent.FLAG_ACTIVITY_CLEAR_TOP
+          )
+          putExtra(GroupCallActivity.EXTRA_ROOM_NAME, id)
+          putExtra(GroupCallActivity.EXTRA_HAS_VIDEO, video)
+          // Receiver joins an existing room → not the outgoing/ringback role.
+          putExtra(GroupCallActivity.EXTRA_IS_OUTGOING, false)
+          // Empty roster; tiles populate via ParticipantConnected events.
+          putExtra(GroupCallActivity.EXTRA_PARTICIPANTS_JSON, "[]")
+          if (!url.isNullOrEmpty()) putExtra(GroupCallActivity.EXTRA_LK_URL, url)
+          if (!token.isNullOrEmpty()) putExtra(GroupCallActivity.EXTRA_LK_TOKEN, token)
+          ExpoCallKitModule.enrichIntentWithAuth(applicationContext, this)
+        }
+        startActivity(gIntent)
+        Log.d("IncomingCallActivity", "[#1359] routed accept to GroupCallActivity room=$id")
+      } catch (t: Throwable) {
+        Log.e("IncomingCallActivity", "startGroupCallActivity failed: ${t.message}")
+      }
+      return
+    }
     try {
       val intent = Intent(this, CallActivity::class.java).apply {
         // [#1172 native-call-in-background fix, 2026-05-19] Same foreground-
