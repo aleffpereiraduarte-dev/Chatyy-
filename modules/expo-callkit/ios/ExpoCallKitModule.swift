@@ -2286,6 +2286,7 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     let actionUUID = action.callUUID
     let callId = module?.callIdForUUID(actionUUID) ?? actionUUID.uuidString
     let snapshot = Self.collectAnswerSnapshot(callId: callId, uuid: actionUUID)
+    nativeCallDiag("cxanswer_received", callId, "video=\(snapshot.hasVideo) caller=\(snapshot.callerEmail)")
 
     // [2026-05-16 Stage 2 native WS signaling] Fire call_answered from
     // native immediately after CallKit hands us the answer action. This
@@ -2320,6 +2321,7 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // NativeCallRoom.currentRoom() / attachDelegate() and not re-connect.
     if NativeCallRoom.shared.isPreconnected(callId: callId) {
       print("[ExpoCallKit] Answer: Room preconnected for \(callId) — skipping token fetch")
+      nativeCallDiag("path_preconnect", callId)
       DispatchQueue.main.async {
         Self.presentNativeCallVC(callId: callId,
                                  callerName: snapshot.callerName,
@@ -2346,6 +2348,7 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
 
     if let cached = cachedToken {
       print("[ExpoCallKit] Answer: using cached LK token for \(callId)")
+      nativeCallDiag("path_cached", callId)
       DispatchQueue.main.async {
         Self.presentNativeCallVC(callId: callId,
                                  callerName: snapshot.callerName,
@@ -2382,6 +2385,7 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
         }
       }
       if let result = result {
+        nativeCallDiag("path_fetch_ok", callId)
         await MainActor.run {
           Self.presentNativeCallVC(callId: callId,
                                    callerName: snapshot.callerName,
@@ -2392,6 +2396,7 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
                                    conversationId: snapshot.conversationId)
         }
       } else {
+        nativeCallDiag("path_fetch_fail", callId, "\(lastError?.localizedDescription ?? "unknown")")
         print("[ExpoCallKit] LK token fetch failed after 4 attempts: \(lastError ?? NSError()) — ending call")
         await MainActor.run {
           moduleRef?.endCallActionWithReason(callId: callId, reasonRaw: "failed")
@@ -2455,8 +2460,10 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // task #1171 complaint. The state cleanup in callEnded / endCallAction
     // already happened on the main thread synchronously, so this check is
     // race-free vs. the present that is also on main.
+    nativeCallDiag("presentVC_entry", callId, "hasVideo=\(hasVideo)")
     guard ExpoCallKitModule.isCallStillActive(callId: callId) else {
       print("[ExpoCallKit] presentNativeCallVC: call \(callId) already ended — skipping stale present")
+      nativeCallDiag("presentVC_stale_abort", callId)
       return
     }
     // [2026-05-24 hybrid v2 REVERTED] The hybrid v2 attempt suppressed the
@@ -2478,10 +2485,12 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       // peer / network / hangup during the cold-start wait window.
       guard ExpoCallKitModule.isCallStillActive(callId: callId) else {
         print("[ExpoCallKit] presentNativeCallVC(retry): call \(callId) ended during wait — abort")
+        nativeCallDiag("presentVC_ended_during_wait", callId)
         return
       }
       // isOutgoing=false: we're presenting because the callee just answered,
       // not because they initiated. call_answered already fired up in CXAnswer.
+      nativeCallDiag("callvc_present_called", callId)
       CallViewController.present(
         from: root,
         callId: callId,
@@ -2495,9 +2504,11 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       )
     }
     if let root = resolvePresentingViewController() {
+      nativeCallDiag("presentVC_root_found", callId)
       presentBlock(root)
     } else {
       print("[ExpoCallKit] presentNativeCallVC: no presenting VC yet (cold-start) — retrying")
+      nativeCallDiag("presentVC_no_root_retry", callId)
       retryPresent(reason: "presentNativeCallVC:\(callId)", block: presentBlock)
     }
   }
@@ -3000,6 +3011,37 @@ extension ExpoCallKitModule: NativeCallRoomListener {
       ])
     }
   }
+}
+
+// MARK: - Native answer-path diagnostics
+//
+// [2026-05-24] The iOS answer flow is pure Swift (CXAnswer → presentNativeCallVC
+// → CallViewController). Its os_log/print lines only show in Xcode/Console.app —
+// useless when the user is on TestFlight and we have no Mac attached. This
+// fire-and-forget POST mirrors each step to /api/voip_diag.php so we can read
+// EXACTLY where the answer UI dies from the server (voip_diag.log). Drops
+// silently on any error — must never block the call flow.
+func nativeCallDiag(_ event: String, _ callId: String, _ detail: String = "") {
+    let userEmail: String = {
+        if let ud = UserDefaults(suiteName: kAppGroupId),
+           let e = ud.string(forKey: "user_email"), !e.isEmpty { return e }
+        return ""
+    }()
+    guard let url = URL(string: "https://chatyy.com.br/api/voip_diag.php") else { return }
+    var req = URLRequest(url: url)
+    req.httpMethod = "POST"
+    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    req.timeoutInterval = 4
+    let payload: [String: Any] = [
+        "event": "native_ios_\(event)",
+        "call_id": callId,
+        "user": userEmail,
+        "detail": detail,
+        "platform": "ios-native",
+        "ts": Int(Date().timeIntervalSince1970 * 1000),
+    ]
+    req.httpBody = try? JSONSerialization.data(withJSONObject: payload, options: [])
+    URLSession.shared.dataTask(with: req).resume()
 }
 
 // MARK: - Window/RootVC resolver

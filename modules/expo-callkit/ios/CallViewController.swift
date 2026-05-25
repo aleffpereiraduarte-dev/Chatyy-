@@ -2319,8 +2319,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // silently no-op (already presenting, view not in scene) and the
         // user sees nothing. Now any drop logs visibly in Console.app.
         NSLog("[CallVC.present] about to present top=\(type(of: top)) callId=\(callId)")
+        nativeCallDiag("callvc_about_to_present", callId, "top=\(type(of: top))")
         top.present(vc, animated: true, completion: {
-            NSLog("[CallVC.present] completion fired callId=\(callId) window=\(vc.view.window != nil)")
+            let attached = vc.view.window != nil
+            NSLog("[CallVC.present] completion fired callId=\(callId) window=\(attached)")
+            nativeCallDiag("callvc_present_completion", callId, "attached_to_window=\(attached)")
         })
     }
 
