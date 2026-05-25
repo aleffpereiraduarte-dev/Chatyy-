@@ -2503,14 +2503,12 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
         conversationId: conversationId
       )
     }
-    if let root = resolvePresentingViewController() {
-      nativeCallDiag("presentVC_root_found", callId)
-      presentBlock(root)
-    } else {
-      print("[ExpoCallKit] presentNativeCallVC: no presenting VC yet (cold-start) — retrying")
-      nativeCallDiag("presentVC_no_root_retry", callId)
-      retryPresent(reason: "presentNativeCallVC:\(callId)", block: presentBlock)
-    }
+    // [2026-05-25] Gate on app-active. Answering from the CallKit system UI on
+    // the lock screen / background fires this while the app is still transitioning
+    // to foreground — a present() there is silently dropped by UIKit. presentWhenActive
+    // presents now if active, else on the next didBecomeActive. Fixes "atendo e não
+    // abre nada" (the warm/app-open path stays single-frame since state is active).
+    presentWhenActive(reason: "presentNativeCallVC:\(callId)", block: presentBlock)
   }
 
   // [Stage #996 outgoing native flow, 2026-05-17] CXStartCallAction is the
@@ -3150,4 +3148,56 @@ fileprivate func retryPresent(reason: String,
   }
   // First attempt synchronous so warm path stays single-frame.
   tick(attempts)
+}
+
+// [2026-05-25 ANSWER-UI ROOT FIX] Present the call screen ONLY once the app is
+// foreground-active. Confirmed by Apple docs + Twilio video-quickstart #354 +
+// Kodeco: when the user answers from the CallKit SYSTEM UI on the lock screen
+// or with the app backgrounded, CXAnswerCallAction fires while the app is still
+// transitioning to foreground (scene state .background / .foregroundInactive).
+// UIKit SILENTLY DROPS a present() in that window — the VC never attaches to a
+// window, so the user "answers and nothing opens". resolvePresentingViewController
+// happily returns a VC from an inactive scene, so retryPresent alone never fixes
+// it (it presents onto a not-yet-active scene). The robust pattern is: gate on
+// UIApplication.applicationState == .active; if we're not active yet, wait for
+// the next didBecomeActive and present then. Warm path (app already open, e.g.
+// outgoing call or app in foreground) stays single-frame because state is active.
+fileprivate func presentWhenActive(reason: String, block: @escaping (UIViewController) -> Void) {
+  var done = false
+  let doPresent: () -> Void = {
+    if done { return }
+    done = true
+    if let vc = resolvePresentingViewController() {
+      block(vc)
+    } else {
+      retryPresent(reason: reason, block: block)
+    }
+  }
+  if UIApplication.shared.applicationState == .active {
+    print("[ExpoCallKit] presentWhenActive(\(reason)): app already active — present now")
+    nativeCallDiag("presentVC_active_now", reason)
+    doPresent()
+    return
+  }
+  // App still transitioning to foreground (answered from lock screen / background).
+  print("[ExpoCallKit] presentWhenActive(\(reason)): app NOT active (state=\(UIApplication.shared.applicationState.rawValue)) — deferring to didBecomeActive")
+  nativeCallDiag("presentVC_waiting_active", reason, "state=\(UIApplication.shared.applicationState.rawValue)")
+  var token: NSObjectProtocol?
+  token = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
+                                                 object: nil, queue: .main) { _ in
+    if let t = token { NotificationCenter.default.removeObserver(t); token = nil }
+    print("[ExpoCallKit] presentWhenActive(\(reason)): didBecomeActive — presenting")
+    nativeCallDiag("presentVC_became_active", reason)
+    // Tiny delay so the window scene is fully attached before present.
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: doPresent)
+  }
+  // Safety net: if the app was already active before we attached the observer
+  // (race), or didBecomeActive never fires, force the present after 2s.
+  DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+    if !done && UIApplication.shared.applicationState == .active {
+      if let t = token { NotificationCenter.default.removeObserver(t); token = nil }
+      nativeCallDiag("presentVC_active_safety_net", reason)
+      doPresent()
+    }
+  }
 }
