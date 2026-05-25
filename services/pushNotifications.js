@@ -113,6 +113,42 @@ async function loadModules() {
           };
         }
 
+        // Find My Friends — silent WAKE-PING. Backend (chat_friend_location_ping)
+        // fires a data-only push when a viewer's map sees this user's pin stale.
+        // Re-run getCurrentPosition + POST chat_friend_location_share_update so
+        // the sharer's location refreshes even when the app is backgrounded (the
+        // WS path LiveLocationPingListener only works when WS is connected). No
+        // visible notification. 60s self-throttle to protect APNs quota.
+        if (data?.type === 'location_ping') {
+          (async () => {
+            try {
+              const now = Date.now();
+              if (now - (globalThis.__chatyyLastLocPing || 0) < 60000) return;
+              globalThis.__chatyyLastLocPing = now;
+              const Location = await import('expo-location');
+              const fg = await Location.getForegroundPermissionsAsync?.().catch(() => null);
+              if (fg && fg.status !== 'granted') return;
+              const loc = await Location.getCurrentPositionAsync({
+                accuracy: Location.Accuracy?.Balanced ?? 3,
+              }).catch(() => null);
+              if (!loc?.coords) return;
+              const api = require('./api');
+              await api.apiCall('chat_friend_location_share_update', {
+                latitude: loc.coords.latitude,
+                longitude: loc.coords.longitude,
+                accuracy: loc.coords.accuracy || null,
+                heading: loc.coords.heading ?? null,
+                speed: loc.coords.speed ?? null,
+              }, 'POST').catch(() => {});
+            } catch {}
+          })();
+          return {
+            shouldShowAlert: false,
+            shouldPlaySound: false,
+            shouldSetBadge: false,
+          };
+        }
+
         // Login challenge: show verification prompt on existing device
         if (data?.type === 'login_challenge' && data?.challenge_id) {
           try {
