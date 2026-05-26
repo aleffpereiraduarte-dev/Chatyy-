@@ -1339,48 +1339,32 @@ class CallActivity : ComponentActivity() {
     } catch (t: Throwable) {
       Log.w(TAG, "audio capture defaults reflective set failed: ${t.message}")
     }
-    // [WAVE 115, 2026-05-21] Relay-first ICE: set iceTransportPolicy=RELAY on
-    // RoomOptions so the very first connect always goes over TURN.
-    // LK Android exposes rtcConfig (RTCConfiguration) on RoomOptions reflectively.
-    try {
-      val roClass = roomOptions.javaClass
-      val rtcField = roClass.declaredFields.firstOrNull {
-        it.name.contains("rtcConfig", ignoreCase = true) ||
-        it.name.contains("rtcConfiguration", ignoreCase = true) ||
-        it.name.contains("iceConfig", ignoreCase = true)
-      }
-      if (rtcField != null) {
-        rtcField.isAccessible = true
-        val rtcCfg = rtcField.get(roomOptions)
-        if (rtcCfg != null) {
-          val cfgCls = rtcCfg.javaClass
-          val policyField = cfgCls.declaredFields.firstOrNull {
-            it.name.contains("iceTransportPolicy", ignoreCase = true) ||
-            it.name.contains("transportPolicy", ignoreCase = true)
-          }
-          if (policyField != null) {
-            policyField.isAccessible = true
-            // IceTransportPolicy.RELAY enum — try to find RELAY constant
-            val enumType = policyField.type
-            val relayConst = if (enumType.isEnum) {
-              enumType.enumConstants?.firstOrNull { it.toString().equals("RELAY", true) }
-            } else null
-            if (relayConst != null) {
-              policyField.set(rtcCfg, relayConst)
-              Log.d(TAG, "[relay-first] iceTransportPolicy=RELAY set on RoomOptions.rtcConfig")
-            } else {
-              Log.d(TAG, "[relay-first] RELAY enum not found on ${enumType.name} — relay phase skipped")
-            }
-          } else {
-            Log.d(TAG, "[relay-first] no iceTransportPolicy field on RTCConfig — skip")
-          }
-        }
-      } else {
-        Log.d(TAG, "[relay-first] no rtcConfig field on RoomOptions — relay phase skipped")
-      }
-    } catch (t: Throwable) {
-      Log.w(TAG, "[relay-first] iceTransportPolicy reflective set failed: ${t.message}")
-    }
+    // [WAVE 115, 2026-05-21] Relay-first ICE: originally set
+    // iceTransportPolicy=RELAY on RoomOptions so the very first connect always
+    // went over TURN.
+    //
+    // [DISABLED 2026-05-25 — call-connect root-cause] Relay-first is now
+    // HARMFUL and is the biggest contributor to slow/flaky connect:
+    //   1. The reason relay-first was added (LAN/docker/tailscale IPs leaking
+    //      into the SFU's ICE candidates) was ALREADY fixed independently at
+    //      the SFU via livekit.yaml `rtc.interfaces.includes:[eth0]` — the SFU
+    //      now advertises ONLY the public IP 217.216.67.99, whose UDP
+    //      50000-50100 + TCP 7881 candidates are open and reachable.
+    //   2. Forcing RELAY makes the client DISCARD those working direct
+    //      candidates and depend entirely on a TURN relay. But the only TURN
+    //      LiveKit advertises to the client is its embedded `turns:5349`, which
+    //      is BROKEN (external_tls:true with no TLS terminator + the cert SAN is
+    //      livekit.chatyy.com.br, not turn.chatyy.com.br) — so the relay
+    //      allocation fails and the Room can't reach Connected until LiveKit's
+    //      own ICE-restart / our attemptConnect backoff eventually retries.
+    //      That stall is the multi-second "slow to connect" + flaky audio.
+    // Leaving iceTransportPolicy at its default (ALL) lets the call use the
+    // working direct SFU path immediately. The Phase-2 restartIce() below
+    // becomes a harmless no-op (we're already on ALL). When the backend TURN
+    // (coturn turn:3478, verified working) is needed for strict-NAT clients,
+    // LiveKit still gathers relay candidates under ALL — they just aren't
+    // forced as the ONLY option.
+    Log.d(TAG, "[relay-first] DISABLED — using default iceTransportPolicy=ALL (direct SFU path + TURN fallback)")
     val r = LiveKit.create(applicationContext, options = roomOptions)
     room = r
     LiveKitRoomHolder.set(r)

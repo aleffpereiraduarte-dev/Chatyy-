@@ -18,7 +18,7 @@ import { IconRefresh } from './Icons';
 // to a centered static overlay. The carousel + preset switching still
 // works for UI testing without the binding.
 import FaceFilterOverlay from './status/FaceFilterOverlay';
-import { FACE_FILTER_PRESETS } from './status/FaceFilters';
+import { FACE_FILTER_PRESETS, getMediaPipe } from './status/FaceFilters';
 
 // Haptics (graceful — `expo-haptics` may not be present in every build)
 let _Haptics = null;
@@ -521,16 +521,54 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       if (__DEV__) console.warn('[StatusCamera] takePhoto called with null cameraRef');
       return;
     }
+    // ── CAPTURE-WITH-EFFECT FREEZE FIX (2026-05-25) ──
+    // Root cause (native, documented in ExpoFaceLandmarkerModule.swift L33-49 +
+    // ExpoFaceLandmarkerModule.kt L47-57): the AR face filter runs its OWN
+    // AVCaptureSession (iOS) / CameraX bindToLifecycle (Android) on the FRONT
+    // lens to feed MediaPipe/Vision landmarks. The OS only lets ONE session own
+    // a camera at a time. While an effect is active and the user presses the
+    // shutter, expo-camera's takePictureAsync contends with that second session:
+    //   • Android: the module's unbindAll()/bindToLifecycle() race steals the
+    //     surface mid-capture → takePictureAsync never resolves → ANR/freeze.
+    //   • iOS: the still-capture request stalls waiting for a device the Vision
+    //     session is holding → spinner forever ("trava na hora de tirar a foto").
+    // Pure-JS / OTA mitigation: STOP the landmarker before capturing so the
+    // front lens is uncontended, then race takePictureAsync against a hard
+    // timeout so the shutter ALWAYS resolves (never hangs). The effect is not
+    // burned in here anyway — it rides forward as `face_filter` key — so
+    // dropping the live overlay for the capture instant is invisible to the user.
+    const _arActive = (FACE_FILTER_PRESETS[arFilterIdx]?.key &&
+                       FACE_FILTER_PRESETS[arFilterIdx].key !== 'none');
+    if (_arActive) {
+      try { getMediaPipe()?.stopFaceLandmarker?.(); } catch (e) {
+        if (__DEV__) console.warn('[StatusCamera] stopFaceLandmarker pre-capture failed:', e?.message);
+      }
+      // Yield one frame so the native session actually tears down and releases
+      // the camera before expo-camera asks for the still.
+      await new Promise(r => setTimeout(r, 0));
+    }
     let photo = null;
     try {
-      photo = await cameraRef.current.takePictureAsync({ quality: 0.92, exif: false });
+      // Race the capture against a 4s ceiling. If the native session is still
+      // wedged (older binary without the camera-share fix), reject so the
+      // outer guard surfaces a retry instead of leaving the user on a frozen
+      // shutter. 4s is well above a healthy capture (<800ms) yet short enough
+      // that a stuck capture doesn't read as a hard freeze.
+      photo = await Promise.race([
+        cameraRef.current.takePictureAsync({ quality: 0.92, exif: false }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('capture-timeout')), 4000)),
+      ]);
     } catch (e) {
       console.warn('[StatusCamera] takePictureAsync threw:', e?.message || e);
+      // Capture failed while we were on the camera screen — restart the
+      // landmarker so the live overlay tracking resumes for the retry.
+      if (_arActive) { try { getMediaPipe()?.startFaceLandmarker?.({ fps: 20 }); } catch {} }
       try { Alert.alert('Erro', 'Falha ao tirar foto. Tenta novamente.'); } catch {}
       return;
     }
     if (!photo || !photo.uri) {
       console.warn('[StatusCamera] takePictureAsync returned empty photo');
+      if (_arActive) { try { getMediaPipe()?.startFaceLandmarker?.({ fps: 20 }); } catch {} }
       try { Alert.alert('Erro', 'Não foi possível capturar a foto. Tenta novamente.'); } catch {}
       return;
     }

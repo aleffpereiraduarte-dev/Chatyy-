@@ -947,24 +947,21 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 adaptiveStream: true,
                 dynacast: true
             )
-            // Set iceTransportPolicy = .relay via reflection (not all LK Swift
-            // versions expose it as a primary constructor param, but the field
-            // has been stable since LK Swift 2.0 on RTCConfiguration).
-            do {
-                let mirror = Mirror(reflecting: roomOpts)
-                for child in mirror.children {
-                    if let label = child.label, label.lowercased().contains("rtcconfig") {
-                        if var rtcCfg = child.value as? AnyObject {
-                            let sel = NSSelectorFromString("setIceTransportPolicy:")
-                            if rtcCfg.responds(to: sel) {
-                                // RTCIceTransportPolicyRelay = 1
-                                rtcCfg.perform(sel, with: NSNumber(value: 1))
-                                NSLog("[CallVC] relay-first: iceTransportPolicy=relay set via RTCConfig")
-                            }
-                        }
-                    }
-                }
-            }
+            // [DISABLED 2026-05-25 — call-connect root-cause] Relay-first ICE
+            // (iceTransportPolicy=.relay) is now HARMFUL and the biggest cause
+            // of slow/flaky connect. The LAN-IP candidate leak it was added to
+            // work around is already fixed at the SFU (livekit.yaml
+            // rtc.interfaces.includes:[eth0] → only the public IP is
+            // advertised, whose UDP 50000-50100 + TCP 7881 are open). Forcing
+            // .relay makes the client discard those working direct candidates
+            // and depend on LiveKit's advertised embedded TURN (turns:5349),
+            // which is BROKEN (external_tls:true with no TLS terminator + cert
+            // SAN mismatch) → relay alloc fails → Room can't reach Connected
+            // until a retry, producing the multi-second stall. Leaving the
+            // policy at default (.all) connects via the direct SFU path
+            // immediately; TURN is still gathered as a fallback under .all.
+            // The Phase-2 restartIce() in didConnect becomes a harmless no-op.
+            NSLog("[CallVC] relay-first DISABLED — using default iceTransportPolicy=all (direct SFU path + TURN fallback)")
             let r = Room(delegate: self, roomOptions: roomOpts)
             self.room = r
             // [#1207 NativeCallRoom REAL, 2026-05-19] Publish to the singleton
