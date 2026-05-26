@@ -4005,7 +4005,17 @@ function CallScreenInner() {
     }
   }
   if (peerRinging && !peerConnected) statusText = t('call.ringing') || 'Chamando...';
-  if (connectionFailed) statusText = t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.';
+  if (connectionFailed) {
+    // [2026-05-26] Quem LIGA e nunca teve o outro lado conectado = o destino
+    // está offline / não atendeu — NÃO é falha de conexão do caller. Mostrar
+    // "Não foi possível conectar" culpa a rede de quem liga e assusta. Mostra
+    // a versão graciosa (igual WhatsApp "Sem resposta / Indisponível"). O
+    // "Não foi possível conectar" fica só pro caso real de falha de mídia
+    // depois que o outro JÁ tinha atendido.
+    statusText = (isCaller && !peerConnected)
+      ? (t('call.peerNotReachable') || 'Indisponível no momento. Tente de novo.')
+      : (t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.');
+  }
   else if (errorMsg) statusText = errorMsg;
   else if (ended) statusText = t('call.ended') || 'Chamada encerrada';
   else if (showReconnectBanner && !peerConnected) statusText = t('call.reconnecting') || 'Reconectando...';
