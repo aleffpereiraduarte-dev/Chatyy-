@@ -12,6 +12,40 @@ const getLazyClearChatCache = async () => {
   return clearChatCache;
 };
 
+// ── P0 PRIVACY: wipe the native SQLite chat store on account change ──────────
+// [2026-05-26] Root cause of "new account sees the previous account's
+// conversations + pinned": the WhatsApp-grade local chat store lives in a
+// SINGLE, NON-account-scoped SQLite file (`chatyy.db`) owned by services/db.js
+// (+ services/localDb.js). clearChatCache() (the only chat-clear the login
+// paths called) explicitly does NOT touch SQLite on native — see its comment
+// "SQLite cleared separately via dbClearAll()" — yet NOTHING ever called
+// dbClearAll()/clearLocalDb() during login/switch/signup. So account B read
+// account A's rows straight out of the `messages`/`conversations` tables.
+//
+// This helper wipes those tables (history, sync watermarks, the
+// chat_full_bootstrap:<email> gate, contacts, the outbox/pending of the
+// OUTGOING account). It is deliberately gated by the caller on
+// "email actually changed (or no prior session)" so a same-user Face-ID /
+// QR re-login keeps its local cache + outbox intact — that gate is what makes
+// this safe against the 2026-05-11 "aggressive nuke broke Android send"
+// regression: we only drop the outbox of the account we're leaving, never of
+// the account that's continuing.
+async function clearLocalChatStore() {
+  if (Platform.OS === 'web') return; // web uses IDB/SW, nuked elsewhere
+  // db.js owns messages/conversations/pending_messages — primary leak surface.
+  try {
+    const dbMod = require('../services/db');
+    if (typeof dbMod.dbClearAll === 'function') await dbMod.dbClearAll();
+  } catch {}
+  // localDb.js wipes the same tables PLUS sync_state_kv (drops the
+  // chat_full_bootstrap:<email> + chat_full_synced:<conv> watermarks so the
+  // new account re-runs its own first-time history bootstrap) and offline_queue.
+  try {
+    const localDb = require('../services/localDb');
+    if (typeof localDb.clearLocalDb === 'function') await localDb.clearLocalDb();
+  } catch {}
+}
+
 // Account-switch paint race: clearChatCache() is async, but React happily
 // renders the new user's chat list BEFORE the clear resolves. Without
 // gating, the sync getters in smartChatCache serve the previous user's
@@ -310,6 +344,11 @@ async function clearAllPerAccountCaches() {
   // 1. Standard MMKV cache + chat-cache module (lazy to break cycle)
   try { await clearAllCache(); } catch {}
   try { const fn = await getLazyClearChatCache(); await fn(); } catch {}
+  // 1a. P0 PRIVACY: native SQLite chat store. clearChatCache() above does NOT
+  // touch SQLite on native (see its "SQLite cleared separately via
+  // dbClearAll()" comment) — without this explicit wipe, a logout left the
+  // messages/conversations tables on disk for the next account to read.
+  try { await clearLocalChatStore(); } catch {}
 
   // 1b. Avatar disk cache (documentDirectory/avatar-saved). Avatars are
   // user-visible identifiers — leaving them on disk after logout lets
@@ -846,6 +885,9 @@ export function AuthProvider({ children }) {
       const _isSwitch = !!_prevEmail && _prevEmail !== _newEmail;
       if (!_prevEmail || _prevEmail !== _newEmail) {
         await clearAccountScopedMmkv();
+        // P0 PRIVACY: also wipe the native SQLite chat store so the new
+        // identity never reads the previous account's messages/conversations.
+        await clearLocalChatStore();
       }
       // Account swap: gate any sync getter for the next 500ms. We used to
       // also drop user to null here so chat screens unmounted before the new
@@ -959,6 +1001,8 @@ export function AuthProvider({ children }) {
     const _isSwitch = !!_prevEmail && _prevEmail !== _newEmail;
     if (!_prevEmail || _prevEmail !== _newEmail) {
       await clearAccountScopedMmkv();
+      // P0 PRIVACY: wipe native SQLite chat store on identity change.
+      await clearLocalChatStore();
     }
     // Same paint-race fence as login() — see lockCacheScope. setUser(null)
     // removed (root cause 3 of reconnect storm fix 2026-05-19): the dual
@@ -1051,6 +1095,12 @@ export function AuthProvider({ children }) {
     const shouldNuke = isAccountSwitch || !prevEmail;
     if (shouldNuke) {
       await clearAccountScopedMmkv();
+      // P0 PRIVACY: wipe native SQLite chat store too. This is the path the
+      // phone-signup / QR-login of a BRAND-NEW account takes (prevEmail='' →
+      // shouldNuke=true), so without this a new account on a device that had a
+      // previous user kept reading the previous user's SQLite conversations +
+      // pinned. (Native-only; the web nuke is handled just below.)
+      await clearLocalChatStore();
       // WEB: clearAccountScopedMmkv() doesn't reach the SW CacheStorage or
       // IndexedDB. On an account switch (or cold start onto a different
       // identity) the SW would otherwise serve the previous account's cached
@@ -1118,6 +1168,12 @@ export function AuthProvider({ children }) {
       // clearAllPerAccountCaches() because that also nuked SQLite outbox
       // + AsyncStorage `u:*` keys and broke Android send (2026-05-11).
       await clearAccountScopedMmkv();
+      // P0 PRIVACY: a brand-new account is, by definition, a different
+      // identity than whoever (if anyone) used this device before — wipe the
+      // native SQLite chat store so the new account never inherits the
+      // previous user's conversations / pinned. Safe here because there is no
+      // legitimate local chat history for a just-created account to lose.
+      await clearLocalChatStore();
       setCacheUser(r.data?.email);
       setUser(r.data);
       loadAccounts();

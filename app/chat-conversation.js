@@ -8691,19 +8691,32 @@ export default function ChatConversationScreen() {
     if (Platform.OS === 'web') return;
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
     const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    // LayoutAnimation matches the keyboard's native easing/duration so the
-    // input + FlatList glide into place instead of snapping. iOS gives us
-    // the real curve in the event; Android uses a fixed 250ms ease-in-out.
-    const { LayoutAnimation } = require('react-native');
+    // [P0 CRASH FIX 2026-05-26] LayoutAnimation is REMOVED on iOS here.
+    // Under the New Architecture (Fabric) the legacy LayoutAnimation API is
+    // unsafe: a configureNext() tick can be mid-flight when the composer tears
+    // down the AudioRecorder and mounts the new audio bubble (send-voice path),
+    // and Fabric's mounting transaction then dereferences a freed shadow node
+    // → EXC_BAD_ACCESS (SIGSEGV) at 0x18 on the main thread (crash stack:
+    // UIManager::animationTick → LayoutAnimationDelegateProxy::activityDidChange
+    // → RCTMountingManager performTransaction). The keyboard transition on iOS
+    // is already smooth without LayoutAnimation because `keyboardWillShow`/Hide
+    // fire before the frame change; the spacer just snaps to the (already
+    // animated) keyboard height. LayoutAnimation stays ONLY on Android, where
+    // it is stable and the crash does not occur.
+    let LayoutAnimation = null;
+    if (Platform.OS === 'android') {
+      try { ({ LayoutAnimation } = require('react-native')); } catch {}
+    }
     const onShow = (e) => {
       try {
-        const duration = Platform.OS === 'ios' ? (e.duration || 250) : 220;
-        LayoutAnimation.configureNext({
-          duration,
-          create:   { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-          update:   { type: LayoutAnimation.Types.easeInEaseOut },
-          delete:   { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-        });
+        if (LayoutAnimation) {
+          LayoutAnimation.configureNext({
+            duration: 220,
+            create:   { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+            update:   { type: LayoutAnimation.Types.easeInEaseOut },
+            delete:   { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+          });
+        }
       } catch {}
       setKeyboardHeight(e.endCoordinates.height);
       requestAnimationFrame(() => {
@@ -8712,13 +8725,14 @@ export default function ChatConversationScreen() {
     };
     const onHide = (e) => {
       try {
-        const duration = Platform.OS === 'ios' ? (e?.duration || 220) : 180;
-        LayoutAnimation.configureNext({
-          duration,
-          create:   { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-          update:   { type: LayoutAnimation.Types.easeInEaseOut },
-          delete:   { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-        });
+        if (LayoutAnimation) {
+          LayoutAnimation.configureNext({
+            duration: 180,
+            create:   { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+            update:   { type: LayoutAnimation.Types.easeInEaseOut },
+            delete:   { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+          });
+        }
       } catch {}
       setKeyboardHeight(0);
     };
