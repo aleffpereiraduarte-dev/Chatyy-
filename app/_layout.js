@@ -76,6 +76,11 @@ try {
   }
 } catch {}
 
+// ⚠️ MUST be the FIRST import — globally neutralizes legacy LayoutAnimation on
+// iOS (Fabric + LayoutAnimation segfault, EXC_BAD_ACCESS at 0x18). Imported
+// before React/components so the monkey-patch is installed before any screen
+// mounts and schedules a LayoutAnimation. Android is left untouched.
+import '../services/disableLayoutAnimationIOS';
 import React, { Suspense } from "react";
 import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated, InteractionManager } from 'react-native';
 // ─── Sentry crash reporting ───

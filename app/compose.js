@@ -712,8 +712,54 @@ export default function ComposeScreen() {
     return contacts.map(c => c.email).join(', ');
   }, []);
 
+  // Returns true when the compose has at least one piece of meaningful
+  // content worth persisting as a draft. An empty compose (no recipient,
+  // no subject, no body, no attachment) must NEVER create a junk draft.
+  // The rich editor returns markup like `<p></p>`, `<div><br></div>` or
+  // `&nbsp;` for a "visually empty" body, so we strip tags + entities +
+  // whitespace before deciding the body is empty.
+  const isComposeEmpty = useCallback(() => {
+    const anyRecipient =
+      to.some(c => (c.email || '').trim()) ||
+      cc.some(c => (c.email || '').trim()) ||
+      bcc.some(c => (c.email || '').trim());
+    if (anyRecipient) return false;
+    if (subject.trim()) return false;
+    if (attachments.length > 0) return false;
+    const plainBody = (body || '')
+      .replace(/<br\s*\/?>/gi, '')
+      .replace(/<[^>]+>/g, '')        // strip all tags (<p></p>, <div>, …)
+      .replace(/&nbsp;/gi, '')         // non-breaking spaces
+      .replace(/ /g, '')          // literal nbsp char
+      .replace(/\s+/g, '')             // any remaining whitespace
+      .trim();
+    if (plainBody.length > 0) return false;
+    return true;
+  }, [to, cc, bcc, subject, body, attachments]);
+
   const saveDraft = useCallback(async () => {
     if (!contentChangedRef.current) return;
+    // Never persist a completely empty compose as a draft. If we are
+    // editing an existing draft that the user cleared to empty, delete it
+    // (it's now empty) instead of leaving a junk draft behind. Either way
+    // we consume the dirty flag so the timer doesn't keep retrying.
+    if (isComposeEmpty()) {
+      contentChangedRef.current = false;
+      if (draftUidRef.current) {
+        const staleUid = draftUidRef.current;
+        draftUidRef.current = null;
+        try {
+          await api.apiCall('draft_delete', { uid: staleUid }, 'POST');
+        } catch {}
+        if (mountedRef.current) {
+          setDraftStatus('idle');
+          setLastSavedAt(null);
+        }
+      } else if (mountedRef.current) {
+        setDraftStatus('idle');
+      }
+      return;
+    }
     contentChangedRef.current = false;
     setDraftStatus('saving');
     try {
@@ -735,7 +781,7 @@ export default function ComposeScreen() {
     } catch {
       if (mountedRef.current) setDraftStatus('error');
     }
-  }, [subject, to, cc, bcc, body, contactsToString]);
+  }, [subject, to, cc, bcc, body, contactsToString, isComposeEmpty]);
 
   useEffect(() => { toValueRef.current = to; }, [to]);
   useEffect(() => { contentChangedRef.current = true; }, [to, cc, bcc, subject, body]);
