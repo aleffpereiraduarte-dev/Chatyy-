@@ -1779,12 +1779,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // Build the set of identities already in the room (lowercased emails)
         // so the picker hides people who already joined. LiveKit identities may
         // carry a "#deviceHash" suffix — strip it back to the email.
-        var present = Set<String>()
+        var presentIds = Set<String>()
         if let r = self.room {
             for p in r.remoteParticipants.values {
                 if let raw = p.identity?.stringValue, !raw.isEmpty {
                     let email = raw.split(separator: "#").first.map(String.init) ?? raw
-                    present.insert(email.lowercased())
+                    presentIds.insert(email.lowercased())
                 }
             }
         }
@@ -1793,7 +1793,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             callId: callId,
             conversationId: conversationId,
             isVideo: hasVideo,
-            alreadyInCall: present,
+            alreadyInCall: presentIds,
             onDismiss: { [weak self] in
                 self?.presentedViewController?.dismiss(animated: true)
             }
@@ -2009,7 +2009,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // had drifted, leaving the mic dead. Apply BOTH directions through
             // setMicrophone(enabled:) and only skip when the LIVE publication
             // already matches.
-            if let r = self.room, r.localParticipant.isMicrophoneEnabled == nextEnabled {
+            if let r = self.room, r.localParticipant.isMicrophoneEnabled() == nextEnabled {
                 // Live state already matches — just keep the UI flag in sync.
                 self.session.micEnabled = nextEnabled
                 return
@@ -2429,11 +2429,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     ///     24-32k only on a genuinely poor link). FEC rides in the Opus SDP.
     /// LK Swift 2.x signature: AudioPublishOptions(name:encoding:dtx:red:).
     static func defaultAudioPublishOptions() -> AudioPublishOptions {
+        // NOTE: this LiveKit Swift version's AudioPublishOptions has no `red:`
+        // param (it was added in a later SDK). DTX alone is the supported knob;
+        // RED is negotiated by the SFU. Adding `red:` is a compile error here.
         return AudioPublishOptions(
             name: nil,
             encoding: AudioEncoding(maxBitrate: 48_000),
-            dtx: true,
-            red: true
+            dtx: true
         )
     }
 
@@ -2748,7 +2750,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // cached bool only when the Room isn't available yet.
         let currentEnabled: Bool
         if let r = self.room {
-            currentEnabled = r.localParticipant.isMicrophoneEnabled
+            currentEnabled = r.localParticipant.isMicrophoneEnabled()
         } else {
             currentEnabled = session.micEnabled
         }

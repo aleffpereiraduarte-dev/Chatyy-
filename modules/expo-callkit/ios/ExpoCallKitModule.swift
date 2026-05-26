@@ -1177,8 +1177,11 @@ public class ExpoCallKitModule: Module {
               // .maximumCallGroupsReached. Match on the code (and domain when
               // present) so we don't accidentally treat an unrelated error as
               // error 7.
+              // NB: there's no `CXErrorCodeRequestTransactionErrorDomain` symbol
+              // exposed to Swift, so match on the code + a CallKit-ish domain
+              // substring instead of a non-existent constant.
               let isMaxGroups = nsErr.code == CXErrorCodeRequestTransactionError.maximumCallGroupsReached.rawValue
-                && (nsErr.domain == CXErrorCodeRequestTransactionErrorDomain || nsErr.domain.contains("CallKit"))
+                && (nsErr.domain.contains("CallKit") || nsErr.domain.contains("CXError"))
               // Error 7 (MaximumCallGroupsReached) on the FIRST attempt usually
               // means an orphan group we missed (CXCallObserver can lag right
               // after a crash/kill). Sweep once more, wait briefly for the OS to
