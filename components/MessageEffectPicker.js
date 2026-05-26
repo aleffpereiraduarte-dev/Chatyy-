@@ -17,6 +17,7 @@ import {
   StyleSheet, Platform, Pressable, Modal, Keyboard,
 } from 'react-native';
 import Svg, { Circle, Path, G } from 'react-native-svg';
+import { ScreenEffectPreview } from './MessageScreenEffect';
 
 const BUBBLE_EFFECTS = [
   { id: 'slam',          labelKey: 'effects.slam',         label: 'Slam' },
@@ -135,10 +136,21 @@ function ScreenPreview({ effect, color }) {
   );
 }
 
-export default function MessageEffectPicker({ visible, onClose, onPick, t, isDark }) {
+export default function MessageEffectPicker({ visible, onClose, onPick, t, isDark, messageText }) {
   const [tab, setTab] = React.useState('bubble');
+  // When a SCREEN effect is selected we open a full-screen live preview
+  // (iMessage-style) that plays the real effect behind a message bubble.
+  // `previewEffect` holds the screen-effect id currently being previewed;
+  // null means we're back on the picker grid.
+  const [previewEffect, setPreviewEffect] = React.useState(null);
   const slideY = useRef(new Animated.Value(400)).current;
   const backdrop = useRef(new Animated.Value(0)).current;
+
+  // Reset the full-screen preview whenever the sheet closes so it never
+  // re-opens stuck on a stale effect (and the Animated loops tear down).
+  useEffect(() => {
+    if (!visible) setPreviewEffect(null);
+  }, [visible]);
 
   useEffect(() => {
     if (visible) {
@@ -171,8 +183,19 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
 
   const tx = (k, fb) => (typeof t === 'function' ? (t(k) || fb) : fb);
 
+  const previewBubbleText = (typeof messageText === 'string' && messageText.trim())
+    ? messageText.trim()
+    : tx('effects.previewSample', 'Olá');
+
   return (
-    <Modal visible={visible} transparent animationType="none" onRequestClose={onClose} statusBarTranslucent>
+    <Modal
+      visible={visible}
+      transparent
+      animationType="none"
+      // Android back: leave the full-screen preview first, then close the sheet.
+      onRequestClose={() => { if (previewEffect) setPreviewEffect(null); else onClose(); }}
+      statusBarTranslucent
+    >
     <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
       <Animated.View
         style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.5)', opacity: backdrop }]}
@@ -180,6 +203,82 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
         <Pressable style={StyleSheet.absoluteFillObject} onPress={onClose} />
       </Animated.View>
 
+      {/* Full-screen live preview — plays the REAL screen-effect renderer
+          behind a message bubble (iMessage parity). Switching effects from
+          here re-triggers instantly via ScreenEffectPreview's keyed remount. */}
+      {previewEffect ? (
+        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: isDark ? '#000' : '#0b1020' }]}>
+          {/* The actual animating effect, looping behind the bubble */}
+          <ScreenEffectPreview effect={previewEffect} active={visible} />
+
+          {/* Top bar: back to grid + effect name */}
+          <View style={{
+            position: 'absolute', top: Platform.OS === 'ios' ? 54 : 28, left: 0, right: 0,
+            flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+            paddingHorizontal: 18,
+          }}>
+            <TouchableOpacity
+              onPress={() => setPreviewEffect(null)}
+              hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+              accessibilityLabel={tx('common.back', 'Voltar')}
+            >
+              <Svg width={26} height={26} viewBox="0 0 24 24">
+                <Path d="M15 19l-7-7 7-7" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+              </Svg>
+            </TouchableOpacity>
+            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+              {tx(
+                (SCREEN_EFFECTS.find((e) => e.id === previewEffect) || {}).labelKey || '',
+                (SCREEN_EFFECTS.find((e) => e.id === previewEffect) || {}).label || ''
+              )}
+            </Text>
+            <View style={{ width: 26 }} />
+          </View>
+
+          {/* Message bubble preview, on top of the animation */}
+          <View style={{ flex: 1, justifyContent: 'flex-end', paddingHorizontal: 18, paddingBottom: 120 }}>
+            <View style={{
+              alignSelf: 'flex-end', maxWidth: '82%',
+              backgroundColor: '#7C3AED',
+              paddingHorizontal: 14, paddingVertical: 10,
+              borderRadius: 20, borderBottomRightRadius: 6,
+            }}>
+              <Text style={{ color: '#fff', fontSize: 16, lineHeight: 21 }}>
+                {previewBubbleText}
+              </Text>
+            </View>
+          </View>
+
+          {/* Confirm bar: replay + send-with-effect */}
+          <View style={{
+            position: 'absolute', left: 0, right: 0, bottom: 0,
+            paddingHorizontal: 18, paddingTop: 12,
+            paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+            flexDirection: 'row', alignItems: 'center', gap: 12,
+          }}>
+            <TouchableOpacity
+              onPress={() => { onPick(previewEffect); setPreviewEffect(null); }}
+              activeOpacity={0.9}
+              style={{
+                flex: 1, backgroundColor: '#7C3AED',
+                paddingVertical: 14, borderRadius: 14, alignItems: 'center',
+                flexDirection: 'row', justifyContent: 'center', gap: 8,
+              }}
+              accessibilityLabel={tx('effects.sendWithEffect', 'Enviar com efeito')}
+            >
+              <Svg width={18} height={18} viewBox="0 0 24 24">
+                <Path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+              </Svg>
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+                {tx('effects.sendWithEffect', 'Enviar com efeito')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
+      {/* Picker grid — hidden while the full-screen preview is up */}
+      {!previewEffect ? (
       <Animated.View
         style={{
           position: 'absolute', left: 0, right: 0, bottom: 0,
@@ -253,7 +352,10 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
             SCREEN_EFFECTS.map((e) => (
               <TouchableOpacity
                 key={e.id}
-                onPress={() => onPick(e.id)}
+                // Screen effects open a full-screen live preview first (so the
+                // sender sees exactly what the recipient will see) and confirm
+                // from there. Bubble effects still commit on tap.
+                onPress={() => setPreviewEffect(e.id)}
                 activeOpacity={0.85}
                 style={{
                   width: '46%', aspectRatio: 1.1, marginHorizontal: '2%', marginBottom: 12,
@@ -270,6 +372,7 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
           )}
         </ScrollView>
       </Animated.View>
+      ) : null}
     </View>
     </Modal>
   );

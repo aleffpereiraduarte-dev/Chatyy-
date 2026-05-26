@@ -1297,7 +1297,9 @@ function ActiveCallScreen({
               }}
               accessibilityLabel="Minimizar"
             >
-              <Text style={{ color: '#fff', fontSize: 20, fontWeight: '700', marginTop: -2 }}>⌄</Text>
+              <Svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
+                <Polyline points="6 9 12 15 18 9" />
+              </Svg>
             </TouchableOpacity>
           ) : <View style={{ width: 40 }} />}
           {isConnected ? (
@@ -1534,18 +1536,19 @@ const activeCallStyles = StyleSheet.create({
     zIndex: 1,
   },
   stateLabel: {
-    color: 'rgba(255,255,255,0.7)',
+    color: 'rgba(255,255,255,0.72)',
     fontSize: 15,
     marginTop: 8,
-    fontWeight: '400',
+    fontWeight: '500',
+    letterSpacing: 0.2,
     zIndex: 1,
   },
   durationTimer: {
     color: '#fff',
-    fontSize: 48,
+    fontSize: 46,
     fontWeight: '200',
     marginTop: 8,
-    letterSpacing: 4,
+    letterSpacing: 3,
     fontVariant: ['tabular-nums'],
     zIndex: 1,
   },
@@ -1560,12 +1563,16 @@ const activeCallStyles = StyleSheet.create({
     width: 72,
     height: 72,
     borderRadius: 36,
-    backgroundColor: 'rgba(255,255,255,0.12)',
+    backgroundColor: 'rgba(255,255,255,0.14)',
     alignItems: 'center',
     justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.10)',
   },
+  // Active state reads as "on" — brand-tinted fill (white icons stay legible).
   actionBtnActive: {
-    backgroundColor: 'rgba(255,255,255,0.3)',
+    backgroundColor: 'rgba(124,58,237,0.55)',
+    borderColor: 'rgba(167,139,250,0.6)',
   },
   actionLabel: {
     color: 'rgba(255,255,255,0.8)',
@@ -3773,36 +3780,44 @@ const s = StyleSheet.create({
     paddingBottom: 20,
   },
 
-  // Section headers
+  // Section headers — tighter, brand-weighted (R-callspolish)
   sectionHeader: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12.5,
+    fontWeight: '700',
     textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    paddingHorizontal: 16,
-    paddingTop: 20,
-    paddingBottom: 6,
+    letterSpacing: 0.8,
+    paddingHorizontal: 18,
+    paddingTop: 22,
+    paddingBottom: 8,
   },
   sectionCard: {
-    marginHorizontal: 16,
-    borderRadius: 12,
+    marginHorizontal: 14,
+    borderRadius: 16,
     overflow: 'hidden',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 1px 3px rgba(15,23,42,0.05)',
+    } : Platform.OS === 'ios' ? {
+      shadowColor: '#0f172a',
+      shadowOffset: { width: 0, height: 1 },
+      shadowOpacity: 0.05,
+      shadowRadius: 4,
+    } : { elevation: 1 }),
   },
 
   // History rows
   historyRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 11,
     paddingHorizontal: 16,
-    minHeight: 64,
+    minHeight: 66,
   },
   historyLeft: {
-    marginRight: 12,
+    marginRight: 13,
     borderWidth: 2,
     borderColor: 'transparent',
     borderRadius: 26,
-    padding: 1,
+    padding: 1.5,
   },
   // Subtle red ring for missed calls — premium "attention pull" without shouting.
   historyLeftMissed: {
@@ -3820,42 +3835,45 @@ const s = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 8,
   },
+  // WhatsApp-grade: name is semibold so it reads as the row's anchor.
   historyName: {
-    fontSize: 16,
-    fontWeight: '400',
+    fontSize: 16.5,
+    fontWeight: '600',
+    letterSpacing: -0.2,
     flex: 1,
   },
   historyType: {
     fontSize: 13,
     fontWeight: '400',
+    letterSpacing: -0.1,
   },
   historyRight: {
-    alignItems: 'flex-end',
+    alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
   },
   historyTime: {
-    fontSize: 10.5,
+    fontSize: 11,
     fontWeight: '500',
-    letterSpacing: 0.3,
-    opacity: 0.55,
+    letterSpacing: 0.2,
+    opacity: 0.6,
     fontVariant: ['tabular-nums'],
   },
   infoBtn: {
     padding: 4,
   },
+  // Round call-back affordance — sized to a comfortable 40pt tap target.
   callBackBtn: {
-    borderRadius: 22,
-    padding: 10,
-    minWidth: 44,
-    minHeight: 44,
+    borderRadius: 20,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },
   separator: {
     height: StyleSheet.hairlineWidth,
-    marginLeft: 72,
+    marginLeft: 73,
   },
 
   // Empty state
@@ -3873,17 +3891,18 @@ const s = StyleSheet.create({
     marginBottom: 16,
   },
   emptyTitle: {
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 21,
+    fontWeight: '800',
     marginBottom: 8,
-    letterSpacing: -0.3,
+    letterSpacing: -0.4,
   },
   emptySubtitle: {
     fontSize: 14.5,
     textAlign: 'center',
     lineHeight: 21,
     fontWeight: '500',
-    maxWidth: 300,
+    maxWidth: 280,
+    opacity: 0.9,
   },
   // Brand purple gradient CTA — opens dialer to make first call.
   emptyCtaBtn: {
@@ -3973,15 +3992,16 @@ const s = StyleSheet.create({
     fontSize: 24,
   },
   dialerNumber: {
-    fontWeight: '200',
-    letterSpacing: 2,
+    fontWeight: '300',
+    letterSpacing: 1.5,
     textAlign: 'center',
+    fontVariant: ['tabular-nums'],
   },
   dialerCountry: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
-    marginTop: 2,
-    letterSpacing: 0.5,
+    marginTop: 4,
+    letterSpacing: 0.4,
   },
   dialerContacts: {
     marginHorizontal: 24,
@@ -4020,8 +4040,8 @@ const s = StyleSheet.create({
   dialerKeypadRow: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: 24,
-    marginBottom: 14,
+    gap: 26,
+    marginBottom: 16,
   },
   dialerBottomRow: {
     flexDirection: 'row',
@@ -4055,6 +4075,14 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginHorizontal: 24,
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 6px 20px rgba(52,199,89,0.45)',
+    } : Platform.OS === 'ios' ? {
+      shadowColor: GREEN,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.45,
+      shadowRadius: 16,
+    } : { elevation: 8 }),
   },
 
   // Dial key - iPhone circular buttons
@@ -4066,16 +4094,16 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   dialKeyDigit: {
-    fontSize: 32,
-    fontWeight: '300',
+    fontSize: 33,
+    fontWeight: '400',
     lineHeight: 38,
   },
   dialKeySub: {
     fontSize: 10,
-    fontWeight: '600',
-    letterSpacing: 1.5,
-    marginTop: 0,
-    opacity: 0.85,
+    fontWeight: '700',
+    letterSpacing: 2,
+    marginTop: 1,
+    opacity: 0.7,
   },
 
   // Chatyy badge

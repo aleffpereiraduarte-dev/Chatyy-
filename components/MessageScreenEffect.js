@@ -779,5 +779,74 @@ function Celebration() {
   );
 }
 
+// ── Live preview (for the "Send with Effect" composer) ──────────────
+// Reuses the EXACT per-effect renderers above (RenderEffect → Balloons /
+// Confetti / Love / …) so the preview matches what the recipient sees
+// pixel-for-pixel. Unlike the imperative <MessageScreenEffect> overlay,
+// this one auto-replays on a loop: each effect runs once, then after a
+// short rest the `key` bumps and RenderEffect remounts, restarting all the
+// inner Animated sequences. Switching `effect` also bumps the key so the
+// new effect plays immediately. All timers are cleared on unmount / effect
+// change so nothing leaks.
+//
+//   <ScreenEffectPreview effect="balloons" active />
+//
+// `active=false` tears everything down (used when the preview area is
+// hidden) so we don't run Animated loops behind a closed sheet.
+function ScreenEffectPreview({ effect, active = true }) {
+  const [cycle, setCycle] = useState(0);
+  const timerRef = useRef(null);
+
+  useEffect(() => {
+    if (!active || !effect || !SCREEN_EFFECTS.has(effect)) {
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+      return undefined;
+    }
+    // Per-effect run length (mirrors the TTLs the real overlay uses), plus a
+    // brief pause so the loop reads as "replay" not "stutter".
+    const ttl = effect === 'balloons' ? 5400
+              : effect === 'spotlight' ? 2800
+              : effect === 'celebration' ? 4400
+              : effect === 'confetti' ? 3800
+              : effect === 'love' ? 4000
+              : effect === 'fireworks' ? 4200
+              : effect === 'lasers' ? 2400
+              : effect === 'echo' ? 2800
+              : effect === 'shooting-star' ? 2600
+              : 3400;
+    const REST = 700;
+
+    let cancelled = false;
+    const schedule = () => {
+      timerRef.current = setTimeout(() => {
+        if (cancelled) return;
+        setCycle((c) => c + 1); // remount RenderEffect → restart animation
+        schedule();
+      }, ttl + REST);
+    };
+    schedule();
+
+    return () => {
+      cancelled = true;
+      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    };
+    // `effect` change resets cycle below; including it here restarts the loop
+    // with the new effect's timing.
+  }, [effect, active]);
+
+  // When the chosen effect changes, reset to cycle 0 so the new effect's
+  // first run starts clean (and the key below changes → fresh mount).
+  useEffect(() => { setCycle(0); }, [effect]);
+
+  if (!active || !effect || !SCREEN_EFFECTS.has(effect)) return null;
+
+  return (
+    <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+      <RenderEffect key={`${effect}-${cycle}`} effect={effect} />
+    </View>
+  );
+}
+
 export default MessageScreenEffect;
+export { ScreenEffectPreview };
 export const SCREEN_EFFECT_IDS = SCREEN_EFFECTS;

@@ -1151,7 +1151,7 @@ function SettingsScreenInner() {
         <TouchableOpacity onPress={handleBack} style={s.backBtn} accessibilityLabel={t('common.back') || 'Voltar'} accessibilityRole="button">
           <IconArrowLeft size={24} color={colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={[s.headerTitle, { color: colors.text }]}>{t('settings.title')}</Text>
+        <Text style={[s.headerTitle, { color: colors.text }]} numberOfLines={1}>{t('settings.title')}</Text>
         <TouchableOpacity
           style={[s.saveBtn, { backgroundColor: colors.primary }, saving && s.saveBtnDisabled]}
           onPress={handleSave}
@@ -5011,11 +5011,11 @@ const s = StyleSheet.create({
     flexDirection: 'column', alignItems: 'flex-start',
     paddingVertical: Spacing.md + 4, borderBottomWidth: 1,
   },
-  settingInfo: { flex: 1 },
+  settingInfo: { flex: 1, minWidth: 0 },
   settingLabel: { fontSize: 15.5, fontWeight: '600', letterSpacing: -0.15 },
   settingDesc: { fontSize: 13, marginTop: 3, opacity: 0.7, lineHeight: 18 },
   // Per page
-  perPageBtns: { flexDirection: 'row', gap: Spacing.sm },
+  perPageBtns: { flexDirection: 'row', gap: Spacing.sm, flexShrink: 0 },
   perPageBtn: {
     borderWidth: 1.5, borderRadius: 12,
     paddingHorizontal: Spacing.md, paddingVertical: 8,

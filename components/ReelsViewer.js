@@ -2216,7 +2216,7 @@ function EmptyReels({ colors, isDark, t }) {
   return (
     <View style={styles.emptyContainer}>
       <View style={styles.emptyIcon}>
-        <IconPlay size={48} color="#555" />
+        <IconPlay size={42} color="rgba(255,255,255,0.7)" />
       </View>
       <Text style={styles.emptyTitle}>
         {t('feed.noReels') || 'Sem reels ainda'}
@@ -2754,11 +2754,11 @@ const styles = StyleSheet.create({
     bottom: 90,
     alignItems: 'center',
     zIndex: 10,
-    gap: 16,
+    gap: 18,
   },
   profileAvatarBtn: {
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   profileAvatarRing: {
     borderWidth: 2,
@@ -2766,6 +2766,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     padding: 1,
     overflow: 'hidden',
+    ...(isWeb ? {} : { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.4, shadowRadius: 4 }),
   },
   profileFollowBadge: {
     position: 'absolute',
@@ -2843,25 +2844,26 @@ const styles = StyleSheet.create({
     left: 14,
     right: 76,
     zIndex: 10,
-    gap: 8,
+    gap: 9,
   },
   username: {
     color: '#fff',
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: -0.2,
     ...TEXT_SHADOW,
   },
   caption: {
     color: '#fff',
     fontSize: 14,
-    lineHeight: 19,
+    lineHeight: 19.5,
     ...TEXT_SHADOW,
   },
   moreText: {
-    color: '#a78bfa',
+    color: '#C4B5FD',
     fontSize: 14,
-    fontWeight: '600',
-    marginTop: 2,
+    fontWeight: '700',
+    marginTop: 3,
   },
 
   // ── Music row ──
@@ -2883,7 +2885,7 @@ const styles = StyleSheet.create({
   marqueeText: {
     color: '#fff',
     fontSize: 13,
-    fontWeight: '400',
+    fontWeight: '500',
     ...TEXT_SHADOW,
   },
 
@@ -2974,26 +2976,31 @@ const styles = StyleSheet.create({
   emptyContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 12,
+    gap: 14,
+    paddingHorizontal: 40,
   },
   emptyIcon: {
     width: 80,
     height: 80,
     borderRadius: 40,
     borderWidth: 2,
-    borderColor: '#333',
+    borderColor: 'rgba(255,255,255,0.18)',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 8,
   },
   emptyTitle: {
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '800',
+    letterSpacing: -0.2,
     color: '#fff',
+    textAlign: 'center',
   },
   emptySubtext: {
-    color: '#666',
-    fontSize: 14,
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 13.5,
+    lineHeight: 19,
+    textAlign: 'center',
   },
 
   // ── Comments sheet (dark themed) ──
@@ -3118,7 +3125,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   reelTabText: {
-    color: 'rgba(255,255,255,0.55)',
+    color: 'rgba(255,255,255,0.6)',
     fontSize: 16,
     fontWeight: '600',
     textAlign: 'center',
@@ -3128,15 +3135,16 @@ const styles = StyleSheet.create({
   },
   reelTabTextActive: {
     color: '#fff',
-    fontWeight: '700',
+    fontWeight: '800',
   },
   reelTabIndicator: {
-    width: 24,
+    width: 22,
     height: 3,
-    borderRadius: 1.5,
+    borderRadius: 2,
     backgroundColor: '#fff',
     alignSelf: 'center',
-    marginTop: 4,
+    marginTop: 5,
+    ...(isWeb ? { boxShadow: '0 0 8px rgba(255,255,255,0.5)' } : {}),
   },
 
   // ── 2× Boost toast (long-press) ──

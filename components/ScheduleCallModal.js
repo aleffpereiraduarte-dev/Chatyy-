@@ -543,15 +543,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     marginBottom: 12,
   },
-  title: { fontSize: FontSize.lg, fontWeight: '700' },
-  label: { fontSize: FontSize.sm, fontWeight: '600', marginTop: 14, marginBottom: 6 },
+  title: { fontSize: FontSize.title, fontWeight: '800', letterSpacing: -0.4 },
+  label: { fontSize: FontSize.sm, fontWeight: '700', marginTop: 16, marginBottom: 7, letterSpacing: 0.1 },
   input: {
-    borderWidth: 1, borderRadius: BorderRadius.md, paddingHorizontal: 12,
-    paddingVertical: 10, fontSize: 15, marginBottom: 4,
+    borderWidth: 1, borderRadius: BorderRadius.lg, paddingHorizontal: 14,
+    paddingVertical: 12, fontSize: 15, marginBottom: 4,
   },
   chip: {
-    paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999,
-    borderWidth: 1,
+    paddingHorizontal: 15, paddingVertical: 9, borderRadius: 999,
+    borderWidth: 1.5,
   },
   peerChip: {
     flexDirection: 'row', alignItems: 'center',
@@ -563,8 +563,13 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   cta: {
-    marginTop: 22, paddingVertical: 14, borderRadius: BorderRadius.md,
+    marginTop: 24, paddingVertical: 15, borderRadius: BorderRadius.lg,
     alignItems: 'center',
+    ...(Platform.OS === 'web' ? {
+      boxShadow: '0 6px 18px rgba(124,58,237,0.32)',
+    } : Platform.OS === 'ios' ? {
+      shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 14,
+    } : { elevation: 5 }),
   },
-  ctaText: { color: '#fff', fontSize: FontSize.md, fontWeight: '700' },
+  ctaText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '700', letterSpacing: 0.2 },
 });

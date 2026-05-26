@@ -2475,6 +2475,12 @@ export default function PhotosScreen() {
         const base = photo.thumbnail_url.startsWith('http') ? '' : api.BASE_URL;
         return base + photo.thumbnail_url;
       }
+      // Only build a drive_download URL when we actually have an id. Without
+      // this guard a row missing both cdn_url AND thumbnail_url AND id fired
+      // `drive_download?id=undefined` → HTTP 400 "File ID required" (the
+      // "2 console err 400" QA saw on the photos grid). Return '' so the
+      // <Image> just shows its placeholder instead of a failing request.
+      if (photo.id == null || photo.id === '' || photo.id === 'undefined') return '';
       return api.fileDownloadUrl(photo.id);
     }
     return photo.uri;
@@ -2484,7 +2490,13 @@ export default function PhotosScreen() {
   const viewerResolveTokenRef = useRef(0);
 
   const getFullUrl = useCallback((photo) => {
-    if (!photo.isDevice) return photo.cdn_url || api.fileDownloadUrl(photo.id);
+    // Same id-guard as getThumbnailUrl: never emit drive_download?id=undefined
+    // (→ HTTP 400). Prefer cdn_url, else download-by-id only when id exists.
+    if (!photo.isDevice) {
+      if (photo.cdn_url) return photo.cdn_url;
+      if (photo.id == null || photo.id === '' || photo.id === 'undefined') return '';
+      return api.fileDownloadUrl(photo.id);
+    }
     // For device photos, resolve localUri for the viewer
     if (Platform.OS === 'ios' && photo.uri?.startsWith('ph://')) {
       const assetId = photo.uri.replace('ph://', '').split('/')[0];

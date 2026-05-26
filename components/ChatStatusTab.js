@@ -45,6 +45,19 @@ const ANDROID_TOP_INSET = (Platform.OS === 'android' ? (StatusBar.currentHeight 
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
+// Resolve a status media path to an absolute URL. The backend already returns
+// absolute CDN URLs (https://media.chatyy.com.br/...), but legacy/cached rows
+// can still carry a relative `/data/...` path. Those 404 if prefixed with the
+// ORIGIN (chatyy.com.br) — the assets only exist on the CDN. Routing relative
+// /data/ paths to media.chatyy.com.br is what stops the status viewer from
+// showing "Não foi possível carregar este vídeo." on those rows.
+function resolveStatusMedia(u) {
+  if (!u || typeof u !== 'string') return '';
+  if (u.startsWith('http')) return u;
+  if (u.startsWith('/data/')) return 'https://media.chatyy.com.br' + u;
+  return u.startsWith('/') ? BASE_URL + u : u;
+}
+
 // Stable component for native audio playback via hidden WebView
 // Using a proper component (not IIFE) prevents remounting on every parent render
 function NativeAudioPlayer({ url }) {
@@ -3198,7 +3211,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     // web (Chrome/Safari block autoplay with sound). Sound is
                     // enabled on tap via the manual unmute control overlay.
                     <video
-                      src={(() => { const url = ((currentViewerItem?.media_url || currentViewerItem?.content || '')).split('\n')[0]; return url.startsWith('/') ? BASE_URL + url : url; })()}
+                      src={(() => { const url = ((currentViewerItem?.media_url || currentViewerItem?.content || '')).split('\n')[0]; return resolveStatusMedia(url); })()}
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                       autoPlay
                       muted
@@ -3216,19 +3229,22 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                           // instead of the black "buffering" screen.
                           const t = currentViewerItem?.thumbnail_url;
                           if (!t) return null;
-                          return t.startsWith('/') ? BASE_URL + t : t;
+                          return resolveStatusMedia(t);
                         })()}
                         url={(() => {
                           // Prefer HLS playlist (chunk-streamed, <500ms
                           // first frame) over progressive mp4 when
                           // available. Falls back to mp4 + local-cache
                           // path for clips that haven't been transcoded yet.
+                          // The backend only emits hls_url when the .m3u8
+                          // exists on disk, so a present hls_url is safe; we
+                          // still CDN-resolve it defensively.
                           const hls = currentViewerItem?.hls_url;
                           if (hls) {
-                            return hls.startsWith('/') ? BASE_URL + hls : hls;
+                            return resolveStatusMedia(hls);
                           }
                           const raw = ((currentViewerItem?.media_url || currentViewerItem?.content || '')).split('\n')[0];
-                          const fullUrl = raw.startsWith('/') ? BASE_URL + raw : raw;
+                          const fullUrl = resolveStatusMedia(raw);
                           if (Platform.OS !== 'web' && fullUrl) {
                             try {
                               const { getLocalUriSyncJs } = require('../services/mediaCache');
@@ -5011,18 +5027,18 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   storyScroller: {
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 6,
   },
   storyItem: {
     alignItems: 'center',
-    width: 80,
-    marginRight: 8,
+    width: 78,
+    marginRight: 6,
   },
   storyAvatarWrap: {
     position: 'relative',
-    marginBottom: 6,
+    marginBottom: 7,
   },
   // Tiny ♪ pill in the top-right of the avatar wrap when the status carries
   // music. Same accent color as the active gradient ring so it reads as part

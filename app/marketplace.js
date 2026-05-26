@@ -772,6 +772,7 @@ function BrowseTab({ savedIds, onToggleSave, onSelectListing }) {
   const [listings, setListings] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [errored, setErrored] = useState(false);
   const [search, setSearch] = useState('');
   const [searchCommit, setSearchCommit] = useState('');
   const [category, setCategory] = useState('all');
@@ -779,13 +780,20 @@ function BrowseTab({ savedIds, onToggleSave, onSelectListing }) {
 
   const load = useCallback(async (q = searchCommit, cat = category) => {
     setLoading(true);
+    setErrored(false);
     try {
       const params = {};
       if (q) params.search = q;
       if (cat && cat !== 'all') params.category = cat;
       const res = await mktList(params);
       if (res?.success) setListings(res.data?.listings || []);
-    } catch {} finally { setLoading(false); setRefreshing(false); }
+      else { setListings([]); setErrored(true); }
+    } catch {
+      // Network/parse failure — surface a clean empty state instead of a
+      // blank screen so the user knows to retry.
+      setListings([]);
+      setErrored(true);
+    } finally { setLoading(false); setRefreshing(false); }
   }, [searchCommit, category]);
 
   useEffect(() => { load(searchCommit, category); }, [searchCommit, category]);
@@ -823,8 +831,8 @@ function BrowseTab({ savedIds, onToggleSave, onSelectListing }) {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={{ maxHeight: 48 }}
-        contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8 }}
+        style={{ flexGrow: 0, flexShrink: 0, maxHeight: 48 }}
+        contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 8, alignItems: 'center' }}
       >
         {CATEGORIES.map(c => (
           <TouchableOpacity
@@ -851,11 +859,31 @@ function BrowseTab({ savedIds, onToggleSave, onSelectListing }) {
           <ActivityIndicator color={colors.primary} />
         </View>
       ) : listings.length === 0 ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 }}>
-          <IconSearch size={48} color={colors.textSecondary} />
-          <Text style={{ color: colors.textSecondary, fontSize: 15, marginTop: 12, textAlign: 'center' }}>
-            {t('marketplace.noResults')}
+        <View style={s.emptyState}>
+          <View style={[s.emptyIconChip, { backgroundColor: colors.primaryLight }]}>
+            {errored ? (
+              <IconTag size={40} color={colors.primary} />
+            ) : (
+              <IconSearch size={40} color={colors.primary} />
+            )}
+          </View>
+          <Text style={[s.emptyStateText, { color: colors.textSecondary }]}>
+            {errored
+              ? (t('marketplace.loadError') || t('marketplace.errGeneric') || 'Não foi possível carregar os anúncios.')
+              : t('marketplace.noResults')}
           </Text>
+          {errored ? (
+            <TouchableOpacity
+              onPress={() => { setRefreshing(true); load(); }}
+              style={[s.emptyRetryBtn, { borderColor: colors.primary }]}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.retry') || 'Tentar novamente'}
+            >
+              <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 14 }}>
+                {t('common.retry') || 'Tentar novamente'}
+              </Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
       ) : (
         <FlatList
@@ -1039,6 +1067,31 @@ const s = StyleSheet.create({
   card: {
     borderRadius: BorderRadius.md,
     overflow: 'hidden',
+  },
+  emptyState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    paddingVertical: 48,
+  },
+  emptyIconChip: {
+    width: 84, height: 84, borderRadius: 42,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  emptyStateText: {
+    fontSize: 15,
+    marginTop: 16,
+    textAlign: 'center',
+    lineHeight: 21,
+    fontWeight: '500',
+  },
+  emptyRetryBtn: {
+    marginTop: 18,
+    paddingHorizontal: 22,
+    paddingVertical: 11,
+    borderRadius: BorderRadius.lg,
+    borderWidth: 1.5,
   },
   heartBtn: {
     position: 'absolute',

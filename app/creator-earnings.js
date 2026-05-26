@@ -373,9 +373,11 @@ const styles = StyleSheet.create({
   headTitle: { fontSize: 17, fontWeight: '800', letterSpacing: -0.2 },
 
   hero: {
-    borderRadius: 20, borderWidth: StyleSheet.hairlineWidth,
-    paddingVertical: 22, paddingHorizontal: 18,
+    borderRadius: 24, borderWidth: 1,
+    paddingVertical: 24, paddingHorizontal: 20,
     marginBottom: 14, alignItems: 'center',
+    shadowColor: '#10B981', shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.14, shadowRadius: 18, elevation: 4,
   },
   heroLabel: { fontSize: 13, fontWeight: '600' },
   heroValue: { fontSize: 38, fontWeight: '900', marginTop: 4, letterSpacing: -0.5 },
@@ -388,9 +390,9 @@ const styles = StyleSheet.create({
   cashoutCtaText: { color: '#fff', fontSize: 15, fontWeight: '800' },
   cashoutHint: { fontSize: 11, marginTop: 8, textAlign: 'center' },
 
-  statRow: { flexDirection: 'row', gap: 10, marginBottom: 10 },
+  statRow: { flexDirection: 'row', gap: 10, marginBottom: 10, alignItems: 'stretch' },
   statCard: {
-    flex: 1, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
+    flex: 1, minWidth: 0, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth,
     paddingVertical: 14, paddingHorizontal: 12,
   },
   statLabel: { fontSize: 11, fontWeight: '600', textTransform: 'uppercase', letterSpacing: 0.5 },
@@ -419,12 +421,13 @@ const styles = StyleSheet.create({
   fanRank: {
     width: 22, height: 22, borderRadius: 11,
     alignItems: 'center', justifyContent: 'center',
+    flexShrink: 0,
   },
   fanRankText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   fanInfo: { flex: 1, minWidth: 0 },
   fanName: { fontSize: 14, fontWeight: '700' },
   fanSub: { fontSize: 11, marginTop: 2 },
-  fanAmount: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  fanAmount: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0, marginLeft: 8 },
   fanAmountText: { fontSize: 14, fontWeight: '800' },
 
   tlRow: {
@@ -435,7 +438,7 @@ const styles = StyleSheet.create({
   tlInfo: { flex: 1, minWidth: 0 },
   tlName: { fontSize: 14, fontWeight: '700' },
   tlSub: { fontSize: 11, marginTop: 2 },
-  tlAmount: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  tlAmount: { flexDirection: 'row', alignItems: 'center', gap: 4, flexShrink: 0, marginLeft: 8 },
   tlAmountText: { fontSize: 14, fontWeight: '800' },
 
   empty: { textAlign: 'center', fontSize: 13, paddingVertical: 22, paddingHorizontal: 12, lineHeight: 18 },

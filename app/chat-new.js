@@ -1424,16 +1424,20 @@ export default function ChatNewScreen() {
           {item.online && <View style={[sty.onlineDotSmall, { borderColor: colors.background }]} />}
         </View>
         <View style={sty.contactInfo}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 }}>
             <HighlightText
               text={item.name && !item.name.includes('@') ? item.name : prettifyHandle(item.email || item.name || '')}
               highlight={searchText}
-              style={[sty.contactName, { color: colors.text, fontWeight: '700' }]}
+              style={[sty.contactName, { color: colors.text, fontWeight: '700', flexShrink: 1 }]}
               highlightStyle={{ backgroundColor: '#7C3AED30', fontWeight: '700' }}
             />
             {/* Tiny Chatyy badge — purple check circle SVG, signals registered user.
-                Less noisy than a pill, more affirmative than nothing. */}
-            <IconChatyyOnChat size={13} color="#7C3AED" />
+                Less noisy than a pill, more affirmative than nothing. Wrapped in a
+                flexShrink:0 View so the long name (flexShrink:1) truncates instead
+                of pushing this icon off-screen / onto the checkbox. */}
+            <View style={{ flexShrink: 0 }}>
+              <IconChatyyOnChat size={13} color="#7C3AED" />
+            </View>
             {/* "NOVO" badge — WhatsApp-style pill for contacts that just joined
                 Chatyy (last 7d via _justJoined flag, populated by friend_suggestions
                 backend + contact_joined WS event). Brand purple so it stands out
@@ -1445,6 +1449,7 @@ export default function ChatNewScreen() {
                 paddingVertical: 2,
                 borderRadius: 8,
                 marginLeft: 2,
+                flexShrink: 0,
               }}>
                 <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 0.5 }}>
                   {t('chat.newOnChatyy') || 'NOVO'}
@@ -1452,15 +1457,15 @@ export default function ChatNewScreen() {
               </View>
             )}
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 }}>
             <HighlightText
               text={item.email}
               highlight={searchText}
-              style={[sty.contactSub, { color: colors.textTertiary }]}
+              style={[sty.contactSub, { color: colors.textTertiary, flexShrink: 1 }]}
               highlightStyle={{ backgroundColor: '#7C3AED30' }}
             />
             {item.username ? (
-              <Text style={{ fontSize: 12, color: '#7C3AED', fontWeight: '600' }}>@{item.username}</Text>
+              <Text style={{ fontSize: 12, color: '#7C3AED', fontWeight: '600', flexShrink: 0 }} numberOfLines={1}>@{item.username}</Text>
             ) : null}
           </View>
           {item.about ? (

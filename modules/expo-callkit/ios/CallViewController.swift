@@ -1727,17 +1727,42 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         print("[CallVC] backgroundMode → \(next) asset=\(proc.imageAsset ?? "<nil>") available=\(proc.available)")
     }
 
-    /// Add-member action — the JS hybrid showed a sheet that posts
-    /// chat_call_invite to the backend. Stage #995 surfaces a placeholder
-    /// because the backend route is JS-owned for now; we just emit a JS
-    /// notification so /call.js (if still mounted as a parent route) can
-    /// handle it. Future work: native search sheet.
+    /// [add-participant 2026-05-26] Add-participant action — presents a native
+    /// SwiftUI contact picker (CallParticipantPickerView) that rings the
+    /// selected contact INTO this running call's LiveKit room (same call_id)
+    /// via the backend `chat_call_add` endpoint. WhatsApp "add to call" parity:
+    /// on a 1:1 this converts the call into a group call on the same SFU room.
+    /// Replaces the old JS-notification placeholder (the JS /call.js parent
+    /// route is dead on mobile post full-native migration).
     private func handleAddMember() {
-        NotificationCenter.default.post(
-            name: Notification.Name("ExpoCallKitNativeAddMember"),
-            object: nil,
-            userInfo: ["callId": callId]
+        // Build the set of identities already in the room (lowercased emails)
+        // so the picker hides people who already joined. LiveKit identities may
+        // carry a "#deviceHash" suffix — strip it back to the email.
+        var present = Set<String>()
+        if let r = self.room {
+            for p in r.remoteParticipants.values {
+                if let raw = p.identity?.stringValue, !raw.isEmpty {
+                    let email = raw.split(separator: "#").first.map(String.init) ?? raw
+                    present.insert(email.lowercased())
+                }
+            }
+        }
+
+        let picker = CallParticipantPickerView(
+            callId: callId,
+            conversationId: conversationId,
+            isVideo: hasVideo,
+            alreadyInCall: present,
+            onDismiss: { [weak self] in
+                self?.presentedViewController?.dismiss(animated: true)
+            }
         )
+        let host = UIHostingController(rootView: picker)
+        if #available(iOS 15.0, *), let sheet = host.sheetPresentationController {
+            sheet.detents = [.medium(), .large()]
+            sheet.prefersGrabberVisible = true
+        }
+        present(host, animated: true, completion: nil)
     }
 
     /// Minimize → Picture in Picture for video; floating OngoingCallBar for
@@ -2639,12 +2664,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             self.session.onHold = !self.session.onHold
             self.applyHold(self.session.onHold)
         })
-        // Add member (handleAddMember exists; posts JS notification).
-        if session.isGroup {
-            sheet.addAction(UIAlertAction(title: "Adicionar participante", style: .default) { [weak self] _ in
-                self?.handleAddMember()
-            })
-        }
+        // [add-participant 2026-05-26] Add participant — ALWAYS available (not
+        // just group calls). On a 1:1 this is WhatsApp's "add to call" that
+        // converts the 1:1 into a group call on the same LiveKit room.
+        sheet.addAction(UIAlertAction(title: "Adicionar participante", style: .default) { [weak self] _ in
+            self?.handleAddMember()
+        })
         sheet.addAction(UIAlertAction(title: "Cancelar", style: .cancel, handler: nil))
 
         // iPad popover anchor (no-op on iPhone). Anchor to the More button.

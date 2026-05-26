@@ -387,7 +387,7 @@ export default function SearchScreen() {
               accessibilityLabel={t(tb.labelKey) || tb.fallback}
               accessibilityState={{ selected: active }}
             >
-              <Text style={{ color: active ? ACCENT : colors.text, fontWeight: active ? '700' : '500', fontSize: 13 }}>
+              <Text numberOfLines={1} style={{ color: active ? ACCENT : colors.text, fontWeight: active ? '700' : '500', fontSize: 13 }}>
                 {t(tb.labelKey) || tb.fallback}
               </Text>
             </TouchableOpacity>
@@ -436,15 +436,26 @@ const styles = StyleSheet.create({
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
   tabBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 8,
     gap: 8,
   },
   tabPill: {
+    // flexShrink:0 keeps every pill at its label width inside the horizontal
+    // ScrollView. On RN-Web a horizontal ScrollView lays its children in a
+    // flex row, and without this the 4 pills get squeezed at narrow widths,
+    // wrapping/overlapping the tab labels. flexShrink:0 forces horizontal
+    // scroll instead. Keep the row from wrapping for the same reason.
+    flexShrink: 0,
+    flexGrow: 0,
     paddingHorizontal: 14,
     paddingVertical: 7,
     borderRadius: 999,
     borderWidth: StyleSheet.hairlineWidth,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   sectionTitle: {
     fontSize: 12,

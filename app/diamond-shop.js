@@ -20,7 +20,7 @@ import { useTheme } from '../context/ThemeContext';
 import { DIAMONDS_ENABLED } from '../constants/featureFlags';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
-import { IconArrowLeft, IconDiamond } from '../components/Icons';
+import { IconArrowLeft, IconDiamond, IconCreditCard, IconChevronRight } from '../components/Icons';
 import { formatInt } from '../utils/dateFormat';
 import {
   DIAMOND_PACKS, getDiamondLocalizedPrice, getDiamondCheckoutUrl, initIAP, purchaseDiamonds,
@@ -270,7 +270,7 @@ export default function DiamondShopScreen() {
           accessibilityLabel={t('diamondShop.payWithCard') || 'Comprar com cartão de crédito'}
         >
           <View style={styles.ccCtaIcon}>
-            <Text style={styles.ccCtaIconText}>💳</Text>
+            <IconCreditCard size={22} color="#A855F7" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[styles.ccCtaTitle, { color: colors.text }]}>
@@ -280,7 +280,7 @@ export default function DiamondShopScreen() {
               {t('diamondShop.payWithCardSub') || 'Pagamento seguro via web. Cartão fica salvo para próximas compras.'}
             </Text>
           </View>
-          <Text style={{ color: '#A855F7', fontSize: 22, fontWeight: '700' }}>›</Text>
+          <IconChevronRight size={20} color="#A855F7" />
         </TouchableOpacity>
 
         {/* Packs */}
@@ -398,8 +398,8 @@ const styles = StyleSheet.create({
   headerLinkText: { fontSize: 13, fontWeight: '700' },
 
   hero: {
-    borderRadius: 20, borderWidth: StyleSheet.hairlineWidth,
-    paddingVertical: 22, paddingHorizontal: 18, alignItems: 'center',
+    borderRadius: 24, borderWidth: 1,
+    paddingVertical: 26, paddingHorizontal: 20, alignItems: 'center',
     marginBottom: 18,
   },
   diamondBig: {
@@ -465,7 +465,6 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'rgba(168,85,247,0.20)',
   },
-  ccCtaIconText: { fontSize: 22 },
   ccCtaTitle: { fontSize: 15, fontWeight: '700' },
   ccCtaSub: { fontSize: 12, marginTop: 2, lineHeight: 16 },
 });

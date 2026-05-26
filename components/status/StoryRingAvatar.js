@@ -317,14 +317,17 @@ export default function StoryRingAvatar({
             accessibilityLabel={badgeAccessibilityLabel || (badge === 'reply' ? 'Reply' : 'Add')}
             style={{
               position: 'absolute',
-              bottom: badge === 'reply' ? -2 : 0,
-              right: badge === 'reply' ? -2 : 0,
-              width: badge === 'reply' ? 22 : 20,
-              height: badge === 'reply' ? 22 : 20,
-              borderRadius: badge === 'reply' ? 11 : 10,
+              bottom: badge === 'reply' ? -2 : -1,
+              right: badge === 'reply' ? -2 : -1,
+              width: badge === 'reply' ? 22 : 22,
+              height: badge === 'reply' ? 22 : 22,
+              borderRadius: 11,
               backgroundColor: ringColor,
               alignItems: 'center', justifyContent: 'center',
-              borderWidth: 2, borderColor: _badgeBorder,
+              borderWidth: badge === 'reply' ? 2 : 2.5, borderColor: _badgeBorder,
+              // Soft brand glow on both badge variants — premium CTA feel.
+              shadowColor: ringColor, shadowOpacity: 0.5, shadowRadius: 6,
+              shadowOffset: { width: 0, height: 2 }, elevation: 4,
             }}
           >
             <Text style={{
@@ -339,13 +342,17 @@ export default function StoryRingAvatar({
           </TouchableOpacity>
         ) : (
           <View style={{
-            position: 'absolute', bottom: 0, right: 0,
-            width: 20, height: 20, borderRadius: 10,
+            position: 'absolute', bottom: -1, right: -1,
+            width: 22, height: 22, borderRadius: 11,
             backgroundColor: ringColor,
             alignItems: 'center', justifyContent: 'center',
-            borderWidth: 2, borderColor: _badgeBorder,
+            borderWidth: 2.5, borderColor: _badgeBorder,
+            // Soft brand-purple glow so the add affordance reads as a premium
+            // CTA (Instagram/WhatsApp parity) instead of a flat dot.
+            shadowColor: ringColor, shadowOpacity: 0.5, shadowRadius: 6,
+            shadowOffset: { width: 0, height: 2 }, elevation: 4,
           }}>
-            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700', marginTop: -2 }}>+</Text>
+            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800', marginTop: -1, lineHeight: 17 }}>+</Text>
           </View>
         )
       ) : null}

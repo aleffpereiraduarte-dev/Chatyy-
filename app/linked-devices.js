@@ -253,10 +253,10 @@ export default function LinkedDevicesScreen() {
               </View>
             )}
           </View>
-          <Text style={[styles.rowMeta, { color: colors.secondaryText }]} numberOfLines={1}>
+          <Text style={[styles.rowMeta, { color: colors.textSecondary }]} numberOfLines={1}>
             {browserLabel}{parsed.os ? ` · ${parsed.os}` : ''} · IP {ipLabel}
           </Text>
-          <Text style={[styles.rowTime, { color: colors.secondaryText }]}>
+          <Text style={[styles.rowTime, { color: colors.textSecondary }]}>
             {lastActiveLabel}
           </Text>
         </View>
@@ -279,7 +279,7 @@ export default function LinkedDevicesScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.title}>{t('devices.title') || 'Linked devices'}</Text>
+        <Text style={styles.title} numberOfLines={1}>{t('devices.title') || 'Linked devices'}</Text>
       </View>
 
       <View style={[styles.hero, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : 'rgba(124,58,237,0.06)' }]}>
@@ -287,7 +287,7 @@ export default function LinkedDevicesScreen() {
         <Text style={[styles.heroTitle, { color: colors.text }]}>
           {t('devices.heroTitle') || 'Keep your account secure'}
         </Text>
-        <Text style={[styles.heroSub, { color: colors.secondaryText }]}>
+        <Text style={[styles.heroSub, { color: colors.textSecondary }]}>
           {t('devices.heroSub') || 'Check devices where you are signed in and sign out the ones you don\'t recognize.'}
         </Text>
       </View>
@@ -336,7 +336,7 @@ export default function LinkedDevicesScreen() {
                 <Text style={[styles.emptyTitle, { color: colors.text }]}>
                   {t('devices.emptyTitle') || 'Apenas este dispositivo'}
                 </Text>
-                <Text style={[styles.emptyText, { color: colors.secondaryText }]}>
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
                   {t('devices.empty') || 'Only this device is signed in.'}
                 </Text>
               </View>
@@ -402,21 +402,21 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 14 },
   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  title: { color: '#fff', fontSize: 20, fontWeight: '700', marginLeft: 8 },
+  title: { flex: 1, color: '#fff', fontSize: 20, fontWeight: '700', marginLeft: 8 },
   hero: { alignItems: 'center', padding: 20, gap: 8 },
   heroTitle: { fontSize: 17, fontWeight: '700', textAlign: 'center' },
   heroSub: { fontSize: 13, textAlign: 'center', lineHeight: 18 },
   loading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   row: { flexDirection: 'row', padding: 16, gap: 12, alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth },
-  iconBox: { width: 44, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  rowBody: { flex: 1 },
+  iconBox: { width: 44, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
+  rowBody: { flex: 1, minWidth: 0 },
   rowHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  rowName: { fontSize: 15, fontWeight: '600' },
-  currentBadge: { backgroundColor: '#10B981', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
+  rowName: { flexShrink: 1, fontSize: 15, fontWeight: '600' },
+  currentBadge: { flexShrink: 0, backgroundColor: '#10B981', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
   currentBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
   rowMeta: { fontSize: 13, marginTop: 2 },
   rowTime: { fontSize: 12, marginTop: 4 },
-  signOutBtn: { paddingHorizontal: 12, paddingVertical: 8 },
+  signOutBtn: { flexShrink: 0, marginLeft: 4, paddingHorizontal: 12, paddingVertical: 8 },
   signOutText: { color: '#EF4444', fontSize: 13, fontWeight: '600' },
   emptyWrap: { alignItems: 'center', paddingTop: 40, paddingHorizontal: 32, gap: 10 },
   emptyIconBox: { width: 64, height: 64, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },

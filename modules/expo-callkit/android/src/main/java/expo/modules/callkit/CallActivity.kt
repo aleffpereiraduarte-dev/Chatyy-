@@ -66,9 +66,14 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+// [add-participant 2026-05-26] Scrollable contact-picker list + worker scope.
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -90,6 +95,7 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.PhoneInTalk
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SpeakerPhone
@@ -150,6 +156,7 @@ import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 import kotlin.random.Random
@@ -520,6 +527,10 @@ class CallActivity : ComponentActivity() {
           state = state,
           remoteRenderer = remoteRenderer,
           localRenderer = localRenderer,
+          // [add-participant 2026-05-26] Pass the running call's identifiers so
+          // the contact picker rings invitees into THIS room (chat_call_add).
+          callId = callId,
+          conversationId = conversationId,
           onHangup = { finishCall(reason = "user_hangup") },
           onToggleMute = { desired ->
             state.isMuted = !desired
@@ -2562,6 +2573,10 @@ private fun CallScreen(
   state: CallSessionStateAndroid,
   remoteRenderer: SurfaceViewRenderer?,
   localRenderer: SurfaceViewRenderer?,
+  // [add-participant 2026-05-26] Needed so the contact picker can ring a
+  // selected contact into THIS room (room name == callId) via chat_call_add.
+  callId: String,
+  conversationId: String,
   onHangup: () -> Unit,
   onToggleMute: (Boolean) -> Unit,
   onToggleCam: (Boolean) -> Unit,
@@ -2599,6 +2614,28 @@ private fun CallScreen(
   /** Real list of connected output devices, refreshed on sheet open. */
   val ctx = androidx.compose.ui.platform.LocalContext.current
   var audioDevices by remember { mutableStateOf(emptyList<AudioOutputEntry>()) }
+
+  // [add-participant 2026-05-26] Contact-picker state for the person+ button.
+  var showAddParticipant by remember { mutableStateOf(false) }
+  var addParticipantContacts by remember { mutableStateOf(emptyList<CallContacts.Contact>()) }
+  var addParticipantLoading by remember { mutableStateOf(false) }
+  var addParticipantBusyEmail by remember { mutableStateOf<String?>(null) }
+  var addParticipantInvited by remember { mutableStateOf(setOf<String>()) }
+  var addParticipantError by remember { mutableStateOf<String?>(null) }
+  val addPartScope = rememberCoroutineScope()
+
+  // Load contacts whenever the picker opens (fresh each time so presence is
+  // current). Runs on IO; UI updates back on the composition dispatcher.
+  LaunchedEffect(showAddParticipant) {
+    if (!showAddParticipant) return@LaunchedEffect
+    addParticipantLoading = true
+    addParticipantError = null
+    val list = withContext(Dispatchers.IO) { CallContacts.fetchContacts(ctx) }
+    // Hide anyone already in the call (current remote identities are emails).
+    val present = state.groupParticipants.map { it.identity.lowercase() }.toSet()
+    addParticipantContacts = list.filter { it.email.lowercase() !in present }
+    addParticipantLoading = false
+  }
 
   // 1s timer driving the connected-call duration HUD.
   LaunchedEffect(state.status) {
@@ -2787,6 +2824,12 @@ private fun CallScreen(
             showKeypad = true
             dtmfBuffer = ""
           },
+          onAddParticipant = {
+            // Open the contact picker. Loading is driven by the
+            // LaunchedEffect keyed on showAddParticipant below.
+            addParticipantError = null
+            showAddParticipant = true
+          },
         )
       }
       Spacer(Modifier.height(12.dp))
@@ -2871,6 +2914,48 @@ private fun CallScreen(
           showAudioPicker = false
         },
         onDismiss = { showAudioPicker = false },
+      )
+    }
+
+    // [add-participant 2026-05-26] Contact picker sheet — rings the tapped
+    // contact into THIS call (same room) via chat_call_add. Tap-outside or
+    // the close button dismisses.
+    AnimatedVisibility(
+      visible = showAddParticipant,
+      enter = slideInVertically { it } + fadeIn(),
+      exit = slideOutVertically { it } + fadeOut(),
+      modifier = Modifier.fillMaxSize(),
+    ) {
+      AddParticipantSheet(
+        contacts = addParticipantContacts,
+        loading = addParticipantLoading,
+        busyEmail = addParticipantBusyEmail,
+        invited = addParticipantInvited,
+        error = addParticipantError,
+        onPick = { email ->
+          if (addParticipantBusyEmail == null) {
+            addParticipantBusyEmail = email
+            addParticipantError = null
+            addPartScope.launch {
+              val ok = withContext(Dispatchers.IO) {
+                CallContacts.ringIntoCall(
+                  ctx = ctx,
+                  callId = callId,
+                  conversationId = conversationId,
+                  email = email,
+                  isVideo = state.isVideo,
+                )
+              }
+              if (ok) {
+                addParticipantInvited = addParticipantInvited + email
+              } else {
+                addParticipantError = "Não foi possível chamar $email"
+              }
+              addParticipantBusyEmail = null
+            }
+          }
+        },
+        onDismiss = { showAddParticipant = false },
       )
     }
 
@@ -3505,6 +3590,9 @@ private fun BottomActionBar(
   onStartScreenshare: () -> Unit,
   /** [DTMF, 2026-05-19] Open the 4×3 keypad overlay. */
   onShowKeypad: () -> Unit,
+  /** [add-participant 2026-05-26] Open the contact picker to ring someone
+   *  new into THIS call (person+ button — WhatsApp "add to call"). */
+  onAddParticipant: () -> Unit,
 ) {
   Column(
     modifier = Modifier
@@ -3520,6 +3608,14 @@ private fun BottomActionBar(
       horizontalArrangement = Arrangement.SpaceEvenly,
       verticalAlignment = Alignment.CenterVertically,
     ) {
+      // [add-participant 2026-05-26] WhatsApp-style "add to call" person+.
+      // First pill so it's reachable; opens the contact picker which rings
+      // the selected contact into THIS room via chat_call_add.
+      ActionPill(
+        icon = Icons.Filled.PersonAdd,
+        label = "Adicionar",
+        onClick = onAddParticipant,
+      )
       ActionPill(
         icon = Icons.Filled.EmojiEmotions,
         label = "Reagir",
@@ -4099,6 +4195,158 @@ private fun AudioOutputSheet(
         }
       }
       Spacer(Modifier.height(16.dp))
+    }
+  }
+}
+
+// [add-participant 2026-05-26] Contact picker sheet (WhatsApp "add to call").
+// Mirrors AudioOutputSheet styling: dim scrim + bottom card. Lists the
+// caller's Chatyy contacts; tapping one rings them into the running call.
+@Composable
+private fun AddParticipantSheet(
+  contacts: List<CallContacts.Contact>,
+  loading: Boolean,
+  busyEmail: String?,
+  invited: Set<String>,
+  error: String?,
+  onPick: (String) -> Unit,
+  onDismiss: () -> Unit,
+) {
+  Box(
+    modifier = Modifier
+      .fillMaxSize()
+      .background(Color.Black.copy(alpha = 0.55f))
+      .clickable(
+        indication = null,
+        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+      ) { onDismiss() },
+    contentAlignment = Alignment.BottomCenter,
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 8.dp, vertical = 24.dp)
+        .clip(RoundedCornerShape(24.dp))
+        .background(Color(0xFF14_1F_27))
+        .clickable(
+          indication = null,
+          interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+        ) { /* swallow */ }
+        .padding(vertical = 16.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+      Box(
+        modifier = Modifier
+          .width(40.dp)
+          .height(4.dp)
+          .clip(RoundedCornerShape(2.dp))
+          .background(Color.White.copy(alpha = 0.3f))
+      )
+      Spacer(Modifier.height(10.dp))
+      Text(text = "Adicionar à chamada", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+      Spacer(Modifier.height(12.dp))
+
+      if (error != null) {
+        Text(text = error, color = Color(0xFF_FF_6B_6B), fontSize = 13.sp)
+        Spacer(Modifier.height(8.dp))
+      }
+
+      when {
+        loading -> {
+          Text(text = "Carregando contatos…", color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp)
+          Spacer(Modifier.height(16.dp))
+        }
+        contacts.isEmpty() -> {
+          Text(text = "Nenhum contato disponível", color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp)
+          Spacer(Modifier.height(16.dp))
+        }
+        else -> {
+          Column(
+            modifier = Modifier
+              .fillMaxWidth()
+              .heightIn(max = 360.dp)
+              .verticalScroll(rememberScrollState())
+              .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+          ) {
+            contacts.forEach { c ->
+              AddParticipantRow(
+                contact = c,
+                busy = busyEmail == c.email,
+                invited = c.email in invited,
+                onPick = { onPick(c.email) },
+              )
+            }
+          }
+          Spacer(Modifier.height(16.dp))
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun AddParticipantRow(
+  contact: CallContacts.Contact,
+  busy: Boolean,
+  invited: Boolean,
+  onPick: () -> Unit,
+) {
+  Row(
+    modifier = Modifier
+      .fillMaxWidth()
+      .clip(RoundedCornerShape(14.dp))
+      .background(Color.White.copy(alpha = 0.06f))
+      .clickable(enabled = !busy && !invited) { onPick() }
+      .padding(horizontal = 14.dp, vertical = 12.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    // Avatar disc with initial.
+    Box(
+      modifier = Modifier
+        .size(40.dp)
+        .clip(CircleShape)
+        .background(avatarBrush(contact.email)),
+      contentAlignment = Alignment.Center,
+    ) {
+      Text(
+        text = contact.name.firstOrNull()?.uppercase() ?: "?",
+        color = Color.White,
+        fontSize = 16.sp,
+        fontWeight = FontWeight.SemiBold,
+      )
+    }
+    Spacer(Modifier.width(12.dp))
+    Column(modifier = Modifier.weight(1f)) {
+      Text(
+        text = contact.name,
+        color = Color.White,
+        fontSize = 15.sp,
+        fontWeight = FontWeight.Medium,
+        maxLines = 1,
+      )
+      Text(
+        text = if (contact.online) "online" else contact.email,
+        color = if (contact.online) Color(0xFF_4C_D9_64) else Color.White.copy(alpha = 0.5f),
+        fontSize = 12.sp,
+        maxLines = 1,
+      )
+    }
+    Spacer(Modifier.width(8.dp))
+    when {
+      invited -> Icon(
+        imageVector = Icons.Filled.Check,
+        contentDescription = "Convidado",
+        tint = Color(0xFF_4C_D9_64),
+        modifier = Modifier.size(22.dp),
+      )
+      busy -> Text(text = "…", color = Color.White.copy(alpha = 0.8f), fontSize = 18.sp)
+      else -> Icon(
+        imageVector = Icons.Filled.PersonAdd,
+        contentDescription = "Adicionar",
+        tint = SpeakerRing,
+        modifier = Modifier.size(22.dp),
+      )
     }
   }
 }

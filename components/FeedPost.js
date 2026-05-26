@@ -859,8 +859,8 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
             <AvatarCircle email={post.author_email} name={post.author_name} size={34} />
           </View>
           <View style={styles.headerInfo}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap' }}>
-              <Text style={[styles.authorName, { color: colors.text }]} numberOfLines={1}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', minWidth: 0 }}>
+              <Text style={[styles.authorName, { color: colors.text, flexShrink: 1 }]} numberOfLines={1}>
                 {authorDisplay}
               </Text>
               {/* Wave 15: "Patrocinado" badge for ads + paid boosts. Backend
@@ -1219,12 +1219,14 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                   smoothly instead of snapping. */}
               {mediaUrls.length <= 10 && (
                 <View style={styles.dotRow}>
-                  {mediaUrls.map((_, idx) => (
-                    <AnimatedCarouselDot
-                      key={idx}
-                      active={idx === activeMediaIndex}
-                    />
-                  ))}
+                  <View style={styles.dotPill}>
+                    {mediaUrls.map((_, idx) => (
+                      <AnimatedCarouselDot
+                        key={idx}
+                        active={idx === activeMediaIndex}
+                      />
+                    ))}
+                  </View>
                 </View>
               )}
             </View>
@@ -1307,7 +1309,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
             accessibilityLabel={t('feed.comment') || 'Comment'}
             accessibilityRole="button"
           >
-            <IconMessageCircle size={25} color={colors.text} />
+            <IconMessageCircle size={26} color={colors.text} />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={handleShare}
@@ -1316,7 +1318,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
             accessibilityLabel={t('feed.share') || 'Share'}
             accessibilityRole="button"
           >
-            <IconShare size={23} color={colors.text} />
+            <IconShare size={24} color={colors.text} />
           </TouchableOpacity>
         </View>
         <Animated.View style={{ transform: [{ scale: bookmarkScale }] }}>
@@ -1330,9 +1332,9 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
             accessibilityRole="button"
           >
             {bookmarked ? (
-              <IconBookmarkFilled size={25} color={colors.text} />
+              <IconBookmarkFilled size={26} color={colors.text} />
             ) : (
-              <IconBookmark size={25} color={colors.text} />
+              <IconBookmark size={26} color={colors.text} />
             )}
           </TouchableOpacity>
         </Animated.View>
@@ -1941,7 +1943,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 11,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -1951,18 +1953,18 @@ const styles = StyleSheet.create({
   },
   avatarRing: {
     padding: 2,
-    borderRadius: 20,
+    borderRadius: 21,
     borderWidth: 1.5,
-    borderColor: 'rgba(150,150,150,0.15)',
+    borderColor: 'rgba(124,58,237,0.22)',
   },
   headerInfo: {
     flex: 1,
-    marginLeft: 10,
+    marginLeft: 11,
   },
   authorName: {
     fontSize: 14,
-    fontWeight: '600',
-    letterSpacing: 0.1,
+    fontWeight: '700',
+    letterSpacing: -0.1,
   },
   locationRow: {
     flexDirection: 'row',
@@ -2031,29 +2033,39 @@ const styles = StyleSheet.create({
   },
   counterBadge: {
     position: 'absolute',
-    top: 14,
-    right: 14,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    borderRadius: 12,
+    top: 12,
+    right: 12,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
   counterText: {
     color: '#fff',
     fontSize: 12,
-    fontWeight: '600',
-    letterSpacing: 0.5,
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   dotRow: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 10,
-    gap: 4,
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
+  },
+  // Translucent backdrop so the inactive white dots stay visible over a
+  // bright/white image (Instagram pins the dots inside a soft dark pill).
+  dotPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.28)',
   },
   dot: {
     // Dimensions set dynamically
@@ -2159,22 +2171,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingTop: 8,
     paddingBottom: 4,
   },
   actionsLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 2,
+    gap: 4,
   },
   actionBtn: {
-    padding: 7,
+    padding: 8,
   },
   // Content
   likeCountRow: {
     paddingHorizontal: 14,
-    paddingTop: 2,
+    paddingTop: 4,
   },
   likeCount: {
     fontSize: 14,
@@ -2183,7 +2195,7 @@ const styles = StyleSheet.create({
   },
   captionRow: {
     paddingHorizontal: 14,
-    paddingTop: 4,
+    paddingTop: 5,
   },
   captionText: {
     fontSize: 14,
@@ -2191,18 +2203,20 @@ const styles = StyleSheet.create({
     letterSpacing: -0.1,
   },
   captionAuthor: {
-    fontWeight: '600',
+    fontWeight: '700',
   },
   moreText: {
     fontSize: 14,
-    marginTop: 1,
+    fontWeight: '500',
+    marginTop: 2,
   },
   commentsPreview: {
     paddingHorizontal: 14,
-    paddingTop: 5,
+    paddingTop: 6,
   },
   commentsPreviewText: {
     fontSize: 14,
+    fontWeight: '500',
   },
   // Wave 15: tagged-people chip row below the caption.
   taggedRow: {

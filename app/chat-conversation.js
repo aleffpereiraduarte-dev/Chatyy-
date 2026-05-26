@@ -17394,7 +17394,10 @@ export default function ChatConversationScreen() {
     if (item._type === 'separator') {
       return (
         <View style={styles.dateSeparator}>
-          <Text style={[styles.dateText, { color: isDark ? 'rgba(255,255,255,0.6)' : 'rgba(0,0,0,0.5)', backgroundColor: isDark ? '#111111' : '#E1F2DA' }]}>
+          {/* Date pill — harmonized to the purple brand (was WhatsApp green
+              #E1F2DA, which clashed with the violet header/bubbles). Light:
+              soft lavender wash + violet ink. Dark: deep glass + muted text. */}
+          <Text style={[styles.dateText, { color: isDark ? 'rgba(221,214,254,0.85)' : '#6D28D9', backgroundColor: isDark ? 'rgba(46,16,101,0.55)' : 'rgba(124,58,237,0.10)' }]}>
             {item._label || formatDateSeparator(item.date, t)}
           </Text>
         </View>
@@ -24875,6 +24878,9 @@ export default function ChatConversationScreen() {
           setShowEffectPicker(false);
           try { Haptics.selectionAsync(); } catch {}
         }}
+        // Live preview bubble shows the real draft text (falls back to a
+        // sample inside the picker when the composer is empty).
+        messageText={inputText}
         t={t}
         isDark={isDark}
       />
@@ -29241,8 +29247,8 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s ease, transform 0.15s ease' } : {}),
   },
   headerInfo: { flex: 1, marginHorizontal: 6 },
-  headerTitle: { fontSize: 16, fontWeight: '700', letterSpacing: -0.2 },
-  headerSubtitle: { fontSize: 12, marginTop: 1, opacity: 0.85, fontWeight: '500', letterSpacing: 0 },
+  headerTitle: { fontSize: 16.5, fontWeight: '800', letterSpacing: -0.3 },
+  headerSubtitle: { fontSize: 12, marginTop: 2, opacity: 0.9, fontWeight: '500', letterSpacing: 0.1 },
   disappearingBanner: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     paddingVertical: 8, paddingHorizontal: 14, gap: 6,
@@ -29259,16 +29265,19 @@ const styles = StyleSheet.create({
     marginVertical: 14,
   },
   dateText: {
-    fontSize: 11.5, fontWeight: '600', letterSpacing: 0.3,
+    // Pill geometry tuned for the lavender brand wash: a touch more letter
+    // spacing + 700 weight so the short labels ("Hoje"/"Ontem") read as a
+    // deliberate divider, fully-pill radius, and a softer shadow (the violet
+    // tint already carries the visual weight, so the heavy drop shadow was
+    // over-egging it).
+    fontSize: 11.5, fontWeight: '700', letterSpacing: 0.4,
     paddingHorizontal: 14, paddingVertical: 6,
-    borderRadius: 14, overflow: 'hidden',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(255,255,255,0.10)',
+    borderRadius: 999, overflow: 'hidden',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 8 },
-      android: { elevation: 3 },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 6 },
+      android: { elevation: 1 },
       web: {
-        boxShadow: '0 4px 14px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.05)',
+        boxShadow: '0 2px 10px rgba(124,58,237,0.10)',
         backdropFilter: 'blur(20px) saturate(180%)',
         WebkitBackdropFilter: 'blur(20px) saturate(180%)',
       },
@@ -29281,10 +29290,12 @@ const styles = StyleSheet.create({
     width: 48, height: 48, borderRadius: 24,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 0,
+    // Brand-tinted lift: a faint violet halo (was pure black) so the FAB
+    // reads as part of the purple system instead of a generic grey button.
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.25, shadowRadius: 18 },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.22, shadowRadius: 18 },
       android: { elevation: 10 },
-      web: { boxShadow: '0 6px 24px rgba(0,0,0,0.18), 0 2px 6px rgba(0,0,0,0.08)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', transition: 'transform 0.2s ease, box-shadow 0.2s ease' },
+      web: { boxShadow: '0 6px 24px rgba(124,58,237,0.18), 0 2px 6px rgba(0,0,0,0.08)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', transition: 'transform 0.2s ease, box-shadow 0.2s ease' },
     }),
     zIndex: 10,
   },
@@ -29388,7 +29399,7 @@ const styles = StyleSheet.create({
     minHeight: 14,
   },
   editedLabel: { fontSize: 10, fontStyle: 'italic', opacity: 0.55 },
-  msgTime: { fontSize: 10.5, fontWeight: '500', letterSpacing: 0.2, opacity: 0.85, flexShrink: 0 },
+  msgTime: { fontSize: 11, fontWeight: '500', letterSpacing: 0.2, opacity: 0.9, flexShrink: 0 },
   videoOverlayAbsolute: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',

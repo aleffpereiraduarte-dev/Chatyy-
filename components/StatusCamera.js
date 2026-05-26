@@ -11,7 +11,10 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CachedImage from './CachedImage';
-import { IconRefresh } from './Icons';
+import {
+  IconRefresh, IconX, IconZap, IconSparkles, IconClock, IconGrid,
+  IconImage, IconUndo2, IconMusic,
+} from './Icons';
 // AR face-filter pipeline (MediaPipe FaceLandmarker — Apache 2.0).
 // Filter overlay is graceful: when the native binding isn't loaded
 // (web, debug sim without the pod installed), each preset falls back
@@ -1178,7 +1181,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
         accessibilityLabel="Close camera"
         accessibilityRole="button"
       >
-        <Text style={s.closeBtnTxt}>✕</Text>
+        <IconX size={22} color="#fff" />
       </TouchableOpacity>
 
       {/* Top music tile (Feature 6) — pill above mode tabs */}
@@ -1188,7 +1191,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
         accessibilityLabel="Add music"
         accessibilityRole="button"
       >
-        <Text style={s.musicNote}>♫</Text>
+        <IconMusic size={14} color="#fff" style={{ marginRight: 6 }} />
         <Text style={s.musicLabel} numberOfLines={1}>
           {musicTrack?.title || 'Adicionar som'}
         </Text>
@@ -1209,7 +1212,9 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           style={s.stackBtn}
           accessibilityLabel="Toggle flash"
         >
-          <Text style={s.stackIcon}>{flash === 'off' ? '⚡' : flash === 'on' ? '⚡' : '⚡'}</Text>
+          <View style={[s.stackIconCircle, flash !== 'off' && s.stackIconCircleActive]}>
+            <IconZap size={20} color={flash !== 'off' ? '#FACC15' : '#fff'} />
+          </View>
           <Text style={s.stackLabel}>
             {flash === 'off' ? 'Off' : flash === 'on' ? 'On' : 'Auto'}
           </Text>
@@ -1233,7 +1238,9 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           style={[s.stackBtn, beauty && s.stackBtnActive]}
           accessibilityLabel="Beauty"
         >
-          <Text style={s.stackIcon}>✨</Text>
+          <View style={[s.stackIconCircle, beauty && s.stackIconCircleActive]}>
+            <IconSparkles size={20} color={beauty ? BRAND_PURPLE_LIGHT : '#fff'} />
+          </View>
           <Text style={s.stackLabel}>Beauty</Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -1241,7 +1248,9 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           style={[s.stackBtn, timerDelay > 0 && s.stackBtnActive]}
           accessibilityLabel="Timer"
         >
-          <Text style={s.stackIcon}>⏱</Text>
+          <View style={[s.stackIconCircle, timerDelay > 0 && s.stackIconCircleActive]}>
+            <IconClock size={20} color={timerDelay > 0 ? BRAND_PURPLE_LIGHT : '#fff'} />
+          </View>
           <Text style={s.stackLabel}>{timerDelay === 0 ? 'Timer' : `${timerDelay}s`}</Text>
         </TouchableOpacity>
         {/* Multi-clip toggle — sets captureMode to video and records the
@@ -1260,7 +1269,13 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           style={[s.stackBtn, segments.length > 0 && s.stackBtnActive]}
           accessibilityLabel="Multi-clip"
         >
-          <Text style={s.stackIcon}>{segments.length > 0 ? `${segments.length}+` : '⊞'}</Text>
+          <View style={[s.stackIconCircle, segments.length > 0 && s.stackIconCircleActive]}>
+            {segments.length > 0 ? (
+              <Text style={s.stackIconCount}>{`${segments.length}+`}</Text>
+            ) : (
+              <IconGrid size={19} color="#fff" />
+            )}
+          </View>
           <Text style={s.stackLabel}>
             {t?.('status.segments') || 'Clips'}
           </Text>
@@ -1339,7 +1354,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
             disabled={recording}
             accessibilityLabel={t?.('common.undo') || 'Desfazer'}
           >
-            <Text style={s.segmentDoneTxt}>{'⤺'}</Text>
+            <IconUndo2 size={17} color="#fff" />
           </TouchableOpacity>
         </View>
       )}
@@ -1463,7 +1478,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
             <Image source={{ uri: galleryThumb }} style={s.galleryThumbImg} />
           ) : (
             <View style={s.galleryThumbFallback}>
-              <Text style={{ fontSize: 22 }}>🖼</Text>
+              <IconImage size={24} color="rgba(255,255,255,0.9)" />
             </View>
           )}
         </TouchableOpacity>
@@ -1610,8 +1625,9 @@ const s = StyleSheet.create({
   closeBtn: {
     position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, left: 16,
     width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     alignItems: 'center', justifyContent: 'center', zIndex: 30,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
   },
   closeBtnTxt: { color: '#fff', fontSize: 20, fontWeight: '600', lineHeight: 22 },
 
@@ -1645,6 +1661,20 @@ const s = StyleSheet.create({
     textAlign: 'center', lineHeight: 44,
     overflow: 'hidden',
   },
+  // SVG-icon variant of the stack button — same 44px translucent circle, but
+  // hosts an SVG child (vs the text glyph in `stackIcon`). Active state lights
+  // the circle with a subtle white tint so the toggled tool reads clearly.
+  stackIconCircle: {
+    width: 44, height: 44, borderRadius: 22,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+  },
+  stackIconCircleActive: {
+    backgroundColor: 'rgba(255,255,255,0.20)',
+    borderColor: 'rgba(255,255,255,0.5)',
+  },
+  stackIconCount: { color: '#fff', fontSize: 16, fontWeight: '900' },
   stackLabel: {
     color: '#fff', fontSize: 10, marginTop: 4, fontWeight: '700',
     letterSpacing: 0.3, textShadowColor: 'rgba(0,0,0,0.5)',
@@ -1685,8 +1715,12 @@ const s = StyleSheet.create({
   },
   modeTxtActive: { color: '#fff', fontWeight: '900' },
   modeUnderline: {
-    marginTop: 5, height: 3, width: 22, borderRadius: 2,
+    marginTop: 5, height: 3, width: 24, borderRadius: 2,
     backgroundColor: '#fff',
+    // Soft brand-purple glow under the active tab so the selection reads as
+    // "Chatyy" rather than a generic white dash (TikTok/IG-grade cue).
+    shadowColor: BRAND_PURPLE_LIGHT, shadowOpacity: 0.9, shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 }, elevation: 3,
   },
 
   // Bottom bar
@@ -1727,6 +1761,10 @@ const s = StyleSheet.create({
     borderWidth: 4, borderColor: '#fff',
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: 'transparent',
+    // Soft drop shadow at rest so the shutter reads as a floating, premium
+    // control over any camera background (IG/TikTok parity).
+    shadowColor: '#000', shadowOpacity: 0.4, shadowRadius: 10,
+    shadowOffset: { width: 0, height: 3 }, elevation: 6,
   },
   capInner: { width: 68, height: 68, borderRadius: 34, backgroundColor: '#fff' },
   capRec: { backgroundColor: '#FF3B30', borderRadius: 8, width: 34, height: 34 },

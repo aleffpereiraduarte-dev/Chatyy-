@@ -20,6 +20,10 @@ import FeedComments from '../components/FeedComments';
 function resolveMediaUrl(u) {
   if (!u) return '';
   if (u.startsWith('http')) return u;
+  // /data/ assets live on R2 and are only served via the CDN host — the
+  // origin (chatyy.com.br) 404s for them. Route relative media paths to the
+  // CDN so a path that escaped backend CDN-ification still resolves.
+  if (u.startsWith('/data/')) return 'https://media.chatyy.com.br' + u;
   return BASE_URL + (u.startsWith('/') ? '' : '/') + u;
 }
 import {
@@ -77,7 +81,17 @@ function VideoPane({ uri, poster, active }) {
 }
 
 function SpotlightItem({ post, active, onLike, onBookmark, onOpenComments, onOpenLikers, router }) {
-  const rawUrl = post.video_hls_url || (Array.isArray(post.media_urls) ? post.media_urls[0] : '');
+  // Source preference: the raw MP4 (media_urls[0]) is always present and lives
+  // on the CDN, so it's the reliable default. We only use video_hls_url when
+  // the backend actually emits one — it now nulls it out when the .m3u8 doesn't
+  // exist on disk (the /data/videos/ HLS pipeline never ran for most posts, so
+  // the old relative path 404'd on both origin AND cdn → poster stuck =
+  // "blurred content"). On web, plain MP4 also plays more reliably than HLS in
+  // a bare <video> tag without hls.js. Belt-and-suspenders: even if a stale
+  // relative HLS path slips through, we fall back to the MP4.
+  const mp4Url = Array.isArray(post.media_urls) ? (post.media_urls[0] || '') : '';
+  const hlsUrl = post.video_hls_url || '';
+  const rawUrl = (Platform.OS === 'web' ? (mp4Url || hlsUrl) : (hlsUrl || mp4Url));
   const videoUrl = resolveMediaUrl(rawUrl);
   const poster = post.thumbnail_url ? resolveMediaUrl(post.thumbnail_url) : null;
 
@@ -85,35 +99,45 @@ function SpotlightItem({ post, active, onLike, onBookmark, onOpenComments, onOpe
     <View style={{ width: SW, height: SH, backgroundColor: '#000' }}>
       <VideoPane uri={videoUrl} poster={poster} active={active} />
 
-      {/* Gradient overlay */}
+      {/* Gradient overlay — slightly deeper at the bottom so the author +
+          caption + action column stay legible over bright footage. */}
       <View
         pointerEvents="none"
         style={[StyleSheet.absoluteFill, {
           ...(Platform.OS === 'web'
-            ? { background: 'linear-gradient(to top, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 40%, rgba(0,0,0,0) 70%, rgba(0,0,0,0.4) 100%)' }
+            ? { background: 'linear-gradient(to top, rgba(0,0,0,0.78) 0%, rgba(0,0,0,0.12) 34%, rgba(0,0,0,0) 62%, rgba(0,0,0,0.45) 100%)' }
             : {}),
         }]}
       />
+      {/* Native fallback: solid translucent scrim pinned to the bottom third
+          (RN can't render a CSS gradient string). Keeps text readable. */}
+      {Platform.OS !== 'web' && (
+        <View
+          pointerEvents="none"
+          style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: SH * 0.34, backgroundColor: 'rgba(0,0,0,0.30)' }}
+        />
+      )}
 
       {/* Right-side action column — heart icon toggles like, count below it
           opens the likers list (Instagram/TikTok convention). Comment icon
-          + count both open the comments sheet. */}
-      <View style={{ position: 'absolute', right: 10, bottom: 120, alignItems: 'center', gap: 20 }}>
+          + count both open the comments sheet. Each icon wears a soft drop
+          shadow so it reads over any frame. */}
+      <View style={{ position: 'absolute', right: 12, bottom: 132, alignItems: 'center', gap: 24 }}>
         <View style={{ alignItems: 'center' }}>
-          <Pressable onPress={() => onLike(post)} hitSlop={8}>
+          <Pressable onPress={() => onLike(post)} hitSlop={10} style={SPOT_ICON_SHADOW}>
             {post.liked_by_me
               ? <IconHeart size={34} color="#FF3366" />
               : <IconHeartOutline size={34} color="#fff" />}
           </Pressable>
-          <Pressable onPress={() => onOpenLikers(post)} hitSlop={6}>
-            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginTop: 2 }}>{post.likes_count || 0}</Text>
+          <Pressable onPress={() => onOpenLikers(post)} hitSlop={8}>
+            <Text style={SPOT_COUNT}>{post.likes_count || 0}</Text>
           </Pressable>
         </View>
         <Pressable onPress={() => onOpenComments(post)} style={{ alignItems: 'center' }}>
-          <IconMessageCircle size={32} color="#fff" />
-          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginTop: 2 }}>{post.comments_count || 0}</Text>
+          <View style={SPOT_ICON_SHADOW}><IconMessageCircle size={32} color="#fff" /></View>
+          <Text style={SPOT_COUNT}>{post.comments_count || 0}</Text>
         </Pressable>
-        <Pressable onPress={() => onBookmark(post)} style={{ alignItems: 'center' }}>
+        <Pressable onPress={() => onBookmark(post)} style={[{ alignItems: 'center' }, SPOT_ICON_SHADOW]}>
           {post.bookmarked_by_me
             ? <IconBookmarkFilled size={30} color="#F59E0B" />
             : <IconBookmark size={30} color="#fff" />}
@@ -121,18 +145,20 @@ function SpotlightItem({ post, active, onLike, onBookmark, onOpenComments, onOpe
       </View>
 
       {/* Bottom metadata */}
-      <View style={{ position: 'absolute', left: 16, right: 80, bottom: 80 }}>
+      <View style={{ position: 'absolute', left: 16, right: 84, bottom: 84 }}>
         <Pressable
           onPress={() => router.push(`/u/${encodeURIComponent(post.author_email)}`)}
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}
+          style={{ flexDirection: 'row', alignItems: 'center', gap: 9, marginBottom: 10 }}
         >
-          <AvatarCircle name={post.author_name || post.author_email} email={post.author_email} size={36} />
-          <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>
+          <View style={{ borderWidth: 1.5, borderColor: '#fff', borderRadius: 19, padding: 1 }}>
+            <AvatarCircle name={post.author_name || post.author_email} email={post.author_email} size={34} />
+          </View>
+          <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800', letterSpacing: -0.2, ...SPOT_TEXT_SHADOW }}>
             @{(post.author_email || '').split('@')[0]}
           </Text>
         </Pressable>
         {!!post.caption && (
-          <Text style={{ color: '#fff', fontSize: 14, lineHeight: 20 }} numberOfLines={3}>
+          <Text style={{ color: '#fff', fontSize: 14, lineHeight: 20, ...SPOT_TEXT_SHADOW }} numberOfLines={3}>
             {post.caption}
           </Text>
         )}
@@ -140,6 +166,25 @@ function SpotlightItem({ post, active, onLike, onBookmark, onOpenComments, onOpe
     </View>
   );
 }
+
+// Shared text/icon shadows so overlay content stays legible over any frame.
+const SPOT_TEXT_SHADOW = {
+  textShadowColor: 'rgba(0,0,0,0.6)',
+  textShadowOffset: { width: 0, height: 1 },
+  textShadowRadius: 4,
+};
+const SPOT_ICON_SHADOW = Platform.OS === 'web'
+  ? {}
+  : { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.45, shadowRadius: 4 };
+const SPOT_COUNT = {
+  color: '#fff',
+  fontSize: 11.5,
+  fontWeight: '700',
+  marginTop: 4,
+  textShadowColor: 'rgba(0,0,0,0.7)',
+  textShadowOffset: { width: 0, height: 1 },
+  textShadowRadius: 3,
+};
 
 export default function SpotlightScreen() {
   const { colors, isDark } = useTheme();
@@ -246,9 +291,15 @@ export default function SpotlightScreen() {
         removeClippedSubviews
         ListEmptyComponent={
           !loading ? (
-            <View style={{ width: SW, height: SH, justifyContent: 'center', alignItems: 'center' }}>
-              <Text style={{ color: '#fff', fontSize: 16 }}>
+            <View style={{ width: SW, height: SH, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 40, gap: 14 }}>
+              <View style={{ width: 76, height: 76, borderRadius: 38, borderWidth: 2, borderColor: 'rgba(255,255,255,0.18)', alignItems: 'center', justifyContent: 'center' }}>
+                <IconPlay size={34} color="rgba(255,255,255,0.7)" />
+              </View>
+              <Text style={{ color: '#fff', fontSize: 17, fontWeight: '800', letterSpacing: -0.2, textAlign: 'center' }}>
                 {t?.('spotlight.empty') || 'Nenhum vídeo no momento'}
+              </Text>
+              <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13.5, textAlign: 'center', lineHeight: 19 }}>
+                {t?.('spotlight.emptyHint') || t?.('feed.noReelsHint') || 'Vídeos aparecerão aqui'}
               </Text>
             </View>
           ) : null
@@ -262,7 +313,7 @@ export default function SpotlightScreen() {
         <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }}>
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 17, fontWeight: '800', textShadowColor: 'rgba(0,0,0,0.6)', textShadowRadius: 4 }}>
+        <Text style={{ flex: 1, textAlign: 'center', color: '#fff', fontSize: 18, fontWeight: '800', letterSpacing: 0.2, textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 }}>
           {t?.('spotlight.title') || 'Spotlight'}
         </Text>
         <View style={{ width: 40 }} />

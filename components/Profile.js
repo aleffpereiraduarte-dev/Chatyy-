@@ -47,7 +47,7 @@ import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
   IconChevronRight, IconSettings, IconMoreHorizontal, IconShare, IconAlertTriangle, IconLock, IconEdit,
   IconTrash, IconPlus, IconGrid, IconFilm, IconTag, IconCheck, IconEyeOff, IconLink, IconPlay,
-  IconGiftBox,
+  IconGiftBox, IconBrush, IconBriefcase,
 } from './Icons';
 const IconEdit3 = IconEdit;
 const IconTrash2 = IconTrash;
@@ -1850,13 +1850,16 @@ export default function Profile({
           >
             <View style={{
               width: RING, height: RING, borderRadius: RING / 2,
-              borderWidth: 1.5, borderColor: borderTone,
+              // Brand-tinted ring + soft purple fill so the "+" tile reads as
+              // an inviting "add a highlight" affordance instead of an empty
+              // grey circle — matches the gradient rings on real tiles.
+              borderWidth: 1.5, borderColor: isDark ? 'rgba(167,139,250,0.45)' : 'rgba(124,58,237,0.30)',
               alignItems: 'center', justifyContent: 'center',
-              backgroundColor: tone,
+              backgroundColor: isDark ? 'rgba(167,139,250,0.10)' : 'rgba(124,58,237,0.07)',
             }}>
-              <IconPlus size={30} color={colors?.text} strokeWidth={2} />
+              <IconPlus size={28} color={isDark ? '#C4B5FD' : '#7C3AED'} strokeWidth={2.2} />
             </View>
-            <Text style={{ fontSize: 12, color: colors?.text, marginTop: 6, fontWeight: '500', letterSpacing: 0.1 }} numberOfLines={1}>
+            <Text style={{ fontSize: 12, color: colors?.text, marginTop: 6, fontWeight: '600', letterSpacing: 0.1 }} numberOfLines={1}>
               {t?.('profile.newHighlight') || 'Novo'}
             </Text>
           </TouchableOpacity>
@@ -2002,11 +2005,31 @@ export default function Profile({
             header flow). Hidden when the user hasn't set one yet to avoid
             an empty grey rectangle. Profile-upgrade combo (2026-05-18). */}
         {coverUrl ? (
-          <View style={{ width: '100%', height: 150, backgroundColor: 'rgba(124,58,237,0.06)' }}>
+          <View style={{
+            width: '100%', height: 160, backgroundColor: 'rgba(124,58,237,0.06)',
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+            overflow: 'hidden',
+          }}>
             {_ExpoImage ? (
               <_ExpoImage source={{ uri: coverUrl }} style={{ width: '100%', height: '100%' }} contentFit="cover" cachePolicy="memory-disk" />
             ) : (
               <Image source={{ uri: coverUrl }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+            )}
+            {/* Bottom scrim so the @handle + avatar that follow never lose
+                contrast against a bright cover. Web uses a real CSS gradient;
+                native falls back to a soft translucent wash. Purely cosmetic —
+                pointerEvents none so it never eats taps. */}
+            {WEB ? (
+              <View pointerEvents="none" style={{
+                position: 'absolute', left: 0, right: 0, bottom: 0, height: '55%',
+                backgroundImage: `linear-gradient(to bottom, rgba(0,0,0,0), ${isDark ? 'rgba(0,0,0,0.45)' : 'rgba(0,0,0,0.22)'})`,
+              }} />
+            ) : (
+              <View pointerEvents="none" style={{
+                position: 'absolute', left: 0, right: 0, bottom: 0, height: '45%',
+                backgroundColor: isDark ? 'rgba(0,0,0,0.28)' : 'rgba(0,0,0,0.14)',
+              }} />
             )}
           </View>
         ) : null}
@@ -2025,39 +2048,51 @@ export default function Profile({
               {identity.username ? `@${identity.username}` : identity.name}
             </Text>
             {identity.verified && (
-              <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#1DA1F2', alignItems: 'center', justifyContent: 'center' }}>
-                <IconCheck size={12} color="#fff" strokeWidth={3} />
+              <View style={{
+                width: 20, height: 20, borderRadius: 10, backgroundColor: '#1DA1F2',
+                alignItems: 'center', justifyContent: 'center',
+                // Hairline white ring lifts the badge off the @handle line so
+                // it reads as a stamped verification mark (Instagram/X parity).
+                borderWidth: 1.5, borderColor: isDark ? 'rgba(13,13,13,0.9)' : '#fff',
+                ...(Platform.OS === 'web' ? { boxShadow: '0 1px 4px rgba(29,161,242,0.45)' } : {
+                  shadowColor: '#1DA1F2', shadowOpacity: 0.4, shadowRadius: 4, shadowOffset: { width: 0, height: 1 }, elevation: 2,
+                }),
+              }}>
+                <IconCheck size={11} color="#fff" strokeWidth={3} />
               </View>
             )}
             {/* Lock icon for private accounts — Instagram parity */}
             {identity.is_private && (
               <IconLock size={16} color={colors?.text} />
             )}
-            {/* Account type badge — Creator (purple palette icon) / Business
-                (blue briefcase icon). Personal renders nothing so most users
-                see a clean header. The single-character emoji-like glyph
-                comes from the user's spec; using a textual badge keeps it
-                cheap (no extra SVG asset) and lets it inherit font scaling. */}
+            {/* Account type chip — Creator (palette/brush SVG) / Business
+                (briefcase SVG). Personal renders nothing so most users see a
+                clean header. NO emoji: icons come from the shared SVG set so
+                they inherit crisp rendering + color on every density. Chip is
+                a soft-tinted pill with a hairline border so it reads as a
+                "badge" without shouting over the @handle next to it. */}
             {accountType === 'creator' && (
               <View style={{
-                paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: 'rgba(147,51,234,0.14)',
-                flexDirection: 'row', alignItems: 'center', gap: 3,
+                paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
+                backgroundColor: 'rgba(147,51,234,0.12)',
+                borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(147,51,234,0.28)',
+                flexDirection: 'row', alignItems: 'center', gap: 4,
               }} accessibilityLabel={t?.('profile.accountTypeCreator') || 'Criador'}>
-                <Text style={{ fontSize: 11 }}>🎨</Text>
-                <Text style={{ fontSize: 11, color: '#9333EA', fontWeight: '700' }}>
+                <IconBrush size={11} color="#9333EA" />
+                <Text style={{ fontSize: 11, color: '#9333EA', fontWeight: '700', letterSpacing: 0.1 }}>
                   {t?.('profile.accountTypeCreator') || 'Criador'}
                 </Text>
               </View>
             )}
             {accountType === 'business' && (
               <View style={{
-                paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10,
-                backgroundColor: 'rgba(37,99,235,0.14)',
-                flexDirection: 'row', alignItems: 'center', gap: 3,
+                paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
+                backgroundColor: 'rgba(37,99,235,0.12)',
+                borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(37,99,235,0.28)',
+                flexDirection: 'row', alignItems: 'center', gap: 4,
               }} accessibilityLabel={t?.('profile.accountTypeBusiness') || 'Negócio'}>
-                <Text style={{ fontSize: 11 }}>💼</Text>
-                <Text style={{ fontSize: 11, color: '#2563EB', fontWeight: '700' }}>
+                <IconBriefcase size={11} color="#2563EB" />
+                <Text style={{ fontSize: 11, color: '#2563EB', fontWeight: '700', letterSpacing: 0.1 }}>
                   {t?.('profile.accountTypeBusiness') || 'Negócio'}
                 </Text>
               </View>
@@ -2235,15 +2270,26 @@ export default function Profile({
             );
           })()}
           {/* Instagram pattern: 3-column stats row to the right of the avatar.
-              Uses justifyContent: space-around with each Stat as flex:1 column
-              so numbers/labels stay vertically centered with the avatar. */}
-          <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', paddingHorizontal: 4 }}>
-            <Stat value={postsTotal} label={t?.('profile.posts') || 'Publicações'} colors={colors} />
-            <Stat value={social?.followers_count || 0} label={t?.('profile.followers') || 'Seguidores'} colors={colors}
-              onPress={() => (onOpenFollowers ? onOpenFollowers(identity.email, 'followers') : setFollowersTab('followers'))} />
-            <Stat value={social?.following_count || 0} label={t?.('profile.following') || 'Seguindo'} colors={colors}
-              onPress={() => (onOpenFollowers ? onOpenFollowers(identity.email, 'following') : setFollowersTab('following'))} />
-          </View>
+              Each Stat is a flex:1 column; hairline vertical dividers between
+              them give the "stats card" rhythm Instagram uses, keeping the
+              numbers visually grouped without a heavy bordered box. */}
+          {(() => {
+            const dividerColor = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.08)';
+            const Divider = () => (
+              <View style={{ width: StyleSheet.hairlineWidth, height: 30, backgroundColor: dividerColor }} />
+            );
+            return (
+              <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center', paddingHorizontal: 4 }}>
+                <Stat value={postsTotal} label={t?.('profile.posts') || 'Publicações'} colors={colors} />
+                <Divider />
+                <Stat value={social?.followers_count || 0} label={t?.('profile.followers') || 'Seguidores'} colors={colors}
+                  onPress={() => (onOpenFollowers ? onOpenFollowers(identity.email, 'followers') : setFollowersTab('followers'))} />
+                <Divider />
+                <Stat value={social?.following_count || 0} label={t?.('profile.following') || 'Seguindo'} colors={colors}
+                  onPress={() => (onOpenFollowers ? onOpenFollowers(identity.email, 'following') : setFollowersTab('following'))} />
+              </View>
+            );
+          })()}
         </View>
 
         {/* Row 3 — name + bio + link + presence.
@@ -2271,9 +2317,12 @@ export default function Profile({
             </Text>
           )}
           {!!identity.website && (
-            <Text style={{ fontSize: 13, color: '#7C3AED', fontWeight: '600', marginTop: 4 }} numberOfLines={1}>
-              {identity.website}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }}>
+              <IconLink size={13} color="#7C3AED" />
+              <Text style={{ fontSize: 13, color: '#7C3AED', fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
+                {identity.website}
+              </Text>
+            </View>
           )}
           {/* Multi-link chips — up to 5 link-in-bio pills rendered as a
               flex-wrap row below the bio. Each chip opens its URL in the
@@ -2304,19 +2353,19 @@ export default function Profile({
                     activeOpacity={0.75}
                     style={{
                       flexDirection: 'row', alignItems: 'center', gap: 6,
-                      paddingHorizontal: 12, paddingVertical: 7,
-                      borderRadius: 16,
-                      backgroundColor: isDark ? 'rgba(124,58,237,0.14)' : 'rgba(124,58,237,0.10)',
+                      paddingHorizontal: 13, paddingVertical: 7,
+                      borderRadius: 999, // pill — matches the action-button family
+                      backgroundColor: isDark ? 'rgba(124,58,237,0.14)' : 'rgba(124,58,237,0.09)',
                       borderWidth: StyleSheet.hairlineWidth,
-                      borderColor: 'rgba(124,58,237,0.30)',
+                      borderColor: isDark ? 'rgba(167,139,250,0.40)' : 'rgba(124,58,237,0.26)',
                     }}
                     accessibilityRole="link"
                     accessibilityLabel={label}
                   >
-                    <IconLink size={13} color="#7C3AED" />
+                    <IconLink size={13} color={isDark ? '#C4B5FD' : '#7C3AED'} />
                     <Text
                       numberOfLines={1}
-                      style={{ fontSize: 13, color: '#7C3AED', fontWeight: '600', maxWidth: 180 }}
+                      style={{ fontSize: 13, color: isDark ? '#C4B5FD' : '#7C3AED', fontWeight: '600', maxWidth: 180 }}
                     >
                       {label}
                     </Text>

@@ -691,15 +691,15 @@ function ChatHub() {
       return (
         <>
           <TouchableOpacity onPress={() => { try { router.push('/photos?camera=1'); } catch (e) { console.warn("[chat] router.push failed:", e); } }} activeOpacity={0.6}
-            style={btnStyle} accessibilityLabel="Camera">
+            hitSlop={6} style={btnStyle} accessibilityLabel="Camera">
             <IconCamera size={19} color={headerIconColor} />
           </TouchableOpacity>
           <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6}
-            style={btnStyle} accessibilityLabel="Search">
+            hitSlop={6} style={btnStyle} accessibilityLabel="Search">
             <IconSearch size={18} color={headerIconColor} />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => router.push('/chat-new')} activeOpacity={0.6}
-            style={btnStyle} accessibilityLabel="New chat">
+            hitSlop={6} style={btnStyle} accessibilityLabel="New chat">
             <IconPlus size={18} color={headerIconColor} />
           </TouchableOpacity>
         </>
@@ -1759,7 +1759,7 @@ const styles = StyleSheet.create({
   brandTitle: {
     fontSize: 24,
     fontWeight: '800',
-    letterSpacing: -0.5,
+    letterSpacing: -0.6,
   },
   title: {
     fontSize: 21,
@@ -1768,7 +1768,7 @@ const styles = StyleSheet.create({
   },
   headerActions: {
     flexDirection: 'row',
-    gap: 8,
+    gap: 6,
   },
   headerIconBtn: {
     width: 38,

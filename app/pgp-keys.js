@@ -161,9 +161,11 @@ export default function PgpKeysScreen() {
         {hasKey ? (
           <>
             <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                <IconCheck size={18} color="#10b981" />
-                <Text style={{ color: colors.text, fontWeight: '700', marginLeft: 8 }}>
+              <View style={s.cardHead}>
+                <View style={[s.cardIconChip, { backgroundColor: '#10b98118' }]}>
+                  <IconCheck size={18} color="#10b981" />
+                </View>
+                <Text style={[s.cardHeadTitle, { color: colors.text }]}>
                   {t('pgp.active') || 'Chave PGP ativa'}
                 </Text>
               </View>
@@ -178,22 +180,24 @@ export default function PgpKeysScreen() {
               </Text>
             </View>
 
-            <TouchableOpacity style={[s.actionBtn, { borderColor: colors.borderLight }]} onPress={copyPublic}>
-              <IconShare size={18} color={colors.text} />
+            <TouchableOpacity style={[s.actionBtn, { borderColor: colors.border, backgroundColor: colors.surface }]} onPress={copyPublic}>
+              <IconShare size={18} color={colors.primary} />
               <Text style={[s.actionLabel, { color: colors.text }]}>{t('pgp.copyPublic') || 'Copiar chave pública'}</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity style={[s.actionBtn, { borderColor: '#ef4444' }]} onPress={revoke}>
-              <IconTrash size={18} color="#ef4444" />
-              <Text style={[s.actionLabel, { color: '#ef4444' }]}>{t('pgp.revoke') || 'Apagar chave'}</Text>
+            <TouchableOpacity style={[s.actionBtn, { borderColor: colors.error + '40', backgroundColor: colors.errorBg }]} onPress={revoke}>
+              <IconTrash size={18} color={colors.error} />
+              <Text style={[s.actionLabel, { color: colors.error }]}>{t('pgp.revoke') || 'Apagar chave'}</Text>
             </TouchableOpacity>
           </>
         ) : (
           <>
             <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
-                <IconKey size={18} color={colors.primary} />
-                <Text style={{ color: colors.text, fontWeight: '700', marginLeft: 8 }}>
+              <View style={s.cardHead}>
+                <View style={[s.cardIconChip, { backgroundColor: colors.primaryLight }]}>
+                  <IconKey size={18} color={colors.primary} />
+                </View>
+                <Text style={[s.cardHeadTitle, { color: colors.text }]}>
                   {t('pgp.generateTitle') || 'Gerar nova chave'}
                 </Text>
               </View>
@@ -239,25 +243,33 @@ export default function PgpKeysScreen() {
 const s = StyleSheet.create({
   root: { flex: 1 },
   intro: { fontSize: FontSize.sm, lineHeight: 20, marginBottom: Spacing.lg },
-  card: { padding: Spacing.md, borderRadius: BorderRadius.lg, borderWidth: 1, marginBottom: Spacing.md },
+  card: { padding: Spacing.lg, borderRadius: BorderRadius.xl, borderWidth: 1, marginBottom: Spacing.md },
+  cardHead: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md },
+  cardIconChip: {
+    width: 36, height: 36, borderRadius: 10,
+    alignItems: 'center', justifyContent: 'center', marginRight: 10,
+  },
+  cardHeadTitle: { fontSize: FontSize.lg, fontWeight: '800', letterSpacing: -0.2 },
   fingerprint: {
     fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', web: 'monospace' }),
-    fontSize: 13, padding: 10, borderRadius: 6, letterSpacing: 1,
+    fontSize: 13, padding: 12, borderRadius: BorderRadius.md, letterSpacing: 1,
   },
   input: {
     borderWidth: 1, borderRadius: BorderRadius.md,
-    paddingHorizontal: 12, paddingVertical: 10,
-    fontSize: FontSize.sm, marginBottom: 10,
+    paddingHorizontal: 14, paddingVertical: 12,
+    fontSize: FontSize.base, marginBottom: 10,
   },
   primaryBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    paddingVertical: 12, borderRadius: BorderRadius.md, marginTop: 4,
+    paddingVertical: 14, borderRadius: BorderRadius.lg, marginTop: 6,
+    shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.28, shadowRadius: 14, elevation: 6,
   },
-  primaryBtnLabel: { color: '#fff', fontWeight: '700', marginLeft: 8 },
+  primaryBtnLabel: { color: '#fff', fontWeight: '800', marginLeft: 8, fontSize: FontSize.base },
   actionBtn: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 12, paddingHorizontal: Spacing.md,
-    borderWidth: 1, borderRadius: BorderRadius.md, marginBottom: Spacing.sm,
+    paddingVertical: 14, paddingHorizontal: Spacing.lg,
+    borderWidth: 1, borderRadius: BorderRadius.lg, marginBottom: Spacing.sm,
   },
-  actionLabel: { fontWeight: '600', marginLeft: 10 },
+  actionLabel: { fontWeight: '700', marginLeft: 10, fontSize: FontSize.base },
 });

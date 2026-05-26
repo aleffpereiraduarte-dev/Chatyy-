@@ -914,7 +914,7 @@ function ScheduledList({ items, skeleton, colors, cardBg, subText, t }) {
           key={it.id || it.session_id || `sch-${idx}`}
           style={[styles.scheduledRow, { backgroundColor: cardBg }]}
         >
-          <View style={{ opacity: skeleton ? 0.4 : 1 }}>
+          <View style={{ opacity: skeleton ? 0.4 : 1, flexShrink: 0 }}>
             <AvatarCircle
               name={it.host_name || it.name || 'Criador'}
               email={it.host_email || it.email}
@@ -923,10 +923,10 @@ function ScheduledList({ items, skeleton, colors, cardBg, subText, t }) {
           </View>
           <View style={{ flex: 1, minWidth: 0 }}>
             <Text numberOfLines={1} style={[styles.scheduledName, { color: colors.text, opacity: skeleton ? 0.4 : 1 }]}>
-              {(t('live.upcomingPrefix') || 'Em breve:')} {it.host_name || it.name || 'criador'}{' '}
-              <Text style={[styles.scheduledNamePlain, { color: subText }]}>
-                {t('live.upcomingGoLive') || 'vai entrar ao vivo'}
-              </Text>
+              {(t('live.upcomingPrefix') || 'Em breve:')} {it.host_name || it.name || 'criador'}
+            </Text>
+            <Text numberOfLines={1} style={[styles.scheduledNamePlain, { color: subText }]}>
+              {t('live.upcomingGoLive') || 'vai entrar ao vivo'}
             </Text>
             <Text numberOfLines={1} style={[styles.scheduledTime, { color: subText }]}>
               {it.scheduled_label || it.starts_at_label || it.time_label || (t('live.timeSoon') || 'Em breve')}
@@ -934,7 +934,7 @@ function ScheduledList({ items, skeleton, colors, cardBg, subText, t }) {
           </View>
           <TouchableOpacity
             activeOpacity={0.85}
-            style={styles.notifyBtn}
+            style={[styles.notifyBtn, { flexShrink: 0 }]}
             disabled={!!skeleton}
             accessibilityRole="button"
             accessibilityLabel={t('live.notifyMe') || 'Avisar'}
@@ -1331,10 +1331,10 @@ const styles = StyleSheet.create({
 
   scheduledRow: {
     flexDirection: 'row', alignItems: 'center',
-    padding: 10, borderRadius: 12, gap: 12,
+    padding: 10, borderRadius: 12, gap: 12, minHeight: 66,
   },
   scheduledName: { fontSize: 13, fontWeight: '700' },
-  scheduledNamePlain: { fontSize: 13, fontWeight: '500' },
+  scheduledNamePlain: { fontSize: 12, fontWeight: '500', marginTop: 1 },
   scheduledTime: { fontSize: 11, marginTop: 2 },
   notifyBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,

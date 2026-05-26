@@ -193,7 +193,7 @@ function LedgerRow({ item, colors, isDark, t, lang }) {
           style={{ transform: [{ rotate: isCredit ? '-135deg' : '45deg' }] }}
         />
       </View>
-      <View style={{ flex: 1 }}>
+      <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={[styles.rowKind, { color: colors.text }]} numberOfLines={1}>{kindLabel}</Text>
         {item.counterparty ? (
           <Text style={[styles.rowCp, { color: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(15,23,42,0.55)' }]} numberOfLines={1}>
@@ -201,8 +201,8 @@ function LedgerRow({ item, colors, isDark, t, lang }) {
           </Text>
         ) : null}
       </View>
-      <View style={{ alignItems: 'flex-end' }}>
-        <Text style={[styles.rowAmt, { color: c }]}>{sign}{formatInt(item.amount, lang)}</Text>
+      <View style={{ alignItems: 'flex-end', flexShrink: 0, marginLeft: 8 }}>
+        <Text style={[styles.rowAmt, { color: c }]} numberOfLines={1}>{sign}{formatInt(item.amount, lang)}</Text>
         {when ? (
           <Text style={[styles.rowWhen, { color: isDark ? 'rgba(255,255,255,0.40)' : 'rgba(15,23,42,0.40)' }]}>{when}</Text>
         ) : null}
@@ -664,7 +664,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12, gap: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  rowIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  rowIcon: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   rowKind: { fontSize: 14, fontWeight: '700' },
   rowCp:   { fontSize: 12, fontWeight: '500', marginTop: 1 },
   rowAmt:  { fontSize: 15, fontWeight: '800' },

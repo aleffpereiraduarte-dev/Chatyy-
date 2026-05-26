@@ -164,6 +164,26 @@ function ParentalScreenInner() {
   // works without navigation.
   const [requestsModal, setRequestsModal] = useState(false);
   const [resolvingId, setResolvingId] = useState(null);
+  // [WAVE 141 #300] Derived from pendingRequests for the red-dot banner.
+  // MUST stay at the top with the other hooks — previously this useMemo
+  // lived below the `if (showWizard) return …` early return, so opening the
+  // wizard (e.g. tapping "Add first child" on the empty state) rendered one
+  // fewer hook than the dashboard → React error #300 (hooks-order violation).
+  const pendingChildNames = useMemo(() => {
+    const names = new Set();
+    // Backend may omit `child_name` for older accounts — fall back to the
+    // email local-part so the banner never reads as a raw email address.
+    (pendingRequests || []).forEach(r => {
+      const nm = (r?.child_name || '').trim();
+      if (nm) { names.add(nm); return; }
+      const em = (r?.child_email || '').trim();
+      if (em) {
+        const local = em.includes('@') ? em.split('@')[0] : em;
+        if (local) names.add(local.charAt(0).toUpperCase() + local.slice(1));
+      }
+    });
+    return Array.from(names);
+  }, [pendingRequests]);
 
   // Heartbeat — drives bedtime countdown + relative-time refresh.
   // Tick once per minute is enough for HH:MM display.
@@ -1942,22 +1962,7 @@ function ParentalScreenInner() {
 
   // Pending requests banner — shows red dot + count when any child has
   // a pending parental_unlock_request waiting for the parent's decision.
-  const pendingCount = pendingRequests.length;
-  const pendingChildNames = useMemo(() => {
-    const names = new Set();
-    // Backend may omit `child_name` for older accounts — fall back to the
-    // email local-part so the banner never reads as a raw email address.
-    pendingRequests.forEach(r => {
-      const nm = (r?.child_name || '').trim();
-      if (nm) { names.add(nm); return; }
-      const em = (r?.child_email || '').trim();
-      if (em) {
-        const local = em.includes('@') ? em.split('@')[0] : em;
-        if (local) names.add(local.charAt(0).toUpperCase() + local.slice(1));
-      }
-    });
-    return Array.from(names);
-  }, [pendingRequests]);
+  const pendingCount = (pendingRequests || []).length;
 
   const renderPendingBanner = () => {
     if (pendingCount === 0) return null;

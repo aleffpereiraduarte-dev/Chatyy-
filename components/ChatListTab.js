@@ -953,7 +953,18 @@ const ConversationRow = React.memo(function ConversationRow({
                   <View style={[
                     s.unreadBadge,
                     s.unreadBadgeShadow,
-                    isMuted && !conversation.unread_mentions && { backgroundColor: isDark ? '#555' : '#999' },
+                    // Muted chats get a neutral grey pill with NO purple glow —
+                    // the badge stays informative but visually de-emphasized so
+                    // the brand-purple unread accent is reserved for live chats.
+                    isMuted && !conversation.unread_mentions && {
+                      backgroundColor: isDark ? '#555' : '#9aa3b2',
+                      ...Platform.select({
+                        ios: { shadowOpacity: 0 },
+                        android: { elevation: 0 },
+                        web: { boxShadow: 'none' },
+                        default: {},
+                      }),
+                    },
                   ]}>
                     <Text style={s.unreadText}>{conversation.unread_count > 99 ? '99+' : conversation.unread_count}</Text>
                   </View>
@@ -1720,9 +1731,9 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
         <View style={{ paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 14 }}>
             {[0,1,2,3,4].map(i => (
-              <View key={`sk-${i}`} style={{ alignItems: 'center', width: 68 }}>
-                <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: skBg }} />
-                <View style={{ width: 36, height: 9, borderRadius: 4, backgroundColor: skBg, marginTop: 6 }} />
+              <View key={`sk-${i}`} style={{ alignItems: 'center', width: 70 }}>
+                <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: skBg }} />
+                <View style={{ width: 36, height: 9, borderRadius: 4, backgroundColor: skBg, marginTop: 7 }} />
               </View>
             ))}
           </ScrollView>
@@ -1733,7 +1744,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   }
 
   return (
-    <View style={{ paddingVertical: stripHasContent ? 10 : 0, borderBottomWidth: stripHasContent ? StyleSheet.hairlineWidth : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
+    <View style={{ paddingVertical: stripHasContent ? 12 : 0, borderBottomWidth: stripHasContent ? StyleSheet.hairlineWidth : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
       {/* Dedicated live bar — prepended above the story strip so contacts
           who are streaming RIGHT NOW are the very first thing the user
           sees on the chat list. Renders only when at least one host is
@@ -1828,19 +1839,19 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
           }}
           onLongPress={() => setShowNoteModal(true)}
           activeOpacity={0.7}
-          style={{ alignItems: 'center', width: 68 }}
+          style={{ alignItems: 'center', width: 70 }}
         >
           <StoryRingAvatar
             name={myDisplayName}
             email={user?.email}
-            size={54}
+            size={56}
             ringStyle={myStatus ? 'solid' : 'none'}
             badge="plus"
             note={!myStatus && myNote?.content ? myNote.content : null}
             isDark={isDark}
             colors={colors}
           />
-          <Text style={{ fontSize: 11, color: colors.text, marginTop: 5, fontWeight: '500' }} numberOfLines={1}>
+          <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '600', letterSpacing: -0.1 }} numberOfLines={1}>
             {myNote || myStatus ? myDisplayName : (t('status.yourStory') || 'Sua nota')}
           </Text>
         </TouchableOpacity>
@@ -5155,9 +5166,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     }
     return (
       <View style={[s.sectionLabel, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-        {/* IconPin removido (bug print 3 — 2026-05-08): renderizava como
-            blob/bullet esfumado antes de "FIXADAS". Caps já comunica. */}
-        <Text style={[s.sectionLabelText, { color: isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)' }]}>
+        {/* Small crisp pin glyph reads as a real section marker (not the old
+            esfumado blob — this is a thin-stroke SVG sized to match the caps).
+            Tinted brand purple so the PINNED group feels like a first-class
+            section, WhatsApp/Telegram-style. */}
+        <IconPin size={11} color={isDark ? '#A78BFA' : '#7C3AED'} />
+        <Text style={[s.sectionLabelText, { color: isDark ? 'rgba(167,139,250,0.85)' : 'rgba(124,58,237,0.85)' }]}>
           {(() => { const v = t('chat.pinned'); return v && v !== 'chat.pinned' ? v : 'FIXADAS'; })()}
         </Text>
       </View>
@@ -7005,24 +7019,32 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 14,
-    paddingVertical: 8,
-    gap: 8,
+    paddingVertical: 9,
+    gap: 9,
   },
+  // Filter pills — taller + rounder so they read like real WhatsApp/Telegram
+  // category chips. The active state gets a soft purple lift via chipActive
+  // (boxShadow on web, elevation native) so the selected filter pops.
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 16,
+    paddingHorizontal: 17,
     paddingVertical: 7,
-    borderRadius: 20,
+    borderRadius: 999,
     borderWidth: 1,
-    height: 34,
+    height: 36,
     justifyContent: 'center',
     flexShrink: 0,
   },
   chipActive: {
     backgroundColor: '#7C3AED',
     borderColor: '#7C3AED',
+    ...Platform.select({
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 6 },
+      android: { elevation: 3 },
+      web: { boxShadow: '0 2px 10px rgba(124,58,237,0.32)' },
+    }),
   },
   chipText: {
     fontSize: 13,
@@ -7030,9 +7052,9 @@ const s = StyleSheet.create({
     letterSpacing: 0.1,
   },
   chipBadge: {
-    minWidth: 22,
-    height: 20,
-    borderRadius: 10,
+    minWidth: 21,
+    height: 21,
+    borderRadius: 999,
     paddingHorizontal: 6,
     alignItems: 'center',
     justifyContent: 'center',
@@ -7045,23 +7067,24 @@ const s = StyleSheet.create({
   sectionLabel: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 7,
     paddingHorizontal: 20,
     paddingVertical: 8,
-    paddingTop: 14,
+    paddingTop: 16,
+    paddingBottom: 6,
   },
   sectionLabelText: {
     fontSize: 11,
-    fontWeight: '700',
-    letterSpacing: 1,
+    fontWeight: '800',
+    letterSpacing: 1.3,
     textTransform: 'uppercase',
   },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 18,
-    paddingVertical: 16,
-    minHeight: 82,
+    paddingVertical: 15,
+    minHeight: 80,
     ...(Platform.OS === 'web' ? {
       transition: 'background-color 0.15s ease, box-shadow 0.15s ease',
       cursor: 'pointer',
@@ -7069,12 +7092,12 @@ const s = StyleSheet.create({
   },
   avatarWrap: {
     position: 'relative',
-    marginRight: 14,
+    marginRight: 13,
   },
   onlineDot: {
     position: 'absolute',
-    bottom: 0,
-    right: 0,
+    bottom: 1,
+    right: 1,
     width: 13,
     height: 13,
     borderRadius: 6.5,
@@ -7115,10 +7138,10 @@ const s = StyleSheet.create({
     fontSize: 16.5,
     fontWeight: '600',
     flex: 1,
-    letterSpacing: -0.15,
+    letterSpacing: -0.2,
   },
   rowNameUnread: { fontWeight: '700' },
-  rowTime: { fontSize: 12, letterSpacing: 0, fontWeight: '400' },
+  rowTime: { fontSize: 12, letterSpacing: 0, fontWeight: '500' },
   rowBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -7132,20 +7155,22 @@ const s = StyleSheet.create({
     lineHeight: 20,
     letterSpacing: 0,
   },
+  // Unread badge — brand-purple pill (was WhatsApp green). Squircle pill with
+  // a soft shadow so a fresh count reads as the brand-colored attention dot.
   unreadBadge: {
     minWidth: 22,
     height: 22,
-    borderRadius: 11,
+    borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 6,
-    backgroundColor: '#25D366',
+    backgroundColor: '#7C3AED',
   },
   unreadBadgeShadow: {
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2 },
-      android: { elevation: 1 },
-      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.1)' },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.32, shadowRadius: 3 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 1px 4px rgba(124,58,237,0.34)' },
       default: {},
     }),
   },
@@ -7249,9 +7274,9 @@ const s = StyleSheet.create({
     paddingHorizontal: 44,
   },
   emptyTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    letterSpacing: -0.3,
+    fontSize: 25,
+    fontWeight: '800',
+    letterSpacing: -0.5,
     textAlign: 'center',
   },
   emptySubtitle: {
@@ -7259,25 +7284,27 @@ const s = StyleSheet.create({
     textAlign: 'center',
     marginTop: 12,
     lineHeight: 22,
-    letterSpacing: 0,
+    letterSpacing: 0.1,
   },
+  // Empty-state CTA — pill button lifted with the brand purple glow so it
+  // reads as the obvious next action on an otherwise empty screen.
   emptyAction: {
-    marginTop: 28,
+    marginTop: 30,
     backgroundColor: ACCENT,
-    paddingHorizontal: 36,
-    paddingVertical: 14,
-    borderRadius: 26,
+    paddingHorizontal: 38,
+    paddingVertical: 15,
+    borderRadius: 999,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 4 },
-      android: { elevation: 2 },
-      web: { boxShadow: `0 2px 6px rgba(0,0,0,0.12)`, transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease' },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.32, shadowRadius: 12 },
+      android: { elevation: 4 },
+      web: { boxShadow: `0 6px 18px rgba(124,58,237,0.34)`, transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease' },
     }),
   },
   emptyActionText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '700',
-    letterSpacing: 0,
+    letterSpacing: 0.1,
   },
   listEmpty: { flexGrow: 1 },
   fab: {
@@ -7285,15 +7312,15 @@ const s = StyleSheet.create({
     right: 20,
     width: 58,
     height: 58,
-    borderRadius: 18,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#7C3AED',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.18, shadowRadius: 4 },
-      android: { elevation: 4 },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 14 },
+      android: { elevation: 6 },
       web: {
-        boxShadow: '0 2px 6px rgba(0,0,0,0.18)',
+        boxShadow: '0 8px 22px rgba(124,58,237,0.42)',
         transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease',
       },
     }),

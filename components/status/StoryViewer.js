@@ -1563,17 +1563,19 @@ export default function StoryViewer({
       // devices with >24dp status bars. Use insets.top + 8 with a small floor
       // so the progress segments always clear the status bar.
       position: 'absolute', top: Math.max(insets?.top || 0, Platform.OS === 'android' ? 12 : 44) + 6, left: 0, right: 0,
-      flexDirection: 'row', gap: 6, paddingHorizontal: 10, zIndex: 5,
+      flexDirection: 'row', gap: 5, paddingHorizontal: 10, zIndex: 5,
       opacity: pausedAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.4] }),
     }}>
       {stories.map((_, i) => (
         <View key={i} style={{
-          // Pending segments: white @ 30% opacity (Instagram spec). Completed
+          // Pending segments: white @ 28% opacity (Instagram spec). Completed
           // segments paint a solid gradient on top via the `i < safeIdx` branch
           // below, so the user reads three distinct states cleanly: pending
-          // (30%), active (animating fill), completed (100% solid gradient).
-          flex: 1, height: 4, backgroundColor: 'rgba(255,255,255,0.3)',
-          borderRadius: 2, overflow: 'hidden',
+          // (28%), active (animating fill), completed (100% solid gradient).
+          // Rounded caps (radius=3 ≈ half the 5px track gap) so segments read
+          // as discrete capsules instead of a chopped bar.
+          flex: 1, height: 3.5, backgroundColor: 'rgba(255,255,255,0.28)',
+          borderRadius: 3, overflow: 'hidden',
         }}>
           {i < safeIdx && (
             // Completed segment — purple→pink gradient matches the active fill
@@ -1899,9 +1901,12 @@ export default function StoryViewer({
             pointerEvents="none"
             style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 220, zIndex: 3 }}
           >
-            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.0)' }} />
-            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.18)' }} />
-            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.42)' }} />
+            {/* Four-stop ramp (vs the old three) for a smoother, deeper fade —
+                keeps captions + bottom chrome legible over bright/busy media. */}
+            <View style={{ flex: 1.2, backgroundColor: 'rgba(0,0,0,0.0)' }} />
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.12)' }} />
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.30)' }} />
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.52)' }} />
           </View>
         ) : null}
 
@@ -2479,7 +2484,16 @@ export default function StoryViewer({
                   Haptic mirrors WhatsApp react UX: a short medium-strength
                   thump that confirms the touch landed even before the visual
                   catches up. */}
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingHorizontal: 16 }}>
+              <View style={{
+                flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+                paddingHorizontal: 14, paddingVertical: 6, marginHorizontal: 8,
+                // Cohesive translucent reaction bar (IG parity) — groups the
+                // quick emojis into one floating surface instead of loose
+                // glyphs over the media.
+                backgroundColor: 'rgba(0,0,0,0.30)',
+                borderRadius: 26,
+                borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+              }}>
                 {['❤️','🔥','😂','😮','😢','👏','👍'].map(emoji => {
                   const pulsing = emojiPulse === emoji;
                   const isHeart = emoji === '❤️';
@@ -2642,6 +2656,10 @@ export default function StoryViewer({
                         backgroundColor: '#7C3AED',
                         alignItems: 'center', justifyContent: 'center',
                         opacity: replying ? 0.6 : 1,
+                        // Soft brand glow so the send affordance pops against
+                        // the translucent reply field (WhatsApp/IG parity).
+                        shadowColor: '#7C3AED', shadowOpacity: 0.55, shadowRadius: 8,
+                        shadowOffset: { width: 0, height: 2 }, elevation: 5,
                       }}
                       accessibilityLabel={t?.('common.send') || 'Enviar'}
                     >

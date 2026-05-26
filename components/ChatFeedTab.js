@@ -1556,16 +1556,16 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '800',
     textAlign: 'center',
     marginTop: 22,
-    letterSpacing: -0.2,
+    letterSpacing: -0.3,
   },
   emptySubtext: {
-    fontSize: 13,
+    fontSize: 13.5,
     marginTop: 8,
     textAlign: 'center',
-    lineHeight: 19,
+    lineHeight: 20,
     maxWidth: 280,
   },
   // FAB
@@ -1803,11 +1803,11 @@ const styles = StyleSheet.create({
   tabItemActive: {},
   tabItemText: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
     letterSpacing: 0.1,
   },
   tabItemTextActive: {
-    fontWeight: '700',
+    fontWeight: '800',
     letterSpacing: 0.2,
   },
   // Footer
@@ -1850,7 +1850,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     padding: 12,
-    borderRadius: 14,
+    borderRadius: 16,
     marginBottom: 8,
     gap: 12,
   },
@@ -1860,21 +1860,23 @@ const styles = StyleSheet.create({
   },
   userCardName: {
     fontSize: 15,
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: -0.1,
   },
   userCardEmail: {
     fontSize: 13,
   },
   followButton: {
     backgroundColor: '#7C3AED',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderRadius: 10,
   },
   followButtonText: {
     color: '#fff',
     fontSize: 13,
-    fontWeight: '700',
+    fontWeight: '800',
+    letterSpacing: 0.1,
   },
   searchStatusContainer: {
     flex: 1,
@@ -1887,55 +1889,66 @@ const styles = StyleSheet.create({
   },
   // Recommended creators rail (inline in feed)
   suggestionsRail: {
-    paddingVertical: 12,
+    paddingTop: 14,
+    paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderTopWidth: StyleSheet.hairlineWidth,
     marginBottom: 4,
   },
   suggestionsHeader: {
     paddingHorizontal: 16,
-    marginBottom: 10,
+    marginBottom: 12,
   },
   suggestionsTitle: {
     fontSize: 15,
-    fontWeight: '700',
-    letterSpacing: -0.1,
+    fontWeight: '800',
+    letterSpacing: -0.2,
   },
   suggestionsScroll: {
     paddingHorizontal: 12,
-    gap: 10,
+    paddingBottom: 2,
   },
   suggestionCard: {
-    width: 130,
-    padding: 12,
-    borderRadius: 14,
+    width: 134,
+    // flexShrink:0 keeps each card at a fixed width inside the horizontal
+    // ScrollView. On RN-Web a horizontal ScrollView lays children in a flex
+    // row; without this the cards compress at narrow widths and the
+    // avatar/name/Seguir button overlap each other. marginRight gives the
+    // inter-card gap (gap on the contentContainer was double-spacing).
+    flexShrink: 0,
+    paddingHorizontal: 12,
+    paddingTop: 16,
+    paddingBottom: 12,
+    borderRadius: 16,
     alignItems: 'center',
-    gap: 6,
+    gap: 7,
     borderWidth: StyleSheet.hairlineWidth,
     marginRight: 10,
   },
   suggestionName: {
-    fontSize: 13,
+    fontSize: 13.5,
     fontWeight: '700',
     textAlign: 'center',
+    letterSpacing: -0.1,
   },
   suggestionMutual: {
     fontSize: 11,
     textAlign: 'center',
   },
   suggestionFollowBtn: {
-    marginTop: 6,
+    marginTop: 8,
     backgroundColor: ACCENT,
     paddingHorizontal: 16,
-    paddingVertical: 7,
-    borderRadius: 8,
+    paddingVertical: 8,
+    borderRadius: 10,
     alignSelf: 'stretch',
     alignItems: 'center',
   },
   suggestionFollowText: {
     color: '#fff',
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 12.5,
+    fontWeight: '800',
+    letterSpacing: 0.1,
   },
   // Back to posts pill (reels mode)
   backToPostsPill: {

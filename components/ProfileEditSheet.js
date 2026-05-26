@@ -622,6 +622,11 @@ export default function ProfileEditSheet({
                     width: 104, height: 104, borderRadius: 52,
                     alignItems: 'center', justifyContent: 'center',
                     backgroundColor: 'rgba(124,58,237,0.10)',
+                    // Defined brand ring around the avatar puck so it reads as
+                    // a deliberate "edit photo" target (Instagram-grade) rather
+                    // than a flat tinted blob.
+                    borderWidth: 1.5,
+                    borderColor: isDark ? 'rgba(167,139,250,0.35)' : 'rgba(124,58,237,0.22)',
                     ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(124,58,237,0.18)' } : {}),
                   }}
                 >
