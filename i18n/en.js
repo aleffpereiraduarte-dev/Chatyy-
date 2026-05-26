@@ -7333,7 +7333,7 @@ export default {
   'videoNote.stopIn': 'Stop in',
   'videoNote.recordingHint': 'Recording. Slide up to lock, left to cancel.',
   'chatConv.summarize': 'Summarize unread',
-  'chatConv.summarizing': 'Reading {count} messages...',
+  'chatConv.summarizing': 'Reading unread messages...',
   'chatConv.summaryTitle': 'Conversation summary',
   'chatConv.summaryCount': '{count} messages',
   'chatConv.summaryEmpty': 'Nothing to summarize right now.',

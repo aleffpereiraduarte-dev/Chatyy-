@@ -6005,12 +6005,19 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
       if (g.dx < -80 || g.vx < -0.6) {
         // Snap the pill further off-screen then cancel — the user sees the
         // slide complete rather than the pill just disappearing at release.
-        Animated.timing(slideX, { toValue: -200, duration: 160, useNativeDriver: true }).start(() => {
+        // useNativeDriver MUST be false: slideX simultaneously drives the
+        // container `translateX` AND is interpolated into `opacity` props
+        // (slideHintOpacity/cancelHintOpacity below). On Android, committing
+        // slideX to the native driver while it also feeds a JS-only `opacity`
+        // throws a fatal "native animated node" error the instant the record
+        // pill mounts — i.e. the moment recording starts. Keeping it JS-driven
+        // lets one value safely power both transform and opacity.
+        Animated.timing(slideX, { toValue: -200, duration: 160, useNativeDriver: false }).start(() => {
           cancelledRef.current = true;
           handleCancel();
         });
       } else {
-        Animated.spring(slideX, { toValue: 0, tension: 220, friction: 14, useNativeDriver: true }).start();
+        Animated.spring(slideX, { toValue: 0, tension: 220, friction: 14, useNativeDriver: false }).start();
       }
     },
   });

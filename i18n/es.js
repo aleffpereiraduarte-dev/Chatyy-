@@ -7333,7 +7333,7 @@ export default {
   'videoNote.stopIn': 'Para en',
   'videoNote.recordingHint': 'Grabando. Desliza arriba para fijar, izquierda para cancelar.',
   'chatConv.summarize': 'Resumir no leídos',
-  'chatConv.summarizing': 'Leyendo {count} mensajes...',
+  'chatConv.summarizing': 'Leyendo mensajes no leídos...',
   'chatConv.summaryTitle': 'Resumen de la conversación',
   'chatConv.summaryCount': '{count} mensajes',
   'chatConv.summaryEmpty': 'Nada para resumir ahora.',

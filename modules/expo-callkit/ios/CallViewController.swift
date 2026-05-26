@@ -131,6 +131,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     static let callEndedNotification = Notification.Name("ExpoCallKitNativeCallEnded")
 
+    // [minimize-drop fix 2026-05-26] Strong holder that keeps a MINIMIZED call
+    // VC alive. The incoming-answer flow presents this VC as a plain modal, so
+    // the ONLY strong ref is the presenting VC. When handleMinimize() dismisses
+    // the modal, ARC would dealloc us — and then "return to call" (tapping the
+    // OngoingCallBar pill / closing PiP) would have no VC to re-present, AND the
+    // old deinit tore down the Room. We park `self` here on minimize so the SAME
+    // VC — still bound as the live Room's RoomDelegate, still holding the audio/
+    // video views — survives and can be re-presented + show live media on
+    // return. Cleared on restoreFromMinimize() and on real hangup teardown.
+    private static var minimizedInstance: CallViewController?
+
     let callId: String
     let callerName: String
     let callerEmail: String
@@ -177,6 +188,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // Whether the remote camera is currently rendering full-bleed video. Drives
     // the controls-scrim layout switch + auto-hide timer (video mode only).
     private var remoteVideoActive: Bool = false
+    // [2026-05-26 remote-camera-off fix] When the remote peer MUTES their camera
+    // (WhatsApp behaviour: keep the publication, just stop sending frames) the
+    // SFU forwards a "muted" flag rather than unpublishing. We stash the still-
+    // subscribed track here and swap the UI to the avatar placeholder, WITHOUT
+    // nilling session.remoteVideoTrack (which would also tear down PiP / look
+    // like the peer left). On unmute we re-bind this exact track and the video
+    // comes back instantly — the call + audio never drop.
+    private var remoteVideoMuted: Bool = false
+    private var mutedRemoteVideoTrack: VideoTrack?
     // Scrim behind the controls when remote video is full-bleed, so the glass
     // buttons stay legible over arbitrary camera frames (mirrors JS
     // translucent gradient under the controls row).
@@ -1081,6 +1101,19 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // race and leave the VC in a half-dismissed state on slower devices.
     private var didHangup: Bool = false
 
+    // [minimize-drop fix 2026-05-26] Distinguishes "minimize" (PiP / floating
+    // OngoingCallBar) from a real hangup. The incoming-answer path presents
+    // this VC as a STANDARD MODAL (CallViewController.present →
+    // top.present(vc)), so the presenting VC is the ONLY strong holder of the
+    // CallViewController. When handleMinimize() calls `dismiss`, ARC then
+    // deallocs the VC and `deinit` ran `room.disconnect()` + NativeCallRoom.
+    // clear() — i.e. minimizing HUNG UP the LiveKit Room, and "return to call"
+    // had nothing to adopt ("call dropped"). With this flag set, deinit skips
+    // the Room teardown so the singleton-owned Room stays connected and the
+    // user can re-present + re-adopt it. Real hangup (End button) leaves this
+    // false → deinit disconnects as before. Reset on restoreFromMinimize().
+    private var isMinimizing: Bool = false
+
     private func handleHangup() {
         if didHangup {
             // Second tap (or delegate-driven re-entry) — only re-issue the
@@ -1090,6 +1123,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             return
         }
         didHangup = true
+        // [minimize-drop fix 2026-05-26] This is a REAL hangup, not a minimize.
+        // Clear the minimize flag so the Room teardown below + deinit run, and
+        // release the strong holder so the VC can finally dealloc. handleHangup
+        // does its own explicit room.disconnect() + NativeCallRoom.clear()
+        // (further down), so the call ends regardless of who held the VC.
+        isMinimizing = false
+        CallViewController.minimizedInstance = nil
         stopRingbackTone(reason: "handleHangup")
         // [#1171 redux dismiss, 2026-05-19] Update the visible status BEFORE
         // any async teardown. Previously the VC stayed at "Conectando…" while
@@ -1323,60 +1363,52 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     private func applyMicEnabled(_ enabled: Bool) {
         guard let r = self.room else { return }
-        // [Wave WhatsApp parity, 2026-05-20 gap B3 iOS] Mute/unmute the
-        // existing RTC audio sender instead of re-publishing. Re-publishing
-        // tears down the SFU path + races the CallKit-owned audio session.
-        // Mirrors the camera fast-path in applyCamEnabled (lines 598-601):
-        // the peer gets the standard WebRTC "muted" signal while audio
-        // routing stays intact. First-time enable (no track yet) falls
-        // through to setMicrophone() with capture options for AEC + AGC + NS.
+        // [2026-05-26 mute→unmute P0 fix] Route BOTH mute and unmute through
+        // LocalParticipant.setMicrophone(enabled:) — the exact path the WORKING
+        // GroupCallViewController.applyMicEnabled uses.
+        //
+        // ROOT CAUSE of the "unmute does nothing" bug: the old fast-path cached
+        // the LocalAudioTrack and called `track.mute()` / `track.unmute()`
+        // directly. On LiveKit Swift 2.x, `LocalAudioTrack.mute()` does NOT just
+        // flip a flag — it stops the underlying capturer and detaches the RTC
+        // audio sender from the CallKit-owned AVAudioSession. With DTX enabled
+        // (defaultAudioPublishOptions) the sender then transmits nothing.
+        // `track.unmute()` flips the publication's muted flag back (so the peer
+        // sees us "unmuted") but does NOT reliably restart the stopped capturer
+        // / re-attach to the now CallKit-owned session — so the mic input stays
+        // dead. Result: mute works, unmute is a no-op for actual audio. Always.
+        //
+        // setMicrophone(enabled: true) deterministically (re)creates + (re)starts
+        // the capture and re-attaches it to the active AVAudioSession, which is
+        // why the group-call path never had this bug. We pin AudioCaptureOptions
+        // on every toggle so AEC + AGC + NS survive a re-publish. We AWAIT the
+        // async result and only commit the UI state on success — on failure we
+        // roll the SwiftUI mic flag back instead of silently leaving the user
+        // muted.
         Task { [weak self] in
             guard let self = self else { return }
             do {
-                // Find the already-published local mic track. We try the
-                // session-cached reference first (set on first publish below)
-                // and fall back to LK's localParticipant audio publications
-                // accessor. If neither yields a track yet, take the legacy
-                // setMicrophone path to perform the first publish — that path
-                // also carries AudioCaptureOptions (AEC+AGC+NS+highpass+typing)
-                // so the first published frame has the WebRTC DSP toggles.
-                if let track = self.localAudioTrackRef {
-                    if enabled {
-                        try await track.unmute()
-                    } else {
-                        try await track.mute()
-                    }
-                    print("[CallVC] mic \(enabled ? "unmute" : "mute") (cached, no republish) — callId=\(self.callId)")
-                } else {
-                    try await r.localParticipant.setMicrophone(
-                        enabled: enabled,
-                        captureOptions: Self.defaultAudioCaptureOptions()
-                    )
-                    // Cache the freshly published track. Resolve via Mirror so
-                    // a minor-rev LK Swift API rename (audioTracks property
-                    // ↔ method ↔ trackPublications filter) doesn't break the
-                    // build. Look for any child labelled `audioTracks` whose
-                    // value is iterable; pull the first LocalAudioTrack we can
-                    // find on its `.track` property.
-                    let mirror = Mirror(reflecting: r.localParticipant)
-                    var found: LocalAudioTrack? = nil
-                    for child in mirror.children where child.label == "audioTracks" {
-                        if let arr = child.value as? [Any] {
-                            for pub in arr {
-                                let pubMirror = Mirror(reflecting: pub)
-                                for c2 in pubMirror.children where c2.label == "track" {
-                                    if let t = c2.value as? LocalAudioTrack { found = t; break }
-                                }
-                                if found != nil { break }
-                            }
-                        }
-                        if found != nil { break }
-                    }
-                    await MainActor.run { self.localAudioTrackRef = found }
-                    print("[CallVC] mic first-publish enabled=\(enabled) cached=\(found != nil) — callId=\(self.callId)")
+                let micPub = try await r.localParticipant.setMicrophone(
+                    enabled: enabled,
+                    captureOptions: Self.defaultAudioCaptureOptions()
+                )
+                // Refresh the cached track reference each toggle. LK may return
+                // the same track on re-enable or a fresh one if it disposed the
+                // capturer on mute; either way keep the ref current (used by the
+                // post-interruption recovery path, which clears it).
+                if let track = micPub?.track as? LocalAudioTrack {
+                    await MainActor.run { self.localAudioTrackRef = track }
+                } else if !enabled {
+                    // Disabled and no publication returned — capturer gone.
+                    await MainActor.run { self.localAudioTrackRef = nil }
                 }
+                // Commit the authoritative UI state on success.
+                await MainActor.run { self.session.micEnabled = enabled }
+                print("[CallVC] mic \(enabled ? "unmute" : "mute") via setMicrophone ok — callId=\(self.callId)")
             } catch {
-                print("[CallVC] applyMicEnabled(\(enabled)) failed: \(error)")
+                print("[CallVC] applyMicEnabled(\(enabled)) failed: \(error) — reverting UI")
+                // Roll back the optimistic UI flip so the button reflects the
+                // real (unchanged) mic state instead of lying to the user.
                 await MainActor.run { self.session.micEnabled = !enabled }
             }
         }
@@ -1593,42 +1625,48 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// 2.0–2.x minor revs where the capturer type name has bounced between
     /// `CameraCapturer` and `LKCameraCapturer`.
     private static func trySmoothCameraSwitch(on track: LocalVideoTrack, to position: AVCaptureDevice.Position) async -> Bool {
-        // [2026-05-25 flip-crash fix] The previous implementation reached the
-        // capturer via Mirror reflection and then `perform(_:with:)`-invoked the
-        // ASYNC-bridged selector `switchCameraPositionWithCompletionHandler:`,
-        // passing an `unsafeBitCast` block as AnyObject. That was the crash
-        // vector: `perform(_:with:)` of an async-bridged ObjC method whose ABI
-        // doesn't match a plain id-arg selector can trap (EXC_BAD_ACCESS /
-        // "unrecognized selector"), and the `CheckedContinuation` could resume
-        // twice or never (both fatal / hanging). The concrete capturer type name
-        // also isn't guaranteed stable across pinned LK Swift 2.x patch revs
-        // (see expo-live-native/LiveHostViewController switchCamera notes), so we
-        // can't safely type-cast it either.
+        // [2026-05-26 flip-noop fix] ROOT CAUSE of "flip just spins, never
+        // changes camera": the previous implementation probed the capturer via
+        // Mirror reflection for the selectors `switchCamera` / `toggleCamera`.
+        // LiveKit Swift 2.x's `CameraCapturer` exposes NEITHER of those — its
+        // real API is `set(cameraPosition:) async throws -> Bool` and
+        // `switchCameraPosition() async throws -> Bool`. So `responds(to:)`
+        // always returned false here, this returned false every time, and the
+        // ONLY thing that ran was the spinner animation in uikitOnFlipCamera()
+        // plus a republish fallback that re-published the SAME front camera
+        // (currentCameraPosition was already flipped, but the republish path
+        // used defaultCameraCaptureOptions(position:) — see note below).
         //
-        // Crash-safe strategy: only probe SYNCHRONOUS, void-returning selectors
-        // via reflection (no async completion handlers, no block bitcasting). If
-        // none of those exist, return false and let switchCamera() fall back to
-        // the proven setCamera(captureOptions:) republish path, which uses the
-        // fully type-checked LiveKit API. Worst case = a brief black frame on
-        // flip, never a crash.
-        var foundCapturer: NSObject?
-        let mirror = Mirror(reflecting: track)
-        for child in mirror.children {
-            if (child.label == "capturer" || child.label == "_capturer"),
-               let obj = child.value as? NSObject {
-                foundCapturer = obj
-                break
-            }
+        // Fix: call the real, type-checked LiveKit CameraCapturer API. It's part
+        // of the pinned `@livekit/react-native` 2.10.3 → client-sdk-swift 2.x,
+        // so the type + async methods are available at compile time. `set`
+        // forwards to RTCCameraVideoCapturer.startCapture(with:) on the SAME
+        // MediaStreamTrack — no republish, one black frame max, and the actual
+        // AVCaptureDevice changes (front↔back). Returns true on success so
+        // switchCamera() skips the republish fallback.
+        guard let capturer = track.capturer as? CameraCapturer else {
+            // Not a CameraCapturer (e.g. screen-share or custom source) — let
+            // switchCamera() fall back to the setCamera(captureOptions:) path.
+            return false
         }
-        guard let capturer = foundCapturer else { return false }
-        for name in ["switchCamera", "toggleCamera"] {
-            let altSel = NSSelectorFromString(name)
-            if capturer.responds(to: altSel) {
-                _ = capturer.perform(altSel)
+        do {
+            // Prefer the explicit position setter so we converge on the exact
+            // target device rather than blindly toggling (avoids drift if some
+            // other code already flipped the capturer underneath us).
+            let changed = try await capturer.set(cameraPosition: position)
+            return changed
+        } catch {
+            print("[CallVC] trySmoothCameraSwitch set(cameraPosition:) failed: \(error)")
+            // Last in-place attempt: plain toggle. If even this throws, return
+            // false → republish fallback in switchCamera().
+            do {
+                _ = try await capturer.switchCameraPosition()
                 return true
+            } catch {
+                print("[CallVC] trySmoothCameraSwitch switchCameraPosition() failed: \(error)")
+                return false
             }
         }
-        return false
     }
 
     /// Toggle screen share. With the LiveKit broadcast extension wiring in
@@ -1778,6 +1816,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// at z-order +100 so it sits above every JS surface. Tap → re-present
     /// CallViewController. Dismissed when handleHangup() runs.
     private func handleMinimize() {
+        // [minimize-drop fix 2026-05-26] Mark this as a minimize BEFORE any
+        // dismiss fires. Both the PiP path (pictureInPictureControllerDidStart
+        // → dismiss) and the audio path (dismiss below) deallocate this VC when
+        // it was modally presented (incoming-answer flow). Without this flag,
+        // the resulting `deinit` disconnects the LiveKit Room and the call
+        // drops. The flag keeps the Room (owned by NativeCallRoom.shared) alive
+        // so restoreFromMinimize / PiP-restore can re-adopt the live session.
+        isMinimizing = true
+        // Park a strong ref so this exact VC (the live Room's RoomDelegate)
+        // survives the dismiss and can be re-presented intact on return.
+        CallViewController.minimizedInstance = self
         if #available(iOS 15.0, *),
            let pip = pipController,
            pip.isPictureInPicturePossible,
@@ -1825,9 +1874,19 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// ProviderDelegate's presenter resolver to handle the case where the JS
     /// shell pushed new VCs while we were minimised.
     fileprivate func restoreFromMinimize() {
+        // [minimize-drop fix 2026-05-26] We're coming back to fullscreen, so a
+        // subsequent dismiss (next minimize / hangup) is re-evaluated fresh.
+        // (deinit shouldn't run while we're re-presented, but reset defensively
+        // so a real hangup after restore still tears the Room down correctly.)
+        isMinimizing = false
         OngoingCallBarOverlayController.shared.uninstall()
         // Re-present over the current key VC. Walk the chain to find the
         // top-most so we don't get stuck behind a JS modal.
+        // NOTE: do NOT clear CallViewController.minimizedInstance before the
+        // present() — that static is currently the ONLY strong ref keeping us
+        // alive (the original presenter dropped its ref when minimize dismissed
+        // us). Clearing it first would dealloc `self` mid-restore. Clear it in
+        // the present completion, by which point the presenter holds us again.
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             guard let scene = UIApplication.shared.connectedScenes
@@ -1840,7 +1899,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             while let next = top.presentedViewController { top = next }
             if top !== self {
                 self.modalPresentationStyle = .fullScreen
-                top.present(self, animated: true, completion: nil)
+                top.present(self, animated: true, completion: {
+                    // Presenter now holds the strong ref; safe to release the
+                    // minimize holder.
+                    CallViewController.minimizedInstance = nil
+                })
+            } else {
+                // Already on screen (rare race) — release the holder anyway.
+                CallViewController.minimizedInstance = nil
             }
         }
     }
@@ -1936,7 +2002,18 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 return
             }
             let nextEnabled = !muted
-            if self.session.micEnabled == nextEnabled { return }
+            // [2026-05-26 mute→unmute P0 fix v2] Reconcile against the REAL
+            // track state, not the cached @Published bool. The old guard
+            // `if self.session.micEnabled == nextEnabled { return }` could
+            // short-circuit a legitimate CallKit unmute when session.micEnabled
+            // had drifted, leaving the mic dead. Apply BOTH directions through
+            // setMicrophone(enabled:) and only skip when the LIVE publication
+            // already matches.
+            if let r = self.room, r.localParticipant.isMicrophoneEnabled == nextEnabled {
+                // Live state already matches — just keep the UI flag in sync.
+                self.session.micEnabled = nextEnabled
+                return
+            }
             self.session.micEnabled = nextEnabled
             self.applyMicEnabled(nextEnabled)
         }
@@ -2386,14 +2463,28 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // MARK: - Deinit
 
     deinit {
-        if let r = self.room {
+        // [minimize-drop fix 2026-05-26] CRITICAL: do NOT disconnect the Room
+        // when this dealloc is the result of a MINIMIZE. The incoming-answer
+        // path presents this VC as a plain modal, so when handleMinimize() (or
+        // the PiP-did-start) dismisses it, the presenting VC drops its only
+        // strong ref → ARC deallocs us → deinit runs. Previously this block
+        // unconditionally called `room.disconnect()` + `NativeCallRoom.clear()`,
+        // which TORE DOWN THE LIVE CALL on minimize (user report: "minimize
+        // drops the call; returning shows the call has dropped"). The Room is
+        // owned by NativeCallRoom.shared precisely so it survives VC dismissal
+        // (PiP / floating-bar). Skip teardown while minimizing; the real hangup
+        // (End button → handleHangup, or remote didDisconnect) already
+        // disconnects the Room + clears the singleton, and leaves isMinimizing
+        // false so this belt-and-braces path still cleans up on those flows.
+        if let r = self.room, !isMinimizing {
             // [#1207 NativeCallRoom REAL] Belt-and-braces: usually handleHangup
             // or didDisconnect have already cleared the singleton by the time
-            // deinit runs, but the PiP path and force-quit can short-circuit
-            // those. Idempotent — clear() on an already-empty singleton is
-            // a no-op print.
+            // deinit runs, but force-quit can short-circuit those. Idempotent —
+            // clear() on an already-empty singleton is a no-op print.
             NativeCallRoom.shared.clear()
             Task { await r.disconnect() }
+        } else if isMinimizing {
+            print("[CallVC] deinit while minimizing — keeping Room alive (owned by NativeCallRoom.shared) callId=\(callId)")
         }
         if let obs = pipResignObserver { NotificationCenter.default.removeObserver(obs) }
         if let obs = dtmfObserver { NotificationCenter.default.removeObserver(obs); dtmfObserver = nil }
@@ -2642,7 +2733,31 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     @objc private func uikitOnMuteTap() {
         // session.micEnabled = mic ENABLED. Mute = micEnabled false.
-        let newMicEnabled = !session.micEnabled
+        //
+        // [2026-05-26 mute→unmute P0 fix v2] Toggle off the REAL current track
+        // state, not the cached SwiftUI bool. `session.micEnabled` can drift out
+        // of sync with the actual LiveKit publication — a CallKit
+        // CXSetMutedCallAction, an AVAudioSession-interruption recovery (which
+        // clears localAudioTrackRef), or a previously-failed async toggle can
+        // all leave the @Published flag pointing the wrong way. When that
+        // happens `!session.micEnabled` computes the SAME direction twice and
+        // the user taps "Unmute" but we re-issue MUTE → mic stays off forever.
+        //
+        // LocalParticipant.isMicrophoneEnabled reflects the publication's true
+        // muted state, so derive the next state from there and fall back to the
+        // cached bool only when the Room isn't available yet.
+        let currentEnabled: Bool
+        if let r = self.room {
+            currentEnabled = r.localParticipant.isMicrophoneEnabled
+        } else {
+            currentEnabled = session.micEnabled
+        }
+        let newMicEnabled = !currentEnabled
+        // Commit the new intended state to the SwiftUI session SYNCHRONOUSLY,
+        // BEFORE the async applyMicEnabled round-trip, so the button reflects the
+        // tap immediately. applyMicEnabled awaits setMicrophone(enabled:) and
+        // only rolls this back if LiveKit genuinely throws.
+        session.micEnabled = newMicEnabled
         applyMicEnabled(newMicEnabled)
         let btn = view.viewWithTag(9002) as? UIButton
         tapFeedback(btn)
@@ -3374,6 +3489,13 @@ extension CallViewController: RoomDelegate {
             // CallSignalWs.fireCallEnd would duplicate the server-side BYE).
             // Re-entrant calls still trigger forceDismissSelf via handleHangup.
             self.didHangup = true
+            // [minimize-drop fix 2026-05-26] Peer ended the call (possibly
+            // while we were minimized). Clear the minimize flag + holder so the
+            // VC can dealloc and the OngoingCallBar / PiP surfaces get torn down
+            // by forceDismissSelf below. The Room is already gone (cleared
+            // above), so deinit's room-teardown is a no-op either way.
+            self.isMinimizing = false
+            CallViewController.minimizedInstance = nil
             // [#1171 redux dismiss, 2026-05-19] Update visible status BEFORE
             // teardown so the user sees the call is ending — same rationale
             // as handleHangup. Mostly relevant for peer-end / network-drop
@@ -3474,6 +3596,9 @@ extension CallViewController: RoomDelegate {
             guard let self = self else { return }
             // 1:1 fallback: clear the remote video track when the peer leaves.
             self.session.remoteVideoTrack = nil
+            // Peer is gone — drop any muted-camera stash so it can't be restored.
+            self.remoteVideoMuted = false
+            self.mutedRemoteVideoTrack = nil
             self.remoteParticipantCount = max(0, self.remoteParticipantCount - 1)
             self.updateParticipantCountLabel()
         }
@@ -3528,6 +3653,70 @@ extension CallViewController: RoomDelegate {
             }
             self.pipAttachedTrack = nil
             self.session.remoteVideoTrack = nil
+            // Track is truly gone now (unpublished) — drop the muted-state stash
+            // so a later spurious unmute can't try to re-bind a dead track.
+            self.remoteVideoMuted = false
+            self.mutedRemoteVideoTrack = nil
+        }
+    }
+
+    /// [2026-05-26 remote-camera-off fix] Remote peer toggled a track's muted
+    /// state. WhatsApp / most clients turn the camera OFF by MUTING the
+    /// publication (the SFU keeps forwarding "muted") rather than unpublishing,
+    /// so this — NOT didUnsubscribeTrack — is what fires when the Android peer
+    /// taps "camera off". The old code had no handler, so the remote VideoView
+    /// kept rendering the last (now frozen / black) frame: the call looked
+    /// "broken / video stopped" even though audio + the session were perfectly
+    /// alive.
+    ///
+    /// Fix: on remote VIDEO mute, swap to the avatar "camera off" placeholder
+    /// while KEEPING the call (and the still-subscribed track) alive; on unmute
+    /// re-bind the exact same track and the picture returns instantly. We never
+    /// touch audio, the Room, or the local camera here — only the remote tile's
+    /// presentation. Audio-track mutes are ignored (the speaking-ring / mic
+    /// indicator path owns those).
+    func room(_ room: Room,
+              participant: Participant,
+              trackPublication: TrackPublication,
+              didUpdateIsMuted isMuted: Bool) {
+        // Only care about REMOTE video here. Local mic/cam + remote audio are
+        // handled elsewhere (mute button, speaking ring).
+        guard trackPublication.kind == .video else { return }
+        guard (participant as? RemoteParticipant) != nil else { return }
+        let identity = participant.identity?.stringValue ?? "?"
+        print("[CallVC] remote video \(isMuted ? "MUTED (camera off)" : "UNMUTED (camera on)") — identity=\(identity)")
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if isMuted {
+                // Remember the live track so we can restore it on unmute, then
+                // show the avatar placeholder. applyRemoteVideoTrack(nil) only
+                // swaps the UI (hides the VideoView, fades the avatar back in) —
+                // it does NOT tear down the call or the Room.
+                self.remoteVideoMuted = true
+                if let current = self.session.remoteVideoTrack {
+                    self.mutedRemoteVideoTrack = current
+                }
+                // Detach the PiP renderer so it doesn't sit on a frozen frame.
+                if let track = self.pipAttachedTrack, let renderer = self.pipRenderer {
+                    track.remove(videoRenderer: renderer)
+                    self.pipAttachedTrack = nil
+                }
+                self.session.remoteVideoTrack = nil
+            } else {
+                // Camera back on — re-bind the same track (or the publication's
+                // current track if our stash is stale) and the video returns.
+                self.remoteVideoMuted = false
+                let restore = (trackPublication.track as? VideoTrack) ?? self.mutedRemoteVideoTrack
+                self.mutedRemoteVideoTrack = nil
+                if let track = restore {
+                    self.session.remoteVideoTrack = track
+                    if #available(iOS 15.0, *) {
+                        self.attachPiPRenderer(to: track)
+                    }
+                }
+                // If we couldn't recover a track here, didSubscribeTrack will
+                // re-bind it when the SFU re-forwards frames — call stays alive.
+            }
         }
     }
 
@@ -3640,6 +3829,9 @@ extension CallViewController: AVPictureInPictureControllerDelegate {
         // Re-present ourselves over the current top-most VC. The original
         // presentation was dismissed when PiP started; we need to bring it
         // back so the user keeps seeing the rich call UI.
+        // [minimize-drop fix 2026-05-26] We're un-minimizing — a later dismiss
+        // must be re-evaluated as a possible real hangup, not swallowed.
+        isMinimizing = false
         if let root = UIApplication.shared.connectedScenes
             .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController })
             .first {
@@ -3648,9 +3840,15 @@ extension CallViewController: AVPictureInPictureControllerDelegate {
                 top = presented
             }
             top.present(self, animated: false) {
+                // [minimize-drop fix 2026-05-26] Presenter holds the strong ref
+                // again — release the minimize holder.
+                CallViewController.minimizedInstance = nil
                 completionHandler(true)
             }
         } else {
+            // Couldn't re-present (no scene). Keep the holder so we aren't
+            // deallocated (which would disconnect the Room) — a later restore
+            // attempt can still find us.
             completionHandler(false)
         }
     }
