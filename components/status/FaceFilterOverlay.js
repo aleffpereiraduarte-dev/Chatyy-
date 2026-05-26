@@ -1,3 +1,14 @@
+// ⚠️ DEPRECATED / ORPHANED (2026-05-26) — DO NOT RE-WIRE INTO THE STATUS
+// CAMERA. This component opens the SECOND camera session (via
+// getMediaPipe().startFaceLandmarker(), backed by ExpoFaceLandmarker's own
+// AVCaptureSession / CameraX bind) that fought expo-camera for the front
+// lens and froze capture. The status camera AR overlay now lives in the
+// SINGLE-session Skia frame processor inside StatusVisionCamera.js
+// (react-native-vision-camera v4). This file is no longer imported anywhere;
+// it is kept only for reference. The DISABLED guard below hard-stops it from
+// ever starting the second session again if it is accidentally mounted.
+const FACE_FILTER_OVERLAY_DISABLED = true;
+//
 // FaceFilterOverlay — renders the active AR face filter on top of the
 // camera preview. Subscribes to face landmark events from the native
 // binding (iOS Vision / Android ML Kit, exposed by expo-native-toolkit
@@ -46,6 +57,9 @@ export default function FaceFilterOverlay({ filterKey, previewSize, facing = 'fr
   // wiring lives in the native module; here we listen + drop the face
   // when the stream stalls.
   useEffect(() => {
+    // Hard kill-switch (2026-05-26): never open the legacy second camera
+    // session. Single-session Skia (StatusVisionCamera) replaced this.
+    if (FACE_FILTER_OVERLAY_DISABLED) return undefined;
     if (!preset || preset.key === 'none') return undefined;
     let mp = null;
     try { mp = getMediaPipe(); } catch (e) {
@@ -110,6 +124,7 @@ export default function FaceFilterOverlay({ filterKey, previewSize, facing = 'fr
   // protects a separate crash path — missing asset (someone deleted the
   // PNG but kept the preset), 0×0 previewSize (camera not laid out),
   // stale filterKey post-HMR.
+  if (FACE_FILTER_OVERLAY_DISABLED) return null;
   if (!preset || preset.key === 'none' || !preset.asset || !previewSize?.width || !previewSize?.height) return null;
 
   const { width: pw, height: ph } = previewSize;

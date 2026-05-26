@@ -7,21 +7,11 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Animated, Dimensions,
   Platform, Image, Pressable, ScrollView, FlatList, Linking, Modal, Alert,
 } from 'react-native';
-// expo-camera is a native module. On some Android builds the binding can be
-// absent/broken; importing or calling `useCameraPermissions()` at mount would
-// then throw and take down the whole host screen (P0: opening own profile
-// crashed on Android because StatusCamera mounts there). Resolve defensively
-// and provide a no-op permissions hook fallback so a degraded camera surfaces
-// a friendly "camera unavailable" state instead of a hard crash. The hook
-// reference is stable for the lifetime of the module, so calling it
-// unconditionally below never violates the rules-of-hooks.
-let CameraView = null;
-let useCameraPermissions = () => [null, async () => ({ granted: false, canAskAgain: false })];
-try {
-  const _cam = require('expo-camera');
-  if (_cam?.CameraView) CameraView = _cam.CameraView;
-  if (typeof _cam?.useCameraPermissions === 'function') useCameraPermissions = _cam.useCameraPermissions;
-} catch {}
+// Camera permission still comes from expo-camera's hook (lightweight, no
+// session) — the actual preview/capture now runs on react-native-vision-camera
+// via StatusVisionCamera (single-session AR). We keep useCameraPermissions
+// because it already drove the App-Review-compliant pre-permission screen.
+import { useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CachedImage from './CachedImage';
@@ -29,13 +19,13 @@ import {
   IconRefresh, IconX, IconZap, IconSparkles, IconClock, IconGrid,
   IconImage, IconUndo2, IconMusic,
 } from './Icons';
-// AR face-filter pipeline (MediaPipe FaceLandmarker — Apache 2.0).
-// Filter overlay is graceful: when the native binding isn't loaded
-// (web, debug sim without the pod installed), each preset falls back
-// to a centered static overlay. The carousel + preset switching still
-// works for UI testing without the binding.
-import FaceFilterOverlay from './status/FaceFilterOverlay';
-import { FACE_FILTER_PRESETS, getMediaPipe } from './status/FaceFilters';
+// AR face-filter pipeline — SINGLE SESSION (react-native-vision-camera v4 +
+// Skia frame processor + MLKit face-detector plugin). StatusVisionCamera owns
+// the ONE camera session: it renders the preview AND draws the dog-ears /
+// glasses / etc. overlay on the same Skia canvas. No second AVCaptureSession /
+// CameraX bind fighting for the front lens (the old dual-session freeze bug).
+import StatusVisionCamera from './status/StatusVisionCamera';
+import { FACE_FILTER_PRESETS } from './status/FaceFilters';
 
 // Haptics (graceful — `expo-haptics` may not be present in every build)
 let _Haptics = null;
@@ -518,80 +508,33 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
 
   // ─── Capture ───
   const takePhoto = useCallback(async () => {
-    // Defensive guard wave — WAVE 84 crash fix. Reports: app hard-crashes
-    // when the user taps the shoot button while an AR face filter overlay
-    // is active. Multiple failure paths converge here, so we harden every
-    // step instead of guessing the exact one:
+    // SINGLE-SESSION CAPTURE (2026-05-26). The old dual-session band-aids are
+    // GONE: there is no longer a second AVCaptureSession / CameraX bind to
+    // contend with, so we don't stop a landmarker, sleep 350ms, or race a 4s
+    // timeout. StatusVisionCamera owns the one session; takePhoto() resolves
+    // cleanly while the AR overlay keeps drawing on the same Skia canvas.
+    //
+    // Remaining defensive guards we DO keep:
     //   1. cameraRef may be null mid-mount (modal opening race) — bail.
-    //   2. takePictureAsync can REJECT (camera busy, surface lost when
-    //      AR overlay is rendering) — outer try/catch swallows it.
-    //   3. takePictureAsync can RESOLVE with null/undefined (expo-camera
-    //      v55 returns null when called during a video-mode swap) —
-    //      accessing photo.uri then throws TypeError. Now guarded.
-    //   4. ImageManipulator.manipulateAsync can throw if uri is a
-    //      content:// URI without read access — inner catch keeps the
-    //      raw photo as fallback (was already there, kept).
-    //   5. onCapture from parent could be undefined — already optional.
-    //   6. activeFilter/FACE_FILTER_PRESETS could be undefined if the
-    //      idx is stale after a hot-reload — fall back to safe defaults.
+    //   2. takePhoto can reject / resolve null — guarded below.
+    //   3. ImageManipulator.manipulateAsync can throw on a content:// URI —
+    //      inner catch keeps the raw photo as fallback.
+    //   4. activeFilter/FACE_FILTER_PRESETS could be stale after a hot-reload —
+    //      fall back to safe defaults.
     if (!cameraRef.current) {
       if (__DEV__) console.warn('[StatusCamera] takePhoto called with null cameraRef');
       return;
     }
-    // ── CAPTURE-WITH-EFFECT FREEZE FIX (2026-05-25) ──
-    // Root cause (native, documented in ExpoFaceLandmarkerModule.swift L33-49 +
-    // ExpoFaceLandmarkerModule.kt L47-57): the AR face filter runs its OWN
-    // AVCaptureSession (iOS) / CameraX bindToLifecycle (Android) on the FRONT
-    // lens to feed MediaPipe/Vision landmarks. The OS only lets ONE session own
-    // a camera at a time. While an effect is active and the user presses the
-    // shutter, expo-camera's takePictureAsync contends with that second session:
-    //   • Android: the module's unbindAll()/bindToLifecycle() race steals the
-    //     surface mid-capture → takePictureAsync never resolves → ANR/freeze.
-    //   • iOS: the still-capture request stalls waiting for a device the Vision
-    //     session is holding → spinner forever ("trava na hora de tirar a foto").
-    // Pure-JS / OTA mitigation: STOP the landmarker before capturing so the
-    // front lens is uncontended, then race takePictureAsync against a hard
-    // timeout so the shutter ALWAYS resolves (never hangs). The effect is not
-    // burned in here anyway — it rides forward as `face_filter` key — so
-    // dropping the live overlay for the capture instant is invisible to the user.
-    const _arActive = (FACE_FILTER_PRESETS[arFilterIdx]?.key &&
-                       FACE_FILTER_PRESETS[arFilterIdx].key !== 'none');
-    if (_arActive) {
-      try { getMediaPipe()?.stopFaceLandmarker?.(); } catch (e) {
-        if (__DEV__) console.warn('[StatusCamera] stopFaceLandmarker pre-capture failed:', e?.message);
-      }
-      // Wait for the native AVCaptureSession (iOS) / CameraX bindToLifecycle
-      // (Android) to ACTUALLY release the front lens before expo-camera asks
-      // for the still. A single `setTimeout(0)` tick was NOT enough — the
-      // teardown is async on the native side, so the capture still raced the
-      // un-released session and timed out at 4s ("trava na hora de tirar").
-      // 350ms is the empirical floor for the session to fully release while
-      // staying imperceptible. Definitive fix is the single-session
-      // Vision-Camera AR rebuild (no second camera session at all).
-      await new Promise(r => setTimeout(r, 350));
-    }
     let photo = null;
     try {
-      // Race the capture against a 4s ceiling. If the native session is still
-      // wedged (older binary without the camera-share fix), reject so the
-      // outer guard surfaces a retry instead of leaving the user on a frozen
-      // shutter. 4s is well above a healthy capture (<800ms) yet short enough
-      // that a stuck capture doesn't read as a hard freeze.
-      photo = await Promise.race([
-        cameraRef.current.takePictureAsync({ quality: 0.92, exif: false }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('capture-timeout')), 4000)),
-      ]);
+      photo = await cameraRef.current.takePictureAsync({ quality: 0.92, exif: false });
     } catch (e) {
-      console.warn('[StatusCamera] takePictureAsync threw:', e?.message || e);
-      // Capture failed while we were on the camera screen — restart the
-      // landmarker so the live overlay tracking resumes for the retry.
-      if (_arActive) { try { getMediaPipe()?.startFaceLandmarker?.({ fps: 20 }); } catch {} }
+      console.warn('[StatusCamera] takePhoto threw:', e?.message || e);
       try { Alert.alert('Erro', 'Falha ao tirar foto. Tenta novamente.'); } catch {}
       return;
     }
     if (!photo || !photo.uri) {
-      console.warn('[StatusCamera] takePictureAsync returned empty photo');
-      if (_arActive) { try { getMediaPipe()?.startFaceLandmarker?.({ fps: 20 }); } catch {} }
+      console.warn('[StatusCamera] takePhoto returned empty photo');
       try { Alert.alert('Erro', 'Não foi possível capturar a foto. Tenta novamente.'); } catch {}
       return;
     }
@@ -1176,22 +1119,26 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           }
         }}
       >
-        <CameraView
-          ref={cameraRef}
-          style={s.camera}
-          facing={facing}
-          flash={flash}
-          mode={captureMode === 'video' ? 'video' : 'picture'}
-        />
-        {/* AR face filter overlay (MediaPipe FaceLandmarker). Sits on
-            top of the camera preview, below the UI chrome so the user's
-            touches don't get intercepted. Renders nothing when the
-            preset is 'none'. */}
-        <FaceFilterOverlay
-          filterKey={FACE_FILTER_PRESETS[arFilterIdx]?.key}
-          previewSize={previewLayoutSize}
-          facing={facing}
-        />
+        {/* SINGLE-SESSION AR camera. One vision-camera <Camera> renders the
+            preview AND draws the live AR overlay (dog ears / glasses / etc.)
+            on the same Skia canvas via its frame processor — no second
+            camera session, so capture never freezes. The drawn overlay is
+            preview-only; the chosen preset rides forward as `face_filter`
+            meta and is re-applied downstream by the viewer/composer.
+            Native-only: the vision-camera / Skia / worklets stack is stubbed
+            on web (metro WEB_STUBS), so we never mount it in the browser. */}
+        {Platform.OS !== 'web' ? (
+          <StatusVisionCamera
+            ref={cameraRef}
+            facing={facing}
+            mode={captureMode === 'video' ? 'video' : 'picture'}
+            arFilterKey={FACE_FILTER_PRESETS[arFilterIdx]?.key || 'none'}
+            isActive={visible && !preview}
+            onError={(e) => { if (__DEV__) console.warn('[StatusCamera] vision-camera error:', e?.message || e); }}
+          />
+        ) : (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />
+        )}
       </View>
 
       {/* Top-left close (TikTok pattern, Feature 5) */}

@@ -27,6 +27,15 @@ const WEB_STUBS = new Set([
   'react-native-webrtc',
   '@twilio/voice-sdk',
   '@telnyx/webrtc',
+  // Single-session AR status camera stack — native-only (JSI worklets,
+  // Skia GPU canvas, MLKit frame-processor plugin). Stubbed on web so the
+  // web bundle resolves; StatusVisionCamera is only mounted on native
+  // (StatusCamera guards with Platform.OS !== 'web') so the stubbed hooks
+  // are never actually called in the browser.
+  'react-native-vision-camera',
+  'react-native-vision-camera-face-detector',
+  'react-native-worklets-core',
+  '@shopify/react-native-skia',
 ]);
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {
