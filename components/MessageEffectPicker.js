@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import Svg, { Circle, Path, G } from 'react-native-svg';
 import { ScreenEffectPreview } from './MessageScreenEffect';
+import { BubbleEffectPreview } from './MessageBubbleEffect';
 
 const BUBBLE_EFFECTS = [
   { id: 'slam',          labelKey: 'effects.slam',         label: 'Slam' },
@@ -37,58 +38,6 @@ const SCREEN_EFFECTS = [
   { id: 'shooting-star', labelKey: 'effects.shootingStar', label: 'Shooting Star', color: '#FFD700' },
   { id: 'celebration',   labelKey: 'effects.celebration',  label: 'Celebration',   color: '#FACC15' },
 ];
-
-function BubblePreview({ effect, color }) {
-  const scale = useRef(new Animated.Value(1)).current;
-  const tx = useRef(new Animated.Value(0)).current;
-  const opacity = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    let loop;
-    if (effect === 'slam') {
-      loop = Animated.loop(Animated.sequence([
-        Animated.timing(scale, { toValue: 1.3, duration: 220, useNativeDriver: true, easing: Easing.out(Easing.back(2)) }),
-        Animated.spring(scale, { toValue: 1, tension: 180, friction: 6, useNativeDriver: true }),
-        Animated.delay(900),
-      ]));
-    } else if (effect === 'loud') {
-      loop = Animated.loop(Animated.sequence([
-        Animated.timing(scale, { toValue: 1.18, duration: 140, useNativeDriver: true }),
-        Animated.timing(tx, { toValue: -3, duration: 60, useNativeDriver: true }),
-        Animated.timing(tx, { toValue: 3, duration: 60, useNativeDriver: true }),
-        Animated.timing(tx, { toValue: -2, duration: 60, useNativeDriver: true }),
-        Animated.timing(tx, { toValue: 0, duration: 60, useNativeDriver: true }),
-        Animated.spring(scale, { toValue: 1, tension: 200, friction: 7, useNativeDriver: true }),
-        Animated.delay(800),
-      ]));
-    } else if (effect === 'gentle') {
-      loop = Animated.loop(Animated.sequence([
-        Animated.timing(scale, { toValue: 0.85, duration: 220, useNativeDriver: true }),
-        Animated.timing(scale, { toValue: 1, duration: 800, easing: Easing.bezier(0.2, 0.8, 0.2, 1), useNativeDriver: true }),
-        Animated.delay(800),
-      ]));
-    } else if (effect === 'invisible-ink') {
-      loop = Animated.loop(Animated.sequence([
-        Animated.timing(opacity, { toValue: 0.25, duration: 600, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 1, duration: 600, useNativeDriver: true }),
-      ]));
-    }
-    loop?.start();
-    return () => loop?.stop?.();
-  }, [effect, scale, tx, opacity]);
-
-  return (
-    <Animated.View style={{
-      transform: [{ scale }, { translateX: tx }],
-      opacity,
-      backgroundColor: color,
-      paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18,
-      alignSelf: 'flex-end',
-    }}>
-      <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>Hello</Text>
-    </Animated.View>
-  );
-}
 
 function ScreenPreview({ effect, color }) {
   const dot = useRef(new Animated.Value(0)).current;
@@ -143,13 +92,17 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
   // `previewEffect` holds the screen-effect id currently being previewed;
   // null means we're back on the picker grid.
   const [previewEffect, setPreviewEffect] = React.useState(null);
+  // Bubble effects get a full-screen preview too (parity with the screen tab):
+  // tapping a bubble tile opens a live looping BubbleEffectPreview on a sample
+  // bubble + a clear "Enviar com efeito" CTA. `previewBubble` holds that id.
+  const [previewBubble, setPreviewBubble] = React.useState(null);
   const slideY = useRef(new Animated.Value(400)).current;
   const backdrop = useRef(new Animated.Value(0)).current;
 
   // Reset the full-screen preview whenever the sheet closes so it never
   // re-opens stuck on a stale effect (and the Animated loops tear down).
   useEffect(() => {
-    if (!visible) setPreviewEffect(null);
+    if (!visible) { setPreviewEffect(null); setPreviewBubble(null); }
   }, [visible]);
 
   useEffect(() => {
@@ -193,7 +146,11 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
       transparent
       animationType="none"
       // Android back: leave the full-screen preview first, then close the sheet.
-      onRequestClose={() => { if (previewEffect) setPreviewEffect(null); else onClose(); }}
+      onRequestClose={() => {
+        if (previewEffect) setPreviewEffect(null);
+        else if (previewBubble) setPreviewBubble(null);
+        else onClose();
+      }}
       statusBarTranslucent
     >
     <View style={StyleSheet.absoluteFillObject} pointerEvents="box-none">
@@ -277,8 +234,83 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
         </View>
       ) : null}
 
-      {/* Picker grid — hidden while the full-screen preview is up */}
-      {!previewEffect ? (
+      {/* Full-screen BUBBLE preview — runs the REAL MessageBubbleEffect
+          choreography (BubbleEffectPreview) on a sample bubble, looping, so
+          the sender sees exactly the slam/loud/gentle/invisible-ink the
+          recipient will get. Same renderer as recipient playback. */}
+      {previewBubble ? (
+        <View style={[StyleSheet.absoluteFillObject, { backgroundColor: isDark ? '#0b0b0d' : '#0b1020' }]}>
+          {/* Top bar: back to grid + effect name */}
+          <View style={{
+            position: 'absolute', top: Platform.OS === 'ios' ? 54 : 28, left: 0, right: 0,
+            flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+            paddingHorizontal: 18,
+          }}>
+            <TouchableOpacity
+              onPress={() => setPreviewBubble(null)}
+              hitSlop={{ top: 12, left: 12, right: 12, bottom: 12 }}
+              accessibilityLabel={tx('common.back', 'Voltar')}
+            >
+              <Svg width={26} height={26} viewBox="0 0 24 24">
+                <Path d="M15 19l-7-7 7-7" stroke="#fff" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+              </Svg>
+            </TouchableOpacity>
+            <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+              {tx(
+                (BUBBLE_EFFECTS.find((e) => e.id === previewBubble) || {}).labelKey || '',
+                (BUBBLE_EFFECTS.find((e) => e.id === previewBubble) || {}).label || ''
+              )}
+            </Text>
+            <View style={{ width: 26 }} />
+          </View>
+
+          {/* The looping bubble effect on a sample bubble, centered. */}
+          <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: 28 }}>
+            <View style={{ alignItems: 'flex-end' }}>
+              <BubbleEffectPreview
+                effect={previewBubble}
+                active={visible}
+                color="#7C3AED"
+                label={previewBubbleText}
+              />
+            </View>
+            {previewBubble === 'invisible-ink' ? (
+              <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13, textAlign: 'center', marginTop: 28 }}>
+                {tx('effects.invisibleInkHint', 'O conteúdo fica oculto até o toque')}
+              </Text>
+            ) : null}
+          </View>
+
+          {/* Confirm bar: send-with-effect */}
+          <View style={{
+            position: 'absolute', left: 0, right: 0, bottom: 0,
+            paddingHorizontal: 18, paddingTop: 12,
+            paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+            flexDirection: 'row', alignItems: 'center', gap: 12,
+          }}>
+            <TouchableOpacity
+              onPress={() => { onPick(previewBubble); setPreviewBubble(null); }}
+              activeOpacity={0.9}
+              style={{
+                flex: 1, backgroundColor: '#7C3AED',
+                paddingVertical: 14, borderRadius: 14, alignItems: 'center',
+                flexDirection: 'row', justifyContent: 'center', gap: 8,
+              }}
+              accessibilityLabel={tx('effects.sendWithEffect', 'Enviar com efeito')}
+            >
+              <Svg width={18} height={18} viewBox="0 0 24 24">
+                <Path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+              </Svg>
+              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+                {tx('effects.sendWithEffect', 'Enviar com efeito')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      ) : null}
+
+      {/* Picker grid — hidden while either full-screen preview is up */}
+      {!previewEffect && !previewBubble ? (
       <Animated.View
         style={{
           position: 'absolute', left: 0, right: 0, bottom: 0,
@@ -332,16 +364,24 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
             BUBBLE_EFFECTS.map((e) => (
               <TouchableOpacity
                 key={e.id}
-                onPress={() => onPick(e.id)}
+                // Open a full-screen live preview (parity with screen tab),
+                // confirm "Enviar com efeito" from there. The inline mini-tile
+                // already loops the REAL bubble choreography via BubbleEffectPreview.
+                onPress={() => setPreviewBubble(e.id)}
                 activeOpacity={0.85}
                 style={{
                   width: 150, height: 110, borderRadius: 14,
                   backgroundColor: tileBg, borderWidth: 1, borderColor: tileBorder,
-                  padding: 10, justifyContent: 'space-between',
+                  padding: 10, justifyContent: 'space-between', overflow: 'hidden',
                 }}
               >
-                <View style={{ flex: 1, justifyContent: 'center' }}>
-                  <BubblePreview effect={e.id} color={bubbleColor} />
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'flex-end' }} pointerEvents="none">
+                  <BubbleEffectPreview
+                    effect={e.id}
+                    active={visible && tab === 'bubble' && !previewBubble && !previewEffect}
+                    color={bubbleColor}
+                    label="Olá"
+                  />
                 </View>
                 <Text style={{ color: text, fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
                   {tx(e.labelKey, e.label)}

@@ -28,6 +28,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { View, Animated, Easing, StyleSheet, Dimensions, Platform } from 'react-native';
 import Svg, { Path, Defs, RadialGradient, Stop, Circle, LinearGradient, Rect } from 'react-native-svg';
+import { registerShakeSink } from './MessageBubbleEffect';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const rand = (min, max) => min + Math.random() * (max - min);
@@ -41,6 +42,41 @@ const SCREEN_EFFECTS = new Set([
 const MessageScreenEffect = React.forwardRef(function MessageScreenEffect(_props, ref) {
   const [active, setActive] = useState(null);
   const flash = useRef(new Animated.Value(0)).current;
+  // Slam impact: a quick translate jitter applied to this full-screen overlay
+  // host plus a brief dark vignette pulse, so a Slam bubble lands with a felt
+  // "thud" across the whole conversation. Registered as the global shake sink
+  // by MessageBubbleEffect so any inbound/sent Slam triggers it.
+  const shakeX = useRef(new Animated.Value(0)).current;
+  const shakeY = useRef(new Animated.Value(0)).current;
+  const impact = useRef(new Animated.Value(0)).current;
+
+  const triggerShake = useCallback((intensity = 1) => {
+    const amp = 7 * Math.max(0.4, Math.min(1.4, intensity));
+    shakeX.setValue(0); shakeY.setValue(0); impact.setValue(0);
+    Animated.parallel([
+      // Damped decaying jitter — 5 swings then rest.
+      Animated.sequence([
+        Animated.timing(shakeX, { toValue: amp, duration: 38, useNativeDriver: true }),
+        Animated.timing(shakeX, { toValue: -amp * 0.8, duration: 38, useNativeDriver: true }),
+        Animated.timing(shakeX, { toValue: amp * 0.5, duration: 38, useNativeDriver: true }),
+        Animated.timing(shakeX, { toValue: -amp * 0.25, duration: 38, useNativeDriver: true }),
+        Animated.timing(shakeX, { toValue: 0, duration: 38, useNativeDriver: true }),
+      ]),
+      Animated.sequence([
+        Animated.timing(shakeY, { toValue: -amp * 0.6, duration: 38, useNativeDriver: true }),
+        Animated.timing(shakeY, { toValue: amp * 0.45, duration: 38, useNativeDriver: true }),
+        Animated.timing(shakeY, { toValue: -amp * 0.2, duration: 38, useNativeDriver: true }),
+        Animated.timing(shakeY, { toValue: 0, duration: 38, useNativeDriver: true }),
+        Animated.delay(38),
+      ]),
+      Animated.sequence([
+        Animated.timing(impact, { toValue: 1, duration: 70, useNativeDriver: true }),
+        Animated.timing(impact, { toValue: 0, duration: 260, useNativeDriver: true }),
+      ]),
+    ]).start();
+  }, [shakeX, shakeY, impact]);
+
+  useEffect(() => registerShakeSink(triggerShake), [triggerShake]);
 
   const play = useCallback((effect) => {
     if (!effect || !SCREEN_EFFECTS.has(effect)) return;
@@ -69,12 +105,31 @@ const MessageScreenEffect = React.forwardRef(function MessageScreenEffect(_props
   React.useImperativeHandle(ref, () => ({ play }), [play]);
 
   return (
-    <View style={StyleSheet.absoluteFillObject} pointerEvents="none">
+    <Animated.View
+      style={[StyleSheet.absoluteFillObject, { transform: [{ translateX: shakeX }, { translateY: shakeY }] }]}
+      pointerEvents="none"
+    >
       <Animated.View
         style={[StyleSheet.absoluteFillObject, { backgroundColor: '#fff', opacity: flash }]}
       />
+      {/* Slam impact vignette — a quick dark edge pulse on landing. */}
+      <Animated.View
+        style={[StyleSheet.absoluteFillObject, {
+          opacity: impact.interpolate({ inputRange: [0, 1], outputRange: [0, 0.28] }),
+        }]}
+      >
+        <Svg width={SCREEN_W} height={SCREEN_H} style={StyleSheet.absoluteFillObject}>
+          <Defs>
+            <RadialGradient id="impact-vignette" cx="50%" cy="50%" r="75%">
+              <Stop offset="0.55" stopColor="#000" stopOpacity="0" />
+              <Stop offset="1" stopColor="#000" stopOpacity="1" />
+            </RadialGradient>
+          </Defs>
+          <Rect x="0" y="0" width={SCREEN_W} height={SCREEN_H} fill="url(#impact-vignette)" />
+        </Svg>
+      </Animated.View>
       {active ? <RenderEffect key={active.key} effect={active.id} /> : null}
-    </View>
+    </Animated.View>
   );
 });
 
@@ -217,8 +272,13 @@ function ConfettiPiece({ fromX, drift, duration, delay, size, ratio, color, rota
   }, [t, r, duration, delay, rotateSpeed]);
 
   const ty = t.interpolate({ inputRange: [0, 1], outputRange: [-30, SCREEN_H + 30] });
-  const tx = t.interpolate({ inputRange: [0, 1], outputRange: [fromX, fromX + drift] });
-  const op = t.interpolate({ inputRange: [0, 0.05, 0.9, 1], outputRange: [0, 1, 1, 0] });
+  // Flutter: drift isn't linear — confetti sways side to side as it falls.
+  const tx = t.interpolate({
+    inputRange: [0, 0.25, 0.5, 0.75, 1],
+    outputRange: [fromX, fromX + drift * 0.4, fromX + drift * 0.2, fromX + drift * 0.8, fromX + drift],
+  });
+  // Gentle tail fade-out over the last 25% so pieces dissolve, not snap off.
+  const op = t.interpolate({ inputRange: [0, 0.05, 0.75, 1], outputRange: [0, 1, 1, 0] });
   const rotate = r.interpolate({ inputRange: [0, 6], outputRange: ['0deg', '2160deg'] });
 
   // Per-shape geometry: circle uses size×size + full radius;
@@ -387,23 +447,43 @@ function LaserBeam({ color, y, angle, delay, dir }) {
     strobe,
   );
 
-  const beamStyle = {
+  const commonTransform = [{ translateX: tx }, { rotate: `${angle}deg` }];
+  // Two-layer beam: a soft wide halo underneath + a bright thin core on top,
+  // so it reads as a glowing laser rather than a flat colored bar.
+  const haloStyle = {
+    position: 'absolute',
+    top: y - 4,
+    left: 0,
+    width: SCREEN_W * 1.4,
+    height: 11,
+    borderRadius: 6,
+    backgroundColor: color,
+    opacity: Animated.multiply(op, 0.35),
+    transform: commonTransform,
+    ...(Platform.OS === 'web' ? { boxShadow: `0 0 22px ${color}, 0 0 44px ${color}` } : {}),
+    ...Platform.select({
+      ios: { shadowColor: color, shadowOpacity: 0.95, shadowRadius: 18 },
+      android: { elevation: 9 },
+      default: {},
+    }),
+  };
+  const coreStyle = {
     position: 'absolute',
     top: y,
     left: 0,
     width: SCREEN_W * 1.4,
     height: 3,
-    backgroundColor: color,
+    backgroundColor: '#ffffff',
     opacity: op,
-    transform: [{ translateX: tx }, { rotate: `${angle}deg` }],
-    ...(Platform.OS === 'web' ? { boxShadow: `0 0 16px ${color}, 0 0 32px ${color}` } : {}),
-    ...Platform.select({
-      ios: { shadowColor: color, shadowOpacity: 0.9, shadowRadius: 14 },
-      android: { elevation: 8 },
-      default: {},
-    }),
+    transform: commonTransform,
+    ...(Platform.OS === 'web' ? { boxShadow: `0 0 10px ${color}` } : {}),
   };
-  return <Animated.View style={beamStyle} />;
+  return (
+    <>
+      <Animated.View style={haloStyle} />
+      <Animated.View style={coreStyle} />
+    </>
+  );
 }
 
 // ── Fireworks ───────────────────────────────────────────────────────
@@ -510,11 +590,11 @@ function Spotlight() {
   }, [dim, cone]);
 
   const motes = useRef(
-    Array.from({ length: 16 }).map((_, i) => ({
-      x: SCREEN_W / 2 - 100 + Math.random() * 200,
-      y: SCREEN_H * 0.15 + Math.random() * SCREEN_H * 0.6,
-      delay: i * 70,
-      size: 2 + Math.random() * 2,
+    Array.from({ length: 28 }).map((_, i) => ({
+      x: SCREEN_W / 2 - 120 + Math.random() * 240,
+      y: SCREEN_H * 0.12 + Math.random() * SCREEN_H * 0.62,
+      delay: i * 50,
+      size: 1.5 + Math.random() * 2.5,
     }))
   ).current;
 

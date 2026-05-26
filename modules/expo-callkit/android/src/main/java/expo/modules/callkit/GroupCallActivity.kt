@@ -31,6 +31,7 @@ import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.renderer.SurfaceViewRenderer
 import io.livekit.android.room.Room
+import io.livekit.android.room.participant.AudioTrackPublishDefaults
 import io.livekit.android.room.participant.Participant
 import io.livekit.android.room.participant.VideoTrackPublishDefaults
 import io.livekit.android.room.track.LocalVideoTrackOptions
@@ -277,6 +278,17 @@ class GroupCallActivity : ComponentActivity() {
         videoTrackPublishDefaults = VideoTrackPublishDefaults(
           simulcast = true,
           videoEncoding = VideoPreset169.H720.encoding
+        ),
+        // [HD tuning 2026-05-26] Opus voice resilience for group calls:
+        // dtx (silence suppression), red (redundant audio — recovers
+        // single/short-burst loss with no retransmit latency), 48 kbps mono
+        // HD voice. Direct ctor here (unlike 1:1 reflective path) because this
+        // RoomOptions block is built fresh; ctor is
+        // AudioTrackPublishDefaults(audioBitrate, dtx, red, preconnect).
+        audioTrackPublishDefaults = AudioTrackPublishDefaults(
+          audioBitrate = 48_000,
+          dtx = true,
+          red = true
         ),
         videoTrackCaptureDefaults = LocalVideoTrackOptions(
           captureParams = VideoCaptureParameter(width = 1280, height = 720, maxFps = 30)

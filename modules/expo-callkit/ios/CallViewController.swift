@@ -944,6 +944,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
                 defaultAudioCaptureOptions: Self.defaultAudioCaptureOptions(),
                 defaultVideoPublishOptions: Self.defaultVideoPublishOptions(),
+                // [HD tuning 2026-05-26] Pin DTX + RED on the published Opus
+                // stream from the very first packet (loss resilience on cellular).
+                defaultAudioPublishOptions: Self.defaultAudioPublishOptions(),
                 adaptiveStream: true,
                 dynacast: true
             )
@@ -2296,32 +2299,64 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// subscriber based on bandwidth + viewport — this is what gives us
     /// adaptive bitrate without any client-side network probe.
     ///
-    /// `degradationPreference: .balanced` tells the encoder to drop fps first
-    /// then resolution when bandwidth is constrained — better perceived
-    /// quality than .maintainResolution under congestion. Matches WhatsApp's
-    /// behavior of staying smooth at lower res before stuttering at full res.
+    /// [HD tuning 2026-05-26] `degradationPreference: .maintainFramerate` is the
+    /// WhatsApp/FaceTime-like default for 1:1 talking-head calls: under
+    /// congestion the encoder DROPS RESOLUTION FIRST and keeps the frame rate
+    /// smooth (motion fidelity > sharpness on a face that's mostly static). The
+    /// simulcast ladder (below) gives the SFU lower-res tiers to fall back to,
+    /// so a weak link smoothly steps 720p→360p→180p instead of stuttering at
+    /// full res. (Was `.balanced`, which split the difference; for a face,
+    /// keeping fps reads as noticeably more "live".)
+    ///
+    /// Simulcast is ON: LK derives 3 encodings from the 720p capture source —
+    /// ~h180 (low) / ~h360 (mid) / ~h720 (high) — and the SFU forwards the
+    /// best tier each subscriber's bandwidth + viewport can take. That, plus
+    /// adaptiveStream + dynacast on the Room, is what downshifts automatically
+    /// on weak networks instead of freezing.
     ///
     /// [Wave WhatsApp parity, 2026-05-20 gap C1+C4]
-    ///   - `preferredCodec: .vp9` + `backupCodec: .vp8` — VP9 cuts ~30% bitrate
-    ///     vs VP8 at the same perceptual quality. SFU negotiates VP9 with peers
-    ///     that support it; falls back to VP8 for everyone else.
-    ///   - `encoding.maxBitrate` bumped 1.7M → 2.0M so the VP9 top simulcast
-    ///     tier can carry the extra fidelity headroom (would otherwise cap out
-    ///     at the same VP8 bitrate and the quality bump would be invisible).
-    ///   - `degradationPreference: .balanced` (was implicit) — drop fps before
-    ///     resolution under congestion.
+    ///   - `preferredCodec: .vp9` — VP9 cuts ~30% bitrate vs VP8 at the same
+    ///     perceptual quality. SFU negotiates VP9 with peers that support it
+    ///     and falls back to VP8 for everyone else (negotiated codec list).
+    ///   - `encoding.maxBitrate = 2.0 Mbps` — top (h720) tier cap. Healthy HD
+    ///     headroom for 720p@30 (target ~1.7M, ceiling 2.0M). On a 1080p-capable
+    ///     good link the SFU/encoder uses the headroom; on weak links the
+    ///     lower simulcast tiers + maintainFramerate keep it smooth.
     static func defaultVideoPublishOptions() -> VideoPublishOptions {
         return VideoPublishOptions(
             name: nil,
             encoding: VideoEncoding(
-                maxBitrate: 2_000_000, // 2.0 Mbps cap for VP9 top tier
+                maxBitrate: 2_000_000, // 2.0 Mbps cap for VP9 720p top tier
                 maxFps: 30
             ),
             simulcast: true,
             preferredCodec: .vp9,
             // [Wave 19 fix] LK iOS 2.0.x VideoPublishOptions has no backupCodec
             // param yet. SFU falls back to negotiated codec list automatically.
-            degradationPreference: .balanced
+            // [HD tuning 2026-05-26] maintainFramerate — keep fps, shed res first.
+            degradationPreference: .maintainFramerate
+        )
+    }
+
+    /// [HD tuning 2026-05-26] AudioPublishOptions — Opus voice resilience knobs.
+    /// AudioCaptureOptions (above) owns the DSP (AEC/AGC/NS); these own how the
+    /// Opus stream is PACKETIZED and made loss-resilient:
+    ///   - `dtx: true`  — Discontinuous Transmission: stop sending packets during
+    ///     silence (saves uplink, battery; no audible effect).
+    ///   - `red: true`  — REDundant audio encoding: piggyback a copy of the prior
+    ///     packet so a single/short-burst loss is recovered with zero retransmit
+    ///     latency. This is the fix for "voz cortando" on cellular. Overhead is
+    ///     negligible at voice bitrates.
+    ///   - `encoding.maxBitrate = 48 kbps` — music-grade mono voice headroom
+    ///     (Opus sounds full at 32-48k mono; the JS adaptive loop pulls down to
+    ///     24-32k only on a genuinely poor link). FEC rides in the Opus SDP.
+    /// LK Swift 2.x signature: AudioPublishOptions(name:encoding:dtx:red:).
+    static func defaultAudioPublishOptions() -> AudioPublishOptions {
+        return AudioPublishOptions(
+            name: nil,
+            encoding: AudioEncoding(maxBitrate: 48_000),
+            dtx: true,
+            red: true
         )
     }
 
@@ -2422,6 +2457,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
             defaultAudioCaptureOptions: Self.defaultAudioCaptureOptions(),
             defaultVideoPublishOptions: Self.defaultVideoPublishOptions(),
+            // [HD tuning 2026-05-26] DTX + RED on the published Opus stream.
+            defaultAudioPublishOptions: Self.defaultAudioPublishOptions(),
             adaptiveStream: true,
             dynacast: true
         )

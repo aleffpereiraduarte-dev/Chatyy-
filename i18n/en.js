@@ -212,6 +212,7 @@ export default {
   'effects.celebration': 'Celebration',
   'effects.sendWithEffect': 'Send with effect',
   'effects.previewSample': 'Hello',
+  'effects.invisibleInkHint': 'Content stays hidden until tapped',
 
   // Splash
   'meetScreen.groupCall': 'Group call',

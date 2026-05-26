@@ -1528,11 +1528,24 @@ function CallScreenInner() {
         // so we keep universal compatibility without losing VP9 where it works.
         videoCodec: 'vp9',
         backupCodec: { codec: 'vp8', simulcast: true },
+        // [HD tuning 2026-05-26] 3-layer simulcast ladder (h180/h360/h720) so
+        // the SFU can forward the best tier each receiver's bandwidth/viewport
+        // can take — that + adaptiveStream/dynacast is what downshifts a weak
+        // link smoothly (720p→360p→180p) instead of freezing. Top (h720) layer
+        // bumped 1.5M → 1.8M for healthy HD headroom (target ~1.7M, native iOS/
+        // Android cap 2.0M for VP9 — kept slightly under to match the JS web
+        // path's lower-power encoders).
         videoSimulcastLayers: [
-          { width: 320, height: 180, encoding: { maxBitrate: 150_000, maxFramerate: 15 } },
-          { width: 640, height: 360, encoding: { maxBitrate: 500_000, maxFramerate: 25 } },
-          { width: 1280, height: 720, encoding: { maxBitrate: 1_500_000, maxFramerate: 30 } },
+          { width: 320, height: 180, encoding: { maxBitrate: 180_000, maxFramerate: 15 } },
+          { width: 640, height: 360, encoding: { maxBitrate: 600_000, maxFramerate: 30 } },
+          { width: 1280, height: 720, encoding: { maxBitrate: 1_800_000, maxFramerate: 30 } },
         ],
+        // [HD tuning 2026-05-26] maintain-framerate — WhatsApp/FaceTime-like
+        // default for 1:1 talking-head: under congestion the encoder drops
+        // RESOLUTION first and keeps fps smooth (motion fidelity on a face >
+        // sharpness). The simulcast ladder above provides the lower-res tiers
+        // to step down to. WebRTC RTCDegradationPreference string value.
+        degradationPreference: 'maintain-framerate',
       },
       // [2026-05-15 #827] iOS broadcast extension wiring. When the user taps
       // "Compartilhar tela", LiveKit's setScreenShareEnabled(true) opens the

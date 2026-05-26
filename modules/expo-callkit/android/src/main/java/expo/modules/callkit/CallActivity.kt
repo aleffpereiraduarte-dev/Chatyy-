@@ -1266,10 +1266,11 @@ class CallActivity : ComponentActivity() {
     // downshifts to VP8. preferredCodec is reflectively set because LK Android
     // 2.x exposes it as a String on VideoTrackPublishDefaults but the field
     // name has bounced ("preferredCodec" → "videoCodec") across minor revs.
-    // [C4, 2026-05-20] degradationPreference=balanced — under network
-    // pressure the encoder degrades resolution AND framerate equally so the
-    // stream stays watchable instead of dropping to a slideshow. WhatsApp
-    // uses balanced; Meet uses maintain-framerate. balanced wins on cellular.
+    // [HD tuning 2026-05-26] degradationPreference set to MAINTAIN_FRAMERATE
+    // below (was BALANCED). For a 1:1 talking-head the smooth-motion read of
+    // holding fps and shedding resolution first (FaceTime/WhatsApp-like) beats
+    // the even resolution+fps drop of BALANCED; the simulcast ladder gives the
+    // SFU lower-res tiers so it steps down instead of freezing.
     val publishDefaults = try {
       VideoTrackPublishDefaults(
         simulcast = true,
@@ -1295,19 +1296,29 @@ class CallActivity : ComponentActivity() {
       } else {
         Log.d(TAG, "no codec field on VideoTrackPublishDefaults — SDK defaults stay (VP8)")
       }
+      // [HD tuning 2026-05-26] degradationPreference = MAINTAIN_FRAMERATE.
+      // WhatsApp/FaceTime-like default for 1:1 talking-head video: under
+      // network pressure the encoder DROPS RESOLUTION FIRST and holds the
+      // frame rate, so a face stays smooth (motion fidelity > sharpness). The
+      // simulcast ladder (H720→H360→H180) gives the SFU lower-res tiers to
+      // step down to, so it degrades gracefully instead of freezing. (Was
+      // BALANCED; for a static-ish face, keeping fps reads as more "live".)
+      // We accept several enum spellings across WebRTC/LK revs.
       val degradationField = pdCls.declaredFields.firstOrNull {
         it.name.contains("degradation", ignoreCase = true)
       }
       if (degradationField != null) {
         degradationField.isAccessible = true
-        // Try enum value first ("BALANCED"), fall back to string.
         val enumType = degradationField.type
         val value: Any = if (enumType.isEnum) {
-          enumType.enumConstants?.firstOrNull { it.toString().equals("BALANCED", true) }
-            ?: "balanced"
-        } else "balanced"
+          enumType.enumConstants?.firstOrNull {
+            val n = it.toString()
+            n.equals("MAINTAIN_FRAMERATE", true) || n.equals("MAINTAINFRAMERATE", true)
+          } ?: enumType.enumConstants?.firstOrNull { it.toString().equals("BALANCED", true) }
+            ?: "maintain-framerate"
+        } else "maintain-framerate"
         degradationField.set(publishDefaults, value)
-        Log.d(TAG, "VideoTrackPublishDefaults.${degradationField.name} = balanced")
+        Log.d(TAG, "VideoTrackPublishDefaults.${degradationField.name} = maintain-framerate")
       }
     } catch (t: Throwable) {
       Log.w(TAG, "codec/degradation reflective set failed: ${t.message}")
@@ -1349,6 +1360,49 @@ class CallActivity : ComponentActivity() {
       }
     } catch (t: Throwable) {
       Log.w(TAG, "audio capture defaults reflective set failed: ${t.message}")
+    }
+    // [HD tuning 2026-05-26] Pin AudioTrackPublishDefaults — the PUBLISH side
+    // knobs that make Opus voice loss-resilient + bandwidth-efficient:
+    //   - dtx=true   : Discontinuous Transmission — stop sending during silence.
+    //   - red=true   : REDundant audio — piggyback the previous packet so a
+    //                  single/short-burst loss is recovered with no retransmit
+    //                  latency (the fix for "voz cortando" on cellular). Cheap
+    //                  at voice bitrates.
+    //   - audioBitrate=48000 : music-grade mono voice headroom (Opus is full at
+    //                  32-48k mono). FEC rides in the Opus SDP automatically.
+    //   - preconnect=false : default; we publish after connect, not before.
+    // LK Android 2.24 ctor: AudioTrackPublishDefaults(Integer audioBitrate,
+    //   boolean dtx, boolean red, boolean preconnect). Reflective because the
+    //   RoomOptions field name (audioTrackPublishDefaults) has shifted across
+    //   revs and we don't want a hard compile dep that breaks on SDK bumps.
+    try {
+      val apdCls = Class.forName("io.livekit.android.room.participant.AudioTrackPublishDefaults")
+      val apdCtor = apdCls.getDeclaredConstructor(
+        java.lang.Integer::class.java,
+        java.lang.Boolean.TYPE,
+        java.lang.Boolean.TYPE,
+        java.lang.Boolean.TYPE
+      )
+      apdCtor.isAccessible = true
+      val audioPublishOpts = apdCtor.newInstance(
+        Integer.valueOf(48_000), // audioBitrate (bps) — HD mono voice
+        true,                    // dtx
+        true,                    // red
+        false                    // preconnect
+      )
+      val apField = roomOptions.javaClass.declaredFields.firstOrNull {
+        it.name.contains("audio", ignoreCase = true) &&
+        it.name.contains("publish", ignoreCase = true)
+      }
+      if (apField != null) {
+        apField.isAccessible = true
+        apField.set(roomOptions, audioPublishOpts)
+        Log.d(TAG, "RoomOptions.${apField.name} injected (Opus dtx+red+48kbps)")
+      } else {
+        Log.d(TAG, "no audio publish defaults field on RoomOptions — SDK defaults stay")
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "audio publish defaults reflective set failed (graceful): ${t.message}")
     }
     // [WAVE 115, 2026-05-21] Relay-first ICE: originally set
     // iceTransportPolicy=RELAY on RoomOptions so the very first connect always

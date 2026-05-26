@@ -332,7 +332,10 @@ public enum NativeCallRoomEvent {
                         simulcast: true,
                         preferredCodec: .vp9,
                         // [Wave 19 fix] LK iOS 2.0.x has no backupCodec param.
-                        degradationPreference: .balanced
+                        // [HD tuning 2026-05-26] maintainFramerate — keep fps,
+                        // shed resolution first under congestion (talking-head).
+                        // Mirrors CallViewController.defaultVideoPublishOptions.
+                        degradationPreference: .maintainFramerate
                     )
                     _ = try await r.localParticipant.setCamera(
                         enabled: true,

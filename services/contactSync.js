@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert, Platform, Linking } from 'react-native';
 import { apiCall, chatSyncContacts } from './api';
+import { COUNTRIES } from '../constants/countries';
 
 const CACHE_KEY = '@chatyy_synced_contacts';
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour in milliseconds
@@ -77,6 +78,97 @@ export function toE164(phone) {
   return '+' + digits;
 }
 
+// Map a dial code (without '+') to its number of digits, longest-first so we
+// can detect whether a raw number already carries a known country code.
+const KNOWN_DIAL_CODES = [
+  '595', '598', '591', '593', '351', '352', '353', '354', '358', '420',
+  '380', '972', '971', '966', '852', '853', '855', '856', '880', '886',
+  '212', '213', '234', '254', '255', '256', '260', '263', '264', '265',
+  '1', '7', '20', '27', '30', '31', '32', '33', '34', '36', '39', '40',
+  '41', '43', '44', '45', '46', '47', '48', '49', '51', '52', '53', '54',
+  '55', '56', '57', '58', '60', '61', '62', '63', '64', '65', '66', '81',
+  '82', '84', '86', '90', '91', '92', '93', '94', '95', '98',
+];
+
+// Resolve the user's home dial code (digits only, no '+'). Used to prepend a
+// country code to phonebook numbers saved in national format (e.g. a BR
+// contact saved as "(33) 99965-2818" → needs +55). Falls back to BR (55).
+// Synchronous-ish: best-effort from expo-localization, then default 55.
+function getHomeDialDigits() {
+  try {
+    const { getLocales } = require('expo-localization');
+    const region = (getLocales?.()?.[0]?.regionCode || '').toUpperCase();
+    if (region) {
+      const c = COUNTRIES.find(x => x.code === region);
+      if (c?.dial) return c.dial.replace(/\D+/g, '');
+    }
+  } catch {}
+  return '55'; // Chatyy is BR-first; default to Brazil.
+}
+
+// Generate sensible E.164 hash candidates for a single raw phonebook number.
+// The server stores sha256(E.164-with-plus) where E.164 was built at signup
+// from <countryDial><nationalDigits>. A phonebook number may be saved in many
+// shapes — international (+55…), national ((33) 9…), or with a trunk 0 —
+// so we emit every plausible canonical form and let the hash match decide.
+//
+// Returns an array of E.164 strings (each like '+5533999652818'), deduped.
+function e164Candidates(rawPhone, homeDial) {
+  if (!rawPhone || typeof rawPhone !== 'string') return [];
+  const out = new Set();
+  const add = (e) => { if (e && /^\+\d{6,15}$/.test(e)) out.add(e); };
+
+  // Raw digits, keeping a possible leading-0 trunk prefix separately.
+  const rawDigits = rawPhone.replace(/\D+/g, '');
+  if (!rawDigits) return [];
+  const noTrunk = rawDigits.replace(/^0+/, '');
+  if (!noTrunk) return [];
+
+  const hd = (homeDial || '55');
+
+  // 1. If it already starts with a known country code (and is long enough to
+  //    be a full international number), trust it as-is.
+  const startsWithKnownCC = KNOWN_DIAL_CODES.some(cc =>
+    noTrunk.startsWith(cc) && noTrunk.length >= cc.length + 6
+  );
+  if (startsWithKnownCC) {
+    add('+' + noTrunk);
+  }
+
+  // 2. Treat it as a national number for the user's home country: prepend the
+  //    home dial code. This is the key fix — most contacts are saved without
+  //    the country code.
+  add('+' + hd + noTrunk);
+
+  // 3. Brazil 9th-digit variants (only relevant when home is BR / number maps
+  //    to a BR national form). A BR mobile is DDD(2) + 9 + 8 digits = 11; the
+  //    legacy form drops the leading 9 = 10 digits. Emit both so a contact
+  //    saved either way still matches a registry entry stored the other way.
+  if (hd === '55') {
+    const national = noTrunk.startsWith('55') && noTrunk.length >= 12
+      ? noTrunk.slice(2)
+      : noTrunk;
+    if (national.length === 11 && national[2] === '9') {
+      add('+55' + national.slice(0, 2) + national.slice(3)); // drop 9th digit
+    } else if (national.length === 10) {
+      add('+55' + national.slice(0, 2) + '9' + national.slice(2)); // add 9th digit
+    }
+  }
+
+  // 4. US/Canada: a 10-digit national number maps to +1XXXXXXXXXX; an
+  //    11-digit number starting with 1 is already full.
+  if (hd === '1') {
+    if (noTrunk.length === 10) add('+1' + noTrunk);
+    else if (noTrunk.length === 11 && noTrunk.startsWith('1')) add('+' + noTrunk);
+  }
+
+  // 5. Last-resort raw form (covers numbers already in '+digits' shape that
+  //    didn't match a known CC, e.g. short codes — harmless extra hash).
+  add('+' + noTrunk);
+
+  return Array.from(out);
+}
+
 // SHA-256 hex of a string, using Web Crypto when available (RN ships it via
 // expo-crypto polyfill) and falling back to a small WordArray-free
 // implementation that only needs TextEncoder + subtle.digest.
@@ -112,11 +204,24 @@ export async function syncContactsHashed(phoneList = []) {
   // that flow having run first, we silently no-op until consent exists.
   const saved = await getContactsConsentState();
   if (saved !== 'granted') return { matches: [], error: 'consent_required' };
-  const uniqueE164 = Array.from(new Set(phoneList.map(toE164).filter(Boolean)));
+
+  // Expand every phonebook number into all plausible E.164 forms. A contact
+  // saved in national format (e.g. "(33) 99965-2818") must be matched against
+  // the registry which stores the full international number (+5533999652818),
+  // so we generate region-prefixed + 9th-digit variants and hash them all.
+  const homeDial = getHomeDialDigits();
+  const uniqueE164Set = new Set();
+  for (const raw of phoneList) {
+    for (const cand of e164Candidates(raw, homeDial)) uniqueE164Set.add(cand);
+  }
+  const uniqueE164 = Array.from(uniqueE164Set);
   if (uniqueE164.length === 0) return { matches: [], error: null };
+
   // Hash client-side. Cap at 5000 to match server guard. We keep a
   // hash → E.164 map so callers can later resolve a matched hash back to the
   // number AND (if they have the phonebook row) to the locally-saved name.
+  // Because a single contact now yields multiple candidate hashes, batch the
+  // request below in chunks so we never silently truncate at the 5000 cap.
   const hashes = [];
   const hashToPhone = {};
   for (const p of uniqueE164.slice(0, 5000)) {
@@ -124,16 +229,36 @@ export async function syncContactsHashed(phoneList = []) {
     if (h) { hashes.push(h); hashToPhone[h] = p; }
   }
   if (hashes.length === 0) return { matches: [], error: null };
+
+  // Batch to the backend in chunks of 500 and merge all matches. The server
+  // caps each request at 5000 hashes; chunking keeps us safely under that even
+  // when a large phonebook × multiple variants exceeds it, and avoids dropping
+  // the tail of a big contact list.
+  const CHUNK = 500;
+  const seenHash = new Set();
+  const matches = [];
   try {
-    const r = await chatSyncContacts(hashes);
-    if (!r?.success) return { matches: [], error: r?.message || 'sync_failed' };
-    const matches = (r.data?.matches || []).map(m => ({
-      ...m,
-      phone: hashToPhone[m.phone_hash] || null,
-    }));
+    for (let i = 0; i < hashes.length; i += CHUNK) {
+      const slice = hashes.slice(i, i + CHUNK);
+      const r = await chatSyncContacts(slice);
+      if (!r?.success) {
+        // Surface the failure only if we got nothing at all so far.
+        if (matches.length === 0) return { matches: [], error: r?.message || 'sync_failed' };
+        break;
+      }
+      for (const m of (r.data?.matches || [])) {
+        // Dedupe by matched email (the same Chatyy user can match through
+        // several phone-number variants); keep the first hit and resolve it
+        // back to a real device number.
+        const key = (m.email || m.phone_hash || '').toLowerCase();
+        if (key && seenHash.has(key)) continue;
+        if (key) seenHash.add(key);
+        matches.push({ ...m, phone: hashToPhone[m.phone_hash] || null });
+      }
+    }
     return { matches, hashToPhone, error: null };
   } catch (e) {
-    return { matches: [], error: e?.message || 'sync_error' };
+    return { matches: matches.length ? matches : [], hashToPhone, error: matches.length ? null : (e?.message || 'sync_error') };
   }
 }
 
@@ -146,15 +271,18 @@ export async function syncContactsHashed(phoneList = []) {
  */
 export async function buildHashToLocalNameMap(rawContacts = []) {
   const out = new Map();
+  const homeDial = getHomeDialDigits();
   for (const c of rawContacts) {
     const name = (c?.name || [c?.firstName, c?.lastName].filter(Boolean).join(' ')).trim();
     if (!name) continue;
     const nums = (c?.phoneNumbers || []).map(p => p?.number || '').filter(Boolean);
     for (const num of nums) {
-      const e164 = toE164(num);
-      if (!e164) continue;
-      const h = await sha256Hex(e164);
-      if (h) out.set(h, name);
+      // Index ALL E.164 variants so a matched hash (which may be the
+      // region-prefixed or 9th-digit form) resolves back to the saved name.
+      for (const e164 of e164Candidates(num, homeDial)) {
+        const h = await sha256Hex(e164);
+        if (h && !out.has(h)) out.set(h, name);
+      }
     }
   }
   return out;
@@ -167,12 +295,27 @@ export async function buildHashToLocalNameMap(rawContacts = []) {
 export async function registerOwnPhone(phone) {
   const e164 = toE164(phone);
   if (!e164) return { ok: false, error: 'invalid_phone' };
-  const hash = await sha256Hex(e164);
-  if (!hash) return { ok: false, error: 'hash_failed' };
+  // Register the verified number AND its sensible variants (e.g. BR 9th-digit
+  // form) so a contact who saved the number the other way still discovers us.
+  // The first (canonical) registration drives the "ok"/notified result; extra
+  // variants are best-effort upserts pointing to the same email.
+  const homeDial = getHomeDialDigits();
+  const variants = new Set([e164, ...e164Candidates(phone, homeDial)]);
+  let primary = null;
+  let notified = false;
   try {
     const { chatRegisterPhone } = require('./api');
-    const r = await chatRegisterPhone(hash);
-    return { ok: !!r?.success, notified: !!r?.data?.notified_waiters };
+    for (const v of variants) {
+      const hash = await sha256Hex(v);
+      if (!hash) continue;
+      const r = await chatRegisterPhone(hash);
+      if (primary === null) {
+        primary = !!r?.success;
+        notified = !!r?.data?.notified_waiters;
+      }
+    }
+    if (primary === null) return { ok: false, error: 'hash_failed' };
+    return { ok: primary, notified };
   } catch (e) {
     return { ok: false, error: e?.message || 'register_failed' };
   }

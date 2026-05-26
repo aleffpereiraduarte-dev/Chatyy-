@@ -2913,7 +2913,7 @@ export default function PhotosScreen() {
         onLongPress={onLongPress}
         style={[
           s.gridItem,
-          { width: gis, height: gis, borderRadius: 2 },
+          { width: gis, height: gis, borderRadius: 8 },
           isSelected && { borderWidth: 3, borderColor: primaryColor },
         ]}
       >
@@ -3040,16 +3040,16 @@ export default function PhotosScreen() {
           },
         ]}
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <View style={{ width: 3, height: 14, borderRadius: 2, backgroundColor: '#7C3AED' }} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
+          <View style={{ width: 4, height: 16, borderRadius: 3, backgroundColor: '#7C3AED' }} />
           <Text
             style={[
               s.sectionTitle,
               {
                 color: colors.text,
-                fontSize: 15,
-                fontWeight: '700',
-                letterSpacing: -0.2,
+                fontSize: 16,
+                fontWeight: '800',
+                letterSpacing: -0.3,
               },
             ]}
             numberOfLines={1}
@@ -3058,9 +3058,11 @@ export default function PhotosScreen() {
           </Text>
         </View>
         {total > 0 && (
-          <Text style={[s.sectionCount, { color: colors.textSecondary, fontWeight: '600' }]}>
-            {total}
-          </Text>
+          <View style={[s.sectionCountChip, { backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.08)' }]}>
+            <Text style={[s.sectionCount, { color: '#7C3AED', fontWeight: '700' }]}>
+              {total}
+            </Text>
+          </View>
         )}
       </View>
     );
@@ -3350,16 +3352,19 @@ export default function PhotosScreen() {
   // ============================================================
   const renderAlbumsTab = () => {
     if (albums.length === 0) {
-      return (
+      return loading ? (
+        <GridSkeleton count={6} columns={3} />
+      ) : (
         <View style={s.emptyState}>
-          {loading ? (
-            <GridSkeleton count={6} columns={3} />
-          ) : (
-            <>
-              <IconAlbum size={64} color={colors.textTertiary} />
-              <Text style={[s.emptyTitle, { color: colors.text }]}>{t('photos.noAlbums')}</Text>
-            </>
-          )}
+          <View style={s.emptyIllustration}>
+            <View style={[s.emptyIconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.16)' : 'rgba(124,58,237,0.08)' }]}>
+              <IconAlbum size={48} color="#7C3AED" />
+            </View>
+          </View>
+          <Text style={[s.emptyTitle, { color: colors.text }]}>{t('photos.noAlbums')}</Text>
+          <Text style={[s.emptySubtitle, { color: colors.textSecondary }]}>
+            {t('photos.noAlbumsDesc') || 'Crie álbuns para organizar suas fotos favoritas.'}
+          </Text>
         </View>
       );
     }
@@ -3545,9 +3550,14 @@ export default function PhotosScreen() {
                 <ActivityIndicator color={colors.primary} />
               </View>
             ) : realFaceClusters.length === 0 ? (
-              <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                <IconUsers size={48} color={colors.textTertiary} />
-                <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 12, textAlign: 'center' }}>
+              <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                <View style={[s.emptyIconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.16)' : 'rgba(124,58,237,0.08)' }]}>
+                  <IconUsers size={44} color="#7C3AED" />
+                </View>
+                <Text style={{ color: colors.text, fontSize: 17, fontWeight: '800', marginTop: 16, letterSpacing: -0.3 }}>
+                  {t('photos.peopleEmptyTitle') || 'Ninguém por aqui ainda'}
+                </Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 8, textAlign: 'center', lineHeight: 20, paddingHorizontal: 24 }}>
                   {t('photos.peopleEmpty') || 'Conforme suas fotos forem analisadas, rostos similares vao agrupar aqui automaticamente.'}
                 </Text>
               </View>
@@ -3566,10 +3576,10 @@ export default function PhotosScreen() {
                       {cluster.sample_url ? (
                         <Image
                           source={{ uri: cluster.sample_url }}
-                          style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#1a1a2e' }}
+                          style={[s.clusterAvatar, { borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)' }]}
                         />
                       ) : (
-                        <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}>
+                        <View style={[s.clusterAvatar, { backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center', borderColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.05)' }]}>
                           <IconUsers size={32} color={colors.textTertiary} />
                         </View>
                       )}
@@ -4758,7 +4768,7 @@ export default function PhotosScreen() {
                 style={[
                   s.tabPill,
                   isActive
-                    ? { backgroundColor: '#7C3AED' }
+                    ? [{ backgroundColor: '#7C3AED' }, s.tabPillActive]
                     : { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#F3F4F6' },
                 ]}
               >
@@ -5646,7 +5656,7 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: Spacing.sm,
-    height: 56,
+    height: 60,
   },
   headerBtn: {
     padding: 8,
@@ -5655,10 +5665,10 @@ const s = StyleSheet.create({
     borderRadius: 12,
   },
   headerTitle: {
-    fontSize: FontSize.xxl,
+    fontSize: FontSize.heading,
     fontWeight: '800',
     marginLeft: 4,
-    letterSpacing: -0.3,
+    letterSpacing: -0.6,
   },
   searchInput: {
     flex: 1,
@@ -5754,16 +5764,17 @@ const s = StyleSheet.create({
     borderRadius: 3,
   },
 
-  // Grid — clean masonry, minimal gaps
+  // Grid — tight square grid with rounded thumbs + subtle breathing gap
   gridRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
   },
   gridItem: {
-    margin: 0.5,
+    margin: 1.5,
     overflow: 'hidden',
     position: 'relative',
-    borderRadius: 2,
+    borderRadius: 8,
+    backgroundColor: '#e5e7eb',
   },
   gridImage: {
     width: '100%',
@@ -5830,9 +5841,16 @@ const s = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: -0.1,
   },
+  sectionCountChip: {
+    minWidth: 22,
+    height: 20,
+    paddingHorizontal: 7,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   sectionCount: {
     fontSize: FontSize.xs,
-    opacity: 0.5,
   },
 
   // Empty — animated camera icon
@@ -5871,7 +5889,7 @@ const s = StyleSheet.create({
   },
   albumCover: {
     aspectRatio: 1,
-    backgroundColor: '#1a1a2e',
+    backgroundColor: '#e5e7eb',
   },
   albumCoverPlaceholder: {
     aspectRatio: 1,
@@ -5879,15 +5897,39 @@ const s = StyleSheet.create({
     justifyContent: 'center',
   },
   albumInfo: {
-    padding: Spacing.sm,
+    paddingHorizontal: Spacing.md - 2,
+    paddingVertical: Spacing.sm + 2,
   },
   albumName: {
-    fontSize: FontSize.sm,
+    fontSize: FontSize.base,
     fontWeight: '700',
+    letterSpacing: -0.2,
   },
   albumCount: {
     fontSize: FontSize.xs,
-    marginTop: 2,
+    marginTop: 3,
+    fontWeight: '500',
+  },
+  // Circular avatar for People (face) clusters — subtle ring lifts it
+  clusterAvatar: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: '#e5e7eb',
+    borderWidth: 1,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 6 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 8px rgba(0,0,0,0.10)' },
+    }),
+  },
+  // Soft circular icon badge for empty states (albums / people)
+  emptyIconCircle: {
+    width: 104,
+    height: 104,
+    borderRadius: 52,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   albumDetailHeader: {
     flexDirection: 'row',
@@ -6126,10 +6168,10 @@ const s = StyleSheet.create({
   memoryGradient: {
     position: 'absolute',
     left: 0, right: 0, bottom: 0,
-    height: '50%',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    height: '60%',
+    backgroundColor: 'rgba(0,0,0,0.52)',
     ...(Platform.OS === 'web' ? {
-      background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.7) 100%)',
+      background: 'linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.45) 55%, rgba(0,0,0,0.8) 100%)',
       backgroundColor: 'transparent',
     } : {}),
   },
@@ -6154,13 +6196,13 @@ const s = StyleSheet.create({
     bottom: 14,
   },
   memoryTitleLg: {
-    fontSize: 18,
+    fontSize: 19,
     fontWeight: '800',
     color: '#fff',
-    letterSpacing: -0.3,
-    textShadowColor: 'rgba(0,0,0,0.45)',
+    letterSpacing: -0.4,
+    textShadowColor: 'rgba(0,0,0,0.5)',
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
+    textShadowRadius: 5,
   },
   memorySubLg: {
     fontSize: 11,
@@ -6217,9 +6259,9 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 24,
   },
   searchPillText: {
     fontSize: 14,
@@ -6232,9 +6274,9 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+    borderRadius: 16,
     maxWidth: 160,
   },
   statusPillDot: {
@@ -6248,14 +6290,21 @@ const s = StyleSheet.create({
     letterSpacing: 0.1,
   },
 
-  // Tab pills (modern row)
+  // Tab pills (modern segmented control — active pill lifts with brand glow)
   tabPill: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 18,
+    paddingHorizontal: 15,
+    paddingVertical: 9,
+    borderRadius: 20,
+  },
+  tabPillActive: {
+    ...Platform.select({
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 8 },
+      android: { elevation: 4 },
+      web: { boxShadow: '0 3px 10px rgba(124,58,237,0.30)' },
+    }),
   },
   tabPillText: {
     fontSize: 13,
@@ -6316,15 +6365,16 @@ const s = StyleSheet.create({
   filterChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 20,
-    backgroundColor: 'rgba(128,128,128,0.15)',
+    gap: 5,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 22,
+    backgroundColor: 'rgba(128,128,128,0.13)',
   },
   filterChipText: {
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 12.5,
+    fontWeight: '700',
+    letterSpacing: -0.1,
   },
 
   // Quality badge
@@ -6473,14 +6523,15 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 12,
+    paddingVertical: 12,
+    borderRadius: 16,
     gap: 10,
-    minWidth: 130,
+    minWidth: 150,
   },
   fabOptionText: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
+    letterSpacing: -0.1,
   },
 
   // Better empty state
@@ -6515,14 +6566,20 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginTop: 20,
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 24,
+    marginTop: 24,
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 28,
+    ...Platform.select({
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.30, shadowRadius: 12 },
+      android: { elevation: 5 },
+      web: { boxShadow: '0 4px 14px rgba(124,58,237,0.30)' },
+    }),
   },
   emptyUploadBtnText: {
     color: '#fff',
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: -0.2,
   },
 });
