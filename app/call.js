@@ -4629,16 +4629,8 @@ function CallScreenInner() {
                 </View>
                 <Text style={styles.recordSheetLabel}>{onHold ? (t('call.unhold') || 'Retomar') : (t('call.hold') || 'Espera')}</Text>
               </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => { handleToggleNoiseCancellation(); setShowMoreSheet(false); }}
-                style={[styles.recordSheetBtn, { flex: 1 }]}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.recordSheetIcon, noiseCancellation && styles.recordSheetIconActive]}>
-                  <IconZap size={20} color={noiseCancellation ? '#fff' : '#7C3AED'} />
-                </View>
-                <Text style={styles.recordSheetLabel}>{noiseCancellation ? (t('call.noiseOn') || 'Ruído ON') : (t('call.noiseOff') || 'Ruído OFF')}</Text>
-              </TouchableOpacity>
+              {/* [2026-05-26] Toggle "Ruído" removido do sheet também — remoção
+                  de ruído fica sempre ON por padrão (noiseCancellation=true). */}
             </View>
 
             <Text style={[styles.moreSheetSectionTitle, { marginTop: 16 }]}>{t('call.recordSection') || 'Record'}</Text>
@@ -4705,51 +4697,11 @@ function CallScreenInner() {
               [WAVE 104B] Eliminates the "Mudo/Vídeo/Alto-falante/Tela/Ruido Off"
               row visible alongside "Reconectar/Desligar" in the screenshot. */}
           <View style={[styles.controlsRowTop, connectionFailed && { display: 'none' }]}>
-            <TouchableOpacity
-              style={styles.controlBtn}
-              onPress={handleToggleNoiseCancellation}
-              activeOpacity={0.7}
-              accessibilityLabel={noiseCancellation ? (t('call.noiseOn') || 'Ruído ON') : (t('call.noiseOff') || 'Ruído OFF')}
-              accessibilityRole="button"
-            >
-              <View style={[styles.controlBtnCircle, noiseCancellation && styles.controlBtnCircleActive]}>
-                <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
-                  <SvgLine x1="4" y1="10" x2="4" y2="14" stroke="#fff" strokeWidth={2} strokeLinecap="round" />
-                  <SvgLine x1="8" y1="7" x2="8" y2="17" stroke="#fff" strokeWidth={2} strokeLinecap="round" />
-                  <SvgLine x1="12" y1="4" x2="12" y2="20" stroke="#fff" strokeWidth={2} strokeLinecap="round" />
-                  <SvgLine x1="16" y1="7" x2="16" y2="17" stroke="#fff" strokeWidth={2} strokeLinecap="round" />
-                  <SvgLine x1="20" y1="10" x2="20" y2="14" stroke="#fff" strokeWidth={2} strokeLinecap="round" />
-                  {!noiseCancellation && (
-                    <SvgLine x1="3" y1="21" x2="21" y2="3" stroke="#ef4444" strokeWidth={2.4} strokeLinecap="round" />
-                  )}
-                </Svg>
-              </View>
-              <Text style={styles.controlLabel} numberOfLines={1}>
-                {noiseCancellation ? (t('call.noiseOn') || 'Ruído ON') : (t('call.noiseOff') || 'Ruído OFF')}
-              </Text>
-            </TouchableOpacity>
-
-            {isGroupCall && (
-              <TouchableOpacity
-                style={styles.controlBtn}
-                onPress={handleToggleHandRaise}
-                activeOpacity={0.7}
-                accessibilityLabel={handRaised ? (t('call.handLower') || 'Abaixar mão') : (t('call.handRaise') || 'Levantar mão')}
-                accessibilityRole="button"
-              >
-                <View style={[styles.controlBtnCircle, handRaised && styles.controlBtnCircleActive]}>
-                  <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
-                    <SvgPath
-                      d="M9 11V5.5a1.5 1.5 0 113 0V11M12 11V4a1.5 1.5 0 113 0v8M15 11V5a1.5 1.5 0 113 0v8.5M9 11V8.5a1.5 1.5 0 10-3 0V14a6 6 0 0012 0v-1.5"
-                      stroke="#fff" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"
-                    />
-                  </Svg>
-                </View>
-                <Text style={styles.controlLabel} numberOfLines={1}>
-                  {handRaised ? (t('call.handLower') || 'Abaixar') : (t('call.handRaise') || 'Mão')}
-                </Text>
-              </TouchableOpacity>
-            )}
+            {/* [2026-05-26] Botões "Ruído" (toggle) e "Levantar mão" REMOVIDOS
+                a pedido do founder. A remoção de ruído (RNNoise/WebRTC NS) fica
+                SEMPRE LIGADA por padrão — não precisa de toggle na UI. Controles
+                visíveis ficam: Mudo, Vídeo, Girar, Alto-falante, (Fundo se vídeo),
+                Tela, Adicionar, Encerrar. */}
 
             {/* [2026-05-17 MediaPipe] Background blur / virtual background pill.
                 Video-only — audio calls have no camera frame to process. The
