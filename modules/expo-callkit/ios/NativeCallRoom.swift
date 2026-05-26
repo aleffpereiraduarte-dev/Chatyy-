@@ -330,7 +330,13 @@ public enum NativeCallRoomEvent {
                         name: nil,
                         encoding: VideoEncoding(maxBitrate: 2_000_000, maxFps: 30),
                         simulcast: true,
-                        preferredCodec: .vp9,
+                        // [remote-video render fix 2026-05-26] .vp9 → .h264 to
+                        // match CallViewController.defaultVideoPublishOptions. VP9
+                        // decode is unreliable cross-platform on mobile and was why
+                        // the remote peer's camera never rendered (avatar only); H.264
+                        // is HW-decoded everywhere. Must stay in sync with the other
+                        // two publish sites or SFU codec negotiation goes asymmetric.
+                        preferredCodec: .h264,
                         // [Wave 19 fix] LK iOS 2.0.x has no backupCodec param.
                         // [HD tuning 2026-05-26] maintainFramerate — keep fps,
                         // shed resolution first under congestion (talking-head).

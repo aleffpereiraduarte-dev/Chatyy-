@@ -309,7 +309,12 @@ object NativeCallRoom {
                             f.isAccessible = true
                             when {
                                 f.name.contains("simulcast", true) && f.type == Boolean::class.java -> f.set(publishOpts, true)
-                                f.name.contains("codec", true) && f.type == String::class.java -> f.set(publishOpts, "vp9")
+                                // [remote-video render fix 2026-05-26] vp9 → h264.
+                                // Must match CallActivity.bringUpRoom + the iOS
+                                // publish sites — VP9 doesn't decode reliably
+                                // cross-platform on mobile (iOS subscriber saw
+                                // only the avatar). H.264 is HW-decoded everywhere.
+                                f.name.contains("codec", true) && f.type == String::class.java -> f.set(publishOpts, "h264")
                                 f.name.contains("degradation", true) -> {
                                     val t = f.type
                                     val v: Any = if (t.isEnum) {
@@ -327,10 +332,10 @@ object NativeCallRoom {
                         if (method != null && captureOpts != null) {
                             method.invoke(r.localParticipant, true, captureOpts, publishOpts)
                             usedOpts = true
-                            Log.d(TAG, "setCameraEnabled(true) with VP9+simulcast publish opts")
+                            Log.d(TAG, "setCameraEnabled(true) with H264+simulcast publish opts")
                         }
                     } catch (t: Throwable) {
-                        Log.w(TAG, "VP9 publish opts reflective set failed (falling back): ${t.message}")
+                        Log.w(TAG, "H264 publish opts reflective set failed (falling back): ${t.message}")
                     }
                     if (!usedOpts) {
                         r.localParticipant.setCameraEnabled(true)

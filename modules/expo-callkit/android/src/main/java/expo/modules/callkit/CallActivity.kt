@@ -90,8 +90,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.ExpandMore
-import androidx.compose.material.icons.filled.FrontHand
-import androidx.compose.material.icons.filled.GraphicEq
+// [button-removal 2026-05-26] FrontHand (hand-raise) + GraphicEq (noise toggle)
+// icon imports removed with their pills — no longer referenced anywhere.
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
@@ -460,14 +460,21 @@ class CallActivity : ComponentActivity() {
       }.start()
     }
 
-    // Seed the noise-suppression + background toggles from persisted prefs.
+    // Seed the background toggle from persisted prefs.
     val prefs = getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
-    state.noiseSuppression = prefs.getBoolean("rnnoise_enabled", true)
+    // [button-removal 2026-05-26] Noise suppression is now ALWAYS ON — the
+    // user-facing "Sem ruído" toggle was removed per founder, so we force-enable
+    // the RNNoise processor regardless of any stale `rnnoise_enabled=false` a
+    // user might have persisted before the toggle disappeared (otherwise they'd
+    // be stuck with NS off and no way to turn it back on). Persist true so the
+    // pref is self-healing for any other reader.
+    state.noiseSuppression = true
     state.backgroundMode = prefs.getString("bg_mode", "off") ?: "off"
-    // Push the seeded toggle state into the native processor singletons so
-    // the very first published audio/video frame already respects it.
+    // Push the always-on NS state into the native processor singleton so the
+    // very first published audio frame already has noise cancellation.
     try {
-      expo.modules.callkit.audio.RNNoiseProcessor.shared().enabled = state.noiseSuppression
+      expo.modules.callkit.audio.RNNoiseProcessor.shared().enabled = true
+      prefs.edit().putBoolean("rnnoise_enabled", true).apply()
     } catch (_: Throwable) {}
     try {
       val proc = expo.modules.callkit.video.BackgroundProcessor.get(applicationContext)
@@ -1291,8 +1298,18 @@ class CallActivity : ComponentActivity() {
       }
       if (codecField != null) {
         codecField.isAccessible = true
-        codecField.set(publishDefaults, "vp9")
-        Log.d(TAG, "VideoTrackPublishDefaults.${codecField.name} = vp9")
+        // [remote-video render fix 2026-05-26] vp9 → h264. ROOT CAUSE of the iOS
+        // caller seeing only the Android peer's avatar on a video call: Android
+        // hard-pinned VP9 here, but VP9 has unreliable cross-platform DECODE on
+        // mobile (many iPhones lack VP9 HW decode; the SFU does NOT silently
+        // downshift a hard-pinned VP9 publisher per-subscriber), so the iOS
+        // subscriber got a remote VideoTrack that never produced a decodable
+        // frame. H.264 is hardware-decoded on EVERY iPhone + Android (the
+        // WhatsApp/FaceTime/Meet-mobile interop default). Mirror of the iOS
+        // change in CallViewController.swift + NativeCallRoom.swift — all three
+        // publish sites must agree or codec negotiation is asymmetric.
+        codecField.set(publishDefaults, "h264")
+        Log.d(TAG, "VideoTrackPublishDefaults.${codecField.name} = h264 (cross-platform decode)")
       } else {
         Log.d(TAG, "no codec field on VideoTrackPublishDefaults — SDK defaults stay (VP8)")
       }
@@ -3782,20 +3799,14 @@ private fun BottomActionBar(
         label = "Reagir",
         onClick = onShowReactions,
       )
-      ActionPill(
-        icon = Icons.Filled.FrontHand,
-        label = if (state.isHandRaised) "Abaixar" else "Levantar",
-        active = state.isHandRaised,
-        onClick = onToggleHand,
-      )
-      // [RNNoise, 2026-05-17] "Cancelar ruído" — toggles the per-user noise
-      // suppression flag. Default ON, persists across calls.
-      ActionPill(
-        icon = Icons.Filled.GraphicEq,
-        label = "Sem ruído",
-        active = state.noiseSuppression,
-        onClick = { onToggleNoiseSuppression(!state.noiseSuppression) },
-      )
+      // [button-removal 2026-05-26] "Levantar mão" (FrontHand) and "Sem ruído"
+      // (GraphicEq) pills REMOVED per founder. Hand-raise is gone entirely.
+      // Noise suppression stays ALWAYS ON internally — the RNNoiseProcessor is
+      // still seeded enabled in onCreate (state.noiseSuppression = prefs default
+      // true → RNNoiseProcessor.shared().enabled), so noise cancellation keeps
+      // working; only the user-facing toggle button is removed. The
+      // onToggleHand / onToggleNoiseSuppression callbacks remain in the
+      // signature (harmless, unused) so other call sites don't break.
       // [MediaPipe, 2026-05-17] Background mode cycler. Only shown for video
       // calls (camera publishing); audio calls have no useful background.
       if (state.isVideo) {

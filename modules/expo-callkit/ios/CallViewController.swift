@@ -334,6 +334,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // ringback engine the moment the callee's WS accept frame lands.
         installRemoteAnsweredObserver()
 
+        // [button-removal 2026-05-26] Noise suppression is now ALWAYS ON — the
+        // user-facing toggle was removed from the More sheet per founder. Force
+        // it enabled regardless of any stale App Group `rnnoise_enabled=false`
+        // a user persisted before the toggle disappeared (else they'd be stuck
+        // off with no way to re-enable). The RNNoise frame processing itself is
+        // untouched. applyNoiseSuppression persists the flag + flips the
+        // processor singleton.
+        applyNoiseSuppression(true)
+
         // [WAVE 154 2026-05-22] NUCLEAR — SwiftUI CallView removed entirely.
         //
         // Builds 552-555 ALL crashed in SwiftUI _UIHostingView.layoutSubviews
@@ -1738,6 +1747,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private func applyNoiseSuppression(_ enabled: Bool) {
         RNNoiseAudioProcessor.shared.enabled = enabled
         session.noiseSuppression = enabled
+        // [button-removal 2026-05-26] Persist so the App Group seed (which the
+        // CallSessionState init reads) is self-healing — a user who had
+        // `rnnoise_enabled=false` before the toggle was removed gets overwritten
+        // to true on the next call start and never lands in a stuck-off state.
+        UserDefaults(suiteName: "group.com.onemundo.mail")?.set(enabled, forKey: "rnnoise_enabled")
         print("[CallVC] noiseSuppression → \(enabled) (available=\(RNNoiseAudioProcessor.shared.available))")
     }
 
@@ -2391,10 +2405,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// adaptiveStream + dynacast on the Room, is what downshifts automatically
     /// on weak networks instead of freezing.
     ///
-    /// [Wave WhatsApp parity, 2026-05-20 gap C1+C4]
-    ///   - `preferredCodec: .vp9` — VP9 cuts ~30% bitrate vs VP8 at the same
-    ///     perceptual quality. SFU negotiates VP9 with peers that support it
-    ///     and falls back to VP8 for everyone else (negotiated codec list).
+    /// [remote-video render fix 2026-05-26]
+    ///   - `preferredCodec: .h264` — was `.vp9`. VP9 lacks reliable HW DECODE on
+    ///     many mobile devices (esp. iPhones), so a VP9-published peer track
+    ///     often never produced a frame on the subscriber → "remote video shows
+    ///     only the avatar" while the call was otherwise connected. H.264 is
+    ///     hardware-decoded on every iPhone + Android (the WhatsApp/FaceTime/
+    ///     Meet-mobile interop default). Note: standard libwebrtc does NOT do
+    ///     H.264 simulcast, so with H.264 the encoder publishes a single
+    ///     encoding (the top tier) even though `simulcast: true` is requested —
+    ///     that's a benign no-op, not an error, and reliable rendering is worth
+    ///     losing per-tier downshift in 1:1.
     ///   - `encoding.maxBitrate = 2.0 Mbps` — top (h720) tier cap. Healthy HD
     ///     headroom for 720p@30 (target ~1.7M, ceiling 2.0M). On a 1080p-capable
     ///     good link the SFU/encoder uses the headroom; on weak links the
@@ -2403,11 +2424,25 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         return VideoPublishOptions(
             name: nil,
             encoding: VideoEncoding(
-                maxBitrate: 2_000_000, // 2.0 Mbps cap for VP9 720p top tier
+                maxBitrate: 2_000_000, // 2.0 Mbps cap for H.264 720p top tier
                 maxFps: 30
             ),
             simulcast: true,
-            preferredCodec: .vp9,
+            // [remote-video render fix 2026-05-26] preferredCodec .vp9 → .h264.
+            // ROOT CAUSE of "remote video shows only the avatar while connected":
+            // VP9 has unreliable cross-platform DECODE on mobile. When the Android
+            // peer published VP9 simulcast, this iOS subscriber frequently got a
+            // remote VideoTrack that never produced a decodable frame (many iPhones
+            // lack VP9 HW decode; the LK/WebRTC build here doesn't fall back per-
+            // subscriber once the publisher hard-pinned VP9) → audio + timer fine,
+            // local PiP fine, but the peer's camera never rendered. H.264 is
+            // hardware-decoded on EVERY iPhone and Android device (the WhatsApp/
+            // FaceTime/Meet-mobile interop default), so both directions decode
+            // reliably. We keep simulcast + maintainFramerate; only the codec
+            // changes. Mirror change in NativeCallRoom.swift (preconnect publish)
+            // and Android CallActivity.kt (reflective codec pin) — all three must
+            // agree or the SFU negotiation is asymmetric.
+            preferredCodec: .h264,
             // [Wave 19 fix] LK iOS 2.0.x VideoPublishOptions has no backupCodec
             // param yet. SFU falls back to negotiated codec list automatically.
             // [HD tuning 2026-05-26] maintainFramerate — keep fps, shed res first.
@@ -2803,11 +2838,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         sheet.addAction(UIAlertAction(title: screenSharing ? "Parar compartilhamento" : "Compartilhar tela", style: .default) { [weak self] _ in
             self?.toggleScreenShare()
         })
-        // Noise suppression toggle (applyNoiseSuppression exists).
-        sheet.addAction(UIAlertAction(title: session.noiseSuppression ? "Desligar redução de ruído" : "Ligar redução de ruído", style: .default) { [weak self] _ in
-            guard let self = self else { return }
-            self.applyNoiseSuppression(!self.session.noiseSuppression)
-        })
+        // [button-removal 2026-05-26] "Redução de ruído" toggle + the hand-raise
+        // control REMOVED per founder. Noise suppression stays ALWAYS ON
+        // internally — applyNoiseSuppression(true) is forced in viewDidLoad /
+        // session seeding (see below), and RNNoiseAudioProcessor.shared keeps
+        // processing every frame; only the user-facing toggle is gone. (iOS had
+        // no hand-raise action in this sheet — it lived only in the dead SwiftUI
+        // CallView — so there is nothing to remove for that one here.)
         // Background effect cycle (cycleBackground exists; MediaPipe blur).
         sheet.addAction(UIAlertAction(title: "Efeito de fundo", style: .default) { [weak self] _ in
             self?.cycleBackground()
