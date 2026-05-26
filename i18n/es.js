@@ -2397,6 +2397,8 @@ export default {
   'profile.avatarHint': 'Avatar — cambiar en Cuenta',
   'profile.changePhoto': 'Cambiar foto',
   'profile.photoPermissionDenied': 'Permiso de fotos necesario',
+  'profile.photoPermissionTitle': 'Acceso a las fotos',
+  'profile.photoPermissionMessage': 'Para elegir una foto, Chatyy necesita acceso a tu galería. Actívalo en los Ajustes del dispositivo.',
   'profile.photoUploadFailed': 'Error al subir foto',
   'profile.name': 'NOMBRE',
   'profile.namePh': 'Tu nombre',

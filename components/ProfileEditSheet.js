@@ -9,9 +9,43 @@ import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable,
   ScrollView, ActivityIndicator, Platform, StyleSheet, KeyboardAvoidingView,
-  Alert, Animated, Easing,
+  Alert, Animated, Easing, Linking,
 } from 'react-native';
 import * as api from '../services/api';
+
+// Request media-library permission with a clear, actionable prompt.
+// Returns true only if granted. The old code just set a tiny error string at
+// the BOTTOM of the sheet ("Permissão de fotos necessária") which testers
+// never noticed. Now: if iOS/Android won't show the system dialog anymore
+// (canAskAgain === false), we pop a real Alert that routes straight to
+// system Settings so the user can actually flip the toggle.
+async function ensurePhotoPermission(t) {
+  try {
+    const ImagePicker = require('expo-image-picker');
+    let perm = await ImagePicker.getMediaLibraryPermissionsAsync?.();
+    if (perm?.granted) return true;
+    // Ask via the system dialog while we still can.
+    if (perm?.canAskAgain !== false) {
+      perm = await ImagePicker.requestMediaLibraryPermissionsAsync?.();
+      if (perm?.granted) return true;
+    }
+    // Denied (likely permanently) → guide the user to Settings.
+    return await new Promise((resolve) => {
+      Alert.alert(
+        t?.('profile.photoPermissionTitle') || 'Acesso às fotos',
+        t?.('profile.photoPermissionMessage') ||
+          'Para escolher uma foto, o Chatyy precisa de acesso à sua galeria. Ative nos Ajustes do aparelho.',
+        [
+          { text: t?.('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+          { text: t?.('common.openSettings') || 'Abrir Ajustes', onPress: () => { try { Linking.openSettings?.(); } catch {} resolve(false); } },
+        ],
+        { cancelable: true, onDismiss: () => resolve(false) }
+      );
+    });
+  } catch {
+    return false;
+  }
+}
 import AvatarCircle from './AvatarCircle';
 import { IconX, IconCamera, IconLink, IconPlus, IconTrash } from './Icons';
 import { Image as ExpoImage } from 'expo-image';
@@ -255,11 +289,7 @@ export default function ProfileEditSheet({
         });
       } else {
         const ImagePicker = require('expo-image-picker');
-        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync?.();
-        if (!perm?.granted) {
-          setErr(t?.('profile.photoPermissionDenied') || 'Permissão de fotos necessária');
-          return;
-        }
+        if (!(await ensurePhotoPermission(t))) return;
         const result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ['images'],
           allowsEditing: true,
@@ -330,11 +360,7 @@ export default function ProfileEditSheet({
         });
       } else {
         const ImagePicker = require('expo-image-picker');
-        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync?.();
-        if (!perm?.granted) {
-          setErr(t?.('profile.photoPermissionDenied') || 'Permissão de fotos necessária');
-          return;
-        }
+        if (!(await ensurePhotoPermission(t))) return;
         const result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ['images'],
           allowsEditing: true,
