@@ -459,6 +459,18 @@ jobs:
                       # already (internal testers see it instantly); the next
                       # build will auto-submit once the previous review clears.
                       print(f"⚠ another build still in beta review (422 ANOTHER_BUILD_IN_REVIEW) — current build is on TestFlight for internal/existing testers, external submission queued"); submitted = True; break
+                  elif code == 422 and 'CLOSED_VERSION' in body_txt:
+                      # ENTITY_UNPROCESSABLE.CLOSED_VERSION — this marketing
+                      # version (and prior ones) are closed for EXTERNAL beta
+                      # review, usually because the version went to App Store
+                      # review/release. The build IS uploaded VALID and IS
+                      # already attached to the beta group, so INTERNAL testers
+                      # (and any existing external testers on an open train)
+                      # get it instantly — only a NEW external beta-review
+                      # submission is blocked until the marketing version is
+                      # bumped. NOT fatal: the build is testable. Surface a
+                      # warning instead of failing the whole pipeline red.
+                      print(f"⚠ version closed for external beta review (422 CLOSED_VERSION) — build {VER} ({build_id}) is on TestFlight + attached to the beta group (internal testers get it now). To open EXTERNAL testing, bump the marketing version (app.json expo.version) and rebuild."); submitted = True; break
                   elif code == 422 and 'INVALID_QC_STATE' in body_txt:
                       print(f"⏳ attempt {attempt}: QC state not ready yet — retry in 30s")
                       time.sleep(30); continue
