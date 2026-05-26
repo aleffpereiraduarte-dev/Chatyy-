@@ -165,7 +165,13 @@ const SystemRow = memo(function SystemRow({ m, stackAlpha }) {
         )}
         <Text style={styles.systemText} numberOfLines={1}>
           <Text style={styles.systemName}>{m.name}</Text>
-          <Text>{` ${m.text || m.content || ''}`}</Text>
+          {/* BUG #1346 (7184, 2026-05-26): system/join rows were dumping the
+              raw payload (`m.text || m.content`) — when that payload was a
+              Chatyy invite/deep-link or any URL it showed as a 40-60 char raw
+              link instead of readable text. Route it through the same cleaner
+              the MessageRow + comment sheet use so URLs become "Link
+              compartilhado" / "link" and invite tokens never leak. */}
+          <Text>{` ${formatLiveChatContent(m.text || m.content || '')}`}</Text>
         </Text>
       </View>
     </Animated.View>

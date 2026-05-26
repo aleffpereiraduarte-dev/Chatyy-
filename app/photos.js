@@ -215,7 +215,10 @@ function groupPhotosByDate(items, t) {
 // ============================================================
 export default function PhotosScreen() {
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  // BCP-47 locale for Intl date formatting in Memories cards/viewer. Map our
+  // short codes to full locales so month names render in the right language.
+  const locale = ({ 'pt-BR': 'pt-BR', pt: 'pt-BR', en: 'en-US', es: 'es-ES' })[language] || language || 'pt-BR';
   const { user } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -325,6 +328,9 @@ export default function PhotosScreen() {
   // Viewer
   const [viewerVisible, setViewerVisible] = useState(false);
   const [viewerIndex, setViewerIndex] = useState(0);
+  // [#1345] Memory slideshow viewer — { title, subtitle, photos[] }. Opened
+  // when a memory card is tapped (story-style auto-advancing player).
+  const [memoryViewer, setMemoryViewer] = useState(null);
   const [viewerStarred, setViewerStarred] = useState(false);
   const [aiCaption, setAiCaption] = useState('');
   const [aiCaptionLoading, setAiCaptionLoading] = useState(false);
@@ -1168,7 +1174,20 @@ export default function PhotosScreen() {
   // in its body + dependency array. Declaring it below caused a TDZ
   // ("Cannot access 'refreshMemories' before initialization") that crashed
   // Photos on first render. Keep this order.
-  const memCacheKey = `photo_memories_v1_${user?.email || 'anon'}`;
+  const memCacheKey = `photo_memories_v2_${user?.email || 'anon'}`;
+  // [#1345 2026-05-26] Richer client-side memory model. The backend
+  // (drive_memories) returns thin buckets { type, years, photos, memory_key }.
+  // We enrich each bucket here with a representative date (pulled from the
+  // first photo that carries one) and a `kind` tag so the card can render a
+  // proper "On this day" / "X anos atrás" / "Destaques recentes" title +
+  // a localized date label — without any backend change.
+  const _photoDate = (p) => {
+    if (!p) return null;
+    const raw = p.created_at || p.taken_at || p.uploaded_at || p.modificationTime;
+    if (!raw) return null;
+    const d = new Date(raw);
+    return isNaN(d.getTime()) ? null : d;
+  };
   const refreshMemories = useCallback(async () => {
     try {
       const r = await api.driveMemories();
@@ -1179,20 +1198,29 @@ export default function PhotosScreen() {
       buckets.forEach(b => {
         if (!b || !Array.isArray(b.photos) || b.photos.length === 0) return;
         if (b.type === 'years_ago') {
+          // Pick a representative date from the bucket (first dated photo).
+          let repDate = null;
+          for (const p of b.photos) { repDate = _photoDate(p); if (repDate) break; }
           yearsCards.push({
+            kind: 'years_ago',
             yearsAgo: Number(b.years) || 1,
             photos: b.photos,
             memoryKey: b.memory_key || `ya_${b.years || 1}`,
+            date: repDate ? repDate.toISOString() : null,
           });
         }
       });
       yearsCards.sort((a, b) => a.yearsAgo - b.yearsAgo);
       let next = yearsCards;
       if (yearsCards.length === 0 && thisWeek?.photos?.length) {
+        let repDate = null;
+        for (const p of thisWeek.photos) { repDate = _photoDate(p); if (repDate) break; }
         next = [{
+          kind: 'this_week',
           yearsAgo: 0,
           photos: thisWeek.photos,
           memoryKey: thisWeek.memory_key || 'wk_current',
+          date: repDate ? repDate.toISOString() : null,
         }];
       }
       try { await AsyncStorage.setItem(memCacheKey, JSON.stringify(next)); } catch {}
@@ -1288,17 +1316,40 @@ export default function PhotosScreen() {
         const currentMonth = now.getMonth();
         const currentYear = now.getFullYear();
         const groups = new Map();
+        const recent = []; // last-30-days pool for the "recent highlights" card
+        const recentCutoff = now.getTime() - 30 * 24 * 3600 * 1000;
         allPhotos.forEach(p => {
           try {
-            const d = new Date(p.created_at || p.uploaded_at || p.modificationTime);
-            if (!isNaN(d.getTime()) && d.getMonth() === currentMonth && d.getFullYear() < currentYear) {
+            const d = _photoDate(p);
+            if (!d) return;
+            // "On this day" — same calendar month, an earlier year.
+            if (d.getMonth() === currentMonth && d.getFullYear() < currentYear) {
               const yearsAgo = currentYear - d.getFullYear();
-              if (!groups.has(yearsAgo)) groups.set(yearsAgo, { yearsAgo, photos: [], memoryKey: `local_ya_${yearsAgo}` });
+              if (!groups.has(yearsAgo)) {
+                groups.set(yearsAgo, {
+                  kind: 'years_ago', yearsAgo, photos: [],
+                  memoryKey: `local_ya_${yearsAgo}`, date: d.toISOString(),
+                });
+              }
               groups.get(yearsAgo).photos.push(p);
             }
+            // Recent pool — collected so we can still show *something* rich
+            // when there's no on-this-day match (brand-new accounts, etc.).
+            if (d.getTime() >= recentCutoff) recent.push(p);
           } catch {}
         });
-        return Array.from(groups.values()).sort((a, b) => a.yearsAgo - b.yearsAgo);
+        const yearCards = Array.from(groups.values()).sort((a, b) => a.yearsAgo - b.yearsAgo);
+        if (yearCards.length > 0) return yearCards;
+        // No on-this-day memory → surface a "Destaques recentes" card from the
+        // last 30 days so Memories is never empty when the user has photos.
+        if (recent.length >= 3) {
+          recent.sort((a, b) => (_photoDate(b)?.getTime() || 0) - (_photoDate(a)?.getTime() || 0));
+          return [{
+            kind: 'recent', yearsAgo: 0, photos: recent.slice(0, 30),
+            memoryKey: 'local_recent', date: now.toISOString(),
+          }];
+        }
+        return [];
       } catch { return []; }
     };
 
@@ -3310,10 +3361,12 @@ export default function PhotosScreen() {
                   colors={colors}
                   isDark={isDark}
                   t={t}
+                  locale={locale}
                   memoriesData={visibleMemoriesData}
                   filteredPhotos={filteredPhotos}
                   getThumbnailUrl={getThumbnailUrl}
                   openViewer={openViewer}
+                  openMemory={setMemoryViewer}
                   api={api}
                   setPresetFilter={setPresetFilter}
                   setPresetMLIds={setPresetMLIds}
@@ -5196,6 +5249,17 @@ export default function PhotosScreen() {
       {/* Viewer modal */}
       {renderViewer()}
 
+      {/* [#1345] Memory slideshow viewer — story-style auto-advancing player. */}
+      {memoryViewer ? (
+        <MemoryViewer
+          memory={memoryViewer}
+          onClose={() => setMemoryViewer(null)}
+          getThumbnailUrl={getThumbnailUrl}
+          t={t}
+          colors={colors}
+        />
+      ) : null}
+
       {/* Photo Editor */}
       <PhotoEditor
         visible={editorVisible}
@@ -5409,9 +5473,53 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
   );
 }
 
+// [#1345] Build a rich, localized title + subtitle for a memory bucket from
+// its `kind` + representative `date`. Keeps the data source (drive_memories)
+// untouched — all the richness is derived client-side.
+//   - years_ago → "Neste dia" / "On this day" + "há N anos · Mês AAAA"
+//   - recent    → "Destaques recentes" + "últimos 30 dias"
+//   - this_week → "Esta semana"
+function buildMemoryMeta(mem, t, locale) {
+  const count = Array.isArray(mem?.photos) ? mem.photos.length : 0;
+  const photosLabel = (t('photos.memoryPhotos', { n: count }) || `${count} ${t('photos.items') || 'fotos'}`);
+  let dateLabel = '';
+  if (mem?.date) {
+    const d = new Date(mem.date);
+    if (!isNaN(d.getTime())) {
+      try { dateLabel = d.toLocaleDateString(locale || undefined, { month: 'long', year: 'numeric' }); }
+      catch { dateLabel = d.toLocaleDateString(); }
+      // Capitalize first letter (pt-BR month names come lowercase).
+      if (dateLabel) dateLabel = dateLabel.charAt(0).toUpperCase() + dateLabel.slice(1);
+    }
+  }
+  if (mem?.kind === 'recent') {
+    return {
+      title: t('photos.recentHighlights') || 'Destaques recentes',
+      subtitle: t('photos.recentHighlightsSub') || 'Suas últimas fotos',
+      meta: photosLabel,
+    };
+  }
+  if (mem?.kind === 'this_week' || mem?.yearsAgo === 0) {
+    return {
+      title: t('photos.thisWeek') || 'Esta semana',
+      subtitle: dateLabel || photosLabel,
+      meta: photosLabel,
+    };
+  }
+  // years_ago — the marquee "On this day" memory.
+  const yearsLabel = mem?.yearsAgo === 1
+    ? (t('photos.yearsAgo', { n: 1 }) || '1 ano atrás')
+    : (t('photos.yearsAgoPlural', { n: mem?.yearsAgo }) || `${mem?.yearsAgo} anos atrás`);
+  return {
+    title: t('photos.onThisDay') || 'Neste dia',
+    subtitle: dateLabel ? `${yearsLabel} · ${dateLabel}` : yearsLabel,
+    meta: photosLabel,
+  };
+}
+
 function MemoriesCarousel({
-  colors, isDark, t, memoriesData, filteredPhotos, getThumbnailUrl,
-  openViewer, api, setPresetFilter, setPresetMLIds, setPresetLoading,
+  colors, isDark, t, locale, memoriesData, filteredPhotos, getThumbnailUrl,
+  openViewer, openMemory, api, setPresetFilter, setPresetMLIds, setPresetLoading,
   onMuteMemory, s,
 }) {
   // Build the card list up front so stagger indexes line up with what renders.
@@ -5495,26 +5603,27 @@ function MemoriesCarousel({
         decelerationRate="fast"
         snapToInterval={332}
       >
-        {/* "1 ano atrás" / "X anos atrás" cards from real memory buckets. */}
+        {/* Rich "On this day" / "Recent highlights" memory cards from real
+            buckets. Cover is a 1-big-+-2-stacked collage (or a single photo
+            when <3 are available). Tap → full-screen story-style slideshow. */}
         {memoryCards.map((mem, idx) => {
-          const cover = mem.photos[0];
-          const coverUri = cover ? (cover.isDevice && Platform.OS === 'ios'
-            ? cover.uri
-            : getThumbnailUrl(cover)) : null;
-          const label = mem.yearsAgo === 1
-            ? (t('photos.yearsAgo', { n: 1 }) || '1 ano atrás')
-            : (t('photos.yearsAgoPlural', { n: mem.yearsAgo }) || `${mem.yearsAgo} anos atrás`);
+          const _uriOf = (p) => p ? (p.isDevice && Platform.OS === 'ios' ? p.uri : getThumbnailUrl(p)) : null;
+          const covers = (mem.photos || []).slice(0, 3).map(_uriOf).filter(Boolean);
+          const collage = covers.length >= 3; // 1 big + 2 stacked thumbnails
+          const meta = buildMemoryMeta(mem, t, locale);
           return (
             <React.Fragment key={`mem-${mem.memoryKey || mem.yearsAgo}`}>
               {renderAnimCard(idx, (
                 <Pressable
                   style={[s.memoryCardLg, { backgroundColor: colors.surface }]}
                   onPress={() => {
-                    // Tap → jump into the first photo of the memory bucket.
-                    // Future (tier-2): full-screen stories-style viewer. The
-                    // existing openViewer is the placeholder wire until then.
-                    const idx0 = filteredPhotos.findIndex(p => p.id === cover?.id);
-                    if (idx0 >= 0) openViewer(idx0);
+                    // Tap → open the story-style Memory slideshow viewer.
+                    if (typeof openMemory === 'function') {
+                      openMemory({ title: meta.title, subtitle: meta.subtitle, photos: mem.photos || [] });
+                    } else {
+                      const idx0 = filteredPhotos.findIndex(p => p.id === (mem.photos?.[0]?.id));
+                      if (idx0 >= 0) openViewer(idx0);
+                    }
                   }}
                   onLongPress={() => {
                     // Long-press → "Não mostrar essa memória". Mute is local
@@ -5536,8 +5645,17 @@ function MemoriesCarousel({
                   }}
                   delayLongPress={400}
                 >
-                  {coverUri ? (
-                    <Image source={{ uri: coverUri }} style={s.memoryCoverLg} resizeMode="cover" />
+                  {collage ? (
+                    // Collage: big photo on the left (62%), two stacked on right.
+                    <View style={s.memoryCollage}>
+                      <Image source={{ uri: covers[0] }} style={s.memoryCollageMain} resizeMode="cover" />
+                      <View style={s.memoryCollageSide}>
+                        <Image source={{ uri: covers[1] }} style={s.memoryCollageThumb} resizeMode="cover" />
+                        <Image source={{ uri: covers[2] }} style={[s.memoryCollageThumb, { marginTop: 2 }]} resizeMode="cover" />
+                      </View>
+                    </View>
+                  ) : covers[0] ? (
+                    <Image source={{ uri: covers[0] }} style={s.memoryCoverLg} resizeMode="cover" />
                   ) : (
                     <View style={[s.memoryCoverLg, { backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }]}>
                       <IconImage size={36} color={colors.textTertiary} />
@@ -5551,11 +5669,13 @@ function MemoriesCarousel({
                   <View style={s.memorySparkle} pointerEvents="none">
                     <IconSparkles size={16} color="#fff" />
                   </View>
+                  {/* Centered play affordance — signals tap → slideshow. */}
+                  <View style={s.memoryPlayBadge} pointerEvents="none">
+                    <IconPlay size={20} color="#fff" />
+                  </View>
                   <View style={s.memoryTextWrap}>
-                    <Text style={s.memoryTitleLg} numberOfLines={1}>{label}</Text>
-                    <Text style={s.memorySubLg} numberOfLines={1}>
-                      {mem.photos.length} {t('photos.items') || 'fotos'}
-                    </Text>
+                    <Text style={s.memoryTitleLg} numberOfLines={1}>{meta.title}</Text>
+                    <Text style={s.memorySubLg} numberOfLines={1}>{meta.subtitle}</Text>
                   </View>
                 </Pressable>
               ))}
@@ -5627,6 +5747,129 @@ function MemoriesCarousel({
         })}
       </ScrollView>
     </View>
+  );
+}
+
+// ============================================================
+// [#1345] MEMORY VIEWER — story-style auto-advancing slideshow
+// ============================================================
+// Opened by tapping a memory card. Plays through the bucket's photos one by
+// one (Apple Photos "Memories" / IG Stories pattern): segmented progress bars
+// up top, auto-advance every ~3.2s with a Ken-Burns zoom, tap left/right to
+// navigate, tap-and-hold to pause, swipe-down or X to close. Pure JS — reuses
+// the same thumbnail URLs the grid already resolves.
+function MemoryViewer({ memory, onClose, getThumbnailUrl, t, colors }) {
+  const photos = Array.isArray(memory?.photos) ? memory.photos : [];
+  const [index, setIndex] = React.useState(0);
+  const [paused, setPaused] = React.useState(false);
+  const progress = React.useRef(new Animated.Value(0)).current;
+  const zoom = React.useRef(new Animated.Value(0)).current;
+  const animRef = React.useRef(null);
+  const SEGMENT_MS = 3200;
+
+  const uriOf = React.useCallback((p) => (
+    p ? (p.isDevice && Platform.OS === 'ios' ? p.uri : getThumbnailUrl(p)) : null
+  ), [getThumbnailUrl]);
+
+  // Drive the active segment's progress bar + Ken-Burns zoom. Advancing past
+  // the last photo closes the viewer (story-style "caught up").
+  React.useEffect(() => {
+    if (!photos.length) return;
+    progress.setValue(0);
+    zoom.setValue(0);
+    Animated.timing(zoom, { toValue: 1, duration: SEGMENT_MS + 400, useNativeDriver: true }).start();
+    if (paused) return;
+    animRef.current = Animated.timing(progress, { toValue: 1, duration: SEGMENT_MS, useNativeDriver: false });
+    animRef.current.start(({ finished }) => {
+      if (!finished) return;
+      if (index >= photos.length - 1) onClose();
+      else setIndex(i => i + 1);
+    });
+    return () => { try { animRef.current?.stop(); } catch {} };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [index, paused, photos.length]);
+
+  if (!memory || !photos.length) return null;
+  const cur = photos[index];
+  const curUri = uriOf(cur);
+  const scale = zoom.interpolate({ inputRange: [0, 1], outputRange: [1, 1.12] });
+
+  const goPrev = () => { if (index > 0) setIndex(i => i - 1); else progress.setValue(0); };
+  const goNext = () => { if (index < photos.length - 1) setIndex(i => i + 1); else onClose(); };
+
+  return (
+    <Modal visible animationType="fade" transparent={false} onRequestClose={onClose} statusBarTranslucent>
+      <View style={s.memViewerRoot}>
+        {/* Active photo with subtle Ken-Burns zoom. */}
+        {curUri ? (
+          <Animated.Image
+            source={{ uri: curUri }}
+            style={[StyleSheet.absoluteFill, { transform: [{ scale }] }]}
+            resizeMode="contain"
+          />
+        ) : (
+          <View style={[StyleSheet.absoluteFill, { alignItems: 'center', justifyContent: 'center' }]}>
+            <IconImage size={48} color="#555" />
+          </View>
+        )}
+
+        {/* Tap zones: left third = prev, right two-thirds = next; hold = pause. */}
+        <Pressable
+          style={s.memViewerTapLeft}
+          onPress={goPrev}
+          onPressIn={() => setPaused(true)}
+          onPressOut={() => setPaused(false)}
+        />
+        <Pressable
+          style={s.memViewerTapRight}
+          onPress={goNext}
+          onPressIn={() => setPaused(true)}
+          onPressOut={() => setPaused(false)}
+        />
+
+        {/* Segmented progress bars (one per photo). */}
+        <View style={s.memViewerBars} pointerEvents="none">
+          {photos.map((_, i) => (
+            <View key={`seg-${i}`} style={s.memViewerBarTrack}>
+              <Animated.View
+                style={[
+                  s.memViewerBarFill,
+                  i < index
+                    ? { width: '100%' }
+                    : i === index
+                      ? { width: progress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }
+                      : { width: '0%' },
+                ]}
+              />
+            </View>
+          ))}
+        </View>
+
+        {/* Header: title + subtitle + close. */}
+        <View style={s.memViewerHeader} pointerEvents="box-none">
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text style={s.memViewerTitle} numberOfLines={1}>{memory.title}</Text>
+            {!!memory.subtitle && (
+              <Text style={s.memViewerSub} numberOfLines={1}>{memory.subtitle}</Text>
+            )}
+          </View>
+          <TouchableOpacity
+            onPress={onClose}
+            style={s.memViewerClose}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            accessibilityRole="button"
+            accessibilityLabel={t('common.close') || 'Fechar'}
+          >
+            <IconX size={22} color="#fff" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Footer counter "n / total". */}
+        <View style={s.memViewerFooter} pointerEvents="none">
+          <Text style={s.memViewerCounter}>{index + 1} / {photos.length}</Text>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -6227,6 +6470,43 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  // [#1345] Centered "play" affordance — circle with a play glyph that
+  // signals the card opens a slideshow when tapped.
+  memoryPlayBadge: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginLeft: -24,
+    marginTop: -32,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(0,0,0,0.42)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // [#1345] Collage cover: big photo (62%) + two stacked thumbnails (38%).
+  memoryCollage: {
+    ...StyleSheet.absoluteFillObject,
+    flexDirection: 'row',
+    backgroundColor: '#1a1a2e',
+  },
+  memoryCollageMain: {
+    width: '62%',
+    height: '100%',
+  },
+  memoryCollageSide: {
+    width: '38%',
+    height: '100%',
+    marginLeft: 2,
+  },
+  memoryCollageThumb: {
+    width: '100%',
+    height: '49.5%',
+    backgroundColor: '#23233a',
+  },
   // Section header — sparkle + uppercase brand pill (replaces plain Text title).
   memoriesHeader: {
     flexDirection: 'row',
@@ -6252,6 +6532,72 @@ const s = StyleSheet.create({
   memoriesHeaderCount: {
     fontSize: 12,
     fontWeight: '700',
+  },
+
+  // [#1345] Memory slideshow viewer (story-style).
+  memViewerRoot: { flex: 1, backgroundColor: '#000' },
+  memViewerTapLeft: { position: 'absolute', top: 0, bottom: 0, left: 0, width: '33%' },
+  memViewerTapRight: { position: 'absolute', top: 0, bottom: 0, right: 0, width: '67%' },
+  memViewerBars: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 52 : ((require('react-native').StatusBar.currentHeight || 24) + 10),
+    left: 10, right: 10,
+    flexDirection: 'row',
+    gap: 4,
+  },
+  memViewerBarTrack: {
+    flex: 1,
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.32)',
+    overflow: 'hidden',
+  },
+  memViewerBarFill: {
+    height: '100%',
+    borderRadius: 2,
+    backgroundColor: '#fff',
+  },
+  memViewerHeader: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 64 : ((require('react-native').StatusBar.currentHeight || 24) + 22),
+    left: 14, right: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  memViewerTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  memViewerSub: {
+    color: 'rgba(255,255,255,0.82)',
+    fontSize: 12,
+    fontWeight: '600',
+    marginTop: 2,
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  memViewerClose: {
+    width: 34, height: 34, borderRadius: 17,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  memViewerFooter: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 36 : 22,
+    left: 0, right: 0,
+    alignItems: 'center',
+  },
+  memViewerCounter: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 12,
+    fontWeight: '600',
   },
 
   // Search pill (always visible, Google Photos style)

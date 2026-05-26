@@ -19112,17 +19112,21 @@ export default function ChatConversationScreen() {
             : colors.textSecondary;
 
           // Map thumbnail — Google Static Maps via our server-side proxy.
-          // The proxy (/api/maps/static.php) holds the API key in
-          // /etc/mail-api.env so it never ships in the JS bundle, signs the
-          // request, and Cloudflare caches the resulting PNG at the edge for
-          // 24h. Gives us a real Google Maps image (faster + lighter than an
-          // iframe) without exposing the key client-side.
+          // [#1356 2026-05-26] The in-chat map bubble renders Google Maps
+          // (Static Maps API) for visual consistency with the full viewer
+          // (MapModal → Google Maps JS API) and with snap-map. The proxy
+          // /api/static_map.php hits the Google Static Maps API first
+          // (real Google cartography + native red drop-pin marker), holding
+          // the GOOGLE_MAPS_KEY server-side in /etc/mail-api.env so it never
+          // ships in the JS bundle. If Google ever returns non-200 (key
+          // restricted / billing flap / quota) the SAME endpoint transparently
+          // falls back to a CartoCDN tile composite so the bubble never breaks
+          // — but the happy path is genuine Google. Cached 7d on disk +
+          // Cloudflare edge keyed by lat/lng/zoom/size.
           const hasCoords = (lat != null && lng != null);
-          // Switched 2026-05-09 from /api/maps/static.php (Google Static Maps,
-          // requires GOOGLE_MAPS_KEY in env — was returning 502 in prod) to
-          // /api/static_map.php (CartoCDN tile compositor, no key required,
-          // cached 7d on disk + Cloudflare edge). Fixes the persistent gray
-          // map bubble users were seeing.
+          // Request a retina (scale-2, applied server-side) PNG sized to the
+          // card. z=15 gives a street-level view matching the full Google
+          // viewer's initial zoom.
           const mapStaticUrl = hasCoords
             ? `https://chatyy.com.br/api/static_map.php?lat=${lat}&lng=${lng}&z=15&w=${Math.round(CARD_W * 2)}&h=${MAP_H * 2}`
             : null;
@@ -29369,12 +29373,19 @@ const styles = StyleSheet.create({
       web: { boxShadow: '0 2px 8px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05)' },
     }),
   },
-  // WAVE 129 (2026-05-22, bug #1354 / foto 7192): overflow:'hidden' clips the
-  // inner reply quote pill (replyIndicator has borderRadius:6 vs bubble's 18)
-  // so the darker purple wash can't render past the bubble's rounded corners.
-  // The bubble tail SVG (rendered at right:-8 / left:-8) is moved to a sibling
-  // wrapper so it survives the clip — see bubble row composition.
-  bubbleWithReply: { minWidth: 200, overflow: 'hidden' },
+  // WAVE 129 (2026-05-22, bug #1354 / foto 7192): originally added
+  // overflow:'hidden' to clip the inner reply quote pill's rounded corners.
+  // BUG #1354 (foto 7192, 2026-05-26): that overflow:'hidden' was CLIPPING the
+  // reply quote text horizontally when the bubble laid out narrower than the
+  // pill's minWidth:200 (short message body, long quote) — cutting the quote
+  // mid-word with NO ellipsis (e.g. "...o p"). The inner <Text> never got the
+  // chance to ellipsize because Yoga measured it against the wider pill width,
+  // then the bubble clipped the overflow. The pill sits INSIDE the bubble's
+  // 14px horizontal padding (inset borderRadius:6 well within the bubble's
+  // borderRadius:18), so clipping was never actually needed for the corners.
+  // Dropping overflow:'hidden' lets the quote <Text> ellipsize cleanly at the
+  // bubble edge instead of being hard-clipped mid-word.
+  bubbleWithReply: { minWidth: 200 },
   bubbleOwn: {
     borderTopLeftRadius: 18, borderTopRightRadius: 18,
     borderBottomLeftRadius: 18, borderBottomRightRadius: 5,

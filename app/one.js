@@ -2064,6 +2064,35 @@ export default function OneScreen() {
     }
   }, [initialLoaded]);
 
+  // [bug-fix #1347 (7185), 2026-05-26] Persist the live thread to the
+  // per-conversation cache on EVERY message change — not just during the
+  // network auto-restore at mount.
+  //
+  // Root cause: `one_messages_<cid>` was only ever written at one spot
+  // (inside loadConversations' auto-restore, after a fresh oneHistory()
+  // round-trip). Messages sent/received during an active session updated
+  // React state via setMessages(...) but were NEVER written through to the
+  // cache. So reopening One within the 2h window flashed an EMPTY/stale
+  // cached thread (getCached at the top of loadConversations) and, if the
+  // backend round-trip was slow/failed or the convo id hadn't been assigned
+  // server-side yet, the history appeared lost. Now we mirror the in-memory
+  // thread to the cache as it grows, so a reopen always re-hydrates the real
+  // history instantly from local storage, independent of the backend.
+  //
+  // Skip while there's nothing to persist or no conversation id yet (a
+  // brand-new thread gets its id on the first stream's onDone/meta, after
+  // which this effect fires and captures it). Long TTL (90d) matches the
+  // auto-restore write at the bottom of loadConversations.
+  useEffect(() => {
+    if (!conversationId) return;
+    if (!Array.isArray(messages) || messages.length === 0) return;
+    // Don't persist transient streaming placeholders that have no content
+    // yet — wait until the assistant message actually has text.
+    const persistable = messages.filter(m => m && (m.content || m.role === 'user'));
+    if (persistable.length === 0) return;
+    setCache('one_messages_' + conversationId, persistable, 7776000000).catch(() => {});
+  }, [messages, conversationId]);
+
   // Proactive daily briefing disabled: user feedback said the auto-fired
   // "me dá um briefing rápido" prompt felt intrusive on every cold open.
   // If we want to bring it back, gate it behind a settings toggle.

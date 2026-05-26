@@ -1100,30 +1100,30 @@ public class ExpoCallKitModule: Module {
       // cap and the dialog above appears. End every observed call from
       // CXCallObserver and clear our maps before requesting the new
       // transaction. Failures from end-action are ignored (best effort).
+      // [2026-05-26 ROOT-CAUSE FIX — "Não é possível iniciar a chamada"]
+      // The orphan-end transaction used to be FIRE-AND-FORGET: we requested it
+      // and then IMMEDIATELY requested the new CXStartCallAction below, without
+      // waiting for the orphan call group to actually tear down. CallKit caps
+      // the number of active call groups, so on any retry (previous call didn't
+      // tear down — network drop, app kill mid-call, delegate bypassed
+      // end-action) the new transaction hit
+      // CXErrorCodeRequestTransactionErrorMaximumCallGroupsReached (error 7)
+      // and the user saw "Não é possível iniciar a chamada".
+      //
+      // Fix: capture the orphan UUIDs and, when present, CHAIN the new
+      // CXStartCallAction inside the end transaction's completion handler so it
+      // only fires AFTER the orphans are torn down. The actual start request is
+      // factored into a local closure `requestStart` that both the no-orphan
+      // path and the post-cleanup path call.
       let observer = CXCallObserver()
       let orphans = observer.calls.filter { !$0.hasEnded }
-      if !orphans.isEmpty {
-        NSLog("[ExpoCallKit] startOutgoingCall: clearing \(orphans.count) orphan call group(s) before new transaction")
-        let endTx = CXTransaction()
-        for orphan in orphans {
-          endTx.addAction(CXEndCallAction(call: orphan.uuid))
-        }
-        // Fire-and-forget — we don't await the end transaction; if it fails
-        // the new transaction below will likely also fail and the JS layer
-        // will surface a fresh error.
-        cc.request(endTx) { err in
-          if let err = err {
-            NSLog("[ExpoCallKit] orphan cleanup transaction error: \(err.localizedDescription)")
-          }
-        }
-        // Clear in-memory maps; the provider delegate's CXEndCallAction
-        // handlers may also fire and remove these, but doing it here keeps
-        // state coherent in case the delegate is delayed.
-        self.safeStateSync {
-          self.activeCalls.removeAll()
-          self.pendingOutgoingCalls.removeAll()
-        }
-        // Re-stash the new pending entry — the removeAll above wiped it.
+      let hasOrphans = !orphans.isEmpty
+
+      // Always (re)stash the pending entry for this new outgoing call. If we
+      // clear maps for the orphan sweep below we re-stash; if there are no
+      // orphans the entry was already set at the top of startOutgoingCall, so
+      // setting it again is idempotent.
+      func restashPending() {
         self.safeStateSync {
           self.activeCalls[callId] = uuid
           ExpoCallKitModule._shared_setUUID(uuid, forCallId: callId)
@@ -1143,40 +1143,110 @@ public class ExpoCallKitModule: Module {
         }
       }
 
-      // [WAVE 152 2026-05-22] REVERTED WAVE 150 skip. CXStartCallAction ALWAYS
-      // fires — CallKit owns the UI completely (same as WhatsApp during outgoing
-      // ringing). Without this, the call would have no system integration and
-      // no UI at all. Combined with WAVE 152's skip of showCallUI above, the
-      // result is: CallKit's native call screen handles everything.
+      // [WAVE 152 2026-05-22] CXStartCallAction ALWAYS fires — CallKit owns the
+      // system call UI (Recents, lock-screen pill, audio session). Combined with
+      // WAVE 152's skip of showCallUI, CallKit's native call screen + JS /call.js
+      // handle everything.
       let handle = CXHandle(type: .emailAddress, value: calleeEmail)
       let startAction = CXStartCallAction(call: uuid, handle: handle)
       startAction.isVideo = isVideo
       startAction.contactIdentifier = calleeName
       let transaction = CXTransaction(action: startAction)
 
-      // CXCallController.request takes a completion. We bridge it to the
-      // async function via withCheckedThrowingContinuation so JS gets a
-      // proper Promise resolve/reject.
+      // CXCallController.request takes a completion. We bridge it to the async
+      // function via withCheckedThrowingContinuation so JS gets a proper
+      // Promise resolve/reject.
       return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Bool, Error>) in
-        cc.request(transaction) { error in
-          if let error = error {
-            print("[ExpoCallKit] startOutgoingCall: transaction failed: \(error.localizedDescription)")
-            // Clean up the stashed state on failure so we don't leak.
-            self.safeStateSync {
-              self.activeCalls.removeValue(forKey: callId)
-              self.pendingOutgoingCalls.removeValue(forKey: uuid)
+        // Guard so the continuation can only be resumed once even if a retry
+        // path also fires.
+        var resumed = false
+        func finishOnce(_ block: () -> Void) {
+          if resumed { return }
+          resumed = true
+          block()
+        }
+
+        // The actual CXStartCallAction request, factored out so we can call it
+        // after orphan teardown and optionally retry once.
+        func requestStart(retryOnMaxGroups: Bool) {
+          cc.request(transaction) { error in
+            if let error = error {
+              let nsErr = error as NSError
+              // CXErrorCodeRequestTransactionErrorDomain is the global String
+              // constant for transaction errors; code 7 ==
+              // .maximumCallGroupsReached. Match on the code (and domain when
+              // present) so we don't accidentally treat an unrelated error as
+              // error 7.
+              let isMaxGroups = nsErr.code == CXErrorCodeRequestTransactionError.maximumCallGroupsReached.rawValue
+                && (nsErr.domain == CXErrorCodeRequestTransactionErrorDomain || nsErr.domain.contains("CallKit"))
+              // Error 7 (MaximumCallGroupsReached) on the FIRST attempt usually
+              // means an orphan group we missed (CXCallObserver can lag right
+              // after a crash/kill). Sweep once more, wait briefly for the OS to
+              // release the group, then retry the start exactly once.
+              if isMaxGroups && retryOnMaxGroups {
+                NSLog("[ExpoCallKit] startOutgoingCall: error 7 (maxGroups) — sweeping + retrying once")
+                let sweep = CXTransaction()
+                for c in CXCallObserver().calls where !c.hasEnded {
+                  sweep.addAction(CXEndCallAction(call: c.uuid))
+                }
+                cc.request(sweep) { _ in
+                  DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    requestStart(retryOnMaxGroups: false)
+                  }
+                }
+                return
+              }
+              print("[ExpoCallKit] startOutgoingCall: transaction failed: \(error.localizedDescription)")
+              // Clean up the stashed state on failure so we don't leak.
+              self.safeStateSync {
+                self.activeCalls.removeValue(forKey: callId)
+                self.pendingOutgoingCalls.removeValue(forKey: uuid)
+              }
+              ExpoCallKitModule._shared_setUUID(nil, forCallId: callId)
+              finishOnce { continuation.resume(throwing: error) }
+            } else {
+              print("[ExpoCallKit] startOutgoingCall: transaction queued for callId=\(callId)")
+              // [2026-05-22 outgoing timeout] 45s ring-timeout so an unanswered
+              // call (network drop, killed, FCM throttled) doesn't stay parasitic
+              // on "Connecting..." forever.
+              self.scheduleOutgoingTimeout(callId: callId)
+              finishOnce { continuation.resume(returning: true) }
             }
-            ExpoCallKitModule._shared_setUUID(nil, forCallId: callId)
-            continuation.resume(throwing: error)
-          } else {
-            print("[ExpoCallKit] startOutgoingCall: transaction queued for callId=\(callId)")
-            // [2026-05-22 outgoing timeout] Schedule a 45s ring-timeout so
-            // if the callee never answers (network drop, app killed, FCM
-            // throttled, WS dropped, etc) we don't stay parasitic on
-            // "Connecting..." forever.
-            self.scheduleOutgoingTimeout(callId: callId)
-            continuation.resume(returning: true)
           }
+        }
+
+        if hasOrphans {
+          NSLog("[ExpoCallKit] startOutgoingCall: clearing \(orphans.count) orphan call group(s) before new transaction")
+          let endTx = CXTransaction()
+          for orphan in orphans {
+            endTx.addAction(CXEndCallAction(call: orphan.uuid))
+          }
+          // Clear in-memory maps; the provider delegate's CXEndCallAction
+          // handlers may also fire and remove these, but doing it here keeps
+          // state coherent in case the delegate is delayed.
+          self.safeStateSync {
+            self.activeCalls.removeAll()
+            self.pendingOutgoingCalls.removeAll()
+          }
+          restashPending()
+          // CHAIN the start request inside the end completion — only request the
+          // new CXStartCallAction once the orphan teardown has been accepted by
+          // CallKit. A small extra delay lets the OS fully release the call
+          // group before we ask for a new one (avoids a same-runloop error 7).
+          cc.request(endTx) { endErr in
+            if let endErr = endErr {
+              NSLog("[ExpoCallKit] orphan cleanup transaction error: \(endErr.localizedDescription)")
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+              requestStart(retryOnMaxGroups: true)
+            }
+          }
+        } else {
+          // No orphans — restash (idempotent) and request immediately. Still
+          // pass retryOnMaxGroups so a lagging observer that missed a just-ended
+          // group can't trip error 7.
+          restashPending()
+          requestStart(retryOnMaxGroups: true)
         }
       }
     }

@@ -333,6 +333,25 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   useEffect(() => () => { isMountedRef.current = false; }, []);
   useEffect(() => { setImgError(false); setVersion(getAvatarVersion(email)); setCachedFileUri(null); }, [email, uri]);
 
+  // Subscribe to global cache bumps so this avatar refreshes when the user uploads a new pic.
+  // IMPORTANT: this useEffect MUST run UNCONDITIONALLY before ANY early return so the hook
+  // call order stays stable across renders. It is declared here — ABOVE the `_hasCollage`
+  // group-collage short-circuit below — because that short-circuit returns early for group
+  // avatars (members[] + no uri). If this hook lived after that return, opening a GROUP
+  // conversation would render one FEWER hook than a 1:1 chat, and React throws
+  // "Rendered more/fewer hooks than during the previous render" (P0 crash #1343 / WAVE 127).
+  useEffect(() => {
+    const listener = (changedEmail) => {
+      if (!email) return;
+      if (String(changedEmail).toLowerCase() === String(email).toLowerCase()) {
+        setVersion(getAvatarVersion(email));
+        setImgError(false);
+      }
+    };
+    _versionListeners.add(listener);
+    return () => { _versionListeners.delete(listener); };
+  }, [email]);
+
   // ── Group collage short-circuit ────────────────────────────────
   // When the caller passes `members` and there's no single image to show
   // (no explicit `uri` AND no email-derived avatar would apply), render
@@ -366,22 +385,6 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
       ? <TouchableOpacity activeOpacity={0.7} onPress={onPress} accessibilityRole="button">{node}</TouchableOpacity>
       : node;
   }
-
-  // Subscribe to global cache bumps so this avatar refreshes when the user uploads a new pic.
-  // IMPORTANT: this useEffect must run UNCONDITIONALLY before any early returns so the hook
-  // call order stays stable across renders (otherwise React throws "Rendered fewer/more
-  // hooks than expected" if the email prop ever flips to/from ai@chatyy.com.br).
-  useEffect(() => {
-    const listener = (changedEmail) => {
-      if (!email) return;
-      if (String(changedEmail).toLowerCase() === String(email).toLowerCase()) {
-        setVersion(getAvatarVersion(email));
-        setImgError(false);
-      }
-    };
-    _versionListeners.add(listener);
-    return () => { _versionListeners.delete(listener); };
-  }, [email]);
 
   // ChatyyAI bot — special-cased app icon avatar with a winking-eye animation
   // (WAVE 46 brand refresh, 2026-05-21). The bot has no real account so its
