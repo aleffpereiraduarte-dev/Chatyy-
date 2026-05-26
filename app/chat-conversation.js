@@ -7456,6 +7456,47 @@ export default function ChatConversationScreen() {
     return () => { cancelled = true; };
   }, [messages.length, user]);
 
+  // [effect-replay 2026-05-25] The <MessageScreenEffect> overlay is mounted at
+  // the very bottom of the render tree, so when a WS/TCP message lands during
+  // a re-render (or before the overlay's first commit) `screenEffectRef.current`
+  // can be null at the instant we want to play — the imperative `play()` call
+  // then silently no-ops (optional chaining swallows it) and the recipient
+  // never sees the effect. This was the real "só anima se 2 telas abertas"
+  // root cause: the SENDER's overlay is warm (it already played on the
+  // optimistic send) but the RECIPIENT's overlay may not be committed yet.
+  // Fix: a pending-effect ref + a flush effect. `playScreenEffect()` plays
+  // immediately when the ref is live, otherwise stashes the effect id and a
+  // useEffect flushes it once the overlay mounts. We also retry a couple of
+  // ticks as a belt-and-suspenders for the WS-arrives-mid-render case.
+  const pendingScreenEffectRef = useRef(null);
+  const playScreenEffect = useCallback((effect) => {
+    if (!effect || !SCREEN_EFFECT_IDS.has(effect)) return;
+    const fire = () => {
+      const ref = screenEffectRef.current;
+      if (ref?.play) {
+        try { ref.play(effect); } catch {}
+        return true;
+      }
+      return false;
+    };
+    if (fire()) return;
+    // Overlay not committed yet — stash + retry on next ticks, and the
+    // mount effect below will flush as a final guarantee.
+    pendingScreenEffectRef.current = effect;
+    setTimeout(() => { if (pendingScreenEffectRef.current === effect && fire()) pendingScreenEffectRef.current = null; }, 60);
+    setTimeout(() => { if (pendingScreenEffectRef.current === effect && fire()) pendingScreenEffectRef.current = null; }, 250);
+  }, []);
+  // Flush a queued screen effect once the overlay commits. Runs after every
+  // render (no deps) so the first commit that mounts <MessageScreenEffect>
+  // immediately drains any effect that arrived before the ref was live.
+  useEffect(() => {
+    const pending = pendingScreenEffectRef.current;
+    if (pending && screenEffectRef.current?.play) {
+      try { screenEffectRef.current.play(pending); } catch {}
+      pendingScreenEffectRef.current = null;
+    }
+  });
+
   // Offline screen-effect replay. iMessage only plays effects in real time,
   // but the user wants the recipient to still see them when they open the
   // conversation later (e.g., they were offline). We scan for the newest
@@ -7480,22 +7521,26 @@ export default function ChatConversationScreen() {
       break;
     }
     if (!target) return;
-    offlineEffectReplayedRef.current = true;
     (async () => {
       try {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
         const key = userScopedKey(`chatyy:effect_seen:${target.id}`);
         const seen = await AsyncStorage.getItem(key);
-        if (seen) return;
+        if (seen) return; // already played — don't burn the one-shot guard yet
+        // Only NOW commit: mark this conv's one-shot replay used, persist
+        // the seen flag, and play. Burning the guard before the seen-check
+        // (old behaviour) meant a partial first render that found an
+        // already-seen effect could block a later genuinely-unseen one.
+        offlineEffectReplayedRef.current = true;
         await AsyncStorage.setItem(key, '1');
         // Defer one tick so the FlatList finishes initial layout — without
-        // this the overlay can flicker through a still-mounting list.
-        setTimeout(() => {
-          try { screenEffectRef.current?.play?.(target.effect); } catch {}
-        }, 250);
+        // this the overlay can flicker through a still-mounting list. Route
+        // through playScreenEffect so it queues if the overlay ref isn't
+        // committed yet on this open.
+        setTimeout(() => { playScreenEffect(target.effect); }, 250);
       } catch {}
     })();
-  }, [messages.length, user]);
+  }, [messages.length, user, playScreenEffect]);
 
   const [replyTo, setReplyTo] = useState(null);
   // Hydrate the reply preview bar from a navigation param — used by the
@@ -10525,7 +10570,7 @@ export default function ChatConversationScreen() {
           // on first render — only screen-class effects need this trigger.
           // Also mark as seen so the offline-replay scan won't refire it.
           if (msg.sender_email !== currentEmail && msg.effect && SCREEN_EFFECT_IDS.has(msg.effect)) {
-            try { screenEffectRef.current?.play?.(msg.effect); } catch {}
+            playScreenEffect(msg.effect);
             if (msg.id && !String(msg.id).startsWith('tmp_')) {
               try {
                 const AsyncStorage = require('@react-native-async-storage/async-storage').default;
@@ -11398,7 +11443,13 @@ export default function ChatConversationScreen() {
               try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
             }
             if (msg.effect && SCREEN_EFFECT_IDS.has(msg.effect)) {
-              try { screenEffectRef.current?.play?.(msg.effect); } catch {}
+              playScreenEffect(msg.effect);
+              if (msg.id && !String(msg.id).startsWith('tmp_')) {
+                try {
+                  const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+                  AsyncStorage.setItem(userScopedKey(`chatyy:effect_seen:${msg.id}`), '1').catch(() => {});
+                } catch {}
+              }
             }
           }
           // Delivery ack — fires when the TCP path arrived first (WS handler
@@ -12174,7 +12225,7 @@ export default function ChatConversationScreen() {
     // Sender also gets the screen overlay so the effect feels confirmed.
     // Bubble effects already replay via MessageBubbleEffect's first-render hook.
     if (stagedEffect && SCREEN_EFFECT_IDS.has(stagedEffect)) {
-      try { screenEffectRef.current?.play?.(stagedEffect); } catch {}
+      playScreenEffect(stagedEffect);
     }
 
     // ⭐ DURABILITY: persist pending message BEFORE broadcasting the WS relay.

@@ -207,6 +207,13 @@ class CallActivity : ComponentActivity() {
      *  empty audio track — call connects, both sides see "in call" UI, no
      *  voice flows either way. */
     private const val REQ_CODE_RECORD_AUDIO = 9101
+    /** [video-upgrade 2026-05-25] Runtime CAMERA permission request code.
+     *  CAMERA is declared in the manifest but Android 6+ won't let
+     *  setCameraEnabled(true) actually capture without an explicit runtime
+     *  grant — LK silently publishes nothing otherwise. An audio→video upgrade
+     *  is the first time the camera is touched in an audio-only call, so we
+     *  must request here (the JS path used requestAndroidCameraPermission). */
+    private const val REQ_CODE_CAMERA = 9102
     const val ACTION_CLOSE = "expo.modules.callkit.CLOSE_CALL_ACTIVITY"
     /** [DTMF, 2026-05-19] In-process broadcast from ExpoCallKitModule.playDTMF
      *  carrying `digit` extra. We publish the digit over the LK data channel
@@ -540,7 +547,17 @@ class CallActivity : ComponentActivity() {
             }
             try { ExpoCallKitModule.emitLkLocalAudioChanged(desired) } catch (_: Throwable) {}
           },
-          onToggleCam = { desired ->
+          onToggleCam = onToggleCam@{ desired ->
+            // [video-upgrade 2026-05-25] If this is still an audio-only call and
+            // the user is turning the camera ON, don't publish video unilaterally
+            // — ask the peer first (mirror of JS app/call.js handleToggleVideo).
+            // The camera flips on only after the peer replies `accepted`
+            // (handleVideoRequestData → enterVideoModeAndPublish). For an
+            // already-video call, fall through to the normal mute/unmute path.
+            if (desired && !state.isVideo) {
+              requestVideoUpgrade()
+              return@onToggleCam
+            }
             state.isCameraOn = desired
             lifecycleScope.launch {
               // [Wave C, 2026-05-18] Toggle the LocalVideoTrack mute state
@@ -743,6 +760,9 @@ class CallActivity : ComponentActivity() {
               }
             }
           },
+          // [video-upgrade 2026-05-25] Wire the two video-upgrade callbacks.
+          onRequestVideoUpgrade = { requestVideoUpgrade() },
+          onRespondVideoRequest = { accept -> respondVideoRequest(accept) },
         )
       }
     }
@@ -1170,6 +1190,23 @@ class CallActivity : ComponentActivity() {
     grantResults: IntArray,
   ) {
     super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    // [video-upgrade 2026-05-25] CAMERA grant result for an audio→video upgrade.
+    if (requestCode == REQ_CODE_CAMERA) {
+      val camGranted = grantResults.isNotEmpty() &&
+        grantResults[0] == PackageManager.PERMISSION_GRANTED
+      Log.d(TAG, "onRequestPermissionsResult CAMERA: granted=$camGranted")
+      if (camGranted && pendingVideoPublish) {
+        pendingVideoPublish = false
+        // Re-enter the publish path now that capture is permitted. isVideo is
+        // already true; enterVideoModeAndPublish is idempotent and will skip
+        // the (now-granted) permission branch and publish the camera.
+        enterVideoModeAndPublish()
+      } else if (!camGranted) {
+        pendingVideoPublish = false
+        state.status = "Permita a câmera para vídeo"
+      }
+      return
+    }
     if (requestCode != REQ_CODE_RECORD_AUDIO) return
     val granted = grantResults.isNotEmpty() &&
       grantResults[0] == PackageManager.PERMISSION_GRANTED
@@ -1633,6 +1670,26 @@ class CallActivity : ComponentActivity() {
         if (track is VideoTrack) {
           Log.d(TAG, "TrackSubscribed (video) sid=${event.publication.sid}")
           state.hasRemoteVideo = true
+          // [video-upgrade 2026-05-25] CRITICAL: a remote VIDEO track means the
+          // peer enabled their camera (initial video call OR a mid-call audio→
+          // video upgrade). The remote-video Crossfade in CallScreen is gated on
+          // `state.isVideo`; if this call started audio-only that flag is false
+          // and the peer's freshly-published video would NEVER render — exactly
+          // the "video upgrade does nothing on the other phone" bug. Flip it on
+          // so video "just works" the moment the peer publishes, even if the
+          // explicit video_request prompt was missed/declined. Also clear any
+          // pending prompt and our own awaiting flag since video is now live.
+          if (!state.isVideo) {
+            Log.d(TAG, "TrackSubscribed (video): audio call → auto-upgrading to video (peer published camera)")
+            state.isVideo = true
+            state.pendingVideoRequest = false
+            state.videoUpgradeRequested = false
+            // Make sure a 1:1 remoteRenderer exists (audio onCreate skipped it).
+            if (remoteRenderer == null) {
+              try { remoteRenderer = SurfaceViewRenderer(this).also { r.initVideoRenderer(it) } }
+              catch (t: Throwable) { Log.w(TAG, "auto-upgrade remoteRenderer alloc failed: ${t.message}") }
+            }
+          }
           // 1:1 path: attach to the single remoteRenderer.
           remoteRenderer?.let { rv -> track.addRenderer(rv) }
           // [WAVE 142 GPT-5.5-pro] Snippet #6 — flip remoteFirstFrame on a
@@ -1711,6 +1768,26 @@ class CallActivity : ComponentActivity() {
         if (track is LocalVideoTrack) {
           Log.d(TAG, "LocalTrackPublished (video) via RoomEvent.TrackPublished")
           bindLocalVideoTrack(track)
+        }
+      }
+      // [video-upgrade 2026-05-25] In-band data channel — the JS app/call.js
+      // path published `video_request` here. The native call screen had NO
+      // RoomEvent.DataReceived handler, so the audio→video upgrade prompt never
+      // arrived on the native peer and nothing happened. Parse the JSON and
+      // route to handleVideoRequestData. We also tolerate the native prefix
+      // formats (R:<emoji> / D:<digit>) that this side itself publishes so a
+      // native↔native call doesn't choke on its own reaction/DTMF frames.
+      is RoomEvent.DataReceived -> {
+        val txt = try { String(event.data, Charsets.UTF_8) } catch (_: Throwable) { "" }
+        if (txt.isNotEmpty() && !txt.startsWith("R:") && !txt.startsWith("D:")) {
+          try {
+            val obj = org.json.JSONObject(txt)
+            if (obj.optString("type") == "video_request") {
+              val action = obj.optString("action")
+              Log.d(TAG, "DataReceived video_request action=$action")
+              handleVideoRequestData(action)
+            }
+          } catch (_: Throwable) { /* not JSON we handle — ignore */ }
         }
       }
       is RoomEvent.ConnectionQualityChanged -> {
@@ -2009,6 +2086,189 @@ class CallActivity : ComponentActivity() {
     }
   }
 
+  // ────────────── Video upgrade (audio→video) — 2026-05-25
+  //
+  // Mirrors the JS app/call.js protocol exactly so a native Android peer can
+  // upgrade an audio call to video against ANY peer (web JS, native Android,
+  // native iOS once it adopts the same JSON). The wire format is a JSON
+  // DataPacket published over the LiveKit data channel — the SAME shape the JS
+  // `sendData()` helper produces — so the existing JS `_handleDataChannelMessage`
+  // switch (case 'video_request') interops without changes.
+
+  /**
+   * Publish a JSON control message over the LK data channel (reliable). This
+   * is the native twin of JS `sendData(payload)`. Used for video_request.
+   */
+  private fun sendCallData(payload: org.json.JSONObject) {
+    val r = room ?: return
+    val bytes = payload.toString().toByteArray(Charsets.UTF_8)
+    lifecycleScope.launch {
+      try {
+        r.localParticipant.publishData(bytes)
+      } catch (t: Throwable) {
+        Log.w(TAG, "sendCallData failed: ${t.message}")
+      }
+    }
+  }
+
+  /**
+   * User tapped the video toggle while this is still an audio-only call and
+   * the peer hasn't agreed to video yet. Send a `video_request:request` and
+   * mark ourselves as awaiting the peer's `accepted`. The local camera does
+   * NOT turn on here — it flips on only when the peer replies `accepted` (in
+   * handleVideoRequestData) so we don't publish video the peer hasn't agreed
+   * to. Idempotent: a second tap while awaiting is a no-op.
+   */
+  private fun requestVideoUpgrade() {
+    if (state.videoUpgradeRequested) {
+      Log.d(TAG, "requestVideoUpgrade: already awaiting peer — ignoring")
+      return
+    }
+    state.videoUpgradeRequested = true
+    Log.d(TAG, "requestVideoUpgrade: sending video_request:request")
+    sendCallData(org.json.JSONObject().apply {
+      put("type", "video_request")
+      put("action", "request")
+    })
+    // Auto-clear the awaiting flag after 30s (mirror of JS 30s timeout) so the
+    // toggle becomes available again if the peer never answers.
+    lifecycleScope.launch {
+      delay(30_000)
+      if (state.videoUpgradeRequested) {
+        state.videoUpgradeRequested = false
+        Log.d(TAG, "requestVideoUpgrade: 30s timeout — peer did not answer")
+      }
+    }
+  }
+
+  /**
+   * The peer asked US to upgrade to video (we received `video_request:request`
+   * and surfaced the prompt). User tapped Accept or Decline.
+   *
+   *  - accept=true  → reply `accepted`, flip the call into video mode, and
+   *    publish our camera. The peer (on receiving `accepted`) publishes theirs.
+   *  - accept=false → reply `declined`; nothing else changes.
+   */
+  private fun respondVideoRequest(accept: Boolean) {
+    state.pendingVideoRequest = false
+    if (accept) {
+      Log.d(TAG, "respondVideoRequest: accepted — entering video mode + publishing camera")
+      sendCallData(org.json.JSONObject().apply {
+        put("type", "video_request")
+        put("action", "accepted")
+      })
+      enterVideoModeAndPublish()
+    } else {
+      Log.d(TAG, "respondVideoRequest: declined")
+      sendCallData(org.json.JSONObject().apply {
+        put("type", "video_request")
+        put("action", "declined")
+      })
+    }
+  }
+
+  /**
+   * Flip the session into video mode and publish the local camera. Shared by
+   * the accept path (callee) and the `accepted` reply path (original
+   * requester). Allocates the renderers lazily because an audio call starts
+   * with null remote/local SurfaceViewRenderers. Idempotent on isCameraOn.
+   */
+  /** [video-upgrade 2026-05-25] Set true when enterVideoModeAndPublish had to
+   *  request CAMERA at runtime; onRequestPermissionsResult re-runs the publish
+   *  once the grant lands. */
+  @Volatile private var pendingVideoPublish: Boolean = false
+
+  private fun enterVideoModeAndPublish() {
+    val r = room ?: return
+    // [video-upgrade 2026-05-25] Ensure CAMERA runtime grant before publish.
+    // Manifest declares it but Android 6+ silently publishes nothing without
+    // the grant (mirrors the RECORD_AUDIO gate). On first audio→video upgrade
+    // the camera was never touched, so the grant may be missing.
+    val camGranted = ContextCompat.checkSelfPermission(
+      this, Manifest.permission.CAMERA
+    ) == PackageManager.PERMISSION_GRANTED
+    if (!camGranted) {
+      Log.w(TAG, "enterVideoModeAndPublish: CAMERA not granted — requesting; will publish on grant")
+      state.isVideo = true
+      state.videoUpgradeRequested = false
+      pendingVideoPublish = true
+      try {
+        ActivityCompat.requestPermissions(
+          this, arrayOf(Manifest.permission.CAMERA), REQ_CODE_CAMERA
+        )
+      } catch (t: Throwable) {
+        Log.e(TAG, "requestPermissions(CAMERA) threw: ${t.message}", t)
+      }
+      return
+    }
+    state.isVideo = true
+    state.videoUpgradeRequested = false
+    // Lazily create renderers that an audio-only onCreate skipped, then init
+    // their EGL context against the live Room before any track binds to them.
+    try {
+      if (remoteRenderer == null) {
+        remoteRenderer = SurfaceViewRenderer(this).also { r.initVideoRenderer(it) }
+      }
+      if (localRenderer == null) {
+        localRenderer = SurfaceViewRenderer(this).also { r.initVideoRenderer(it) }
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "enterVideoModeAndPublish: renderer alloc failed: ${t.message}")
+    }
+    // If a remote video track already landed before we entered video mode
+    // (peer published first), bind it to the freshly-created renderer now.
+    try {
+      val rp = r.remoteParticipants.values.firstOrNull()
+      val pub = rp?.getTrackPublication(Track.Source.CAMERA)
+      val rTrack = pub?.track as? VideoTrack
+      if (rTrack != null) {
+        remoteRenderer?.let { rv -> rTrack.addRenderer(rv) }
+        state.hasRemoteVideo = true
+        lifecycleScope.launch { delay(180); state.remoteFirstFrame = true }
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "enterVideoModeAndPublish: late remote bind failed: ${t.message}")
+    }
+    state.isCameraOn = true
+    lifecycleScope.launch {
+      try {
+        r.localParticipant.setCameraEnabled(true)
+        bindLocalCameraIfReady(r)
+        Log.d(TAG, "enterVideoModeAndPublish: camera published")
+      } catch (t: Throwable) {
+        Log.w(TAG, "enterVideoModeAndPublish: setCameraEnabled failed: ${t.message}")
+      }
+    }
+    try { ExpoCallKitModule.emitLkLocalVideoChanged(true) } catch (_: Throwable) {}
+  }
+
+  /**
+   * Handle an inbound `video_request` DataPacket. Routed from
+   * handleRoomEvent's RoomEvent.DataReceived case. Mirrors the JS
+   * `_handleDataChannelMessage` case 'video_request' branch.
+   */
+  private fun handleVideoRequestData(action: String) {
+    when (action) {
+      "request" -> {
+        // Peer wants to turn the audio call into video — surface the prompt.
+        Log.d(TAG, "video_request:request — showing accept prompt")
+        state.pendingVideoRequest = true
+      }
+      "accepted" -> {
+        // We had asked; the peer agreed. Publish our camera + enter video mode.
+        Log.d(TAG, "video_request:accepted — peer agreed, enabling our video")
+        if (state.videoUpgradeRequested || !state.isVideo) {
+          enterVideoModeAndPublish()
+        }
+      }
+      "declined", "cancel" -> {
+        Log.d(TAG, "video_request:$action — clearing pending/awaiting flags")
+        state.pendingVideoRequest = false
+        state.videoUpgradeRequested = false
+      }
+    }
+  }
+
   private fun spawnReaction(emoji: String) {
     val now = System.currentTimeMillis()
     val xOffset = Random.nextInt(-80, 80).toFloat()
@@ -2201,6 +2461,19 @@ class CallSessionStateAndroid {
   var remoteFirstFrame by mutableStateOf(false)
   var localIsActiveSpeaker by mutableStateOf(false)
   var localSpeakerLevel by mutableStateOf(0f)
+
+  // [video-upgrade 2026-05-25] Audio→Video upgrade signaling, mirrors the JS
+  // app/call.js videoUpgradeRequestedRef / pendingVideoRequest pair over the
+  // LiveKit data channel ({type:"video_request", action:"request"|"accepted"|
+  // "declined"|"cancel"}). The native call screen previously had NO handler
+  // for this — the accept prompt never surfaced on the peer's phone and the
+  // requester's camera-on did nothing. These two flags drive:
+  //   - pendingVideoRequest: WE received a `request` → show accept/decline prompt.
+  //   - videoUpgradeRequested: WE sent a `request` and are awaiting the peer's
+  //     `accepted`/`declined` (gates the local camera-on so we don't publish
+  //     video before the peer agrees).
+  var pendingVideoRequest by mutableStateOf(false)
+  var videoUpgradeRequested by mutableStateOf(false)
 }
 
 /** One floating emoji burst. The activity scope removes it after ~3s. */
@@ -2324,6 +2597,12 @@ private fun CallScreen(
   onPickAudioDevice: (String) -> Unit,
   /** [Wave C-1, 2026-05-21] Emit onOpenChat + enter PiP. */
   onOpenChat: () -> Unit,
+  /** [video-upgrade 2026-05-25] User tapped "Vídeo" in an audio-only call —
+   *  ask the peer before publishing the camera. */
+  onRequestVideoUpgrade: () -> Unit,
+  /** [video-upgrade 2026-05-25] Respond to an incoming `video_request:request`
+   *  prompt. true=accept (publish camera), false=decline. */
+  onRespondVideoRequest: (Boolean) -> Unit,
 ) {
   var elapsedSeconds by remember { mutableStateOf(0) }
   var showReactions by remember { mutableStateOf(false) }
@@ -2608,6 +2887,94 @@ private fun CallScreen(
           showAudioPicker = false
         },
         onDismiss = { showAudioPicker = false },
+      )
+    }
+
+    // 9. [video-upgrade 2026-05-25] Incoming "switch to video?" prompt. Shown
+    //    when the peer sent video_request:request (state.pendingVideoRequest).
+    //    Accept → publish camera + reply accepted; Decline → reply declined.
+    AnimatedVisibility(
+      visible = state.pendingVideoRequest,
+      enter = slideInVertically { it } + fadeIn(),
+      exit = slideOutVertically { it } + fadeOut(),
+      modifier = Modifier
+        .align(Alignment.BottomCenter)
+        .padding(bottom = 200.dp),
+    ) {
+      VideoUpgradePrompt(
+        callerName = state.callerName,
+        onAccept = { onRespondVideoRequest(true) },
+        onDecline = { onRespondVideoRequest(false) },
+      )
+    }
+
+    // 10. [video-upgrade 2026-05-25] "Aguardando…" toast while WE wait for the
+    //     peer to accept our video request (state.videoUpgradeRequested).
+    AnimatedVisibility(
+      visible = state.videoUpgradeRequested,
+      enter = fadeIn(),
+      exit = fadeOut(),
+      modifier = Modifier
+        .align(Alignment.TopCenter)
+        .padding(top = 96.dp),
+    ) {
+      Box(
+        modifier = Modifier
+          .clip(RoundedCornerShape(20.dp))
+          .background(Color.Black.copy(alpha = 0.6f))
+          .padding(horizontal = 16.dp, vertical = 10.dp),
+      ) {
+        Text(
+          text = "Aguardando aceitar vídeo…",
+          color = Color.White,
+          fontSize = 14.sp,
+        )
+      }
+    }
+  }
+}
+
+// [video-upgrade 2026-05-25] Accept/Decline card for an inbound video upgrade
+// request. Mirrors the WhatsApp "Fulano quer ativar o vídeo" prompt.
+@Composable
+private fun VideoUpgradePrompt(
+  callerName: String,
+  onAccept: () -> Unit,
+  onDecline: () -> Unit,
+) {
+  Column(
+    horizontalAlignment = Alignment.CenterHorizontally,
+    modifier = Modifier
+      .clip(RoundedCornerShape(20.dp))
+      .background(Color.Black.copy(alpha = 0.78f))
+      .padding(horizontal = 20.dp, vertical = 16.dp),
+  ) {
+    Text(
+      text = if (callerName.isNotEmpty()) "$callerName quer ativar o vídeo" else "Ativar vídeo?",
+      color = Color.White,
+      fontSize = 15.sp,
+      fontWeight = FontWeight.Medium,
+    )
+    Spacer(Modifier.height(14.dp))
+    Row(
+      horizontalArrangement = Arrangement.spacedBy(16.dp, alignment = Alignment.CenterHorizontally),
+      verticalAlignment = Alignment.CenterVertically,
+    ) {
+      CircleControlButton(
+        size = 56.dp,
+        background = Color.White,
+        foreground = Color.Black,
+        icon = Icons.Filled.VideocamOff,
+        contentDescription = "Recusar vídeo",
+        onClick = onDecline,
+      )
+      CircleControlButton(
+        size = 56.dp,
+        background = SpeakerRing,
+        foreground = Color.White,
+        icon = Icons.Filled.Videocam,
+        contentDescription = "Aceitar vídeo",
+        onClick = onAccept,
       )
     }
   }
@@ -3250,6 +3617,20 @@ private fun BottomActionBar(
           icon = if (state.isCameraOn) Icons.Filled.Videocam else Icons.Filled.VideocamOff,
           contentDescription = "Camera",
           onClick = { onToggleCam(!state.isCameraOn) },
+        )
+      } else {
+        // [video-upgrade 2026-05-25] Audio-only call: still offer a video
+        // button so the user can REQUEST an audio→video upgrade. The activity's
+        // onToggleCam intercept routes desired=true + !isVideo to
+        // requestVideoUpgrade() (asks the peer), instead of publishing video
+        // unilaterally. Disabled visual while a request is already in flight.
+        CircleControlButton(
+          size = 64.dp,
+          background = if (state.videoUpgradeRequested) Color.White else ChipColor,
+          foreground = if (state.videoUpgradeRequested) Color.Black else Color.White,
+          icon = Icons.Filled.Videocam,
+          contentDescription = "Pedir vídeo",
+          onClick = { onToggleCam(true) },
         )
       }
 

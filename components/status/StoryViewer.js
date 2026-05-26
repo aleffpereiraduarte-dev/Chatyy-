@@ -576,7 +576,14 @@ export default function StoryViewer({
   useEffect(() => {
     if (!visible || !isSelf || !_mailWs?.on) return undefined;
     let dismissTimer = null;
-    const sub = _mailWs.on('status_react', (data) => {
+    // BUG FIX (2026-05-25) — owner never saw the live reaction toast. The
+    // backend emits the WS event as `status_reaction` (chat.php status_react
+    // handler → event:'status_reaction'), but this listener only subscribed
+    // to `status_react`. The websocket dispatcher emits `msg.type` verbatim
+    // with no alias, so the names never matched and the handler never fired.
+    // Subscribe to BOTH names so we catch the canonical `status_reaction` and
+    // stay compatible with any path/remap that uses the short `status_react`.
+    const onReaction = (data) => {
       try {
         const d = data || {};
         if (d.removed || !d.emoji) return;
@@ -596,9 +603,12 @@ export default function StoryViewer({
         if (dismissTimer) clearTimeout(dismissTimer);
         dismissTimer = setTimeout(() => setReactToast(null), 2800);
       } catch {}
-    });
+    };
+    const sub = _mailWs.on('status_reaction', onReaction);
+    const subLegacy = _mailWs.on('status_react', onReaction);
     return () => {
       try { sub?.(); } catch {}
+      try { subLegacy?.(); } catch {}
       if (dismissTimer) clearTimeout(dismissTimer);
     };
   }, [visible, isSelf, idx, stories, reactToastAnim]);
@@ -891,11 +901,24 @@ export default function StoryViewer({
   // Without a small grace window, the opening touch fires goPrev()/advance()
   // or, worse, gets reported as a swipe-down (origin tap below the ring then
   // finger lifts after modal mount → release event lands on PanResponder).
-  // Block all close/nav handlers for 250ms after visible flips to true.
+  // Block all close/nav handlers for 600ms after visible flips to true.
+  // [2026-05-25] Bumped 250ms → 600ms. The deferred empty-stories auto-close
+  // below arms a 350ms timer; with the old 250ms window that timer could
+  // outlive the guard and dismiss the viewer the instant it opened from the
+  // chat-list strip (bug "nem abre e já fecha"). The chat-list path passes a
+  // freshly-locked snapshot whose array reference flips across the same
+  // state-flush that sets statusViewerEmail, so `stories` can be momentarily
+  // read as [] by the auto-close effect's stale closure right after mount.
+  // 600ms comfortably covers the 350ms close timer + the fade/spring anims.
   const mountAtRef = useRef(0);
   const isFreshMount = useCallback(() => {
-    return mountAtRef.current > 0 && (Date.now() - mountAtRef.current) < 250;
+    return mountAtRef.current > 0 && (Date.now() - mountAtRef.current) < 600;
   }, []);
+  // Always-current view of the stories prop so deferred timers (auto-close)
+  // re-check the LIVE value instead of a stale closure captured when the
+  // effect armed. Prevents closing a viewer that received items in the gap.
+  const storiesRef = useRef(stories);
+  storiesRef.current = stories;
 
   useEffect(() => {
     if (visible) {
@@ -1083,8 +1106,12 @@ export default function StoryViewer({
       // and the followup setStatuses(hookGroups) sync effect in ChatListTab.
       const t = setTimeout(() => {
         // Re-check via ref — if a fresh mount is still active or stories
-        // populated in the meantime, the parent will skip the close.
+        // populated in the meantime, DON'T close. `storiesRef.current` is the
+        // live value (not the stale closure from when this effect armed), so a
+        // viewer that received its locked snapshot a few ms after mount stays
+        // open instead of flashing closed ("nem abre e já fecha").
         if (isFreshMount()) return;
+        if (Array.isArray(storiesRef.current) && storiesRef.current.length > 0) return;
         onClose?.();
       }, 350);
       return () => clearTimeout(t);

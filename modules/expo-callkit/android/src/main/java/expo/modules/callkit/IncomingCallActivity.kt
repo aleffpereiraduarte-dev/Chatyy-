@@ -749,6 +749,10 @@ class IncomingCallActivity : AppCompatActivity() {
         }
         startActivity(gIntent)
         Log.d("IncomingCallActivity", "[#1359] routed accept to GroupCallActivity room=$id")
+        // [Goal 2 full-screen-accept fix 2026-05-25] Finish this lock-screen
+        // ringing Activity now that the call screen is launched — see the 1:1
+        // path below for the full root-cause writeup.
+        finishAcceptedRinger()
       } catch (t: Throwable) {
         Log.e("IncomingCallActivity", "startGroupCallActivity failed: ${t.message}")
       }
@@ -797,8 +801,44 @@ class IncomingCallActivity : AppCompatActivity() {
         ExpoCallKitModule.enrichIntentWithAuth(applicationContext, this)
       }
       startActivity(intent)
+      // [Goal 2 full-screen-accept fix 2026-05-25] ROOT CAUSE of "answering
+      // from the full-screen native incoming screen sometimes does nothing".
+      //
+      // The notification "Atender" path (CallActionReceiver.ACTION_ACCEPT_CALL)
+      // explicitly broadcasts CLOSE_CALL_ACTIVITY (closeIncomingCallActivity)
+      // so this lock-screen Activity FINISHES before/while CallActivity comes
+      // up. The full-screen onAccept path did NOT: it launched CallActivity
+      // with FLAG_ACTIVITY_REORDER_TO_FRONT|SINGLE_TOP but kept THIS Activity
+      // (setShowWhenLocked=true, in its own FGS-launched task) resumed on top
+      // behind the "Conectando…" overlay for 15s. On many OEMs the resumed
+      // show-when-locked task keeps window focus, so CallActivity builds +
+      // connects LK invisibly behind it — the user taps Atender and "nothing
+      // happens" until the 15s finishAndRemoveTask fires. The notification
+      // path worked precisely because it tore this Activity down.
+      //
+      // Fix: finish this ringing Activity the instant CallActivity is
+      // launched (cache-hit = synchronous; cache-miss = after the async fetch
+      // posts back to the main thread), so the call screen owns the window —
+      // exactly what the notification path does. We still keep the 15s
+      // finishAndRemoveTask in onAccept as a belt-and-suspenders safety net
+      // (it's a no-op once we've already finished).
+      finishAcceptedRinger()
     } catch (t: Throwable) {
       Log.e("IncomingCallActivity", "startCallActivity failed: ${t.message}")
+    }
+  }
+
+  /**
+   * [Goal 2 full-screen-accept fix 2026-05-25] Tear down the ringing Activity
+   * right after CallActivity is launched, mirroring the notification path's
+   * closeIncomingCallActivity. Posted to the main looper so it runs after the
+   * current click handler returns (avoids finishing mid-startActivity on some
+   * OEMs). Guarded so the connecting overlay doesn't get stuck if CallActivity
+   * fails to surface — the closeReceiver / 15s timeout still cover that.
+   */
+  private fun finishAcceptedRinger() {
+    mainHandler.post {
+      try { finish() } catch (_: Exception) {}
     }
   }
 

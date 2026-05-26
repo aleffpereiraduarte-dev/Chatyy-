@@ -1,0 +1,56 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="expo.modules.livenative" >
+4
+5    <uses-sdk android:minSdkVersion="24" />
+6
+7    <application>
+7-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:3:3-37:17
+8
+9        <!--
+10      Stage 1 scaffold (2026-05-16) — full-native Live host screen. Owns the
+11      entire broadcast UX: camera preview + LiveKit publish + viewer count +
+12      reactions. Replaces the RN /live-broadcast screen once Stage 2 lands.
+13      portrait + NoActionBar so the activity owns its own chrome.
+14        -->
+15        <activity
+15-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:11:5-15:46
+16            android:name="expo.modules.livenative.LiveHostActivity"
+16-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:12:7-39
+17            android:exported="false"
+17-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:13:7-31
+18            android:screenOrientation="portrait"
+18-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:15:7-43
+19            android:theme="@style/Theme.AppCompat.NoActionBar" />
+19-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:14:7-57
+20
+21        <!--
+22      Stage 1 scaffold — Live viewer screen. Subscribes to the host's video +
+23      audio tracks; sends like reactions over the data channel. Replaces the
+24      RN /live-viewer screen once Stage 2 lands.
+25
+26      Wave 16 (2026-05-17): supportsPictureInPicture=true so onUserLeaveHint
+27      can drop the activity into a floating PiP window when the user
+28      backgrounds the app. resizeableActivity=true is required for PiP on
+29      Android 8.0 (API 26)+. The activity also handles screen+keyboard
+30      config changes itself so PiP entry doesn't recreate the activity.
+31        -->
+32        <activity
+32-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:28:5-35:112
+33            android:name="expo.modules.livenative.LiveViewerActivity"
+33-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:29:7-41
+34            android:configChanges="screenSize|smallestScreenSize|screenLayout|orientation|keyboard|keyboardHidden"
+34-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:35:7-109
+35            android:exported="false"
+35-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:30:7-31
+36            android:resizeableActivity="true"
+36-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:34:7-40
+37            android:screenOrientation="portrait"
+37-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:32:7-43
+38            android:supportsPictureInPicture="true"
+38-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:33:7-46
+39            android:theme="@style/Theme.AppCompat.NoActionBar" />
+39-->/root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:31:7-57
+40    </application>
+41
+42</manifest>

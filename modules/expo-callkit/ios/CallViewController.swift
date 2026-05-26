@@ -667,7 +667,16 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         view.addSubview(controlBar)
 
         // 7. E2E encryption badge
+        // [2026-05-25 #1358 video fix] Tag 9045 so applyRemoteVideoTrack can
+        // fade this small "Criptografada" pill out when the remote camera takes
+        // over the full screen — without a tag it stayed drawn in the center of
+        // the screen ON TOP of the remote video (the remote VideoView is
+        // inserted aboveSubview: pulse, i.e. BELOW this badge in z-order), so the
+        // user saw the word "Criptografada" instead of the peer's video. We keep
+        // the badge (encryption is real) — it just belongs with the avatar/name
+        // overlay, hidden while video is full-bleed and restored when video off.
         let e2eBadge = UIView()
+        e2eBadge.tag = 9045
         e2eBadge.translatesAutoresizingMaskIntoConstraints = false
         e2eBadge.backgroundColor = UIColor.white.withAlphaComponent(0.08)
         e2eBadge.layer.cornerRadius = 14
@@ -1584,9 +1593,24 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// 2.0–2.x minor revs where the capturer type name has bounced between
     /// `CameraCapturer` and `LKCameraCapturer`.
     private static func trySmoothCameraSwitch(on track: LocalVideoTrack, to position: AVCaptureDevice.Position) async -> Bool {
-        // Reach the capturer via reflection. LK exposes `capturer` on
-        // LocalVideoTrack but the concrete type isn't part of the public API
-        // header — using `as? NSObject` lets us invoke selectors safely.
+        // [2026-05-25 flip-crash fix] The previous implementation reached the
+        // capturer via Mirror reflection and then `perform(_:with:)`-invoked the
+        // ASYNC-bridged selector `switchCameraPositionWithCompletionHandler:`,
+        // passing an `unsafeBitCast` block as AnyObject. That was the crash
+        // vector: `perform(_:with:)` of an async-bridged ObjC method whose ABI
+        // doesn't match a plain id-arg selector can trap (EXC_BAD_ACCESS /
+        // "unrecognized selector"), and the `CheckedContinuation` could resume
+        // twice or never (both fatal / hanging). The concrete capturer type name
+        // also isn't guaranteed stable across pinned LK Swift 2.x patch revs
+        // (see expo-live-native/LiveHostViewController switchCamera notes), so we
+        // can't safely type-cast it either.
+        //
+        // Crash-safe strategy: only probe SYNCHRONOUS, void-returning selectors
+        // via reflection (no async completion handlers, no block bitcasting). If
+        // none of those exist, return false and let switchCamera() fall back to
+        // the proven setCamera(captureOptions:) republish path, which uses the
+        // fully type-checked LiveKit API. Worst case = a brief black frame on
+        // flip, never a crash.
         var foundCapturer: NSObject?
         let mirror = Mirror(reflecting: track)
         for child in mirror.children {
@@ -1597,20 +1621,6 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             }
         }
         guard let capturer = foundCapturer else { return false }
-        // LK Swift's `CameraCapturer.switchCameraPosition()` async throws is
-        // bridged to ObjC as `switchCameraPositionWithCompletionHandler:`.
-        let sel = NSSelectorFromString("switchCameraPositionWithCompletionHandler:")
-        if capturer.responds(to: sel) {
-            return await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
-                let block: @convention(block) (NSError?) -> Void = { err in
-                    cont.resume(returning: err == nil)
-                }
-                let blockObj = unsafeBitCast(block, to: AnyObject.self)
-                _ = capturer.perform(sel, with: blockObj)
-            }
-        }
-        // Some SDK builds spell the method differently — try a couple of
-        // common variants before giving up. All return Bool / Void.
         for name in ["switchCamera", "toggleCamera"] {
             let altSel = NSSelectorFromString(name)
             if capturer.responds(to: altSel) {
@@ -2878,11 +2888,33 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             remote.track = track
             remote.isHidden = false
             remoteVideoActive = true
-            // Hide avatar + pulse rings + initial label — video owns the screen.
+            // [2026-05-25 #1358 video fix] The remote VideoView MUST sit above the
+            // avatar/name/status/badge overlay (which were addSubview'd after the
+            // gradient) but below the controls + top bar. setupVideoViews inserts
+            // it aboveSubview: pulse, but the e2e badge (9045), name (9000),
+            // status (9001) and participant count (9040) were added afterwards and
+            // therefore float ABOVE the video — that's why "Criptografada" covered
+            // the picture. Re-front the video over those overlay labels here, then
+            // re-front ONLY the persistent call chrome (controls 9008 + top bar)
+            // so the buttons stay tappable. The name/status/badge belong to the
+            // avatar overlay and are faded out below.
+            self.view.bringSubviewToFront(remote)
+            if let controls = self.view.viewWithTag(9008) { self.view.bringSubviewToFront(controls) }
+            if let bars = self.view.viewWithTag(9010), let topBar = bars.superview {
+                self.view.bringSubviewToFront(topBar)
+            }
+            // PiP local tile always stays on top of everything.
+            if let pip = self.localPipContainer { self.view.bringSubviewToFront(pip) }
+            // Hide avatar + pulse rings + initial label + encryption badge +
+            // participant count — video owns the screen. The "Criptografada" pill
+            // is part of this overlay; it fades with the rest so it never covers
+            // the picture, and comes back if the camera goes off.
             UIView.animate(withDuration: 0.3) {
                 remote.alpha = 1
                 if let av = self.avatarContainerView() { av.alpha = 0 }
                 if let pulse = self.view.viewWithTag(9020) { pulse.alpha = 0 }
+                if let badge = self.view.viewWithTag(9045) { badge.alpha = 0 }
+                if let count = self.view.viewWithTag(9040) { count.alpha = 0 }
             }
             // Switch the controls to video mode (scrim + auto-hide + tap toggle).
             enterVideoControlsMode()
@@ -2895,6 +2927,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             UIView.animate(withDuration: 0.3) {
                 remote.alpha = 0
                 if let av = self.avatarContainerView() { av.alpha = 1 }
+                // Restore the encryption badge + participant count overlay now
+                // that the avatar screen is showing again.
+                if let badge = self.view.viewWithTag(9045) { badge.alpha = 1 }
+                if self.session.isGroup, let count = self.view.viewWithTag(9040) { count.alpha = 1 }
                 // Only un-hide pulse rings if the call hasn't connected yet;
                 // once connected the statusObserver fades them out and we leave
                 // them hidden. Re-show avatar regardless.
@@ -2977,6 +3013,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // ── Camera flip ─────────────────────────────────────────────────────────
     @objc private func uikitOnFlipCamera() {
         tapFeedback(view.viewWithTag(9006) as? UIButton)
+        // [2026-05-25 flip-crash fix] Guard: if there is no local video track
+        // published yet (audio-only call, or video not yet on), flipping the
+        // camera has nothing to act on — switchCamera() would otherwise reach
+        // into a nil capturer / publish a camera the user never asked for.
+        // The flip control is normally hidden until the camera publishes, but
+        // the PiP-tile flip button + races can still fire this; bail safely
+        // instead of crashing.
+        guard session.localVideoTrack != nil, session.camEnabled else {
+            print("[CallVC] uikitOnFlipCamera ignored — no local video track / cam disabled")
+            return
+        }
         switchCamera()
         // Update local mirror immediately for snappy feel; switchCamera flips
         // currentCameraPosition synchronously before the async swap.

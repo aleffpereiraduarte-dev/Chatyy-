@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  [#1176 polish, 2026-05-18] Slide-down exit when the user hangs up.
+  Symmetric with call_slide_up_enter so the dismiss feels like the same
+  physical surface returning offscreen.
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:interpolator/accelerate_quint"
+    android:shareInterpolator="true">
+    <translate
+        android:fromYDelta="0"
+        android:toYDelta="100%p"
+        android:duration="240" />
+    <alpha
+        android:fromAlpha="1.0"
+        android:toAlpha="0.7"
+        android:duration="200" />
+</set>

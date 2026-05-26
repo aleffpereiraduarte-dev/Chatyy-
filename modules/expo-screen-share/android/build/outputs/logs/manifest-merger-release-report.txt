@@ -1,0 +1,34 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:2:1-19:12
+INJECTED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:2:1-19:12
+	package
+		INJECTED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml
+	xmlns:android
+		ADDED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:2:11-69
+uses-permission#android.permission.FOREGROUND_SERVICE
+ADDED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:10:3-75
+	android:name
+		ADDED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:10:20-72
+uses-permission#android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION
+ADDED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:11:3-92
+	android:name
+		ADDED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:11:20-89
+application
+ADDED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:13:3-18:17
+service#expo.modules.screenshare.ScreenShareService
+ADDED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:14:5-17:57
+	android:exported
+		ADDED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:16:7-31
+	android:foregroundServiceType
+		ADDED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:17:7-54
+	android:name
+		ADDED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:15:7-41
+uses-sdk
+INJECTED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml
+INJECTED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml
+	android:targetSdkVersion
+		INJECTED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml
+	android:minSdkVersion
+		INJECTED from /root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml

@@ -28,6 +28,14 @@ export default function FaceFilterOverlay({ filterKey, previewSize, facing = 'fr
   const [face, setFace] = useState(null);     // last detected face packet
   const lastSeenRef = useRef(0);
   const subRef = useRef(null);
+  // JS-side commit throttle. The native binding is *supposed* to cap the
+  // landmark stream at `fps`, but on some builds/devices it emits faster
+  // (or the cap isn't wired), and a setFace() per event re-renders this
+  // whole overlay (per-anchor math + <Image> remounts) every frame — which
+  // saturates the JS thread and freezes the camera UI ("status com efeito
+  // travando"). Hard-cap commits to ~20fps (50ms) on the JS side so the
+  // overlay can never starve the UI thread regardless of native behavior.
+  const lastCommitRef = useRef(0);
 
   // Smoothing state — last interpolated positions keyed by anchor id.
   // Persists across frames so we don't snap when a landmark drops out
@@ -52,7 +60,12 @@ export default function FaceFilterOverlay({ filterKey, previewSize, facing = 'fr
       mp.startFaceLandmarker?.({ fps });
       const handler = (data) => {
         if (!data?.landmarks || !data.landmarks.length) return;
-        lastSeenRef.current = Date.now();
+        const now = Date.now();
+        lastSeenRef.current = now;
+        // Throttle the React commit to ~20fps. We still record lastSeenRef
+        // above every event so the stale-face watchdog stays accurate.
+        if (now - lastCommitRef.current < 50) return;
+        lastCommitRef.current = now;
         setFace(data.landmarks[0]); // first face only — single-subject status
       };
       subRef.current = mp.addListener?.('faceLandmarks', handler);
@@ -70,16 +83,28 @@ export default function FaceFilterOverlay({ filterKey, previewSize, facing = 'fr
   // stale overlay glued to the last position when the user turns away.
   // 800ms is a balance: shorter feels twitchy when ML Kit briefly loses
   // lock during a head turn; longer leaves a "stuck filter" smell.
+  //
+  // This watchdog runs once per active preset — NOT per `face` change.
+  // Keying it on `[face]` (as it was) tore down and recreated the interval
+  // on every single landmark commit (up to 20-30×/sec), churning timers
+  // and compounding the render pressure that froze the camera. Gating on
+  // the preset's presence keeps a single stable interval for the whole
+  // session; the lastSeenRef read inside picks up the latest timestamp.
   useEffect(() => {
-    if (!face) return undefined;
+    if (!preset || preset.key === 'none') return undefined;
     const id = setInterval(() => {
-      if (Date.now() - lastSeenRef.current > 800) {
-        setFace(null);
-        smoothRef.current = {};
+      if (lastSeenRef.current && Date.now() - lastSeenRef.current > 800) {
+        // Functional update so we only re-render (and reset smoothing) on
+        // the transition non-null → null, never repeatedly while idle.
+        setFace((prev) => {
+          if (prev === null) return prev;
+          smoothRef.current = {};
+          return null;
+        });
       }
     }, 200);
     return () => clearInterval(id);
-  }, [face]);
+  }, [preset?.key]);
 
   // Belt-and-braces: bail when any prerequisite is missing. Each check
   // protects a separate crash path — missing asset (someone deleted the

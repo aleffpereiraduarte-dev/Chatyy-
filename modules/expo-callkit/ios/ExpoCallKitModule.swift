@@ -3212,14 +3212,27 @@ fileprivate func retryPresent(reason: String,
 // outgoing call or app in foreground) stays single-frame because state is active.
 fileprivate func presentWhenActive(reason: String, block: @escaping (UIViewController) -> Void) {
   var done = false
+  // doPresent always routes through retryPresent, which ticks
+  // resolvePresentingViewController() up to ~3s. This is the key robustness
+  // upgrade: even if we fire on .foregroundInactive (which we now also accept),
+  // retryPresent keeps re-resolving until a foreground window with a rootVC is
+  // available and presents onto it — so the full-screen / lock-screen answer
+  // lands on the EXACT same CallViewController.present path as the banner
+  // answer, instead of a one-shot present() that UIKit silently drops mid
+  // transition. Idempotent via `done`.
+  var obsActive: NSObjectProtocol?
+  var obsForeground: NSObjectProtocol?
+  func cleanup() {
+    if let t = obsActive { NotificationCenter.default.removeObserver(t); obsActive = nil }
+    if let t = obsForeground { NotificationCenter.default.removeObserver(t); obsForeground = nil }
+  }
   let doPresent: () -> Void = {
     if done { return }
     done = true
-    if let vc = resolvePresentingViewController() {
-      block(vc)
-    } else {
-      retryPresent(reason: reason, block: block)
-    }
+    cleanup()
+    // retryPresent's first attempt is synchronous, so the warm path stays
+    // single-frame; subsequent ticks cover the cold/locked transition.
+    retryPresent(reason: reason, block: block)
   }
   if UIApplication.shared.applicationState == .active {
     print("[ExpoCallKit] presentWhenActive(\(reason)): app already active — present now")
@@ -3227,24 +3240,36 @@ fileprivate func presentWhenActive(reason: String, block: @escaping (UIViewContr
     doPresent()
     return
   }
-  // App still transitioning to foreground (answered from lock screen / background).
-  print("[ExpoCallKit] presentWhenActive(\(reason)): app NOT active (state=\(UIApplication.shared.applicationState.rawValue)) — deferring to didBecomeActive")
+  // App still transitioning to foreground (answered from CallKit full-screen UI
+  // on the lock screen, or with the app backgrounded). Listen for BOTH
+  // didBecomeActive AND willEnterForeground — on a locked-device answer the app
+  // can sit at .foregroundInactive for a while (until passcode), and
+  // willEnterForeground fires earlier/more reliably than didBecomeActive in
+  // that path. Whichever fires first wins (doPresent is idempotent).
+  print("[ExpoCallKit] presentWhenActive(\(reason)): app NOT active (state=\(UIApplication.shared.applicationState.rawValue)) — deferring to foreground")
   nativeCallDiag("presentVC_waiting_active", reason, "state=\(UIApplication.shared.applicationState.rawValue)")
-  var token: NSObjectProtocol?
-  token = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
-                                                 object: nil, queue: .main) { _ in
-    if let t = token { NotificationCenter.default.removeObserver(t); token = nil }
+  obsActive = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification,
+                                                     object: nil, queue: .main) { _ in
     print("[ExpoCallKit] presentWhenActive(\(reason)): didBecomeActive — presenting")
     nativeCallDiag("presentVC_became_active", reason)
     // Tiny delay so the window scene is fully attached before present.
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: doPresent)
   }
-  // Safety net: if the app was already active before we attached the observer
-  // (race), or didBecomeActive never fires, force the present after 2s.
+  obsForeground = NotificationCenter.default.addObserver(forName: UIApplication.willEnterForegroundNotification,
+                                                         object: nil, queue: .main) { _ in
+    print("[ExpoCallKit] presentWhenActive(\(reason)): willEnterForeground — presenting")
+    nativeCallDiag("presentVC_will_foreground", reason)
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: doPresent)
+  }
+  // Safety net: if both notifications were missed (e.g. the app became active in
+  // the race window between the state check above and addObserver), force the
+  // present after 2s. No longer gated on .active — retryPresent itself resolves
+  // a presentable foreground VC and bails safely if none is found, so this can
+  // never strand the user on a blank screen waiting for a notification that
+  // already fired.
   DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-    if !done && UIApplication.shared.applicationState == .active {
-      if let t = token { NotificationCenter.default.removeObserver(t); token = nil }
-      nativeCallDiag("presentVC_active_safety_net", reason)
+    if !done {
+      nativeCallDiag("presentVC_safety_net", reason, "state=\(UIApplication.shared.applicationState.rawValue)")
       doPresent()
     }
   }

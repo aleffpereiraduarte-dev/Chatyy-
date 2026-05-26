@@ -1,0 +1,16 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /root/webmail-app/modules/expo-chat-cache/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest1930821716926083051.xml:2:13-83
+INJECTED from /root/webmail-app/modules/expo-chat-cache/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest1930821716926083051.xml:2:13-83
+	package
+		INJECTED from /root/webmail-app/modules/expo-chat-cache/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest1930821716926083051.xml
+	xmlns:android
+		ADDED from /root/webmail-app/modules/expo-chat-cache/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest1930821716926083051.xml:2:23-81
+uses-sdk
+INJECTED from /root/webmail-app/modules/expo-chat-cache/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest1930821716926083051.xml reason: use-sdk injection requested
+INJECTED from /root/webmail-app/modules/expo-chat-cache/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest1930821716926083051.xml
+INJECTED from /root/webmail-app/modules/expo-chat-cache/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest1930821716926083051.xml
+	android:targetSdkVersion
+		INJECTED from /root/webmail-app/modules/expo-chat-cache/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest1930821716926083051.xml
+	android:minSdkVersion
+		INJECTED from /root/webmail-app/modules/expo-chat-cache/android/build/intermediates/tmp/ProcessLibraryManifest/release/tempAndroidManifest1930821716926083051.xml

@@ -1,0 +1,32 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="expo.modules.screenshare" >
+4
+5    <uses-sdk android:minSdkVersion="24" />
+6
+7    <!--
+8    [2026-05-16] MediaProjection foreground service for Android screenshare.
+9    Android 14+ requires this declared permission AND foregroundServiceType
+10    in startForeground() (see ScreenShareService.kt). Without both, the
+11    service throws SecurityException the moment we acquire the MediaProjection.
+12    -->
+13    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+13-->/root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:10:3-75
+13-->/root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:10:20-72
+14    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+14-->/root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:11:3-92
+14-->/root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:11:20-89
+15
+16    <application>
+16-->/root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:13:3-18:17
+17        <service
+17-->/root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:14:5-17:57
+18            android:name="expo.modules.screenshare.ScreenShareService"
+18-->/root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:15:7-41
+19            android:exported="false"
+19-->/root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:16:7-31
+20            android:foregroundServiceType="mediaProjection" />
+20-->/root/webmail-app/modules/expo-screen-share/android/src/main/AndroidManifest.xml:17:7-54
+21    </application>
+22
+23</manifest>
