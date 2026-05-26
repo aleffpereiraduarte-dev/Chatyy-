@@ -628,7 +628,10 @@ function CallScreenInner() {
         });
       } catch {}
       setConnectPhase('slow');
-      setShowSlowConnectOverlay(true);
+      // Only show the alarmist "slow connection / check your network" overlay
+      // to the CALLEE (who already answered and is joining media). For the
+      // CALLER this window is just normal ringing — don't blame their network.
+      if (!isCaller) setShowSlowConnectOverlay(true);
     }, 15000);
     // [WAVE 109 2026-05-21] Hard 60s ceiling (bumped from 25s).
     // Root cause of "Não foi possível conectar": iOS cold-start VoIP push
@@ -3986,8 +3989,20 @@ function CallScreenInner() {
   // 5s debounce — `showReconnectBanner` is the gate, not the raw flag.
   let statusText = t('call.connecting') || 'Conectando...';
   if (!peerConnected && !peerRinging) {
-    if (connectPhase === 'slow') statusText = t('call.slowConnectHint') || 'A conexão está demorando um pouco. Verifique sua rede.';
-    else if (connectPhase === 'establishing') statusText = t('call.establishing') || 'Estabelecendo conexão segura...';
+    if (isCaller && connectPhase !== 'connecting') {
+      // CALLER waiting for the other side to pick up. This is NORMAL ringing
+      // (can be 30-45s), NOT a network fault — so never show the alarmist
+      // "Verifique sua rede" here just because the callee is slow to answer
+      // (or, e.g., their device didn't ack the ring). Show the honest
+      // "Chamando..." like WhatsApp. The 60s hard-fail ceiling still catches
+      // a genuinely stuck call (connectionFailed below). The establishing/
+      // slow escalation stays for the CALLEE side (post-answer media join).
+      statusText = t('call.ringing') || 'Chamando...';
+    } else if (connectPhase === 'slow') {
+      statusText = t('call.slowConnectHint') || 'A conexão está demorando um pouco. Verifique sua rede.';
+    } else if (connectPhase === 'establishing') {
+      statusText = t('call.establishing') || 'Estabelecendo conexão segura...';
+    }
   }
   if (peerRinging && !peerConnected) statusText = t('call.ringing') || 'Chamando...';
   if (connectionFailed) statusText = t('call.connectionFailed') || 'Não foi possível conectar. Tente novamente.';
