@@ -1873,7 +1873,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
             isDark={isDark}
             colors={colors}
           />
-          <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '600', letterSpacing: -0.1 }} numberOfLines={1}>
+          <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 7, fontWeight: '600', letterSpacing: -0.15 }} numberOfLines={1}>
             {myNote || myStatus ? myDisplayName : (t('status.yourStory') || 'Sua nota')}
           </Text>
         </TouchableOpacity>
@@ -7309,7 +7309,7 @@ const s = StyleSheet.create({
   emptyTitle: {
     fontSize: 25,
     fontWeight: '800',
-    letterSpacing: -0.5,
+    letterSpacing: -0.6,
     textAlign: 'center',
   },
   emptySubtitle: {
@@ -7317,7 +7317,8 @@ const s = StyleSheet.create({
     textAlign: 'center',
     marginTop: 12,
     lineHeight: 22,
-    letterSpacing: 0.1,
+    letterSpacing: 0,
+    maxWidth: 300,
   },
   // Empty-state CTA — pill button lifted with the brand purple glow so it
   // reads as the obvious next action on an otherwise empty screen.

@@ -1726,9 +1726,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 10,
-    minHeight: 52,
+    paddingTop: 11,
+    paddingBottom: 11,
+    minHeight: 54,
     zIndex: 10,
     ...(Platform.OS === 'ios' ? {
       shadowColor: '#000',
@@ -1757,18 +1757,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   brandTitle: {
-    fontSize: 24,
+    fontSize: 25,
     fontWeight: '800',
-    letterSpacing: -0.6,
+    letterSpacing: -0.8,
   },
   title: {
     fontSize: 21,
     fontWeight: '700',
-    letterSpacing: -0.3,
+    letterSpacing: -0.4,
   },
   headerActions: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 7,
   },
   headerIconBtn: {
     width: 38,
