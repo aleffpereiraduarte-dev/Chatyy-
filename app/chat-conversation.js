@@ -74,7 +74,7 @@ import LocationPickerSheet from '../components/LocationPickerSheet';
 import ChatNotificationSettingsSheet from '../components/ChatNotificationSettingsSheet';
 import SafetyNumberSheet from '../components/SafetyNumberSheet';
 import SendStatusText from '../components/SendStatusText';
-import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache } from '../services/mediaCache';
+import { getCachedUri, preCacheUrls, cacheMedia, saveMediaPermanent, saveConversationMedia, initSyncCache, getThumbB64Sync, ingestThumbB64FromMessages } from '../services/mediaCache';
 // [WAVE 45 2026-05-21] Root cause Android thumb sumindo: ExpoImage was aliased
 // to react-native's <Image>, which does NOT understand `source={{ blurhash }}`
 // nor `cachePolicy`/`contentFit`/`priority` props. The blurhash backdrop layer
@@ -9608,6 +9608,37 @@ export default function ChatConversationScreen() {
         // — em 4G a gente segura pra não estourar plano de dados, o usuário
         // toca no balão pra forçar download (vide download icon nos cases).
         if (Platform.OS !== 'web') {
+          // Persist every LQIP (thumb_b64) the batch carries so the blur
+          // placeholder is queryable synchronously from the in-memory MMKV
+          // cache (getThumbB64Sync) the instant each image bubble mounts —
+          // even for rows that later lose the column to a SQLite snapshot.
+          try { ingestThumbB64FromMessages(newMsgs); } catch {}
+          // WhatsApp-grade head start: warm expo-image's NATIVE memory+disk
+          // cache for the ~10 most recent image messages the moment the
+          // conversation opens. expo-image checks memory → disk → network, so
+          // by the time these rows scroll into view they paint sub-frame from
+          // the warm cache instead of triggering a cold CDN download (the
+          // multi-second gray box). Bounded to the last 10 + deduped so a
+          // long history doesn't fan out hundreds of fetches. force:false on
+          // cacheMedia keeps the cellular policy intact; Image.prefetch is
+          // lightweight and always safe (it's just a decode-ahead hint).
+          try {
+            const recentImgs = newMsgs
+              .filter(m => m && m.type === 'image' && m.file_url && !m._uploading)
+              .slice(-10);
+            if (recentImgs.length) {
+              let ExpoImg = null;
+              try { ExpoImg = require('expo-image').Image; } catch {}
+              const { getLocalUriIfCached } = require('../services/mediaCache');
+              for (const m of recentImgs) {
+                try {
+                  const remote = api.getMediaUrl(m.file_url);
+                  if (!remote || getLocalUriIfCached(remote)) continue;
+                  ExpoImg?.prefetch?.(remote, 'memory-disk');
+                } catch {}
+              }
+            }
+          } catch {}
           let isWifi = false;
           try {
             const { getNetworkState } = require('../services/networkInfo');
@@ -17408,7 +17439,8 @@ export default function ChatConversationScreen() {
             if (v?.thumb) _cellThumbUri = v.thumb.startsWith('http') ? v.thumb : `https://chatyy.com.br${v.thumb}`;
           } catch {}
         }
-        const _cellLqip = m.thumb_b64 ? `data:image/jpeg;base64,${m.thumb_b64}` : null;
+        const _cellLqipB64 = m.thumb_b64 || (Platform.OS !== 'web' ? getThumbB64Sync(m.id) : null);
+        const _cellLqip = _cellLqipB64 ? `data:image/jpeg;base64,${_cellLqipB64}` : null;
         return (
           <TouchableOpacity
             key={m.id || keyIdx}
@@ -17814,7 +17846,15 @@ export default function ChatConversationScreen() {
           // embedded in the message payload. Rendered blurred with the full
           // photo streaming on top — user sees a blurred version of the
           // actual photo instantly, never a blank box.
-          const lqipUri = msg.thumb_b64 ? `data:image/jpeg;base64,${msg.thumb_b64}` : null;
+          // LQIP source priority: the row's own thumb_b64 (freshest), else the
+          // persisted MMKV cache keyed by message id (populated the instant the
+          // WS event landed via prefetchIncomingMessageMedia → persistThumbB64).
+          // The fallback matters because SQLite snapshots / re-normalized rows
+          // can drop the thumb_b64 property even though the backend sent it —
+          // without it the bubble fell to the slow full-res-blurred `remote-bd`
+          // path = the multi-second gray box the user reported.
+          const _lqipB64 = msg.thumb_b64 || (Platform.OS !== 'web' ? getThumbB64Sync(msg.id) : null);
+          const lqipUri = _lqipB64 ? `data:image/jpeg;base64,${_lqipB64}` : null;
           // [WAVE 45 2026-05-21] One-shot dev trace per msg id so we can see
           // which backdrop source wins on Android. Helps the next regression
           // investigation — silenced in production by __DEV__ check.
