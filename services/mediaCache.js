@@ -2075,6 +2075,54 @@ export async function requestRedownload(messageId, fileUrl = '') {
   if (_inflightRedl.has(mid)) return _inflightRedl.get(mid);
 
   const work = (async () => {
+    // ── Step 0: try the ORIGINAL file_url directly (WhatsApp-first) ────────
+    // The overwhelmingly common reason a bubble shows "baixar de novo" is
+    // that the LOCAL copy was evicted (iOS purged cacheDirectory, or our LRU
+    // sweep ran) while the CDN object is still very much alive. In that case
+    // we don't need the server round-trip at all — just re-fetch the same URL
+    // and write it back into the PERMANENT dir. This is what makes the button
+    // feel instant and is why "clico em baixar e não acontece nada" happened:
+    // the old in-bubble handlers called bare cacheMedia (which silently no-ops
+    // on the remote URL when it 404s) and never escalated; here we try the
+    // cheap path first, then fall through to the server for a fresh URL.
+    if (Platform.OS !== 'web' && fileUrl) {
+      try {
+        // Resolve through getMediaUrl so the cache key matches the bubble's
+        // (CDN host rewrite). force:true = explicit user intent, bypass gate.
+        let absolute = fileUrl;
+        try {
+          const api0 = require('./api');
+          if (api0?.getMediaUrl) absolute = api0.getMediaUrl(fileUrl);
+        } catch {}
+        if (!/^https?:/i.test(absolute) && !absolute.startsWith('file://')) {
+          absolute = absolute.startsWith('/') ? `https://chatyy.com.br${absolute}` : absolute;
+        }
+        if (/^https?:/i.test(absolute)) {
+          const local = await cacheMedia(absolute, { force: true });
+          if (typeof local === 'string' && local.startsWith('file://')) {
+            // Got it straight from the origin — bind the original URL too so
+            // every bubble in the thread resolves to the same local file.
+            try { if (absolute !== fileUrl) bindLocalUriToRemoteUrl(local, fileUrl); } catch {}
+            const payload0 = {
+              ok: true,
+              messageId: mid,
+              url: absolute,
+              localUri: local,
+              kind: 'origin',
+              type: '',
+              fileName: '',
+              fileSize: 0,
+              createdAt: null,
+              originalUrl: fileUrl,
+            };
+            _emitRedownload(payload0);
+            return payload0;
+          }
+        }
+      } catch {}
+    }
+
+    // ── Step 1: ask the server for a fresh URL (R2 CDN > origin > presigned)
     let resp;
     try {
       const api = require('./api');
@@ -2084,15 +2132,19 @@ export async function requestRedownload(messageId, fileUrl = '') {
     }
     if (!resp || !resp.success) {
       // Pass through the server-side reason so UI can show "deleted" vs
-      // "unavailable" copy. status comes from apiCall's wrapped error shape.
+      // "unavailable" copy. NOTE: apiCall() returns only the JSON body
+      // ({success,data,message}) and STRIPS the HTTP status, so resp.status
+      // is undefined here. We can't read 410 off the code — rely on the
+      // server's `message` text ("message deleted") to detect the hard-delete
+      // case. Everything else is a transient/unavailable error the UI should
+      // let the user retry.
       const msg = resp?.message || resp?.error || 'unknown';
-      const code = resp?.status || 0;
       return {
         ok: false,
         error: msg,
-        status: code,
+        status: 0,
         messageId: mid,
-        deleted: code === 410 || /deleted/i.test(String(msg)),
+        deleted: /deleted|apagad/i.test(String(msg)),
       };
     }
     const data = resp.data || {};

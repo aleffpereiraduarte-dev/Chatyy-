@@ -18232,19 +18232,38 @@ export default function ChatConversationScreen() {
                     // Cleared on successful re-load (onLoadEnd above) or on
                     // an explicit retry tap from the placeholder UI.
                     setMediaErrors(prev => prev[msg.id] ? prev : ({ ...prev, [msg.id]: true }));
-                    // Optimistic local path guess falhou — força remote pra este msg
+                    // Optimistic local path guess falhou (arquivo evictado do
+                    // documentDirectory ou nunca gravado). WhatsApp recupera
+                    // silenciosamente: re-baixa do origin; se o origin tb 404
+                    // (CDN evictado / URL assinada rotacionada), escala pro
+                    // servidor (requestRedownload → URL fresca). Só deixa o chip
+                    // de erro visível se nem o servidor resolver.
                     if (typeof fullUri === 'string' && fullUri.startsWith('file://')) {
-                      const remote = msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
+                      const remote = (() => {
+                        try { return api.getMediaUrl(msg.file_url); }
+                        catch { return msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`; }
+                      })();
                       setCachedUris(prev => ({ ...prev, [remote]: remote }));
                       try {
-                        const { cacheMedia } = require('../services/mediaCache');
-                        cacheMedia(remote).then(local => {
-                          if (local && local !== remote && mountedRef.current) {
+                        const { cacheMedia, requestRedownload } = require('../services/mediaCache');
+                        cacheMedia(remote, { force: true, conversationId }).then(local => {
+                          if (!mountedRef.current) return;
+                          if (typeof local === 'string' && local.startsWith('file://')) {
                             setCachedUris(p => ({ ...p, [remote]: local }));
-                            // Cache succeeded — clear error so the new URI paints.
                             setMediaErrors(p => { if (!p[msg.id]) return p; const n = { ...p }; delete n[msg.id]; return n; });
+                          } else {
+                            // Origin dead — ask the server for a fresh URL. The
+                            // subscribeRedownload listener up top swaps _localUri
+                            // on success, repainting the bubble automatically.
+                            requestRedownload(msg.id, msg.file_url).then(r => {
+                              if (mountedRef.current && r?.ok) {
+                                setMediaErrors(p => { if (!p[msg.id]) return p; const n = { ...p }; delete n[msg.id]; return n; });
+                              }
+                            }).catch(() => {});
                           }
-                        }).catch(() => {});
+                        }).catch(() => {
+                          requestRedownload(msg.id, msg.file_url).catch(() => {});
+                        });
                       } catch {}
                     }
                   }}
@@ -18260,17 +18279,38 @@ export default function ChatConversationScreen() {
                     activeOpacity={0.7}
                     onPress={(e) => {
                       e.stopPropagation?.();
-                      // Clear error flag + force a fresh download. The
-                      // ChatMedia component re-keys off uri so we don't
-                      // need to unmount it explicitly.
+                      // Clear error flag + re-download. WhatsApp behavior: the
+                      // local copy is gone but the CDN object usually isn't —
+                      // requestRedownload() tries the ORIGINAL url first (cheap,
+                      // instant when the file is still on the CDN) and only
+                      // escalates to the server (chat_redownload_media → fresh
+                      // CDN/origin/presigned URL) when the origin truly 404s.
+                      // Routing through it (instead of bare cacheMedia, which
+                      // silently no-ops on a dead remote) is the fix for
+                      // "clico em baixar e não acontece nada". On success it
+                      // emits to subscribeRedownload → the listener up top swaps
+                      // _localUri so the bubble repaints without a refetch.
                       setMediaErrors(prev => { if (!prev[msg.id]) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
                       try {
-                        const remote = msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`;
-                        const { cacheMedia } = require('../services/mediaCache');
+                        const { requestRedownload } = require('../services/mediaCache');
+                        const remote = (() => {
+                          try { return api.getMediaUrl(msg.file_url); }
+                          catch { return msg.file_url?.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`; }
+                        })();
                         setDownloadProgress(prev => ({ ...prev, [msg.id]: 0 }));
-                        cacheMedia(remote, { force: true, conversationId }).then(local => {
-                          if (local && local !== remote && mountedRef.current) {
-                            setCachedUris(p => ({ ...p, [remote]: local }));
+                        requestRedownload(msg.id, msg.file_url).then(r => {
+                          if (!mountedRef.current) return;
+                          if (r?.ok && (r.localUri || r.url)) {
+                            // The redownload listener already swapped _localUri;
+                            // also seed cachedUris so resolveMediaUri hits it.
+                            if (r.localUri && r.localUri.startsWith('file://')) {
+                              setCachedUris(p => ({ ...p, [remote]: r.localUri }));
+                            }
+                            setMediaErrors(p => { if (!p[msg.id]) return p; const n = { ...p }; delete n[msg.id]; return n; });
+                          } else {
+                            // True 404/deleted/expired — re-show the chip so the
+                            // user can tap again (server may recover).
+                            setMediaErrors(p => ({ ...p, [msg.id]: true }));
                           }
                         }).catch(() => {
                           if (mountedRef.current) setMediaErrors(p => ({ ...p, [msg.id]: true }));
@@ -18404,7 +18444,7 @@ export default function ChatConversationScreen() {
                   if (!msg.file_url) return;
                   // Reuse the existing fullscreen ChatMediaViewer — it
                   // handles unmute + rotation + pinch. No extra route needed.
-                  setMediaViewer({ visible: true, fileUrl: sVUri || msg.file_url, fileName: msg.file_name || 'short.mp4', fileSize: msg.file_size || 0, type: 'video' });
+                  setMediaViewer({ visible: true, fileUrl: sVUri || msg.file_url, fileName: msg.file_name || 'short.mp4', fileSize: msg.file_size || 0, type: 'video', messageId: msg.id, senderName: msg.sender_name || (msg.sender_email || '').split('@')[0] || '', senderEmail: msg.sender_email || '', createdAt: msg.created_at || msg.createdAt || null });
                 }}
                 onLongPressShare={(messageId) => {
                   // TODO: "Postar nos Reels também" — wire to
@@ -20114,14 +20154,32 @@ export default function ChatConversationScreen() {
             })();
             setDownloadProgress(prev => ({ ...prev, [msg.id]: 0 }));
             try {
-              const { cacheMedia } = require('../services/mediaCache');
-              return cacheMedia(remote).then(local => {
+              const { cacheMedia, requestRedownload } = require('../services/mediaCache');
+              return cacheMedia(remote, { force: true, conversationId }).then(local => {
                 if (!mountedRef.current) return null;
-                if (local && local !== remote && typeof local === 'string' && local.startsWith('file://')) {
+                if (typeof local === 'string' && local.startsWith('file://')) {
                   setCachedUris(prev => ({ ...prev, [remote]: local }));
+                  setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
+                  return local;
                 }
-                setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
-                return (typeof local === 'string' && local.startsWith('file://')) ? local : null;
+                // cacheMedia returned the remote URL unchanged → the origin
+                // 404'd / expired (file evicted from CDN, signed URL rotated).
+                // Escalate to the server for a fresh URL instead of silently
+                // returning null (the old behavior = "baixar não funciona").
+                return requestRedownload(msg.id, msg.file_url).then(r => {
+                  if (!mountedRef.current) return null;
+                  setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
+                  if (r?.ok && r.localUri && r.localUri.startsWith('file://')) {
+                    setCachedUris(prev => ({ ...prev, [remote]: r.localUri }));
+                    return r.localUri;
+                  }
+                  // Server may have handed back a fresh remote URL even if the
+                  // local write failed — still usable by the viewer.
+                  return (r?.ok && r.url) ? r.url : null;
+                }).catch(() => {
+                  setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
+                  return null;
+                });
               }).catch(() => {
                 setDownloadProgress(prev => { const n = { ...prev }; delete n[msg.id]; return n; });
                 return null;

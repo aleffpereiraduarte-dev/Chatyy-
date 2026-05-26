@@ -248,10 +248,28 @@ export default function ChatMedia({
         // bubble was stuck on dead file://.
         if (effectiveUri && effectiveUri.startsWith('file://') && !forceRemote) {
           setForceRemote(true);
-          // Also kick a fresh cacheMedia to refill syncIndex with a valid path.
+          // Silently re-fetch into the PERMANENT dir so the next paint is a
+          // file:// hit again. If the plain origin URL is also dead (CDN
+          // evicted / signed URL rotated) AND we have a messageId, escalate
+          // to the server for a fresh URL — same robust path the retry chip
+          // uses. This is the WhatsApp "evicted media silently comes back"
+          // guarantee for BUG A; the error chip only shows on a true 404.
           try {
             const abs = resolveAbsolute(uri);
-            if (abs) cacheMedia(abs).catch(() => {});
+            if (abs) {
+              cacheMedia(abs, { force: true }).then(local => {
+                if ((typeof local !== 'string' || !local.startsWith('file://'))
+                    && messageId && Platform.OS !== 'web') {
+                  // Origin gone — ask the server. Emits to subscribeRedownload
+                  // so the chat screen swaps _localUri and we repaint.
+                  requestRedownload(messageId, uri).catch(() => {});
+                }
+              }).catch(() => {
+                if (messageId && Platform.OS !== 'web') {
+                  requestRedownload(messageId, uri).catch(() => {});
+                }
+              });
+            }
           } catch {}
           return;
         }
