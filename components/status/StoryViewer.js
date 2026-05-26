@@ -2054,8 +2054,12 @@ export default function StoryViewer({
               // mention_type='status'.
               if (s.type === 'mention') {
                 const username = String(s.username || '').replace(/^@/, '');
-                const email = s.email || (username.includes('@') ? username : null);
-                const targetEmail = email || (username ? `${username}` : null);
+                // Only a real email is a valid profile target. A bare username
+                // (legacy stickers without `s.email`) is NOT a routable target —
+                // routing to it lands on a broken/empty profile. Accept `s.email`
+                // or a username that already looks like an email; otherwise the
+                // chip stays decorative (non-interactive).
+                const targetEmail = s.email || (username.includes('@') ? username : null);
                 const tappable = !!(onMentionPress && targetEmail);
                 return (
                   <TouchableOpacity

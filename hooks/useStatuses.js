@@ -175,18 +175,22 @@ function _prefetchAvatars(users) {
 }
 
 // Fingerprint a status response. Two responses are "equal" iff every item
-// has the same id + viewed_at + created_at — that's the only state the UI
-// actually cares about.
+// has the same id + viewed flag + view_count + created_at — that's the only
+// state the UI actually cares about. NOTE: the server returns `viewed` (bool)
+// and `view_count`, NOT `viewed_at`, so keying on viewed_at meant the
+// fingerprint never changed when a status got viewed on another device (the
+// "viewed" ring never greyed out, and the owner's "Vistos" count never
+// refreshed on poll). Key on the fields the server actually sends.
 function _fingerprint(mine, others) {
   try {
     const parts = [];
     for (const it of (mine || [])) {
-      parts.push(`m:${it.id}:${it.viewed_at || ''}:${it.created_at || ''}`);
+      parts.push(`m:${it.id}:${it.viewed ? 1 : 0}:${it.view_count || 0}:${it.created_at || ''}`);
     }
     for (const g of (others || [])) {
       const owner = g.ownerEmail || g.email || '';
       for (const it of (g.items || [])) {
-        parts.push(`o:${owner}:${it.id}:${it.viewed_at || ''}:${it.created_at || ''}`);
+        parts.push(`o:${owner}:${it.id}:${it.viewed ? 1 : 0}:${it.view_count || 0}:${it.created_at || ''}`);
       }
     }
     return parts.join('|');
@@ -697,16 +701,32 @@ export default function useStatuses(currentEmail, opts = {}) {
 
   // Optimistic remove (own delete flow). Removes the item from `mine` and
   // also from the corresponding `groups` entry so the row collapses cleanly.
+  //
+  // Mirrors `removeGroup`'s durability: persist the mutation to _liveStore +
+  // MMKV + disk cache so the deleted item doesn't resurrect from the cached
+  // snapshot on the next mount (before the server status_list refetch lands).
   const removeStatus = useCallback((statusId) => {
-    setMine(prev => prev.filter(it => it.id !== statusId));
-    setGroups(prev => prev.map(g => ({
-      ...g,
-      items: (g.items || []).filter(it => it.id !== statusId),
-    })).filter(g => (g.items || []).length > 0));
-    setOthers(prev => prev.map(g => ({
-      ...g,
-      items: (g.items || []).filter(it => it.id !== statusId),
-    })).filter(g => (g.items || []).length > 0));
+    const dropItem = (arr) => (arr || []).filter(it => it.id !== statusId);
+    const dropFromGroups = (gs) => (gs || [])
+      .map(g => ({ ...g, items: dropItem(g.items) }))
+      .filter(g => (g.items || []).length > 0);
+    const nextMine = (m) => dropItem(m);
+    setMine(prev => nextMine(prev));
+    setGroups(prev => {
+      const next = dropFromGroups(prev);
+      if (_liveStore) {
+        _liveStore = {
+          ..._liveStore,
+          mine: nextMine(_liveStore.mine),
+          groups: next,
+          others: dropFromGroups(_liveStore.others),
+        };
+        _writeMMKV(_liveStore);
+        try { setCache('statuses', _liveStore, 2592000000).catch(() => {}); } catch {}
+      }
+      return next;
+    });
+    setOthers(prev => dropFromGroups(prev));
     fpRef.current = null;
   }, []);
 
@@ -741,23 +761,35 @@ export default function useStatuses(currentEmail, opts = {}) {
     fpRef.current = null;
   }, []);
 
-  // Archive a single status locally. Mirrors `removeStatus` but the
-  // intent is "hide from the strip, keep recoverable" — once the backend
-  // ships `status_archive`, the caller can fire-and-forget the API at the
-  // same time. For now, this is purely client-side optimistic feedback.
-  // TODO: consumers should also call api.statusArchive when available so
-  // the hidden flag survives across devices + restarts.
+  // Archive a single status. Mirrors `removeStatus`'s durability (live store +
+  // MMKV + disk cache) so the archived item stays hidden across nav/restart,
+  // and fires the backend `status_archive` endpoint so the hidden flag also
+  // survives across devices. API call is fire-and-forget; the next refetch
+  // reconciles if it failed.
   const archiveStatus = useCallback((statusId) => {
     if (!statusId) return;
-    setMine(prev => prev.filter(it => it.id !== statusId));
-    setGroups(prev => prev.map(g => ({
-      ...g,
-      items: (g.items || []).filter(it => it.id !== statusId),
-    })).filter(g => (g.items || []).length > 0));
-    setOthers(prev => prev.map(g => ({
-      ...g,
-      items: (g.items || []).filter(it => it.id !== statusId),
-    })).filter(g => (g.items || []).length > 0));
+    try { api.statusArchive(statusId).catch(() => {}); } catch {}
+    const dropItem = (arr) => (arr || []).filter(it => it.id !== statusId);
+    const dropFromGroups = (gs) => (gs || [])
+      .map(g => ({ ...g, items: dropItem(g.items) }))
+      .filter(g => (g.items || []).length > 0);
+    const nextMine = (m) => dropItem(m);
+    setMine(prev => nextMine(prev));
+    setGroups(prev => {
+      const next = dropFromGroups(prev);
+      if (_liveStore) {
+        _liveStore = {
+          ..._liveStore,
+          mine: nextMine(_liveStore.mine),
+          groups: next,
+          others: dropFromGroups(_liveStore.others),
+        };
+        _writeMMKV(_liveStore);
+        try { setCache('statuses', _liveStore, 2592000000).catch(() => {}); } catch {}
+      }
+      return next;
+    });
+    setOthers(prev => dropFromGroups(prev));
     fpRef.current = null;
   }, []);
 

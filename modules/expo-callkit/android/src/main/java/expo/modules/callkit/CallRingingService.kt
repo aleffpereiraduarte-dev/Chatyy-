@@ -71,6 +71,11 @@ class CallRingingService : Service() {
     // with is_group=true → onAccept routes to GroupCallActivity.
     private var isGroup: Boolean = false
     private var groupName: String = ""
+    // [missed-call has_video fix 2026-05-26 P1] Capture the call's video flag
+    // from the intent so the timeout runnable can pass the REAL value into
+    // showMissedCallNotification (it used to hardcode false, so missed VIDEO
+    // calls showed as voice in the tray). Set in onStartCommand.
+    private var hasVideo: Boolean = false
     // [STAGE-B 2026-05-20] Vibrator handle. Moved here from
     // IncomingCallActivity so vibration survives the user dismissing the
     // FSI without accepting (which previously killed the activity but
@@ -97,9 +102,10 @@ class CallRingingService : Service() {
                     callerEmail = callerEmail,
                     conversationId = conversationId,
                     callerAvatarUrl = callerAvatar,
-                    isVideo = false  // captured at notify time; ringing service
-                                     // doesn't keep video flag in state (matches
-                                     // hasVideo intent extra but not worth threading)
+                    // [missed-call has_video fix 2026-05-26 P1] Was hardcoded
+                    // false, so missed VIDEO calls rendered as voice in the
+                    // tray. Now threaded from the intent via the hasVideo field.
+                    isVideo = hasVideo
                 )
             } catch (t: Throwable) {
                 Log.w(TAG, "showMissedCallNotification failed: ${t.message}")
@@ -150,7 +156,10 @@ class CallRingingService : Service() {
             ?: "Chamada"
         conversationId = intent.getStringExtra("conversation_id") ?: ""
         callerAvatar = intent.getStringExtra("caller_avatar") ?: ""
-        val hasVideo = intent.getBooleanExtra("has_video", false)
+        // [missed-call has_video fix 2026-05-26 P1] Store into the field (not a
+        // shadowing local) so the timeout runnable's showMissedCallNotification
+        // gets the real value.
+        hasVideo = intent.getBooleanExtra("has_video", false)
         // [Goal 1 ring-fix 2026-05-25] "Modo silencioso para ligações" — server
         // sets mute_ringtone=1 (forwarded by CallFirebaseMessagingService /
         // displayIncomingCall). Routes the notification through the silent twin

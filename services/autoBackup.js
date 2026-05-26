@@ -193,7 +193,15 @@ TaskManager.defineTask(TASK_NAME, async () => {
                         FS.deleteAsync(destUri, { idempotent: true }).catch(() => {});
                         if (r.status >= 200 && r.status < 300) {
                           const confirmResult = await api.confirmUpload(batchResult.data.uploads[idx].file_id);
-                          if (confirmResult?.success !== false) {
+                          // [#524 hardening 2026-05-26] Require an EXPLICIT
+                          // success:true before marking the asset backed-up.
+                          // The old `!== false` was permissive: a network
+                          // timeout / malformed response (undefined success)
+                          // slipped through, marking the asset done while the
+                          // R2 object had no confirmed drive_files row →
+                          // orphan that is never retried. Mirror the
+                          // backupEngine.js confirm-then-mark hardening.
+                          if (confirmResult?.success === true) {
                             markAssetBackedUp(backedUpIds, chunk[idx].id);
                             uploaded++;
                             // Tag media kind (Live / Burst / Slo-mo / Time-lapse / RAW)
@@ -223,19 +231,24 @@ TaskManager.defineTask(TASK_NAME, async () => {
       } catch (e) { console.warn('[AutoBackup] Error in iOS background backup:', e.message); }
     }
 
-    // Fallback: use BackupEngine for non-iOS or if native upload yielded nothing
-    if (uploaded === 0) {
-      try {
-        const { getBackupEngine } = require('./backupEngine');
-        const engine = getBackupEngine();
-        await engine.init();
-        const result = await engine.runFullBackup({
-          includeVideos: settings.includeVideos,
-          quality: settings.quality || 'economy',
-        });
-        uploaded = result?.uploaded || 0;
-      } catch (e) { console.warn('[AutoBackup] Error in engine fallback:', e.message); }
-    }
+    // [#1241 2026-05-26] ALWAYS run the paginating engine, not only when the
+    // native pass uploaded nothing. The iOS native pass above scans only the
+    // newest 200 assets (getAssetsAsync { first: 200 }), so gating the engine
+    // on `uploaded === 0` meant older photos were NEVER reached as long as any
+    // recent one uploaded — the backlog silently stalled. runFullBackup
+    // paginates the entire library and dedups against backedUpIds (the same
+    // map the native pass just wrote), so re-running it is cheap and idempotent
+    // for already-backed-up assets while finally draining the older pages.
+    try {
+      const { getBackupEngine } = require('./backupEngine');
+      const engine = getBackupEngine();
+      await engine.init();
+      const result = await engine.runFullBackup({
+        includeVideos: settings.includeVideos,
+        quality: settings.quality || 'economy',
+      });
+      uploaded += result?.uploaded || 0;
+    } catch (e) { console.warn('[AutoBackup] Error in engine fallback:', e.message); }
 
     if (uploaded > 0) {
       await setLastSync(new Date().toISOString());

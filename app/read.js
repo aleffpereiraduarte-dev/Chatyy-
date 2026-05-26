@@ -104,8 +104,20 @@ export default function ReadScreen() {
         resolve(null);
       }, _timeoutMs)),
     ]);
+    // [2026-05-26] A single transient IMAP 401 / edge timeout used to strand
+    // the user on an empty reader. Retry the message fetch ONCE on a
+    // null/timeout/unsuccessful first result before trusting "no email". The
+    // api.js Rust-dead state is now cooldown-based, so the retry can land on a
+    // healthy path (PHP fallback or recovered Rust) instead of refailing.
+    const _fetchMessageWithRetry = async () => {
+      let r = await _withTimeout(getMessage(uid, folder), 'message');
+      if (!cancelled && !(r && r.success)) {
+        r = await _withTimeout(getMessage(uid, folder).catch(() => null), 'message-retry');
+      }
+      return r;
+    };
     Promise.all([
-      _withTimeout(getMessage(uid, folder), 'message'),
+      _fetchMessageWithRetry(),
       _withTimeout(getThread(uid, folder).catch(() => null), 'thread'),
     ]).then(([msgResult, threadResult]) => {
       if (cancelled) return;

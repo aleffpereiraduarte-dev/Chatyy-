@@ -329,6 +329,9 @@ export function getTokenMeta() { return { ..._tokenMeta }; }
 let _lastMetaPersist = 0;
 function _noteAuthOk() {
   _tokenMeta.last_auth_ok_at = Date.now();
+  // A confirmed-alive token must clear the ghost-login streak, otherwise an
+  // old streak could survive a recovery and trip a false logout later.
+  _consecutive401NoError = 0;
   const now = Date.now();
   if (now - _lastMetaPersist > 5 * 60 * 1000) {
     _lastMetaPersist = now;
@@ -1316,6 +1319,26 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       } else if (tokenHasValue) {
         _consecutive401 = (_consecutive401 || 0) + 1;
       }
+
+      // [2026-05-26] Per-token ghost-login streak. Count ONLY 401s that carried
+      // no explicit server `error` field (explicit logged_out/revoked already
+      // exited via the fast-path above). Reset the streak whenever the in-memory
+      // bearer changes (login / refresh / account switch) so a fresh token is
+      // never punished for the previous one's failures. Noisy actions never feed
+      // this streak.
+      const _hadErrField = !!(result.data && (result.data.error || result.data.data?.error));
+      const _fp = _tokenFingerprint();
+      if (_fp && _fp !== _ghost401TokenFp) {
+        _ghost401TokenFp = _fp;
+        _consecutive401NoError = 0;
+      }
+      if (!tokenHasValue || isNoisy || _hadErrField) {
+        // No token, noisy endpoint, or an explicit (but non-revoke) error code
+        // — don't let it accumulate toward the ghost-login signal.
+        if (isNoisy || _hadErrField) _consecutive401NoError = 0;
+      } else {
+        _consecutive401NoError = (_consecutive401NoError || 0) + 1;
+      }
       // 15 consecutive 401s antes de disparar logout — era 8, mas sob
       // teste prolongado de chamadas (call_notify + voip_register + WS
       // re-auth) o streak chegava a 8 e expulsava o user mesmo com token
@@ -1331,17 +1354,48 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       // por endpoints fora do NOISY_ACTIONS_401 (cada user é diferente). Com
       // 100 strikes, só um token de fato revogado/expirado dispara logout —
       // qualquer ruído transient se dilui antes. WhatsApp parity sustentável.
-      // [2026-05-19] WhatsApp parity: streak-based logout is now DISABLED.
-      // The only path that signals true logout is the explicit-revoke 401
-      // (server returns `error: logged_out`/`revoked` — handled in the
-      // fast-path block above this function). Any 401 without that explicit
-      // marker is treated as transient and the bearer is preserved. Setting
-      // `shouldSignal = false` here keeps all the downstream grace/in-call
-      // guards intact (in case we ever flip the threshold back) without
-      // changing their behaviour. User intent: "uma vez logado n sai mais
-      // so se a pessoa clicar em sair".
+      // [2026-05-26] Conservative ghost-login re-enable. The old code hard-pinned
+      // `shouldSignal = false`, so a genuinely dead token never forced logout
+      // unless the server emitted the exact logged_out/revoked marker — leaving
+      // users stuck in a "ghost logged-in" 401 loop. We now allow a logout
+      // signal, but only under a HIGH-confidence two-factor condition:
+      //   (a) the SAME bearer has returned >= GHOST_401_THRESHOLD 401s that
+      //       carried NO server error field (transient blips reset the streak
+      //       via _noteAuthOk / noteApiSuccess), AND
+      //   (b) an explicit check_auth probe against the backend ALSO comes back
+      //       401 (i.e. the bearer is confirmed dead, not just a flapping
+      //       sidecar endpoint).
+      // Both must hold. The downstream grace-window + in-call guards still get
+      // the final say below, so a recently-alive token is never nuked. This
+      // keeps WhatsApp-parity (no false logouts on blips) while finally healing
+      // the truly-dead-token case.
       let shouldSignal = false;
       void tokenHasValue; void isNoisy; // referenced for ESLint no-unused
+      if (
+        !_authFailureSignaled &&
+        tokenHasValue &&
+        !isNoisy &&
+        !_hadErrField &&
+        action !== 'check_auth' &&
+        _consecutive401NoError >= GHOST_401_THRESHOLD
+      ) {
+        try {
+          // Confirm the bearer is actually dead before signalling. check_auth
+          // extends the sliding token on success; a 2xx here means the streak
+          // was noise, so we clear it and keep the session.
+          const probe = await _rawApiCall('check_auth', {}, 'GET');
+          if (probe && probe.status >= 200 && probe.status < 300) {
+            _consecutive401NoError = 0;
+            try { _noteAuthOk(); } catch {}
+          } else if (probe && probe.status === 401) {
+            shouldSignal = true;
+          }
+        } catch {
+          // Probe failed (network/timeout) — DON'T logout on an inconclusive
+          // probe; treat as transient and wait for the next 401 to re-evaluate.
+          shouldSignal = false;
+        }
+      }
 
       // WhatsApp-grade refusal: even after 100 strikes, if this token has
       // been confirmed alive (any 2xx) within the last 90 days, REFUSE to
@@ -1358,6 +1412,7 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
           // every subsequent 401 keeps re-evaluating against the same
           // (now disregarded) 100-strike threshold.
           _consecutive401 = 0;
+          _consecutive401NoError = 0;
           try {
             recordLogoutAttempt('refused_within_grace', {
               source: 'api_401_streak',
@@ -1379,6 +1434,7 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
           if (typeof globalThis !== 'undefined' && globalThis.__chatyyCallActive) {
             shouldSignal = false;
             _consecutive401 = 0;
+            _consecutive401NoError = 0;
             try {
               recordLogoutAttempt('refused_during_call', {
                 source: 'api_401_streak',
@@ -1442,10 +1498,34 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
 
 let _authFailureSignaled = false;
 let _consecutive401 = 0;
-export function resetAuthFailureSignal() { _authFailureSignaled = false; _consecutive401 = 0; }
+// [2026-05-26] Conservative ghost-login signal. We track 401s that arrive
+// WITHOUT any explicit server `error` field (logged_out/revoked go through the
+// fast-path above and never reach here). Counted per-token: if the in-memory
+// bearer fingerprint changes (login / refresh / account switch) we reset, so a
+// healthy new token always starts clean. Only when the SAME dead bearer racks
+// up >= GHOST_401_THRESHOLD such 401s do we escalate to an explicit check_auth
+// probe; logout is signalled only if that probe ALSO 401s. This is the only
+// non-explicit path that can ever sign out, and it stays well clear of the
+// transient blips the grace/in-call guards already cover.
+let _consecutive401NoError = 0;
+let _ghost401TokenFp = '';
+const GHOST_401_THRESHOLD = 5;
+function _tokenFingerprint() {
+  const t = typeof authToken === 'string' ? authToken : '';
+  if (!t) return '';
+  // Cheap, non-reversible-enough fingerprint (length + head/tail) so we don't
+  // hold the raw bearer in another module variable.
+  return `${t.length}:${t.slice(0, 4)}:${t.slice(-4)}`;
+}
+export function resetAuthFailureSignal() {
+  _authFailureSignaled = false;
+  _consecutive401 = 0;
+  _consecutive401NoError = 0;
+  _ghost401TokenFp = '';
+}
 // Reset consecutive counter on any successful response so transient 401s
 // across long sessions don't accumulate forever.
-export function noteApiSuccess() { _consecutive401 = 0; }
+export function noteApiSuccess() { _consecutive401 = 0; _consecutive401NoError = 0; }
 
 // Soft-refresh the in-memory bearer from persistent storage. Used by the
 // WebSocket auth_error path so the next reconnect picks up a fresh bearer
@@ -1797,17 +1877,27 @@ export async function checkAuth() {
   return apiCall('check_auth');
 }
 
-// [2026-05-19] Once Rust returns 401 for the current bearer, mark it dead
-// for the rest of the session. Same bearer keeps working on PHP, but Rust's
-// IDLE-IMAP auth silently failed (observed on Chrome desktop). Without this
-// flag we'd keep hitting Rust on every getInbox/getFolders/getMessage call,
-// spamming the browser network panel + console with "Failed to load
-// resource: 401" lines that the user explicitly complained about.
-let _rustDead = false;
-function _markRustDead() { _rustDead = true; }
+// [2026-05-19] Once Rust returns 401 for the current bearer, mark it dead so
+// we stop hitting Rust on every getInbox/getFolders/getMessage call — that
+// spammed the network panel + console with "401" lines the user complained
+// about. Same bearer keeps working on PHP, but Rust's IDLE-IMAP auth had
+// silently failed (observed on Chrome desktop).
+//
+// [2026-05-26] Don't LATCH the dead state for the whole session on a single
+// 401 — that was often a transient IMAP/edge blip, after which Rust would have
+// recovered but we'd never probe it again (stuck on the slower PHP path for
+// the rest of the session). Instead mark it dead with a timestamp and allow a
+// re-probe after a cooldown. Call sites use `_isRustDead()` instead of the
+// old `_rustDead` boolean.
+const _RUST_DEAD_COOLDOWN_MS = 60 * 1000; // re-probe Rust ~1min after a 401
+let _rustDeadAt = 0;
+function _markRustDead() { _rustDeadAt = Date.now(); }
+function _isRustDead() {
+  return _rustDeadAt > 0 && (Date.now() - _rustDeadAt) < _RUST_DEAD_COOLDOWN_MS;
+}
 // Public reset hook — called by login() when the bearer changes so a fresh
 // token gets a fair shot at Rust again.
-export function _resetRustHealth() { _rustDead = false; }
+export function _resetRustHealth() { _rustDeadAt = 0; }
 
 export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search = '', category = '', label = '', filter = '') {
   // Rust-first for everything except label/category (Rust 501 → PHP fallback).
@@ -1815,7 +1905,7 @@ export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search 
   // handled natively; label KEYWORD maps and category bucketing stay on PHP.
   const needsPHP = !!label || (!!category && category !== 'all');
   if (!needsPHP) {
-    if (authToken && !_rustDead) {
+    if (authToken && !_isRustDead()) {
       try {
         const qs = new URLSearchParams({ folder, page: String(page), per_page: String(perPage) });
         if (search) qs.set('search', search);
@@ -1852,7 +1942,7 @@ export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search 
 export async function getMessage(uid, folder = 'INBOX') {
   // Rust email-api first, PHP fallback. Rust returns the exact same shape the app expects
   // plus extras (html/text/attachments) — we wrap into the legacy response shape.
-  if (!authToken || _rustDead) return apiCall('message', { uid, folder });
+  if (!authToken || _isRustDead()) return apiCall('message', { uid, folder });
   try {
     const url = `${BASE_URL}/api/rust/email/message/${encodeURIComponent(uid)}?folder=${encodeURIComponent(folder)}&mark_seen=true`;
     const r = await fetch(url, { headers: getAuthHeaders() });
@@ -1895,8 +1985,8 @@ export async function getFolders() {
   // Skip the Rust call entirely when we have no bearer token: the service
   // has no PHP session fallback and would just return 401, spamming logs
   // and the browser's network tab on cold boots without auth.
-  // Also skip when Rust already 401'd this session (see _rustDead comment).
-  if (authToken && !_rustDead) {
+  // Also skip when Rust recently 401'd (see _isRustDead cooldown comment).
+  if (authToken && !_isRustDead()) {
     try {
       const r = await fetch(`${BASE_URL}/api/rust/email/folders`, { headers: getAuthHeaders() });
       if (r.status === 401) _markRustDead();
@@ -2285,15 +2375,75 @@ export async function emptySpam() {
 }
 
 // Thread view
+// Backend get_thread returns data = { thread_id, subject, message_count, messages:[...] }.
+// read.js / ThreadView consume `data` as an array of messages, so flatten the
+// envelope: expose the messages array as `data` while keeping the metadata
+// fields (thread_id/subject/message_count) reachable for any caller that wants
+// them. Without this remap `data.length` is undefined and ThreadView never
+// renders (P0). Degrades safely if the backend ever returns a bare array.
 export async function getThread(uid, folder = 'INBOX') {
-  return apiCall('get_thread', { uid, folder });
+  const r = await apiCall('get_thread', { uid, folder });
+  if (r && r.success && r.data && !Array.isArray(r.data)) {
+    const meta = r.data;
+    return {
+      ...r,
+      data: Array.isArray(meta.messages) ? meta.messages : [],
+      thread_id: meta.thread_id,
+      subject: meta.subject,
+      message_count: meta.message_count,
+    };
+  }
+  return r;
 }
 
-// Attachment download URL
-// TODO: Security concern — bearer token is embedded in URL (visible in browser history, server logs, Referer headers).
-// Consider implementing a short-lived download token endpoint on the backend to minimize exposure.
+// Attachment download URL.
+//
+// Security (P1): the raw bearer used to be embedded in the URL (visible in
+// browser history, server logs, Referer headers). We now prefer a short-lived
+// download token (`dt=`) minted by the backend `attachment_dl_token` endpoint.
+// Because the only consumers (EmailReader) build the URL synchronously at
+// render time, getAttachmentUrl stays sync: it serves a cached `dt` when one
+// is available+fresh, otherwise it falls back to the legacy bearer URL AND
+// fires a background prefetch so the next render self-upgrades to `dt`. If the
+// backend endpoint isn't deployed yet the prefetch fails quietly and we keep
+// degrading to the bearer — never breaking downloads.
+const _dlTokenCache = new Map(); // key -> { token, exp }
+const _dlTokenInflight = new Set();
+const _DL_TOKEN_TTL_MS = 4 * 60 * 1000; // assume ~5min server TTL, refresh early
+
+function _dlTokenKey(uid, folder, part) {
+  return `${uid}:${folder}:${part}`;
+}
+
+async function _prefetchAttachmentDlToken(uid, folder, part) {
+  const key = _dlTokenKey(uid, folder, part);
+  if (_dlTokenInflight.has(key)) return;
+  _dlTokenInflight.add(key);
+  try {
+    const r = await apiCall('attachment_dl_token', { uid, folder, part });
+    const tok = r && r.success ? (r.data?.dt || r.data?.token || r.dt) : null;
+    if (tok) {
+      const ttl = (r.data?.expires_in ? r.data.expires_in * 1000 : _DL_TOKEN_TTL_MS);
+      _dlTokenCache.set(key, { token: tok, exp: Date.now() + Math.min(ttl, _DL_TOKEN_TTL_MS) });
+    }
+  } catch {
+    // Endpoint not deployed / transient — stay on bearer fallback.
+  } finally {
+    _dlTokenInflight.delete(key);
+  }
+}
+
 export function getAttachmentUrl(uid, folder, part) {
-  return `${API_URL}?action=attachment_download&uid=${uid}&folder=${encodeURIComponent(folder)}&part=${part}&token=${authToken || ''}`;
+  const base = `${API_URL}?action=attachment_download&uid=${uid}&folder=${encodeURIComponent(folder)}&part=${part}`;
+  const key = _dlTokenKey(uid, folder, part);
+  const cached = _dlTokenCache.get(key);
+  if (cached && cached.exp > Date.now()) {
+    return `${base}&dt=${encodeURIComponent(cached.token)}`;
+  }
+  // No fresh dt — kick off a background mint for the next render, and fall
+  // back to the bearer for this one so the download still works today.
+  try { _prefetchAttachmentDlToken(uid, folder, part); } catch {}
+  return `${base}&token=${authToken || ''}`;
 }
 
 // ---- Forgot Password ----

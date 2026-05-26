@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
-  LayoutAnimation, Animated, Modal, Pressable, Switch,
+  LayoutAnimation, Animated, Modal, Pressable, Switch, AppState,
 } from 'react-native';
 let DOMPurify = null;
 if (Platform.OS === 'web') {
@@ -789,14 +789,55 @@ export default function ComposeScreen() {
   const saveDraftRef = useRef(saveDraft);
   useEffect(() => { saveDraftRef.current = saveDraft; }, [saveDraft]);
 
+  // Force a final draft persist regardless of where we are in the autosave
+  // cycle. Used by the unmount cleanup and by the web beforeunload / native
+  // AppState 'background' handlers so a draft is never lost just because the
+  // interval timer hadn't fired yet. We re-arm the dirty flag first so the
+  // existing saveDraft (which early-returns when clean) actually writes.
+  const flushDraft = useCallback(() => {
+    try {
+      if (isComposeEmpty()) return;
+      contentChangedRef.current = true;
+      // Fire-and-forget: on unmount/background the component may be gone before
+      // the network call resolves, but the request still goes out.
+      saveDraftRef.current?.();
+    } catch {}
+  }, [isComposeEmpty]);
+  const flushDraftRef = useRef(flushDraft);
+  useEffect(() => { flushDraftRef.current = flushDraft; }, [flushDraft]);
+
   useEffect(() => {
     draftTimerRef.current = setInterval(() => saveDraftRef.current(), DRAFT_SAVE_INTERVAL);
+
+    // Persist on web tab close/refresh and on native app-background. Without
+    // this a user who closes the tab or backgrounds the app between autosave
+    // ticks loses everything typed since the last save.
+    let _removeBeforeUnload = null;
+    let _appStateSub = null;
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.addEventListener) {
+        const onBeforeUnload = () => { try { flushDraftRef.current?.(); } catch {} };
+        window.addEventListener('beforeunload', onBeforeUnload);
+        _removeBeforeUnload = () => window.removeEventListener('beforeunload', onBeforeUnload);
+      }
+    } else {
+      _appStateSub = AppState.addEventListener('change', (next) => {
+        if (next === 'background' || next === 'inactive') {
+          try { flushDraftRef.current?.(); } catch {}
+        }
+      });
+    }
+
     return () => {
       if (draftTimerRef.current) clearInterval(draftTimerRef.current);
       if (draftSavedTimerRef.current) clearTimeout(draftSavedTimerRef.current);
       // Clean up undo send timers on unmount to prevent sending after navigation
       if (undoSendRef.current) clearTimeout(undoSendRef.current);
       if (undoIntervalRef.current) clearInterval(undoIntervalRef.current);
+      // Final flush so an in-progress draft survives navigating away / unmount.
+      try { flushDraftRef.current?.(); } catch {}
+      try { _removeBeforeUnload?.(); } catch {}
+      try { _appStateSub?.remove?.(); } catch {}
     };
   }, []);
 
@@ -1315,6 +1356,35 @@ export default function ComposeScreen() {
     );
   };
 
+  // Inline note: the backend draft (draft_save) only stores headers + body —
+  // it has no MIME attachment parts. So when the user has attachments AND the
+  // draft is being autosaved, warn that the attachments themselves won't be in
+  // the saved draft (they must actually send the email to keep them). Avoids
+  // the "I saved a draft, where did my files go?" surprise.
+  const renderAttachmentDraftWarning = () => {
+    if (attachments.length === 0) return null;
+    const draftActive = draftStatus === 'saving' || draftStatus === 'saved' || !!draftUidRef.current;
+    if (!draftActive) return null;
+    const msg = t('compose.attachmentsNotSaved') || 'Anexos não são salvos no rascunho';
+    return (
+      <View
+        style={{
+          marginTop: 6,
+          paddingHorizontal: 10,
+          paddingVertical: 6,
+          borderRadius: 8,
+          backgroundColor: 'rgba(245, 158, 11, 0.12)',
+          borderWidth: StyleSheet.hairlineWidth,
+          borderColor: 'rgba(245, 158, 11, 0.45)',
+        }}
+        accessibilityRole="text"
+        accessibilityLabel={msg}
+      >
+        <Text style={{ fontSize: 11, color: '#b45309', fontWeight: '600' }}>{msg}</Text>
+      </View>
+    );
+  };
+
   // ── Shared: Undo / Draft / Error bars ──
   const renderStatusBars = () => (
     <>
@@ -1817,6 +1887,7 @@ export default function ComposeScreen() {
                   maxFiles={10}
                   maxSize={50 * 1024 * 1024}
                 />
+                {renderAttachmentDraftWarning()}
               </View>
 
               {/* Reply toolbar */}
@@ -2047,6 +2118,7 @@ export default function ComposeScreen() {
                 maxFiles={10}
                 maxSize={50 * 1024 * 1024}
               />
+              {renderAttachmentDraftWarning()}
             </View>
 
             {/* Bottom toolbar */}

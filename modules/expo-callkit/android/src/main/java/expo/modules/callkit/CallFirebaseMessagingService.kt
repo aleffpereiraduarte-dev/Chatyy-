@@ -59,6 +59,56 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             return
         }
 
+        // [FCM call_cancel fix 2026-05-26 P1] Caller hung up before pickup, OR
+        // the call was answered on another device. The backend pushes a silent
+        // data-only call_cancel/call_end (caller-side sibling-cancel + answered-
+        // elsewhere fan-out). Before this branch, the cancel push fell through
+        // to the Expo delegate → surfaced as a plain notification and the ring
+        // kept going until the 45s missed-call timeout (phone rang for a call
+        // the caller already abandoned). Mirrors the WS path
+        // (CallSignalWs.handleMessage "call_cancel" at line 447): tear down the
+        // ring + notification, honoring answered_elsewhere SELF-suppression so
+        // we don't kill a call THIS device just answered.
+        if (type == "call_cancel" || type == "call_end") {
+            val cancelId = data["call_id"] ?: data["room_id"] ?: ""
+            val reason = data["reason"] ?: ""
+            val acceptedByClientId = data["accepted_by_client_id"] ?: ""
+            if (cancelId.isEmpty()) {
+                Log.w(TAG, "$type with no call_id — ignoring")
+                return
+            }
+            // Self-suppress: if THIS device just answered, the server still
+            // ships the answered_elsewhere fan-out cancel to it. Don't tear
+            // down our own freshly-active call. Same gate as CallSignalWs:447.
+            if ((reason == "answered_elsewhere" || acceptedByClientId.isNotEmpty()) &&
+                CallSignalWs.consumeSelfAnsweredForCancel(cancelId)) {
+                Log.d(TAG, "$type $cancelId: we answered locally — self-suppress (reason=$reason)")
+                return
+            }
+            Log.d(TAG, "$type $cancelId reason=$reason — tearing down ring/notification")
+            // Stop the authoritative looping ringtone (the FCM-fallback ringer
+            // is launched directly, not tied to the FGS lifecycle, so an
+            // explicit stop is required here). Idempotent.
+            try { IncomingRinger.stop() } catch (_: Throwable) {}
+            // Cancel the incoming-call heads-up / full-screen notification.
+            try { CallNotificationService.cancelNotification(applicationContext, cancelId) } catch (_: Throwable) {}
+            // Stop the ringing foreground service (stopRingingForCall semantics:
+            // CallRingingService.onStartCommand owns a single ring; stopService
+            // → onDestroy stops the ringer + vibration + clears the FGS notif).
+            try {
+                applicationContext.stopService(Intent(applicationContext, CallRingingService::class.java))
+            } catch (_: Throwable) {}
+            // Also finish IncomingCallActivity if it's already on screen.
+            try {
+                val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").apply {
+                    setPackage(packageName)
+                    putExtra("call_id", cancelId)
+                }
+                applicationContext.sendBroadcast(closeIntent)
+            } catch (_: Throwable) {}
+            return
+        }
+
         // [#1359 group-answer routing 2026-05-25] The backend sends group calls
         // either as type="incoming_group_call" OR type="incoming_call" with
         // is_group="1" (see chat.php chat_group_call / call_notify). Previously

@@ -673,7 +673,14 @@ export async function replayOfflineQueue(api) {
           // drop the action; transient errors throw to trigger retry.
           if (!action.conversation_id) break;
           try {
-            const r = await api.chatReadAck(action.conversation_id);
+            // [read-id fix] When the offline fallback carried the specific
+            // message_id (markReadUpTo), replay with chatRead(conv, id) so the
+            // server's last_read_message_id advances to that exact row — the
+            // conversation-wide chatReadAck loses the watermark and can let the
+            // peer's blue ticks regress. Fall back to chatReadAck when no id.
+            const r = action.message_id
+              ? await api.chatRead(action.conversation_id, action.message_id)
+              : await api.chatReadAck(action.conversation_id);
             if (r && r.success === false) {
               const msg = String(r.message || r.error || '');
               const isHardError = /not_found|permission|invalid|forbidden/i.test(msg);
@@ -704,6 +711,47 @@ export async function replayOfflineQueue(api) {
           } catch (e) {
             const msg = String(e?.message || e || '');
             const isHardError = /not_found|invalid|permission|forbidden|too_long/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
+        case 'chat_delete': {
+          // Delete-for-everyone / delete-for-me replay. message_id + mode
+          // required. Mirrors chat_react: hard errors drop the action,
+          // transient errors throw to trigger retry. Server dedups a repeat
+          // delete (already-deleted row is a no-op), so replay is safe.
+          if (!action.message_id) break;
+          try {
+            const r = await api.chatDelete(
+              action.message_id,
+              action.mode || 'for_all',
+            );
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+              if (!isHardError) throw new Error('chat_delete_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
+        case 'chat_edit': {
+          // Edit-message replay. message_id + content required (content is the
+          // already-encrypted envelope when E2E is on). Mirrors chat_react.
+          if (!action.message_id || action.content == null) break;
+          try {
+            const r = await api.chatEdit(action.message_id, action.content);
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+              if (!isHardError) throw new Error('chat_edit_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
             if (!isHardError) throw e;
           }
           break;

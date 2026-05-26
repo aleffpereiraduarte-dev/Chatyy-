@@ -15,6 +15,34 @@ const ACCENT = '#7C3AED';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SHEET_HEIGHT = Math.min(SCREEN_HEIGHT * 0.75, 700);
 
+// Insert a freshly-sent comment into the comments list. Root comments go to
+// the top (Instagram/TikTok newest-first). Replies are nested under their
+// parent's `replies[]` array (so flatComments renders them right below the
+// parent) instead of being prepended to the root — which made the reply
+// "jump to the top" away from the thread it belongs to. If the parent isn't
+// in the current page we fall back to leaving the flat `reply_to_id` row so
+// flatComments' orphan handling can still place it.
+function insertComment(prev, newComment, replyParent) {
+  const parentId = replyParent?.id ?? newComment.reply_to_id ?? null;
+  if (parentId == null) {
+    // Root comment — newest first.
+    return [newComment, ...prev];
+  }
+  let placed = false;
+  const next = prev.map((c) => {
+    if (c.id === parentId) {
+      placed = true;
+      const replies = Array.isArray(c.replies) ? c.replies : [];
+      return { ...c, replies: [...replies, newComment] };
+    }
+    return c;
+  });
+  // Parent not on this page — keep the reply as a flat row (it carries
+  // reply_to_id) so flatComments' orphan pass can still splice it in.
+  if (!placed) return [...prev, newComment];
+  return next;
+}
+
 function timeAgo(dateStr, t) {
   if (!dateStr) return '';
   const str = dateStr.endsWith('Z') || dateStr.includes('+') ? dateStr : dateStr + 'Z';
@@ -395,7 +423,13 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
             return [...prev, ...unique];
           });
         }
-        setHasMore(newComments.length >= 20);
+        // Prefer the backend's authoritative has_more flag; fall back to the
+        // page-size heuristic for older servers that don't return it.
+        setHasMore(
+          r.data.has_more !== undefined
+            ? !!r.data.has_more
+            : newComments.length >= 20
+        );
       }
     } catch {} finally {
       setLoading(false);
@@ -472,8 +506,14 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     try {
       const r = await api.feedComment(post.id, content, replyTo?.id);
       if (r.success) {
-        const newComment = r.data?.comment || { ...optimisticComment, id: Date.now(), _pending: false };
-        setComments(prev => [newComment, ...prev]);
+        // Backend returns the comment row flat in `data` (not data.comment).
+        // Keep the legacy data.comment read as a fallback for older servers.
+        const serverRow = r.data?.comment || r.data;
+        const newComment = (serverRow && serverRow.id != null)
+          ? serverRow
+          : { ...optimisticComment, id: Date.now(), _pending: false };
+        const isReply = !!replyTo;
+        setComments(prev => insertComment(prev, newComment, replyTo));
         setText('');
         setReplyTo(null);
         currentCountRef.current += 1;
@@ -487,10 +527,13 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           } catch {}
         }
-        // Scroll to top to show new comment
-        setTimeout(() => {
-          listRef.current?.scrollToOffset?.({ offset: 0, animated: true });
-        }, 100);
+        // Scroll to top only for root comments — replies stay anchored under
+        // their parent, so yanking the list to the top would lose the thread.
+        if (!isReply) {
+          setTimeout(() => {
+            listRef.current?.scrollToOffset?.({ offset: 0, animated: true });
+          }, 100);
+        }
       }
     } catch {
       // Offline / 5xx — queue and keep the optimistic comment mounted so
@@ -503,7 +546,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           type: 'feed_comment',
           params: { post_id: post.id, content, reply_to_id: replyTo?.id || null },
         });
-        setComments(prev => [optimisticComment, ...prev]);
+        setComments(prev => insertComment(prev, optimisticComment, replyTo));
         setText('');
         setReplyTo(null);
         currentCountRef.current += 1;
@@ -588,14 +631,16 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           ...r.data,
           author_email: r.data.email,
           author_name: r.data.name,
+          reply_to_id: r.data.reply_to_id ?? replyTo?.id,
           liked_by_me: false,
           likes_count: 0,
         };
-        setComments(prev => [newComment, ...prev]);
+        const wasReply = !!replyTo;
+        setComments(prev => insertComment(prev, newComment, replyTo));
         setReplyTo(null);
         currentCountRef.current += 1;
         onCommentCountChange?.(currentCountRef.current);
-        setTimeout(() => listRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 100);
+        if (!wasReply) setTimeout(() => listRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 100);
       }
     } catch {} finally {
       setSending(false);
@@ -632,11 +677,12 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           created_at: new Date().toISOString(),
           reply_to_id: replyTo?.id,
         };
-        setComments(prev => [newComment, ...prev]);
+        const wasReply = !!replyTo;
+        setComments(prev => insertComment(prev, newComment, replyTo));
         setReplyTo(null);
         currentCountRef.current += 1;
         onCommentCountChange?.(currentCountRef.current);
-        setTimeout(() => listRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 100);
+        if (!wasReply) setTimeout(() => listRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 100);
       }
     } catch {} finally {
       setSending(false);
@@ -711,11 +757,12 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           created_at: new Date().toISOString(),
           reply_to_id: replyTo?.id,
         };
-        setComments(prev => [newComment, ...prev]);
+        const wasReply = !!replyTo;
+        setComments(prev => insertComment(prev, newComment, replyTo));
         setReplyTo(null);
         currentCountRef.current += 1;
         onCommentCountChange?.(currentCountRef.current);
-        setTimeout(() => listRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 100);
+        if (!wasReply) setTimeout(() => listRef.current?.scrollToOffset?.({ offset: 0, animated: true }), 100);
       }
     } catch {} finally {
       setVideoUploading(false);

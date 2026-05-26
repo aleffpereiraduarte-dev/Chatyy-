@@ -1182,9 +1182,14 @@ export async function cacheMedia(url, opts = {}) {
   }
 
   const key = urlToKey(url);
-  // Best-effort owner tag so the LRU sweep can protect favorites.
+  // Best-effort owner tag so the LRU sweep can protect favorites. Persisted
+  // (debounced) so the tag survives cold start — see _urlConvOwner notes.
   if (opts && opts.conversationId != null) {
-    try { _urlConvOwner.set(key, String(opts.conversationId)); } catch {}
+    _hydrateUrlConvOwner();
+    try {
+      _urlConvOwner.set(key, String(opts.conversationId));
+      _scheduleUrlConvOwnerPersist();
+    } catch {}
   }
   const indexed = syncIndex.get(key);
   if (indexed) {
@@ -1229,17 +1234,58 @@ export async function cacheMedia(url, opts = {}) {
       // bateria. Backoff: 0ms → 500ms → 1500ms (3 tentativas no total).
       const BACKOFFS_MS = [0, 500, 1500];
       let lastStatus = 0;
+      // [#1240 2026-05-26] Big-media buckets (video/doc) use a resumable
+      // download so a flaky link doesn't restart from byte 0 on every retry —
+      // expo-fs persists the partial file and resumeData, so a 200MB video
+      // that drops at 80% picks up where it left off instead of re-burning the
+      // whole transfer (and the user's data). Photos/audio stay on the simple
+      // whole-file path (small enough that resume overhead isn't worth it).
+      const bucket = _bucketForUrl(url);
+      const isBig = bucket === 'videos' || bucket === 'docs';
+      // Size-scaled timeout: photos/audio keep the snappy 20s ceiling; big
+      // media gets a much larger window (a 200MB video over slow 3G can take
+      // minutes legitimately). createDownloadResumable can support cancel(),
+      // so a stuck transfer is torn down rather than orphaning the promise.
+      const BIG_TIMEOUT_MS = 120000;
+      const SMALL_TIMEOUT_MS = 20000;
+      const timeoutMs = isBig ? BIG_TIMEOUT_MS : SMALL_TIMEOUT_MS;
+      let resumable = null; // persisted across retries so resume works
       for (let attempt = 0; attempt < BACKOFFS_MS.length; attempt++) {
         if (BACKOFFS_MS[attempt] > 0) {
           await new Promise(r => setTimeout(r, BACKOFFS_MS[attempt]));
         }
         try {
-          // 20s timeout so a stuck CDN (slow 3G, dead edge node) doesn't hold the
-          // promise forever and freeze downstream awaits.
-          const download = await Promise.race([
-            fs.downloadAsync(url, localPath),
-            new Promise((_, rej) => setTimeout(() => rej(new Error('download_timeout')), 20000)),
-          ]);
+          let download;
+          if (isBig && typeof fs.createDownloadResumable === 'function') {
+            // Reuse the same resumable instance across attempts: the first
+            // attempt calls downloadAsync(); subsequent attempts call
+            // resumeAsync() to continue from the partial file on disk.
+            if (!resumable) {
+              resumable = fs.createDownloadResumable(url, localPath);
+            }
+            let timer = null;
+            const timeout = new Promise((_, rej) => {
+              timer = setTimeout(() => {
+                try { resumable.cancelAsync?.(); } catch {}
+                rej(new Error('download_timeout'));
+              }, timeoutMs);
+            });
+            try {
+              const op = attempt === 0
+                ? resumable.downloadAsync()
+                : resumable.resumeAsync();
+              download = await Promise.race([op, timeout]);
+            } finally {
+              if (timer) clearTimeout(timer);
+            }
+          } else {
+            // 20s timeout so a stuck CDN (slow 3G, dead edge node) doesn't hold
+            // the promise forever and freeze downstream awaits.
+            download = await Promise.race([
+              fs.downloadAsync(url, localPath),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('download_timeout')), timeoutMs)),
+            ]);
+          }
           if (download?.status === 200) {
             registerSyncKey(url, localPath);
             // Count the downloaded bytes toward the network-usage total
@@ -1249,13 +1295,23 @@ export async function cacheMedia(url, opts = {}) {
           }
           lastStatus = download?.status || 0;
           try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+          resumable = null; // bad response — don't try to resume a dead file
           // Abort em 4xx — não vai mudar com retry. Recursos ausentes /
           // tokens inválidos são bug, não flaky network.
           if (lastStatus >= 400 && lastStatus < 500) break;
         } catch {
-          // Network/timeout — vale tentar de novo.
-          try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+          // Network/timeout — vale tentar de novo. For big media we KEEP the
+          // partial file + resumable so the next attempt resumes; for small
+          // media we delete so it restarts clean.
+          if (!isBig) {
+            try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+          }
         }
+      }
+      // Exhausted retries on a big-media transfer — clean up the partial so a
+      // half-written video isn't mistaken for a complete cached file later.
+      if (isBig) {
+        try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
       }
     } catch {
       try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
@@ -1764,7 +1820,15 @@ export async function evictIfNeeded(opts) {
     try {
       const limitBytes = capMb * 1024 * 1024;
       const entries = [];
-      for (const dir of [getCacheDir(), getSavedDir()]) {
+      // [P0 DATA LOSS 2026-05-26] PRIMARY GUARD: the LRU sweep walks ONLY the
+      // OS-purgeable cache dir, never getSavedDir(). The saved/permanent dir
+      // holds Keep-Always media (and the default download target — see
+      // cacheMedia); evicting it on a cold start (when the _urlConvOwner
+      // protection map was still empty) was silently destroying user data.
+      // The permanent dir is now off-limits to automatic eviction entirely;
+      // it is only cleared by explicit user action (clearAllCache /
+      // clearSavedMedia / deleteCachedUrl / per-conversation delete).
+      for (const dir of [getCacheDir()]) {
         if (!dir) continue;
         try {
           const info = await fs.getInfoAsync(dir);
@@ -1834,6 +1898,7 @@ export async function evictIfNeeded(opts) {
             nativeDb.dbClearLocalPathByFilenames(evictedNames).catch(() => {});
           }
         } catch {}
+        _scheduleUrlConvOwnerPersist();
       }
       _schedulePersistIndex();
     } finally {
@@ -1850,9 +1915,30 @@ export async function clearMediaCache() {
   const fs = getFS();
   if (!fs) return;
   const dir = getCacheDir();
+  // [#1239 2026-05-26] Snapshot filenames before delete so we can NULL the
+  // matching messages.local_path rows (same rationale as clearAllCache).
+  const wipedNames = [];
+  try {
+    const info = await fs.getInfoAsync(dir);
+    if (info.exists) {
+      const names = await fs.readDirectoryAsync(dir);
+      for (const n of names) if (typeof n === 'string') wipedNames.push(n);
+    }
+  } catch {}
   try {
     await fs.deleteAsync(dir, { idempotent: true });
   } catch {}
+  // HLS offline tree is OS-purgeable-style cache too — clear it here so the
+  // "clear cache" path doesn't leave orphaned video-offline segments behind.
+  try { require('./hlsOffline').clearAllHls?.(); } catch {}
+  if (wipedNames.length > 0) {
+    try {
+      const nativeDb = require('./db');
+      if (typeof nativeDb.dbClearLocalPathByFilenames === 'function') {
+        nativeDb.dbClearLocalPathByFilenames(wipedNames).catch(() => {});
+      }
+    } catch {}
+  }
 }
 
 // Clear saved media
@@ -1974,6 +2060,35 @@ export async function getStorageStats() {
     } catch {}
   }
 
+  // [#1239 2026-05-26] Fold the HLS offline tree
+  // (documentDirectory/video-offline/<videoId>/*.ts) into the stats so the
+  // Storage UI reflects ALL on-disk media. Previously this multi-GB tree was
+  // invisible — users saw "0 used" while their disk filled with offline
+  // status/chat HLS. Counts toward the video bucket and savedBytes (permanent).
+  try {
+    const hlsRoot = fs.documentDirectory + 'video-offline/';
+    const rootInfo = await fs.getInfoAsync(hlsRoot);
+    if (rootInfo.exists) {
+      const videoIds = await fs.readDirectoryAsync(hlsRoot);
+      for (const vid of videoIds) {
+        const vidDir = hlsRoot + vid + '/';
+        try {
+          const segNames = await fs.readDirectoryAsync(vidDir);
+          for (const seg of segNames) {
+            try {
+              const st = await fs.getInfoAsync(vidDir + seg);
+              if (!st.exists || st.isDirectory) continue;
+              const size = st.size || 0;
+              byType.video += size;
+              counts.video += 1;
+              savedBytes += size;
+            } catch {}
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+
   // Surface the cache cap alongside the breakdown so callers (storage UI)
   // can render "X used of Y" without a second mediaCache import. capBytes
   // is 0 when the user picked "unlimited" — the UI should hide the
@@ -1999,9 +2114,45 @@ export async function clearAllCache() {
   if (Platform.OS === 'web') return;
   const fs = getFS();
   if (!fs) return;
+  // [#1239 2026-05-26] Collect the filenames we're about to wipe BEFORE
+  // deleting so we can NULL the matching messages.local_path rows. Otherwise
+  // the bubbles keep a stale "file://…" path that no longer exists and render
+  // "Mídia removida do cache" with no way to re-download until a relaunch.
+  const wipedNames = [];
+  for (const dir of [getCacheDir(), getSavedDir()]) {
+    if (!dir) continue;
+    try {
+      const info = await fs.getInfoAsync(dir);
+      if (info.exists) {
+        const names = await fs.readDirectoryAsync(dir);
+        for (const n of names) if (typeof n === 'string') wipedNames.push(n);
+      }
+    } catch {}
+  }
   for (const dir of [getCacheDir(), getSavedDir()]) {
     if (!dir) continue;
     try { await fs.deleteAsync(dir, { idempotent: true }); } catch {}
+  }
+  // Also wipe the HLS offline dir (documentDirectory/video-offline/) — it is a
+  // separate tree the LRU/clear paths never touched, so offline status/chat
+  // videos used to survive a full "clear cache" and orphan gigabytes.
+  try { require('./hlsOffline').clearAllHls?.(); } catch {}
+  // Clear the gallery auto-save dedup set so a fresh re-download is allowed to
+  // re-save media to the camera roll (the set otherwise pins keys forever).
+  try {
+    _hydrateAutoSavedKeys();
+    _autoSavedKeys.clear();
+    const mmkv = require('./mmkv');
+    mmkv.setString?.(AUTO_SAVE_GALLERY_DONE_KEY, JSON.stringify([]));
+  } catch {}
+  // NULL local_path for every wiped file so bubbles fall back to re-download.
+  if (wipedNames.length > 0) {
+    try {
+      const nativeDb = require('./db');
+      if (typeof nativeDb.dbClearLocalPathByFilenames === 'function') {
+        nativeDb.dbClearLocalPathByFilenames(wipedNames).catch(() => {});
+      }
+    } catch {}
   }
   syncIndex.clear();
   _schedulePersistIndex();
@@ -2013,9 +2164,19 @@ export async function clearAllCache() {
 // conversation IDs. The evict path consults `_isUrlProtected` which walks
 // the syncIndex tagging and skips any file whose owner conv is in the set.
 const KEEP_ALWAYS_KEY = 'media_keep_always_convs_v1';
+// [P0 DATA LOSS 2026-05-26] _urlConvOwner is the file→conversation tag the LRU
+// sweep consults via _isFileProtected to skip Keep-Always media. It used to be
+// an in-memory Map only — on a cold start it was EMPTY, so the very first
+// evict sweep after reopening the app saw every Keep-Always file as orphan and
+// could delete it. Now persisted to MMKV (capped) and hydrated at module load,
+// mirroring _keepAlwaysConvs, so protection survives kill-and-reopen.
+const URL_CONV_OWNER_KEY = 'media_url_conv_owner_v1';
+const URL_CONV_OWNER_MAX = 5000; // cap MMKV blob; FIFO trim on persist
 const _keepAlwaysConvs = new Set();
 const _urlConvOwner = new Map(); // key → conversationId (best-effort tag)
 let _keepAlwaysHydrated = false;
+let _urlConvOwnerHydrated = false;
+let _urlConvOwnerPersistTimer = null;
 
 function _hydrateKeepAlways() {
   if (_keepAlwaysHydrated) return;
@@ -2032,6 +2193,43 @@ function _hydrateKeepAlways() {
   } catch {}
 }
 _hydrateKeepAlways();
+
+function _hydrateUrlConvOwner() {
+  if (_urlConvOwnerHydrated) return;
+  _urlConvOwnerHydrated = true;
+  if (Platform.OS === 'web') return;
+  try {
+    const mmkv = require('./mmkv');
+    const raw = mmkv.getString?.(URL_CONV_OWNER_KEY);
+    if (!raw) return;
+    const obj = JSON.parse(raw);
+    if (obj && typeof obj === 'object') {
+      for (const [k, v] of Object.entries(obj)) {
+        if (k && v != null) _urlConvOwner.set(k, String(v));
+      }
+    }
+  } catch {}
+}
+_hydrateUrlConvOwner();
+
+function _scheduleUrlConvOwnerPersist() {
+  if (Platform.OS === 'web') return;
+  if (_urlConvOwnerPersistTimer) return;
+  _urlConvOwnerPersistTimer = setTimeout(() => {
+    _urlConvOwnerPersistTimer = null;
+    try {
+      const mmkv = require('./mmkv');
+      const all = [..._urlConvOwner.entries()];
+      const start = Math.max(0, all.length - URL_CONV_OWNER_MAX);
+      const obj = {};
+      for (let i = start; i < all.length; i++) {
+        const [k, v] = all[i];
+        obj[k] = v;
+      }
+      mmkv.setString?.(URL_CONV_OWNER_KEY, JSON.stringify(obj));
+    } catch {}
+  }, 3000);
+}
 
 function _persistKeepAlways() {
   if (Platform.OS === 'web') return;
@@ -2065,10 +2263,15 @@ export function getKeepAlwaysConvs() {
 // Without a tag the file is treated as orphan and evictable normally.
 export function tagUrlConversation(url, conversationId) {
   if (!url || conversationId == null || Platform.OS === 'web') return;
-  try { _urlConvOwner.set(urlToKey(url), String(conversationId)); } catch {}
+  _hydrateUrlConvOwner();
+  try {
+    _urlConvOwner.set(urlToKey(url), String(conversationId));
+    _scheduleUrlConvOwnerPersist();
+  } catch {}
 }
 
 function _isFileProtected(filename) {
+  _hydrateUrlConvOwner();
   const owner = _urlConvOwner.get(filename);
   if (!owner) return false;
   return _keepAlwaysConvs.has(owner);

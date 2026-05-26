@@ -409,7 +409,16 @@ const ConversationRow = React.memo(function ConversationRow({
 
   const isOnline = !!isOnlineProp;
 
-  const typingName = typingUsers?.[conversation.id];
+  // typingUsers[convId] may be a string (legacy 1:1) or an array (group, one
+  // entry per active typer). Normalize to an array for rendering, then derive
+  // a single display string ("Ana", "Ana, João", "Ana e mais 2").
+  const _typingRaw = typingUsers?.[conversation.id];
+  const typingNames = Array.isArray(_typingRaw) ? _typingRaw : (_typingRaw ? [_typingRaw] : []);
+  const typingName = typingNames.length
+    ? (typingNames.length <= 2
+        ? typingNames.join(', ')
+        : `${typingNames.slice(0, 2).join(', ')} +${typingNames.length - 2}`)
+    : null;
 
   let preview = '';
   let previewSender = null;
@@ -912,7 +921,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 10 }}>
                   <TypingDotsInline color={ACCENT} />
                   <Text style={[s.rowPreview, { color: ACCENT, fontStyle: 'italic', fontWeight: '600', flex: 0 }]} numberOfLines={1}>
-                    {isGroup ? `${typingName} ` : ''}{t('chat.typing') || 'digitando...'}
+                    {isGroup ? `${typingName} ` : ''}{(isGroup && typingNames.length > 1) ? (t('chat.typingMultiple') || 'estão digitando...') : (t('chat.typing') || 'digitando...')}
                   </Text>
                 </View>
               ) : (
@@ -1063,6 +1072,12 @@ const ConversationRow = React.memo(function ConversationRow({
   if (prevConv.id !== nextConv.id) return false;
   if ((prevConv.unread_count || 0) !== (nextConv.unread_count || 0)) return false;
   if ((prevConv.last_message?.id) !== (nextConv.last_message?.id)) return false;
+  // Re-render when the last message is edited (content changes) or deleted
+  // (tombstone) in place — the message_id stays the same, so the id check
+  // above won't catch it. Without these the preview text would stay stale
+  // until a brand-new message arrived.
+  if ((prevConv.last_message?.content || '') !== (nextConv.last_message?.content || '')) return false;
+  if ((prevConv.last_message?.deleted_at || '') !== (nextConv.last_message?.deleted_at || '')) return false;
   // Re-render when delivery/read state of the last outbound message changes
   // so ✓ → ✓✓ → ✓✓ roxo animates in without waiting for a new message.
   if ((prevConv.last_message?.delivered_at || '') !== (nextConv.last_message?.delivered_at || '')) return false;
@@ -1075,8 +1090,11 @@ const ConversationRow = React.memo(function ConversationRow({
   if ((prevConv.display_name || prevConv.name) !== (nextConv.display_name || nextConv.name)) return false;
 
   // Compare typing only for THIS conversation, not all (comparing all caused every row to re-render when anyone typed)
+  // typingUsers[convId] is now an array (per-typer list); compare by joined
+  // content so a brand-new array reference with the same names is a no-op.
   const convId = prev.conversation?.id;
-  if ((prev.typingUsers?.[convId]) !== (next.typingUsers?.[convId])) return false;
+  const _typKey = (v) => Array.isArray(v) ? v.join('') : (v == null ? '' : String(v));
+  if (_typKey(prev.typingUsers?.[convId]) !== _typKey(next.typingUsers?.[convId])) return false;
 
   return true; // All properties match, skip re-render
 });
@@ -2542,7 +2560,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // (no-op em mobile). Recomputado quando conversations muda.
   React.useEffect(() => {
     try {
-      const total = (conversations || []).reduce((sum, c) => sum + (c.unread_count || 0), 0);
+      // Muted conversations must NOT inflate the app/title badge (WhatsApp
+      // parity): a muted chat can still accrue unread_count for the in-list
+      // bubble, but the global badge only counts unmuted unread.
+      const total = (conversations || []).reduce((sum, c) => sum + (c.muted ? 0 : (c.unread_count || 0)), 0);
       const { setChatUnread } = require('../services/webBadge');
       setChatUnread(total);
     } catch {}
@@ -3241,16 +3262,31 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         if (!data?.conversation_id || data?.email === user?.email) return;
         const name = emailToDisplayName(data.name || data.email || '');
         const convId = data.conversation_id;
-        setTypingUsers(prev => ({ ...prev, [convId]: name }));
-        // Clear previous timeout for this conversation to avoid accumulation
-        if (typingTimeoutsRef.current[convId]) clearTimeout(typingTimeoutsRef.current[convId]);
-        typingTimeoutsRef.current[convId] = setTimeout(() => {
+        // Track an ARRAY of names per conversation so a group with several
+        // people typing shows "Ana, João estão digitando…" instead of
+        // flickering between single names. Each typer has its own 3s expiry
+        // timer keyed by "convId::name" so one person stopping doesn't reset
+        // the others. typingUsers[convId] is normalized to an array; the row
+        // renderer joins it.
+        setTypingUsers(prev => {
+          const cur = prev[convId];
+          const arr = Array.isArray(cur) ? cur : (cur ? [cur] : []);
+          if (arr.includes(name)) return prev;
+          return { ...prev, [convId]: [...arr, name] };
+        });
+        const tkey = `${convId}::${name}`;
+        if (typingTimeoutsRef.current[tkey]) clearTimeout(typingTimeoutsRef.current[tkey]);
+        typingTimeoutsRef.current[tkey] = setTimeout(() => {
           setTypingUsers(prev => {
+            const cur = prev[convId];
+            const arr = Array.isArray(cur) ? cur : (cur ? [cur] : []);
+            const left = arr.filter(n => n !== name);
             const next = { ...prev };
-            if (next[convId] === name) delete next[convId];
+            if (left.length) next[convId] = left;
+            else delete next[convId];
             return next;
           });
-          delete typingTimeoutsRef.current[convId];
+          delete typingTimeoutsRef.current[tkey];
         }, 3000);
       }));
 
@@ -3325,6 +3361,31 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           setArchivedConversations(prevArch => {
             const ai = prevArch.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
             if (ai === -1) return prevArch;
+            // WhatsApp parity: a MUTED archived chat stays archived when a new
+            // message lands — muting is the user's explicit "leave it in the
+            // archive" signal. We just bump its last_message in place so the
+            // archived bucket shows the fresh preview, and skip the promote.
+            if (prevArch[ai].muted) {
+              const senderLc = String(data.sender_email || data.sender || '').toLowerCase();
+              const meLc = String(user?.email || '').toLowerCase();
+              const nextArch = [...prevArch];
+              nextArch[ai] = {
+                ...nextArch[ai],
+                last_message: {
+                  ...(nextArch[ai].last_message || {}),
+                  content: data.content || data.message,
+                  type: data.type || 'text',
+                  sender_email: data.sender_email || data.sender,
+                  sender_name: data.sender_name || data.sender_email || data.sender,
+                  created_at: data.created_at || new Date().toISOString(),
+                },
+                last_message_type: data.type || 'text',
+                last_message_sender: data.sender_email || data.sender,
+                last_message_at: data.created_at || new Date().toISOString(),
+                unread_count: senderLc === meLc ? (nextArch[ai].unread_count || 0) : ((nextArch[ai].unread_count || 0) + 1),
+              };
+              return nextArch;
+            }
             unarchivedConv = { ...prevArch[ai], archived: 0 };
             // Persist the unarchive server-side so the next chat_list fetch
             // doesn't bounce the conv back into the archived bucket.
@@ -3444,6 +3505,65 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // INSTEAD of chat_message, so the list has to listen to both to cover
       // old-server (still firing chat_message) and new-server paths.
       unsubs.push(mailWs.on('chat_summary', onIncomingForList));
+
+      // Backend broadcasts `delete`/`edit` when a message is deleted-for-all
+      // or edited. The list never subscribed to these, so a deleted/edited
+      // LAST message left a stale preview ("Mensagem apagada" never showed,
+      // and edits never updated the row text) until a fresh message landed
+      // or a manual chat_list refetch ran. We only touch the row when the
+      // affected message IS the conversation's last_message — older messages
+      // don't drive the preview.
+      const _delMsgId = (d) => d?.message_id ?? d?.id ?? d?.msg_id;
+      unsubs.push(mailWs.on('delete', (data) => {
+        const convId = data?.conversation_id;
+        const mid = _delMsgId(data);
+        if (convId == null || mid == null) return;
+        setConversations(prev => {
+          const idx = prev.findIndex(c => c.id == convId || c.conversation_id == convId);
+          if (idx === -1) return prev;
+          const lm = prev[idx].last_message;
+          if (!lm || String(lm.id) !== String(mid)) return prev;
+          const tomb = t('chatConv.deletedMessage') || 'Mensagem apagada';
+          return prev.map((c, i) => {
+            if (i !== idx) return c;
+            return {
+              ...c,
+              last_message: {
+                ...lm,
+                content: tomb,
+                type: 'text',
+                file_url: null,
+                file_name: null,
+                deleted_at: data?.deleted_at || new Date().toISOString(),
+              },
+            };
+          });
+        });
+      }));
+      unsubs.push(mailWs.on('edit', (data) => {
+        const convId = data?.conversation_id;
+        const mid = _delMsgId(data);
+        if (convId == null || mid == null) return;
+        const newContent = data?.content ?? data?.message ?? data?.new_content;
+        if (newContent == null) return;
+        setConversations(prev => {
+          const idx = prev.findIndex(c => c.id == convId || c.conversation_id == convId);
+          if (idx === -1) return prev;
+          const lm = prev[idx].last_message;
+          if (!lm || String(lm.id) !== String(mid)) return prev;
+          return prev.map((c, i) => {
+            if (i !== idx) return c;
+            return {
+              ...c,
+              last_message: {
+                ...lm,
+                content: newContent,
+                edited_at: data?.edited_at || new Date().toISOString(),
+              },
+            };
+          });
+        });
+      }));
 
       unsubs.push(mailWs.on('chat_read', (data) => {
         const meLower = (user?.email || '').toLowerCase();
@@ -3759,7 +3879,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       if (data?.email && data?.status) {
         const cur = presencesRef.current.get(data.email);
         const newVal = { status: data.status, last_seen: data.last_seen || new Date().toISOString() };
-        if (!cur || cur.status !== newVal.status) {
+        // Re-render not only when online/offline flips but also when last_seen
+        // advances (peer went offline → "visto por último" timestamp moves).
+        // Without the last_seen check the row's subtitle stayed frozen on a
+        // stale "visto às HH:MM" after the first offline broadcast.
+        if (!cur || cur.status !== newVal.status || cur.last_seen !== newVal.last_seen) {
           const merged = new Map(presencesRef.current);
           merged.set(data.email, newVal);
           presencesRef.current = merged;
@@ -3992,11 +4116,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     if (willPin) {
       const currentPins = conversations.filter(c => !!c.pinned && c.id !== conv.id);
       if (currentPins.length >= MAX_PINNED_CHATS) {
-        const oldest = currentPins.slice().sort((a, b) => {
-          const at = new Date(a.last_message_at || a.last_activity || 0).getTime();
-          const bt = new Date(b.last_message_at || b.last_activity || 0).getTime();
-          return at - bt;
-        })[0];
+        const _recency = (c) => new Date(
+          c.last_message_at || c.last_message?.created_at || c.updated_at || c.last_activity || 0
+        ).getTime();
+        const oldest = currentPins.slice().sort((a, b) => _recency(a) - _recency(b))[0];
         displaceId = oldest?.id || null;
       }
     }
@@ -4503,6 +4626,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       folderFilter = chatFolders.find(f => Number(f.id) === fid) || null;
     }
     const sq = (debouncedQuery || '').trim().toLowerCase();
+    // Accent-insensitive name matching (BR users: searching "joao" must match
+    // "João", "ana" must match "Ana" / "Aná"). NFD splits a letter into its
+    // base char + a combining diacritic; stripping the combining marks (the
+    // U+0300–U+036F range) gives a fold-insensitive key for both query + name.
+    const _stripAccents = (str) => String(str || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+    const nsq = _stripAccents(sq);
     // Drop orphan direct chats — no name, no peer, no messages — that show
     // up as "Desconhecido / Nenhuma mensagem" rows. They get created when a
     // chat is initiated but never receives a message and the peer email
@@ -4542,11 +4671,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       list = list.filter(c => {
         try {
           const rawName = String(c.display_name || c.name || c.other_email || '').toLowerCase();
-          if (rawName.includes(sq)) return true;
+          if (_stripAccents(rawName).includes(nsq)) return true;
           // Also try the email-to-display-name conversion used by the UI so a
           // search for "rene" matches "rene.reis@…" → "Rene Reis".
           const pretty = String(emailToDisplayName(c.display_name || c.name || c.other_email || '') || '').toLowerCase();
-          if (pretty && pretty.includes(sq)) return true;
+          if (pretty && _stripAccents(pretty).includes(nsq)) return true;
           // last_message is an OBJECT ({content, sender_email, ...}), not a
           // string. Extract `.content` defensively. The previous code called
           // .toLowerCase() on the raw object → TypeError → entire useMemo
@@ -4581,11 +4710,16 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       const peer = String(c.other_email || c.contact_email || c.peer_email || c.email || '').toLowerCase();
       return !!peer && peer === meLc;
     };
+    // Recency key: backend now returns last_message_at, but optimistic WS
+    // updates and older cached rows may only have last_message.created_at /
+    // updated_at. Fall back so the re-sort doesn't collapse to a no-op (which
+    // would freeze the list order on stale data).
+    const _sortKey = (c) => String(c.last_message_at || c.last_message?.created_at || c.updated_at || '');
     list.sort((a, b) => {
       const aPinned = (a.pinned || isSelfChat(a)) ? 1 : 0;
       const bPinned = (b.pinned || isSelfChat(b)) ? 1 : 0;
       if (aPinned !== bPinned) return bPinned - aPinned;
-      return (b.last_message_at || '').localeCompare(a.last_message_at || '');
+      return _sortKey(b).localeCompare(_sortKey(a));
     });
     return list;
   }, [filter, conversations, archivedConversations, lockedConversations, debouncedQuery, chatFolders, user?.email]);
@@ -5438,7 +5572,6 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           Tiny, muted purple-gray so it doesn't compete with content. */}
       {syncingBadge && !wsDownBanner && (
         <View
-          accessibilityRole="status"
           accessibilityLiveRegion="polite"
           accessibilityLabel={t?.('chat.syncing') || 'Sincronizando...'}
           style={{

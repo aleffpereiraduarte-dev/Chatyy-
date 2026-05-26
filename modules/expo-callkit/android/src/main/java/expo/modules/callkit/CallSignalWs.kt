@@ -122,6 +122,16 @@ object CallSignalWs {
         }
     }
 
+    /**
+     * [FCM call_cancel fix 2026-05-26 P1] Package-internal accessor so
+     * CallFirebaseMessagingService can apply the SAME answered_elsewhere
+     * self-suppression as the WS path (handleMessage call_cancel at line 447)
+     * when a cancel push arrives. Without this, a multi-device user who
+     * answered on THIS phone would have their freshly-active call torn down by
+     * the sibling-fan-out cancel push the backend sends to all callee devices.
+     */
+    internal fun consumeSelfAnsweredForCancel(callId: String): Boolean = consumeSelfAnswered(callId)
+
     // [P0 2026-05-18 #1132] When true, the WS stays connected even with an
     // empty outgoing queue, so inbound `call_invite` frames can be received
     // by the callee (who has nothing to send). Flipped on by `warmConnect()`.

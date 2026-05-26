@@ -13,6 +13,29 @@ const AUTH_ROUTES = ['/login', '/signup', '/signup-phone', '/forgot'];
 
 const BiometricContext = createContext({});
 
+// ── Module-level lock bridge ────────────────────────────────────────────────
+// AuthContext needs to force a re-challenge on identity changes
+// (switchAccount / explicit logout) WITHOUT importing this React context
+// (BiometricProvider wraps AuthProvider, and pulling the hook into AuthContext
+// would create a brittle render-order coupling). The provider registers its
+// `setIsLocked(true)` here on mount; AuthContext calls `lockNow()` after an
+// account switch / logout so the new identity must pass biometrics before the
+// app is usable again. No-op on web and when no provider is mounted.
+let _lockNowFn = null;
+export function lockNow() {
+  try { if (typeof _lockNowFn === 'function') _lockNowFn(); } catch {}
+}
+
+// bio_token / bio_email are bound per-account so a device-wide pair can't let
+// identity A's bearer unlock into identity B. The login / switch paths still
+// write the legacy global keys for backward compat; these helpers add the
+// per-account twin (`bio_token:<email>`).
+export function bioTokenKeyFor(email) {
+  const e = (email || '').toString().trim().toLowerCase();
+  return e ? `bio_token:${e}` : null;
+}
+export function bioEmailKey() { return 'bio_email'; }
+
 // Default lock delay when the user hasn't picked one yet. 5 s matches the
 // historical behavior and avoids surprising existing users post-upgrade.
 const DEFAULT_LOCK_DELAY_SEC = 5;
@@ -113,6 +136,26 @@ export function BiometricProvider({ children }) {
     })();
   }, []);
 
+  // Force-lock now. Called on identity changes (account switch / logout) via
+  // the module-level `lockNow()` bridge so an account swap can never leave the
+  // previous identity's session unlocked under the new account's eyes. Only
+  // arms the overlay when biometrics are actually enabled — otherwise there's
+  // nothing to unlock with and we'd trap the user behind a dead lock screen.
+  const lockNowLocal = useCallback(() => {
+    if (Platform.OS === 'web') return;
+    if (!biometricEnabled) return;
+    // Don't lock the public auth screens (no session, no bio_token yet).
+    if (isAuthRouteRef.current) return;
+    setIsLocked(true);
+  }, [biometricEnabled]);
+
+  // Register / unregister the module-level lock bridge so AuthContext can
+  // trigger a re-challenge without importing this context.
+  useEffect(() => {
+    _lockNowFn = lockNowLocal;
+    return () => { if (_lockNowFn === lockNowLocal) _lockNowFn = null; };
+  }, [lockNowLocal]);
+
   // Setter exposed via context. Persists the choice + updates the ref so
   // the in-flight AppState handler picks the new threshold next backgrounding.
   const setAutoLockInterval = useCallback(async (value) => {
@@ -175,7 +218,12 @@ export function BiometricProvider({ children }) {
       const result = await LocalAuthentication.authenticateAsync({
         promptMessage: t('biometric.unlock'),
         cancelLabel: t('common.cancel'),
-        disableDeviceFallback: false,
+        // SECURITY: the APP-LOCK must not be poppable with the device
+        // passcode — otherwise anyone who knows the phone PIN bypasses the
+        // app's own biometric gate. Force true biometric (Face ID / Touch ID)
+        // for the unlock. The destructive-action gate (biometricGate.js) keeps
+        // device fallback for usability; the app-lock does not.
+        disableDeviceFallback: true,
         fallbackLabel: t('biometric.usePassword'),
       });
       if (result.success) {
@@ -200,7 +248,10 @@ export function BiometricProvider({ children }) {
         const result = await LocalAuthentication.authenticateAsync({
           promptMessage: t('biometric.confirmEnable'),
           cancelLabel: t('common.cancel'),
-          disableDeviceFallback: false,
+          // Match the app-lock unlock: arming the lock with a real biometric
+          // (not the device PIN) guarantees the same factor will be required
+          // to unlock — no point enabling a lock the device passcode bypasses.
+          disableDeviceFallback: true,
         });
         if (result.success) {
           setBiometricEnabled(true);
@@ -260,6 +311,7 @@ export function BiometricProvider({ children }) {
       biometricAvailable,
       toggleBiometric,
       authenticate,
+      lockNow: lockNowLocal,
       autoLockInterval,
       setAutoLockInterval,
     }}>

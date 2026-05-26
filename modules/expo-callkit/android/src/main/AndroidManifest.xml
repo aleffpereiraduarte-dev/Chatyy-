@@ -114,7 +114,20 @@
 
     <receiver
       android:name=".CallActionReceiver"
-      android:exported="false" />
+      android:exported="false">
+      <!--
+        [missed-call recording fix 2026-05-26 P1] CallRingingService broadcasts
+        CALL_MISSED on its 45s ring timeout (package-scoped). A manifest
+        intent-filter lets the system instantiate CallActionReceiver to record
+        the missed call server-side even when JS / the app process is dead
+        (which is exactly when a call times out unanswered). Other class-
+        targeted actions (ACCEPT/DECLINE/HANGUP/PIP_*) keep working — they're
+        delivered via explicit Intent(context, CallActionReceiver::class).
+      -->
+      <intent-filter>
+        <action android:name="expo.modules.callkit.CALL_MISSED" />
+      </intent-filter>
+    </receiver>
 
     <!--
       [notif-p0p1 2026-05-17] Chat notification actions. Backs MessagingStyle

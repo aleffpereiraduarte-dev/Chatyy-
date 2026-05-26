@@ -53,6 +53,20 @@ private let kRingTimersLock = NSLock()
 // three independent timers drifting produced tardy "missed call" surfaces.
 private let kRingTimeoutSeconds: Int = 45
 
+// [phantom-ring cancel fix 2026-05-26 P0] callId→UUID map. The backend ships
+// SILENT VoIP "cancel" pushes (type:"call_cancel" / voip-type:"cancel" /
+// reason:"answered_elsewhere") when the caller hangs up before pickup or the
+// call was answered on another device. Before this map, EVERY VoIP push minted
+// a fresh UUID + reportNewIncomingCall — so a cancel push rang a brand-new
+// phantom call that nothing ever ended (it sat ringing until the 45s timeout).
+// Now incoming pushes register callId→UUID (and dedup duplicate deliveries of
+// the same callId), and cancel pushes look up the live UUID and report it
+// ended (.remoteEnded) instead of reporting a new call. Apple still requires
+// us to *report* on every VoIP push, so cancel = report-then-end (never skip
+// reportCall entirely, or iOS flags the app misbehaving + throttles VoIP).
+private var kCallIdToUUID: [String: UUID] = [:]
+private let kCallIdToUUIDLock = NSLock()
+
 // [WAVE 163 2026-05-23 GHOST FIX] Outgoing-side timers, parallel to kRingTimers.
 // Lives at FILE scope (NOT inside ExpoCallKitModule) so the DispatchSource
 // timer survives module/bridge teardown when user swipe-kills the app while
@@ -218,6 +232,51 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
 
         let dict = payload.dictionaryPayload
         let callId = (dict["call_id"] as? String) ?? UUID().uuidString
+
+        // [phantom-ring cancel fix 2026-05-26 P0] Classify the push type. The
+        // backend sends silent cancel/answered-elsewhere VoIP pushes for
+        // caller-hangup-before-pickup and answered-on-another-device. They MUST
+        // NOT mint a new incoming call. Apple still requires we report on every
+        // VoIP push, so we report the EXISTING call as ended and return.
+        let pushType = ((dict["type"] as? String) ?? (dict["voip-type"] as? String) ?? "").lowercased()
+        let isCancelPush = pushType == "call_cancel"
+            || pushType == "call_end"
+            || pushType == "cancel"
+            || pushType == "answered_elsewhere"
+            || (dict["reason"] as? String)?.lowercased() == "answered_elsewhere"
+        if isCancelPush {
+            kCallIdToUUIDLock.lock()
+            let existing = kCallIdToUUID[callId]
+            kCallIdToUUID.removeValue(forKey: callId)
+            kCallIdToUUIDLock.unlock()
+            let provider = VoipPushAppDelegateSubscriber.earlyProvider ?? makeEphemeralProvider()
+            if let endUUID = existing {
+                // Cancel the ring timer + clear stashed payload for this UUID.
+                VoipPushAppDelegateSubscriber.cancelRingTimeout(uuid: endUUID)
+                kPendingAnswerPayloadsLock.lock()
+                kPendingAnswerPayloads.removeValue(forKey: endUUID)
+                kPendingAnswerPayloadsLock.unlock()
+                print("[VoipSubscriber] cancel push type=\(pushType) for \(callId) — reporting .remoteEnded on \(endUUID.uuidString)")
+                provider.reportCall(with: endUUID, endedAt: Date(), reason: .remoteEnded)
+            } else {
+                // No live UUID for this callId (cancel arrived before/without an
+                // incoming push, or already torn down). Apple still requires a
+                // report for THIS push — report-then-immediately-end a throwaway
+                // UUID so iOS sees a valid PushKit response and doesn't flag the
+                // app as misbehaving (which throttles future VoIP delivery).
+                let throwaway = UUID()
+                let upd = CXCallUpdate()
+                upd.remoteHandle = CXHandle(type: .generic, value: (dict["caller_name"] as? String) ?? "Chatyy")
+                upd.hasVideo = false
+                print("[VoipSubscriber] cancel push type=\(pushType) for \(callId) — no live UUID; report-then-end throwaway")
+                provider.reportNewIncomingCall(with: throwaway, update: upd) { _ in
+                    provider.reportCall(with: throwaway, endedAt: Date(), reason: .remoteEnded)
+                }
+            }
+            completion()
+            return
+        }
+
         let callerName = (dict["caller_name"] as? String) ?? (dict["caller_email"] as? String) ?? "Unknown"
         let hasVideo = (dict["video"] as? String) == "1" || (dict["call_type"] as? String) == "video"
         // [Wave WhatsApp parity, 2026-05-20 gap A2+H5] Phone-number handle gives
@@ -241,11 +300,28 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
             || ((dict["auto_accept"] as? Bool) == true)
             || ((dict["auto_accept"] as? NSNumber)?.boolValue == true)
 
+        // [phantom-ring cancel fix 2026-05-26 P0] Dedup duplicate VoIP
+        // deliveries of the SAME callId. APNs can deliver the same push twice
+        // (retries, multiple token registrations). If we already have a live
+        // UUID for this callId, the call is already ringing — no-op: just
+        // satisfy the PushKit contract via completion() and return. Otherwise
+        // mint a fresh UUID and register it so the matching cancel push can
+        // later find and end it.
+        kCallIdToUUIDLock.lock()
+        if let alive = kCallIdToUUID[callId] {
+            kCallIdToUUIDLock.unlock()
+            print("[VoipSubscriber] duplicate incoming push for \(callId) — already ringing as \(alive.uuidString); no-op")
+            completion()
+            return
+        }
+        let uuid = UUID()
+        kCallIdToUUID[callId] = uuid
+        kCallIdToUUIDLock.unlock()
+
         // reportNewIncomingCall FIRST — before any bookkeeping. Apple's
         // run-loop deadline is enforced: any work between the push receipt
         // and the report call eats budget and any blocking sync can push us
         // over the deadline. iOS then kills the app and stops VoIP delivery.
-        let uuid = UUID()
         let update = CXCallUpdate()
         // [Wave WhatsApp parity, 2026-05-20 gap A2+H5] Prefer .phoneNumber when
         // we have the caller's E.164 — iOS routes through the same handle
@@ -559,6 +635,19 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
             kPendingAnswerPayloadsLock.lock()
             kPendingAnswerPayloads.removeValue(forKey: uuid)
             kPendingAnswerPayloadsLock.unlock()
+            // [phantom-ring cancel fix 2026-05-26 P0] Clear the callId→UUID map
+            // so a late cancel push doesn't try to re-end a dead UUID and a
+            // legitimate re-dial with the same callId can ring again.
+            kCallIdToUUIDLock.lock()
+            kCallIdToUUID.removeValue(forKey: callId)
+            kCallIdToUUIDLock.unlock()
+            // [missed-call recording fix 2026-05-26 P1] Record the missed call
+            // server-side so chat history flips to "Chamada perdida" AND the
+            // caller gets the missed push. Same REST contract the JS
+            // IncomingCallListener uses: chat.php call_status (call_id + status).
+            // Without this the call only timed out locally on the device — the
+            // backend call_card stayed "ringing" and no missed-call surfaced.
+            VoipPushAppDelegateSubscriber.postCallStatus(callId: callId, status: "missed")
         }
         kRingTimersLock.lock()
         kRingTimers[uuid] = timer
@@ -572,6 +661,55 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         let t = kRingTimers.removeValue(forKey: uuid)
         kRingTimersLock.unlock()
         t?.cancel()
+    }
+
+    /// [phantom-ring cancel fix 2026-05-26 P0] Reverse-lookup + remove a
+    /// callId→UUID mapping by its UUID (used on answer/end where only the
+    /// CallKit UUID is known). Idempotent.
+    fileprivate static func clearCallIdMapping(forUUID uuid: UUID) {
+        kCallIdToUUIDLock.lock()
+        if let key = kCallIdToUUID.first(where: { $0.value == uuid })?.key {
+            kCallIdToUUID.removeValue(forKey: key)
+        }
+        kCallIdToUUIDLock.unlock()
+    }
+
+    /// [missed-call recording fix 2026-05-26 P1] Fire-and-forget POST to the
+    /// backend call_status endpoint. Mirrors the JS api.callStatus path
+    /// (services/api.js → chat.php?action=call_status) and reuses the same
+    /// App Group auth (`auth_token` + `api_base`) the LK token fetcher uses.
+    /// Best-effort: failures are logged, never surfaced — the local CallKit
+    /// teardown already happened by the time this runs.
+    fileprivate static func postCallStatus(callId: String, status: String) {
+        guard !callId.isEmpty else { return }
+        guard let ud = UserDefaults(suiteName: kAppGroupId),
+              let authToken = ud.string(forKey: "auth_token"), !authToken.isEmpty,
+              let apiBase = ud.string(forKey: "api_base"), !apiBase.isEmpty else {
+            print("[VoipSubscriber] postCallStatus(\(status)) skipped — missing auth_token/api_base in App Group")
+            return
+        }
+        let baseTrimmed = apiBase.hasSuffix("/") ? String(apiBase.dropLast()) : apiBase
+        let urlString = "\(baseTrimmed)/api/email.php?action=call_status"
+        guard let url = URL(string: urlString) else { return }
+        var req = URLRequest(url: url, timeoutInterval: 8.0)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        let body: [String: Any] = [
+            "action": "call_status",
+            "call_id": callId,
+            "status": status,
+            "duration": 0,
+        ]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body, options: [])
+        URLSession.shared.dataTask(with: req) { _, resp, err in
+            if let err = err {
+                print("[VoipSubscriber] postCallStatus(\(status)) failed: \(err.localizedDescription)")
+            } else if let http = resp as? HTTPURLResponse {
+                print("[VoipSubscriber] postCallStatus(\(status)) HTTP \(http.statusCode) for \(callId)")
+            }
+        }.resume()
     }
 
     // ─── [WAVE 163 2026-05-23 GHOST FIX] Outgoing-side timer (caller side)
@@ -700,6 +838,10 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         // the missed-call timer so we don't fire .unanswered against a UUID
         // that's actively connecting.
         VoipPushAppDelegateSubscriber.cancelRingTimeout(uuid: uuid)
+        // [phantom-ring cancel fix 2026-05-26 P0] Clear this UUID from the
+        // callId→UUID map (reverse lookup) so a sibling answered_elsewhere /
+        // cancel push doesn't tear down our just-answered call.
+        VoipPushAppDelegateSubscriber.clearCallIdMapping(forUUID: uuid)
 
         // 1. Persist accept intent so ExpoCallKitModule replays once RN is up.
         if let ud = UserDefaults(suiteName: kAppGroupId) {
@@ -861,6 +1003,10 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         // hung up first — cancel the ring timer so we don't fire .unanswered
         // on top of an already-ended call.
         VoipPushAppDelegateSubscriber.cancelRingTimeout(uuid: action.callUUID)
+        // [phantom-ring cancel fix 2026-05-26 P0] Clear this UUID from the
+        // callId→UUID map so a trailing cancel push doesn't re-end a dead UUID
+        // and a re-dial with the same callId can ring again.
+        VoipPushAppDelegateSubscriber.clearCallIdMapping(forUUID: action.callUUID)
         if let ud = UserDefaults(suiteName: kAppGroupId) {
             ud.set(action.callUUID.uuidString, forKey: "pendingEndUUID")
         }

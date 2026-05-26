@@ -32,6 +32,21 @@ class ChatActionReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        // [native-crash-hardening 2026-05-26] An uncaught exception in
+        // onReceive runs on the main thread and crashes the whole process.
+        // RemoteInput parsing, NotificationManager calls, and JSON cache reads
+        // below can all throw in bad states. Wrap the whole body so a malformed
+        // chat-action intent degrades to a logged no-op rather than an
+        // intermittent app crash. (sendInBackground already isolates the HTTP
+        // hop on its own coroutine with its own catch.)
+        try {
+            onReceiveInner(context, intent)
+        } catch (t: Throwable) {
+            Log.e(TAG, "onReceive crashed for action=${intent.action}: ${t.message}", t)
+        }
+    }
+
+    private fun onReceiveInner(context: Context, intent: Intent) {
         val action = intent.action ?: return
         val convId = intent.getStringExtra("conversation_id") ?: ""
         val notifId = intent.getIntExtra("notif_id", -1)

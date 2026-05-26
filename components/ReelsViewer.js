@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, Dimensions,
   Animated, Platform, Share, TextInput, Modal, KeyboardAvoidingView,
   ActivityIndicator, Pressable, ScrollView, Image, Easing, PanResponder,
-  AppState,
+  AppState, ToastAndroid,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AvatarCircle from './AvatarCircle';
@@ -278,6 +278,24 @@ function parseMediaUrls(raw) {
     try { return JSON.parse(raw); } catch { return []; }
   }
   return [];
+}
+
+// Reels P2 — Duet / Stitch / "Usar este som" call backend actions that don't
+// exist yet (the post-create recorder has no duet/stitch mode and there's no
+// reels-by-sound feed wired end-to-end). Hide those affordances behind this
+// flag until the backend lands so users don't tap into a dead end. "Não
+// tenho interesse" stays visible and persists the hide locally + toasts.
+const REELS_BACKEND_ACTIONS_READY = false;
+
+// A feed post counts as a "reel" when it's a video — either tagged
+// media_type=video, or its first media URL has a video extension. Hoisted to
+// module scope so loadReels() (page 1) and loadMore() (pages 2+) share the
+// exact same filter, keeping pagination dedup consistent.
+function isReelVideo(p) {
+  if (!p) return false;
+  if (p.media_type === 'video') return true;
+  const urls = parseMediaUrls(p.media_urls);
+  return urls.some(u => typeof u === 'string' && (u.endsWith('.mp4') || u.endsWith('.mov') || u.endsWith('.webm')));
 }
 
 function formatCount(n) {
@@ -903,6 +921,9 @@ function ShareSheet({ visible, reel, t, onClose, onRepost, onCopyLink, onExterna
 // the next reel loads with the same default. TikTok parity: 5 speed options.
 const REELS_SPEED_KEY = '@chatyy:reels_speed_default_v1';
 const REELS_CC_KEY = '@chatyy:reels_cc_enabled_v1';
+// Locally-persisted "não tenho interesse" hides — kept client-side so the
+// reel stays gone across sessions even if the backend hide signal isn't live.
+const REELS_HIDDEN_KEY = '@chatyy:reels_hidden_ids_v1';
 
 function SpeedPickerSheet({ visible, current, onSelect, onClose, t }) {
   const slideAnim = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
@@ -1303,15 +1324,26 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     setLiked(!!reel.user_liked);
     setLikeCount(Number(reel.like_count) || 0);
     setBookmarked(!!reel.user_bookmarked);
-  }, [reel.user_liked, reel.like_count, reel.user_bookmarked]);
+    // View pill (P1): reconcile the count whenever feed_list hands us a fresh
+    // view_count (backend now returns it). The pill only renders when > 0, so
+    // without this it stayed stuck at 0 for the whole session.
+    setViewCount(Number(reel.view_count) || 0);
+  }, [reel.user_liked, reel.like_count, reel.user_bookmarked, reel.view_count]);
 
-  // Track view when reel becomes active — guarded so swiping back doesn't
-  // re-fire feedView for an id already counted this mount.
+  // Track view when reel becomes active (P1) — gated behind a ~1.5s dwell so
+  // we only count a view once the user actually watched, not on every swipe
+  // that flicked past. Guarded via viewedRef so swiping back doesn't re-fire
+  // feedView for an id already counted this mount. Optimistically bumps the
+  // local pill so it reacts immediately.
   useEffect(() => {
-    if (isActive && reel.id && !viewedRef.current.has(reel.id)) {
+    if (!isActive || !reel.id || viewedRef.current.has(reel.id)) return;
+    const timer = setTimeout(() => {
+      if (viewedRef.current.has(reel.id)) return;
       viewedRef.current.add(reel.id);
+      setViewCount(prev => prev + 1);
       api.feedView?.(reel.id).catch(() => {});
-    }
+    }, 1500);
+    return () => clearTimeout(timer);
   }, [isActive, reel.id]);
 
   // Auto-play/pause based on active state (web)
@@ -1486,7 +1518,10 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
       const r = await api.feedLike(reel.id);
       if (r.success && r.data) {
         if (r.data.liked !== undefined) setLiked(!!r.data.liked);
-        if (r.data.like_count !== undefined) setLikeCount(Number(r.data.like_count));
+        // Backend returns the reconciled total as `likes_count`; older
+        // servers used `like_count`. Read both so the count actually syncs.
+        const serverCount = r.data.likes_count ?? r.data.like_count;
+        if (serverCount !== undefined) setLikeCount(Number(serverCount));
       }
     } catch {
       // Network error — keep the optimistic state and queue the toggle.
@@ -2117,8 +2152,8 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
           >
             <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.25)', alignSelf: 'center', marginBottom: 12 }} />
 
-            {/* Use this sound */}
-            {!!reel.sound_id && (
+            {/* Use this sound — hidden until the by-sound feed ships. */}
+            {REELS_BACKEND_ACTIONS_READY && !!reel.sound_id && (
               <TouchableOpacity
                 style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
                 onPress={() => { setMoreSheetOpen(false); onUseSound && onUseSound(reel); }}
@@ -2131,8 +2166,8 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
               </TouchableOpacity>
             )}
 
-            {/* Duet — only when the creator allows it. */}
-            {reel.allow_duet !== false && reel.media_type === 'video' && (
+            {/* Duet — only when the creator allows it (and backend is ready). */}
+            {REELS_BACKEND_ACTIONS_READY && reel.allow_duet !== false && reel.media_type === 'video' && (
               <TouchableOpacity
                 style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
                 onPress={() => { setMoreSheetOpen(false); onDuet && onDuet(reel); }}
@@ -2145,8 +2180,8 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
               </TouchableOpacity>
             )}
 
-            {/* Stitch — only when the creator allows it. */}
-            {reel.allow_stitch !== false && reel.media_type === 'video' && (
+            {/* Stitch — only when the creator allows it (and backend is ready). */}
+            {REELS_BACKEND_ACTIONS_READY && reel.allow_stitch !== false && reel.media_type === 'video' && (
               <TouchableOpacity
                 style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 }}
                 onPress={() => { setMoreSheetOpen(false); onStitch && onStitch(reel); }}
@@ -2318,6 +2353,35 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   const [likersReel, setLikersReel] = useState(null);
   const [containerHeight, setContainerHeight] = useState(SCREEN_HEIGHT);
 
+  // ── Infinite scroll (P0) ──
+  // Page cursor + has-more + in-flight guard tracked per feed (For You vs
+  // Following vs by-sound). loadReels() resets these to page 1; loadMore()
+  // (wired to FlatList onEndReached) appends the next page and dedups by id,
+  // mirroring ChatFeedTab.loadPosts' existingIds merge so a reel never shows
+  // twice when the backend returns overlapping windows.
+  const [page, setPage] = useState(1);
+  const [followingPage, setFollowingPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [followingHasMore, setFollowingHasMore] = useState(true);
+  const loadingMoreRef = useRef(false);
+
+  // ── "Não tenho interesse" local persistence + toast (P2) ──
+  const hiddenIdsRef = useRef(new Set());
+  const [hideToast, setHideToast] = useState('');
+  const hideToastTimerRef = useRef(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(REELS_HIDDEN_KEY);
+        if (raw) {
+          const ids = JSON.parse(raw);
+          if (Array.isArray(ids)) hiddenIdsRef.current = new Set(ids.map(String));
+        }
+      } catch {}
+    })();
+    return () => { if (hideToastTimerRef.current) clearTimeout(hideToastTimerRef.current); };
+  }, []);
+
   const viewConfigRef = useRef({ viewAreaCoveragePercentThreshold: 50 });
   const onViewableRef = useRef(({ viewableItems }) => {
     if (viewableItems && viewableItems[0]) {
@@ -2352,6 +2416,11 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   const loadReels = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
+    // Fresh load → reset both feed cursors back to page 1.
+    setPage(1);
+    setFollowingPage(1);
+    setHasMore(true);
+    setFollowingHasMore(true);
     try {
       // Reels P0 — three load paths:
       //   1. soundIdProp set → "Use this sound" feed (chat_reels_by_sound)
@@ -2362,9 +2431,13 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
       if (soundIdProp) {
         const r = await api.chatReelsBySound(soundIdProp, 1, 50);
         if (r && r.success && r.data) {
-          const videos = Array.isArray(r.data.posts) ? r.data.posts : [];
+          const rawSound = Array.isArray(r.data.posts) ? r.data.posts : [];
+          const videos = rawSound.filter(p => !hiddenIdsRef.current.has(String(p.id)));
           setReels(videos);
           setFollowingReels(videos);
+          const more = rawSound.length >= 50;
+          setHasMore(more);
+          setFollowingHasMore(more);
         }
       } else {
         // Fire both feeds in parallel so switching tabs is instant.
@@ -2375,22 +2448,18 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         if (allR && allR.success && allR.data) {
           const rawPosts = allR.data.posts || allR.data;
           const allPosts = Array.isArray(rawPosts) ? rawPosts : [];
-          const videos = allPosts.filter(p => {
-            if (p.media_type === 'video') return true;
-            const urls = parseMediaUrls(p.media_urls);
-            return urls.some(u => typeof u === 'string' && (u.endsWith('.mp4') || u.endsWith('.mov') || u.endsWith('.webm')));
-          });
+          const videos = allPosts.filter(p => isReelVideo(p) && !hiddenIdsRef.current.has(String(p.id)));
           setReels(videos);
+          // Base has-more on the *raw* page size (pre video-filter) so a page
+          // full of non-video posts doesn't prematurely stop pagination.
+          setHasMore(allPosts.length >= 50);
         }
         if (followR && followR.success && followR.data) {
           const rawF = followR.data.posts || followR.data;
           const followingAll = Array.isArray(rawF) ? rawF : [];
-          const followingVids = followingAll.filter(p => {
-            if (p.media_type === 'video') return true;
-            const urls = parseMediaUrls(p.media_urls);
-            return urls.some(u => typeof u === 'string' && (u.endsWith('.mp4') || u.endsWith('.mov') || u.endsWith('.webm')));
-          });
+          const followingVids = followingAll.filter(p => isReelVideo(p) && !hiddenIdsRef.current.has(String(p.id)));
           setFollowingReels(followingVids);
+          setFollowingHasMore(followingAll.length >= 50);
         }
       }
     } catch (e) {
@@ -2403,6 +2472,59 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   };
 
   const handleRefresh = useCallback(() => loadReels(true), []);
+
+  // ── Infinite scroll (P0) — fetch the next page for whichever tab is active
+  // and append it, deduping by id (mirrors ChatFeedTab.loadPosts existingIds
+  // merge). The loadingMoreRef single-flight guard stops FlatList from firing
+  // a second onEndReached while a fetch is already in flight. By-sound feeds
+  // (soundIdProp) page through chat_reels_by_sound; the two standard tabs use
+  // feedList with type='following' for the Following tab.
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current) return;
+    const isFollowing = reelTab === 'following';
+    const moreAvailable = isFollowing ? followingHasMore : hasMore;
+    if (!moreAvailable) return;
+    const nextPage = (isFollowing ? followingPage : page) + 1;
+    loadingMoreRef.current = true;
+    try {
+      let rawPosts = [];
+      if (soundIdProp) {
+        const r = await api.chatReelsBySound(soundIdProp, nextPage, 50);
+        if (r && r.success && r.data) rawPosts = Array.isArray(r.data.posts) ? r.data.posts : [];
+      } else {
+        const args = { page: nextPage, limit: 50 };
+        if (isFollowing) args.type = 'following';
+        const r = await api.feedList(args);
+        if (r && r.success && r.data) {
+          const raw = r.data.posts || r.data;
+          rawPosts = Array.isArray(raw) ? raw : [];
+        }
+      }
+      const newVideos = rawPosts.filter(p => isReelVideo(p) && !hiddenIdsRef.current.has(String(p.id)));
+      const setList = isFollowing ? setFollowingReels : setReels;
+      setList(prev => {
+        const existingIds = new Set(prev.map(p => p.id));
+        const unique = newVideos.filter(p => !existingIds.has(p.id));
+        if (unique.length === 0) return prev;
+        return [...prev, ...unique];
+      });
+      // Cursor + has-more bookkeeping. Base has-more on the *raw* page size so
+      // a page full of non-video posts doesn't prematurely halt pagination.
+      const more = rawPosts.length >= 50;
+      if (isFollowing) {
+        setFollowingPage(nextPage);
+        setFollowingHasMore(more);
+        if (soundIdProp) setPage(nextPage);
+      } else {
+        setPage(nextPage);
+        setHasMore(more);
+      }
+    } catch (e) {
+      console.warn('Reels loadMore error:', e);
+    } finally {
+      loadingMoreRef.current = false;
+    }
+  }, [reelTab, page, followingPage, hasMore, followingHasMore, soundIdProp]);
 
   const handleOpenComments = useCallback((reel) => {
     setCommentsReel(reel);
@@ -2495,14 +2617,38 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     try { router?.push(`/post-create?stitch_of=${reel.id}`); } catch {}
   }, [router]);
 
-  // ── Reels P0: Not interested — soft-hide for the current viewer.
+  // ── Reels P0/P2: Not interested — soft-hide for the current viewer.
+  // The backend feed_hide_post action may not be live yet, so we ALSO persist
+  // the hidden id locally (AsyncStorage) and surface a toast so the action is
+  // never a silent no-op. Locally-hidden ids are filtered out of future loads
+  // via hiddenIdsRef (see loadReels-side filter), so the reel stays gone even
+  // across refreshes regardless of whether the server recorded the signal.
   const handleHidePost = useCallback(async (reel, signal = 'not_interested') => {
     if (!reel?.id) return;
-    try { await api.feedHidePost(reel.id, signal); } catch {}
+    // Best-effort server signal — ignore failures, the local hide is authoritative.
+    try { await api.feedHidePost?.(reel.id, signal); } catch {}
+    // Persist locally so the reel stays hidden across sessions.
+    try {
+      hiddenIdsRef.current.add(String(reel.id));
+      await AsyncStorage.setItem(
+        REELS_HIDDEN_KEY,
+        JSON.stringify([...hiddenIdsRef.current]),
+      );
+    } catch {}
     // Optimistically drop the reel from the active list so it disappears now.
     setReels(prev => prev.filter(p => p.id !== reel.id));
     setFollowingReels(prev => prev.filter(p => p.id !== reel.id));
-  }, []);
+    // Visible confirmation (toast) — auto-dismisses after ~2s.
+    const msg = signal === 'reported'
+      ? (t?.('feed.reportThanks') || 'Obrigado, vamos revisar.')
+      : (t?.('feed.notInterestedDone') || 'Você verá menos desse tipo.');
+    if (Platform.OS === 'android' && ToastAndroid?.show) {
+      try { ToastAndroid.show(msg, ToastAndroid.SHORT); return; } catch {}
+    }
+    setHideToast(msg);
+    if (hideToastTimerRef.current) clearTimeout(hideToastTimerRef.current);
+    hideToastTimerRef.current = setTimeout(() => setHideToast(''), 2200);
+  }, [t]);
 
   const overlayOpen = !!commentsReel || !!likersReel;
   // Pre-load window: mark the reel that's one and two ahead as `preload`.
@@ -2600,6 +2746,8 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         decelerationRate="fast"
         onViewableItemsChanged={onViewableRef.current}
         viewabilityConfig={viewConfigRef.current}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.5}
         getItemLayout={(data, index) => ({
           length: containerHeight,
           offset: containerHeight * index,
@@ -2657,6 +2805,14 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         t={t}
         onClose={() => setLikersReel(null)}
       />
+
+      {/* "Não tenho interesse" / report confirmation toast (iOS + web; Android
+          uses the native ToastAndroid in handleHidePost). */}
+      {!!hideToast && (
+        <View pointerEvents="none" style={styles.hideToast}>
+          <Text style={styles.hideToastText} numberOfLines={2}>{hideToast}</Text>
+        </View>
+      )}
     </View>
   );
 }
@@ -2672,6 +2828,24 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  hideToast: {
+    position: 'absolute',
+    bottom: 90,
+    left: 24,
+    right: 24,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 18,
+    alignItems: 'center',
+    zIndex: 50,
+  },
+  hideToastText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
   },
   reelContainer: {
     backgroundColor: '#000',

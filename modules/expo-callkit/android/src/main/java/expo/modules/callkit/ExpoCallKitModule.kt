@@ -427,6 +427,17 @@ class ExpoCallKitModule : Module() {
 
     OnCreate {
       instance.set(this@ExpoCallKitModule)
+      // [native-crash-visibility 2026-05-26] Install a process-wide
+      // uncaught-exception handler so NATIVE Kotlin crashes (which bypass the
+      // JS ErrorUtils handler in services/crashReporter.js) get recorded to the
+      // same push_diag.log channel before the OS tears the process down. This
+      // module is guaranteed to load early, so OnCreate is a reliable install
+      // point. Guarded internally — can never crash boot. See NativeCrashReporter.
+      try {
+        NativeCrashReporter.install(context.applicationContext)
+      } catch (t: Throwable) {
+        Log.w(TAG, "NativeCrashReporter install failed: ${t.message}")
+      }
     }
 
     OnDestroy {

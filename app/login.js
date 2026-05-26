@@ -433,7 +433,30 @@ export default function LoginScreen() {
       // lets us short-circuit to the normal password flow when we have
       // nothing saved, instead of prompting Face ID on an unknown account.
       const savedEmail = await SecureStore.getItemAsync('bio_email');
-      const savedToken = await SecureStore.getItemAsync('bio_token');
+      let savedToken = await SecureStore.getItemAsync('bio_token');
+      // P1: bind the bearer to the identity it was minted for. The global
+      // `bio_token` is a single device-wide slot; when a per-account twin
+      // (`bio_token:<email>`) exists, prefer it and refuse the global token
+      // if it doesn't match — otherwise a stale global pair could unlock a
+      // DIFFERENT account than `bio_email` claims.
+      try {
+        if (savedEmail) {
+          const { bioTokenKeyFor } = require('../context/BiometricContext');
+          const k = bioTokenKeyFor(savedEmail);
+          if (k) {
+            const perAccountTok = await SecureStore.getItemAsync(k);
+            if (perAccountTok) {
+              // Trust the per-account twin as the source of truth.
+              savedToken = perAccountTok;
+            } else if (savedToken) {
+              // No twin for this email but a global token exists — it may have
+              // been minted for a different identity. Drop it and require a
+              // password so the next success re-binds the per-account token.
+              savedToken = null;
+            }
+          }
+        }
+      } catch {}
       const legacyPassword = !savedToken ? await SecureStore.getItemAsync('bio_password') : null;
 
       // First time on this device: no saved email. Surface a clear hint so
@@ -473,6 +496,12 @@ export default function LoginScreen() {
           // so we can see exactly why the token isn't working (user reports
           // "Face ID pede senha" without knowing why).
           try { await SecureStore.deleteItemAsync('bio_token'); } catch {}
+          // Drop the per-account twin too so the dead bearer can't be retried.
+          try {
+            const { bioTokenKeyFor } = require('../context/BiometricContext');
+            const k = bioTokenKeyFor(savedEmail);
+            if (k) await SecureStore.deleteItemAsync(k);
+          } catch {}
           try { setEmail(savedEmail); setStep(2); } catch {}
           const reason = r?.message ? ` (${r.message.slice(0, 60)})` : '';
           setError((t('login.biometricExpired') || 'Sessão expirada. Digite a senha para reativar o Face ID.') + reason);
@@ -484,7 +513,15 @@ export default function LoginScreen() {
         if (r.success) {
           try {
             const newToken = api.getToken?.();
-            if (newToken) await SecureStore.setItemAsync('bio_token', newToken);
+            if (newToken) {
+              await SecureStore.setItemAsync('bio_token', newToken);
+              // Re-bind the per-account twin for the just-authenticated email.
+              try {
+                const { bioTokenKeyFor } = require('../context/BiometricContext');
+                const k = bioTokenKeyFor(savedEmail);
+                if (k) await SecureStore.setItemAsync(k, newToken);
+              } catch {}
+            }
             await SecureStore.deleteItemAsync('bio_password');
           } catch {}
           goAfterLogin(r.data?.is_child || isChildAccount());
@@ -750,6 +787,13 @@ export default function LoginScreen() {
             await SecureStore.setItemAsync('bio_email', fullEmail);
             if (tok) {
               await SecureStore.setItemAsync('bio_token', tok);
+              // P1: per-account twin so this bearer can only unlock the
+              // identity it was minted for (`bio_token:<email>`).
+              try {
+                const { bioTokenKeyFor } = require('../context/BiometricContext');
+                const k = bioTokenKeyFor(fullEmail);
+                if (k) await SecureStore.setItemAsync(k, tok);
+              } catch {}
             } else {
               console.warn('[login] bio_token NOT saved — api.getToken() + r.data.token both empty. Face ID will not work until next manual login.');
             }
@@ -807,7 +851,15 @@ export default function LoginScreen() {
                 try {
                   const tok = r.data?.token || api.getToken?.();
                   await SecureStore.setItemAsync('bio_email', chEmail);
-                  if (tok) await SecureStore.setItemAsync('bio_token', tok);
+                  if (tok) {
+                    await SecureStore.setItemAsync('bio_token', tok);
+                    // P1: per-account twin (`bio_token:<email>`).
+                    try {
+                      const { bioTokenKeyFor } = require('../context/BiometricContext');
+                      const k = bioTokenKeyFor(chEmail);
+                      if (k) await SecureStore.setItemAsync(k, tok);
+                    } catch {}
+                  }
                   await SecureStore.deleteItemAsync('bio_password').catch(() => {});
                 } catch {}
               }
@@ -2531,6 +2583,16 @@ export default function LoginScreen() {
                         try {
                           if (Platform.OS !== 'web') {
                             const SS = require('expo-secure-store');
+                            // Clear the per-account twin for whatever email is
+                            // currently bound BEFORE wiping bio_email.
+                            try {
+                              const lastEmail = await SS.getItemAsync('bio_email').catch(() => null);
+                              if (lastEmail) {
+                                const { bioTokenKeyFor } = require('../context/BiometricContext');
+                                const k = bioTokenKeyFor(lastEmail);
+                                if (k) await SS.deleteItemAsync(k).catch(() => {});
+                              }
+                            } catch {}
                             await SS.deleteItemAsync('bio_email').catch(() => {});
                             await SS.deleteItemAsync('bio_token').catch(() => {});
                             await SS.deleteItemAsync('bio_password').catch(() => {});

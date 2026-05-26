@@ -2183,6 +2183,7 @@ export default function PhotosScreen() {
     setPhotoRestoreProgress({ current: 0, total: totalToDownload });
 
     let downloaded = 0;
+    let skippedExisting = 0;
 
     // Get MediaLibrary on native
     let ML = null;
@@ -2200,6 +2201,103 @@ export default function PhotosScreen() {
       } catch {}
     }
 
+    // [#1243 2026-05-26] Skip assets already on the device so restore doesn't
+    // duplicate photos into the camera roll. Two signals, unioned:
+    //   1. asset_id — the server tags each backed-up file with its origin
+    //      device asset_id (md5'd); getBackedUpMap() is keyed by that id and
+    //      reflects every asset this device has uploaded (i.e. already owns).
+    //   2. content hash — for photos that came from another device or whose
+    //      asset_id we don't have, match the server-provided content hash
+    //      against hashes we've already restored in this run.
+    // A Set built once up-front, then consulted per file. Also tracks ids we
+    // restore THIS run so re-selecting overlapping months doesn't re-download.
+    const ownedAssetIds = new Set();
+    try {
+      const bs = require('../services/backup/backupStorage');
+      if (bs?.getBackedUpMap) {
+        const map = await bs.getBackedUpMap();
+        if (map && typeof map === 'object') {
+          for (const k of Object.keys(map)) ownedAssetIds.add(String(k));
+        }
+      }
+    } catch {}
+    // Device library asset ids (devicePhotos carries deviceId === asset_id).
+    try {
+      for (const dp of (devicePhotos || [])) {
+        if (dp?.deviceId) ownedAssetIds.add(String(dp.deviceId));
+        if (dp?.id) ownedAssetIds.add(String(dp.id));
+      }
+    } catch {}
+    const restoredHashes = new Set();
+    const isAlreadyOnDevice = (file) => {
+      const aid = file?.asset_id != null ? String(file.asset_id) : null;
+      if (aid && ownedAssetIds.has(aid)) return true;
+      const hash = file?.content_hash || file?.hash || file?.md5 || null;
+      if (hash && restoredHashes.has(hash)) return true;
+      return false;
+    };
+    const markRestored = (file) => {
+      const aid = file?.asset_id != null ? String(file.asset_id) : null;
+      if (aid) ownedAssetIds.add(aid);
+      const hash = file?.content_hash || file?.hash || file?.md5 || null;
+      if (hash) restoredHashes.add(hash);
+    };
+
+    // Restore a single file. Returns 'done' | 'skipped' | 'error'.
+    const restoreOne = async (file) => {
+      if (isAlreadyOnDevice(file)) return 'skipped';
+      try {
+        if (Platform.OS !== 'web' && ML && FileSystem) {
+          // Native: download and save to gallery
+          const downloadUrl = file.download_url || file.url;
+          if (downloadUrl) {
+            const localUri = FileSystem.cacheDirectory + (file.name || `photo_${file.id}.jpg`);
+            await FileSystem.downloadAsync(downloadUrl, localUri);
+            await ML.createAssetAsync(localUri);
+            // Clean up cache
+            try { await FileSystem.deleteAsync(localUri, { idempotent: true }); } catch {}
+            markRestored(file);
+            return 'done';
+          }
+        } else if (Platform.OS === 'web') {
+          // Web: trigger download via hidden link
+          const downloadUrl = file.download_url || file.url;
+          if (downloadUrl) {
+            const a = document.createElement('a');
+            a.href = downloadUrl;
+            a.download = file.name || `photo_${file.id}.jpg`;
+            a.style.display = 'none';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            // Small delay to avoid browser download limits
+            await new Promise(r => setTimeout(r, 300));
+            markRestored(file);
+            return 'done';
+          }
+        }
+      } catch {}
+      return 'error';
+    };
+
+    // Small parallel pool — downloads run concurrently (network-bound) but the
+    // pool size is capped so we don't saturate the radio or createAssetAsync.
+    // Web stays serial (the hidden-link trick + browser download limits).
+    const POOL = Platform.OS === 'web' ? 1 : 4;
+    const runPool = async (files) => {
+      let cursor = 0;
+      const worker = async () => {
+        while (cursor < files.length) {
+          const file = files[cursor++];
+          const res = await restoreOne(file);
+          if (res === 'skipped') skippedExisting++;
+          else if (res === 'done') downloaded++;
+          setPhotoRestoreProgress({ current: downloaded + skippedExisting, total: totalToDownload });
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(POOL, files.length || 1) }, worker));
+    };
+
     // Download in batches per selected month
     for (const monthKey of selectedMonths) {
       let page = 1;
@@ -2208,41 +2306,7 @@ export default function PhotosScreen() {
         try {
           const r = await api.drivePhotoSyncList(page, 10, monthKey);
           if (!r.success || !r.data?.files?.length) { hasMore = false; break; }
-          const files = r.data.files;
-
-          // Download each file in this batch
-          for (const file of files) {
-            try {
-              if (Platform.OS !== 'web' && ML && FileSystem) {
-                // Native: download and save to gallery
-                const downloadUrl = file.download_url || file.url;
-                if (downloadUrl) {
-                  const localUri = FileSystem.cacheDirectory + (file.name || `photo_${file.id}.jpg`);
-                  await FileSystem.downloadAsync(downloadUrl, localUri);
-                  await ML.createAssetAsync(localUri);
-                  // Clean up cache
-                  try { await FileSystem.deleteAsync(localUri, { idempotent: true }); } catch {}
-                }
-              } else if (Platform.OS === 'web') {
-                // Web: trigger download via hidden link
-                const downloadUrl = file.download_url || file.url;
-                if (downloadUrl) {
-                  const a = document.createElement('a');
-                  a.href = downloadUrl;
-                  a.download = file.name || `photo_${file.id}.jpg`;
-                  a.style.display = 'none';
-                  document.body.appendChild(a);
-                  a.click();
-                  document.body.removeChild(a);
-                  // Small delay to avoid browser download limits
-                  await new Promise(r => setTimeout(r, 300));
-                }
-              }
-            } catch {}
-            downloaded++;
-            setPhotoRestoreProgress({ current: downloaded, total: totalToDownload });
-          }
-
+          await runPool(r.data.files);
           hasMore = page < (r.data.pages || 1);
           page++;
         } catch { hasMore = false; }
@@ -2250,11 +2314,18 @@ export default function PhotosScreen() {
     }
 
     setPhotoRestoreRunning(false);
+    // [#1243] Surface that economy backups restore at reduced quality + how
+    // many duplicates we skipped, so the result count isn't mistaken for loss.
+    const baseMsg = (t('photos.restoreCompleteMsg') || '{n} fotos restauradas com sucesso').replace('{n}', downloaded);
+    const economyNotice = t('photos.restoreEconomyNotice') || 'Backups economy restauram em qualidade reduzida.';
+    const skipNotice = skippedExisting > 0
+      ? '\n' + (t('photos.restoreSkippedMsg') || '{n} já estavam no dispositivo.').replace('{n}', skippedExisting)
+      : '';
     safeAlert(
       t('photos.restoreComplete') || 'Concluido!',
-      (t('photos.restoreCompleteMsg') || '{n} fotos restauradas com sucesso').replace('{n}', downloaded)
+      `${baseMsg}${skipNotice}\n\n${economyNotice}`
     );
-  }, [selectedMonths, cloudPhotoMonths, t]);
+  }, [selectedMonths, cloudPhotoMonths, devicePhotos, t]);
 
   // Create album
   const createAlbum = useCallback(async () => {

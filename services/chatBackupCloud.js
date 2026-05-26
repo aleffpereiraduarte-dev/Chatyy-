@@ -60,6 +60,16 @@ const FRAME_GZIP = 0x01;
 // with no Content-Length and we want to bound memory blow-up.
 const MEDIA_MAX_BYTES = 50 * 1024 * 1024;       // 50 MB ceiling per item
 const MEDIA_TRUNCATE_BYTES = 5 * 1024 * 1024;   // 5 MB safe cut-off
+// [#1242 2026-05-26] HARD cumulative cap on packed media. Before this the
+// only guard was a SOFT 500MB *estimate* prompt (confirmLargeMedia) that the
+// user could simply accept — then the loop accumulated the ENTIRE library as
+// base64 in one in-memory bundle and the device OOM-crashed on iOS (base64 is
+// ~33% larger than raw, and the whole thing is held + JSON.stringify'd +
+// gzipped + encrypted, so peak RSS is several × the media size). This is a
+// real ceiling enforced byte-by-byte during the fetch loop: once the packed
+// total would exceed it we stop including further media (counted as skipped),
+// guaranteeing a bounded bundle regardless of what the user accepts.
+const MEDIA_CUMULATIVE_MAX_BYTES = 400 * 1024 * 1024; // 400 MB packed ceiling
 
 // pako is optional — only used to gzip the JSON before encryption. We
 // require it lazily so the module still loads in environments that didn't
@@ -381,6 +391,8 @@ export async function exportChatBundleWithMedia(passphrase, opts = {}) {
   let mediaSkippedTooBig = 0;
   let mediaSkippedFailed = 0;
   let mediaBytes = 0;
+  // Messages whose file_b64 we packed — released right after serialization.
+  let _packedForCleanup = [];
 
   if (includeMedia) {
     const withUrls = messages.filter((m) => m.file_url);
@@ -437,9 +449,21 @@ export async function exportChatBundleWithMedia(passphrase, opts = {}) {
     if (mediaSkippedTooBig === 0 || mediaSkippedTooBig !== withUrls.length) {
     onProgress({ stage: 'fetch_media', total: withUrls.length });
 
+    // Track which messages we packed so we can release their base64 strings
+    // immediately after the bundle is serialized (see post-stringify cleanup).
+    const packedMessages = [];
+    let mediaCapHit = false;
     for (let i = 0; i < withUrls.length; i++) {
       const m = withUrls[i];
       onProgress({ stage: 'fetch_media_item', index: i, total: withUrls.length, file_name: m.file_name });
+      // [#1242] Stop packing once the cumulative HARD cap is reached. Remaining
+      // items are counted as skipped (too big) so the manifest is honest and
+      // the restore side knows media is partial. Bounds peak memory.
+      if (mediaBytes >= MEDIA_CUMULATIVE_MAX_BYTES) {
+        mediaSkippedTooBig++;
+        mediaCapHit = true;
+        continue;
+      }
       // HEAD first to learn size (best-effort — many CDNs don't honor HEAD).
       let declaredSize = null;
       try {
@@ -451,26 +475,51 @@ export async function exportChatBundleWithMedia(passphrase, opts = {}) {
         mediaSkippedTooBig++;
         continue;
       }
+      // If we already know (via HEAD) that adding this item would blow the
+      // cumulative cap, skip it before spending the bandwidth/memory on it.
+      if (declaredSize && mediaBytes + declaredSize > MEDIA_CUMULATIVE_MAX_BYTES) {
+        mediaSkippedTooBig++;
+        mediaCapHit = true;
+        continue;
+      }
       try {
         const r = await fetch(m.file_url);
         if (!r.ok) { mediaSkippedFailed++; continue; }
-        const buf = await r.arrayBuffer();
+        let buf = await r.arrayBuffer();
         let u8 = new Uint8Array(buf);
-        if (u8.length > MEDIA_MAX_BYTES) { mediaSkippedTooBig++; continue; }
+        if (u8.length > MEDIA_MAX_BYTES) { mediaSkippedTooBig++; buf = null; u8 = null; continue; }
         if (u8.length > MEDIA_TRUNCATE_BYTES && declaredSize == null) {
           // Defensive: server didn't tell us size up-front and the body is
           // larger than our soft cap. Truncate rather than risk OOM.
           u8 = u8.slice(0, MEDIA_TRUNCATE_BYTES);
           m.file_truncated = true;
         }
+        // Recheck the cumulative cap with the ACTUAL decoded size (HEAD may
+        // have lied or been absent). If this body tips us over, drop it.
+        if (mediaBytes + u8.length > MEDIA_CUMULATIVE_MAX_BYTES) {
+          mediaSkippedTooBig++;
+          mediaCapHit = true;
+          buf = null; u8 = null;
+          continue;
+        }
         m.file_b64 = _u8ToBase64(u8);
         m.file_b64_size = u8.length;
         mediaIncluded++;
         mediaBytes += u8.length;
+        packedMessages.push(m);
+        // Release the large binary buffers ASAP so they aren't held alongside
+        // every other item's base64 for the rest of the (long) fetch loop.
+        buf = null;
+        u8 = null;
       } catch {
         mediaSkippedFailed++;
       }
     }
+    if (mediaCapHit) onProgress({ stage: 'media_cap_reached', media_bytes: mediaBytes });
+    // Stash the packed list on a non-enumerable carrier so the post-serialize
+    // cleanup below can null each file_b64 right after JSON.stringify, freeing
+    // the (largest) chunk of memory before gzip + encrypt run.
+    _packedForCleanup = packedMessages;
     } // end "if user didn't decline the >500MB prompt"
   }
 
@@ -504,6 +553,16 @@ export async function exportChatBundleWithMedia(passphrase, opts = {}) {
   // huge win here (media is base64-expanded so the JSON is ~33% larger
   // than raw bytes; gzip walks that back to near-original).
   const jsonBytes = decodeUTF8(JSON.stringify(bundle));
+  // [#1242] The bundle's base64 media is now captured in jsonBytes — release
+  // every packed file_b64 reference so the (gzip + encrypt) stages that follow
+  // don't hold the base64 strings AND the byte buffers simultaneously. This is
+  // the single biggest memory drop in the whole export on a large library.
+  try {
+    for (const m of _packedForCleanup) {
+      if (m) { m.file_b64 = undefined; }
+    }
+    _packedForCleanup = [];
+  } catch {}
   const pako = _getPako();
   let plaintext;
   if (pako && typeof pako.gzip === 'function') {

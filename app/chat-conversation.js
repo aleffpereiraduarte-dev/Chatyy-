@@ -7890,7 +7890,10 @@ export default function ChatConversationScreen() {
     api.chatRead(conversationId, msgId).catch(() => {
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
-        queueOfflineAction({ type: 'chat_read', conversation_id: conversationId }).catch(() => {});
+        // [read-id fix] Carry message_id so the replay advances the server's
+        // last_read_message_id to THIS exact row (chatRead vs the watermark-
+        // losing chatReadAck). Without it the peer's blue ticks could regress.
+        queueOfflineAction({ type: 'chat_read', conversation_id: conversationId, message_id: msgId }).catch(() => {});
       } catch {}
     });
     try {
@@ -9365,6 +9368,19 @@ export default function ChatConversationScreen() {
               if (typeof nm.id === 'number' && nm.id < oldestNewId) oldestNewId = nm.id;
             }
             const keptOlder = prev.filter(m => typeof m.id === 'number' && m.id < oldestNewId);
+            // [msg "aparece e some" fix] Keep numeric-id messages NEWER than
+            // this server batch too. loadMessages always pulls the last
+            // PAGE_SIZE (sinceId=0); a message that landed via WS/TCP AFTER the
+            // server snapshotted (but isn't in newById) would otherwise be
+            // dropped by keptOlder (only keeps < oldestNewId) and reconciled
+            // (only the batch) — so a just-received bubble vanished on every
+            // re-run of loadMessages. Find the newest numeric id in the batch
+            // and preserve anything strictly newer that the batch doesn't carry.
+            let newestNewId = -Infinity;
+            for (const nm of newMsgs) {
+              if (typeof nm.id === 'number' && nm.id > newestNewId) newestNewId = nm.id;
+            }
+            const keptNewer = prev.filter(m => typeof m.id === 'number' && m.id > newestNewId && !newById.has(m.id));
             // [#1188 Agent investigation 2026-05-19] Envelope-mode messages
             // get a CMI-string id (not tmp_*, not numeric) because the
             // server never creates a chat_messages row for them — only
@@ -9435,7 +9451,7 @@ export default function ChatConversationScreen() {
               }
               return withTx;
             });
-            const merged = [...keptOlder, ...reconciled, ...keptPending, ...keptEnvelope];
+            const merged = [...keptOlder, ...reconciled, ...keptPending, ...keptEnvelope, ...keptNewer];
             // Stable ordering: primary by numeric id, secondary by created_at
             // ms. Bursts on slow networks can let two messages land with
             // identical fall-back negative ids (Date.now()*1000 collision when
@@ -10594,8 +10610,23 @@ export default function ChatConversationScreen() {
           // Send delivery ack for incoming messages (WhatsApp-style double check).
           // Use the batcher so a burst of 20 messages collapses into ONE POST
           // instead of 20 — saves server CPU + radio battery on the recipient.
-          if (msg.sender_email !== currentEmail && msg.id && typeof msg.id === 'number') {
-            api.chatDeliveryAckBatched?.(conversationId, [msg.id]);
+          // [E2E ack fix] Envelope-mode rows carry a NON-numeric CMI id (or a
+          // negative-int32 placeholder), so the old `typeof msg.id==='number'`
+          // gate silently skipped the ack and the sender never saw ✓✓ for
+          // encrypted messages. Derive the real server id: prefer msg.id when
+          // it's a positive number, else any numeric server-assigned field the
+          // envelope row carries (message_id / server_id). Only a positive
+          // integer is a valid chat_messages PK to ack.
+          if (msg.sender_email !== currentEmail) {
+            const _ackCandidates = [msg.id, msg.message_id, msg.server_id];
+            let _ackId = null;
+            for (const c of _ackCandidates) {
+              const n = typeof c === 'number' ? c : (typeof c === 'string' && /^[0-9]+$/.test(c) ? Number(c) : NaN);
+              if (Number.isFinite(n) && n > 0) { _ackId = n; break; }
+            }
+            if (_ackId != null) {
+              api.chatDeliveryAckBatched?.(conversationId, [_ackId]);
+            }
           }
 
           // Mark as read since user is viewing the conversation (debounced)
@@ -11213,6 +11244,20 @@ export default function ChatConversationScreen() {
               }
             })();
           }
+          // [stuck-sending recovery] Reclaim any outbox rows wedged in the
+          // mid-flight 'sending' state from a previous session/crash. Boot-time
+          // recovery (sendWorker.start) only runs once; a row that got stuck
+          // AFTER boot (socket dropped mid-send) would otherwise spin
+          // "Enviando..." forever until the next cold start. Run it on every
+          // reconnect so the sendWorker poke below can re-drain it.
+          if (OUTBOX_V2_ONLY) {
+            try {
+              const _rs = messageOutbox.recoverStuck?.();
+              const _drain = () => { try { require('../services/sendWorker').poke?.(); } catch {} };
+              if (_rs && typeof _rs.then === 'function') _rs.then(_drain).catch(() => {});
+              else _drain();
+            } catch {}
+          }
           // Re-flush any chat sends queued while offline (server dedupes via client_message_id).
           (async () => {
             try {
@@ -11305,15 +11350,22 @@ export default function ChatConversationScreen() {
         const _cidKey = _rawCid ? 'c:' + String(_rawCid) : null;
         if (_recvIdSet.current.has(_idKey)) return;
         if (_cidKey && _recvIdSet.current.has(_cidKey)) return;
-        _addRecvId(_idKey);
-        if (_cidKey) _addRecvId(_cidKey);
         // Advance pts watermark so chat_sync doesn't re-fetch this event
         // (the WS handler above does this too; TCP was silently missing it).
         if (msg.conv_pts) {
           try { require('../services/chatSync').observePts(conversationId, Number(msg.conv_pts)); } catch {}
         }
-        // ★ Decrypt + normalize for native view
-        msg = processIncoming([msg])[0];
+        // ★ Decrypt + normalize for native view. Mirror the WS path: process
+        // FIRST and only mark the id in the dedup set AFTER a valid msg comes
+        // back. The old order added _idKey BEFORE processIncoming (and indexed
+        // [0] with no null guard) — if decrypt failed, the id was poisoned in
+        // the set so the canonical re-delivery was blocked forever and the
+        // bubble vanished ("aparece e some").
+        const m2 = processIncoming([msg])?.[0];
+        if (!m2) return;
+        msg = m2;
+        _addRecvId(_idKey);
+        if (_cidKey) _addRecvId(_cidKey);
         // Soft pop sound for incoming messages from OTHER users (not own echo)
         const isFromOther = msg.sender_email && msg.sender_email !== user?.email;
         const tcpClientMsgIdOuter = msg.client_message_id || msg._client_id || data?.client_message_id || data?._client_id;
@@ -12093,33 +12145,69 @@ export default function ChatConversationScreen() {
             editContent = e2eService.createEnvelope(text, currentEmail, e2eKeys);
           }
         }
-        const r = await api.chatEdit(editingMsg.id, editContent);
-        if (r.success) {
-          const editedAt = new Date().toISOString();
-          let editedRow = null;
-          setMessages(prev => prev.map(m => {
-            if (m.id !== editingMsg.id) return m;
-            editedRow = { ...m, content: text, edited_at: editedAt };
-            return editedRow;
-          }));
-          // Persist the edit to ALL local cache layers — same as handleDelete.
-          // Without this the WS `_onEdit` echo-filters the sender's own edit
-          // (no self-echo), so a cold reopen / offline read showed the OLD
-          // text. Mirror handleDelete: cacheSingleMessage (chatCache +
-          // SmartCache + web IndexedDB via _cacheOne) plus the SmartCache
-          // partial update.
-          if (editedRow) { try { _cacheOne(conversationId, editedRow); } catch {} }
+        // [optimistic-edit fix] Apply the new text to state + ALL cache layers
+        // BEFORE the network call (WhatsApp-style — the bubble updates
+        // instantly). Capture a rollback snapshot so a HARD failure (expired
+        // window) can restore the original; transient/network failures keep
+        // the optimistic edit and enqueue a chat_edit replay.
+        const editedAt = new Date().toISOString();
+        const _editId = editingMsg.id;
+        let editedRow = null;
+        let _prevEditRow = null;
+        setMessages(prev => prev.map(m => {
+          if (m.id !== _editId) return m;
+          _prevEditRow = m;
+          editedRow = { ...m, content: text, edited_at: editedAt };
+          return editedRow;
+        }));
+        // Persist the edit to ALL local cache layers — same as handleDelete.
+        // Without this the WS `_onEdit` echo-filters the sender's own edit
+        // (no self-echo), so a cold reopen / offline read showed the OLD
+        // text. Mirror handleDelete: cacheSingleMessage (chatCache +
+        // SmartCache + web IndexedDB via _cacheOne) plus the SmartCache
+        // partial update.
+        if (editedRow) { try { _cacheOne(conversationId, editedRow); } catch {} }
+        try {
+          const SmartCache = require('../services/smartChatCache');
+          SmartCache.updateCachedMessage?.(conversationId, _editId, { content: text, edited_at: editedAt });
+        } catch {}
+        setEditingMsg(null);
+        setInputText('');
+        try {
+          const r = await api.chatEdit(_editId, editContent);
+          if (!r.success) {
+            const reason = String(r?.message || '');
+            const isHard = /expired|window|permission|forbidden|not_found|invalid/i.test(reason);
+            if (isHard) {
+              // Restore the original row + surface the reason.
+              if (_prevEditRow) {
+                setMessages(prev => prev.map(m => m.id === _editId ? _prevEditRow : m));
+                try { _cacheOne(conversationId, _prevEditRow); } catch {}
+                try {
+                  const SmartCache = require('../services/smartChatCache');
+                  SmartCache.updateCachedMessage?.(conversationId, _editId, { content: _prevEditRow.content, edited_at: _prevEditRow.edited_at || null });
+                } catch {}
+              }
+              safeAlert(t('common.error') || 'Error', r?.message || t('chatConv.editFailed') || 'Failed to edit message');
+            } else {
+              // Transient soft failure — keep the optimistic edit, enqueue replay.
+              try {
+                const { queueOfflineAction } = require('../services/offlineCache');
+                await queueOfflineAction({ type: 'chat_edit', message_id: _editId, content: editContent });
+              } catch {}
+            }
+          }
+        } catch (e) {
+          console.warn('Edit message error:', e);
+          // Network failure — keep the optimistic edit (don't revert/alert),
+          // enqueue a chat_edit offline action; the replay drains on reconnect.
           try {
-            const SmartCache = require('../services/smartChatCache');
-            SmartCache.updateCachedMessage?.(conversationId, editingMsg.id, { content: text, edited_at: editedAt });
+            const { queueOfflineAction } = require('../services/offlineCache');
+            await queueOfflineAction({ type: 'chat_edit', message_id: _editId, content: editContent });
           } catch {}
-          setEditingMsg(null);
-          setInputText('');
-        } else {
-          safeAlert(t('common.error') || 'Error', r?.message || t('chatConv.editFailed') || 'Failed to edit message');
         }
       } catch (e) {
-        console.warn('Edit message error:', e);
+        console.warn('Edit message error (outer):', e);
         safeAlert(t('common.error') || 'Error', t('chatConv.editFailed') || 'Failed to edit message');
       } finally {
         setSending(false);
@@ -12185,6 +12273,19 @@ export default function ChatConversationScreen() {
     // sorts to the bottom of the list (newest). Date.now() in ms is way
     // bigger than typical server ids (which are < 100M).
     const negId = Date.now() * 1000 + Math.floor(Math.random() * 1000);
+    // [stuck-sending fix] Drop the synthetic-id native SQLite row. The success
+    // path already does this before swapping in the server row; the encrypt-
+    // fail and timeout/error branches did NOT, so a failed send left an orphan
+    // optimistic row in the native cache that re-hydrated on the next open as a
+    // ghost "Enviando..." bubble. Call this from EVERY terminal failure path.
+    const _dropOptimisticNativeRow = () => {
+      try {
+        if (negId && _NativeChatCache?.deleteMessage) {
+          const p = _NativeChatCache.deleteMessage(conversationId, negId);
+          if (p && typeof p.then === 'function') p.catch(() => {});
+        }
+      } catch {}
+    };
     const optimisticMsg = {
       id: tempId,
       _negId: negId,
@@ -12308,6 +12409,7 @@ export default function ChatConversationScreen() {
         // understands this isn't a network issue.
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'encryption_failed' } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
+        _dropOptimisticNativeRow();
         if (OUTBOX_V2_ONLY) {
           // Encryption is a hard fail — burn the row from the outbox so the
           // worker doesn't keep retrying a payload that will never encrypt.
@@ -12666,6 +12768,10 @@ export default function ChatConversationScreen() {
           // will pick up retries via the BACKOFF_SCHEDULE_MS ladder.
           try { messageOutbox.markFailed(msgId, r?.message || r?.error || 'server_error').catch(() => {}); } catch {}
         }
+        // [stuck-sending fix] Drop the synthetic negId native row — the
+        // outbox/offline queue now owns the retry under msgId/tempId, so the
+        // orphan negId row would otherwise re-hydrate as a ghost bubble.
+        _dropOptimisticNativeRow();
       }
     } catch (e) {
       // Log the REAL error to console for debugging (visible in Xcode/Safari dev tools)
@@ -12694,6 +12800,10 @@ export default function ChatConversationScreen() {
           // will drain this row in addition to the offlineCache retry.
           try { messageOutbox.markFailed(msgId, e?.message || 'network').catch(() => {}); } catch {}
         }
+        // [stuck-sending fix] Drop the synthetic negId native row on
+        // timeout/network failure too (mirrors the success swap) so it can't
+        // re-hydrate as an orphan "Enviando..." bubble on the next open.
+        _dropOptimisticNativeRow();
         // Transient-failure auto-replay: WS may still be connected (the
         // failure was just one HTTP hiccup), in which case the user would
         // otherwise wait for the NEXT reconnect/foreground event to drain
@@ -14850,59 +14960,84 @@ export default function ChatConversationScreen() {
     const deleteForEveryone = async () => {
       setSelectedMsg(null);
       await new Promise(r => setTimeout(r, 0));
+      // [optimistic-delete fix] Apply the tombstone to state + ALL cache layers
+      // BEFORE the network call (WhatsApp-style — the message vanishes
+      // instantly). Capture priorFileUrl + a rollback snapshot synchronously
+      // so we can both scrub the on-disk media and restore on a hard failure.
+      const _deletedAt = new Date().toISOString();
+      let priorFileUrl = '';
+      let _prevRow = null;
+      setMessages(prev => prev.map(m => {
+        if (String(m.id) === String(msgId)) {
+          priorFileUrl = m.file_url || '';
+          _prevRow = m;
+          return {
+            ...m,
+            deleted_at: _deletedAt,
+            content: '',
+            file_url: '',
+            file_name: '',
+            file_size: 0,
+            thumb_b64: null,
+            hls_url: null,
+            waveform: null,
+            deleted_by: user?.email,
+          };
+        }
+        return m;
+      }));
+      // Invalidate ALL cache layers so the stale pre-delete copy can't
+      // resurrect on the next chat open. Previously only the legacy
+      // chatCache was cleared — SmartCache kept the non-deleted row
+      // and `_initialCached` put it back into state on remount.
+      try {
+        const { deleteCachedMessage: delCache } = require('../services/chatCache');
+        delCache?.(conversationId, msgId)?.catch?.(() => {});
+      } catch {}
+      try {
+        const SmartCache = require('../services/smartChatCache');
+        SmartCache.updateCachedMessage?.(conversationId, msgId, { deleted_at: _deletedAt, content: '', file_url: '', file_name: '', file_size: 0, thumb_b64: null });
+      } catch {}
+      try {
+        const nativeDb = require('../services/db');
+        nativeDb.dbDeleteMessage?.(conversationId, msgId);
+      } catch {}
+      // Drop the on-disk media so re-tap can't resurface the local cached
+      // copy (mediaCache returns a file:// for previously downloaded URLs,
+      // independent of the server's file_url scrub).
+      if (priorFileUrl) {
+        try {
+          const mc = require('../services/mediaCache');
+          mc.deleteCachedUrl?.(priorFileUrl)?.catch?.(() => {});
+        } catch {}
+      }
       try {
         const r = await api.chatDelete(msgId, 'for_all');
-        if (r?.success) {
-          let priorFileUrl = '';
-          setMessages(prev => prev.map(m => {
-            if (String(m.id) === String(msgId)) {
-              priorFileUrl = m.file_url || '';
-              return {
-                ...m,
-                deleted_at: new Date().toISOString(),
-                content: '',
-                file_url: '',
-                file_name: '',
-                file_size: 0,
-                thumb_b64: null,
-                hls_url: null,
-                waveform: null,
-                deleted_by: user?.email,
-              };
-            }
-            return m;
-          }));
-          // Invalidate ALL cache layers so the stale pre-delete copy can't
-          // resurrect on the next chat open. Previously only the legacy
-          // chatCache was cleared — SmartCache kept the non-deleted row
-          // and `_initialCached` put it back into state on remount.
-          try {
-            const { deleteCachedMessage: delCache } = require('../services/chatCache');
-            delCache?.(conversationId, msgId)?.catch?.(() => {});
-          } catch {}
-          try {
-            const SmartCache = require('../services/smartChatCache');
-            SmartCache.updateCachedMessage?.(conversationId, msgId, { deleted_at: new Date().toISOString(), content: '', file_url: '', file_name: '', file_size: 0, thumb_b64: null });
-          } catch {}
-          try {
-            const nativeDb = require('../services/db');
-            nativeDb.dbDeleteMessage?.(conversationId, msgId);
-          } catch {}
-          // Drop the on-disk media so re-tap can't resurface the local cached
-          // copy (mediaCache returns a file:// for previously downloaded URLs,
-          // independent of the server's file_url scrub).
-          if (priorFileUrl) {
+        if (!r?.success) {
+          // Soft failure with a server message that's a HARD error (expired
+          // window, no permission) → restore the row + surface the reason.
+          const reason = String(r?.message || '');
+          const isHard = /expired|window|permission|forbidden|not_found|invalid/i.test(reason);
+          if (isHard) {
+            if (_prevRow) setMessages(prev => prev.map(m => String(m.id) === String(msgId) ? _prevRow : m));
+            if (reason) safeAlert(t('common.error'), r.message);
+          } else {
+            // Transient soft failure — keep the optimistic tombstone, enqueue
+            // for replay so the delete eventually reaches the server.
             try {
-              const mc = require('../services/mediaCache');
-              mc.deleteCachedUrl?.(priorFileUrl)?.catch?.(() => {});
+              const { queueOfflineAction } = require('../services/offlineCache');
+              await queueOfflineAction({ type: 'chat_delete', message_id: msgId, mode: 'for_all' });
             } catch {}
           }
-        } else if (r?.message) {
-          safeAlert(t('common.error'), r.message);
         }
       } catch (e) {
         console.warn('Delete for everyone error:', e);
-        safeAlert(t('common.error') || 'Error', t('chatConv.deleteFailed') || 'Failed to delete message');
+        // Network failure — keep the optimistic tombstone (don't revert/alert),
+        // enqueue a chat_delete offline action; the replay drains on reconnect.
+        try {
+          const { queueOfflineAction } = require('../services/offlineCache');
+          await queueOfflineAction({ type: 'chat_delete', message_id: msgId, mode: 'for_all' });
+        } catch {}
       }
     };
     const deleteForMe = async () => {
@@ -15099,9 +15234,24 @@ export default function ChatConversationScreen() {
         }
       }
     } catch {
-      // Network failure: rollback.
-      if (prevReactions) {
-        setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions: prevReactions } : m));
+      // Network failure: DON'T roll back. WhatsApp keeps the reaction chip
+      // and syncs it when connectivity returns. Enqueue a chat_react offline
+      // action (replay case exists in offlineCache.js) and leave the optimistic
+      // chip in place until the replay confirms with the server.
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        queueOfflineAction({
+          type: 'chat_react',
+          message_id: msgId,
+          emoji: isSticker ? null : emoji,
+          sticker_url: isSticker ? stickerUrl : null,
+        }).catch(() => {});
+      } catch {
+        // Queue itself unavailable — last-resort rollback so the chip doesn't
+        // lie about a reaction that will never sync.
+        if (prevReactions) {
+          setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions: prevReactions } : m));
+        }
       }
     }
     setShowReactions(null);

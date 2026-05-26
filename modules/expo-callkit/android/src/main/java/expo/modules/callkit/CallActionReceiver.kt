@@ -19,12 +19,82 @@ class CallActionReceiver : BroadcastReceiver() {
      *  from DECLINE (which targets the *incoming* ring notification before
      *  accept); HANGUP targets an *active* call after both peers connected. */
     const val ACTION_HANGUP = "ACTION_HANGUP_CALL"
+    /** [missed-call recording fix 2026-05-26 P1] Broadcast by
+     *  CallRingingService on its 45s ring timeout. We record the missed call
+     *  server-side (chat.php call_status) so chat history flips to "Chamada
+     *  perdida" AND the caller gets a missed-call push — matching iOS CallKit's
+     *  reportEndedCall(reason:.unanswered) + REST call_status path. */
+    const val ACTION_CALL_MISSED = "expo.modules.callkit.CALL_MISSED"
   }
 
   override fun onReceive(context: Context, intent: Intent) {
+    // [native-crash-hardening 2026-05-26] An uncaught exception in a
+    // BroadcastReceiver's onReceive crashes the whole process (it runs on the
+    // main thread). The action handlers below touch SharedPreferences,
+    // NotificationManager, AudioManager and the JS bridge — any of which can
+    // throw in a bad state (e.g. notification posted after process recycle,
+    // ExpoCallKitModule not yet ready). Wrap the entire body so a single bad
+    // call_action degrades to a logged no-op instead of an intermittent crash.
+    // The goAsync() paths inside already own their own try/finally for
+    // pendingResult.finish(); this is the outer net for the synchronous work.
+    try {
+      onReceiveInner(context, intent)
+    } catch (t: Throwable) {
+      Log.e(TAG, "onReceive crashed for action=${intent.action}: ${t.message}", t)
+    }
+  }
+
+  private fun onReceiveInner(context: Context, intent: Intent) {
     val callId = intent.getStringExtra("call_id") ?: return
 
     when (intent.action) {
+      ACTION_CALL_MISSED -> {
+        // [missed-call recording fix 2026-05-26 P1] Fire-and-forget POST so the
+        // backend records the unanswered call. Nothing previously consumed this
+        // broadcast — the FGS timed out, the local notification showed, but the
+        // call_card stayed "ringing" server-side and no missed push reached the
+        // caller. goAsync() keeps the receiver alive across the brief HTTP hop.
+        if (callId.isEmpty()) return
+        Log.d(TAG, "ACTION_CALL_MISSED callId=$callId — recording missed call server-side")
+        val ctx = context.applicationContext
+        val pending = goAsync()
+        Thread {
+          try {
+            val sp = ctx.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
+            val authToken = sp.getString("auth_token", "") ?: ""
+            val apiBase = sp.getString("api_base", "") ?: ""
+            if (authToken.isEmpty() || apiBase.isEmpty()) {
+              Log.w(TAG, "missed-call POST skipped — missing auth_token/api_base")
+              return@Thread
+            }
+            val base = if (apiBase.endsWith("/")) apiBase.dropLast(1) else apiBase
+            val url = java.net.URL("$base/api/email.php?action=call_status")
+            val conn = (url.openConnection() as java.net.HttpURLConnection).apply {
+              requestMethod = "POST"
+              setRequestProperty("Authorization", "Bearer $authToken")
+              setRequestProperty("Content-Type", "application/json")
+              setRequestProperty("Accept", "application/json")
+              doOutput = true
+              connectTimeout = 4000
+              readTimeout = 6000
+            }
+            val body = org.json.JSONObject(mapOf(
+              "action" to "call_status",
+              "call_id" to callId,
+              "status" to "missed",
+              "duration" to 0,
+            )).toString()
+            conn.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            Log.d(TAG, "missed-call POST HTTP ${conn.responseCode} for $callId")
+            try { conn.inputStream.close() } catch (_: Throwable) {}
+          } catch (t: Throwable) {
+            Log.w(TAG, "missed-call POST failed: ${t.message}")
+          } finally {
+            try { pending.finish() } catch (_: Throwable) {}
+          }
+        }.start()
+        return
+      }
       // ──────────────────────────────────────────────────────────────
       // [2026-05-16 Stage 4] Native-only accept path. Mirror of
       // IncomingCallActivity.onAccept: persist accept flag + pending call,

@@ -891,6 +891,10 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // (handleOpenForward, next/prev nav, etc.) call it via this ref to
   // avoid TDZ on web minified bundle (`Cannot access 'Ca'`).
   const closeViewerRef = useRef(null);
+  // recordView (declared near advanceViewer) is also referenced earlier by
+  // closeViewer; route through a ref so closeViewer can flush the current
+  // item's view receipt on dismiss without a TDZ on the minified bundle.
+  const recordViewRef = useRef(null);
   const progressAnim = useRef(new Animated.Value(0)).current;
   const timerRef = useRef(null);
   const animRef = useRef(null);
@@ -1595,6 +1599,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   }, [viewerOpacity, panY, myStatuses, contactStatuses, currentEmail, currentName]);
 
   const closeViewer = useCallback(() => {
+    // Flush the currently-visible item's view receipt before tearing down —
+    // covers the case where the user closes before auto-advance fired (quick
+    // close / single-item group). recordView is idempotent (guards on
+    // `viewed`), so this never double-counts an already-recorded item.
+    try { recordViewRef.current?.(viewerIndex); } catch {}
     stopStatusAudio();
     Animated.timing(viewerOpacity, { toValue: 0, duration: 200, useNativeDriver: false }).start(() => {
       setViewerVisible(false);
@@ -1604,7 +1613,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     progressAnim.setValue(0);
     panY.setValue(0);
     loadStatuses();
-  }, [progressAnim, viewerOpacity, panY, loadStatuses]);
+  }, [progressAnim, viewerOpacity, panY, loadStatuses, viewerIndex]);
 
   // Keep the ref in sync so panResponder can call it
   closeViewerRef.current = closeViewer;
@@ -1648,33 +1657,58 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     }
   }, [currentGroupIndex, allStatusGroups, progressAnim]);
 
+  // Record a view receipt for a single status item. Centralizes the logic
+  // that previously lived inline in advanceViewer so it can also fire on
+  // viewer OPEN and on every viewerIndex change (see effect below). Without
+  // those entry points, opening + closing a status within the auto-advance
+  // window (or a single-item group, which never advances) recorded NOTHING —
+  // the author's "Vistos" count never incremented.
+  //
+  // [WAVE 93 2026-05-21] Skip placeholder items: their id looks like
+  // `__manifest_<email>_<i>` and the backend rejects it (500 → goes into
+  // offline queue → garbage retries forever). Mirrors the StoryViewer fix.
+  // Idempotent locally: the `!item.viewed` guard + the in-modal flip below
+  // mean re-entry for the same item is a no-op.
+  const recordView = useCallback((idx) => {
+    const item = viewerStatuses[idx];
+    if (!item || item.viewed || item._placeholder || String(item.id).startsWith('__manifest_')) return;
+    const _viewId = item.id;
+    if (!_viewId) return;
+    api.statusView(_viewId).catch(() => {
+      // Offline / 5xx — queue the view receipt so it lands next reconnect.
+      // Server insert is idempotent on (status_id, viewer_email).
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        queueOfflineAction({ type: 'status_view', params: { status_id: _viewId } });
+      } catch {}
+    });
+    // Local viewer snapshot still needs the immediate flip — `viewerStatuses`
+    // was captured at openViewer time and isn't bound to the hook output,
+    // so this keeps the in-modal "Vistos" badge truthy for this same item.
+    setViewerStatuses(prev => prev.map((s, i) => i === idx ? { ...s, viewed: true } : s));
+    // Wave 4 finalize: route through the hook so MMKV + 30d disk cache +
+    // home strip + profile rings all see the viewed flag immediately. The
+    // mirror useEffect re-pushes hookOthers → setContactStatuses, so the
+    // "Recentes / Visualizados" partition reshuffles within one render —
+    // replaces the old manual setContactStatuses walk that left other
+    // surfaces (ChatListTab home, Profile) stale until the next 120s poll.
+    try { hookMarkViewed?.(item.id); } catch {}
+  }, [viewerStatuses, hookMarkViewed]);
+
+  // Keep the ref in sync so closeViewer (declared earlier) can flush.
+  recordViewRef.current = recordView;
+
+  // Fire the view receipt whenever the visible item changes (viewer open OR
+  // viewerIndex step). Mirrors StoryViewer's idx effect (~1019) so the receipt
+  // no longer depends on advanceViewer running — quick close / single-item
+  // groups now record correctly.
+  useEffect(() => {
+    if (!viewerVisible) return;
+    recordView(viewerIndex);
+  }, [viewerVisible, viewerIndex, recordView]);
+
   const advanceViewer = useCallback(() => {
-    const currentItem = viewerStatuses[viewerIndex];
-    // [WAVE 93 2026-05-21] Skip placeholder items: their id looks like
-    // `__manifest_<email>_<i>` and the backend rejects it (500 → goes into
-    // offline queue → garbage retries forever). Mirrors the StoryViewer fix.
-    if (currentItem && !currentItem.viewed && !currentItem._placeholder && !String(currentItem.id).startsWith('__manifest_')) {
-      const _viewId = currentItem.id;
-      api.statusView(_viewId).catch(() => {
-        // Offline / 5xx — queue the view receipt so it lands next reconnect.
-        // Server insert is idempotent on (status_id, viewer_email).
-        try {
-          const { queueOfflineAction } = require('../services/offlineCache');
-          queueOfflineAction({ type: 'status_view', params: { status_id: _viewId } });
-        } catch {}
-      });
-      // Local viewer snapshot still needs the immediate flip — `viewerStatuses`
-      // was captured at openViewer time and isn't bound to the hook output,
-      // so this keeps the in-modal "Vistos" badge truthy for this same item.
-      setViewerStatuses(prev => prev.map((s, idx) => idx === viewerIndex ? { ...s, viewed: true } : s));
-      // Wave 4 finalize: route through the hook so MMKV + 30d disk cache +
-      // home strip + profile rings all see the viewed flag immediately. The
-      // mirror useEffect re-pushes hookOthers → setContactStatuses, so the
-      // "Recentes / Visualizados" partition reshuffles within one render —
-      // replaces the old manual setContactStatuses walk that left other
-      // surfaces (ChatListTab home, Profile) stale until the next 120s poll.
-      try { hookMarkViewed?.(currentItem.id); } catch {}
-    }
+    recordView(viewerIndex);
 
     if (viewerIndex < viewerStatuses.length - 1) {
       setViewerIndex((prev) => prev + 1);
@@ -1682,7 +1716,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       // Move to next person's statuses instead of closing
       goToNextPerson();
     }
-  }, [viewerStatuses, viewerIndex, goToNextPerson, hookMarkViewed]);
+  }, [viewerStatuses, viewerIndex, goToNextPerson, recordView]);
 
   const goBackViewer = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);

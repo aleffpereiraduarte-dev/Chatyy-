@@ -660,7 +660,10 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
       const r = await api.feedLike(post.id);
       if (r.success && r.data) {
         if (r.data.liked !== undefined) setLiked(!!r.data.liked);
-        if (r.data.like_count !== undefined) setLikeCount(Number(r.data.like_count));
+        // Backend returns the reconciled total as `likes_count`; older
+        // servers used `like_count`. Read both so the count actually syncs.
+        const serverCount = r.data.likes_count ?? r.data.like_count;
+        if (serverCount !== undefined) setLikeCount(Number(serverCount));
       }
     } catch {
       // Network error — DON'T roll back the optimistic state. Instead,

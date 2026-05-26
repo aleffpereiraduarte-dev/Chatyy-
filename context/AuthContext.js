@@ -6,6 +6,18 @@ import * as api from '../services/api';
 import { clearAll as clearAllCache, setCacheUser } from '../services/cache';
 import { initDeltaSync, stopDeltaSync } from '../services/deltaSync';
 
+// Force the biometric app-lock to re-fire on identity changes. Imported via a
+// thin module-level bridge (NOT the React context) because BiometricProvider
+// wraps AuthProvider — pulling the hook in here would create a render-order
+// coupling. lockNow() is a no-op when biometrics are disabled, on web, or on a
+// public auth route, so it's always safe to call. See context/BiometricContext.jsx.
+function _forceBiometricLock() {
+  try {
+    const { lockNow } = require('./BiometricContext');
+    if (typeof lockNow === 'function') lockNow();
+  } catch {}
+}
+
 // Lazy-load to break circular dependency: AuthContext → chatCache → db
 const getLazyClearChatCache = async () => {
   const { clearChatCache } = await import('../services/chatCache');
@@ -652,16 +664,18 @@ export function AuthProvider({ children }) {
             return;
           }
           // If login returned "Incorrect email or password", truly logged out
-          // But if it was a network/server error, keep user logged in with cached data
+          // But if it was a network/server error, fall back to the OFFLINE
+          // cache — which only hydrates when a previously-validated token
+          // exists. We must NOT `setUser({email,name})` with no token here:
+          // that resurrected a session on web with no bearer at all, so the
+          // user appeared logged in but every API call 401'd (and a hostile
+          // cold start could surface the last identity without any credential).
           if (lr.message && lr.message.includes('Incorrect')) {
             // Real auth failure - do nothing, will show login screen
           } else {
-            // Server error (503, timeout) - use cached user data
-            setUser({ email: creds.email, name: creds.email.split('@')[0] });
-            loadAccounts();
-            _syncShareExtAuth(creds.email);
-            setLoading(false);
-            return;
+            // Server error (503, timeout) - only restore from offline cache if
+            // there's a real validated token behind it; never a token-less stub.
+            if (await hydrateOffline()) return;
           }
         }
 
@@ -702,14 +716,13 @@ export function AuthProvider({ children }) {
           try { api.clearAuthToken?.(); } catch {}
         }
       } catch (e) {
-        // Network error - try to use cached credentials (web) or AsyncStorage (native)
-        const creds = getSavedCredentials();
-        if (creds?.email) {
-          setUser({ email: creds.email, name: creds.email.split('@')[0] });
-          loadAccounts();
-          setLoading(false);
-          return;
-        }
+        // Network error - try the offline cache (native) which only hydrates
+        // when a previously-validated token exists. We deliberately do NOT
+        // `setUser({email,name})` from getSavedCredentials() here: that minted
+        // a token-less session (notably on web, where hydrateOffline is a
+        // no-op) — the user looked logged in but had no bearer, so every API
+        // call 401'd and, worse, a cold start could surface the last identity
+        // with no credential at all. Require a real token-backed restore.
         if (await hydrateOffline()) return;
       }
       loadAccounts();
@@ -1147,6 +1160,15 @@ export function AuthProvider({ children }) {
         const bioTok = (authToken || api.getAuthToken?.() || '').toString();
         if (bioEmail) { try { await SecureStore.setItemAsync('bio_email', bioEmail); } catch {} }
         if (bioTok) { try { await SecureStore.setItemAsync('bio_token', bioTok); } catch {} }
+        // P1: also bind the token per-account (`bio_token:<email>`) so a
+        // device-wide pair can't unlock a different identity than the one it
+        // was minted for. The login screen verifies the per-account twin
+        // matches the targeted email before trusting the bearer.
+        try {
+          const { bioTokenKeyFor } = require('./BiometricContext');
+          const k = bioTokenKeyFor(bioEmail);
+          if (k && bioTok) await SecureStore.setItemAsync(k, bioTok);
+        } catch {}
       }
     } catch {}
     // First-launch cloud-restore — same prompt path as login(). Only fires
@@ -1235,6 +1257,10 @@ export function AuthProvider({ children }) {
     const _outgoingEmail = (user?.email || api.getActiveAccountEmail?.() || '').toLowerCase();
     setUser(null);
     setCacheUser(null);
+    // SECURITY (P1): drop the biometric lock state on the way out so the
+    // outgoing identity's unlocked overlay can't carry into whoever signs in
+    // next on this device (the lock will re-arm + re-challenge for them).
+    _forceBiometricLock();
     // 2. Redirect to login IMMEDIATELY
     try { router.replace('/login'); } catch {}
     // 3. Clear token (prevents auto-relogin on next open) — must happen
@@ -1273,11 +1299,13 @@ export function AuthProvider({ children }) {
     // 3a. SECURITY: explicit logout clears `bio_token` so the next cold
     //     start does NOT silently auto-login via Face ID using a stale
     //     bearer (user reported 2026-05-09: "sai da conta, fechei a página
-    //     e voltou logado"). We keep `bio_email` so the login screen still
-    //     pre-fills the email field (nice UX), but the secret token is
-    //     gone — Face ID prompts the user, then needs a password since
-    //     bio_token is missing. Telegram/WhatsApp pattern: explicit
-    //     logout = full credential nuke; biometric is opt-in on next login.
+    //     e voltou logado"). We ALSO clear `bio_email` (P2): keeping it
+    //     disclosed the previous account's email on a shared device and made
+    //     the login screen auto-target Face ID at the last identity. The
+    //     login screen now falls back to the multi-account roster (which
+    //     keeps email+name for the picker) rather than leaking the last
+    //     signed-in identity. Telegram/WhatsApp pattern: explicit logout =
+    //     full credential nuke; biometric is opt-in on next login.
     try {
       if (Platform.OS !== 'web') {
         const SecureStore = require('expo-secure-store');
@@ -1287,6 +1315,16 @@ export function AuthProvider({ children }) {
         // a window where a fast app-kill skipped the keychain delete and the
         // next cold start re-entered the just-logged-out account via Face ID.
         try { await SecureStore.deleteItemAsync('bio_token'); } catch {} // SECURITY: kill auto-relogin
+        // P1: also drop the per-account twin (`bio_token:<email>`) for the
+        // identity we're leaving so it can't unlock that account either.
+        try {
+          const { bioTokenKeyFor } = require('./BiometricContext');
+          const k = bioTokenKeyFor(_outgoingEmail);
+          if (k) await SecureStore.deleteItemAsync(k);
+        } catch {}
+        // P2: clear bio_email so a shared device doesn't disclose / auto-target
+        // the previous account's identity on the next login screen.
+        try { await SecureStore.deleteItemAsync('bio_email'); } catch {}
       }
     } catch {}
     // 3c. WEB: clearAllPerAccountCaches only wipes MMKV/AsyncStorage shims —
@@ -1396,6 +1434,10 @@ export function AuthProvider({ children }) {
             try { await clearChatCache(); } catch {}
             setCacheUser(check.data.email);
             setUser(check.data);
+            // SECURITY (P1): identity changed → force the biometric app-lock
+            // to re-fire so the new account can't ride in on the previous
+            // user's already-unlocked overlay. No-op if biometrics are off.
+            _forceBiometricLock();
             // Update active account marker
             api.setActiveAccountEmail(check.data.email);
             // Update stored token (server may have rotated it)
@@ -1421,6 +1463,14 @@ export function AuthProvider({ children }) {
                 const bioTok = (currentToken || '').toString();
                 if (bioEmail) { try { await SecureStore.setItemAsync('bio_email', bioEmail); } catch {} }
                 if (bioTok) { try { await SecureStore.setItemAsync('bio_token', bioTok); } catch {} }
+                // P1: per-account twin so Face ID after a cold start unlocks
+                // the CURRENTLY-active identity, not whichever global pair
+                // happened to be last written.
+                try {
+                  const { bioTokenKeyFor } = require('./BiometricContext');
+                  const k = bioTokenKeyFor(bioEmail);
+                  if (k && bioTok) await SecureStore.setItemAsync(k, bioTok);
+                } catch {}
               }
             } catch {}
             // WEB: the cache wipe above (clearAllCache + clearChatCache) doesn't
@@ -1452,13 +1502,25 @@ export function AuthProvider({ children }) {
   }, [loadAccounts, user, prefetchAvatar, prefetchProfile]);
 
   // Remove a stored account
-  const removeAccount = useCallback((email) => {
+  const removeAccount = useCallback(async (email) => {
+    // If removing the ACTIVE account, revoke the bearer server-side FIRST,
+    // then drop the local row. Previously this called removeStoredAccount()
+    // immediately and fired doLogout() without awaiting it — a fire-and-forget
+    // logout that races the local-row delete. If the app was killed in that
+    // window the bearer was never revoked server-side, so the removed account
+    // kept a live session (and kept receiving pushes). Await the full logout
+    // (which awaits the push-unregister + bearer clear) before forgetting the
+    // account locally.
+    if (user?.email === email) {
+      try { await doLogout('remove_account'); } catch {}
+      try { api.removeStoredAccount(email); } catch {}
+      loadAccounts();
+      return;
+    }
+    // Non-active account: no live in-memory bearer to revoke here; just drop
+    // the stored row (its token field was already zeroed on its own logout).
     api.removeStoredAccount(email);
     loadAccounts();
-    // If removing the active account, logout
-    if (user?.email === email) {
-      doLogout('remove_account');
-    }
   }, [user, doLogout, loadAccounts]);
 
   // Listen for auth failure signal from api.js (token rejected server-side).
