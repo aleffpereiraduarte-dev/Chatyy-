@@ -329,7 +329,11 @@ public enum NativeCallRoomEvent {
                     let publishOpts = VideoPublishOptions(
                         name: nil,
                         encoding: VideoEncoding(maxBitrate: 2_000_000, maxFps: 30),
-                        simulcast: true,
+                        // [VIDEO FIX 2026-05-26] simulcast=false with H.264 —
+                        // libwebrtc has no H.264 simulcast; true here made the
+                        // camera publish fail silently (no self-view + no remote).
+                        // Mirrors CallViewController.defaultVideoPublishOptions.
+                        simulcast: false,
                         // [remote-video render fix 2026-05-26] .vp9 → .h264 to
                         // match CallViewController.defaultVideoPublishOptions. VP9
                         // decode is unreliable cross-platform on mobile and was why

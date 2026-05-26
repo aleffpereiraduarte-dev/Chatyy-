@@ -2427,7 +2427,16 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 maxBitrate: 2_000_000, // 2.0 Mbps cap for H.264 720p top tier
                 maxFps: 30
             ),
-            simulcast: true,
+            // [VIDEO FIX 2026-05-26] simulcast MUST be false with H.264.
+            // ROOT CAUSE "nem eu me vejo nem o outro me vê em vídeo": standard
+            // libwebrtc (react-native-webrtc m144) does NOT support H.264
+            // simulcast. With `simulcast: true` + `preferredCodec: .h264` the SDK
+            // builds an invalid multi-encoding H.264 publish offer → setCamera()
+            // throws/returns a dead track, swallowed by the `try?` → local
+            // self-view never gets a track AND nothing reaches the SFU → remote
+            // peer sees only the avatar. H.264 publishes a single encoding anyway,
+            // so disabling simulcast loses nothing in 1:1 and makes publish work.
+            simulcast: false,
             // [remote-video render fix 2026-05-26] preferredCodec .vp9 → .h264.
             // ROOT CAUSE of "remote video shows only the avatar while connected":
             // VP9 has unreliable cross-platform DECODE on mobile. When the Android

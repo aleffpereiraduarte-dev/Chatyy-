@@ -510,6 +510,12 @@ class CallActivity : ComponentActivity() {
     // never recorded a voice msg or used the status camera reaches the
     // call screen with RECORD_AUDIO=denied → one-way silent call.
     ensureMicPermission()
+    // [VIDEO FIX 2026-05-26] On a VIDEO call also request CAMERA up front.
+    // Bug "não me vejo / preview preto em vídeo": onCreate only requested
+    // RECORD_AUDIO; CAMERA was only requested on the audio→video UPGRADE path.
+    // On a fresh device setCameraEnabled(true) without the grant silently
+    // captures no frames → black self-view + nothing reaches the peer.
+    if (hasVideo) ensureCameraPermission()
 
     // Fire call_invite via native WS path for outgoing — server dedupes
     // against the JS-side fire, so racing is safe.
@@ -1202,6 +1208,30 @@ class CallActivity : ComponentActivity() {
     }
   }
 
+  /** [VIDEO FIX 2026-05-26] Runtime CAMERA check for video calls. Mirrors
+   *  ensureMicPermission — setCameraEnabled(true) without the grant silently
+   *  produces no frames (black self-view + peer sees avatar only).
+   *  onRequestPermissionsResult re-publishes the camera once granted. */
+  private fun ensureCameraPermission() {
+    val granted = ContextCompat.checkSelfPermission(
+      this, Manifest.permission.CAMERA
+    ) == PackageManager.PERMISSION_GRANTED
+    if (!granted) {
+      Log.w(TAG, "CAMERA not granted (video call) — requesting at runtime")
+      try {
+        ActivityCompat.requestPermissions(
+          this,
+          arrayOf(Manifest.permission.CAMERA),
+          REQ_CODE_CAMERA
+        )
+      } catch (t: Throwable) {
+        Log.e(TAG, "requestPermissions(CAMERA) threw: ${t.message}", t)
+      }
+    } else {
+      Log.d(TAG, "CAMERA already granted")
+    }
+  }
+
   override fun onRequestPermissionsResult(
     requestCode: Int,
     permissions: Array<String>,
@@ -1219,6 +1249,24 @@ class CallActivity : ComponentActivity() {
         // already true; enterVideoModeAndPublish is idempotent and will skip
         // the (now-granted) permission branch and publish the camera.
         enterVideoModeAndPublish()
+      } else if (camGranted && state.isVideo) {
+        // [VIDEO FIX 2026-05-26] INITIAL video call (not an upgrade): CAMERA
+        // was granted after we already connected. Publish + bind the camera
+        // now (mirrors the late RECORD_AUDIO re-publish below). Without this,
+        // first-ever video call shows a black self-view until manual toggle.
+        val r = room
+        if (r != null) {
+          state.isCameraOn = true
+          lifecycleScope.launch {
+            try {
+              r.localParticipant.setCameraEnabled(true)
+              bindLocalCameraIfReady(r)
+              Log.d(TAG, "camera published after late CAMERA grant (initial video)")
+            } catch (t: Throwable) {
+              Log.w(TAG, "late camera publish failed: ${t.message}")
+            }
+          }
+        }
       } else if (!camGranted) {
         pendingVideoPublish = false
         state.status = "Permita a câmera para vídeo"
@@ -1280,7 +1328,12 @@ class CallActivity : ComponentActivity() {
     // SFU lower-res tiers so it steps down instead of freezing.
     val publishDefaults = try {
       VideoTrackPublishDefaults(
-        simulcast = true,
+        // [VIDEO FIX 2026-05-26] simulcast=false to match the H.264 codec pin
+        // below. libwebrtc has no H.264 simulcast → with simulcast=true the
+        // camera publish offer is invalid and the peer never gets frames
+        // (remote shows avatar only). H.264 publishes a single encoding anyway.
+        // Mirrors iOS CallViewController/NativeCallRoom (simulcast:false).
+        simulcast = false,
         videoEncoding = VideoPreset169.H720.encoding
       )
     } catch (t: Throwable) {
