@@ -864,11 +864,39 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         if let ud = UserDefaults(suiteName: kAppGroupId) {
             ud.set(action.callUUID.uuidString, forKey: "pendingEndUUID")
         }
-        // [stage 2] Drop the stashed payload + tear the native LK room. Safe
-        // to call even if connect never fired — disconnect() is idempotent.
+        // [2026-05-26 decline-signal fix] COLD-START decline path. When the app
+        // is killed and the user taps Decline on the lock-screen CallKit UI,
+        // THIS stub handler runs (RN bundle not loaded, ExpoCallKitModule
+        // doesn't exist), so the module's callEnded()→fireCallEnd never runs.
+        // Without signaling here, the caller rings until their 30s timeout.
+        // Grab caller_email + conversation_id from the stashed VoIP push
+        // payload and fire call_end natively over CallSignalWs so the C++ WS
+        // relay delivers the BYE back to the caller's channel. Mirrors Android
+        // IncomingCallActivity.onDecline. Capture BEFORE we remove the payload.
         kPendingAnswerPayloadsLock.lock()
+        let endingPayload = kPendingAnswerPayloads[action.callUUID]
         kPendingAnswerPayloads.removeValue(forKey: action.callUUID)
         kPendingAnswerPayloadsLock.unlock()
+        if let p = endingPayload {
+            let callerEmail = (p["caller_email"] as? String) ?? ""
+            let callId = (p["call_id"] as? String) ?? (p["callId"] as? String) ?? ""
+            let convId: String = {
+                if let s = p["conversation_id"] as? String { return s }
+                if let n = p["conversation_id"] as? NSNumber { return n.stringValue }
+                return ""
+            }()
+            if !callerEmail.isEmpty && !callId.isEmpty {
+                NSLog("[VoipSubscriber] cold-start decline — firing native call_end → caller=\(callerEmail) callId=\(callId)")
+                CallSignalWs.shared.fireCallEnd(
+                    callId: callId,
+                    conversationId: convId,
+                    reason: "declined",
+                    targetEmail: callerEmail
+                )
+            }
+        }
+        // [stage 2] Tear the native LK room. Safe to call even if connect never
+        // fired — disconnect() is idempotent.
         NativeCallRoom.shared.disconnect()
 
         // Do NOT manually setActive(false) here. CallKit fires didDeactivate

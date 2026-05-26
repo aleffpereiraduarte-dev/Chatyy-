@@ -2095,8 +2095,17 @@ public class ExpoCallKitModule: Module {
   }
 
   func callEnded(uuid: UUID) {
+    // [2026-05-26 decline-signal fix] Capture the inbound call payload BEFORE
+    // we drop it from callPayloads. We need caller_email + conversation_id to
+    // signal the CALLER over the WS that this side declined / hung up. Without
+    // this, declining from the native CallKit screen (especially app
+    // backgrounded/killed, where JS isn't running to relay) left the caller
+    // ringing until their 30s timeout. Android's IncomingCallActivity.onDecline
+    // already fires CallSignalWs.fireCallEnd natively — this mirrors it on iOS.
+    var endedPayload: [AnyHashable: Any]? = nil
     let callId: String? = safeStateSync {
       guard let callId = activeCalls.first(where: { $0.value == uuid })?.key else { return nil }
+      endedPayload = callPayloads[callId]
       activeCalls.removeValue(forKey: callId)
       callPayloads.removeValue(forKey: callId)
       return callId
@@ -2110,6 +2119,33 @@ public class ExpoCallKitModule: Module {
     if let cid = callId { ExpoCallKitModule._shared_setUUID(nil, forCallId: cid) }
     if let callId = callId {
       print("[ExpoCallKit] callEnded: callId=\(callId), jsReady=\(jsListenersReady)")
+      // [2026-05-26 decline-signal fix] Tell the CALLER over the call-signal
+      // WS that we ended/declined. `callPayloads` is populated ONLY for
+      // INBOUND calls (adoptPendingCall / VoIP push), so this fires for the
+      // callee's decline/hangup path WITHOUT touching the outgoing-hangup path
+      // (the caller's own hangup is already signaled from JS while the call
+      // screen is foreground). target_email = the caller, so the C++ WS relay
+      // (and PG fan-out across both hubs) delivers the call_end frame back to
+      // the caller's chat_user_<caller_email> channel → ringback stops + UI
+      // shows declined/no-answer. The native CallSignalWs send doesn't depend
+      // on the RN bundle being alive, so it works on cold-start declines too.
+      if let payload = endedPayload {
+        let callerEmail = (payload["caller_email"] as? String) ?? ""
+        let convId: String = {
+          if let s = payload["conversation_id"] as? String { return s }
+          if let n = payload["conversation_id"] as? NSNumber { return n.stringValue }
+          return ""
+        }()
+        if !callerEmail.isEmpty {
+          NSLog("[ExpoCallKit] callEnded: firing native call_end → caller=\(callerEmail) callId=\(callId)")
+          CallSignalWs.shared.fireCallEnd(
+            callId: callId,
+            conversationId: convId,
+            reason: "declined",
+            targetEmail: callerEmail
+          )
+        }
+      }
       // [WAVE 116 2026-05-21] Issue 4 — purge the pending LK token/url/ts
       // that was stashed in UserDefaults by persistPendingLkToken (JS) or by
       // the inline VoIP push handler. Safe here: CXEndCallAction fires AFTER
