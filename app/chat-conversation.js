@@ -5245,15 +5245,11 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   const [previewProgress, setPreviewProgress] = useState(0); // 0..1
   const previewAudioRef = useRef(null); // HTMLAudioElement on web, expo-audio player on native
   const previewIntervalRef = useRef(null);
-  // Slide-to-cancel (horizontal) + slide-up-to-lock (vertical) — Telegram /
-  // WhatsApp parity. slideX drives the cancel hint fade + pill recoil; slideY
-  // drives the lock hint that hovers above the mic so the user can see the
-  // lock target without releasing the finger.
+  // Slide-to-cancel (horizontal) — slideX drives the cancel hint fade + pill
+  // recoil. (The vertical slide-up-to-lock gesture was removed: this recorder
+  // is tap-to-record/hands-free, so a "lock" affordance is meaningless. Cancel
+  // is always available via the explicit X button.)
   const slideX = useRef(new Animated.Value(0)).current;
-  const slideY = useRef(new Animated.Value(0)).current;
-  // Latched once the user crosses the lock threshold so we don't spam haptics
-  // — Telegram buzzes exactly once when the hint reaches the lock icon.
-  const lockHapticFiredRef = useRef(false);
   const cancelledRef = useRef(false);
   const intervalRef = useRef(null);
   const startTimeRef = useRef(0);
@@ -5265,12 +5261,12 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   const waveIntervalRef = useRef(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulseLoopRef = useRef(null);
-  // Voice lock — when the user lifts the finger after sliding up the mic,
-  // recording stays "locked" so they can keep both hands free. Web has no
-  // haptics so we lean on the visual pop (scale 0.8→1.2→1 spring) to confirm
-  // the lock engaged. Native gets a 40ms Vibration tick alongside the spring.
-  const [voiceLocked, setVoiceLocked] = useState(false);
-  const lockScale = useRef(new Animated.Value(1)).current;
+  // When the user taps "Send" on the recorder pill we want to skip the manual
+  // preview step and ship the audio straight away — WhatsApp parity.
+  // handleStop always lands the captured audio in `previewData`; this flag lets
+  // a one-shot effect auto-confirm the send the moment that data is ready, so
+  // we reuse the whole stop/drain/finalize pipeline without duplicating it.
+  const pendingDirectSendRef = useRef(false);
   // Voice pre-upload session state. While recording on web, we ship each
   // dataavailable chunk to the server in order so the file is mostly there
   // by the time the user releases. If anything in this pipeline fails
@@ -5312,21 +5308,17 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
     };
   }, []);
 
-  // Voice lock feedback — when the user engages hands-free recording the lock
-  // icon pops (0.8 → 1.2 → 1) and native devices buzz briefly. Web has no
-  // haptics API so the spring is the only confirmation; that's why the visual
-  // is loud (overshoot to 1.2) instead of subtle.
+  // Direct-send: handleStop assembles the audio into `previewData`; if the user
+  // asked to send straight away (tapped Send on the recorder pill) we confirm
+  // the send as soon as that data lands. Guarded by
+  // the ref so the normal Stop→preview flow is untouched.
   useEffect(() => {
-    if (!voiceLocked) return;
-    lockScale.setValue(0.8);
-    Animated.sequence([
-      Animated.spring(lockScale, { toValue: 1.2, useNativeDriver: true, tension: 180, friction: 5 }),
-      Animated.spring(lockScale, { toValue: 1,   useNativeDriver: true, tension: 120, friction: 8 }),
-    ]).start();
-    if (Platform.OS !== 'web') {
-      try { Vibration.vibrate(40); } catch {}
+    if (previewData && pendingDirectSendRef.current) {
+      pendingDirectSendRef.current = false;
+      handleConfirmSend();
     }
-  }, [voiceLocked, lockScale]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewData]);
 
   // Serial drain — uploads chunks one-at-a-time in the order they arrived
   // so the server's strict in-order assemblage holds. If a chunk POST fails
@@ -5777,6 +5769,15 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
     setRecording(null);
   };
 
+  // Stop + send in one shot — wired to the primary Send (paper-plane) button on
+  // the recorder pill. Flags the direct-send intent then runs the normal stop
+  // pipeline; the previewData effect picks it up and confirms.
+  const handleStopAndSend = () => {
+    if (!recording) return;
+    pendingDirectSendRef.current = true;
+    handleStop();
+  };
+
   // Clear persisted voice draft — call on send AND discard so we never
   // re-prompt for audio the user already resolved.
   const clearVoiceDraft = async () => {
@@ -5988,30 +5989,16 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   }
 
   // ─── RECORDING MODE ───
-  // PanResponder for WhatsApp / Telegram-style slide-to-cancel + slide-up-to-
-  // lock. Horizontal drag past -80px cancels; vertical drag past -90px locks
-  // hands-free recording. Live feedback: pill follows finger horizontally,
-  // the lock-hint floats up vertically with `slideY`, and crossing the lock
-  // threshold fires a one-shot 20ms haptic for Telegram parity.
+  // PanResponder for WhatsApp / Telegram-style slide-to-cancel. Horizontal drag
+  // past -80px cancels; the pill follows the finger horizontally. (Slide-up-to-
+  // lock was removed — this recorder is tap-to-record/hands-free already, so a
+  // lock affordance is redundant. Cancel is also always reachable via the X.)
   const slideCancelPan = PanResponder.create({
     onStartShouldSetPanResponder: () => false,
-    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 10 || g.dy < -10,
+    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 10,
     onPanResponderMove: (_, g) => {
-      if (g.dx < 0 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2) {
+      if (g.dx < 0) {
         slideX.setValue(Math.max(g.dx, -140));
-      }
-      if (g.dy < 0 && Math.abs(g.dy) > Math.abs(g.dx) * 0.8) {
-        const clamped = Math.max(g.dy, -120);
-        slideY.setValue(clamped);
-        // Telegram parity — single haptic tick when the lock hint reaches
-        // the lock icon (≈ -90px). Latch with lockHapticFiredRef so the
-        // buzz fires once per gesture.
-        if (clamped <= -90 && !lockHapticFiredRef.current) {
-          lockHapticFiredRef.current = true;
-          if (Platform.OS !== 'web') {
-            try { Vibration.vibrate(20); } catch {}
-          }
-        }
       }
     },
     onPanResponderRelease: (_, g) => {
@@ -6022,18 +6009,8 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           cancelledRef.current = true;
           handleCancel();
         });
-      } else if (g.dy < -80) {
-        // Released past the lock threshold → engage hands-free recording.
-        // Snap slideY back to 0 so the hint disappears cleanly while the
-        // locked state takes over the UI.
-        Animated.spring(slideY, { toValue: 0, tension: 220, friction: 14, useNativeDriver: true }).start();
-        Animated.spring(slideX, { toValue: 0, tension: 220, friction: 14, useNativeDriver: true }).start();
-        setVoiceLocked(true);
-        lockHapticFiredRef.current = false;
       } else {
         Animated.spring(slideX, { toValue: 0, tension: 220, friction: 14, useNativeDriver: true }).start();
-        Animated.spring(slideY, { toValue: 0, tension: 220, friction: 14, useNativeDriver: true }).start();
-        lockHapticFiredRef.current = false;
       }
     },
   });
@@ -6043,26 +6020,17 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   // (0 → 0.5 → 1) so the affordance is loudest when the finger is at rest.
   const cancelHintTranslateX = slideX.interpolate({ inputRange: [-100, 0], outputRange: [-30, 0], extrapolate: 'clamp' });
   const cancelHintOpacity = slideX.interpolate({ inputRange: [-100, -50, 0], outputRange: [0, 0.5, 1], extrapolate: 'clamp' });
-  // Lock hint (above the mic) — floats up with the finger as the user drags
-  // vertically. -100 maps to translateY -30 so the hint is visibly closer to
-  // the lock icon, with a matching opacity ramp.
-  const lockHintTranslateY = slideY.interpolate({ inputRange: [-100, 0], outputRange: [-30, 0], extrapolate: 'clamp' });
-  const lockHintOpacity = slideY.interpolate({ inputRange: [-100, -40, 0], outputRange: [1, 0.6, 0], extrapolate: 'clamp' });
 
   return (
     <Animated.View
       style={[recStyles.container, recStyles.recordPill, { backgroundColor: recBg, borderTopColor: colors.border, transform: [{ translateX: slideX }] }]}
       {...slideCancelPan.panHandlers}
     >
-      {/* Left: trash / cancel — when locked, this becomes the explicit "cancel"
-          affordance since the slide-to-cancel gesture no longer applies. The
-          Cancel (X) icon is louder when locked so the user has a clear way
-          out without re-triggering the mic. */}
-      <TouchableOpacity onPress={handleCancel} style={recStyles.iconBtn} accessibilityLabel={voiceLocked ? 'Cancelar' : 'Cancelar gravação'}>
+      {/* Left: cancel (X) — discards the recording. Always available so the
+          user has a clear way out regardless of the slide-to-cancel gesture. */}
+      <TouchableOpacity onPress={handleCancel} style={recStyles.iconBtn} accessibilityLabel="Cancelar gravação">
         <View style={recStyles.trashWrap}>
-          {voiceLocked
-            ? <IconX size={20} color={colors.error || '#ef4444'} />
-            : <IconTrash size={20} color={colors.error || '#ef4444'} />}
+          <IconX size={20} color={colors.error || '#ef4444'} />
         </View>
       </TouchableOpacity>
 
@@ -6113,21 +6081,15 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           </View>
         </View>
 
-        {/* Slide hint — Telegram parity. Three states:
+        {/* Slide hint — two states:
             • view-once engaged → show the view-once explainer in purple
-            • locked → show "Solto, fala livremente" so the user knows the
-              finger is no longer needed and gets to tap the send button
             • default → IconChevronLeft + "Deslize para cancelar"; the chevron
               slides slightly left + fades as the finger drags, with the
               translateX/opacity interpolations spec'd by the design. */}
-        <Animated.View style={[recStyles.slideRow, { opacity: voiceLocked ? 1 : slideHintOpacity }]}>
+        <Animated.View style={[recStyles.slideRow, { opacity: slideHintOpacity }]}>
           {voiceViewOnce ? (
             <Text style={[recStyles.slideHint, { color: '#7C3AED', fontWeight: '600' }]} numberOfLines={1}>
               {t('chatConv.viewOnceVoiceHint') || 'Áudio só pode ser ouvido uma vez'}
-            </Text>
-          ) : voiceLocked ? (
-            <Text style={[recStyles.slideHint, { color: '#7C3AED', fontWeight: '600' }]} numberOfLines={1}>
-              {t('chatConv.handsFree') || 'Solto, fala livremente'}
             </Text>
           ) : (
             <Animated.View style={{
@@ -6163,57 +6125,33 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
       >
         <Text style={[recStyles.voiceOnceBtnText, { color: voiceViewOnce ? '#fff' : (colors.textTertiary || '#9ca3af') }]}>1</Text>
       </TouchableOpacity>
-      {/* Lock affordance — tapping engages hands-free recording. The pop
-          animation (0.8 → 1.2 → 1 spring) is the only confirmation on web
-          since browsers have no haptic API; native pairs the pop with a 40ms
-          Vibration tick. Tinted purple when locked so the eye lands on it.
-          While the user drags vertically (slideY < 0) a floating "↑ Bloquear"
-          hint rises above the lock so they can aim — Telegram parity. */}
-      <View style={{ position: 'relative', alignItems: 'center', justifyContent: 'center', marginRight: 4 }}>
-        {!voiceLocked && (
-          <Animated.View
-            pointerEvents="none"
-            style={[recStyles.lockHint, {
-              transform: [{ translateY: lockHintTranslateY }],
-              opacity: lockHintOpacity,
-            }]}
-          >
-            <IconLock size={12} color="#7C3AED" />
-            <Text style={recStyles.lockHintText} numberOfLines={1}>
-              {'↑ ' + (t('chatConv.slideToLock') || 'Bloquear')}
-            </Text>
-          </Animated.View>
-        )}
+      {/* Right controls — hands-free: an explicit Stop-to-preview button PLUS a
+          primary purple Send button, with a "Toque para enviar" hint above.
+          This recorder is tap-to-record, so the finger is already free: a clear
+          Stop + Send pair is always shown (no lock state). */}
+      <View style={recStyles.lockedActions}>
+        <View pointerEvents="none" style={recStyles.tapToSendHint}>
+          <Text style={recStyles.tapToSendHintText} numberOfLines={1}>
+            {t('chatConv.tapToSend') || 'Toque para enviar'}
+          </Text>
+        </View>
+        {/* Stop → preview (review before sending) */}
         <TouchableOpacity
-          onPress={() => setVoiceLocked(v => !v)}
-          style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}
-          accessibilityLabel={voiceLocked ? 'Destravar gravação' : 'Travar gravação'}
-          accessibilityRole="button"
+          onPress={handleStop}
+          style={recStyles.lockedStopBtn}
+          accessibilityLabel="Parar e pré-ouvir"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
-          <Animated.View style={{ transform: [{ scale: lockScale }] }}>
-            <IconLock size={18} color={voiceLocked ? '#7C3AED' : (colors.textTertiary || '#9ca3af')} />
-          </Animated.View>
-        </TouchableOpacity>
-      </View>
-
-      {/* Right: STOP button (enters preview) — wrapped in a synced pulse halo
-          so the entire control reads as one heartbeat: dot + waveform + stop.
-          When locked, a "Toque para enviar" hint floats above it so the user
-          knows what the stop/send button does in hands-free mode. */}
-      <View style={recStyles.stopWrap}>
-        {voiceLocked && (
-          <View pointerEvents="none" style={recStyles.tapToSendHint}>
-            <Text style={recStyles.tapToSendHintText} numberOfLines={1}>
-              {t('chatConv.tapToSend') || 'Toque para enviar'}
-            </Text>
-          </View>
-        )}
-        <Animated.View style={[recStyles.stopHalo, {
-          transform: [{ scale: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [1, 1.18] }) }],
-          opacity: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0.55, 0] }),
-        }]} />
-        <TouchableOpacity onPress={handleStop} style={recStyles.stopBtn} accessibilityLabel="Parar e pré-ouvir">
           <View style={recStyles.stopSquare} />
+        </TouchableOpacity>
+        {/* Send → ship the recorded audio immediately */}
+        <TouchableOpacity
+          onPress={handleStopAndSend}
+          style={recStyles.lockedSendBtn}
+          accessibilityLabel="Enviar áudio"
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        >
+          <IconSend size={20} color="#fff" />
         </TouchableOpacity>
       </View>
     </Animated.View>
@@ -6252,23 +6190,33 @@ const recStyles = StyleSheet.create({
     marginLeft: 4,
     ...(Platform.OS === 'web' ? { boxShadow: '0 1px 6px rgba(124,58,237,0.35)' } : {}),
   },
-  stopWrap: {
-    width: 56, height: 56,
-    alignItems: 'center', justifyContent: 'center',
+  stopSquare: {
+    width: 16, height: 16, borderRadius: 3, backgroundColor: '#fff',
   },
-  stopHalo: {
-    position: 'absolute',
-    width: 56, height: 56, borderRadius: 28,
-    backgroundColor: 'rgba(239,68,68,0.35)',
+  // Locked (hands-free) right-side cluster: Stop-to-preview + primary Send.
+  lockedActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 8,
+    position: 'relative',
   },
-  stopBtn: {
-    width: 46, height: 46, borderRadius: 23,
+  lockedStopBtn: {
+    width: 40, height: 40, borderRadius: 20,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#ef4444',
     ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(239,68,68,0.4)' } : {}),
   },
-  stopSquare: {
-    width: 16, height: 16, borderRadius: 3, backgroundColor: '#fff',
+  lockedSendBtn: {
+    width: 46, height: 46, borderRadius: 23,
+    alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#7C3AED',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 10px rgba(124,58,237,0.45)' } : {}),
+    ...Platform.select({
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.4, shadowRadius: 8 },
+      android: { elevation: 5 },
+      default: {},
+    }),
   },
   // View-once "1" pill
   voiceOnceBtn: {
@@ -6366,30 +6314,8 @@ const recStyles = StyleSheet.create({
     fontSize: FontSize.xs,
     opacity: 0.7,
   },
-  // Floating lock hint (Telegram-style) — hovers above the lock button while
-  // the user drags vertically. translateY interpolation drives the rise so
-  // the chip visually approaches the lock target.
-  lockHint: {
-    position: 'absolute',
-    bottom: 38,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 3,
-    borderRadius: 10,
-    backgroundColor: 'rgba(124,58,237,0.12)',
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(124,58,237,0.35)',
-  },
-  lockHintText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#7C3AED',
-    letterSpacing: 0.2,
-  },
-  // "Toque para enviar" chip that floats above the stop button once recording
-  // is locked. Mirrors the Telegram send-hint design.
+  // "Toque para enviar" chip that floats above the stop button. Mirrors the
+  // Telegram send-hint design.
   tapToSendHint: {
     position: 'absolute',
     bottom: 54,
