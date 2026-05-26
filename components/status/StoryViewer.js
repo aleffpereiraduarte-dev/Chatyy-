@@ -15,7 +15,7 @@
 //
 // All extras gated by props so callers don't pay for what they don't use.
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, Pressable, Image,
   Platform, Modal, Alert, Animated, Keyboard, FlatList, ActivityIndicator,
@@ -359,6 +359,349 @@ const StatusVideoPlayer = React.memo(function StatusVideoPlayer({
       <VideoView player={player} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} contentFit="contain" nativeControls={false} />
     </View>
   );
+});
+
+// StoryMedia — the per-item media canvas (text / image / video), HOISTED to
+// module level and wrapped in React.memo so transient parent state ticks
+// (reactPop, hearts, emojiPulse, paused, toast) don't rebuild + re-reconcile
+// the expensive media subtree on every render. It only re-renders when one of
+// its actual inputs changes (the current item, the resolved URL, the per-item
+// error/retry/mute flags, or the imageFade ref). Behavior + visuals are a
+// verbatim move of the former inline `renderMedia()` — no logic change.
+const StoryMedia = React.memo(function StoryMedia({
+  cur, isText, isVideo, isImage, mediaUrl,
+  t, paused, videoMuted, videoError, imageError, imageRetry, imageFade,
+  advance, onVideoError, onVideoReady, setVideoError, setImageError, setImageRetry,
+  boomerangRef, boomerangStateRef,
+}) {
+    if (isText) {
+      // Gradient text status — bg_color is a `gradient:<id>` token instead
+      // of a hex value. Paint the SVG behind the text in absoluteFill so
+      // the gradient bleeds edge-to-edge while the centered Text stays put.
+      const gradient = _resolveTextGradient(cur.bg_color);
+      const stops = gradient
+        ? (gradient.colors.length > 1 ? gradient.colors : [gradient.colors[0], gradient.colors[0]])
+        : null;
+      return (
+        <View style={{ flex: 1, backgroundColor: gradient ? '#000' : (cur.bg_color || '#25D366'), alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+          {gradient ? (
+            <Svg
+              pointerEvents="none"
+              style={StyleSheet.absoluteFill}
+              preserveAspectRatio="none"
+              viewBox="0 0 1 1"
+            >
+              <Defs>
+                <SvgLinearGradient id={`storyTextGrad_${gradient.id}`} x1="0" y1="0" x2="1" y2="1">
+                  {stops.map((c, i) => (
+                    <Stop key={i} offset={`${Math.round((i / (stops.length - 1)) * 100)}%`} stopColor={c} stopOpacity="1" />
+                  ))}
+                </SvgLinearGradient>
+              </Defs>
+              <SvgRect x="0" y="0" width="1" height="1" fill={`url(#storyTextGrad_${gradient.id})`} />
+            </Svg>
+          ) : null}
+          <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', textAlign: 'center', lineHeight: 34 }}>
+            {cur.content || ''}
+          </Text>
+        </View>
+      );
+    }
+    if (!mediaUrl) {
+      // [WAVE 79 2026-05-21] Manifest-only placeholder items have NO media_url
+      // because status_manifest only ships per-owner aggregates (count + email
+      // + latest_at). When the user taps before status_list resolves we'd land
+      // on "Mídia indisponível" — wrong message. Show a spinner + "Carregando"
+      // instead so the viewer feels alive while the real payload streams in.
+      // Bug user 2026-05-21: "foto não aparece, se volta aparece".
+      if (cur?._placeholder) {
+        return (
+          <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+            <ActivityIndicator size="large" color="rgba(255,255,255,0.85)" />
+            <Text style={{ marginTop: 16, color: 'rgba(255,255,255,0.85)', fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
+              {t?.('status.loading') || 'Carregando…'}
+            </Text>
+          </View>
+        );
+      }
+      return (
+        <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+          <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 40, marginBottom: 12 }}>📷</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
+            {t?.('status.unavailable') || 'Mídia indisponível'}
+          </Text>
+          <Text style={{ marginTop: 6, color: 'rgba(255,255,255,0.5)', fontSize: 12, textAlign: 'center' }}>
+            {t?.('status.unavailableHint') || 'Esse status pode ter expirado ou foi removido.'}
+          </Text>
+        </View>
+      );
+    }
+    if (isVideo) {
+      const isBoomerang = !!cur.is_boomerang || !!cur?.meta?.is_boomerang;
+      const boomerangLoopDurationMs = 7000;
+      // Poster: backend stores .thumb.jpg next to status videos and surfaces
+      // it via `thumbnail_url`. Painting it behind the <video> kills the black
+      // flash before the first decoded frame lands. Falls back gracefully if
+      // the field is absent (older statuses).
+      const posterUrl = cur.thumbnail_url
+        ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : `${BASE_URL}${cur.thumbnail_url}`)
+        : '';
+      const PosterOverlay = posterUrl ? (
+        <Image
+          source={{ uri: posterUrl }}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' }}
+          resizeMode="contain"
+        />
+      ) : null;
+      // Friendly fail card — beats a black void if expo-video/expo-av reject
+      // the URL (404, codec mismatch, signed URL expired).
+      if (videoError) {
+        return (
+          <View style={{ flex: 1, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+            <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 38, marginBottom: 14 }}>⚠</Text>
+            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
+              {t?.('status.videoUnavailable') || 'Vídeo indisponível'}
+            </Text>
+            <Text style={{ marginTop: 6, color: 'rgba(255,255,255,0.5)', fontSize: 12, textAlign: 'center' }}>
+              {t?.('status.videoUnavailableHint') || 'Tente novamente em instantes ou avance.'}
+            </Text>
+          </View>
+        );
+      }
+      if (WEB) {
+        return (
+          <View style={{ flex: 1, backgroundColor: '#000' }}>
+            {PosterOverlay}
+            <video
+              src={mediaUrl}
+              autoPlay
+              playsInline
+              muted={videoMuted}
+              loop={isBoomerang}
+              onEnded={isBoomerang ? undefined : advance}
+              onError={() => setVideoError(true)}
+              onLoadedMetadata={isBoomerang ? (() => setTimeout(advance, boomerangLoopDurationMs)) : undefined}
+              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', backgroundColor: 'transparent' }}
+            />
+          </View>
+        );
+      }
+      // Prefer expo-video (SDK 55+); fall back to expo-av for older bundles.
+      // The player itself lives in the module-level <StatusVideoPlayer> so it
+      // doesn't get remounted on every progress tick (the hook used to be
+      // defined inside this render fn → new component type each render). For
+      // a non-boomerang clip we pass `onEnd={advance}` so it auto-advances at
+      // end-of-playback (the inline path had no end listener → native video
+      // stories hung forever).
+      try {
+        const _expoVideoMod = require('expo-video');
+        if (_expoVideoMod?.useVideoPlayer && _expoVideoMod?.VideoView) {
+          return (
+            <StatusVideoPlayer
+              mod={_expoVideoMod}
+              uri={mediaUrl}
+              loop={isBoomerang}
+              initialMuted={videoMuted}
+              liveMuted={videoMuted}
+              poster={PosterOverlay}
+              onEnd={advance}
+              onError={onVideoError}
+              onReady={onVideoReady}
+            />
+          );
+        }
+      } catch {}
+      try {
+        const V = require('expo-av').Video;
+        return (
+          <V
+            ref={boomerangRef}
+            source={{ uri: mediaUrl }}
+            resizeMode="contain"
+            shouldPlay={!paused}
+            isLooping={isBoomerang}
+            onLoad={isBoomerang ? (() => setTimeout(advance, boomerangLoopDurationMs)) : undefined}
+            onPlaybackStatusUpdate={(s) => {
+              if (!isBoomerang) { if (s?.didJustFinish) advance(); return; }
+              try {
+                if (s?.didJustFinish && boomerangRef?.current?.setPositionAsync) {
+                  boomerangStateRef.current.reversing = !boomerangStateRef.current.reversing;
+                  if (boomerangStateRef.current.reversing && s?.durationMillis) {
+                    boomerangRef.current.setPositionAsync(Math.max(0, s.durationMillis - 50));
+                  }
+                }
+              } catch {}
+            }}
+            style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
+          />
+        );
+      } catch {}
+      return <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />;
+    }
+    // Poster fallback for IMAGE status — backend (#557) ships thumbnail_url
+    // for both photo + video status. Painting a blurred thumb behind the
+    // full image kills the 1-2s black gap users reported while expo-image /
+    // network finished the full payload. Falls back gracefully on older
+    // statuses without thumbnail_url (the wrapper's #1a0a2e tint reads as
+    // a soft brand-purple, not pitch black).
+    //
+    // [WAVE 99 2026-05-21] When backend didn't ship a thumbnail_url for an
+    // image status (most image rows, since chat.php only generates thumbs
+    // for video — line 8972), fall back to the media_url ITSELF blurred so
+    // the blackness gap before/around expo-image's fade-in window is
+    // covered by the same image content rather than a dark void. expo-image
+    // dedupes by URL so this is essentially free (same bytes used by the
+    // sharp foreground load).
+    const imagePoster = cur.thumbnail_url
+      ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : `${BASE_URL}${cur.thumbnail_url}`)
+      : mediaUrl;
+    const ImagePosterLayer = imagePoster ? (
+      WEB ? (
+        <img
+          src={imagePoster}
+          alt=""
+          style={{
+            position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
+            objectFit: 'contain', filter: 'blur(20px)', transform: 'scale(1.08)',
+          }}
+        />
+      ) : (
+        <Image
+          source={{ uri: imagePoster }}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' }}
+          resizeMode="contain"
+          blurRadius={20}
+        />
+      )
+    ) : null;
+    // [WAVE 99 2026-05-21] Error fallback chip — replaces the silent-black
+    // canvas when expo-image / RN Image / <img> fails to decode. Surfaces
+    // the real reason in dev logs + offers a Retry tap that bumps the
+    // imageRetry counter — that remounts the underlying image with a fresh
+    // cache key (cachePolicy="none" on retry) so a poisoned disk cache entry
+    // can't soft-brick the viewer forever. Branded #1a0a2e backdrop so the
+    // canvas reads as "Stories" not "app crashed". Falls through to next
+    // story via the existing auto-advance timer so a single broken item
+    // doesn't dead-end the carousel.
+    if (imageError) {
+      return (
+        <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+          <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 38, marginBottom: 14 }}>⚠</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
+            {t?.('status.imageUnavailable') || 'Imagem indisponível'}
+          </Text>
+          <Text style={{ marginTop: 6, color: 'rgba(255,255,255,0.55)', fontSize: 12, textAlign: 'center', paddingHorizontal: 12 }}>
+            {t?.('status.imageUnavailableHint') || 'Toque pra tentar de novo ou avance pra próxima.'}
+          </Text>
+          <TouchableOpacity
+            onPress={() => {
+              setImageError(false);
+              setImageRetry(r => r + 1);
+              imageFade.setValue(0);
+              Animated.timing(imageFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
+            }}
+            style={{
+              marginTop: 18, paddingHorizontal: 22, paddingVertical: 10,
+              borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.16)',
+              borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
+            }}
+            accessibilityRole="button"
+          >
+            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>
+              {t?.('status.retry') || 'Tentar de novo'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+    // On retry, bypass the (possibly poisoned) disk cache for one fetch so
+    // we don't loop on the bad entry. After a successful onLoad it'll be
+    // re-cached fresh.
+    const _imgCachePolicy = imageRetry > 0 ? 'none' : 'memory-disk';
+    // Brand-tinted backdrop replaces #0f172a slate. When expo-image fails
+    // but the safety-net imageFade forces opacity 1 anyway, the user at
+    // least sees a recognizable dark-purple "Stories canvas" — not a blank
+    // black void the user calls "preto puro".
+    const _wrapperBg = '#1a0a2e';
+    // Force-remount the inner image whenever URL or retry counter changes
+    // so React doesn't reuse a stale instance still tied to the old cache
+    // hit. expo-image internally dedupes by source.uri so the key= is the
+    // only escape hatch.
+    const _imgKey = `${mediaUrl}::${imageRetry}`;
+    if (_ExpoImage && !WEB) {
+      // Image fade-in: opacity ramps 0 → 1 once expo-image fires onLoad.
+      // Native driver makes it free; transition prop alone gives a slight
+      // crossfade INSIDE expo-image but doesn't cover the empty-frame gap
+      // before any data has arrived. Poster sits underneath via absolute
+      // positioning so the blurred thumb peeks while the full payload lands.
+      return (
+        <View style={{ flex: 1, backgroundColor: _wrapperBg }}>
+          {ImagePosterLayer}
+          <Animated.View style={{ flex: 1, opacity: imageFade }}>
+            <_ExpoImage
+              key={_imgKey}
+              source={{ uri: mediaUrl }}
+              style={{ width: '100%', height: '100%' }}
+              contentFit="contain"
+              cachePolicy={_imgCachePolicy}
+              priority="high"
+              transition={120}
+              onLoad={() => {
+                Animated.timing(imageFade, { toValue: 1, duration: 350, useNativeDriver: true }).start();
+              }}
+              onError={(e) => {
+                if (__DEV__) {
+                  try { console.warn('[STATUS-IMG-ERR]', mediaUrl, e?.nativeEvent?.error || e?.error || e); } catch {}
+                }
+                setImageError(true);
+                imageFade.setValue(1);
+              }}
+            />
+          </Animated.View>
+        </View>
+      );
+    }
+    return WEB
+      ? (
+        <div style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: _wrapperBg }}>
+          {ImagePosterLayer}
+          <img
+            key={_imgKey}
+            src={mediaUrl}
+            alt=""
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }}
+            onError={() => {
+              if (typeof console !== 'undefined') {
+                try { console.warn('[STATUS-IMG-ERR-web]', mediaUrl); } catch {}
+              }
+              setImageError(true);
+            }}
+          />
+        </div>
+      )
+      : (
+        <View style={{ flex: 1, backgroundColor: _wrapperBg }}>
+          {ImagePosterLayer}
+          <Animated.View style={{ flex: 1, opacity: imageFade }}>
+            <Image
+              key={_imgKey}
+              source={{ uri: mediaUrl }}
+              style={{ width: '100%', height: '100%' }}
+              resizeMode="contain"
+              onLoad={() => {
+                Animated.timing(imageFade, { toValue: 1, duration: 350, useNativeDriver: true }).start();
+              }}
+              onError={(e) => {
+                if (__DEV__) {
+                  try { console.warn('[STATUS-IMG-ERR-rn]', mediaUrl, e?.nativeEvent?.error || e); } catch {}
+                }
+                setImageError(true);
+                imageFade.setValue(1);
+              }}
+            />
+          </Animated.View>
+        </View>
+      );
 });
 
 export default function StoryViewer({
@@ -1247,336 +1590,30 @@ export default function StoryViewer({
         : '');
   const mediaUrl = rawMedia ? (rawMedia.startsWith('http') ? rawMedia : `${BASE_URL}${rawMedia}`) : '';
 
-  const renderMedia = () => {
-    if (isText) {
-      // Gradient text status — bg_color is a `gradient:<id>` token instead
-      // of a hex value. Paint the SVG behind the text in absoluteFill so
-      // the gradient bleeds edge-to-edge while the centered Text stays put.
-      const gradient = _resolveTextGradient(cur.bg_color);
-      const stops = gradient
-        ? (gradient.colors.length > 1 ? gradient.colors : [gradient.colors[0], gradient.colors[0]])
-        : null;
-      return (
-        <View style={{ flex: 1, backgroundColor: gradient ? '#000' : (cur.bg_color || '#25D366'), alignItems: 'center', justifyContent: 'center', padding: 30 }}>
-          {gradient ? (
-            <Svg
-              pointerEvents="none"
-              style={StyleSheet.absoluteFill}
-              preserveAspectRatio="none"
-              viewBox="0 0 1 1"
-            >
-              <Defs>
-                <SvgLinearGradient id={`storyTextGrad_${gradient.id}`} x1="0" y1="0" x2="1" y2="1">
-                  {stops.map((c, i) => (
-                    <Stop key={i} offset={`${Math.round((i / (stops.length - 1)) * 100)}%`} stopColor={c} stopOpacity="1" />
-                  ))}
-                </SvgLinearGradient>
-              </Defs>
-              <SvgRect x="0" y="0" width="1" height="1" fill={`url(#storyTextGrad_${gradient.id})`} />
-            </Svg>
-          ) : null}
-          <Text style={{ color: '#fff', fontSize: 26, fontWeight: '800', textAlign: 'center', lineHeight: 34 }}>
-            {cur.content || ''}
-          </Text>
-        </View>
-      );
-    }
-    if (!mediaUrl) {
-      // [WAVE 79 2026-05-21] Manifest-only placeholder items have NO media_url
-      // because status_manifest only ships per-owner aggregates (count + email
-      // + latest_at). When the user taps before status_list resolves we'd land
-      // on "Mídia indisponível" — wrong message. Show a spinner + "Carregando"
-      // instead so the viewer feels alive while the real payload streams in.
-      // Bug user 2026-05-21: "foto não aparece, se volta aparece".
-      if (cur?._placeholder) {
-        return (
-          <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
-            <ActivityIndicator size="large" color="rgba(255,255,255,0.85)" />
-            <Text style={{ marginTop: 16, color: 'rgba(255,255,255,0.85)', fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
-              {t?.('status.loading') || 'Carregando…'}
-            </Text>
-          </View>
-        );
-      }
-      return (
-        <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
-          <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 40, marginBottom: 12 }}>📷</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
-            {t?.('status.unavailable') || 'Mídia indisponível'}
-          </Text>
-          <Text style={{ marginTop: 6, color: 'rgba(255,255,255,0.5)', fontSize: 12, textAlign: 'center' }}>
-            {t?.('status.unavailableHint') || 'Esse status pode ter expirado ou foi removido.'}
-          </Text>
-        </View>
-      );
-    }
-    if (isVideo) {
-      const isBoomerang = !!cur.is_boomerang || !!cur?.meta?.is_boomerang;
-      const boomerangLoopDurationMs = 7000;
-      // Poster: backend stores .thumb.jpg next to status videos and surfaces
-      // it via `thumbnail_url`. Painting it behind the <video> kills the black
-      // flash before the first decoded frame lands. Falls back gracefully if
-      // the field is absent (older statuses).
-      const posterUrl = cur.thumbnail_url
-        ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : `${BASE_URL}${cur.thumbnail_url}`)
-        : '';
-      const PosterOverlay = posterUrl ? (
-        <Image
-          source={{ uri: posterUrl }}
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' }}
-          resizeMode="contain"
-        />
-      ) : null;
-      // Friendly fail card — beats a black void if expo-video/expo-av reject
-      // the URL (404, codec mismatch, signed URL expired).
-      if (videoError) {
-        return (
-          <View style={{ flex: 1, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
-            <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 38, marginBottom: 14 }}>⚠</Text>
-            <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
-              {t?.('status.videoUnavailable') || 'Vídeo indisponível'}
-            </Text>
-            <Text style={{ marginTop: 6, color: 'rgba(255,255,255,0.5)', fontSize: 12, textAlign: 'center' }}>
-              {t?.('status.videoUnavailableHint') || 'Tente novamente em instantes ou avance.'}
-            </Text>
-          </View>
-        );
-      }
-      if (WEB) {
-        return (
-          <View style={{ flex: 1, backgroundColor: '#000' }}>
-            {PosterOverlay}
-            <video
-              src={mediaUrl}
-              autoPlay
-              playsInline
-              muted={videoMuted}
-              loop={isBoomerang}
-              onEnded={isBoomerang ? undefined : advance}
-              onError={() => setVideoError(true)}
-              onLoadedMetadata={isBoomerang ? (() => setTimeout(advance, boomerangLoopDurationMs)) : undefined}
-              style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', backgroundColor: 'transparent' }}
-            />
-          </View>
-        );
-      }
-      // Prefer expo-video (SDK 55+); fall back to expo-av for older bundles.
-      // The player itself lives in the module-level <StatusVideoPlayer> so it
-      // doesn't get remounted on every progress tick (the hook used to be
-      // defined inside this render fn → new component type each render). For
-      // a non-boomerang clip we pass `onEnd={advance}` so it auto-advances at
-      // end-of-playback (the inline path had no end listener → native video
-      // stories hung forever).
-      try {
-        const _expoVideoMod = require('expo-video');
-        if (_expoVideoMod?.useVideoPlayer && _expoVideoMod?.VideoView) {
-          return (
-            <StatusVideoPlayer
-              mod={_expoVideoMod}
-              uri={mediaUrl}
-              loop={isBoomerang}
-              initialMuted={videoMuted}
-              liveMuted={videoMuted}
-              poster={PosterOverlay}
-              onEnd={advance}
-              onError={_onVideoError}
-              onReady={_onVideoReady}
-            />
-          );
-        }
-      } catch {}
-      try {
-        const V = require('expo-av').Video;
-        return (
-          <V
-            ref={boomerangRef}
-            source={{ uri: mediaUrl }}
-            resizeMode="contain"
-            shouldPlay={!paused}
-            isLooping={isBoomerang}
-            onLoad={isBoomerang ? (() => setTimeout(advance, boomerangLoopDurationMs)) : undefined}
-            onPlaybackStatusUpdate={(s) => {
-              if (!isBoomerang) { if (s?.didJustFinish) advance(); return; }
-              try {
-                if (s?.didJustFinish && boomerangRef?.current?.setPositionAsync) {
-                  boomerangStateRef.current.reversing = !boomerangStateRef.current.reversing;
-                  if (boomerangStateRef.current.reversing && s?.durationMillis) {
-                    boomerangRef.current.setPositionAsync(Math.max(0, s.durationMillis - 50));
-                  }
-                }
-              } catch {}
-            }}
-            style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
-          />
-        );
-      } catch {}
-      return <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />;
-    }
-    // Poster fallback for IMAGE status — backend (#557) ships thumbnail_url
-    // for both photo + video status. Painting a blurred thumb behind the
-    // full image kills the 1-2s black gap users reported while expo-image /
-    // network finished the full payload. Falls back gracefully on older
-    // statuses without thumbnail_url (the wrapper's #1a0a2e tint reads as
-    // a soft brand-purple, not pitch black).
-    //
-    // [WAVE 99 2026-05-21] When backend didn't ship a thumbnail_url for an
-    // image status (most image rows, since chat.php only generates thumbs
-    // for video — line 8972), fall back to the media_url ITSELF blurred so
-    // the blackness gap before/around expo-image's fade-in window is
-    // covered by the same image content rather than a dark void. expo-image
-    // dedupes by URL so this is essentially free (same bytes used by the
-    // sharp foreground load).
-    const imagePoster = cur.thumbnail_url
-      ? (cur.thumbnail_url.startsWith('http') ? cur.thumbnail_url : `${BASE_URL}${cur.thumbnail_url}`)
-      : mediaUrl;
-    const ImagePosterLayer = imagePoster ? (
-      WEB ? (
-        <img
-          src={imagePoster}
-          alt=""
-          style={{
-            position: 'absolute', top: 0, left: 0, width: '100%', height: '100%',
-            objectFit: 'contain', filter: 'blur(20px)', transform: 'scale(1.08)',
-          }}
-        />
-      ) : (
-        <Image
-          source={{ uri: imagePoster }}
-          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' }}
-          resizeMode="contain"
-          blurRadius={20}
-        />
-      )
-    ) : null;
-    // [WAVE 99 2026-05-21] Error fallback chip — replaces the silent-black
-    // canvas when expo-image / RN Image / <img> fails to decode. Surfaces
-    // the real reason in dev logs + offers a Retry tap that bumps the
-    // imageRetry counter — that remounts the underlying image with a fresh
-    // cache key (cachePolicy="none" on retry) so a poisoned disk cache entry
-    // can't soft-brick the viewer forever. Branded #1a0a2e backdrop so the
-    // canvas reads as "Stories" not "app crashed". Falls through to next
-    // story via the existing auto-advance timer so a single broken item
-    // doesn't dead-end the carousel.
-    if (imageError) {
-      return (
-        <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
-          <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 38, marginBottom: 14 }}>⚠</Text>
-          <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
-            {t?.('status.imageUnavailable') || 'Imagem indisponível'}
-          </Text>
-          <Text style={{ marginTop: 6, color: 'rgba(255,255,255,0.55)', fontSize: 12, textAlign: 'center', paddingHorizontal: 12 }}>
-            {t?.('status.imageUnavailableHint') || 'Toque pra tentar de novo ou avance pra próxima.'}
-          </Text>
-          <TouchableOpacity
-            onPress={() => {
-              setImageError(false);
-              setImageRetry(r => r + 1);
-              imageFade.setValue(0);
-              Animated.timing(imageFade, { toValue: 1, duration: 200, useNativeDriver: true }).start();
-            }}
-            style={{
-              marginTop: 18, paddingHorizontal: 22, paddingVertical: 10,
-              borderRadius: 22, backgroundColor: 'rgba(255,255,255,0.16)',
-              borderWidth: 1, borderColor: 'rgba(255,255,255,0.28)',
-            }}
-            accessibilityRole="button"
-          >
-            <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>
-              {t?.('status.retry') || 'Tentar de novo'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      );
-    }
-    // On retry, bypass the (possibly poisoned) disk cache for one fetch so
-    // we don't loop on the bad entry. After a successful onLoad it'll be
-    // re-cached fresh.
-    const _imgCachePolicy = imageRetry > 0 ? 'none' : 'memory-disk';
-    // Brand-tinted backdrop replaces #0f172a slate. When expo-image fails
-    // but the safety-net imageFade forces opacity 1 anyway, the user at
-    // least sees a recognizable dark-purple "Stories canvas" — not a blank
-    // black void the user calls "preto puro".
-    const _wrapperBg = '#1a0a2e';
-    // Force-remount the inner image whenever URL or retry counter changes
-    // so React doesn't reuse a stale instance still tied to the old cache
-    // hit. expo-image internally dedupes by source.uri so the key= is the
-    // only escape hatch.
-    const _imgKey = `${mediaUrl}::${imageRetry}`;
-    if (_ExpoImage && !WEB) {
-      // Image fade-in: opacity ramps 0 → 1 once expo-image fires onLoad.
-      // Native driver makes it free; transition prop alone gives a slight
-      // crossfade INSIDE expo-image but doesn't cover the empty-frame gap
-      // before any data has arrived. Poster sits underneath via absolute
-      // positioning so the blurred thumb peeks while the full payload lands.
-      return (
-        <View style={{ flex: 1, backgroundColor: _wrapperBg }}>
-          {ImagePosterLayer}
-          <Animated.View style={{ flex: 1, opacity: imageFade }}>
-            <_ExpoImage
-              key={_imgKey}
-              source={{ uri: mediaUrl }}
-              style={{ width: '100%', height: '100%' }}
-              contentFit="contain"
-              cachePolicy={_imgCachePolicy}
-              priority="high"
-              transition={120}
-              onLoad={() => {
-                Animated.timing(imageFade, { toValue: 1, duration: 350, useNativeDriver: true }).start();
-              }}
-              onError={(e) => {
-                if (__DEV__) {
-                  try { console.warn('[STATUS-IMG-ERR]', mediaUrl, e?.nativeEvent?.error || e?.error || e); } catch {}
-                }
-                setImageError(true);
-                imageFade.setValue(1);
-              }}
-            />
-          </Animated.View>
-        </View>
-      );
-    }
-    return WEB
-      ? (
-        <div style={{ position: 'relative', width: '100%', height: '100%', backgroundColor: _wrapperBg }}>
-          {ImagePosterLayer}
-          <img
-            key={_imgKey}
-            src={mediaUrl}
-            alt=""
-            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain' }}
-            onError={() => {
-              if (typeof console !== 'undefined') {
-                try { console.warn('[STATUS-IMG-ERR-web]', mediaUrl); } catch {}
-              }
-              setImageError(true);
-            }}
-          />
-        </div>
-      )
-      : (
-        <View style={{ flex: 1, backgroundColor: _wrapperBg }}>
-          {ImagePosterLayer}
-          <Animated.View style={{ flex: 1, opacity: imageFade }}>
-            <Image
-              key={_imgKey}
-              source={{ uri: mediaUrl }}
-              style={{ width: '100%', height: '100%' }}
-              resizeMode="contain"
-              onLoad={() => {
-                Animated.timing(imageFade, { toValue: 1, duration: 350, useNativeDriver: true }).start();
-              }}
-              onError={(e) => {
-                if (__DEV__) {
-                  try { console.warn('[STATUS-IMG-ERR-rn]', mediaUrl, e?.nativeEvent?.error || e); } catch {}
-                }
-                setImageError(true);
-                imageFade.setValue(1);
-              }}
-            />
-          </Animated.View>
-        </View>
-      );
-  };
+  const renderMedia = () => (
+    <StoryMedia
+      cur={cur}
+      isText={isText}
+      isVideo={isVideo}
+      isImage={isImage}
+      mediaUrl={mediaUrl}
+      t={t}
+      paused={paused}
+      videoMuted={videoMuted}
+      videoError={videoError}
+      imageError={imageError}
+      imageRetry={imageRetry}
+      imageFade={imageFade}
+      advance={advance}
+      onVideoError={_onVideoError}
+      onVideoReady={_onVideoReady}
+      setVideoError={setVideoError}
+      setImageError={setImageError}
+      setImageRetry={setImageRetry}
+      boomerangRef={boomerangRef}
+      boomerangStateRef={boomerangStateRef}
+    />
+  );
 
   // Modern gradient progress bar — animates left-to-right with a soft glow.
   // Replaces the flat white bar. Uses Svg gradient + Animated Rect width.

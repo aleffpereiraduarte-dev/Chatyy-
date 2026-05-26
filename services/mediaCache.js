@@ -361,18 +361,32 @@ if (Platform.OS !== 'web' && !globalThis.__mediaCache_reconnect_sub) {
 // (avatar fetch, message sends, etc).
 const _MAX_CONCURRENT_DOWNLOADS = 3;
 let _activeDownloads = 0;
-const _downloadWaiters = []; // FIFO queue of resolve fns
+// [PRIORITY LANES 2026-05-26] Two waiter queues instead of one FIFO. The
+// on-demand / visible-viewport path (a bubble the user is looking at, a
+// tap-to-download, a redownload) MUST jump ahead of the background prefetch
+// firehose (WS auto-prefetch, mediaAutoSync sweep, full-history backfill).
+// Before this, a burst of 30 inbound-message prefetches could grab all 3
+// slots and the foreground image the user is staring at would sit behind
+// them — perceived as "the photo I opened won't load". The high lane is
+// always drained first; prefetch only gets a slot when no foreground request
+// is waiting. Behavior (which files get cached, persistence) is unchanged —
+// only the ORDER under contention changes.
+const _hiWaiters = [];  // FIFO queue of resolve fns — foreground/on-demand
+const _loWaiters = [];  // FIFO queue of resolve fns — background prefetch
 
-function _acquireDownloadSlot() {
+function _acquireDownloadSlot(priority) {
   if (_activeDownloads < _MAX_CONCURRENT_DOWNLOADS) {
     _activeDownloads++;
     return Promise.resolve();
   }
-  return new Promise(resolve => _downloadWaiters.push(resolve));
+  const q = priority === 'low' ? _loWaiters : _hiWaiters;
+  return new Promise(resolve => q.push(resolve));
 }
 
 function _releaseDownloadSlot() {
-  const next = _downloadWaiters.shift();
+  // Drain the high-priority lane first so foreground/on-demand downloads
+  // never starve behind a backlog of background prefetches.
+  const next = _hiWaiters.shift() || _loWaiters.shift();
   if (next) {
     // Hand the slot directly to the next waiter (no decrement → no race).
     try { next(); } catch { _activeDownloads--; }
@@ -391,9 +405,12 @@ function _releaseDownloadSlot() {
 // outside cacheMedia funnel through the SAME slot pool instead of opening an
 // independent N-way pool that contends with foreground fetches. Always pair an
 // acquire with exactly one release (use try/finally). No-op-safe on web.
-export function acquireDownloadSlot() {
+export function acquireDownloadSlot(priority) {
   if (Platform.OS === 'web') return Promise.resolve();
-  return _acquireDownloadSlot();
+  // External callers default to the high lane (current behavior). Pass
+  // 'low' to yield to foreground/on-demand downloads (e.g. a background
+  // backfill worker that shouldn't out-compete a visible image).
+  return _acquireDownloadSlot(priority);
 }
 export function releaseDownloadSlot() {
   if (Platform.OS === 'web') return;
@@ -1205,6 +1222,17 @@ export async function cacheMedia(url, opts = {}) {
   }
 
   const key = urlToKey(url);
+
+  // [HOT PATH 2026-05-26] In-flight dedup BEFORE any filesystem stat. A
+  // fast-scrolling list (or several bubbles bound to the same URL) can call
+  // cacheMedia for the same key many times within a frame; collapsing them to
+  // the single existing promise here avoids N× getInfoAsync round-trips on the
+  // render path. Correctness is unchanged — the shared promise already resolves
+  // to the same local path the stat path would have produced. (Hoisted above
+  // the stat fallback; the original check at the end of the lookup is now
+  // redundant but harmless if reached.)
+  if (_inflightDownloads.has(key)) return _inflightDownloads.get(key);
+
   // Best-effort owner tag so the LRU sweep can protect favorites. Persisted
   // (debounced) so the tag survives cold start — see _urlConvOwner notes.
   if (opts && opts.conversationId != null) {
@@ -1216,6 +1244,17 @@ export async function cacheMedia(url, opts = {}) {
   }
   const indexed = syncIndex.get(key);
   if (indexed) {
+    // [HOT PATH 2026-05-26] If the index points at the PERMANENT dir
+    // (getSavedDir), the file cannot have been auto-evicted — the LRU sweep
+    // walks ONLY the OS-purgeable cache dir (see the P0 guard in
+    // evictIfNeeded), and the permanent dir is otherwise cleared only by
+    // explicit user action, which scrubs the index in the same call. So we can
+    // return the local path WITHOUT the fs.getInfoAsync re-validation, serving
+    // the on-disk file with zero I/O on the common case (every WS/permanent
+    // download lands in getSavedDir). Cache-dir paths can be purged by iOS
+    // under the app, so those keep the validating stat below.
+    const savedDir = getSavedDir();
+    if (savedDir && indexed.startsWith(savedDir)) return indexed;
     try {
       const info = await fs.getInfoAsync(indexed);
       if (info.exists) return indexed;
@@ -1240,6 +1279,15 @@ export async function cacheMedia(url, opts = {}) {
   // ou limpar manualmente no Settings do app. Mesma estratégia do WhatsApp.
   const dir = getSavedDir();
   const localPath = dir + key;
+  // [PRIORITY LANES 2026-05-26] Pick the download lane. Background prefetch —
+  // WS auto-download (opts.received), or any caller that explicitly opts into
+  // 'low' — yields to foreground/on-demand requests. An explicit user tap
+  // (opts.force) and the visible-viewport render path (ChatMedia calls
+  // cacheMedia(url) with no flags) take the high lane so the photo the user is
+  // actually looking at never sits behind a backlog of auto-prefetches.
+  const _dlPriority = (opts.priority === 'low' || (opts.received && !opts.force))
+    ? 'low'
+    : 'high';
   const dlPromise = (async () => {
     // Throttle: wait for a free slot before hitting the network. The slot
     // is held only for the actual download — getInfoAsync / mkdir are
@@ -1250,7 +1298,7 @@ export async function cacheMedia(url, opts = {}) {
         await fs.makeDirectoryAsync(dir, { intermediates: true });
       }
     } catch {}
-    await _acquireDownloadSlot();
+    await _acquireDownloadSlot(_dlPriority);
     try {
       // Retry com exponential backoff em 5xx / network failures. 4xx
       // (404, 410, 403) são bug nosso ou link expirado — retry só queima
@@ -1398,7 +1446,10 @@ export async function preCacheUrls(urls) {
   // Cache em batches de 20 — antes só processava os 20 primeiros e
   // ignorava o resto, deixando mídias antigas sem cache.
   for (let i = 0; i < urls.length; i += 20) {
-    await Promise.allSettled(urls.slice(i, i + 20).map(url => cacheMedia(url)));
+    // Batch pre-cache is a background warm-up — yield the download lane to any
+    // visible-viewport/on-demand request so opening a conversation doesn't make
+    // the photo on screen wait behind the bulk warm of the whole thread.
+    await Promise.allSettled(urls.slice(i, i + 20).map(url => cacheMedia(url, { priority: 'low' })));
   }
 }
 
@@ -1416,7 +1467,10 @@ export async function getCacheSize() {
 }
 
 // Save media permanently (won't be cleared by OS)
-export async function saveMediaPermanent(url) {
+// `opts.priority` ('low' | 'high', default 'high') selects the shared
+// download lane. Background prefetch (voice-note auto-prefetch) passes 'low'
+// so it yields to on-demand/foreground downloads under contention.
+export async function saveMediaPermanent(url, opts = {}) {
   if (!url || Platform.OS === 'web') return url;
   const fs = getFS();
   if (!fs) return url;
@@ -1425,9 +1479,16 @@ export async function saveMediaPermanent(url) {
   const key = urlToKey(url);
   const localPath = dir + key;
 
+  // [HOT PATH 2026-05-26] In-memory index hit → file is in the permanent dir
+  // (this function only ever writes there) which the LRU sweep never touches,
+  // so it can't have been auto-evicted. Return it without the getInfoAsync
+  // round-trip. Keeps the prefetch/adopt callers' fast cache-hit path zero-I/O.
+  const indexedSave = syncIndex.get(key);
+  if (indexedSave && indexedSave.startsWith(dir)) return indexedSave;
+
   try {
     const info = await fs.getInfoAsync(localPath);
-    if (info.exists) return localPath;
+    if (info.exists) { registerSyncKey(url, localPath); return localPath; }
   } catch {}
 
   try {
@@ -1449,7 +1510,7 @@ export async function saveMediaPermanent(url) {
     // burst of audio prefetches (e.g. 10 voice notes arriving over WS
     // after a reconnect) can't saturate the radio behind cacheMedia's
     // back. _MAX_CONCURRENT_DOWNLOADS is shared across both code paths.
-    await _acquireDownloadSlot();
+    await _acquireDownloadSlot(opts.priority === 'low' ? 'low' : 'high');
     try {
       const download = await fs.downloadAsync(url, localPath);
       if (download.status === 200) {
@@ -1635,7 +1696,9 @@ export function prefetchAudioMessage(remoteUrl, opts = {}) {
   // location getCachedAudioUri checks via the mediaCache consolidation hook,
   // so a single download serves both the bubble's player AND the chat list
   // preview. No cellular gate inside saveMediaPermanent → safe for audio.
-  return saveMediaPermanent(remoteUrl).then(async (local) => {
+  // Background prefetch → low lane so a burst of inbound voice notes never
+  // out-competes the image/video the user is actively viewing.
+  return saveMediaPermanent(remoteUrl, { priority: 'low' }).then(async (local) => {
     // [#1218 2026-05-20 BUG#6 fix] Write the file:// path back into
     // messages.local_path so a cold-open of the bubble doesn't re-resolve
     // from the syncIndex (which can be stale after an account swap or
@@ -1798,7 +1861,7 @@ export async function saveConversationMedia(messages, convIdHint) {
       // disk on cold-open. Same hook image/video already had on the WS path;
       // it was missing on the conversation-load sweep, leaving files on disk
       // but msg.local_path NULL — bubble showed "mídia não foi baixada".
-      return saveMediaPermanent(url).then((local) => {
+      return saveMediaPermanent(url, { priority: 'low' }).then((local) => {
         try {
           // [WAVE 36 2026-05-20] Coerce file path → file:// URI form before
           // checking. saveMediaPermanent returns whatever path expo-fs gave

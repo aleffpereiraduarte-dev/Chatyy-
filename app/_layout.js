@@ -109,7 +109,19 @@ try { installCrashReporter(); } catch {}
 // `setupIOSAudioManagement` is the lower-level escape hatch: we tell LK
 // the session is hot ALREADY and configured for voice; LK will skip its
 // own configuration entirely.
-if (Platform.OS !== 'web') {
+//
+// [cold-start, 2026-05-26] `require('@livekit/react-native')` synchronously
+// pulls in the whole WebRTC JS bridge + native global registration — pure
+// dead weight on the launch→chat-list path since calls are lazy (CallContext
+// + /call screen are React.lazy and never mount at boot). Deferred off the
+// critical path with setTimeout(0): registration still completes long before
+// any call can connect (the call screen + livekit-client import are gated
+// behind a user/CallKit action that's seconds away at minimum), but the
+// require() no longer blocks first paint. Idempotent — guarded so it runs once.
+let _lkGlobalsRegistered = false;
+function _registerLiveKitGlobals() {
+  if (_lkGlobalsRegistered || Platform.OS === 'web') return;
+  _lkGlobalsRegistered = true;
   try {
     const lkrn = require('@livekit/react-native');
     if (typeof lkrn.registerGlobals === 'function') {
@@ -128,6 +140,9 @@ if (Platform.OS !== 'web') {
     try { reportStep('lk_require_fail', e?.message); } catch {}
     if (typeof console !== 'undefined') console.warn('[LiveKit] registerGlobals failed:', e?.message);
   }
+}
+if (Platform.OS !== 'web' && typeof setTimeout === 'function') {
+  setTimeout(_registerLiveKitGlobals, 0);
 }
 
 // Web has no native Animated module — force useNativeDriver:false globally
@@ -270,10 +285,16 @@ const LiveLocationHeartbeat = React.lazy(() => import('../components/LiveLocatio
 // The Android equivalent is inline in IncomingCallActivity.kt.
 const DeclineWithMessageSheet = React.lazy(() => import('../components/DeclineWithMessageSheet'));
 const ActiveCallBar = React.lazy(() => import('../components/ActiveCallBar').then(m => ({ default: () => { const B = m.ActiveCallBridge; return React.createElement(B, null); } })));
-import LoginChallengePrompt from '../components/LoginChallengePrompt';
-import LocationRequestModal from '../components/LocationRequestModal';
-import PushLoginRequestModal from '../components/PushLoginRequestModal';
-import PWAPrompts from '../components/PWAPrompts';
+// Cold-start: these are modal/overlay surfaces that are never visible at
+// launch (they only mount UI when triggered by a WS event / permission flow).
+// Lazy-loading them keeps their module code (and transitive deps) out of the
+// synchronous launch→chat-list bundle path. Each is rendered under a
+// <Suspense fallback={null}> below, so the deferred chunk resolving later has
+// no visible effect — until then they'd render null anyway.
+const LoginChallengePrompt = React.lazy(() => import('../components/LoginChallengePrompt'));
+const LocationRequestModal = React.lazy(() => import('../components/LocationRequestModal'));
+const PushLoginRequestModal = React.lazy(() => import('../components/PushLoginRequestModal'));
+const PWAPrompts = React.lazy(() => import('../components/PWAPrompts'));
 import WhatsNewSheet, { shouldShowWhatsNew } from '../components/WhatsNewSheet';
 // Stage 6 — surface "Phone offline" UI when web's relay reads fall back to
 // IndexedDB cache. Web-only; renders null on native.
@@ -319,9 +340,13 @@ function ThemedStatusBar() {
 // This prevents any flash of white/icon between the native splash hiding and React rendering.
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-// Initialize native services
-if (Platform.OS !== 'web') {
-  registerBackgroundSync().catch(() => {});
+// Initialize native services — deferred off the cold-start path. Background
+// sync task registration touches expo-task-manager/BackgroundFetch native
+// bridges and is irrelevant to first paint; running it at module-eval time
+// added native bridge work before the first screen could render. setTimeout(0)
+// lets the launch→chat-list path finish first; registration is idempotent.
+if (Platform.OS !== 'web' && typeof setTimeout === 'function') {
+  setTimeout(() => { try { registerBackgroundSync().catch(() => {}); } catch {} }, 0);
 }
 
 // Handles deep links: mailto:, chat, email, and other app URLs
@@ -1566,11 +1591,19 @@ export default function RootLayout() {
                 <Suspense fallback={null}>
                   <DeclineWithMessageSheet />
                 </Suspense>
-                <LoginChallengePrompt />
-                <LocationRequestModal />
-                <PushLoginRequestModal />
+                <Suspense fallback={null}>
+                  <LoginChallengePrompt />
+                </Suspense>
+                <Suspense fallback={null}>
+                  <LocationRequestModal />
+                </Suspense>
+                <Suspense fallback={null}>
+                  <PushLoginRequestModal />
+                </Suspense>
                 <WhatsNewGate />
-                <PWAPromptsThemed />
+                <Suspense fallback={null}>
+                  <PWAPromptsThemed />
+                </Suspense>
                 <NotificationToast
                   notification={toastNotif}
                   onDismiss={() => setToastNotif(null)}

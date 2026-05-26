@@ -937,6 +937,23 @@ const PENDING_TOKEN_SENDS_MAX = 5;
 // flushes (foreground + WS auth_ack firing back-to-back) don't re-POST the
 // same {token, email} pair to the backend.
 const _flushedTokensInSession = new Set();
+// [perf] FIFO cap on the in-memory session dedup set. It's only ever added
+// to (never pruned), so over a long-lived session with repeated token
+// rotations / account switches it would grow without bound. 64 distinct
+// {token|email|type} keys is far more than any real device produces; we
+// drop the oldest insertion-order key once over the cap (Set preserves
+// insertion order). Worst case of an evicted key is one redundant re-POST,
+// which the backend dedups idempotently.
+const _FLUSHED_TOKENS_MAX = 64;
+function _markFlushed(key) {
+  if (!key) return;
+  if (_flushedTokensInSession.has(key)) return;
+  _flushedTokensInSession.add(key);
+  if (_flushedTokensInSession.size > _FLUSHED_TOKENS_MAX) {
+    const oldest = _flushedTokensInSession.values().next().value;
+    _flushedTokensInSession.delete(oldest);
+  }
+}
 
 function _readPendingTokenSends() {
   const v = getJSON(PENDING_TOKEN_SENDS_KEY);
@@ -980,7 +997,7 @@ export async function sendTokenToBackend(pushToken) {
     const r1 = await apiCall('register_push_token', { token: pushToken, platform: Platform.OS }, 'POST');
     _diagPush('send_expo', r1?.success ? 'ok' : ('fail:' + (r1?.error || 'unknown')));
     if (r1?.success) {
-      _flushedTokensInSession.add(pushToken + '|' + email + '|');
+      _markFlushed(pushToken + '|' + email + '|');
     } else {
       // API returned a non-throwing failure (e.g. 5xx wrapped in success:false).
       // Queue for retry just like a network throw.
@@ -998,7 +1015,7 @@ export async function sendTokenToBackend(pushToken) {
         }, 'POST');
         _diagPush('send_fcm', r2?.success ? 'ok' : ('fail:' + (r2?.error || 'unknown')));
         if (r2?.success) {
-          _flushedTokensInSession.add(fcmTok + '|' + email + '|fcm_device');
+          _markFlushed(fcmTok + '|' + email + '|fcm_device');
         } else {
           _enqueuePendingTokenSend({ token: fcmTok, email, platform: 'android', token_type: 'fcm_device' });
         }
@@ -1060,7 +1077,7 @@ export async function flushPendingTokens() {
       const r = await apiCall('register_push_token', payload, 'POST');
       if (r?.success) {
         flushed++;
-        _flushedTokensInSession.add(dedupKey);
+        _markFlushed(dedupKey);
       } else {
         // Server returned a structured failure. If the response shape
         // suggests a permanent error (invalid token format, account

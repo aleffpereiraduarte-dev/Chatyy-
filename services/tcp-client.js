@@ -568,6 +568,10 @@ export class TCPClient extends EventEmitter {
       this.sendFrame(MSG_TYPES.PING, { ts: this._lastPingTime });
 
       // FIX: detectar se pong não chegou (conexão morta)
+      // [perf] Clear any pongTimer still armed from a previous tick before
+      // overwriting the handle — otherwise a slow/missed pong leaks an
+      // orphaned timer that can later fire a spurious reconnect.
+      if (this.pongTimer) { clearTimeout(this.pongTimer); this.pongTimer = null; }
       this.pongTimer = setTimeout(() => {
         log('[tcp] PONG timeout — conexão morta, reconectando');
         if (this.ws) {

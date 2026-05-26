@@ -483,6 +483,14 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   // to the letters it shows — if a row's name flips for a moment, the
   // background flips with it (never a mismatch between AU letters and
   // a JA-colored circle, which used to flash on cold start).
+  //
+  // NOTE: these are plain calls (NOT useMemo) on purpose — there are early
+  // returns above (group-collage short-circuit + ChatyyAI bot) so a hook
+  // here would change the hook count between renders and crash with
+  // "rendered fewer hooks than expected". getInitials() (one split) and
+  // hashColor() (a short char loop) are cheap; the real re-render win comes
+  // from the memo() comparator below, which stops the component re-running
+  // at all when only `style`/parent identity changed.
   const initials = getInitials(name, email);
   const _colorSeed = (displayName || email || '').toLowerCase();
   const bgColor = hashColor(_colorSeed);

@@ -2257,6 +2257,37 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
       />
     </View>
   );
+}, (prev, next) => {
+  // [perf] Custom equality so a parent re-render (containerHeight settling,
+  // the prefetch effect firing on currentIndex change, overlay toggles for a
+  // *different* row) doesn't re-render every mounted reel. We only re-render
+  // when something this row actually renders against changed. Function props
+  // (onOpenComments, onLikeChange, …) are stable useCallbacks in the parent,
+  // so we deliberately ignore their identity. NOTE: returning true === skip
+  // re-render; this is a pure render optimization and changes no behavior.
+  if (prev.isActive !== next.isActive) return false;
+  if (prev.preload !== next.preload) return false;
+  if (prev.overlayOpen !== next.overlayOpen) return false;
+  if (prev.screenFocused !== next.screenFocused) return false;
+  if (prev.showLiveRing !== next.showLiveRing) return false;
+  if (prev.containerHeight !== next.containerHeight) return false;
+  if (prev.isDark !== next.isDark) return false;
+  if (prev.colors !== next.colors) return false;
+  if (prev.t !== next.t) return false;
+  if (prev.user?.email !== next.user?.email) return false;
+  const a = prev.reel, b = next.reel;
+  if (!a || !b) return a === b;
+  if (a.id !== b.id) return false;
+  if ((a.like_count ?? 0) !== (b.like_count ?? 0)) return false;
+  if ((a.comment_count ?? 0) !== (b.comment_count ?? 0)) return false;
+  if ((a.view_count ?? 0) !== (b.view_count ?? 0)) return false;
+  if ((a.user_liked || false) !== (b.user_liked || false)) return false;
+  if ((a.user_bookmarked || false) !== (b.user_bookmarked || false)) return false;
+  if ((a.user_following || false) !== (b.user_following || false)) return false;
+  if ((a.sound_saved || false) !== (b.sound_saved || false)) return false;
+  if ((a.caption || '') !== (b.caption || '')) return false;
+  if ((a.media_urls || '') !== (b.media_urls || '')) return false;
+  return true;
 });
 
 // ── Empty state ──
@@ -2813,8 +2844,13 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
           index,
         })}
         initialNumToRender={2}
-        maxToRenderPerBatch={3}
+        maxToRenderPerBatch={2}
         windowSize={3}
+        // [perf] Spread the off-screen mounting work across a couple of frames
+        // instead of one big synchronous batch — keeps the swipe gesture from
+        // dropping frames while the next reel mounts. windowSize=3 already caps
+        // mounted rows to active±1 so only the active + 1 preload video exist.
+        updateCellsBatchingPeriod={60}
         removeClippedSubviews={Platform.OS !== 'web'}
         onRefresh={handleRefresh}
         refreshing={refreshing}

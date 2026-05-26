@@ -1163,6 +1163,11 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
     );
   }, [colors, isDark, t, user, handleOpenComments, handleDeletePost, handlePressUser, renderSuggestionsRail]);
 
+  // Stable keyExtractor — hoisted out of the list JSX so its identity stays
+  // constant across the many parent re-renders this screen does (notif poll,
+  // live poll, search keystrokes) and doesn't force the list to re-key.
+  const feedKeyExtractor = useCallback((item) => String(item.id), []);
+
   const renderFooter = useCallback(() => {
     // End-of-feed: when there's no more pages and we have at least 1 post,
     // surface a small "voce ja viu tudo" hint so users don't think the feed
@@ -1461,12 +1466,23 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
         ref={feedListRef}
         data={interleavedPosts}
         renderItem={renderPost}
-        keyExtractor={(item) => String(item.id)}
+        keyExtractor={feedKeyExtractor}
         estimatedItemSize={450}
         onScroll={handleFeedScroll}
         scrollEventThrottle={32}
         onEndReached={handleLoadMore}
         onEndReachedThreshold={0.5}
+        // [perf] Virtualization tuning for the main feed. Posts are tall
+        // (media + caption + actions), so a small window keeps the number of
+        // mounted FeedPost rows (each with its own VideoPlayer / images)
+        // bounded during long scrolls. removeClippedSubviews detaches the
+        // off-screen rows' native views on native. Tuning only — the existing
+        // FeedPostRow memo + fingerprint dedup already guard correctness.
+        initialNumToRender={4}
+        maxToRenderPerBatch={4}
+        windowSize={7}
+        updateCellsBatchingPeriod={50}
+        removeClippedSubviews={Platform.OS !== 'web'}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

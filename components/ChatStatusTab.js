@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
   Modal, TextInput, Image, Animated, Dimensions, KeyboardAvoidingView,
@@ -563,7 +563,7 @@ function DraggableTextOverlay({ text, color, fontSize, onMove, onRemove }) {
 //   - Releases its timer + Animated cleanly on unmount so a quick tap-and-
 //     release doesn't leave an orphan animation incrementing in the bg.
 const PEEK_DURATION_MS = Math.round(5000 / 1.5); // 5s @ normal → 3.33s @ 1.5×
-function AnimatedPeekPreview({ group, ownerName, t }) {
+const AnimatedPeekPreview = React.memo(function AnimatedPeekPreview({ group, ownerName, t }) {
   const items = group?.items || [];
   const [activeIdx, setActiveIdx] = useState(0);
   const progress = useRef(new Animated.Value(0)).current;
@@ -676,7 +676,7 @@ function AnimatedPeekPreview({ group, ownerName, t }) {
       </View>
     </View>
   );
-}
+});
 
 function EmptyStatusIllustration({ isDark }) {
   return (
@@ -693,7 +693,7 @@ function EmptyStatusIllustration({ isDark }) {
 }
 
 /** Renders a segmented ring around an avatar (one arc per status item) */
-function SegmentedRing({ items, size, viewed, closeFriends = false }) {
+const SegmentedRing = React.memo(function SegmentedRing({ items, size, viewed, closeFriends = false }) {
   const count = items?.length || 1;
   const ringSize = size + 10;
   const radius = (ringSize / 2) - 3;
@@ -739,10 +739,10 @@ function SegmentedRing({ items, size, viewed, closeFriends = false }) {
       </Svg>
     </View>
   );
-}
+});
 
 /** Horizontal story-style avatar scroller */
-function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpenViewer, onOpenCreator, isDark, colors, t }) {
+const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpenViewer, onOpenCreator, isDark, colors, t }) {
   const hasMyStatus = myStatuses.length > 0;
   const myStatusGroup = hasMyStatus
     ? { ownerEmail: currentEmail, ownerName: currentName, items: myStatuses }
@@ -838,7 +838,7 @@ function StoryScroller({ statuses, myStatuses, currentEmail, currentName, onOpen
       })}
     </ScrollView>
   );
-}
+});
 
 
 // (MMKV preload + fingerprint diff lived here as inline helpers; both
@@ -1532,28 +1532,36 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   }, [autoNewStatus]);
 
   // Filter by search
-  const filteredStatuses = contactStatuses.filter((s) => {
+  // [PERF] Memoize the search filter + the 3-way partition so they only
+  // recompute when the underlying status list or the query actually change.
+  // Previously these ran on EVERY render (this component carries 50+ state
+  // hooks: reactions, forward, highlights, translate, viewer animations…),
+  // minting fresh array references each time → the horizontal StoryScroller
+  // (now React.memo) re-rendered + re-mapped every avatar/ring on every
+  // unrelated state tick. Keying the memo on contactStatuses + searchQuery
+  // gives StoryScroller a stable `statuses` prop so it bails out cleanly.
+  const filteredStatuses = useMemo(() => contactStatuses.filter((s) => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.toLowerCase();
     return s.ownerName.toLowerCase().includes(q) || s.ownerEmail.toLowerCase().includes(q);
-  });
+  }), [contactStatuses, searchQuery]);
 
   // 3-way partition (Instagram-style): muted users go to a collapsed
   // "Silenciados" section, the rest split into "Recentes" (any unviewed)
   // and "Vistos" (all viewed). The hook flags muted groups via `s.muted`
   // when known; we also fall back to a backend hint at `s.is_muted`.
-  const mutedStatuses = filteredStatuses.filter(
+  const mutedStatuses = useMemo(() => filteredStatuses.filter(
     (s) => !!(s.muted || s.is_muted)
-  );
-  const audibleStatuses = filteredStatuses.filter(
+  ), [filteredStatuses]);
+  const audibleStatuses = useMemo(() => filteredStatuses.filter(
     (s) => !(s.muted || s.is_muted)
-  );
-  const recentStatuses = audibleStatuses.filter(
+  ), [filteredStatuses]);
+  const recentStatuses = useMemo(() => audibleStatuses.filter(
     (s) => !s.items.every((item) => item.viewed)
-  );
-  const viewedStatuses = audibleStatuses.filter(
+  ), [audibleStatuses]);
+  const viewedStatuses = useMemo(() => audibleStatuses.filter(
     (s) => s.items.every((item) => item.viewed)
-  );
+  ), [audibleStatuses]);
 
   // All status groups for swiping between people
   const [allStatusGroups, setAllStatusGroups] = useState([]);

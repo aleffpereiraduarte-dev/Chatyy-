@@ -1244,6 +1244,12 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                       <View key={idx} style={[styles.mediaFrame, { width: cardWidth }]}>
                         <img
                           src={resolveMediaUrl(url)}
+                          // [perf] Defer decode/fetch of off-screen carousel
+                          // slides — only the first slide is in view on mount,
+                          // so the rest load lazily as the user swipes. Pure
+                          // browser hint; visuals unchanged.
+                          loading={idx === 0 ? 'eager' : 'lazy'}
+                          decoding="async"
                           style={{
                             width: '100%',
                             height: '100%',

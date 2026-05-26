@@ -19,7 +19,7 @@
  *   setPeekProfile({ email })                            // peek
  */
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Image,
   Platform, Modal, Pressable, ActivityIndicator, Dimensions, Animated, Alert, TextInput,
@@ -187,7 +187,7 @@ function relativeLastSeen(ts, t) {
 //   - Secondary → transparent fill with 1px brand-tinted border (outlined pill).
 // Press feels tactile via a spring scale (native driver). The shadow is
 // kept subtle (purple alpha, low offset) so it doesn't clash with dark mode.
-function FlatButton({ label, onPress, isPrimary, colors, isDark }) {
+const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors, isDark }) {
   const scale = useRef(new Animated.Value(1)).current;
   const onPressIn = useCallback(() => {
     Animated.spring(scale, { toValue: 0.96, useNativeDriver: true, speed: 30, bounciness: 4 }).start();
@@ -241,7 +241,7 @@ function FlatButton({ label, onPress, isPrimary, colors, isDark }) {
       </TouchableOpacity>
     </Animated.View>
   );
-}
+});
 
 // Live "Watch now" CTA — full-width red pulsing pill that surfaces a host's
 // active broadcast directly on their profile, just below the action row.
@@ -333,7 +333,7 @@ function LiveWatchCta({ label, onPress }) {
 // Secondary chip with icon + label — used for supplementary actions (call,
 // video, email) that sit below the primary Follow/Message row. Pill-shape
 // matches the FlatButton above so the action stack reads as one family.
-function ChipButton({ icon: Icon, label, onPress, colors, isDark }) {
+const ChipButton = memo(function ChipButton({ icon: Icon, label, onPress, colors, isDark }) {
   const scale = useRef(new Animated.Value(1)).current;
   const outlineColor = isDark ? 'rgba(167,139,250,0.40)' : 'rgba(124,58,237,0.22)';
   return (
@@ -365,9 +365,9 @@ function ChipButton({ icon: Icon, label, onPress, colors, isDark }) {
       </TouchableOpacity>
     </Animated.View>
   );
-}
+});
 
-function ActionButton({ icon: Icon, label, onPress, colors, isPrimary }) {
+const ActionButton = memo(function ActionButton({ icon: Icon, label, onPress, colors, isPrimary }) {
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -388,10 +388,10 @@ function ActionButton({ icon: Icon, label, onPress, colors, isPrimary }) {
       </Text>
     </TouchableOpacity>
   );
-}
+});
 
 // ─── Stat column ──────────────────────────────────────────────────────
-function Stat({ value, label, onPress, colors }) {
+const Stat = memo(function Stat({ value, label, onPress, colors }) {
   // Slightly chunkier number with a tabular-nums variant so 1K vs 999
   // don't shift width when count tips over. Label uppercased + tighter
   // letter-spacing for a more "stats card" feel (Instagram parity).
@@ -440,14 +440,14 @@ function Stat({ value, label, onPress, colors }) {
       </Animated.View>
     </TouchableOpacity>
   );
-}
+});
 
 // ─── Empty-state illustration ─────────────────────────────────────────
 // Subtle 3-tile-mosaic SVG that lives where the posts grid would be.
 // Reads as "no photos here yet" without leaning on a literal camera icon.
 // Renders at very low opacity so it sinks into the background — the title
 // and CTA stay the focal point.
-function EmptyGridIllustration({ isDark, size = 120 }) {
+const EmptyGridIllustration = memo(function EmptyGridIllustration({ isDark, size = 120 }) {
   if (!_Svg || !_SvgPath) {
     // Fallback: stack of 3 dim squares laid out the same way.
     const tile = (size - 14) / 2;
@@ -482,14 +482,14 @@ function EmptyGridIllustration({ isDark, size = 120 }) {
       <_SvgPath d="M64 64 H106 V106 H64 Z" fill={tone} opacity={0.45} />
     </_Svg>
   );
-}
+});
 
 // ─── Live recording grid tile ────────────────────────────────────────
 // Used by the Lives profile tab. Mirrors the Reels GridItem look (full-
 // bleed 1:1 cell, hairline gutters) but layers a duration chip + view
 // count overlay so the user can scan their saved replays. Long-press on
 // own profile opens the delete confirm (wired in renderTabContent).
-function LiveGridItem({ rec, size, onPress, onLongPress }) {
+const LiveGridItem = memo(function LiveGridItem({ rec, size, onPress, onLongPress }) {
   const thumb = rec?.thumbnail_url ? resolveMedia(rec.thumbnail_url) : '';
   // Prefer viewer_count (peak live audience) over view_count when both are
   // present — the backend started returning both as of 2026-05-18 and we
@@ -605,7 +605,7 @@ function LiveGridItem({ rec, size, onPress, onLongPress }) {
       </View>
     </TouchableOpacity>
   );
-}
+});
 
 // ─── Animated tab bar (Posts / Reels / Mídia / …) ────────────────────
 // Instagram-style sticky tabs with a sliding underline. The underline
@@ -767,7 +767,7 @@ function ProfileSkeleton({ colors, isDark }) {
 // Uses expo-image on native for disk-cached thumbs so scrolling back into a
 // profile doesn't re-download every tile. Web falls back to native <img>
 // (browser cache handles persistence).
-function GridItem({ item, size, onPress, isReel }) {
+const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
   const rawThumb = item.thumbnail || item.url || '';
   const url = resolveMedia(rawThumb);
   const looksLikeVideo = /\.(mp4|webm|mov|m4v|avi|mkv)(\?|$)/i.test(url)
@@ -875,7 +875,7 @@ function GridItem({ item, size, onPress, isReel }) {
       </View>
     </TouchableOpacity>
   );
-}
+});
 
 
 // ─── Main Profile component ──────────────────────────────────────────
@@ -1450,6 +1450,15 @@ export default function Profile({
     const w = mode === 'peek' ? Math.min(SCREEN_W, 380) : Math.min(SCREEN_W, 640);
     return Math.floor(w / 3);
   }, [mode]);
+
+  // Posts tab shows posts + reels merged (desc by created_at). Memoized so the
+  // spread+sort only re-runs when the source arrays change, not on every
+  // unrelated re-render (the 20s live-poll tick + many state vars re-render
+  // this component frequently). Same output as the previous inline compute.
+  const combinedPosts = useMemo(() => (
+    [...(posts || []), ...(reels || [])]
+      .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
+  ), [posts, reels]);
 
   // Handlers
   const handleChat = useCallback(() => { onOpenChat?.(identity?.email); onClose?.(); }, [identity, onOpenChat, onClose]);
@@ -2641,8 +2650,7 @@ export default function Profile({
         // tem reels, o contador era 2 mas o array `posts` vinha [].
         // Tab Posts agora mostra posts E reels combinados (ordenados desc),
         // assim o conteúdo aparece. Tab Reels segue só com reels.
-        const combined = [...(posts || []), ...(reels || [])]
-          .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+        const combined = combinedPosts;
         if (combined.length === 0) {
           return (
             <EmptyStateCard

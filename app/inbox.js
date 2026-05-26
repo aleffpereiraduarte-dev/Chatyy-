@@ -13,17 +13,24 @@ import { useLanguage } from '../context/LanguageContext';
 import { Shadow, BorderRadius, FontSize, Spacing, LetterSpacing, AnimTiming } from '../constants/theme';
 import EmailReader from '../components/EmailReader';
 import Sidebar from '../components/Sidebar';
-import GlobalSearch from '../components/GlobalSearch';
-import NotificationsHub from '../components/NotificationsHub';
+// Cold-start: these overlays (search, notifications hub, shortcut refs,
+// snooze/context/quick-settings panels) are never visible on the first paint
+// of /inbox — they all start closed (`visible={false}`) and only render UI
+// when the user triggers them. Lazy-loading keeps their module code + deps off
+// the synchronous launch→inbox bundle path; each render site is wrapped in
+// <Suspense fallback={null}>, and since they'd render null/closed until opened
+// anyway, the deferred chunk resolving later has no visible effect.
+const GlobalSearch = lazy(() => import('../components/GlobalSearch'));
+const NotificationsHub = lazy(() => import('../components/NotificationsHub'));
 import UnifiedComposeFab from '../components/UnifiedComposeFab';
 import BrandFab from '../components/BrandFab';
-import KeyboardShortcutsRef from '../components/KeyboardShortcutsRef';
+const KeyboardShortcutsRef = lazy(() => import('../components/KeyboardShortcutsRef'));
 import EmailList from '../components/EmailList';
 import SearchBar from '../components/SearchBar';
 import { saveRecentSearch } from '../components/SearchOperators';
 import UndoToast from '../components/UndoToast';
-import KeyboardShortcutsModal from '../components/KeyboardShortcutsModal';
-import SnoozePickerModal from '../components/SnoozePickerModal';
+const KeyboardShortcutsModal = lazy(() => import('../components/KeyboardShortcutsModal'));
+const SnoozePickerModal = lazy(() => import('../components/SnoozePickerModal'));
 import {
   IconMenu, IconX, IconMail, IconSun, IconMoon, IconSettings, IconChevronLeft,
   IconUser, IconLogout, IconCompose, IconPlus, IconSearch, IconFolder, IconShield,
@@ -32,8 +39,8 @@ import {
   IconWifiOff, IconBookmark,
 } from '../components/Icons';
 import CategoryTabs from '../components/CategoryTabs';
-import QuickSettingsPanel from '../components/QuickSettingsPanel';
-import ContextMenu from '../components/ContextMenu';
+const QuickSettingsPanel = lazy(() => import('../components/QuickSettingsPanel'));
+const ContextMenu = lazy(() => import('../components/ContextMenu'));
 import ErrorBoundary from '../components/ErrorBoundary';
 import AvatarCircle from '../components/AvatarCircle';
 import { MessageSkeleton } from '../components/SkeletonLoader';
@@ -1895,7 +1902,11 @@ function InboxScreenInner() {
       <UndoToast action={undoAction} onUndo={executeUndo} onDismiss={dismissUndo} />
 
       {/* Keyboard Shortcuts Modal */}
-      <KeyboardShortcutsModal visible={showShortcuts} onClose={() => setShowShortcuts(false)} />
+      {showShortcuts && (
+        <Suspense fallback={null}>
+          <KeyboardShortcutsModal visible={showShortcuts} onClose={() => setShowShortcuts(false)} />
+        </Suspense>
+      )}
 
       {/* Account Switch Password Prompt */}
       {switchLoginEmail && (
@@ -2004,13 +2015,19 @@ function InboxScreenInner() {
       )}
 
       {/* Snooze Picker Modal */}
-      <SnoozePickerModal
-        visible={showSnooze}
-        onClose={() => { setShowSnooze(false); setSnoozeTarget(null); }}
-        onSnooze={handleSnoozeConfirm}
-      />
+      {showSnooze && (
+        <Suspense fallback={null}>
+          <SnoozePickerModal
+            visible={showSnooze}
+            onClose={() => { setShowSnooze(false); setSnoozeTarget(null); }}
+            onSnooze={handleSnoozeConfirm}
+          />
+        </Suspense>
+      )}
 
       {/* Context Menu */}
+      {contextMenu.visible && (
+      <Suspense fallback={null}>
       <ContextMenu
         visible={contextMenu.visible}
         position={contextMenu.position}
@@ -2032,6 +2049,8 @@ function InboxScreenInner() {
           onMoveTo: (e) => setMoveToTarget(e),
         }}
       />
+      </Suspense>
+      )}
 
       {/* Move To Folder Picker */}
       {moveToTarget && (
@@ -2077,7 +2096,11 @@ function InboxScreenInner() {
       )}
 
       {/* Quick Settings Panel */}
-      <QuickSettingsPanel visible={showQuickSettings} onClose={() => setShowQuickSettings(false)} />
+      {showQuickSettings && (
+        <Suspense fallback={null}>
+          <QuickSettingsPanel visible={showQuickSettings} onClose={() => setShowQuickSettings(false)} />
+        </Suspense>
+      )}
 
       {/* Floating Compose Modal — desktop web only (lazy loaded) */}
       {isDesktop && Platform.OS === 'web' && composeModal !== null && (
@@ -2105,23 +2128,31 @@ function InboxScreenInner() {
       )}
     </View>
     {/* Global unified search (Cmd/Ctrl+K on web, or sidebar Search shortcut) */}
-    <GlobalSearch
-      visible={showGlobalSearch}
-      onClose={() => setShowGlobalSearch(false)}
-      colors={colors}
-      isDark={isDark}
-      t={t}
-      router={router}
-    />
+    {showGlobalSearch && (
+      <Suspense fallback={null}>
+        <GlobalSearch
+          visible={showGlobalSearch}
+          onClose={() => setShowGlobalSearch(false)}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+          router={router}
+        />
+      </Suspense>
+    )}
     {/* Unified notifications hub — opened from header bell or sidebar shortcut */}
-    <NotificationsHub
-      visible={showNotifHub}
-      onClose={() => setShowNotifHub(false)}
-      colors={colors}
-      isDark={isDark}
-      t={t}
-      router={router}
-    />
+    {showNotifHub && (
+      <Suspense fallback={null}>
+        <NotificationsHub
+          visible={showNotifHub}
+          onClose={() => setShowNotifHub(false)}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+          router={router}
+        />
+      </Suspense>
+    )}
     {/* Inbox layout selector — bottom sheet */}
     <Modal visible={showLayoutMenu} transparent animationType="fade" onRequestClose={() => setShowLayoutMenu(false)}>
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' }} onPress={() => setShowLayoutMenu(false)}>
@@ -2151,13 +2182,17 @@ function InboxScreenInner() {
       </Pressable>
     </Modal>
     {/* Keyboard shortcut reference overlay — opens with "?" on web */}
-    <KeyboardShortcutsRef
-      visible={showShortcutsRef}
-      onClose={() => setShowShortcutsRef(false)}
-      colors={colors}
-      isDark={isDark}
-      t={t}
-    />
+    {showShortcutsRef && (
+      <Suspense fallback={null}>
+        <KeyboardShortcutsRef
+          visible={showShortcutsRef}
+          onClose={() => setShowShortcutsRef(false)}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+        />
+      </Suspense>
+    )}
     </>
   );
 }

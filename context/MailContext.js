@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
+import { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Platform, LayoutAnimation, UIManager, AppState } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as api from '../services/api';
@@ -1022,28 +1022,50 @@ export function MailProvider({ children }) {
     }
   }, [silentRefresh, loadFolders, emails.length, currentFolder, wsStatus]);
 
+  // Memoize the context value so consumers don't re-render on every internal
+  // state change that doesn't affect the slice they read. Previously this was
+  // a fresh object literal on every MailProvider render — so each poll tick,
+  // each WS event, each `wsStatus`/`undoAction`/`emails` mutation handed every
+  // consumer a brand-new context object and forced the entire subtree to
+  // re-render. All callbacks below are `useCallback`-stable and the setters
+  // (setPage/setSelectedEmail) are React-stable, so they're sound deps.
+  const contextValue = useMemo(() => ({
+    emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
+    page, total, search, wsStatus,
+    loadFolders, loadEmails, openEmail, changeFolder, refresh, doSearch,
+    deleteEmail, moveEmail, setPage, setSelectedEmail, markAsRead,
+    starEmail, archiveEmail,
+    // Selection
+    selectedUids, selectMode, toggleSelect, selectAll, clearSelection,
+    // Bulk
+    bulkDelete, bulkArchive, bulkMarkRead, bulkMarkUnread,
+    // Undo
+    undoAction, executeUndo, dismissUndo,
+    // Labels
+    addLabelToEmail, removeLabelFromEmail, labelCounts,
+    // Snooze
+    snoozeEmail,
+    // Account
+    resetMailState,
+    // Ready state
+    recentlyReadLoaded,
+  }), [
+    emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
+    page, total, search, wsStatus,
+    loadFolders, loadEmails, openEmail, changeFolder, refresh, doSearch,
+    deleteEmail, moveEmail, setPage, setSelectedEmail, markAsRead,
+    starEmail, archiveEmail,
+    selectedUids, selectMode, toggleSelect, selectAll, clearSelection,
+    bulkDelete, bulkArchive, bulkMarkRead, bulkMarkUnread,
+    undoAction, executeUndo, dismissUndo,
+    addLabelToEmail, removeLabelFromEmail, labelCounts,
+    snoozeEmail,
+    resetMailState,
+    recentlyReadLoaded,
+  ]);
+
   return (
-    <MailContext.Provider value={{
-      emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
-      page, total, search, wsStatus,
-      loadFolders, loadEmails, openEmail, changeFolder, refresh, doSearch,
-      deleteEmail, moveEmail, setPage, setSelectedEmail, markAsRead,
-      starEmail, archiveEmail,
-      // Selection
-      selectedUids, selectMode, toggleSelect, selectAll, clearSelection,
-      // Bulk
-      bulkDelete, bulkArchive, bulkMarkRead, bulkMarkUnread,
-      // Undo
-      undoAction, executeUndo, dismissUndo,
-      // Labels
-      addLabelToEmail, removeLabelFromEmail, labelCounts,
-      // Snooze
-      snoozeEmail,
-      // Account
-      resetMailState,
-      // Ready state
-      recentlyReadLoaded,
-    }}>
+    <MailContext.Provider value={contextValue}>
       {children}
     </MailContext.Provider>
   );

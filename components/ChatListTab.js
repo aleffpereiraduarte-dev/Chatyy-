@@ -723,19 +723,19 @@ const ConversationRow = React.memo(function ConversationRow({
             },
           ]}
           onPress={() => {
-            if (selectionMode) { onToggleSelect?.(); return; }
+            if (selectionMode) { onToggleSelect?.(conversation); return; }
             if (swipeOpen.current) { resetSwipe(); return; }
-            onPress();
+            onPress?.(conversation);
           }}
           onPressIn={() => {
             // Touch-down prefetch — start the network request before the
             // tap is even recognized. The 80-150ms between finger-down and
             // onPress gets folded into the conversation-open latency.
             if (selectionMode || swipeOpen.current) return;
-            try { onPressIn?.(); } catch {}
+            try { onPressIn?.(conversation); } catch {}
           }}
           onLongPress={() => {
-            if (!selectionMode) onLongPress?.();
+            if (!selectionMode) onLongPress?.(conversation);
           }}
           delayLongPress={isWeb ? 300 : 500}
           activeOpacity={0.6}
@@ -748,7 +748,7 @@ const ConversationRow = React.memo(function ConversationRow({
             // the default browser context menu from stealing the gesture.
             onContextMenu: (e) => {
               try { e?.preventDefault?.(); } catch {}
-              if (!selectionMode) onLongPress?.();
+              if (!selectionMode) onLongPress?.(conversation);
             },
           } : {})}
         >
@@ -1065,6 +1065,13 @@ const ConversationRow = React.memo(function ConversationRow({
   if (prev.isSelected !== next.isSelected) return false;
   if (prev.draftText !== next.draftText) return false;
   if (prev.draftEditedAt !== next.draftEditedAt) return false;
+  // noteText + currentEmail both feed the row render (the Instagram note bubble
+  // above the avatar, and the "is this my own message / who's the peer" logic).
+  // They were missing here, so a note change or an account switch left the row
+  // stale until something else invalidated it. Adding them can only trigger a
+  // genuinely-needed repaint — it never skips one.
+  if (prev.noteText !== next.noteText) return false;
+  if (prev.currentEmail !== next.currentEmail) return false;
 
   // Compare conversation properties, not reference
   const prevConv = prev.conversation;
@@ -5421,6 +5428,18 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     return map;
   }, [notes]);
 
+  // Stable row callbacks — the ConversationRow already invokes these with its
+  // own `conversation`, so we don't need to mint per-item arrow closures inside
+  // renderItem (was 5 fresh closures × every row × every list render = GC churn
+  // and a renderItem identity that flipped on each conversations update). These
+  // take a conversation and delegate to the existing id-based handlers.
+  const rowPrefetch = useCallback((conv) => {
+    try { prefetchConversation(conv.id); } catch {}
+  }, []);
+  const rowToggleSelect = useCallback((conv) => {
+    toggleSelected(conv.id);
+  }, [toggleSelected]);
+
   const renderItem = useCallback(({ item, index }) => {
     // Resolve the peer email ONCE per render (was three separate IIFEs walking
     // item.members + lowercasing currentEmail + scanning, called for every row
@@ -5456,8 +5475,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         isDark={isDark}
         t={t}
         language={language}
-        onPress={() => handleConversationPress(item)}
-        onPressIn={() => { try { prefetchConversation(item.id); } catch {} }}
+        onPress={handleConversationPress}
+        onPressIn={rowPrefetch}
         onDelete={handleDeleteConversation}
         onArchive={handleArchiveConversation}
         onMute={handleMuteConversation}
@@ -5471,15 +5490,15 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         typingUsers={typingUsers}
         selectionMode={selectionMode}
         isSelected={selectedIds.has(item.id)}
-        onLongPress={() => showLongPressMenu(item)}
-        onToggleSelect={() => toggleSelected(item.id)}
+        onLongPress={showLongPressMenu}
+        onToggleSelect={rowToggleSelect}
         draftText={drafts[String(item.id)] || null}
         draftEditedAt={draftTimes[String(item.id)] || null}
         noteText={noteText}
-        onAvatarPress={(p) => setAvatarLightbox(p)}
+        onAvatarPress={setAvatarLightbox}
       />
     );
-  }, [filter, pinnedCount, isDark, colors, t, handleConversationPress, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, handleMarkUnreadConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, enterSelectionMode, toggleSelected, drafts, draftTimes, notesMap]);
+  }, [isDark, colors, t, language, handleConversationPress, rowPrefetch, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, handleMarkUnreadConversation, handleEmailConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, showLongPressMenu, rowToggleSelect, drafts, draftTimes, notesMap, setAvatarLightbox]);
   // NOTE: presenceVersion removed from deps to prevent 15s flicker cycle
   // isOnline calculated inside ConversationRow using presencesRef directly
 

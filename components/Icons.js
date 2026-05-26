@@ -51,9 +51,10 @@ export function IconChevronLeft({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polyline points="15 18 9 12 15 6"/></I>;
 }
 
-export function IconChevronRight({ size, color, style }) {
+// React.memo: trailing ">" affordance on settings/chat/contact rows.
+export const IconChevronRight = React.memo(function IconChevronRight({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polyline points="9 18 15 12 9 6"/></I>;
-}
+});
 
 export function IconChevronDown({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polyline points="6 9 12 15 18 9"/></I>;
@@ -113,13 +114,14 @@ export function IconArchive({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polyline points="21 8 21 21 3 21 3 8"/><Rect x="1" y="3" width="22" height="5" rx="1"/><Line x1="10" y1="12" x2="14" y2="12"/></I>;
 }
 
-export function IconStar({ size, color, style }) {
+// React.memo: star / starred-message marker rendered per email + chat row.
+export const IconStar = React.memo(function IconStar({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></I>;
-}
+});
 
-export function IconStarFilled({ size, color, style }) {
+export const IconStarFilled = React.memo(function IconStarFilled({ size, color, style }) {
   return <I size={size} color={color} fill={color} strokeWidth={0} style={style}><Polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></I>;
-}
+});
 
 export function IconReply({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polyline points="9 17 4 12 9 7"/><Path d="M20 18v-2a4 4 0 0 0-4-4H4"/></I>;
@@ -259,19 +261,23 @@ export function IconPenTool({ size, color, style }) {
 
 // ===================== STATUS =====================
 
-export function IconCheck({ size, color, style, strokeWidth }) {
+// React.memo: IconCheck renders on EVERY message bubble (sent/delivered/read
+// ticks) in chat-conversation. Props are primitives (size/color/strokeWidth/
+// style) so the default shallow-prop comparison is correct and lets a
+// re-rendering message row skip re-rendering an unchanged tick.
+export const IconCheck = React.memo(function IconCheck({ size, color, style, strokeWidth }) {
   return <I size={size} color={color} strokeWidth={strokeWidth} style={style}><Polyline points="20 6 9 17 4 12"/></I>;
-}
+});
 
-export function IconCheckCircle({ size, color, style }) {
+export const IconCheckCircle = React.memo(function IconCheckCircle({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><Polyline points="22 4 12 14.01 9 11.01"/></I>;
-}
+});
 
 // WhatsApp Business / X premium-style verified badge — filled circle with a
 // white checkmark. Used on call screens and contact rows when the caller's
 // number is Telnyx-verified (telnyx_caller_id_verified flag). The fill color
 // is rendered via the `color` prop so callers can pass brand blue or green.
-export function IconVerifiedBadge({ size = 14, color = '#007AFF', style }) {
+export const IconVerifiedBadge = React.memo(function IconVerifiedBadge({ size = 14, color = '#007AFF', style }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" style={typeof style === 'object' ? style : undefined}>
       <Circle cx="12" cy="12" r="11" fill={color} stroke="none" />
@@ -285,7 +291,7 @@ export function IconVerifiedBadge({ size = 14, color = '#007AFF', style }) {
       />
     </Svg>
   );
-}
+});
 
 export function IconEye({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><Circle cx="12" cy="12" r="3"/></I>;
@@ -355,9 +361,11 @@ export function IconPencil({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M12 20h9"/><Path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></I>;
 }
 
-export function IconMoreVert({ size, color, style }) {
+// React.memo: per-row "⋮" overflow trigger — one per chat-list row / message
+// / status / viewer entry. Primitive props → shallow comparison is safe.
+export const IconMoreVert = React.memo(function IconMoreVert({ size, color, style }) {
   return <I size={size} color={color} fill={color} strokeWidth={0} style={style}><Circle cx="12" cy="5" r="1.5"/><Circle cx="12" cy="12" r="1.5"/><Circle cx="12" cy="19" r="1.5"/></I>;
-}
+});
 
 export function IconBold({ size, color, style }) {
   return <I size={size} color={color} strokeWidth={2.5} style={style}><Path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/><Path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/></I>;
@@ -509,9 +517,10 @@ export function IconFolderPlus({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><Line x1="12" y1="11" x2="12" y2="17"/><Line x1="9" y1="14" x2="15" y2="14"/></I>;
 }
 
-export function IconBell({ size, color, style }) {
+// React.memo: per-row muted/notification marker on chat-list rows.
+export const IconBell = React.memo(function IconBell({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><Path d="M13.73 21a2 2 0 0 1-3.46 0"/></I>;
-}
+});
 
 export function IconChevronUp({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polyline points="18 15 12 9 6 15"/></I>;
@@ -653,13 +662,15 @@ export function IconRepeat({ size, color, style }) {
 
 // ===================== REACTIONS & GESTURES =====================
 
-export function IconThumbsUp({ size, color, style }) {
+// React.memo: reaction-chip / reaction-picker icon rendered many times per
+// message thread. Primitive props → safe shallow comparison.
+export const IconThumbsUp = React.memo(function IconThumbsUp({ size, color, style }) {
   return (
     <I size={size} color={color} fill={color} strokeWidth={0} style={style}>
       <Path d="M7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3m7-2V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3H14z"/>
     </I>
   );
-}
+});
 
 // Mirror of IconThumbsUp — used by the One AI "Bad response" affordance
 // in the message context sheet (ChatGPT parity).
@@ -671,13 +682,15 @@ export function IconThumbsDown({ size, color, style }) {
   );
 }
 
-export function IconHeart({ size, color = '#ef4444', style }) {
+// React.memo: like/heart reaction icon, rendered per feed post + per message
+// reaction chip + live double-tap bursts.
+export const IconHeart = React.memo(function IconHeart({ size, color = '#ef4444', style }) {
   return (
     <I size={size} color={color} fill={color} strokeWidth={0} style={style}>
       <Path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
     </I>
   );
-}
+});
 
 export function IconLaughFace({ size, color, style }) {
   return (
@@ -889,9 +902,10 @@ export function IconShare({ size, color, style }) {
   return <I size={size} color={color} style={style}><Circle cx="18" cy="5" r="3"/><Circle cx="6" cy="12" r="3"/><Circle cx="18" cy="19" r="3"/><Line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><Line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></I>;
 }
 
-export function IconMoreHorizontal({ size, color, style }) {
+// React.memo: feed/list "…" overflow trigger, rendered per post/row.
+export const IconMoreHorizontal = React.memo(function IconMoreHorizontal({ size, color, style }) {
   return <I size={size} color={color} fill={color} strokeWidth={0} style={style}><Circle cx="12" cy="12" r="1.5"/><Circle cx="19" cy="12" r="1.5"/><Circle cx="5" cy="12" r="1.5"/></I>;
-}
+});
 
 // ===================== NOTES =====================
 
@@ -899,9 +913,10 @@ export function IconStickyNote({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M15.5 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.5L15.5 3z"/><Polyline points="14 3 14 9 21 9"/></I>;
 }
 
-export function IconPin({ size, color, style }) {
+// React.memo: per-row "pinned conversation" marker on chat-list rows.
+export const IconPin = React.memo(function IconPin({ size, color, style }) {
   return <I size={size} color={color} style={style}><Path d="M12 17v5"/><Path d="M9 2h6l-1.5 6.5L16 12H8l2.5-3.5L9 2z"/></I>;
-}
+});
 
 // ───── Settings sheet icons (added for unified profile gear) ─────────
 export function IconCreditCard({ size, color, style }) {

@@ -922,6 +922,11 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     );
   }, [colors, isDark, t, user, handleReply, handleDelete, handleToggleCommentLike, commentMap]);
 
+  // Stable keyExtractor — hoisting it out of the FlatList JSX keeps its
+  // identity constant across renders (a fresh inline arrow on every keystroke
+  // in the input box would otherwise be a needless prop change on the list).
+  const keyExtractor = useCallback((item) => String(item.id), []);
+
   const captionAuthor = post?.author_name || post?.author_email?.split('@')[0] || '?';
 
   return (
@@ -967,7 +972,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
               ref={listRef}
               data={flatComments}
               renderItem={renderComment}
-              keyExtractor={(item) => String(item.id)}
+              keyExtractor={keyExtractor}
               contentContainerStyle={[
                 styles.listContent,
                 flatComments.length === 0 && styles.listContentEmpty,
@@ -975,6 +980,16 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
               onEndReached={loadMore}
               onEndReachedThreshold={0.3}
               showsVerticalScrollIndicator={false}
+              // [perf] Virtualize long comment threads so a popular post with
+              // hundreds of comments doesn't mount every row up front. Comment
+              // rows are short + variable height, so removeClippedSubviews is
+              // left to platform default (true on native) and we keep a modest
+              // window. These are tuning knobs only — no behavior change.
+              initialNumToRender={12}
+              maxToRenderPerBatch={10}
+              windowSize={9}
+              updateCellsBatchingPeriod={50}
+              removeClippedSubviews={Platform.OS !== 'web'}
               keyboardShouldPersistTaps="handled"
               keyboardDismissMode="interactive"
               ListHeaderComponent={

@@ -407,6 +407,12 @@ class MailWebSocket {
         }
         this._typingStopTimers.clear();
       }
+      // [perf] Also drop the per-conversation last-typing-sent timestamps.
+      // The normal stop-typing timer deletes these, but _clearAllTypingState
+      // cancels those timers before they fire — without this the
+      // _lastTypingSent Map kept one entry per conversation ever typed in,
+      // forever (grew unbounded across background/foreground cycles).
+      try { this._lastTypingSent?.clear(); } catch {}
     } catch {}
   }
 
@@ -838,6 +844,10 @@ class MailWebSocket {
       clearTimeout(timer);
     }
     this._typingStopTimers.clear();
+    // [perf] Clear last-typing-sent timestamps too — their scheduled
+    // deletes live on _typingStopTimers, which we just cancelled, so
+    // otherwise this Map leaks one entry per conversation across reconnects.
+    try { this._lastTypingSent?.clear(); } catch {}
     // Detach the dying socket's handlers so a late-firing onclose from
     // the previous socket doesn't drive a phantom reconnect on top of
     // an already-reconnecting flow (the "double reconnect storm" that

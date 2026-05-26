@@ -17086,6 +17086,17 @@ export default function ChatConversationScreen() {
     []
   );
 
+  // PERF: was an inline object literal on the FlatList `maintainVisibleContentPosition`
+  // prop. The parent re-renders on every keystroke (setInputText) / presence WS tick,
+  // and the inline `{ minIndexForVisible: 1, ... }` allocated a fresh object each time.
+  // On iOS this is a native-bridged prop, so a new reference forces the shadow node to
+  // re-apply it every frame. Hoist to a stable ref so it's created once. Behavior is
+  // identical (iOS gets the same config object, Android still gets undefined).
+  const maintainVisibleContentPositionConfig = useMemo(
+    () => (Platform.OS === 'ios' ? { minIndexForVisible: 1, autoscrollToTopThreshold: 100 } : undefined),
+    []
+  );
+
   // PERF: ListHeaderComponent was inline JSX — recreated every parent render
   // (and the parent re-renders on EVERY keystroke via setInputText). That
   // forced the TypingBubbleHost subtree to reconcile per character typed
@@ -23541,7 +23552,7 @@ export default function ChatConversationScreen() {
           // pin the user's current reading position instead of jumping. The
           // `minIndexForVisible:1` means "don't shift if we're actively on
           // the first row" — which in inverted mode is the latest message.
-          maintainVisibleContentPosition={Platform.OS === 'ios' ? { minIndexForVisible: 1, autoscrollToTopThreshold: 100 } : undefined}
+          maintainVisibleContentPosition={maintainVisibleContentPositionConfig}
           ListHeaderComponent={listHeader}
           ListFooterComponent={listFooter}
           ListEmptyComponent={listEmpty}

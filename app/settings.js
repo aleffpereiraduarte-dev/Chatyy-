@@ -1,5 +1,5 @@
 import ErrorBoundary from "../components/ErrorBoundary";
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { memo, useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   Switch, ActivityIndicator, Platform, Alert, Image, Linking, Share, Modal, Pressable,
@@ -48,7 +48,7 @@ function setStorage(key, val) {
 // SettingsScreenInner. Hooks pull theme + i18n; SQLite counters come from
 // services/db.getSyncStats() refreshed on mount + every 4s while a download
 // is running. Manual triggers route to services/fullHistorySync.
-function HistoryDownloadRow() {
+const HistoryDownloadRow = memo(function HistoryDownloadRow() {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [stats, setStats] = useState(null);
@@ -263,7 +263,7 @@ function HistoryDownloadRow() {
       </TouchableOpacity>
     </View>
   );
-}
+});
 
 // Collapsible group header that shows/hides its children. Each group owns one
 // useState. When `forceOpen` is true (search query active) it ignores the
