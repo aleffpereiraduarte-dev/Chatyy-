@@ -14,6 +14,7 @@
     "scheme": "onemundomail",
     "owner": "aleffduarte",
     "runtimeVersion": "2.4.6",
+    "newArchEnabled": true,
     "updates": {
       "enabled": true,
       "fallbackToCacheTimeout": 5000,
@@ -283,6 +284,15 @@
         {
           "cameraPermission": "Chatyy needs camera access so you can take a new photo or record a short video to send in a chat — for example, open a conversation with a friend, tap the camera icon, snap a selfie, and send it instantly. The camera is also used during video calls to appear on screen when you tap the video button, to record 15-second stories shared with your followers, and to scan a QR code to pair a new device or add a contact by QR.",
           "microphonePermission": "Chatyy needs microphone access so you can record voice messages to send in chat — for example, open a conversation, press and hold the microphone button at the bottom, say a message out loud, then release to send it as an audio message. The microphone is also used to speak during voice and video calls and to broadcast audio during Live streams when you tap Go Live."
+        }
+      ],
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "Chatyy needs camera access to record stories and apply live AR face filters (dog ears, glasses, hearts) in the status camera.",
+          "enableMicrophonePermission": true,
+          "microphonePermissionText": "Chatyy needs microphone access to record audio with your status videos.",
+          "enableFrameProcessors": true
         }
       ],
       "./plugins/fix-jitpack",

@@ -1664,9 +1664,17 @@ class CallActivity : ComponentActivity() {
         Log.d(TAG, "ParticipantConnected $identity")
         state.peerIdentity = identity
         // [Wave C-2] Add to the group grid if not already present.
-        // Video track starts null — wired in on TrackSubscribed.
+        // Video track starts null — wired in on TrackSubscribed / wireGroupTiles.
         if (state.groupParticipants.none { it.identity == identity }) {
           state.groupParticipants.add(GroupParticipantAndroid(identity = identity, name = name))
+        }
+        // [remote-video fix 2026-05-26] If this connection grows the call into a
+        // group (>= 2 remote participants), build the grid tile renderers now so
+        // each remote's already-subscribed camera track gets a mounted sink.
+        // For a still-1:1 call this is a no-op (the full-bleed remoteRenderer
+        // remains the single sink) — wireGroupTiles only runs at size >= 2.
+        if (state.groupParticipants.size >= 2) {
+          wireGroupTiles(r)
         }
         // [WAVE 161B 2026-05-24] Stop ringback + flip status only when the
         // peer's presence in the SFU represents a REAL accept. For caller
@@ -1739,8 +1747,17 @@ class CallActivity : ComponentActivity() {
               catch (t: Throwable) { Log.w(TAG, "auto-upgrade remoteRenderer alloc failed: ${t.message}") }
             }
           }
-          // 1:1 path: attach to the single remoteRenderer.
-          remoteRenderer?.let { rv -> track.addRenderer(rv) }
+          // 1:1 path: attach to the single full-bleed remoteRenderer. This is
+          // the ONLY sink for a 1:1 call and mirrors how the local preview binds
+          // to the single localRenderer in bindLocalVideoTrack(). The renderer
+          // was created in onCreate (video call) or in enterVideoModeAndPublish
+          // (audio→video upgrade) and initVideoRenderer'd against this Room in
+          // bringUpRoom / the upgrade path, so addRenderer here makes frames flow.
+          remoteRenderer?.let { rv ->
+            try { track.addRenderer(rv) } catch (t: Throwable) {
+              Log.w(TAG, "remoteRenderer addRenderer failed: ${t.message}")
+            }
+          }
           // [WAVE 142 GPT-5.5-pro] Snippet #6 — flip remoteFirstFrame on a
           // ~180ms post-subscribe delay so the Crossfade audio→video kicks
           // in once the first I-frame has decoded. The LK Android Room API
@@ -1752,33 +1769,30 @@ class CallActivity : ComponentActivity() {
             delay(180)
             state.remoteFirstFrame = true
           }
-          // [Wave C-2] Also wire this track into the group grid tile.
-          // Allocate a dedicated SurfaceViewRenderer for this participant
-          // and hand it to the tile entry. If the participant entry doesn't
-          // exist yet (TrackSubscribed races ParticipantConnected on some
-          // SFU topologies), add them now.
+          // [remote-video fix 2026-05-26] Record the participant identity so the
+          // group-grid tiles can be (re)built lazily. Do NOT allocate a second
+          // SurfaceViewRenderer here for the 1:1 case: a single WebRTC VideoTrack
+          // fanned out to a tile renderer that is NEVER attached to a window
+          // (the grid stays hidden while groupParticipants.size < 2) leaves an
+          // orphan EglRenderer sink on the track whose surface is never created.
+          // On LK Android 2.24.x SurfaceViewRenderer that orphan sink stalls the
+          // shared track's frame callback → the VISIBLE remoteRenderer goes
+          // blank/black. That is the "remote video does not render" bug. Mirror
+          // the local-preview model (one track → one bound, mounted renderer)
+          // and only build per-tile renderers when we are actually a group.
           val identity = event.participant.identity?.value ?: ""
           val name = event.participant.name ?: ""
-          val tileRenderer = try { SurfaceViewRenderer(this) } catch (t: Throwable) {
-            Log.w(TAG, "Wave C-2 tile renderer alloc failed: ${t.message}")
-            null
+          val existingIdx = state.groupParticipants.indexOfFirst { it.identity == identity }
+          if (existingIdx < 0) {
+            // Track-subscribed raced ahead of ParticipantConnected — record the
+            // peer (renderer stays null; the 1:1 full-bleed remoteRenderer is
+            // the active sink). When/if the call grows to a group, wireGroupTiles
+            // allocates + binds tile renderers for everyone.
+            state.groupParticipants.add(GroupParticipantAndroid(identity = identity, name = name))
           }
-          if (tileRenderer != null) {
-            try { r.initVideoRenderer(tileRenderer) } catch (t: Throwable) {
-              Log.w(TAG, "Wave C-2 initVideoRenderer failed: ${t.message}")
-            }
-            try { track.addRenderer(tileRenderer) } catch (t: Throwable) {
-              Log.w(TAG, "Wave C-2 addRenderer failed: ${t.message}")
-            }
-            val existingIdx = state.groupParticipants.indexOfFirst { it.identity == identity }
-            if (existingIdx >= 0) {
-              val old = state.groupParticipants[existingIdx]
-              state.groupParticipants[existingIdx] = old.copy(renderer = tileRenderer)
-            } else {
-              state.groupParticipants.add(
-                GroupParticipantAndroid(identity = identity, name = name, renderer = tileRenderer)
-              )
-            }
+          // If we are already (or now) a group, build the grid tile renderers.
+          if (state.groupParticipants.size >= 2) {
+            wireGroupTiles(r)
           }
         } else {
           Log.d(TAG, "TrackSubscribed (audio) sid=${event.publication.sid}")
@@ -1801,6 +1815,50 @@ class CallActivity : ComponentActivity() {
             } catch (t: Throwable) { Log.w(TAG, "Wave C-2 renderer release: ${t.message}") }
             state.groupParticipants[idx] = old.copy(renderer = null)
           }
+        }
+      }
+      // [remote-video fix 2026-05-26] Remote camera MUTE/UNMUTE without an
+      // unsubscribe. When the peer turns their camera off WhatsApp-style, LK
+      // keeps the subscription alive and just stops frames (mute=true) — there
+      // is NO TrackUnsubscribed, so the crossfade would otherwise freeze on the
+      // last frame. Flip hasRemoteVideo to swap to the avatar placeholder; on
+      // unmute the SAME track resumes frames into the already-bound
+      // remoteRenderer (1:1) / tile renderer (group), so we just flip the flag
+      // back on (no rebind needed). Local participant mutes are ignored here —
+      // the local preview is driven by isCameraOn from the toggle handler.
+      is RoomEvent.TrackMuted -> if (event.participant !is LocalParticipant) {
+        val pub = event.publication
+        if (pub.source == Track.Source.CAMERA || pub.track is VideoTrack) {
+          Log.d(TAG, "remote camera muted → placeholder")
+          state.hasRemoteVideo = false
+          // Group grid: drop the tile to its avatar by clearing the renderer ref
+          // is NOT done here (the track + renderer stay valid for fast unmute);
+          // ParticipantTile shows the frozen frame which LK blanks on mute.
+        }
+      }
+      is RoomEvent.TrackUnmuted -> if (event.participant !is LocalParticipant) {
+        val pub = event.publication
+        if (pub.source == Track.Source.CAMERA || pub.track is VideoTrack) {
+          Log.d(TAG, "remote camera unmuted → show video")
+          // Auto-upgrade an audio-only call if the peer turns video on.
+          if (!state.isVideo) {
+            state.isVideo = true
+            if (remoteRenderer == null) {
+              try { remoteRenderer = SurfaceViewRenderer(this).also { r.initVideoRenderer(it) } }
+              catch (t: Throwable) { Log.w(TAG, "unmute remoteRenderer alloc failed: ${t.message}") }
+            }
+            // Bind the (still-subscribed) track to the renderer if it wasn't.
+            val rp = event.participant
+            val vTrack = (pub.track as? VideoTrack)
+              ?: (rp.getTrackPublication(Track.Source.CAMERA)?.track as? VideoTrack)
+            vTrack?.let { vt -> remoteRenderer?.let { rv ->
+              try { vt.addRenderer(rv) } catch (_: Throwable) {}
+            } }
+          }
+          state.hasRemoteVideo = true
+          state.remoteFirstFrame = true
+          // If we are a group, make sure tiles are wired (idempotent).
+          if (state.groupParticipants.size >= 2) wireGroupTiles(r)
         }
       }
       // [2026-05-18] LiveKit 2.x consolidated LocalTrackPublished + RemoteTrackPublished
@@ -2054,6 +2112,55 @@ class CallActivity : ComponentActivity() {
       }
     } catch (t: Throwable) {
       Log.w(TAG, "BackgroundProcessor attach failed: ${t.message}")
+    }
+  }
+
+  // ────────────── Group grid tile binding (lazy, group-only)
+  //
+  // [remote-video fix 2026-05-26] Build the per-participant SurfaceViewRenderer
+  // tiles ONLY when the room is actually a group (>= 2 remote participants).
+  // For a 1:1 call the full-bleed `remoteRenderer` is the single sink and we
+  // never allocate a tile renderer (avoiding the orphan-sink stall that blanked
+  // the remote video). When a 3rd party joins, the ParticipantGridView takes
+  // over the background and each remote VideoTrack must be wired to its own
+  // mounted tile renderer here.
+  //
+  // Idempotent: skips participants that already hold a renderer; re-walks the
+  // SFU's current camera publications so a peer who enabled video before the
+  // call became a group still gets a tile. Safe to call from any RoomEvent.
+  private fun wireGroupTiles(r: Room) {
+    try {
+      for (rp in r.remoteParticipants.values) {
+        val identity = rp.identity?.value ?: continue
+        val pub = rp.getTrackPublication(Track.Source.CAMERA)
+        val vTrack = pub?.track as? VideoTrack ?: continue
+        val idx = state.groupParticipants.indexOfFirst { it.identity == identity }
+        // Already has a live tile renderer — nothing to do.
+        if (idx >= 0 && state.groupParticipants[idx].renderer != null) continue
+        val tileRenderer = try {
+          SurfaceViewRenderer(this).also { r.initVideoRenderer(it) }
+        } catch (t: Throwable) {
+          Log.w(TAG, "wireGroupTiles: tile renderer alloc failed: ${t.message}")
+          null
+        } ?: continue
+        try { vTrack.addRenderer(tileRenderer) } catch (t: Throwable) {
+          Log.w(TAG, "wireGroupTiles: addRenderer failed: ${t.message}")
+        }
+        if (idx >= 0) {
+          val old = state.groupParticipants[idx]
+          state.groupParticipants[idx] = old.copy(renderer = tileRenderer)
+        } else {
+          state.groupParticipants.add(
+            GroupParticipantAndroid(
+              identity = identity,
+              name = rp.name ?: "",
+              renderer = tileRenderer,
+            )
+          )
+        }
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "wireGroupTiles failed: ${t.message}")
     }
   }
 

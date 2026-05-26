@@ -15,13 +15,31 @@ import {
   IconRefresh, IconX, IconZap, IconSparkles, IconClock, IconGrid,
   IconImage, IconUndo2, IconMusic,
 } from './Icons';
-// AR face-filter pipeline (MediaPipe FaceLandmarker — Apache 2.0).
-// Filter overlay is graceful: when the native binding isn't loaded
-// (web, debug sim without the pod installed), each preset falls back
-// to a centered static overlay. The carousel + preset switching still
-// works for UI testing without the binding.
-import FaceFilterOverlay from './status/FaceFilterOverlay';
-import { FACE_FILTER_PRESETS, getMediaPipe } from './status/FaceFilters';
+// AR face-filter pipeline. ENGINE MIGRATED (2026-05-26) from MediaPipe
+// FaceLandmarker (which opened a SECOND camera session and FROZE the shutter)
+// to a SINGLE react-native-vision-camera feed with a useSkiaFrameProcessor
+// worklet that detects faces (MLKit) and draws the effect into the live frame
+// with Skia (components/status/SkiaFaceCamera.js + SkiaFaceEffects.js). One
+// camera = no contention = no freeze.
+//
+// SkiaFaceCamera is loaded LAZILY behind isVisionCameraArAvailable() so web /
+// debug binaries without the native modules linked never import the native
+// component graph — those fall back to the plain expo-camera CameraView (no
+// AR overlay, but capture still works). The legacy FaceFilterOverlay +
+// getMediaPipe are no longer used by the AR capture flow.
+import { FACE_FILTER_PRESETS, isVisionCameraArAvailable } from './status/FaceFilters';
+import { effectIdForKey } from './status/SkiaFaceEffects';
+// Lazy require so the native VisionCamera/Skia graph only loads where present.
+const _getSkiaFaceCamera = (() => {
+  let _mod;
+  let _tried = false;
+  return () => {
+    if (_tried) return _mod;
+    _tried = true;
+    try { _mod = require('./status/SkiaFaceCamera').default; } catch { _mod = null; }
+    return _mod;
+  };
+})();
 
 // Haptics (graceful — `expo-haptics` may not be present in every build)
 let _Haptics = null;
@@ -254,6 +272,10 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
   const voiceoverRecRef = useRef(null);
 
   const cameraRef = useRef(null);
+  // Ref to the single-camera Skia AR engine (react-native-vision-camera).
+  // Used to capture the COMPOSITED frame (effect burned in) when an AR
+  // filter is active. Null on web / non-AR builds.
+  const skiaCamRef = useRef(null);
   const recordTimerRef = useRef(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const progressAnim = useRef(new Animated.Value(0)).current;
@@ -265,6 +287,32 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
   const hintFadeAnim = useRef(new Animated.Value(0)).current;
 
   const activeFilter = FILTERS[filterIdx] || FILTERS[0];
+
+  // ── Single-camera AR engine selection ──
+  // arAvailable: the VisionCamera + Skia + face-detector native modules are
+  //   present in this binary (false on web / pre-rebuild debug binaries).
+  // arPresetKey / arEffectId: the currently-selected AR preset (FaceFilters
+  //   index → stable int id consumed by the Skia frame processor).
+  // arEngineActive: render the single-camera Skia AR engine instead of the
+  //   plain expo-camera CameraView. We keep the Skia engine mounted whenever
+  //   AR is available + we're on the front camera in photo/story mode (so the
+  //   user can swipe between effects without a camera remount), and switch the
+  //   active effect via the effectId prop (NOT by remounting / recreating the
+  //   frame processor — that's the VisionCamera v4 + Skia recreate crash
+  //   guard, issue #3606).
+  const arAvailable = isVisionCameraArAvailable();
+  const arPresetKey = FACE_FILTER_PRESETS[arFilterIdx]?.key || 'none';
+  const arEffectId = effectIdForKey(arPresetKey);
+  // Use the single-camera Skia AR engine for PHOTO and STORY capture (the
+  // still-capture path, which is where the MediaPipe freeze happened). VIDEO
+  // capture stays on expo-camera CameraView for now — Vision Camera's
+  // recording pipeline differs and burning the Skia overlay into the recorded
+  // file needs a separate frame-recorder path; the live AR preview + photo
+  // capture are the freeze-prone surfaces this migration targets. Video still
+  // records fine (no AR burned in) and the `face_filter` meta still rides
+  // forward so the viewer can re-render the overlay on playback.
+  const arEngineActive = arAvailable && !preview && captureMode !== 'video';
+  const SkiaFaceCamera = arEngineActive ? _getSkiaFaceCamera() : null;
 
   // ─── ffmpeg-kit helpers ───
   // Lazy-loaded so web builds (and debug simulators without the pod) don't
@@ -504,83 +552,74 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
 
   // ─── Capture ───
   const takePhoto = useCallback(async () => {
-    // Defensive guard wave — WAVE 84 crash fix. Reports: app hard-crashes
-    // when the user taps the shoot button while an AR face filter overlay
-    // is active. Multiple failure paths converge here, so we harden every
-    // step instead of guessing the exact one:
-    //   1. cameraRef may be null mid-mount (modal opening race) — bail.
-    //   2. takePictureAsync can REJECT (camera busy, surface lost when
-    //      AR overlay is rendering) — outer try/catch swallows it.
-    //   3. takePictureAsync can RESOLVE with null/undefined (expo-camera
-    //      v55 returns null when called during a video-mode swap) —
-    //      accessing photo.uri then throws TypeError. Now guarded.
-    //   4. ImageManipulator.manipulateAsync can throw if uri is a
-    //      content:// URI without read access — inner catch keeps the
-    //      raw photo as fallback (was already there, kept).
-    //   5. onCapture from parent could be undefined — already optional.
-    //   6. activeFilter/FACE_FILTER_PRESETS could be undefined if the
-    //      idx is stale after a hot-reload — fall back to safe defaults.
-    if (!cameraRef.current) {
-      if (__DEV__) console.warn('[StatusCamera] takePhoto called with null cameraRef');
-      return;
-    }
-    // ── CAPTURE-WITH-EFFECT FREEZE FIX (2026-05-25) ──
-    // Root cause (native, documented in ExpoFaceLandmarkerModule.swift L33-49 +
-    // ExpoFaceLandmarkerModule.kt L47-57): the AR face filter runs its OWN
-    // AVCaptureSession (iOS) / CameraX bindToLifecycle (Android) on the FRONT
-    // lens to feed MediaPipe/Vision landmarks. The OS only lets ONE session own
-    // a camera at a time. While an effect is active and the user presses the
-    // shutter, expo-camera's takePictureAsync contends with that second session:
-    //   • Android: the module's unbindAll()/bindToLifecycle() race steals the
-    //     surface mid-capture → takePictureAsync never resolves → ANR/freeze.
-    //   • iOS: the still-capture request stalls waiting for a device the Vision
-    //     session is holding → spinner forever ("trava na hora de tirar a foto").
-    // Pure-JS / OTA mitigation: STOP the landmarker before capturing so the
-    // front lens is uncontended, then race takePictureAsync against a hard
-    // timeout so the shutter ALWAYS resolves (never hangs). The effect is not
-    // burned in here anyway — it rides forward as `face_filter` key — so
-    // dropping the live overlay for the capture instant is invisible to the user.
-    const _arActive = (FACE_FILTER_PRESETS[arFilterIdx]?.key &&
-                       FACE_FILTER_PRESETS[arFilterIdx].key !== 'none');
-    if (_arActive) {
-      try { getMediaPipe()?.stopFaceLandmarker?.(); } catch (e) {
-        if (__DEV__) console.warn('[StatusCamera] stopFaceLandmarker pre-capture failed:', e?.message);
-      }
-      // Yield one frame so the native session actually tears down and releases
-      // the camera before expo-camera asks for the still.
-      await new Promise(r => setTimeout(r, 0));
-    }
+    // Defensive guard wave (kept from WAVE 84): every capture step is wrapped
+    // so a single failure can't hard-crash the composer. Failure paths:
+    //   1. camera ref null mid-mount (modal opening race) — bail.
+    //   2. capture REJECTS (camera busy / surface lost) — outer try/catch.
+    //   3. capture RESOLVES null/undefined — guarded before reading .uri.
+    //   4. ImageManipulator throws on content:// — inner catch keeps raw.
+    //   5. onCapture optional.
+    //   6. stale activeFilter/preset idx — safe defaults.
+    //
+    // ── SINGLE-CAMERA AR (2026-05-26) ──
+    // The MediaPipe second-camera freeze is GONE: the AR effect now runs in a
+    // useSkiaFrameProcessor on the SAME vision-camera feed and is drawn into
+    // each frame. There is no competing AVCaptureSession/CameraX session, so
+    // the shutter can't deadlock against a landmarker. When an AR effect is
+    // active we capture the COMPOSITED frame via the Skia AR camera's
+    // takeSnapshot (effect already burned in). Otherwise we use expo-camera.
+    const _arActive = arEngineActive && !!SkiaFaceCamera && skiaCamRef.current;
     let photo = null;
-    try {
-      // Race the capture against a 4s ceiling. If the native session is still
-      // wedged (older binary without the camera-share fix), reject so the
-      // outer guard surfaces a retry instead of leaving the user on a frozen
-      // shutter. 4s is well above a healthy capture (<800ms) yet short enough
-      // that a stuck capture doesn't read as a hard freeze.
-      photo = await Promise.race([
-        cameraRef.current.takePictureAsync({ quality: 0.92, exif: false }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('capture-timeout')), 4000)),
-      ]);
-    } catch (e) {
-      console.warn('[StatusCamera] takePictureAsync threw:', e?.message || e);
-      // Capture failed while we were on the camera screen — restart the
-      // landmarker so the live overlay tracking resumes for the retry.
-      if (_arActive) { try { getMediaPipe()?.startFaceLandmarker?.({ fps: 20 }); } catch {} }
-      try { Alert.alert('Erro', 'Falha ao tirar foto. Tenta novamente.'); } catch {}
-      return;
-    }
-    if (!photo || !photo.uri) {
-      console.warn('[StatusCamera] takePictureAsync returned empty photo');
-      if (_arActive) { try { getMediaPipe()?.startFaceLandmarker?.({ fps: 20 }); } catch {} }
-      try { Alert.alert('Erro', 'Não foi possível capturar a foto. Tenta novamente.'); } catch {}
-      return;
+    if (_arActive) {
+      try {
+        // takeSnapshot grabs the rendered preview surface — the AR effect is
+        // already drawn into it by the frame processor, so the saved photo
+        // includes the filter. Race a 4s ceiling as belt-and-braces.
+        const snap = await Promise.race([
+          skiaCamRef.current.capture(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('capture-timeout')), 4000)),
+        ]);
+        if (snap && snap.uri) photo = { uri: snap.uri, width: snap.width, height: snap.height };
+      } catch (e) {
+        console.warn('[StatusCamera] AR capture threw:', e?.message || e);
+        try { Alert.alert('Erro', 'Falha ao tirar foto. Tenta novamente.'); } catch {}
+        return;
+      }
+      if (!photo || !photo.uri) {
+        console.warn('[StatusCamera] AR capture returned empty');
+        try { Alert.alert('Erro', 'Não foi possível capturar a foto. Tenta novamente.'); } catch {}
+        return;
+      }
+    } else {
+      // ── Plain expo-camera path (no AR / web / non-AR build) ──
+      if (!cameraRef.current) {
+        if (__DEV__) console.warn('[StatusCamera] takePhoto called with null cameraRef');
+        return;
+      }
+      try {
+        photo = await Promise.race([
+          cameraRef.current.takePictureAsync({ quality: 0.92, exif: false }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('capture-timeout')), 4000)),
+        ]);
+      } catch (e) {
+        console.warn('[StatusCamera] takePictureAsync threw:', e?.message || e);
+        try { Alert.alert('Erro', 'Falha ao tirar foto. Tenta novamente.'); } catch {}
+        return;
+      }
+      if (!photo || !photo.uri) {
+        console.warn('[StatusCamera] takePictureAsync returned empty photo');
+        try { Alert.alert('Erro', 'Não foi possível capturar a foto. Tenta novamente.'); } catch {}
+        return;
+      }
     }
     try {
       let finalUri = photo.uri;
       // Front-camera mirror fix: flip horizontally so the saved photo matches
       // what the user saw in the preview (iOS/Android save a non-mirrored image
       // but the preview is mirrored — selfie looks "backwards" after capture).
-      if (facing === 'front' && Platform.OS !== 'web') {
+      // The Skia AR camera already mirrors its snapshot (isMirrored), so only
+      // flip the plain expo-camera path here.
+      if (facing === 'front' && Platform.OS !== 'web' && !_arActive) {
         try {
           const ImageManipulator = require('expo-image-manipulator');
           const flipped = await ImageManipulator.manipulateAsync(
@@ -617,7 +656,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
         onCapture?.({ uri: photo.uri, type: 'photo', width: photo.width, height: photo.height });
       } catch {}
     }
-  }, [facing, onCapture, activeFilter, beauty, musicTrack, arFilterIdx]);
+  }, [facing, onCapture, activeFilter, beauty, musicTrack, arFilterIdx, arEngineActive, SkiaFaceCamera]);
 
   const startRecording = useCallback(async () => {
     if (!cameraRef.current || recording) return;
@@ -1156,22 +1195,36 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           }
         }}
       >
-        <CameraView
-          ref={cameraRef}
-          style={s.camera}
-          facing={facing}
-          flash={flash}
-          mode={captureMode === 'video' ? 'video' : 'picture'}
-        />
-        {/* AR face filter overlay (MediaPipe FaceLandmarker). Sits on
-            top of the camera preview, below the UI chrome so the user's
-            touches don't get intercepted. Renders nothing when the
-            preset is 'none'. */}
-        <FaceFilterOverlay
-          filterKey={FACE_FILTER_PRESETS[arFilterIdx]?.key}
-          previewSize={previewLayoutSize}
-          facing={facing}
-        />
+        {arEngineActive && SkiaFaceCamera ? (
+          /* SINGLE-CAMERA AR ENGINE — react-native-vision-camera +
+             useSkiaFrameProcessor. The face detector runs and the selected
+             effect is DRAWN into each frame by the Skia frame processor
+             (see SkiaFaceCamera + SkiaFaceEffects). One feed = no second
+             MediaPipe session = no freeze. The active effect is passed as a
+             prop; SkiaFaceCamera funnels it into a shared value so the frame
+             processor is NEVER recreated on filter change (issue #3606). */
+          <SkiaFaceCamera
+            ref={skiaCamRef}
+            facing={facing}
+            effectId={arEffectId}
+            isActive={visible && !preview}
+            torch={flash === 'on' ? 'on' : 'off'}
+            photo
+            video
+            audio={false}
+          />
+        ) : (
+          /* Non-AR / web / pre-rebuild fallback — plain expo-camera. No AR
+             overlay (the second-camera MediaPipe path was removed), but
+             plain photo/video capture still works. */
+          <CameraView
+            ref={cameraRef}
+            style={s.camera}
+            facing={facing}
+            flash={flash}
+            mode={captureMode === 'video' ? 'video' : 'picture'}
+          />
+        )}
       </View>
 
       {/* Top-left close (TikTok pattern, Feature 5) */}

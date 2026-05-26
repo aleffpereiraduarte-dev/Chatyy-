@@ -5945,7 +5945,16 @@ export async function chatPinMessage(messageId, durationSeconds) {
   if (ld && typeof ld.queueOfflineAction === 'function') {
     try { await ld.queueOfflineAction('chat_pin_message', payload); } catch {}
   }
-  return apiCall('chat_pin_message', payload, 'POST');
+  const r = await apiCall('chat_pin_message', payload, 'POST');
+  // [pin persistence] chat_pinned_messages is an SWR-cached read. The generic
+  // chat_* mutation hook in apiCall only busts `chat_list`, so without an
+  // explicit invalidation here the next conversation open could serve a stale
+  // (pre-pin / empty) pinned list straight from _swrCache within its TTL —
+  // making the pin "disappear" after closing + reopening the chat even though
+  // it persisted server-side. Bust the cache so the mount-time rehydrate
+  // re-fetches the fresh pinned list.
+  if (r?.success) { try { swrInvalidate('chat_pinned_messages'); } catch {} }
+  return r;
 }
 
 export async function chatPinnedMessages(conversationId) {

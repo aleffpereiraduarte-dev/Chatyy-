@@ -1,4 +1,20 @@
-// FaceFilters — AR face-overlay filter presets driven by MediaPipe
+// FaceFilters — AR face-overlay filter presets.
+//
+// ⚠️ ENGINE MIGRATED (2026-05-26): the status AR camera no longer uses the
+// MediaPipe FaceLandmarker second-camera path. It now runs on a SINGLE
+// react-native-vision-camera feed with a useSkiaFrameProcessor worklet that
+// detects faces (react-native-vision-camera-face-detector / MLKit) and DRAWS
+// the effect into the live frame with Skia (see SkiaFaceCamera.js +
+// SkiaFaceEffects.js). One camera = no second AVCaptureSession/CameraX
+// contention = no "status com efeito travando" freeze.
+//
+// The preset list below is kept (data-driven labels + tile art + downstream
+// `face_filter` meta key are unchanged). The MediaPipe binding loader
+// (getMediaPipe) and the legacy anchor/asset fields are now ONLY used by the
+// old <FaceFilterOverlay> fallback path, which renders nothing on the new
+// camera (StatusCamera no longer calls getMediaPipe in the AR capture flow).
+//
+// ── Legacy doc (MediaPipe era, no longer the active path) ──
 // FaceLandmarker (Apache 2.0). On-device, 30fps target (15fps fallback
 // on weak devices). Each preset declares which landmarks anchor which
 // PNG overlay; the runtime queries MediaPipe per frame and re-positions
@@ -184,4 +200,30 @@ export function getTargetFps() {
 export function resolveFilterPreset(key) {
   const want = (key || 'none').toLowerCase();
   return FACE_FILTER_PRESETS.find(p => p.key === want) || FACE_FILTER_PRESETS[0];
+}
+
+// ─── Vision Camera (single-camera Skia AR) availability probe ───
+// The new AR path needs three native modules: react-native-vision-camera,
+// react-native-vision-camera-face-detector and @shopify/react-native-skia
+// (plus react-native-worklets-core for the frame processor). On web, on a
+// debug binary built before these were linked, or if any require throws, we
+// report unavailable so StatusCamera falls back to the plain expo-camera
+// CameraView (no AR, but capture still works). Probed once + memoized.
+let _vcProbe = null;
+export function isVisionCameraArAvailable() {
+  if (_vcProbe !== null) return _vcProbe;
+  if (Platform.OS === 'web') { _vcProbe = false; return _vcProbe; }
+  try {
+    // Resolve the packages without importing the React component graph so the
+    // probe is cheap and side-effect-free. require() throws if the JS package
+    // (and therefore the native module) isn't present in this binary.
+    require('react-native-vision-camera');
+    require('react-native-vision-camera-face-detector');
+    require('@shopify/react-native-skia');
+    require('react-native-worklets-core');
+    _vcProbe = true;
+  } catch {
+    _vcProbe = false;
+  }
+  return _vcProbe;
 }
