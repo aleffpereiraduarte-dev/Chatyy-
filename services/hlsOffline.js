@@ -176,6 +176,34 @@ export async function downloadHls(videoId, manifestUrl, onProgress) {
   const segments = media.segments || [];
   if (!segments.length) return null;
 
+  // [P2 2026-05-26] Stale-partial cleanup. The per-segment skip below resumes
+  // an interrupted download by reusing .ts files already on disk — great when
+  // the SAME run is retried. But a download that died long ago (source rotated,
+  // app updated, videoId reused) can leave a large set of orphaned .ts files
+  // with NO final index.m3u8 forever: each retry resumes against possibly
+  // mismatched segments and never converges. Detect that here — if the
+  // rewritten manifest is missing yet >50% of the expected segments are
+  // already present, treat the dir as a stale partial, wipe it, and force a
+  // clean re-download. (A healthy in-progress resume normally has the manifest
+  // absent too, but we only nuke when the partial is substantial AND we just
+  // (re)fetched a fresh manifest — so the worst case is re-downloading a
+  // genuinely-resumable set once.)
+  try {
+    const manifestInfo = await fs.getInfoAsync(dir + 'index.m3u8');
+    const manifestMissing = !(manifestInfo?.exists && manifestInfo?.size > 0);
+    if (manifestMissing) {
+      let tsCount = 0;
+      try {
+        const entries = await fs.readDirectoryAsync(dir);
+        for (const f of entries) if (f.endsWith('.ts')) tsCount++;
+      } catch {}
+      if (tsCount > 0 && tsCount > segments.length * 0.5) {
+        await fs.deleteAsync(dir, { idempotent: true });
+        await ensureDir(dir);
+      }
+    }
+  } catch {}
+
   // Persist the raw server manifest for debugging.
   try { await fs.writeAsStringAsync(dir + 'original.m3u8', manifestText); } catch {}
 

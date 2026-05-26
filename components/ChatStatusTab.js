@@ -903,6 +903,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // Viewers modal state
   const [viewersModal, setViewersModal] = useState(false);
   const [viewersList, setViewersList] = useState([]);
+  // [P2 2026-05-26] Which status the "Vistos" sheet is currently showing.
+  // A ref (not state) so the WS status_view listener can read it without
+  // re-subscribing on every open/close, and to refresh the live viewers list
+  // when a new view lands for THIS status while the sheet is open.
+  const viewersModalStatusIdRef = useRef(null);
 
   // Per-status analytics modal (creator-only). Opened from the own-status
   // long-press menu under "Estatísticas". `analyticsData` carries the
@@ -1024,23 +1029,70 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const [forwardConversations, setForwardConversations] = useState([]);
   const [forwardLoading, setForwardLoading] = useState(false);
 
+  // Fetch the viewers list for a status. `silent` skips the loading spinner
+  // (used for the live WS-driven refresh so the sheet doesn't flash a spinner
+  // every time a new view lands).
+  const refreshViewersList = useCallback(async (statusId, { silent = false } = {}) => {
+    if (!statusId) return;
+    if (!silent) setViewersLoading(true);
+    try {
+      const r = await statusViewers(statusId);
+      if (r.success && r.data?.viewers) {
+        // Guard against a stale response landing after the user switched to a
+        // different status's sheet (race between two fetches).
+        if (String(viewersModalStatusIdRef.current) === String(statusId)) {
+          setViewersList(r.data.viewers);
+        }
+      }
+    } catch (err) {
+      console.warn('[Status] Failed to load viewers:', err);
+    } finally {
+      if (!silent) setViewersLoading(false);
+    }
+  }, []);
+
   const handleShowViewers = useCallback(async (statusId) => {
+    viewersModalStatusIdRef.current = statusId;
     setViewersLoading(true);
     setViewersModal(true);
     setIsPaused(true);
     if (timerRef.current) clearTimeout(timerRef.current);
     if (animRef.current) animRef.current.stop();
-    try {
-      const r = await statusViewers(statusId);
-      if (r.success && r.data?.viewers) {
-        setViewersList(r.data.viewers);
-      }
-    } catch (err) {
-      console.warn('[Status] Failed to load viewers:', err);
-    } finally {
-      setViewersLoading(false);
-    }
-  }, []);
+    await refreshViewersList(statusId, { silent: true });
+    setViewersLoading(false);
+  }, [refreshViewersList]);
+
+  // [P2 2026-05-26] Live "Vistos" refresh. When a viewer opens one of my
+  // statuses the backend fires a `status_view` WS event. If the viewers sheet
+  // is open for THAT status, re-fetch the list so the count + names update in
+  // real time (previously the sheet showed a frozen snapshot from the moment
+  // it opened — the user had to close + reopen to see new viewers). Debounced
+  // 500ms so a burst of views (e.g. a story going out to many contacts) only
+  // triggers one round-trip. Only active while the sheet is visible.
+  useEffect(() => {
+    if (!viewersModal || !mailWs?.on) return undefined;
+    let debounce = null;
+    const onView = (data) => {
+      try {
+        const openId = viewersModalStatusIdRef.current;
+        if (!openId) return;
+        const sid = data?.status_id;
+        // Match the event's status against the open sheet. Coerce both sides to
+        // string so numeric vs string ids from different WS paths still match.
+        if (sid != null && String(sid) !== String(openId)) return;
+        if (debounce) clearTimeout(debounce);
+        debounce = setTimeout(() => {
+          debounce = null;
+          refreshViewersList(openId, { silent: true });
+        }, 500);
+      } catch {}
+    };
+    const off = mailWs.on('status_view', onView);
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      try { off?.(); } catch {}
+    };
+  }, [viewersModal, refreshViewersList]);
 
   // Handle emoji reaction on a status. Race-safe: snapshot the prior
   // reaction *inside* the setMyReactions updater so rapid taps don't read
@@ -2580,6 +2632,9 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     const last = myStatuses[myStatuses.length - 1];
                     if (!last?.id) return;
                     try { Haptics.impactAsync?.(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                    // [P2 2026-05-26] Track the open status so the live
+                    // status_view WS refresh updates THIS sheet's count.
+                    viewersModalStatusIdRef.current = last.id;
                     try {
                       const r = await statusViewers(last.id);
                       const list = (r?.data?.viewers || r?.viewers || []);
@@ -3648,8 +3703,8 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       </Modal>
 
       {/* ─── Viewers List Modal — WhatsApp-style ─── */}
-      <Modal visible={viewersModal} transparent animationType="slide" onRequestClose={() => { setViewersModal(false); setIsPaused(false); }}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }} onPress={() => { setViewersModal(false); setIsPaused(false); }}>
+      <Modal visible={viewersModal} transparent animationType="slide" onRequestClose={() => { setViewersModal(false); setIsPaused(false); viewersModalStatusIdRef.current = null; }}>
+        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }} onPress={() => { setViewersModal(false); setIsPaused(false); viewersModalStatusIdRef.current = null; }}>
           <Pressable style={{
             backgroundColor: isDark ? '#111' : '#fff',
             borderTopLeftRadius: 24, borderTopRightRadius: 24,

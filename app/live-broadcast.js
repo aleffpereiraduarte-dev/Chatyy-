@@ -697,6 +697,28 @@ export default function LiveBroadcastScreen() {
             try { ws.close(); } catch {}
             return;
           }
+          // [2026-05-26] Reset/resync the viewer list on every (re)auth. The LK
+          // room outlives the WS signaling socket, so when the WS drops &
+          // reconnects, any ParticipantDisconnected events that fired during the
+          // gap are NOT replayed → viewers who left mid-disconnect linger in
+          // `lkViewers` as ghosts (inflated count + stale "X entrou" chips).
+          // Rebuild the list from the LK room's CURRENT remoteParticipants:
+          // this drops ghosts while keeping genuinely-present viewers. Falls
+          // back to a clean empty list when no LK room is up (RTC pipeline).
+          try {
+            const lkRoom = lkRoomRef.current;
+            if (lkRoom && lkRoom.remoteParticipants) {
+              const live = Array.from(lkRoom.remoteParticipants.values?.() || []);
+              const localId = String(lkRoom.localParticipant?.identity || '');
+              const rebuilt = live
+                .filter(p => p && String(p.identity || '') && String(p.identity) !== localId)
+                .map(p => ({ identity: String(p.identity), name: cleanParticipantName(p), joinedAt: Date.now() }));
+              setLkViewers(rebuilt);
+            } else {
+              setLkViewers([]);
+            }
+          } catch { try { setLkViewers([]); } catch {} }
+
           console.log('[Live] sending live_start session=' + sid);
           console.log('[LIVE-TRACE] WS live_start sent session=' + sid);
           ws.send(JSON.stringify({ type: 'live_start', session_id: sid }));

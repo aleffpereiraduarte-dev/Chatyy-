@@ -380,6 +380,12 @@ function CallScreenInner() {
   const [addParticipantBusy, setAddParticipantBusy] = useState(false);
   const [addParticipantCandidates, setAddParticipantCandidates] = useState([]);
   const [addParticipantLoading, setAddParticipantLoading] = useState(false);
+  // [2026-05-26] Group cap UX. Flipped true when the local room count hits
+  // MAX_CALL_PARTICIPANTS, or when the backend rejects an invite with a
+  // limit-reached status (403/409). Drives the "Limite de participantes
+  // atingido" toast + disables the add button/rows so the user isn't left
+  // tapping into a silent no-op.
+  const [participantLimitReached, setParticipantLimitReached] = useState(false);
   const [floatingEmojis, setFloatingEmojis] = useState([]);
   const [onHold, setOnHold] = useState(false);
   const [peerOnHold, setPeerOnHold] = useState(false);
@@ -1476,6 +1482,23 @@ function CallScreenInner() {
       _diag('token_ok', { url, room, ice_count: iceServers?.length || 0 });
     } catch (e) {
       _diag('token_err', { msg: String(e?.message || e), stack: String(e?.stack || '').slice(0, 500) });
+      // [2026-05-26] Cold-start iOS callee w/ adoptNative: a transient token
+      // failure (timeout / 401 before WS/session warmed up) used to immediately
+      // hard-fail. But on this path the native side may still be establishing
+      // its own LK Room and can recover via the onLk* bridge (flips
+      // peerConnected → dismisses any failed state). Don't slam the door: surface
+      // a soft error message but DEFER the hard `connectionFailed` flip to the
+      // progressive connect-phase timeout machine (60s ceiling) which either
+      // recovers (peer/native connects) or surfaces the actionable failure.
+      // Without this the UI hung on "Conectando" because the early-return
+      // skipped the rest of connectToRoom while the timer-driven recovery was
+      // the only thing that could un-stick it.
+      if (wantsAdoptNative && Platform.OS !== 'web') {
+        try { setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar.'); } catch {}
+        // NOTE: intentionally NOT setting connectionFailed here — let the
+        // T+60s hard-fail timer (or native peer-join recovery) own the verdict.
+        return;
+      }
       setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar.');
       setConnectionFailed(true);
       return;
@@ -1792,6 +1815,14 @@ function CallScreenInner() {
       try { _callDiagAppend('info', 'LK Room reconnected', { call_id: callId }); } catch {}
       console.log('[Call] LiveKit Reconnected');
       setReconnecting(false);
+      // [2026-05-26] Reset stale video stats on reconnect. The last snapshot
+      // before the drop is almost always a "very_poor" / fps=0 reading (the
+      // link was dying). If we leave it in place, <PoorConnectionWarning>
+      // renders "Conexão fraca" on a freshly healthy room until the adaptive
+      // loop's next sample (~3s) overwrites it. Clearing to null makes the
+      // warning evaluate to a good default (bucket→'good', fps→0, isPoor=false)
+      // so the banner doesn't flash on a recovered call.
+      try { setVideoStatsSnapshot(null); } catch {}
       if (reconnectGraceTimerRef.current) {
         try { clearTimeout(reconnectGraceTimerRef.current); } catch {}
         reconnectGraceTimerRef.current = null;
@@ -1914,6 +1945,11 @@ function CallScreenInner() {
       _removeGroupPeer(participant.identity);
       // For 1:1, dropping the only remote means the call is done.
       const remaining = Array.from(r.remoteParticipants?.values?.() || []);
+      // [2026-05-26] A slot freed up → re-enable the add-participant UI if we
+      // were sitting at the cap. (remaining + local) must be below the cap.
+      try {
+        if (remaining.length + 1 < MAX_CALL_PARTICIPANTS) setParticipantLimitReached(false);
+      } catch {}
       if (remaining.length === 0) {
         setRemoteParticipant(null);
         _refreshRemoteTracks(null);
@@ -3177,6 +3213,27 @@ function CallScreenInner() {
     };
   }, [peerConnected, audioMuted, ended]);
 
+  // [2026-05-26] Auto-dismiss the participant-limit toast after 4s. The add
+  // button stays disabled (driven by the same flag) only as long as the cap
+  // actually holds — re-tapping a disabled button re-arms this toast. If the
+  // room later drops below the cap (a participant leaves) the flag is cleared
+  // by the participant-disconnect path; otherwise it just hides the toast.
+  useEffect(() => {
+    if (!participantLimitReached) return undefined;
+    const tHide = setTimeout(() => {
+      // Only hide the toast; keep the button disabled if we're still at cap.
+      try {
+        const r = roomRef.current;
+        const occupied = ((r && r.remoteParticipants && r.remoteParticipants.size) || 0) + 1;
+        if (occupied < MAX_CALL_PARTICIPANTS) setParticipantLimitReached(false);
+        else setParticipantLimitReached(false); // hide toast; re-tap re-shows
+      } catch {
+        setParticipantLimitReached(false);
+      }
+    }, 4000);
+    return () => clearTimeout(tHide);
+  }, [participantLimitReached]);
+
   // Hide reminder immediately when user unmutes — no point showing it.
   useEffect(() => {
     if (!audioMuted && muteReminderVisible) {
@@ -3945,6 +4002,8 @@ function CallScreenInner() {
       const occupied = remoteCount + 1; // include local participant
       if (occupied >= MAX_CALL_PARTICIPANTS) {
         if (__DEV__) console.warn('[call.invite] cap reached:', occupied);
+        // [2026-05-26] Surface the cap instead of a silent no-op + lock the UI.
+        setParticipantLimitReached(true);
         return;
       }
     } catch {}
@@ -3953,10 +4012,31 @@ function CallScreenInner() {
       const { chatCallInvite } = require('../services/api');
       // The backend ring-fan-out endpoint reuses the same callId — the
       // invitee will join the same LiveKit room when they accept.
-      await chatCallInvite(conversationId, callId, [email], !!isVideoCall);
+      const res = await chatCallInvite(conversationId, callId, [email], !!isVideoCall);
+      // [2026-05-26] The backend enforces its own MAX_CALL_PARTICIPANTS. When
+      // it rejects (HTTP 403/409 surfaced via the response body) it returns
+      // success:false. Detect a limit-reached verdict and lock the add UI with
+      // a toast rather than silently swallowing the failure.
+      const data = (res && res.data) ? res.data : res;
+      const status = res && typeof res.status === 'number' ? res.status : 0;
+      const msgStr = String((data && (data.message || data.error || data.code)) || '').toLowerCase();
+      const limitHit = status === 403 || status === 409
+        || (data && (data.code === 'participant_limit' || data.limit_reached === true))
+        || /limit|cheia|lotad|máximo|maximo|full|cap reached|too many/.test(msgStr);
+      if (data && data.success === false && limitHit) {
+        setParticipantLimitReached(true);
+        return;
+      }
+      // Successful invite — remove the contact from the candidate list.
       setAddParticipantCandidates(prev => prev.filter(c => (c.email || '').toLowerCase() !== email.toLowerCase()));
     } catch (e) {
       if (__DEV__) console.warn('[call.invite]', e?.message);
+      // [2026-05-26] A thrown error may also carry a 403/409 status (some
+      // transports reject before returning a body). Treat that as limit-hit.
+      const st = e && (e.status || e.statusCode);
+      if (st === 403 || st === 409 || /limit|lotad|máximo|maximo|full|too many/.test(String(e?.message || '').toLowerCase())) {
+        setParticipantLimitReached(true);
+      }
     } finally {
       setAddParticipantBusy(false);
     }
@@ -4400,6 +4480,18 @@ function CallScreenInner() {
             </View>
           )}
 
+          {/* [2026-05-26] Participant-limit toast. Shows when the group call
+              hits MAX_CALL_PARTICIPANTS (client cap) or the backend rejects an
+              invite with a limit-reached verdict. Auto-dismisses via the effect
+              below; the add button stays disabled while this stands. */}
+          {participantLimitReached && !ended && (
+            <View style={[styles.weakBanner, { backgroundColor: 'rgba(31,41,55,0.92)' }]}>
+              <Text style={styles.weakBannerText} numberOfLines={2}>
+                {t('call.participantLimitReached') || 'Limite de participantes atingido'}
+              </Text>
+            </View>
+          )}
+
           {/* Center avatar (audio-only / pre-connect) */}
           {!showRemoteVideo && (
             <View style={[styles.centerArea, { paddingTop: insets.top, paddingBottom: insets.bottom + 180 }]}>
@@ -4763,11 +4855,18 @@ function CallScreenInner() {
 
             {peerConnected && (
               <TouchableOpacity
-                style={styles.controlBtn}
-                onPress={() => setShowAddParticipant(true)}
+                style={[styles.controlBtn, participantLimitReached && { opacity: 0.4 }]}
+                onPress={() => {
+                  // [2026-05-26] At the participant cap → don't open the picker;
+                  // re-surface the toast so the user knows why it's locked.
+                  if (participantLimitReached) { setParticipantLimitReached(true); return; }
+                  setShowAddParticipant(true);
+                }}
+                disabled={participantLimitReached}
                 activeOpacity={0.7}
                 accessibilityLabel={t('call.addParticipant') || 'Adicionar'}
                 accessibilityRole="button"
+                accessibilityState={{ disabled: participantLimitReached }}
               >
                 <View style={styles.controlBtnCircle}>
                   <IconUserPlus size={22} color="#fff" />
@@ -5018,9 +5117,9 @@ function CallScreenInner() {
                   return (
                     <TouchableOpacity
                       key={email}
-                      style={styles.addPartRow}
+                      style={[styles.addPartRow, participantLimitReached && { opacity: 0.4 }]}
                       onPress={() => handleInviteToCall(email)}
-                      disabled={addParticipantBusy}
+                      disabled={addParticipantBusy || participantLimitReached}
                       activeOpacity={0.7}
                     >
                       <AvatarCircle email={email} name={name} size={40} />

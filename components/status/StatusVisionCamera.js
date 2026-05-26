@@ -93,8 +93,19 @@ function StatusVisionCameraInner(
 
   // Reset smoothing memory whenever the preset changes so a new filter
   // doesn't inherit the previous filter's interpolated anchors.
+  //
+  // [P0 2026-05-26] AR shared-value race. The Skia frame processor reads
+  // `smooth.value` on the render runtime CONCURRENTLY with this JS-side clear.
+  // Assigning a fresh empty `{}` mid-read could hand the worklet a half-torn
+  // object (worklets-core shared values are copied across runtimes; a clear
+  // landing between the worklet's read + mutate could crash or resurrect stale
+  // keys). Instead we publish a SENTINEL object `{ __cleared: true }` in a
+  // single atomic assignment — the worklet treats the sentinel as "no memory
+  // yet" and seeds fresh on the next frame, so the clear can't race a read into
+  // a corrupt state. Wrapped in try/catch so a transient shared-value access
+  // error during teardown never bubbles into a fatal.
   useEffect(() => {
-    try { smooth.value = {}; } catch {}
+    try { smooth.value = { __cleared: true }; } catch {}
   }, [presetKey]);
 
   // ─── Skia frame processor (the single-session render + AR draw) ───
@@ -145,14 +156,23 @@ function StatusVisionCameraInner(
     const ALPHA = 0.35;
     const smoothCenter = (key, tx, ty) => {
       'worklet';
-      const mem = smooth.value;
-      const prev = mem[key];
+      const raw = smooth.value;
+      // [P0 2026-05-26] Sentinel handling — when the JS side cleared the
+      // smoothing memory on a preset change it published `{ __cleared: true }`.
+      // Treat that (and a null/undefined value) as "no memory yet": start from
+      // a fresh empty map so we don't carry a `__cleared` key forward or read a
+      // stale anchor from the previous filter. No `prev` → no lerp, just seed.
+      const cleared = raw == null || raw.__cleared === true;
+      const mem = cleared ? {} : raw;
+      const prev = cleared ? null : mem[key];
       let nx = tx, ny = ty;
       if (prev) {
         nx = prev.x + (tx - prev.x) * ALPHA;
         ny = prev.y + (ty - prev.y) * ALPHA;
       }
-      // Reassign whole object so the shared value commit is observed.
+      // Reassign whole object so the shared value commit is observed. Always
+      // publish the working `mem` (never the sentinel) so the next read sees a
+      // real anchor map rather than the cleared marker.
       mem[key] = { x: nx, y: ny };
       smooth.value = mem;
       return { x: nx, y: ny };

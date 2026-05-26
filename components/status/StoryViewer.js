@@ -988,6 +988,22 @@ export default function StoryViewer({
     if (!visible) return;
     const cur = stories?.[idx];
     if (!cur) return;
+    // [P1 2026-05-26] Placeholder items have no real media yet — the parent
+    // (ChatListTab/useStatuses) refetches status_list and swaps the SAME index
+    // to a real item in-place. EARLY-RETURN here so we never start the progress
+    // timer against a ghost: leave the canvas visible (itemOpacity=1, no
+    // fade-from-0 flash on placeholders) and freeze progress at 0. Because the
+    // real item is a different object identity, `stories` changes reference and
+    // this effect re-runs — at which point `cur._placeholder` is undefined and
+    // we fall through to the normal media + timer setup below (timer starts).
+    // Without this, the prior code reset itemOpacity to 0 then armed the
+    // placeholder freeze only AFTER the media-setup block, but the crossfade
+    // left the canvas at opacity 0 with no timer → frozen story.
+    if (cur._placeholder) {
+      progressRef.current.setValue(0);
+      itemOpacity.setValue(1);
+      return;
+    }
     progressRef.current.setValue(0);
     // Reset per-item state: crossfade in, image fade reset, video flags cleared.
     itemOpacity.setValue(0);
@@ -1099,7 +1115,17 @@ export default function StoryViewer({
   }, [visible, idx, paused, stories, advance, onMarkViewed, itemOpacity, imageFade]);
 
   useEffect(() => {
-    if (visible && (!stories || stories.length === 0)) {
+    // [P0 2026-05-26] Guard the ARM step against a momentarily-empty
+    // `storiesRef`. The effect closure captures `stories` at render time, but
+    // by the time it runs the LIVE snapshot (storiesRef.current) may already
+    // carry items (parent swapped the locked snapshot in a later micro-task).
+    // If the live ref is already populated, we must NOT arm the close timer at
+    // all — otherwise the timer fires against a stale-empty closure and the
+    // viewer flashes shut the instant it opened ("abre e já fecha"). Keeping
+    // the in-timeout re-check below is belt-and-suspenders for the inverse race
+    // (ref populates AFTER we arm but BEFORE the 350ms elapses).
+    const liveHasStories = Array.isArray(storiesRef.current) && storiesRef.current.length > 0;
+    if (visible && !liveHasStories && (!stories || stories.length === 0)) {
       // Defer the auto-close so a brief empty render (e.g., parent recomputed
       // groupIdx mid-state-flush and `items` is momentarily []) doesn't close
       // the modal the instant it mounts. 350ms covers the mount-grace window

@@ -42,20 +42,50 @@ const getLazyClearChatCache = async () => {
 // this safe against the 2026-05-11 "aggressive nuke broke Android send"
 // regression: we only drop the outbox of the account we're leaving, never of
 // the account that's continuing.
+// Returns true only when BOTH native chat stores were cleared (or were not
+// present to begin with — a module that doesn't exist can't be leaking). When
+// a clear *throws* (db locked, corrupt, mid-migration) we return false so the
+// caller can FAIL CLOSED: lock the cache scope so no reader serves the
+// previous account's rows until a later attempt succeeds. Silently swallowing
+// the failure (the old behavior) left account A's messages readable under
+// account B if dbClearAll() ever threw.
 async function clearLocalChatStore() {
-  if (Platform.OS === 'web') return; // web uses IDB/SW, nuked elsewhere
+  if (Platform.OS === 'web') return true; // web uses IDB/SW, nuked elsewhere
+  let ok = true;
   // db.js owns messages/conversations/pending_messages — primary leak surface.
   try {
     const dbMod = require('../services/db');
     if (typeof dbMod.dbClearAll === 'function') await dbMod.dbClearAll();
-  } catch {}
+  } catch (e) {
+    ok = false;
+    try { console.warn('[auth] clearLocalChatStore: db.dbClearAll failed:', e?.message); } catch {}
+  }
   // localDb.js wipes the same tables PLUS sync_state_kv (drops the
   // chat_full_bootstrap:<email> + chat_full_synced:<conv> watermarks so the
   // new account re-runs its own first-time history bootstrap) and offline_queue.
   try {
     const localDb = require('../services/localDb');
     if (typeof localDb.clearLocalDb === 'function') await localDb.clearLocalDb();
-  } catch {}
+  } catch (e) {
+    ok = false;
+    try { console.warn('[auth] clearLocalChatStore: localDb.clearLocalDb failed:', e?.message); } catch {}
+  }
+  return ok;
+}
+
+// Clear the native SQLite chat store on an identity change and FAIL CLOSED if
+// it throws. On failure we hold the cache scope locked for a longer window
+// (8s) so the chat list / conversation getters keep returning empty instead of
+// painting the previous account's messages while a retry runs. Best-effort
+// retry once after a short delay (the db is often only transiently busy).
+async function clearLocalChatStoreFailClosed() {
+  const ok = await clearLocalChatStore();
+  if (!ok) {
+    // Block every (sync + async) cache reader until the retry lands.
+    _lockCacheScopeSync(8000);
+    setTimeout(() => { clearLocalChatStore().catch(() => {}); }, 1200);
+  }
+  return ok;
 }
 
 // Account-switch paint race: clearChatCache() is async, but React happily
@@ -849,12 +879,19 @@ export function AuthProvider({ children }) {
   const prefetchProfile = useCallback((email) => {
     if (!email) return;
     api.getProfile().then(r => {
-      if (r.success && r.data) {
+      if (r && r.success && r.data && typeof r.data === 'object') {
         import('../services/cache').then(({ setCache }) => {
           setCache('user_profile', r.data, 600000);
         }).catch(() => {});
-        // Update user name from profile if available
-        const profileName = r.data.display_name || r.data.name;
+        // Update user name from profile if available. GUARD: only adopt the
+        // value when it's a NON-EMPTY STRING. The server has historically
+        // returned display_name as null, a number, or an object on edge
+        // accounts — assigning a non-string here propagates into user.name
+        // and crashes downstream callers that do user.name.split(' ') /
+        // .charAt(0) (avatar initials, greeting header). Trim so a
+        // whitespace-only name doesn't blank the header either.
+        const rawName = r.data.display_name != null ? r.data.display_name : r.data.name;
+        const profileName = typeof rawName === 'string' ? rawName.trim() : '';
         if (profileName) {
           setUser(prev => prev ? { ...prev, name: profileName } : prev);
         }
@@ -900,7 +937,9 @@ export function AuthProvider({ children }) {
         await clearAccountScopedMmkv();
         // P0 PRIVACY: also wipe the native SQLite chat store so the new
         // identity never reads the previous account's messages/conversations.
-        await clearLocalChatStore();
+        // Fail-closed: if the clear throws, the cache scope stays locked so no
+        // reader paints the previous account's rows until a retry succeeds.
+        await clearLocalChatStoreFailClosed();
       }
       // Account swap: gate any sync getter for the next 500ms. We used to
       // also drop user to null here so chat screens unmounted before the new
@@ -997,12 +1036,23 @@ export function AuthProvider({ children }) {
   }, [loadAccounts, registerPushAfterAuth, prefetchAvatar, prefetchProfile]);
 
   const completeLoginAfterChallenge = useCallback(async (data) => {
+    // GUARD: a challenge "approval" is only trustworthy when it carries a
+    // real bearer. Without this, a malformed/partial approval payload
+    // (token missing, null, empty, or non-string) fell straight through to
+    // setUser(data) below — minting a ghost "logged-in" state with no
+    // bearer, so every subsequent API call 401'd and the user sat on an
+    // empty chat with no way forward but manual logout. Bail early with a
+    // failure result so the login screen keeps showing the challenge UI /
+    // surfaces an error instead of navigating into a dead session.
+    const _token = data && typeof data.token === 'string' ? data.token.trim() : '';
+    if (!_token) {
+      try { console.warn('[auth] completeLoginAfterChallenge: missing/invalid token in approval payload — refusing to complete login'); } catch {}
+      return { success: false, message: 'Token inválido' };
+    }
     // Snapshot the prev email BEFORE we mutate auth state so we can detect
     // an account switch and run the surgical bare-key cleaner.
     const _prevEmail = (api.getActiveAccountEmail?.() || '').toLowerCase();
-    if (data?.token) {
-      api.setAuthTokenDirect(data.token);
-    }
+    api.setAuthTokenDirect(_token);
     if (data?.device_trust_token) {
       api.saveTrustToken(data.device_trust_token);
     }
@@ -1015,7 +1065,8 @@ export function AuthProvider({ children }) {
     if (!_prevEmail || _prevEmail !== _newEmail) {
       await clearAccountScopedMmkv();
       // P0 PRIVACY: wipe native SQLite chat store on identity change.
-      await clearLocalChatStore();
+      // Fail-closed so a throwing clear can't leave prior messages readable.
+      await clearLocalChatStoreFailClosed();
     }
     // Same paint-race fence as login() — see lockCacheScope. setUser(null)
     // removed (root cause 3 of reconnect storm fix 2026-05-19): the dual
@@ -1050,6 +1101,10 @@ export function AuthProvider({ children }) {
     } catch {}
     _maybeOfferCloudRestore().catch(() => {});
     _maybeOfferWhatsNew().catch(() => {});
+    // Return a success result so the caller (login.js challenge poll) can
+    // confirm login actually completed before navigating — mirrors the
+    // {success,data} shape of login() / loginWithToken().
+    return { success: true, data };
   }, [loadAccounts, registerPushAfterAuth]);
 
   // Log in using a previously-saved bearer token (QR flow, biometric flow).
@@ -1112,8 +1167,9 @@ export function AuthProvider({ children }) {
       // phone-signup / QR-login of a BRAND-NEW account takes (prevEmail='' →
       // shouldNuke=true), so without this a new account on a device that had a
       // previous user kept reading the previous user's SQLite conversations +
-      // pinned. (Native-only; the web nuke is handled just below.)
-      await clearLocalChatStore();
+      // pinned. (Native-only; the web nuke is handled just below.) Fail-closed:
+      // a throwing clear keeps the cache scope locked until a retry succeeds.
+      await clearLocalChatStoreFailClosed();
       // WEB: clearAccountScopedMmkv() doesn't reach the SW CacheStorage or
       // IndexedDB. On an account switch (or cold start onto a different
       // identity) the SW would otherwise serve the previous account's cached
@@ -1195,7 +1251,8 @@ export function AuthProvider({ children }) {
       // native SQLite chat store so the new account never inherits the
       // previous user's conversations / pinned. Safe here because there is no
       // legitimate local chat history for a just-created account to lose.
-      await clearLocalChatStore();
+      // Fail-closed so a throwing clear can't leave prior messages readable.
+      await clearLocalChatStoreFailClosed();
       setCacheUser(r.data?.email);
       setUser(r.data);
       loadAccounts();
@@ -1432,6 +1489,14 @@ export function AuthProvider({ children }) {
             setCacheUser(null);
             try { await clearAllCache(); } catch {}
             try { await clearChatCache(); } catch {}
+            // P0 PRIVACY: clearChatCache() deliberately does NOT touch the
+            // native SQLite store (see its "SQLite cleared separately via
+            // dbClearAll()" note). switchAccount NEVER wiped it — so the
+            // switched-to account read the previous account's
+            // messages/conversations straight off disk. Wipe it here, BEFORE
+            // setUser, and fail-closed so a throwing clear holds the cache
+            // scope locked rather than painting the prior account's rows.
+            await clearLocalChatStoreFailClosed();
             setCacheUser(check.data.email);
             setUser(check.data);
             // SECURITY (P1): identity changed → force the biometric app-lock

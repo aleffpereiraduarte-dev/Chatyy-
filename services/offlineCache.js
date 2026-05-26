@@ -596,20 +596,56 @@ export async function replayOfflineQueue(api) {
           break;
         }
         case 'chat_send': {
-          const r = await api.chatSend(
-            action.conversation_id,
-            action.content,
-            action.msgType || 'text',
-            action.reply_to_id,
-            action.mentions || null,
-            null,
-            action.temp_id,
-            action.client_message_id,
-          );
+          // Network-down hardening: on a dead/captive network api.chatSend()
+          // can hang indefinitely (no fetch timeout) — the optimistic bubble
+          // then stays stuck on "Enviando..." forever with no red tap-to-retry,
+          // because neither the success path nor markFailed ever fires. Race
+          // the call against a 5s timeout so a hang is treated identically to
+          // a thrown error: it falls into the catch below (which schedules a
+          // backoff retry) AND, critically, flips the messageOutbox state to
+          // 'failed' so SendStatusText shows the tap-to-retry affordance.
+          let r;
+          try {
+            r = await Promise.race([
+              api.chatSend(
+                action.conversation_id,
+                action.content,
+                action.msgType || 'text',
+                action.reply_to_id,
+                action.mentions || null,
+                null,
+                action.temp_id,
+                action.client_message_id,
+              ),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('chat_send_timeout')), 5000)
+              ),
+            ]);
+          } catch (sendErr) {
+            // Surface the failure to the SQLite outbox state machine so the
+            // bubble can flip from "Enviando..." to the red retry state — the
+            // catch handler below only re-queues for backoff, it doesn't touch
+            // messageOutbox. markFailed is idempotent (no-op if no such row).
+            if (action.client_message_id) {
+              try {
+                const outbox = require('./messageOutbox');
+                outbox.markFailed?.(action.client_message_id, sendErr);
+              } catch {}
+            }
+            throw sendErr;
+          }
           // Throw em falha pra que a fila mantenha a action para retry —
           // antes ações com r.success=false (sem exception) eram consideradas
           // replayed e sumiam silenciosamente.
-          if (!r?.success || !r?.data?.id) throw new Error('chat_send_failed');
+          if (!r?.success || !r?.data?.id) {
+            if (action.client_message_id) {
+              try {
+                const outbox = require('./messageOutbox');
+                outbox.markFailed?.(action.client_message_id, new Error('chat_send_failed'));
+              } catch {}
+            }
+            throw new Error('chat_send_failed');
+          }
           if (r?.success && r.data?.id) {
             const serverMsg = { ...r.data, client_message_id: action.client_message_id };
             // 1. Drop the persisted "pending" entry — without this, the
@@ -684,11 +720,20 @@ export async function replayOfflineQueue(api) {
             if (r && r.success === false) {
               const msg = String(r.message || r.error || '');
               const isHardError = /not_found|permission|invalid|forbidden/i.test(msg);
+              if (/not_found/i.test(msg)) {
+                // Conversation was deleted (other device / server purge). Drop
+                // it from the chat-list cache too so the stale unread badge
+                // clears instead of lingering forever pointing at a dead conv.
+                try { require('./chatCache').removeConversationFromCache?.(action.conversation_id); } catch {}
+              }
               if (!isHardError) throw new Error('chat_read_failed:' + msg);
             }
           } catch (e) {
             const msg = String(e?.message || e || '');
             const isHardError = /not_found|permission|forbidden/i.test(msg);
+            if (/not_found/i.test(msg)) {
+              try { require('./chatCache').removeConversationFromCache?.(action.conversation_id); } catch {}
+            }
             if (!isHardError) throw e;
           }
           break;
@@ -705,12 +750,21 @@ export async function replayOfflineQueue(api) {
             );
             if (r && r.success === false) {
               const msg = String(r.message || r.error || '');
-              const isHardError = /not_found|invalid|permission|forbidden|too_long/i.test(msg);
+              // "already exists" / "duplicate" = the reaction already landed
+              // (e.g. the original request actually succeeded before we queued
+              // the offline retry). Retrying forever is pointless — treat it
+              // as a hard error and drop the action.
+              const isHardError = /not_found|invalid|permission|forbidden|too_long|already.?exists|duplicate/i.test(msg);
               if (!isHardError) throw new Error('chat_react_failed:' + msg);
             }
           } catch (e) {
             const msg = String(e?.message || e || '');
-            const isHardError = /not_found|invalid|permission|forbidden|too_long/i.test(msg);
+            if (/already.?exists|duplicate/i.test(msg)) {
+              // Mark as hard so the outer catch drops it from the queue rather
+              // than scheduling another doomed retry.
+              e.isHardError = true;
+            }
+            const isHardError = /not_found|invalid|permission|forbidden|too_long|already.?exists|duplicate/i.test(msg);
             if (!isHardError) throw e;
           }
           break;

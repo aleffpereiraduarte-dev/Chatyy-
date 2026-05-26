@@ -1099,6 +1099,14 @@ function SettingsScreenInner() {
         initialSettingsRef.current = JSON.stringify(settings);
         if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
         savedTimerRef.current = setTimeout(() => setSaved(false), 2000);
+        // A successful settings save can change the display name surfaced on
+        // the profile. Invalidate the cached profile blob (set by
+        // AuthContext.prefetchProfile with a 600s TTL) so the profile screen
+        // and /u/{email} reflect the change instead of stale data.
+        try {
+          const { invalidate } = await import('../services/cache');
+          invalidate?.('user_profile');
+        } catch {}
       }
       // Persist notification prefs locally + update MailContext
       const notifPrefs = {
@@ -1140,6 +1148,21 @@ function SettingsScreenInner() {
           const r = await uploadAvatar(file);
           if (r?.success) {
             setAvatarKey(Date.now());
+            // Invalidate the cached profile blob so /u/{email} (and the
+            // profile screen) don't serve a stale avatar for the full 600s
+            // TTL set by AuthContext.prefetchProfile.
+            try {
+              const { invalidate } = await import('../services/cache');
+              invalidate?.('user_profile');
+            } catch {}
+            // Also drop the per-email profile_v1 MMKV cache used by the
+            // profile viewer component (Profile.js) so it re-fetches.
+            try {
+              const { invalidateProfileCache } = await import('../components/Profile');
+              if (typeof invalidateProfileCache === 'function') {
+                invalidateProfileCache(null);
+              }
+            } catch {}
           } else {
             Alert.alert(t('common.error') || 'Erro', r?.message || (t('settings.avatarUploadFailed') || 'Falha ao salvar foto.'));
           }

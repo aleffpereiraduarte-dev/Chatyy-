@@ -379,6 +379,16 @@ export default function useStatuses(currentEmail, opts = {}) {
   // Antes era só MMKV → web e cold-start sem MMKV mostrava skeleton blank.
   const [loading, setLoading] = useState(!_hadPreload);
   const fpRef = useRef(_hadPreload ? _fingerprint(_initialNorm.mine, _initialNorm.others) : null);
+  // [P2 2026-05-26] Offline view-receipt UX. When markViewed runs while the
+  // device is offline, the optimistic ring flips to "viewed" locally but the
+  // server hasn't recorded the receipt yet — it sits in the offline queue
+  // until reconnect. We track those status ids here so a surface can show a
+  // subtle "pending sync" indicator (the set is exposed from the hook). The id
+  // is cleared once a fresh status_list refetch confirms the receipt landed
+  // (or simply on the next successful refetch after reconnect), so the receipt
+  // replays exactly once with no double-suppression: markViewed nulls the
+  // fingerprint so the post-reconnect refetch always re-persists fresh state.
+  const [pendingViewReceipts, setPendingViewReceipts] = useState(() => new Set());
 
   // [WAVE 43B 2026-05-20] Async fallback — se MMKV sync E getCachedSync
   // não tiveram cache (primeira vez nesta sessão JS, hot reload, etc.),
@@ -555,6 +565,12 @@ export default function useStatuses(currentEmail, opts = {}) {
         return;
       }
       const norm = _normalize(r.data, currentEmail);
+      // [P2 2026-05-26] A successful status_list round-trip means we're back
+      // online and the offline queue has had a chance to replay any queued
+      // view receipts. Clear the pending-sync indicators so the UI stops
+      // showing "syncing" once the server has the receipts. Only touch state
+      // when there's actually something pending to avoid a no-op re-render.
+      setPendingViewReceipts(prev => (prev.size > 0 ? new Set() : prev));
       const fp = _fingerprint(norm.mine, norm.others);
       if (fp !== fpRef.current) {
         fpRef.current = fp;
@@ -670,6 +686,23 @@ export default function useStatuses(currentEmail, opts = {}) {
   // poll cycle, causing ring-color flicker).
   const markViewed = useCallback((statusId) => {
     const stamp = new Date().toISOString();
+    // [P2 2026-05-26] If we're offline, the actual status_view receipt is
+    // sitting in the offline queue (StoryViewer queues it on failure). Surface
+    // that as a subtle pending indicator so the owner-side "viewed" state reads
+    // as not-yet-synced. Cleared on the next successful refetch (post-reconnect)
+    // — see refetch(). Best-effort: if connectivity can't be determined we just
+    // don't flag it pending (no false-positives).
+    try {
+      const { isOnline } = require('../services/offlineCache');
+      if (typeof isOnline === 'function' && isOnline() === false) {
+        setPendingViewReceipts(prev => {
+          if (prev.has(statusId)) return prev;
+          const next = new Set(prev);
+          next.add(statusId);
+          return next;
+        });
+      }
+    } catch {}
     const mapItem = (it) => it.id === statusId ? { ...it, viewed: true, viewed_at: stamp } : it;
     setMine(prev => {
       const next = prev.map(mapItem);
@@ -793,5 +826,5 @@ export default function useStatuses(currentEmail, opts = {}) {
     fpRef.current = null;
   }, []);
 
-  return { groups, mine, others, loading, refetch, markViewed, removeStatus, removeGroup, archiveStatus };
+  return { groups, mine, others, loading, refetch, markViewed, removeStatus, removeGroup, archiveStatus, pendingViewReceipts };
 }

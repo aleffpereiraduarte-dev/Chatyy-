@@ -36,6 +36,24 @@ export function bioTokenKeyFor(email) {
 }
 export function bioEmailKey() { return 'bio_email'; }
 
+// Is there a LIVE logged-in session right now? A non-empty bearer token in
+// services/api means the user is authenticated. Lazy require keeps
+// BiometricProvider free of a top-level dep on api.js (and the circular-import
+// risk that would create, since AuthContext also pulls this module). Used to
+// decide whether the auth-route lock suppression is safe: it is ONLY safe when
+// there is no session (pre-auth signup/forgot). If a session exists and the
+// app returns from background onto /login (e.g. a deep-link), we MUST still
+// lock — otherwise navigating away from /login exposes the unlocked session.
+function _hasActiveSession() {
+  try {
+    const apiMod = require('../services/api');
+    const tok = (typeof apiMod.getAuthToken === 'function' ? apiMod.getAuthToken() : '') || '';
+    return !!String(tok).trim();
+  } catch {
+    return false;
+  }
+}
+
 // Default lock delay when the user hasn't picked one yet. 5 s matches the
 // historical behavior and avoids surprising existing users post-upgrade.
 const DEFAULT_LOCK_DELAY_SEC = 5;
@@ -144,8 +162,13 @@ export function BiometricProvider({ children }) {
   const lockNowLocal = useCallback(() => {
     if (Platform.OS === 'web') return;
     if (!biometricEnabled) return;
-    // Don't lock the public auth screens (no session, no bio_token yet).
-    if (isAuthRouteRef.current) return;
+    // Don't lock the public auth screens — but ONLY when there's genuinely no
+    // session (signup/forgot pre-auth). If a live bearer exists while we're on
+    // /login (e.g. an account switch that navigated through /login, or a
+    // deep-link to /login while still authenticated), arming the lock is the
+    // correct, secure behavior. Suppressing it there would let the previous
+    // identity's unlocked overlay carry over.
+    if (isAuthRouteRef.current && !_hasActiveSession()) return;
     setIsLocked(true);
   }, [biometricEnabled]);
 
@@ -197,7 +220,16 @@ export function BiometricProvider({ children }) {
           // User opted out — never auto-lock on background return.
         } else {
           const thresholdMs = Math.max(0, Number(ival) * 1000);
-          if (bgTime && (Date.now() - bgTime) >= thresholdMs && !isAuthRouteRef.current) {
+          // Auth-route suppression is only safe when there is NO live session.
+          // The suppression exists so signup/forgot (no bearer, no bio_token)
+          // don't trap the user behind a dead lock when they return from the
+          // gallery. But if a logged-in session exists and the app returns
+          // from background onto /login — e.g. a deep-link to /login while
+          // already authenticated — we MUST still lock: otherwise navigating
+          // away from /login would expose the unlocked session. So only honor
+          // the auth-route skip when no bearer is present.
+          const suppressForAuthRoute = isAuthRouteRef.current && !_hasActiveSession();
+          if (bgTime && (Date.now() - bgTime) >= thresholdMs && !suppressForAuthRoute) {
             setIsLocked(true);
           }
         }

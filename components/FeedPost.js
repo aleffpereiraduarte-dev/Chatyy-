@@ -428,6 +428,18 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   const [captionTranslating, setCaptionTranslating] = useState(false);
   const [activeMediaIndex, setActiveMediaIndex] = useState(0);
   const [captionExpanded, setCaptionExpanded] = useState(false);
+  // [#img-retry] Single-image load-error + retry. On an image error we flip
+  // `imageError` true (renders a tappable retry overlay) and bumping
+  // `imageRetry` forces the <Image>/<img> to remount via its key, so the
+  // browser/native loader actually re-fetches the URL instead of staying
+  // parked on the failed request. Without the key change RN/Expo Image keeps
+  // the broken cached attempt and a plain re-render never re-tries.
+  const [imageError, setImageError] = useState(false);
+  const [imageRetry, setImageRetry] = useState(0);
+  const retryImage = useCallback(() => {
+    setImageError(false);
+    setImageRetry(n => n + 1);
+  }, []);
   const [likersOpen, setLikersOpen] = useState(false);
   const [likersList, setLikersList] = useState(null); // null = loading, [] = empty
   const [likersBusy, setLikersBusy] = useState(new Set());
@@ -1144,6 +1156,9 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
               isWeb ? (
                 <View style={styles.mediaFrame}>
                   <img
+                    // [#img-retry] key includes imageRetry so a retry tap
+                    // remounts the <img> and re-fetches the failed URL.
+                    key={`img-${resolveMediaUrl(mediaUrls[0])}-${imageRetry}`}
                     src={resolveMediaUrl(mediaUrls[0])}
                     style={{
                       width: '100%',
@@ -1152,15 +1167,53 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                       filter: getFilterCss(post.filter),
                     }}
                     alt={post.caption || t('feed.image') || 'Image'}
+                    onError={() => setImageError(true)}
+                    onLoad={() => { if (imageError) setImageError(false); }}
                   />
+                  {imageError ? (
+                    <Pressable
+                      onPress={retryImage}
+                      style={styles.imageRetryOverlay}
+                      accessibilityRole="button"
+                      accessibilityLabel={t?.('common.retry') || t?.('chat.retry') || 'Tentar novamente'}
+                    >
+                      <View style={styles.imageRetryPill}>
+                        <Text style={styles.imageRetryText}>
+                          {t?.('common.retry') || t?.('chat.retry') || 'Tentar novamente'}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  ) : null}
                 </View>
               ) : (
-                <_CachedFeedImage
-                  source={{ uri: resolveMediaUrl(mediaUrls[0]) }}
-                  style={[styles.mediaFrame, getNativeFilterStyle(post.filter)]}
-                  resizeMode="cover"
-                  accessibilityLabel={post.caption || t('feed.image') || 'Image'}
-                />
+                <View style={styles.mediaFrame}>
+                  <_CachedFeedImage
+                    // [#img-retry] key forces a remount on retry so the native
+                    // loader re-requests the URL instead of holding the failed
+                    // attempt.
+                    key={`img-${resolveMediaUrl(mediaUrls[0])}-${imageRetry}`}
+                    source={{ uri: resolveMediaUrl(mediaUrls[0]) }}
+                    style={[StyleSheet.absoluteFill, getNativeFilterStyle(post.filter)]}
+                    resizeMode="cover"
+                    accessibilityLabel={post.caption || t('feed.image') || 'Image'}
+                    onError={() => setImageError(true)}
+                    onLoad={() => { if (imageError) setImageError(false); }}
+                  />
+                  {imageError ? (
+                    <Pressable
+                      onPress={retryImage}
+                      style={styles.imageRetryOverlay}
+                      accessibilityRole="button"
+                      accessibilityLabel={t?.('common.retry') || t?.('chat.retry') || 'Tentar novamente'}
+                    >
+                      <View style={styles.imageRetryPill}>
+                        <Text style={styles.imageRetryText}>
+                          {t?.('common.retry') || t?.('chat.retry') || 'Tentar novamente'}
+                        </Text>
+                      </View>
+                    </Pressable>
+                  ) : null}
+                </View>
               )
             )
           ) : (
@@ -2034,6 +2087,27 @@ const styles = StyleSheet.create({
     width: '100%',
     aspectRatio: 1,
     backgroundColor: '#111',
+  },
+  // [#img-retry] Full-frame tap target shown over a broken image. Centered
+  // pill keeps the affordance obvious + easy to hit.
+  imageRetryOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+  },
+  imageRetryPill: {
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    borderRadius: 999,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  imageRetryText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
   },
   counterBadge: {
     position: 'absolute',

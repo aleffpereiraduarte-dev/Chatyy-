@@ -385,6 +385,26 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
   const inputRef = useRef(null);
   const listRef = useRef(null);
   const currentCountRef = useRef(0);
+  // [#optimistic-merge-fix] Ref-backed Set of every comment id we currently
+  // hold (root + nested replies), mirroring ChatFeedTab's feedIdSetRef. The
+  // page>1 merge in loadComments used to rebuild its dedup set from the
+  // previous-render `comments` snapshot, so a comment/reply inserted
+  // optimistically between the loadMore() call and the response landing could
+  // be dropped (the functional updater reads the latest `prev`, but a server
+  // page that re-returns the now-canonical row would collide on a *different*
+  // tmp id and the optimistic copy lingered as a dupe). Tracking ids in a ref
+  // that survives across renders makes the merge resilient regardless of
+  // render timing. Always reseed it whenever we replace the list wholesale.
+  const commentIdSetRef = useRef(new Set());
+  const collectCommentIds = useCallback((arr) => {
+    const s = new Set();
+    for (const c of (Array.isArray(arr) ? arr : [])) {
+      if (c && c.id != null) s.add(String(c.id));
+      const reps = Array.isArray(c?.replies) ? c.replies : null;
+      if (reps) for (const r of reps) { if (r && r.id != null) s.add(String(r.id)); }
+    }
+    return s;
+  }, []);
   const slideAnim = useRef(new Animated.Value(0)).current;
   const isWeb = Platform.OS === 'web';
   // Voice comment (Instagram-parity). Tap-and-hold to record, release to
@@ -407,6 +427,13 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
     }
   }, [post?.id, post?.comment_count]);
 
+  // [#optimistic-merge-fix] Keep the dedup ref in lockstep with `comments`
+  // (covers optimistic inserts, WS pushes, deletes, sticker/voice/video
+  // replies) so the next page>1 merge always sees the current id universe.
+  useEffect(() => {
+    commentIdSetRef.current = collectCommentIds(comments);
+  }, [comments, collectCommentIds]);
+
   const loadComments = useCallback(async (pageNum = 1) => {
     if (!post?.id) return;
     if (pageNum > 1) setLoadingMore(true);
@@ -416,10 +443,25 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         const newComments = r.data.comments || r.data || [];
         if (pageNum === 1) {
           setComments(newComments);
+          // Reseed the dedup ref off the fresh page-1 snapshot.
+          commentIdSetRef.current = collectCommentIds(newComments);
         } else {
           setComments(prev => {
-            const existingIds = new Set(prev.map(c => c.id));
-            const unique = newComments.filter(c => !existingIds.has(c.id));
+            // [#optimistic-merge-fix] Dedup against the ref-backed Set (which
+            // includes any locally-inserted optimistic comments/replies that
+            // may not be present in the previous-render `prev` we close over)
+            // PLUS the live prev so we never drop or double-add a row.
+            const seen = new Set(commentIdSetRef.current);
+            for (const c of prev) { if (c && c.id != null) seen.add(String(c.id)); }
+            const unique = [];
+            for (const c of newComments) {
+              if (!c || c.id == null) continue;
+              const idStr = String(c.id);
+              if (seen.has(idStr)) continue;
+              seen.add(idStr);
+              unique.push(c);
+            }
+            commentIdSetRef.current = seen;
             return [...prev, ...unique];
           });
         }
@@ -478,12 +520,19 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
   }, [visible, post?.id, user?.email, onCommentCountChange]);
 
   const loadMore = useCallback(() => {
+    // [#optimistic-merge-fix] Hold off pagination while a comment/reply is
+    // mid-flight (sending) or being recorded — an optimistic insert that lands
+    // in the same tick as a page-2 merge is the exact race that could drop the
+    // local row. The ref-backed dedup Set already protects the merge, but
+    // blocking here removes the race entirely with zero UX cost (the user
+    // can't scroll-to-load while they're typing/sending anyway).
+    if (sending || recording) return;
     if (hasMore && !loading && !loadingMore) {
       const nextPage = page + 1;
       setPage(nextPage);
       loadComments(nextPage);
     }
-  }, [hasMore, loading, loadingMore, page, loadComments]);
+  }, [hasMore, loading, loadingMore, page, loadComments, sending, recording]);
 
   const handleSend = useCallback(async () => {
     const content = text.trim();

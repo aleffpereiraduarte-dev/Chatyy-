@@ -3821,24 +3821,71 @@ function _chatActionId() {
   return 'a_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
 }
 
-export async function chatEdit(messageId, content) {
+// Best-effort read of the current local content/edited_at for a message so
+// chatEdit can do a FULL revert (content + edited_at) on server rejection.
+// No single-message getter is guaranteed across db modules, so we probe a
+// couple of conventional names and the conversation-scoped getMessages as a
+// fallback. Returns null when nothing is recoverable — caller then degrades
+// gracefully to the legacy edited_at-only revert.
+async function _readLocalMessageSnapshot(messageId, conversationId) {
+  if (!messageId) return null;
+  const ld = _ld();
+  try {
+    if (ld && typeof ld.getMessageById === 'function') {
+      const m = await ld.getMessageById(messageId);
+      if (m) return { content: m.content, edited_at: m.edited_at ?? null };
+    }
+  } catch {}
+  try {
+    const _db = require('./db');
+    if (_db && typeof _db.dbGetMessageById === 'function') {
+      const m = await _db.dbGetMessageById(messageId);
+      if (m) return { content: m.content, edited_at: m.edited_at ?? null };
+    }
+  } catch {}
+  // Fallback: scan the conversation's recent messages if we know the conv id.
+  try {
+    if (conversationId && ld && typeof ld.getMessages === 'function') {
+      const rows = await ld.getMessages(conversationId, 200, null);
+      const m = Array.isArray(rows) ? rows.find(r => String(r.id) === String(messageId)) : null;
+      if (m) return { content: m.content, edited_at: m.edited_at ?? null };
+    }
+  } catch {}
+  return null;
+}
+
+export async function chatEdit(messageId, content, conversationId = null) {
   // Stage 1: write the edit to local SQLite FIRST, then POST. The optimistic
   // row update is what the UI rebinds to on reload — server confirmation
   // arrives later via WS message_edited.
+  // [P1 2026-05-26] Capture the prior content+edited_at BEFORE the optimistic
+  // write so a hard server rejection can fully revert. The old code reverted
+  // only edited_at; the edited content stayed in SQLite, so on the next sync
+  // the user's typed-then-rejected text visibly persisted/replaced the
+  // original. Snapshot is best-effort — if unavailable we degrade to the
+  // legacy edited_at-only revert (no regression).
+  const prior = await _readLocalMessageSnapshot(messageId, conversationId);
   const editedAt = new Date().toISOString();
   await _localUpdateMessage(messageId, { content, edited_at: editedAt });
+  const _revert = async () => {
+    if (prior && typeof prior.content === 'string') {
+      // Full revert: restore both the original content and the original
+      // edited_at (which may itself be a real prior-edit timestamp, so we
+      // restore the captured value rather than blindly nulling it).
+      await _localUpdateMessage(messageId, { content: prior.content, edited_at: prior.edited_at ?? null });
+    } else {
+      // Snapshot unavailable — fall back to legacy behavior.
+      await _localUpdateMessage(messageId, { edited_at: null });
+    }
+  };
   try {
     const r = await apiCall('chat_edit', { message_id: messageId, content, client_action_id: _chatActionId() }, 'POST');
     if (r && r.success === false) {
-      // Roll-forward fix: revert edited_at so the row reads as not-edited
-      // again. We can't restore the prior content here (we never had it);
-      // the UI layer keeps the previous string and will re-render it on
-      // chat_messages refresh.
-      await _localUpdateMessage(messageId, { edited_at: null });
+      await _revert();
     }
     return r;
   } catch (e) {
-    await _localUpdateMessage(messageId, { edited_at: null });
+    await _revert();
     throw e;
   }
 }
@@ -3909,7 +3956,7 @@ export async function chatReact(messageId, emoji, stickerUrl) {
   // Sticker reaction (premium): URL up to 512 chars. Server gates by plan.
   if (typeof stickerUrl === 'string' && stickerUrl.length > 0) {
     if (stickerUrl.length > 512) return { success: false, message: 'sticker_url_too_long' };
-    return apiCall('chat_react', { message_id: messageId, sticker_url: stickerUrl, client_action_id: actionId }, 'POST');
+    return _normalizeReactResult(await apiCall('chat_react', { message_id: messageId, sticker_url: stickerUrl, client_action_id: actionId }, 'POST'));
   }
 
   // Emoji reaction. Reject silly payloads — sanity guard before hitting network.
@@ -3917,8 +3964,36 @@ export async function chatReact(messageId, emoji, stickerUrl) {
     return { success: false, message: 'invalid_emoji' };
   }
   const rust = await _rustChatPost('react', { message_id: messageId, emoji, client_action_id: actionId });
-  if (rust) return rust;
-  return apiCall('chat_react', { message_id: messageId, emoji, client_action_id: actionId }, 'POST');
+  if (rust) return _normalizeReactResult(rust);
+  return _normalizeReactResult(await apiCall('chat_react', { message_id: messageId, emoji, client_action_id: actionId }, 'POST'));
+}
+
+// [P2 2026-05-26] Treat a server "reaction already exists" / idempotent
+// replay as a SUCCESS no-op. The backend chat_react is a toggle with an
+// idempotency guard (returns success + idempotent_replay) and swallows a
+// duplicate INSERT, but an offline-queue retry or a Rust/PHP edge can surface
+// a `success:false` payload whose message signals the reaction was already
+// applied. Returning that as an error makes the UI flip the optimistic chip
+// OFF — the reaction visibly disappears even though it landed. Coerce those
+// shapes to success so the chip stays on (idempotent add).
+function _normalizeReactResult(res) {
+  if (!res || typeof res !== 'object') return res;
+  // apiCall wraps as { data, status }; the rust path returns the body directly.
+  const body = (res.data && typeof res.data === 'object') ? res.data : res;
+  const isFailure = body && body.success === false;
+  if (!isFailure) return res;
+  const msg = String(body.message || body.error || body.code || '').toLowerCase();
+  const alreadyApplied =
+    msg.includes('already') ||
+    msg.includes('duplicate') ||
+    msg.includes('exists') ||
+    msg.includes('idempotent') ||
+    msg.includes('replay');
+  if (alreadyApplied) {
+    body.success = true;
+    if (!body.message) body.message = 'idempotent';
+  }
+  return res;
 }
 
 export async function chatRead(conversationId, messageId) {
@@ -3928,6 +4003,19 @@ export async function chatRead(conversationId, messageId) {
   // refreshed from server on next sync.
   if (messageId) {
     await _localUpdateMessage(messageId, { read_at: new Date().toISOString() });
+  }
+  // [P0 2026-05-26] Persist the conversation-level read watermark too.
+  // Stamping read_at on the single message alone is NOT enough: on cold
+  // start the unread count is recomputed from conversation.last_read_message_id,
+  // not from per-message read_at. Without persisting the watermark the unread
+  // badge re-inflates after an app restart. Call db.js defensively — the
+  // function is being added there concurrently; optional-chain + try/catch
+  // means we no-op cleanly if it isn't present yet.
+  if (conversationId && messageId) {
+    try {
+      const _db = require('./db');
+      await _db?.dbUpdateConversationLastReadMessageId?.(conversationId, messageId);
+    } catch {}
   }
   const rust = await _rustChatPost('mark_read', { conversation_id: conversationId, message_id: messageId });
   // Bump the app-icon badge down right after the read POST lands. Without

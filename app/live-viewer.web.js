@@ -73,6 +73,14 @@ export default function LiveViewerWeb() {
   // HLS refs.
   const hlsInstanceRef = useRef(null);
   const hlsUrlRef = useRef('');
+  // [2026-05-26] Bounded HLS recovery. hls.js does NOT stop on its own when a
+  // fatal error fires — and our old handler set phase=unavailable WITHOUT
+  // destroying the instance, so hls.js kept retrying fragment loads in the
+  // background (CPU burn while the user stares at the error card). Now we
+  // attempt hls.js's built-in recovery (startLoad / recoverMediaError) up to
+  // MAX_HLS_RETRIES, then destroy the instance and surface unavailable once.
+  const hlsRetryRef = useRef(0);
+  const MAX_HLS_RETRIES = 5;
 
   // ─── Cleanup helpers ─────────────────────────────────────────────────
   const teardownLk = useCallback(() => {
@@ -274,6 +282,7 @@ export default function LiveViewerWeb() {
   const connectHls = useCallback(async (url) => {
     setPhase('hls');
     hlsUrlRef.current = url;
+    hlsRetryRef.current = 0; // fresh stream → fresh retry budget.
     // Defer to next tick so <video> is mounted.
     setTimeout(async () => {
       const video = videoElRef.current;
@@ -306,10 +315,42 @@ export default function LiveViewerWeb() {
           const p = video.play?.();
           if (p && p.catch) p.catch(() => {});
           setConnected(true);
+          // A successful (re)parse means the stream is healthy again — reset the
+          // retry budget so a later transient blip gets its full recovery window.
+          hlsRetryRef.current = 0;
         });
         hls.on(Hls.Events.ERROR, (_e, data) => {
-          if (data?.fatal) {
-            console.warn('[live-viewer.web] HLS fatal:', data?.type, data?.details);
+          if (!data?.fatal) return; // non-fatal: hls.js self-heals, ignore.
+          hlsRetryRef.current += 1;
+          console.warn('[live-viewer.web] HLS fatal:', data?.type, data?.details,
+            'retry', hlsRetryRef.current, '/', MAX_HLS_RETRIES);
+          if (hlsRetryRef.current > MAX_HLS_RETRIES) {
+            // Budget exhausted — STOP. Destroy the instance so hls.js doesn't
+            // keep hammering the segment endpoint in the background, then
+            // surface the failure exactly once.
+            try { hls.destroy(); } catch {}
+            if (hlsInstanceRef.current === hls) hlsInstanceRef.current = null;
+            setPhase('unavailable');
+            setErrorMsg('Erro de reprodução da live');
+            return;
+          }
+          // Within budget — attempt the matching hls.js recovery.
+          try {
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              hls.startLoad();
+            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+              hls.recoverMediaError();
+            } else {
+              // Other fatal error (e.g. MUX/KEY) is unrecoverable — give up now.
+              try { hls.destroy(); } catch {}
+              if (hlsInstanceRef.current === hls) hlsInstanceRef.current = null;
+              setPhase('unavailable');
+              setErrorMsg('Erro de reprodução da live');
+            }
+          } catch (recErr) {
+            console.warn('[live-viewer.web] HLS recovery threw:', recErr?.message || recErr);
+            try { hls.destroy(); } catch {}
+            if (hlsInstanceRef.current === hls) hlsInstanceRef.current = null;
             setPhase('unavailable');
             setErrorMsg('Erro de reprodução da live');
           }

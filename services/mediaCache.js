@@ -382,6 +382,29 @@ function _releaseDownloadSlot() {
   }
 }
 
+// [P2 concurrency 2026-05-26] Public funnel for the shared download semaphore.
+// cacheMedia/saveMediaPermanent already gate every network download through the
+// internal _acquire/_releaseDownloadSlot pair (cap _MAX_CONCURRENT_DOWNLOADS),
+// so any caller that routes its downloads through cacheMedia is ALREADY
+// throttled by this single source. These exports let external schedulers (e.g.
+// mediaAutoSync's own worker pool) that perform raw fs.downloadAsync calls
+// outside cacheMedia funnel through the SAME slot pool instead of opening an
+// independent N-way pool that contends with foreground fetches. Always pair an
+// acquire with exactly one release (use try/finally). No-op-safe on web.
+export function acquireDownloadSlot() {
+  if (Platform.OS === 'web') return Promise.resolve();
+  return _acquireDownloadSlot();
+}
+export function releaseDownloadSlot() {
+  if (Platform.OS === 'web') return;
+  _releaseDownloadSlot();
+}
+// Read-only accessor so a caller can size its own queue to match the shared
+// pool rather than hard-coding a higher number that just waits on the gate.
+export function getMaxConcurrentDownloads() {
+  return _MAX_CONCURRENT_DOWNLOADS;
+}
+
 // ── Media auto-download preferences (WhatsApp Settings → Storage parity) ──
 //
 // 4 buckets: photos, audio, videos, docs. Each is 'wifi' | 'mobile' | 'never'.
@@ -1342,12 +1365,21 @@ export async function cacheMedia(url, opts = {}) {
     // opts.messageId from prefetchIncomingMessageMedia.
     if (result && opts.messageId != null && opts.conversationId != null &&
         Platform.OS !== 'web' && typeof result === 'string' && result.startsWith('file://')) {
+      // [P1 race fix 2026-05-26] AWAIT the local_path write-back instead of
+      // fire-and-forget. getLocalUriIfCached itself reads the in-memory
+      // syncIndex (already populated by registerSyncKey above, so the UI path
+      // stays instant + non-blocking), but the DB row is the source of truth a
+      // cold restart reads. Awaiting here guarantees the path is durably
+      // persisted before cacheMedia resolves — a crash right after return can
+      // no longer leave the file on disk with local_path still NULL. The whole
+      // block stays inside try/catch so a DB failure never breaks the happy
+      // path (we still return the file:// result).
       try {
         const nativeDb = require('./db');
         if (typeof nativeDb.dbUpdateMessageFields === 'function') {
-          nativeDb.dbUpdateMessageFields(opts.conversationId, opts.messageId, {
+          await nativeDb.dbUpdateMessageFields(opts.conversationId, opts.messageId, {
             local_path: result,
-          }).catch(() => {});
+          });
         }
       } catch {}
     }
@@ -1603,16 +1635,26 @@ export function prefetchAudioMessage(remoteUrl, opts = {}) {
   // location getCachedAudioUri checks via the mediaCache consolidation hook,
   // so a single download serves both the bubble's player AND the chat list
   // preview. No cellular gate inside saveMediaPermanent → safe for audio.
-  return saveMediaPermanent(remoteUrl).then((local) => {
+  return saveMediaPermanent(remoteUrl).then(async (local) => {
     // [#1218 2026-05-20 BUG#6 fix] Write the file:// path back into
     // messages.local_path so a cold-open of the bubble doesn't re-resolve
     // from the syncIndex (which can be stale after an account swap or
     // app reinstall). Image+video already had this hook; audio now matches.
+    //
+    // [P1 race fix 2026-05-26] AWAIT the write-back (was fire-and-forget with
+    // no .catch — an async reject would surface as an unhandled rejection) so
+    // the path is durably persisted before this resolves. The gate requires
+    // BOTH ids because dbUpdateMessageFields keys its UPDATE on
+    // (conversationId, messageId); callers that only pass a URL (bubble render
+    // / chat-list prefetch) have no ids to write and rely on the syncIndex
+    // entry registerSyncKey already wrote inside saveMediaPermanent.
     try {
       if (typeof local === 'string' && local.startsWith('file://')
           && opts && opts.messageId != null && opts.conversationId != null) {
         const nativeDb = require('./db');
-        nativeDb.dbUpdateMessageFields?.(opts.conversationId, opts.messageId, { local_path: local });
+        if (typeof nativeDb.dbUpdateMessageFields === 'function') {
+          await nativeDb.dbUpdateMessageFields(opts.conversationId, opts.messageId, { local_path: local });
+        }
       }
     } catch {}
     return local;

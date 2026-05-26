@@ -649,7 +649,7 @@ export async function startForegroundBackup(onProgress, options = {}) {
           // otherwise the last burst of completions is lost.
           try { await completeSub?._drain?.(); } catch {}
           completeSub?.remove?.();
-          if (uploaded > 0) await setLastSync(new Date().toISOString());
+          if (uploaded > 0) { await setLastSync(new Date().toISOString()); invalidateBackedUpCountCache(); }
           const _showCompleteNotif = !!progressCallback?.__wasShown?.();
           releaseLock();
           progressCallback = null;
@@ -741,7 +741,7 @@ export async function startForegroundBackup(onProgress, options = {}) {
       try { await completeSub?._drain?.(); } catch {}
       completeSub?.remove();
 
-      if (uploaded > 0) await setLastSync(new Date().toISOString());
+      if (uploaded > 0) { await setLastSync(new Date().toISOString()); invalidateBackedUpCountCache(); }
       const _showCompleteNotif = !!progressCallback?.__wasShown?.();
       releaseLock();
       progressCallback = null;
@@ -775,7 +775,7 @@ export async function startForegroundBackup(onProgress, options = {}) {
     const uploaded = result?.uploaded || result?.completedFiles || 0;
     const totalBackedUp = result?.totalBackedUp || 0;
 
-    if (uploaded > 0) await setLastSync(new Date().toISOString());
+    if (uploaded > 0) { await setLastSync(new Date().toISOString()); invalidateBackedUpCountCache(); }
 
     const _showCompleteNotif = !!progressCallback?.__wasShown?.();
     releaseLock();
@@ -1011,9 +1011,26 @@ export async function initAutoBackup() {
   if (Platform.OS === 'web') return;
   if (initialized) return;
 
+  // [P2 2026-05-26] Drop any stale server-count cache so the first
+  // getBackedUpCount() after a fresh launch re-fetches from the server
+  // instead of returning a value cached from a previous session.
+  invalidateBackedUpCountCache();
+
   // Run unified migration first
   const { migrateBackupStateV2 } = require('./backup/backupStorage');
   await migrateBackupStateV2();
+
+  // [P0 2026-05-26] Prune stale backed-up IDs that no longer correspond to a
+  // device asset (photos the user deleted). The backedUpIds map only grows —
+  // when assets are deleted from the library the IDs linger, inflating
+  // getPendingCount()'s denominator math and making "1250/1250" a lie. We
+  // cross-check the map against the current library and drop orphans.
+  // Lightweight: sample-capped at 50k device ids, runs async (don't block the
+  // rest of init). Also re-seeds the server precheck (fix #3) inside the same
+  // background pass so we only walk the library once.
+  pruneAndPrecheckBackedUpIds().catch((e) => {
+    console.warn('[backup] prune/precheck init pass failed:', e?.message);
+  });
 
   // 2026-05-18: sync the JS-side "Notificações de backup" toggle into the
   // native iOS module on boot. Without this, on a fresh launch the native
@@ -1184,6 +1201,14 @@ export async function getPendingCount() {
  */
 let _serverCountCache = { value: 0, ts: 0 };
 const SERVER_COUNT_CACHE_MS = 30 * 1000;
+// [P2 2026-05-26] Invalidate the 30s server-count cache. Called on
+// initAutoBackup() and whenever a backup pass completes so the Photos
+// screen never shows a count that's stale for up to 30s after fresh
+// uploads landed. Without this the user saw "1230 backed up" for half a
+// minute after the counter should have ticked to 1250.
+export function invalidateBackedUpCountCache() {
+  _serverCountCache = { value: 0, ts: 0 };
+}
 export async function getBackedUpCount() {
   const now = Date.now();
   if (_serverCountCache.ts && now - _serverCountCache.ts < SERVER_COUNT_CACHE_MS) {
@@ -1212,4 +1237,104 @@ export async function getBackedUpCount() {
 export async function resetBackupHistory() {
   const { clearBackedUpMap } = require('./backup/backupStorage');
   await clearBackedUpMap();
+}
+
+// [P0/P1 2026-05-26] One library walk that does two jobs:
+//   (1) PRUNE: drop backedUpIds that no longer match a device asset (deleted
+//       photos). The map is append-only otherwise, so a heavy deleter
+//       accumulates thousands of ghost IDs → the count math lies ("1250/1250"
+//       while the device only has 900 photos left).
+//   (2) PRECHECK: ask the server which of the CURRENT device assets are
+//       already in drive_files and merge them in, so a 2nd device doesn't
+//       re-upload what another device already added. Previously the precheck
+//       only ran on a cold (<100 item) map inside backupEngine.init(); a
+//       device that already had a warm map never reconciled against another
+//       device's uploads.
+// Result of the precheck is cached for ~1h to avoid hammering the backend on
+// every init / setting toggle.
+let _precheckLastRunAt = 0;
+const PRECHECK_CACHE_MS = 60 * 60 * 1000; // ~1h
+async function pruneAndPrecheckBackedUpIds() {
+  if (Platform.OS === 'web') return;
+  try {
+    const ML = require('expo-media-library');
+    const { status } = await ML.getPermissionsAsync();
+    if (status !== 'granted') return;
+
+    const backedUpMap = await getBackedUpMap();
+    const mapIds = Object.keys(backedUpMap || {});
+
+    // Walk the device library once (capped). PHAsset fetch is in-memory but
+    // we still bound the work so a 100k library can't stall init.
+    const deviceIdSet = new Set();
+    const deviceIdList = [];
+    try {
+      let cursor = null, remaining = 50000, pages = 0;
+      while (remaining > 0 && pages < 10) {
+        pages++;
+        const page = await ML.getAssetsAsync({
+          first: Math.min(5000, remaining),
+          after: cursor || undefined,
+          mediaType: [ML.MediaType.photo, ML.MediaType.video],
+          sortBy: [ML.SortBy.creationTime],
+        });
+        const assets = page?.assets || [];
+        if (!assets.length) break;
+        for (const a of assets) { deviceIdSet.add(a.id); deviceIdList.push(a.id); }
+        if (!page.hasNextPage || !page.endCursor) break;
+        cursor = page.endCursor;
+        remaining -= assets.length;
+      }
+    } catch (e) { console.warn('[backup] prune device scan failed:', e?.message); }
+
+    // (1) PRUNE — only if we actually saw a full library (don't prune when the
+    // scan returned nothing / was permission-throttled, or we'd wipe the whole
+    // map on a transient failure). Require the device scan to have surfaced at
+    // least some assets before trusting it as authoritative.
+    if (deviceIdSet.size > 0 && mapIds.length > 0) {
+      let removed = 0;
+      for (const id of mapIds) {
+        if (!deviceIdSet.has(id)) { delete backedUpMap[id]; removed++; }
+      }
+      // Guard against the case where the (capped) device scan is a strict
+      // subset of a much larger library — if we'd remove almost everything,
+      // assume the scan was incomplete and skip the prune to stay safe.
+      const wouldRemoveFraction = removed / mapIds.length;
+      if (removed > 0 && wouldRemoveFraction < 0.9) {
+        await saveBackedUpMap(backedUpMap);
+        console.log(`[backup] prune: dropped ${removed} stale IDs (device=${deviceIdSet.size}, map=${mapIds.length})`);
+      } else if (removed > 0) {
+        // Re-load to undo the in-memory deletions we just made (we didn't save).
+        // No-op: backedUpMap is a fresh object each call, so simply not saving
+        // is enough — but log so we know the prune was skipped as unsafe.
+        console.log(`[backup] prune SKIPPED as unsafe (would remove ${removed}/${mapIds.length}, scan likely truncated)`);
+      }
+    }
+
+    // (2) PRECHECK — cached ~1h. Reconcile against the server so cross-device
+    // uploads aren't duplicated.
+    const now = Date.now();
+    if (deviceIdList.length > 0 && (now - _precheckLastRunAt) > PRECHECK_CACHE_MS) {
+      _precheckLastRunAt = now;
+      let seeded = 0;
+      const map = await getBackedUpMap(); // re-read in case prune saved
+      const CHUNK = 1500;
+      for (let i = 0; i < deviceIdList.length; i += CHUNK) {
+        const slice = deviceIdList.slice(i, i + CHUNK);
+        try {
+          const r = await api.apiCall('drive_precheck_asset_ids', { asset_ids: slice }, 'POST');
+          const list = r?.data?.backed_up || r?.backed_up || [];
+          for (const id of list) {
+            if (!map[id]) { map[id] = now; seeded++; }
+          }
+        } catch {}
+      }
+      if (seeded > 0) {
+        await saveBackedUpMap(map);
+        console.log(`[backup] precheck (every-init): seeded ${seeded} cross-device IDs`);
+      }
+    }
+  } catch (e) {
+    console.warn('[backup] pruneAndPrecheckBackedUpIds error:', e?.message);
+  }
 }

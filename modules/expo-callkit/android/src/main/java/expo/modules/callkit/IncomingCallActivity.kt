@@ -58,12 +58,29 @@ class IncomingCallActivity : AppCompatActivity() {
   // to finish() this Activity unconditionally, killing the new incoming
   // ring. CallActivity.closeReceiver already has this guard (#867 era fix);
   // the IncomingCallActivity path was missed.
+  // [P0 sequential-call fix 2026-05-26] Hardened to ALSO honor conversation_id
+  // when the broadcast carries it. Root cause: a `call_end` for call A could
+  // silence the ring for a different sequential call B. The call_id guard
+  // covers the common case, but a stale/malformed `call_end` that lost its
+  // call_id (CallSignalWs only stamps call_id when non-empty) would fall
+  // through and finish() the live ring for B. Now: if EITHER identifier is
+  // present and mismatches our live call, we ignore the close. The
+  // action-driven no-identifier broadcasts (CallActionReceiver accept/decline
+  // → closeIncomingCallActivity, which intentionally carries no extras) still
+  // fall through to close, so the accept/decline-from-notification dismissal
+  // path is preserved.
   private val closeReceiver = object : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
       val broadcastCallId = intent.getStringExtra("call_id")
       val myId = callId
-      if (broadcastCallId != null && myId != null && broadcastCallId != myId) {
+      if (!broadcastCallId.isNullOrEmpty() && !myId.isNullOrEmpty() && broadcastCallId != myId) {
         Log.d("IncomingCallActivity", "closeReceiver: ignoring close for stale call_id=$broadcastCallId (mine=$myId)")
+        return
+      }
+      val broadcastConvId = intent.getStringExtra("conversation_id")
+      val myConv = conversationId
+      if (!broadcastConvId.isNullOrEmpty() && !myConv.isNullOrEmpty() && broadcastConvId != myConv) {
+        Log.d("IncomingCallActivity", "closeReceiver: ignoring close for stale conversation_id=$broadcastConvId (mine=$myConv)")
         return
       }
       stopRinging()
@@ -729,6 +746,30 @@ class IncomingCallActivity : AppCompatActivity() {
     // so we don't need the roster up-front (the LK Room discovers it). The
     // room name is the callId (matches the SFU room the backend minted).
     if (isGroup) {
+      // [P1 group-disbanded fallback 2026-05-26] If the LK token fetch failed
+      // (LkTokenFetcher.fetch returned null → both url and token are empty),
+      // the group was very likely deleted/disbanded server-side (token mint
+      // 403/409) — or auth/network died. Launching GroupCallActivity with no
+      // token leaves the user staring at "Conectando..." forever because the
+      // grid can never join the SFU room. Bail out cleanly with a toast instead
+      // of hanging. (LkTokenFetcher's public fetch() collapses the HTTP status
+      // to null, so we can't single out 403/409 here — any empty-token group
+      // accept is treated the same: don't hang.)
+      if (url.isNullOrEmpty() || token.isNullOrEmpty()) {
+        Log.w("IncomingCallActivity", "[#1359] group token unavailable (disbanded/403/409 or fetch fail) room=$id — aborting accept")
+        stopRinging()
+        CallNotificationService.cancelNotification(this, id)
+        stopRingingService()
+        try {
+          android.widget.Toast.makeText(
+            applicationContext,
+            "Grupo não disponível",
+            android.widget.Toast.LENGTH_LONG
+          ).show()
+        } catch (_: Throwable) {}
+        finishAcceptedRinger()
+        return
+      }
       try {
         val gIntent = Intent(this, GroupCallActivity::class.java).apply {
           addFlags(

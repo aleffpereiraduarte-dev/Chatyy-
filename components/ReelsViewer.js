@@ -1112,7 +1112,7 @@ const BoostToast = memo(function BoostToast({ visible }) {
 });
 
 // ── Single Reel Item ──
-const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, showLiveRing, overlayOpen, router, preload, screenFocused = true }) {
+const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, onLikeChange, showLiveRing, overlayOpen, router, preload, screenFocused = true }) {
   // Safe-area insets so the bottom info block (username/caption/music row)
   // doesn't sit on top of the iOS home indicator or Android gesture pill.
   const insets = useSafeAreaInsets();
@@ -1501,8 +1501,15 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     if (likeInFlightRef.current) return;
     likeInFlightRef.current = true;
     const wasLiked = liked;
-    setLiked(!wasLiked);
-    setLikeCount(prev => wasLiked ? Math.max(0, prev - 1) : prev + 1);
+    const nextLiked = !wasLiked;
+    // [#like-count-sync] Compute the optimistic count explicitly so we can both
+    // update local state AND lift it to the parent's reels map (so the like
+    // survives FlatList recycling — see handleReelLikeChange). Reading off
+    // `likeCount` here is safe: toggleLike is single-flighted by likeInFlightRef.
+    const optimisticCount = wasLiked ? Math.max(0, likeCount - 1) : likeCount + 1;
+    setLiked(nextLiked);
+    setLikeCount(optimisticCount);
+    try { onLikeChange?.(reel.id, nextLiked, optimisticCount); } catch {}
     // Scale-pop 1 → 1.4 → 1 spring (matches TikTok button feedback). Burst
     // particles + light haptic only when *becoming* liked, not on un-like.
     likeScale.setValue(1);
@@ -1517,11 +1524,15 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     try {
       const r = await api.feedLike(reel.id);
       if (r.success && r.data) {
-        if (r.data.liked !== undefined) setLiked(!!r.data.liked);
+        const finalLiked = r.data.liked !== undefined ? !!r.data.liked : nextLiked;
+        if (r.data.liked !== undefined) setLiked(finalLiked);
         // Backend returns the reconciled total as `likes_count`; older
         // servers used `like_count`. Read both so the count actually syncs.
         const serverCount = r.data.likes_count ?? r.data.like_count;
-        if (serverCount !== undefined) setLikeCount(Number(serverCount));
+        const finalCount = serverCount !== undefined ? Number(serverCount) : optimisticCount;
+        if (serverCount !== undefined) setLikeCount(finalCount);
+        // [#like-count-sync] Reconcile the parent map with the server truth.
+        try { onLikeChange?.(reel.id, finalLiked, finalCount); } catch {}
       }
     } catch {
       // Network error — keep the optimistic state and queue the toggle.
@@ -1533,12 +1544,14 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         await queueOfflineAction({ type: 'feed_like', params: { id: reel.id } });
       } catch {
         setLiked(wasLiked);
-        setLikeCount(prev => wasLiked ? prev + 1 : Math.max(0, prev - 1));
+        setLikeCount(likeCount);
+        // [#like-count-sync] Roll back the parent map too so it matches.
+        try { onLikeChange?.(reel.id, wasLiked, likeCount); } catch {}
       }
     } finally {
       likeInFlightRef.current = false;
     }
-  }, [liked, reel.id, likeScale]);
+  }, [liked, likeCount, reel.id, likeScale, onLikeChange]);
 
   const handleDoubleTap = useCallback(() => {
     const now = Date.now();
@@ -2482,6 +2495,14 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   const loadMore = useCallback(async () => {
     if (loadingMoreRef.current) return;
     const isFollowing = reelTab === 'following';
+    // [#tab-switch-fix] Guard against the empty-list transition: when the user
+    // flips tabs, activeReels momentarily becomes the other tab's array which
+    // may be empty for a frame. FlatList fires onEndReached on an empty list
+    // (offset 0 == "end"), which used to kick off a spurious page-2 fetch and
+    // double pagination. Bail when the active tab has no reels yet — loadReels
+    // owns the page-1 load.
+    const activeLen = isFollowing ? followingReels.length : reels.length;
+    if (activeLen === 0) return;
     const moreAvailable = isFollowing ? followingHasMore : hasMore;
     if (!moreAvailable) return;
     const nextPage = (isFollowing ? followingPage : page) + 1;
@@ -2524,7 +2545,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     } finally {
       loadingMoreRef.current = false;
     }
-  }, [reelTab, page, followingPage, hasMore, followingHasMore, soundIdProp]);
+  }, [reelTab, page, followingPage, hasMore, followingHasMore, soundIdProp, reels.length, followingReels.length]);
 
   const handleOpenComments = useCallback((reel) => {
     setCommentsReel(reel);
@@ -2547,6 +2568,21 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
       setFollowingReels(rs => rs.map(patch));
       return { ...prev, comment_count: newCount };
     });
+  }, []);
+
+  // [#like-count-sync] When a ReelItem toggles its like, patch the parent feed
+  // arrays so the optimistic like (user_liked + like_count) survives FlatList
+  // recycling. Without this, the ReelItem's own sync effect (keyed on
+  // reel.user_liked / reel.like_count) would reset the heart + count back to
+  // the stale prop the next time the row re-mounts or the prop object changes —
+  // i.e. swipe away and back and the like vanished. We patch BOTH arrays since
+  // the same reel can appear in For You and Following.
+  const handleReelLikeChange = useCallback((reelId, nextLiked, nextCount) => {
+    const patch = (p) => (p.id === reelId
+      ? { ...p, user_liked: nextLiked, like_count: nextCount }
+      : p);
+    setReels(rs => rs.map(patch));
+    setFollowingReels(rs => rs.map(patch));
   }, []);
 
   const onLayout = useCallback((e) => {
@@ -2575,14 +2611,36 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     }
   }, [currentIndex, activeReels]);
 
-  // Reset index when switching tabs
+  // Reset index when switching tabs.
+  // [#tab-switch-fix] Also clear the loadingMoreRef single-flight guard so the
+  // empty-list transition between tabs (activeReels momentarily swaps to the
+  // other tab's array) can't leave a stale in-flight flag that double-fires
+  // onEndReached. The currentIndex reset is *also* re-run via a useEffect keyed
+  // on reelTab below (after activeReels has actually swapped) to avoid the
+  // off-by-N where the FlatList paints the new tab's data against the old index.
   const handleTabChange = useCallback((tab) => {
     setReelTab(tab);
     setCurrentIndex(0);
+    loadingMoreRef.current = false;
     if (listRef.current) {
       try { listRef.current.scrollToOffset({ offset: 0, animated: false }); } catch {}
     }
   }, []);
+
+  // [#tab-switch-fix] currentIndex must snap back to 0 *after* activeReels has
+  // swapped to the newly-selected tab's array. Doing it only inside
+  // handleTabChange races the render: setReelTab queues a state change that
+  // swaps activeReels on the next render, but the FlatList briefly evaluated
+  // renderItem with the new data and the old currentIndex (off-by-N — wrong
+  // video flashed as "active"). Keying this on reelTab guarantees the reset
+  // lands in the same commit as the array swap. Also re-scrolls to top.
+  useEffect(() => {
+    setCurrentIndex(0);
+    loadingMoreRef.current = false;
+    if (listRef.current) {
+      try { listRef.current.scrollToOffset({ offset: 0, animated: false }); } catch {}
+    }
+  }, [reelTab]);
 
   const handleOpenProfile = useCallback((email, item) => {
     // If the parent wired onAvatarTap (ChatReelsTab does for live routing),
@@ -2676,13 +2734,14 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         onDuet={handleDuet}
         onStitch={handleStitch}
         onHidePost={handleHidePost}
+        onLikeChange={handleReelLikeChange}
         showLiveRing={!!showLiveRing}
         overlayOpen={overlayOpen}
         preload={isPreloadItem}
         screenFocused={playGate}
       />
     );
-  }, [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, showLiveRing, overlayOpen, playGate]);
+  }, [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, handleReelLikeChange, showLiveRing, overlayOpen, playGate]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 

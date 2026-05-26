@@ -1064,6 +1064,17 @@ export class BackupEngine {
     if (!isVideo && quality !== 'original' && !skipCompress) {
       // Android: BitmapFactory + inSampleSize in Kotlin — no main-thread JPEG
       // decode. iOS / web: keep expo-image-manipulator.
+      // [P1 OOM 2026-05-26] Compression of very large images (48MP HEIC,
+      // panoramas) can blow the native bitmap allocation and throw an
+      // out-of-memory error. Defensive contract for BOTH compress paths:
+      //   - On ANY failure we leave uploadUri/mimeType/uploadFilename at the
+      //     ORIGINAL values (never a half-written temp). The original upload
+      //     is bigger but correct — far better than a corrupt/partial JPEG or
+      //     a hard crash. We explicitly do NOT mutate uploadUri unless the
+      //     compressor returned a complete result.
+      //   - OOM is detected and logged distinctly so we can spot devices that
+      //     consistently can't compress and tune COMPRESS_MAX_WIDTH down.
+      const isOomErr = (e) => /out of memory|outofmemory|oom|java\.lang\.OutOfMemoryError|memory|alloc/i.test(e?.message || e?.toString?.() || '');
       if (USE_NATIVE_ANDROID && typeof uri === 'string') {
         try {
           const r = await _nativeMod().compressImage(
@@ -1071,6 +1082,8 @@ export class BackupEngine {
             COMPRESS_MAX_WIDTH,
             Math.round(COMPRESS_QUALITY * 100)
           );
+          // Only adopt the compressed output if it's COMPLETE (has a uri/path).
+          // A partial / falsy result keeps the original — no half-state.
           if (r && (r.uri || r.path)) {
             uploadUri = r.uri || ('file://' + r.path);
             mimeType = 'image/jpeg';
@@ -1079,7 +1092,10 @@ export class BackupEngine {
             }
           }
         } catch (e) {
-          console.warn('[Backup] native compressImage failed:', e?.message);
+          // Skip compression — upload the original. uploadUri is untouched.
+          const oom = isOomErr(e);
+          console.warn('[Backup] native compressImage failed' + (oom ? ' (OOM)' : '') + ':', e?.message);
+          api.apiCall('drive_backup_debug', { msg: oom ? 'compress_oom_skip' : 'compress_fail_skip', data: `native|${uploadFilename}|${e?.message || ''}` }, 'POST').catch(() => {});
         }
       } else if (ImageManipulator?.manipulateAsync) {
         try {
@@ -1088,13 +1104,21 @@ export class BackupEngine {
             [{ resize: { width: COMPRESS_MAX_WIDTH } }],
             { compress: COMPRESS_QUALITY, format: ImageManipulator.SaveFormat.JPEG }
           );
-          uploadUri = result.uri;
-          mimeType = 'image/jpeg';
-          if (!['jpg', 'jpeg'].includes(ext)) {
-            uploadFilename = uploadFilename.replace(/\.[^.]+$/, '.jpg');
+          // Only adopt if the manipulator returned a complete uri.
+          if (result?.uri) {
+            uploadUri = result.uri;
+            mimeType = 'image/jpeg';
+            if (!['jpg', 'jpeg'].includes(ext)) {
+              uploadFilename = uploadFilename.replace(/\.[^.]+$/, '.jpg');
+            }
           }
-        } catch {
-          // Use original on compression failure
+        } catch (e) {
+          // Skip compression on failure — upload the ORIGINAL (uploadUri is
+          // still the unmodified source). Never silently continue with a
+          // half-compressed temp.
+          const oom = isOomErr(e);
+          console.warn('[Backup] ImageManipulator failed' + (oom ? ' (OOM)' : '') + ':', e?.message);
+          api.apiCall('drive_backup_debug', { msg: oom ? 'compress_oom_skip' : 'compress_fail_skip', data: `manip|${uploadFilename}|${e?.message || ''}` }, 'POST').catch(() => {});
         }
       }
     }
@@ -1373,7 +1397,28 @@ export class BackupEngine {
       // For VIDEOS and big files (>15MB) use FS legacy uploadAsync (streams from disk, no memory blob).
       // For small PHOTOS use fetch (smaller, fast).
       const useStream = isVideo || (fileSize && fileSize > 15 * 1024 * 1024);
-      const streamTimeout = isVideo ? VIDEO_TIMEOUT_MS : UPLOAD_TIMEOUT_MS;
+      // [P1 resume 2026-05-26] S3 presigned PUT is all-or-nothing — there's no
+      // true byte-offset resume for the 2-30MB single-PUT path (only the >30MB
+      // multipart path resumes). On a weak network a single 60s timeout meant
+      // a 12MB photo at ~2 Mbps (≈48s, but with packet loss often 90s+) NEVER
+      // completed: every attempt timed out, the outer worker restarted from
+      // byte 0 with the SAME short timeout, and the item ping-ponged forever.
+      // Two-part mitigation here:
+      //   1. Scale the timeout to the file size (~1 minute per 2MB, floor 60s,
+      //      cap 8min) so a slow-but-progressing upload is given enough wall
+      //      time to actually finish instead of being killed mid-stream.
+      //   2. A bounded retry-FROM-START loop (3 tries) with backoff, so a
+      //      transient drop is retried in-place instead of bubbling all the way
+      //      out to the worker and competing with fresh items.
+      const sizeScaledTimeout = (() => {
+        if (isVideo) return VIDEO_TIMEOUT_MS;
+        const perMb = 30 * 1000; // 30s per MB of headroom on weak links
+        const mb = (fileSize || 0) / (1024 * 1024);
+        const scaled = Math.round(mb * perMb);
+        return Math.min(8 * 60 * 1000, Math.max(UPLOAD_TIMEOUT_MS, scaled));
+      })();
+      const streamTimeout = sizeScaledTimeout;
+      const MEDIUM_PUT_MAX_TRIES = isVideo ? 1 : 3;
       try {
         if (useStream) {
           const FSLegacy = require('expo-file-system/legacy');
@@ -1385,20 +1430,35 @@ export class BackupEngine {
           // the JS thread suspends). iOS: URLSession.background. Was previously
           // FOREGROUND which is why "o sistema de foto quando eu minimizo o app
           // ele para" — JS upload got cut every time user minimized.
-          const result = await withTimeout(
-            FSLegacy.uploadAsync(fullUploadUrl, uploadUri, {
-              httpMethod: 'PUT',
-              uploadType: FSLegacy.FileSystemUploadType.BINARY_CONTENT,
-              headers: uploadHeaders,
-              sessionType: FSLegacy.FileSystemSessionType.BACKGROUND,
-            }),
-            streamTimeout,
-            'fs_stream'
-          );
-          uploadOk = result.status >= 200 && result.status < 300;
-          if (!uploadOk) {
-            api.apiCall('drive_backup_debug', { msg: 'upload_http_err', data: `${result.status}|${item.filename}` }, 'POST').catch(() => {});
+          let lastErr = null;
+          for (let putTry = 1; putTry <= MEDIUM_PUT_MAX_TRIES && !uploadOk; putTry++) {
+            try {
+              const result = await withTimeout(
+                FSLegacy.uploadAsync(fullUploadUrl, uploadUri, {
+                  httpMethod: 'PUT',
+                  uploadType: FSLegacy.FileSystemUploadType.BINARY_CONTENT,
+                  headers: uploadHeaders,
+                  sessionType: FSLegacy.FileSystemSessionType.BACKGROUND,
+                }),
+                streamTimeout,
+                'fs_stream'
+              );
+              uploadOk = result.status >= 200 && result.status < 300;
+              if (!uploadOk) {
+                api.apiCall('drive_backup_debug', { msg: 'upload_http_err', data: `${result.status}|try${putTry}|${item.filename}` }, 'POST').catch(() => {});
+                // Non-2xx (e.g. expired presign, 4xx) won't fix on retry-from-
+                // start with the same URL — stop early.
+                break;
+              }
+            } catch (putErr) {
+              lastErr = putErr;
+              api.apiCall('drive_backup_debug', { msg: 'medium_put_retry', data: `try${putTry}/${MEDIUM_PUT_MAX_TRIES}|${putErr?.message || 'unknown'}|${item.filename}` }, 'POST').catch(() => {});
+              if (putTry < MEDIUM_PUT_MAX_TRIES) {
+                await new Promise(r => setTimeout(r, 1500 * putTry));
+              }
+            }
           }
+          if (!uploadOk && lastErr) throw lastErr;
         } else {
           const blobResp = await withTimeout(fetch(uploadUri), 30000, 'fetch_blob');
           const blob = await withTimeout(blobResp.blob(), 30000, 'blob_read');

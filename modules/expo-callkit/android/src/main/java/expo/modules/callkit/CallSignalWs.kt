@@ -218,6 +218,47 @@ object CallSignalWs {
             }
         }.toString()
         enqueueAndShip(context, payload)
+        // [P0 socket-leak fix 2026-05-26] Release the socket shortly after the
+        // call_end frame is shipped. Before this, fireCallEnd only enqueued the
+        // frame and left the WS open forever. On a rapid decline → re-invite
+        // sequence (user mashes the decline button, or callee declines then the
+        // caller retries seconds later) the stale socket lingered: the next
+        // connect() short-circuits on `connecting`/`authenticated`, OR a
+        // half-dead socket sits authenticating until AUTH_TIMEOUT_MS, looping
+        // close→reconnect→auth-timeout while the caller is stuck "Conectando".
+        // Scheduling a clean close after the flush window releases the socket;
+        // onClosed → onDisconnect → scheduleReconnect then re-establishes a
+        // FRESH socket only when actually needed (keepAlive callee path) so the
+        // normal in-call WS is never broken — the call is ending anyway.
+        scheduleSocketRelease()
+    }
+
+    /**
+     * [P0 socket-leak fix 2026-05-26] Schedule a clean close of the live socket
+     * ~500ms out so any just-enqueued call_end frame has drained to the wire
+     * first. Idempotent / best-effort: if the socket is already gone this is a
+     * no-op. The close routes through onClosed → onDisconnect (which nils
+     * wsRef + flips authenticated/connecting false), then scheduleReconnect()
+     * decides whether to come back (keepAlive callee) or stay down (caller with
+     * an empty queue). This is what stops the stale-socket auth-timeout loop.
+     */
+    private fun scheduleSocketRelease() {
+        scope.launch {
+            // Give drainQueue() time to flush the call_end frame to the socket.
+            delay(500L)
+            val ws = wsRef.get() ?: return@launch
+            // Initiate a clean close. We do NOT touch wsRef / authenticated /
+            // connecting here — the okhttp onClosed (or onFailure) callback
+            // runs onDisconnect() which flips that state + scheduleReconnect()
+            // decides whether to come back. Letting the listener own the state
+            // transition keeps a single source of truth and avoids racing a
+            // concurrent connect() that a fresh re-invite might have kicked off.
+            try {
+                ws.close(1000, "call_end_release")
+            } catch (t: Throwable) {
+                Log.w(TAG, "scheduleSocketRelease close threw: ${t.message}")
+            }
+        }
     }
 
     /**

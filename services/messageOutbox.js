@@ -67,6 +67,35 @@ export const MAX_ATTEMPTS = 7;
 const _subscribers = new Map(); // cmi → Set<fn>
 const _wildcardSubs = new Set();
 
+// States after which a per-cmi message can produce no further transitions.
+// 'removed' is emitted by remove(); 'read' is the end of the ✓✓-blue ladder;
+// 'failed' is the permanent-fail surface (the user must explicitly requeue(),
+// which re-emits 'queued' and re-arms the listeners). Once we hit one of
+// these we schedule a prune of that cmi's listener Set so a screen that
+// forgot to call its unsubscribe (unmounted without cleanup) doesn't leak a
+// dead closure for the lifetime of the process.
+const _TERMINAL_STATES = new Set(['read', 'failed', 'removed']);
+// Hard cap so a pathological caller that subscribes thousands of distinct
+// CMIs without ever unsubscribing can't grow _subscribers unbounded. When we
+// exceed the cap we drop the listener Sets whose cmi is already in a terminal
+// state in the DB-independent fast path (we only have the last snapshot, so
+// we prune lazily on notify below instead of scanning here).
+const _MAX_TRACKED_CMI = 2000;
+
+function _scheduleTerminalPrune(cmi) {
+  // Defer one tick so the terminal snapshot is delivered to every current
+  // listener before we drop them. requeue() resurrects the row (re-emits a
+  // non-terminal state) and any live subscriber simply re-subscribes.
+  try {
+    setTimeout(() => {
+      const set = _subscribers.get(cmi);
+      if (set) _subscribers.delete(cmi);
+    }, 0);
+  } catch {
+    _subscribers.delete(cmi);
+  }
+}
+
 function _notify(cmi, snapshot) {
   if (cmi) {
     const set = _subscribers.get(cmi);
@@ -75,17 +104,41 @@ function _notify(cmi, snapshot) {
         try { fn(snapshot); } catch {}
       }
     }
+    // Prune listeners for terminal-state messages so we don't leak closures
+    // when a UI component unmounts without invoking its unsubscribe fn.
+    if (snapshot && _TERMINAL_STATES.has(snapshot.state)) {
+      _scheduleTerminalPrune(cmi);
+    }
   }
   for (const fn of _wildcardSubs) {
     try { fn(snapshot); } catch {}
   }
 }
 
+/**
+ * Subscribe to state transitions for a single client_message_id (or '*' /
+ * null for the wildcard bus that fires on EVERY transition).
+ *
+ * CONTRACT: the returned unsubscribe fn MUST be called when the consumer goes
+ * away (e.g. React useEffect cleanup) — failing to do so leaks the closure.
+ * As a safety net, per-cmi listeners are auto-pruned once the message reaches
+ * a terminal state (read / failed / removed); wildcard listeners are NEVER
+ * auto-pruned (they're long-lived by design) so those callers must always
+ * clean up explicitly.
+ */
 export function subscribe(cmi, fn) {
   if (typeof fn !== 'function') return () => {};
   if (cmi === '*' || cmi == null) {
     _wildcardSubs.add(fn);
     return () => _wildcardSubs.delete(fn);
+  }
+  // Stale-listener cap: if we're tracking an absurd number of distinct CMIs,
+  // something upstream isn't cleaning up. Drop the oldest tracked Set (Map
+  // preserves insertion order) to bound memory; its listeners were almost
+  // certainly already terminal.
+  if (_subscribers.size >= _MAX_TRACKED_CMI) {
+    const oldest = _subscribers.keys().next().value;
+    if (oldest != null && oldest !== cmi) _subscribers.delete(oldest);
   }
   let set = _subscribers.get(cmi);
   if (!set) { set = new Set(); _subscribers.set(cmi, set); }
@@ -190,37 +243,89 @@ export async function enqueue(payload) {
   const cmi = String(payload.client_message_id);
   const conv = Number(payload.conversation_id);
   const now = Date.now();
+  const payloadJson = JSON.stringify(payload);
   try {
-    // Idempotency check first.
-    const existing = await db.getFirstAsync(
-      'SELECT id, seq, state FROM outbox WHERE client_message_id = ?',
-      cmi
-    );
-    if (existing) {
-      _notify(cmi, await getStatus(cmi));
-      return { id: existing.id, seq: existing.seq, state: existing.state, existed: true };
+    // Atomicity: two enqueue() calls racing on the same client_message_id (or
+    // two messages in the same conversation racing the seq calc) used to do a
+    // non-transactional SELECT-then-INSERT — both could read "no existing row"
+    // and both compute the same MAX(seq)+1, producing a double-insert (caught
+    // only by the UNIQUE constraint, the loser silently lost) or two rows
+    // sharing a seq (FIFO ordering corrupted). Wrap the check + seq + INSERT in
+    // a single SQLite transaction so the read and write are atomic. Use
+    // INSERT OR IGNORE so a concurrent transaction that already inserted the
+    // same CMI doesn't blow up — we detect the no-op (changes===0) and fall
+    // through to returning the existing row.
+    let result = null;
+    if (typeof db.withTransactionAsync === 'function') {
+      await db.withTransactionAsync(async () => {
+        const existing = await db.getFirstAsync(
+          'SELECT id, seq, state FROM outbox WHERE client_message_id = ?',
+          cmi
+        );
+        if (existing) {
+          result = { id: existing.id, seq: existing.seq, state: existing.state, existed: true };
+          return;
+        }
+        const seqRow = await db.getFirstAsync(
+          'SELECT MAX(seq) AS m FROM outbox WHERE conversation_id = ?',
+          conv
+        );
+        const seq = ((seqRow && (seqRow.m ?? seqRow['m'])) | 0) + 1;
+        const res = await db.runAsync(
+          `INSERT OR IGNORE INTO outbox
+            (client_message_id, conversation_id, payload, state, attempts,
+             next_retry_at, seq, created_at, updated_at)
+           VALUES (?, ?, ?, 'queued', 0, 0, ?, ?, ?)`,
+          cmi, conv, payloadJson, seq, now, now,
+        );
+        if ((res?.changes ?? 0) === 0) {
+          // A concurrent transaction won the race — re-read the winner's row.
+          const winner = await db.getFirstAsync(
+            'SELECT id, seq, state FROM outbox WHERE client_message_id = ?',
+            cmi
+          );
+          result = winner
+            ? { id: winner.id, seq: winner.seq, state: winner.state, existed: true }
+            : null;
+          return;
+        }
+        result = { id: res?.lastInsertRowId || null, seq, state: 'queued', _inserted: true };
+      });
+    } else {
+      // Fallback for SQLite shims without withTransactionAsync: atomic
+      // INSERT OR IGNORE guards against the double-insert, then we read back
+      // the canonical row (whether ours or a racer's).
+      const seqRow = await db.getFirstAsync(
+        'SELECT MAX(seq) AS m FROM outbox WHERE conversation_id = ?',
+        conv
+      );
+      const seq = ((seqRow && (seqRow.m ?? seqRow['m'])) | 0) + 1;
+      const res = await db.runAsync(
+        `INSERT OR IGNORE INTO outbox
+          (client_message_id, conversation_id, payload, state, attempts,
+           next_retry_at, seq, created_at, updated_at)
+         VALUES (?, ?, ?, 'queued', 0, 0, ?, ?, ?)`,
+        cmi, conv, payloadJson, seq, now, now,
+      );
+      if ((res?.changes ?? 0) === 0) {
+        const existing = await db.getFirstAsync(
+          'SELECT id, seq, state FROM outbox WHERE client_message_id = ?',
+          cmi
+        );
+        result = existing
+          ? { id: existing.id, seq: existing.seq, state: existing.state, existed: true }
+          : null;
+      } else {
+        result = { id: res?.lastInsertRowId || null, seq, state: 'queued', _inserted: true };
+      }
     }
-    // seq = max(seq) + 1 for the conversation.
-    const seqRow = await db.getFirstAsync(
-      'SELECT MAX(seq) AS m FROM outbox WHERE conversation_id = ?',
-      conv
-    );
-    const seq = ((seqRow && (seqRow.m ?? seqRow['m'])) | 0) + 1;
-    const res = await db.runAsync(
-      `INSERT INTO outbox
-        (client_message_id, conversation_id, payload, state, attempts,
-         next_retry_at, seq, created_at, updated_at)
-       VALUES (?, ?, ?, 'queued', 0, 0, ?, ?, ?)`,
-      cmi,
-      conv,
-      JSON.stringify(payload),
-      seq,
-      now,
-      now,
-    );
-    const id = res?.lastInsertRowId || null;
-    _notify(cmi, { client_message_id: cmi, state: 'queued', attempts: 0, conversation_id: conv, seq });
-    return { id, seq, state: 'queued' };
+    if (!result) return null;
+    if (result.existed) {
+      _notify(cmi, await getStatus(cmi));
+      return { id: result.id, seq: result.seq, state: result.state, existed: true };
+    }
+    _notify(cmi, { client_message_id: cmi, state: 'queued', attempts: 0, conversation_id: conv, seq: result.seq });
+    return { id: result.id, seq: result.seq, state: 'queued' };
   } catch (e) {
     try { console.warn('[messageOutbox] enqueue:', e?.message); } catch {}
     return null;

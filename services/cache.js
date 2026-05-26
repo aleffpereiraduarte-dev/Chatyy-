@@ -153,6 +153,20 @@ export async function clearCache(key) {
 }
 
 /**
+ * Invalidate a cached key SYNCHRONOUSLY (memory + MMKV). Use after a write
+ * (profile edit, avatar change, etc.) so the next read misses the stale
+ * entry instead of serving it for the rest of its TTL. Same effect as
+ * clearCache() but exposed under the name callers expect and safe to call
+ * without awaiting. Returns nothing.
+ */
+export function invalidate(key) {
+  if (!key) return;
+  const fullKey = _getPrefix() + key;
+  _memCache.delete(fullKey);
+  try { remove(fullKey); } catch {}
+}
+
+/**
  * Clear ALL chatyy cache entries (all users).
  */
 export async function clearAll() {

@@ -60,6 +60,20 @@ export function lockCacheScope(ms = 300) {
 export function unlockCacheScope() { _scopeLockedUntil = 0; }
 export function isCacheScopeLocked() { return Date.now() < _scopeLockedUntil; }
 
+// ─── Clear-in-flight gate (race-proof account switch) ───────────────────────
+// The time-based scope lock above is a best-effort window, but it can EXPIRE
+// mid-mount while clearChatCache() is still draining SQLite/IndexedDB — the
+// getter then unblocks and serves the previous account's rows (old-account
+// flash / blank). To close that race we also track the clearChatCache()
+// promise itself: readers await the in-flight clear (if any) before touching
+// storage, so they never read between "lock expired" and "clear finished".
+let _clearInFlight = null;
+async function _awaitClearGate() {
+  if (_clearInFlight) {
+    try { await _clearInFlight; } catch {}
+  }
+}
+
 // ─── Real MMKV fast-path (react-native-mmkv, if installed) ──────────────────
 // Provides synchronous <0.5ms reads — eliminates the async gap on initial render.
 // Falls back to the existing AsyncStorage-backed mmkv.js shim transparently.
@@ -267,6 +281,11 @@ export async function getCachedMessages(conversationId, limit = 50) {
   // scope is locked — otherwise the previous user's messages flash on the
   // new user's screen during the ~500ms clear race.
   if (isCacheScopeLocked()) return [];
+  // Race-proofing: even if the time lock just expired, a clearChatCache() may
+  // still be draining storage. Await it so we never read between
+  // "lock expired" and "clear finished" (would surface old-account rows).
+  await _awaitClearGate();
+  if (isCacheScopeLocked()) return [];
   // Try SQLite first (native) — wait up to 300ms for DB
   if (isNative) {
     if (!isDbReady()) {
@@ -394,6 +413,9 @@ function _hydrateList(list) {
 export async function getCachedConversations() {
   // Same account-switch gate as getCachedMessages — see lockCacheScope().
   if (isCacheScopeLocked()) return [];
+  // Wait out any in-flight clearChatCache() so we don't read mid-drain.
+  await _awaitClearGate();
+  if (isCacheScopeLocked()) return [];
   // Try SQLite first (native) — wait up to 500ms for DB to be ready
   if (isNative) {
     if (!isDbReady()) {
@@ -421,6 +443,65 @@ export async function getCachedConversations() {
     const raw = getString('chat_conversations');
     return _hydrateList(raw ? JSON.parse(raw) : []);
   } catch { return []; }
+}
+
+// Remove a single conversation from the chat-list cache across every tier.
+// Called when the server reports a conversation as not_found (deleted on
+// another device / purged) so a stale unread badge for a dead conversation
+// clears instead of lingering forever. Best-effort + never throws — the
+// offline-queue replay calls this opportunistically.
+export async function removeConversationFromCache(conversationId) {
+  if (conversationId == null) return;
+  const cid = conversationId;
+  const sameId = (c) => c && (c.id === cid || String(c.id) === String(cid));
+  // SQLite-backed conversation list (native).
+  if (isNative && isDbReady()) {
+    try {
+      const convs = await dbGetConversations();
+      const next = (convs || []).filter(c => !sameId(c));
+      if (next.length !== (convs || []).length) {
+        try { await dbSaveConversations(next); } catch {}
+      }
+    } catch {}
+  }
+  // MMKV synchronous mirror.
+  try {
+    const raw = getString('chat_conversations');
+    if (raw) {
+      const list = JSON.parse(raw);
+      if (Array.isArray(list)) {
+        const next = list.filter(c => !sameId(c));
+        if (next.length !== list.length) setString('chat_conversations', JSON.stringify(next));
+      }
+    }
+  } catch {}
+  // Drop any cached messages + pending for that conversation too.
+  try { _hotCache.delete(`chat_msgs_${cid}`); } catch {}
+  try { _kvRemove(`chat_msgs_${cid}`); } catch {}
+  try { await clearPendingMessages(cid); } catch {}
+  // Web: IndexedDB + localStorage scoped mirror.
+  if (Platform.OS === 'web') {
+    try {
+      const { webGetConversations, webSaveConversations } = require('./localDb');
+      const idb = await webGetConversations();
+      if (Array.isArray(idb)) {
+        const next = idb.filter(c => !sameId(c));
+        if (next.length !== idb.length) { try { webSaveConversations(next); } catch {} }
+      }
+    } catch {}
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const raw = localStorage.getItem(_scopedConvsKey());
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            const next = list.filter(c => !sameId(c));
+            if (next.length !== list.length) localStorage.setItem(_scopedConvsKey(), JSON.stringify(next));
+          }
+        }
+      }
+    } catch {}
+  }
 }
 
 // Delete a single message from cache
@@ -455,39 +536,55 @@ export async function updateCachedMessage(conversationId, messageId, updates) {
 
 // Clear all chat cache
 export async function clearChatCache() {
-  // Tier-0 first — drop pending debounced writes + hot memory so the
-  // next reader doesn't hit stale data if logout/switch races with a
-  // pending flush.
-  for (const handle of _pendingWrites.values()) clearTimeout(handle);
-  _pendingWrites.clear();
-  _hotCache.clear();
-  // Also flush SmartCache's in-memory authoritative state. Without this the
-  // synchronous Sync getters (getCachedMessagesSync / getCachedConversationsSync)
-  // would still serve the previous account's data on the very next render,
-  // because clearChatCache here was only wiping our own tier-0 + MMKV.
-  try {
-    const SmartCache = require('./smartChatCache');
-    SmartCache.clearChatCache?.();
-  } catch {}
-  try {
-    const keys = _kvGetAllKeys().filter(k => k.startsWith('chat_'));
-    keys.forEach(k => _kvRemove(k));
-  } catch {}
-  // Web: also clear the IndexedDB + localStorage mirror so the next user
-  // doesn't momentarily see the previous user's conversations.
-  if (Platform.OS === 'web') {
-    try { const { webClearAll } = require('./localDb'); webClearAll(); } catch {}
+  // Publish the in-flight clear promise so concurrent readers
+  // (getCachedMessages / getCachedConversations) can await it and never read
+  // storage mid-clear (the time-based scope lock can expire before this
+  // finishes). Reentrancy: if a clear is already running, chain onto it so a
+  // second switch doesn't unblock readers early.
+  const run = (async () => {
+    try { if (_clearInFlight) { try { await _clearInFlight; } catch {} } } catch {}
+    // Tier-0 first — drop pending debounced writes + hot memory so the
+    // next reader doesn't hit stale data if logout/switch races with a
+    // pending flush.
+    for (const handle of _pendingWrites.values()) clearTimeout(handle);
+    _pendingWrites.clear();
+    _hotCache.clear();
+    // Also flush SmartCache's in-memory authoritative state. Without this the
+    // synchronous Sync getters (getCachedMessagesSync / getCachedConversationsSync)
+    // would still serve the previous account's data on the very next render,
+    // because clearChatCache here was only wiping our own tier-0 + MMKV.
     try {
-      if (typeof localStorage !== 'undefined') {
-        // Drop both the new scoped key for the active user and the legacy
-        // unscoped key (still around on devices that haven't written since
-        // the scoping landed). Belt-and-suspenders during the transition.
-        localStorage.removeItem(_scopedConvsKey());
-        localStorage.removeItem('chatyy_convs_v1');
-      }
+      const SmartCache = require('./smartChatCache');
+      SmartCache.clearChatCache?.();
     } catch {}
+    try {
+      const keys = _kvGetAllKeys().filter(k => k.startsWith('chat_'));
+      keys.forEach(k => _kvRemove(k));
+    } catch {}
+    // Web: also clear the IndexedDB + localStorage mirror so the next user
+    // doesn't momentarily see the previous user's conversations.
+    if (Platform.OS === 'web') {
+      try { const { webClearAll } = require('./localDb'); await webClearAll(); } catch {}
+      try {
+        if (typeof localStorage !== 'undefined') {
+          // Drop both the new scoped key for the active user and the legacy
+          // unscoped key (still around on devices that haven't written since
+          // the scoping landed). Belt-and-suspenders during the transition.
+          localStorage.removeItem(_scopedConvsKey());
+          localStorage.removeItem('chatyy_convs_v1');
+        }
+      } catch {}
+    }
+    // SQLite cleared separately via dbClearAll()
+  })();
+  _clearInFlight = run;
+  try {
+    await run;
+  } finally {
+    // Only clear the handle if it's still ours (a newer clear may have
+    // chained on and replaced it).
+    if (_clearInFlight === run) _clearInFlight = null;
   }
-  // SQLite cleared separately via dbClearAll()
 }
 
 // --- Pending (unsent) message persistence ---
@@ -558,18 +655,31 @@ export async function removePendingMessage(conversationId, tempId) {
 
 // Clear ALL pending messages for a conversation (called when server confirms messages loaded)
 export async function clearPendingMessages(conversationId) {
-  // Clear from SQLite
+  const key = `chat_pending_${conversationId}`;
+  // Atomicity across all 3 tiers (SQLite + MMKV + hotCache). Order matters:
+  //   1. Cancel any pending debounced write FIRST — otherwise a timer queued
+  //      by savePendingMessage could fire AFTER we clear and re-serialize the
+  //      ghost list straight back into MMKV (resurrecting a "sent" message).
+  //   2. Drop the hot-cache copy (sync, in-memory authoritative).
+  //   3. Wipe both KV backends — use _kvRemove so the REAL react-native-mmkv
+  //      instance is cleared (plain `remove` only touched the AsyncStorage
+  //      shim, leaving the pending key alive on devices with the native pod).
+  //   4. Clear SQLite last — it's the slowest tier; doing it after the
+  //      in-memory + KV wipe means a crash mid-call can't leave a state where
+  //      memory says "empty" but a reload pulls the row back from MMKV.
+  try {
+    const t = _pendingWrites.get(key);
+    if (t) { clearTimeout(t); _pendingWrites.delete(key); }
+  } catch {}
+  try { _hotCache.delete(key); } catch {}
+  try { _kvRemove(key); } catch {}
+  try { remove(key); } catch {} // belt-and-suspenders: also clear the shim key
   if (isNative && isDbReady()) {
     try {
       const pending = await dbGetPending(conversationId);
       for (const p of pending) { try { await dbRemovePending(p.temp_id); } catch {} }
     } catch {}
   }
-  // Clear from MMKV + hot cache. Antes só limpava MMKV — o _hotCache
-  // ficava com a lista pendente "fantasma" até o app reiniciar.
-  const key = `chat_pending_${conversationId}`;
-  try { remove(key); } catch {}
-  try { _hotCache.delete(key); } catch {}
 }
 
 export async function getAllPendingMessages() {

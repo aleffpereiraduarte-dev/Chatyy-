@@ -369,6 +369,24 @@ export async function initDatabase() {
       }
     }
 
+    // Read watermark per conversation. The chat-list / open-thread paths
+    // advance this as the local "highest message id the user has read" so a
+    // cold start can hide already-read unread dots without a server round
+    // trip. Added idempotently — older installs created `conversations`
+    // without the column. dbUpdateConversationLastReadMessageId() writes it.
+    const CONV_ADDITIVE_COLUMNS = [
+      "ALTER TABLE conversations ADD COLUMN last_read_message_id INTEGER DEFAULT 0",
+    ];
+    for (const sql of CONV_ADDITIVE_COLUMNS) {
+      try { await _db.execAsync(sql); }
+      catch (e) {
+        const msg = String(e?.message || '');
+        if (!/duplicate column/i.test(msg)) {
+          console.warn('[DB] conversations migration failed:', sql, msg);
+        }
+      }
+    }
+
     // ── Self-check: blow up loud if schema is still missing required cols ──
     // This is the diagnostic that would have caught the localDb/db.js race
     // immediately instead of letting it bleed messages for days.
@@ -507,6 +525,36 @@ export async function dbGetConversations(includeArchived = false) {
     `SELECT raw_json FROM conversations ${where} ORDER BY pinned DESC, last_message_time DESC LIMIT 200`
   );
   return rows.map(r => { try { return JSON.parse(r.raw_json); } catch { return null; } }).filter(Boolean);
+}
+
+/**
+ * [P1] Advance the per-conversation read watermark. Sets
+ * conversations.last_read_message_id to `messageId` ONLY when it moves the
+ * watermark FORWARD (new id >= current) so an out-of-order / stale ack can't
+ * drag it backward and resurrect already-read unread dots. No-op when the
+ * conversation row doesn't exist yet or the args are invalid.
+ *
+ * Called by the api.js delivery/read path; fire-and-forget on the caller's
+ * side, so we swallow errors (logged in __DEV__) rather than throwing.
+ */
+export async function dbUpdateConversationLastReadMessageId(conversationId, messageId) {
+  if (isWeb || !_db) return;
+  const convId = Number(conversationId);
+  const msgId = Number(messageId);
+  if (!Number.isFinite(convId) || !Number.isFinite(msgId) || msgId <= 0) return;
+  try {
+    // The guard is in the WHERE clause so the watermark only advances — an
+    // older/equal id leaves the row untouched (changes === 0). COALESCE keeps
+    // a NULL column (pre-migration row) behaving like 0.
+    await _db.runAsync(
+      `UPDATE conversations
+         SET last_read_message_id = ?
+       WHERE id = ? AND ? >= COALESCE(last_read_message_id, 0)`,
+      [msgId, convId, msgId]
+    );
+  } catch (e) {
+    if (__DEV__) console.warn('[db] dbUpdateConversationLastReadMessageId failed:', e?.message || e);
+  }
 }
 
 // ══════════════════════════════════════
@@ -740,7 +788,10 @@ const _ALLOWED_FIELD_UPDATES = new Set([
 ]);
 export async function dbUpdateMessageFields(conversationId, messageId, fields) {
   if (isWeb || !_db) return;
-  if (!fields || typeof fields !== 'object') return;
+  // [P1] Strict null/empty guard up top — a null/non-object/empty `fields`
+  // arg must never reach the query (otherwise media local_path write-backs
+  // could throw on Object.entries(null) and silently fail).
+  if (!fields || typeof fields !== 'object' || Object.keys(fields).length === 0) return;
   const entries = Object.entries(fields).filter(([k]) => _ALLOWED_FIELD_UPDATES.has(k));
   if (entries.length === 0) return;
   try {

@@ -843,30 +843,51 @@ export default function LoginScreen() {
             clearInterval(challengePollRef.current);
             challengePollRef.current = null;
             setVerificationStep('approved');
-            // Complete login with received data
-            if (r.data.token) {
-              completeLoginAfterChallenge(r.data);
-              // Save biometric creds
-              if (Platform.OS !== 'web') {
-                try {
-                  const tok = r.data?.token || api.getToken?.();
-                  await SecureStore.setItemAsync('bio_email', chEmail);
-                  if (tok) {
-                    await SecureStore.setItemAsync('bio_token', tok);
-                    // P1: per-account twin (`bio_token:<email>`).
-                    try {
-                      const { bioTokenKeyFor } = require('../context/BiometricContext');
-                      const k = bioTokenKeyFor(chEmail);
-                      if (k) await SecureStore.setItemAsync(k, tok);
-                    } catch {}
-                  }
-                  await SecureStore.deleteItemAsync('bio_password').catch(() => {});
-                } catch {}
-              }
-              setTimeout(() => {
-                if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount(), chEmail);
-              }, 800);
+            // Complete login with received data. GUARD: only proceed when the
+            // approval carries a real, NON-EMPTY STRING bearer. A truthy-but-
+            // non-string token (object/number) or an empty string would have
+            // slipped through the old `if (r.data.token)` check and produced
+            // a ghost "logged-in" session whose every API call 401s. On a bad
+            // token, surface an error and let the user retry instead of
+            // navigating into a dead session.
+            const challengeToken =
+              r.data && typeof r.data.token === 'string' ? r.data.token.trim() : '';
+            if (!challengeToken) {
+              setVerificationStep(null);
+              setError(t('login.errorConnection') || 'Não foi possível concluir o login. Tente novamente.');
+              shake();
+              return;
             }
+            // completeLoginAfterChallenge returns {success,data}; only persist
+            // biometric creds + navigate when it actually completed.
+            const cr = await completeLoginAfterChallenge(r.data);
+            if (!mountedRef.current) return;
+            if (!cr || cr.success === false) {
+              setVerificationStep(null);
+              setError(cr?.message || t('login.errorConnection') || 'Não foi possível concluir o login.');
+              shake();
+              return;
+            }
+            // Save biometric creds
+            if (Platform.OS !== 'web') {
+              try {
+                const tok = challengeToken || api.getToken?.();
+                await SecureStore.setItemAsync('bio_email', chEmail);
+                if (tok) {
+                  await SecureStore.setItemAsync('bio_token', tok);
+                  // P1: per-account twin (`bio_token:<email>`).
+                  try {
+                    const { bioTokenKeyFor } = require('../context/BiometricContext');
+                    const k = bioTokenKeyFor(chEmail);
+                    if (k) await SecureStore.setItemAsync(k, tok);
+                  } catch {}
+                }
+                await SecureStore.deleteItemAsync('bio_password').catch(() => {});
+              } catch {}
+            }
+            setTimeout(() => {
+              if (mountedRef.current) maybePromptRestoreThenGo(isChildAccount(), chEmail);
+            }, 800);
           } else if (r.data.status === 'denied') {
             clearInterval(challengePollRef.current);
             challengePollRef.current = null;
