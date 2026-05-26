@@ -327,16 +327,21 @@ export async function registerOwnPhone(phone) {
  */
 function normalizePhone(phone) {
   if (!phone || typeof phone !== 'string') return '';
-  // Strip everything that isn't a digit
+  // Mirror the backend's check_contacts $normalizePhone EXACTLY
+  // (email.php ~6378) so client- and server-side normalization produce the
+  // same key for the same number — otherwise discovery silently misses.
+  // Backend rule, in order:
+  //   1. strip non-digits
+  //   2. drop '55' iff len >= 12 && starts with '55'  (Brazil DDI)
+  //   3. drop '1'  iff len === 11 && starts with '1'   (US/CA DDI)
+  // NOTE: the backend does NOT strip leading zeros — doing so here (as a
+  // prior version did) changed the length the >=12/===11 checks see and
+  // produced hashes the server never matched. Removed to stay in lockstep.
   let cleaned = phone.replace(/\D/g, '');
-  // Remove leading zeros
-  cleaned = cleaned.replace(/^0+/, '');
-  // Remove leading country code 55 (Brazil) if number is long enough
-  if (cleaned.startsWith('55') && cleaned.length >= 12) {
+  if (cleaned.length >= 12 && cleaned.startsWith('55')) {
     cleaned = cleaned.slice(2);
   }
-  // Remove leading country code 1 (US/CA) if number is 11 digits
-  if (cleaned.startsWith('1') && cleaned.length === 11) {
+  if (cleaned.length === 11 && cleaned.startsWith('1')) {
     cleaned = cleaned.slice(1);
   }
   return cleaned;

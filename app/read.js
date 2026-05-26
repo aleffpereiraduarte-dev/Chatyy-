@@ -150,7 +150,26 @@ export default function ReadScreen() {
           import('../services/pushNotifications').then(m => m.refreshBadgeCount?.()).catch(() => {});
         }
       }
-      setThread(threadResult?.success && threadResult.data?.length > 1 ? threadResult.data : null);
+      if (threadResult?.success && threadResult.data?.length > 1) {
+        // ThreadView derives its header subject from thread[0].subject. Some
+        // thread payloads carry only per-message bodies without the root
+        // subject/sender, leaving the thread header blank. Backfill from the
+        // loaded message (msgResult.data) so the header is never empty.
+        const rootSubject = msgResult?.data?.subject;
+        const rootFrom = msgResult?.data?.from;
+        const normalized = threadResult.data.map((m, i) =>
+          i === 0
+            ? {
+                ...m,
+                subject: m?.subject || rootSubject || '',
+                from: m?.from || rootFrom || '',
+              }
+            : m
+        );
+        setThread(normalized);
+      } else {
+        setThread(null);
+      }
     }).finally(() => { if (!cancelled) setLoading(false); });
 
     return () => { cancelled = true; };
@@ -436,6 +455,7 @@ export default function ReadScreen() {
         {followupChip}
         <ThreadView
           thread={thread}
+          email={email}
           onReply={handleReply}
           onReplyAll={handleReplyAll}
           onForward={handleForward}

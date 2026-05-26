@@ -144,10 +144,15 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
           if (b > a) duration = Math.max(15, Math.round((b - a) / 60000));
         }
       } catch {}
+      // Send the device's IANA timezone so suggested slots come back in the
+      // user's local wall clock instead of UTC-shifted. Backend may ignore it.
+      let timezone;
+      try { timezone = Intl.DateTimeFormat().resolvedOptions().timeZone; } catch {}
       const r = await api.apiCall('event_find_free_time', {
         attendees,
         duration_minutes: duration,
         preferred_window: 'business_hours',
+        timezone,
       }, 'POST');
       if (r?.success && Array.isArray(r?.data?.slots)) {
         setFreeSlots(r.data.slots);
@@ -204,11 +209,22 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
       safeAlert(t('common.error'), t('eventDetail.titleRequired'));
       return;
     }
+    const startAt = allDay ? `${startDate}T00:00:00` : `${startDate}T${startTime}:00`;
+    const endAt = allDay ? `${endDate}T23:59:59` : `${endDate}T${endTime}:00`;
+    // Reject inverted ranges (end before start) before hitting the backend —
+    // otherwise the event saves with a negative duration and renders oddly.
+    const _startMs = new Date(startAt).getTime();
+    const _endMs = new Date(endAt).getTime();
+    if (Number.isFinite(_startMs) && Number.isFinite(_endMs) && _endMs < _startMs) {
+      safeAlert(
+        t('common.error'),
+        t('eventDetail.endBeforeStart') || 'Horário final deve ser depois do início'
+      );
+      return;
+    }
     setSaving(true);
     setSaveSuccess(false);
     try {
-      const startAt = allDay ? `${startDate}T00:00:00` : `${startDate}T${startTime}:00`;
-      const endAt = allDay ? `${endDate}T23:59:59` : `${endDate}T${endTime}:00`;
       const attendees = attendeesText.split(',').map(e => e.trim()).filter(Boolean).map(e => ({ email: e }));
       await onSave({
         title: title.trim(),
@@ -1014,12 +1030,12 @@ function EventDetailScreenInner() {
             <View style={styles.attendeeRow}>
               <View style={[styles.attendeeAvatar, { backgroundColor: eventColor }]}>
                 <Text style={styles.attendeeAvatarText}>
-                  {(event.creator_name || event.created_by || event.creator_email || '?')[0].toUpperCase()}
+                  {((event.creator_name || '').trim() || event.created_by || event.creator_email || '?')[0].toUpperCase()}
                 </Text>
               </View>
               <View style={styles.attendeeInfo}>
                 <Text style={[styles.attendeeName, { color: colors.text }]}>
-                  {event.creator_name || event.created_by || event.creator_email}
+                  {(event.creator_name || '').trim() || event.created_by || event.creator_email || '?'}
                 </Text>
                 <Text style={[styles.attendeeEmail, { color: colors.textSecondary }]}>
                   {event.created_by || event.creator_email}

@@ -185,6 +185,10 @@ export function MailProvider({ children }) {
 
   // Track recently-read UIDs to prevent seen state from reverting (IMAP flag lag)
   const recentlyReadRef = useRef(new Set());
+  // Tracks the folder+query of the last loadEmails call so we can force page 1
+  // when either changes (prevents requesting a non-existent page after a
+  // folder/search switch). Seeded to the initial folder.
+  const loadEmailsCtxRef = useRef({ folder: 'INBOX', query: '' });
   const [recentlyReadLoaded, setRecentlyReadLoaded] = useState(false);
 
   // Load persisted recently-read UIDs on mount (survives app restart)
@@ -250,6 +254,18 @@ export function MailProvider({ children }) {
 
   const loadEmails = useCallback(async (folder, pg = 1, q = '', category = '', label = '', silent = false) => {
     const f = folder || currentFolder;
+
+    // Pagination reset guard: if the folder or the search query differs from
+    // the previous loadEmails call, force page 1. Otherwise switching from a
+    // large folder (where the user scrolled to page 5) into a smaller folder —
+    // or starting/clearing a search — would request a non-existent page and
+    // come back empty. (loadMore is the only legit path that keeps pg > 1, and
+    // it always targets the same folder+query, so it's unaffected.)
+    if (pg > 1 && (f !== loadEmailsCtxRef.current.folder || q !== loadEmailsCtxRef.current.query)) {
+      pg = 1;
+      setPage(1);
+    }
+    loadEmailsCtxRef.current = { folder: f, query: q };
 
     // Show cached data INSTANTLY on non-silent first-page loads (no spinner if cache exists)
     if (!silent && pg === 1 && !q && !category && !label) {
@@ -410,7 +426,25 @@ export function MailProvider({ children }) {
     // Call the server — await so it completes before app might close
     try {
       const r = await api.markRead(uid, targetFolder);
-      if (!r?.success) console.warn('markRead failed for uid', uid, r?.message);
+      if (!r?.success) {
+        console.warn('markRead failed for uid', uid, r?.message);
+        // Backend rejected the flag-set. Revert the optimistic seen=true and
+        // the folder badge decrement, otherwise the unread "bounces back" on
+        // the next folders/inbox refresh and the counter drifts. Only revert
+        // rows we actually flipped (wasUnread).
+        if (wasUnread) {
+          recentlyReadRef.current.delete(uidStr);
+          setEmails(prev => prev.map(e =>
+            String(e.uid) === uidStr ? { ...e, seen: false } : e
+          ));
+          setFolders(prev => prev.map(f => {
+            if (f.name !== targetFolder) return f;
+            const cur = (f.unread ?? f.unseen ?? 0) | 0;
+            const next = cur + 1;
+            return { ...f, unread: next, unseen: next };
+          }));
+        }
+      }
     } catch (e) {
       console.warn('markRead error for uid', uid, e);
       // Queue for offline retry

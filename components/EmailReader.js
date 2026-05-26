@@ -58,24 +58,13 @@ if (Platform.OS === 'web' && DOMPurify?.addHook) {
   });
 }
 
-const sanitizeHtml = (html) => {
-  if (!html) return html;
-  if (Platform.OS === 'web') {
-    return DOMPurify?.sanitize ? DOMPurify.sanitize(html, {
-      ALLOWED_TAGS: ['p', 'br', 'div', 'span', 'a', 'img', 'b', 'i', 'u', 'strong', 'em',
-        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code',
-        'table', 'thead', 'tbody', 'tr', 'td', 'th', 'hr', 'sup', 'sub', 'small', 'font',
-        'center'],
-      ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'style', 'class', 'width', 'height',
-        'target', 'color', 'size', 'face', 'align', 'valign', 'bgcolor', 'border',
-        'cellpadding', 'cellspacing', 'colspan', 'rowspan'],
-      ALLOW_DATA_ATTR: false,
-      ADD_ATTR: ['target'],
-      FORBID_TAGS: ['style', 'svg', 'math'],
-    }) : html;
-  }
-  // Mobile: strip dangerous tags and event handlers (DOMPurify requires browser DOM)
-  return html
+// Regex fallback sanitizer used when DOMPurify is unavailable (native always;
+// web only if the dompurify require failed). Strips dangerous tags, inline
+// event handlers, and dangerous URI schemes (javascript:, vbscript:,
+// data:text/html, data:application/*) so a malicious quoted body can never
+// run code or load an executable data: payload via img/src or href.
+const _regexFallbackSanitize = (html) =>
+  html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
     .replace(/<embed[\s\S]*?\/?>/gi, '')
@@ -92,7 +81,29 @@ const sanitizeHtml = (html) => {
     .replace(/\son\w+\s*=[^\s>]*/gi, '')
     .replace(/javascript\s*:/gi, '')
     .replace(/vbscript\s*:/gi, '')
-    .replace(/data\s*:\s*text\/html/gi, '');
+    .replace(/data\s*:\s*text\/html/gi, '')
+    .replace(/data\s*:\s*application\//gi, '');
+
+const sanitizeHtml = (html) => {
+  if (!html) return html;
+  if (Platform.OS === 'web') {
+    // When DOMPurify failed to load on web we must NOT return raw HTML
+    // (that would be a stored-XSS hole) — fall back to the regex sanitizer.
+    return DOMPurify?.sanitize ? DOMPurify.sanitize(html, {
+      ALLOWED_TAGS: ['p', 'br', 'div', 'span', 'a', 'img', 'b', 'i', 'u', 'strong', 'em',
+        'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'pre', 'code',
+        'table', 'thead', 'tbody', 'tr', 'td', 'th', 'hr', 'sup', 'sub', 'small', 'font',
+        'center'],
+      ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'style', 'class', 'width', 'height',
+        'target', 'color', 'size', 'face', 'align', 'valign', 'bgcolor', 'border',
+        'cellpadding', 'cellspacing', 'colspan', 'rowspan'],
+      ALLOW_DATA_ATTR: false,
+      ADD_ATTR: ['target'],
+      FORBID_TAGS: ['style', 'svg', 'math'],
+    }) : _regexFallbackSanitize(html);
+  }
+  // Mobile: strip dangerous tags and event handlers (DOMPurify requires browser DOM)
+  return _regexFallbackSanitize(html);
 };
 const MEET_LINK_RE = /https?:\/\/(meet\.jit\.si|meet\.onemundo\.com\.br|mail\.onemundo\.com\.br\/meet)\/[\w-]+/g;
 const ONEMUNDO_MEET_RE = /https?:\/\/mail\.onemundo\.com\.br\/meet\/([\w-]+)/;

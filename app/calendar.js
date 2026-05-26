@@ -437,10 +437,27 @@ function spansMultipleDays(evt) {
   return !isSameDay(s, e);
 }
 
+// Treat a live broadcast that started >4h ago with no explicit end as stale,
+// so we don't keep flashing "AO VIVO" for a meeting that ended hours ago and
+// only left a dangling is_live/live_id flag. Defensive: if the event carries
+// no start timestamp at all we return false (don't wrongly suppress a real
+// live badge — only the >4h-stale and explicitly-ended cases suppress).
+function isStale(evt) {
+  if (!evt) return false;
+  if (evt.status && evt.status !== 'active') return false;
+  if (evt.live_ended_at || evt.ended_at) return true;
+  const startMs = new Date(
+    evt.live_started_at || evt.started_at || evt.start_at || 0
+  ).getTime();
+  if (!Number.isFinite(startMs) || !startMs) return false;
+  return (Date.now() - startMs) > 4 * 60 * 60 * 1000;
+}
+
 // Helper: is event "live" attached? Falls back gracefully if backend hasn't
 // populated either field yet — we just return false and the badge stays off.
 function eventIsLive(evt) {
   if (!evt) return false;
+  if (isStale(evt)) return false;
   return !!(evt.is_live || evt.live_id);
 }
 

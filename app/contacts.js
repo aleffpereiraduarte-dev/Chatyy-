@@ -321,6 +321,9 @@ function ContactsScreenInner() {
   const [searchResults, setSearchResults] = useState([]);
   const [searchingUsers, setSearchingUsers] = useState(false);
   const searchTimerRef = useRef(null);
+  // Monotonic request id so a slower in-flight family search can't overwrite
+  // the results of a newer query (search.js uses the same guard).
+  const searchReqRef = useRef(0);
 
   // Debounced local search
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -352,9 +355,13 @@ function ContactsScreenInner() {
     }
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
     searchTimerRef.current = setTimeout(async () => {
+      const reqId = ++searchReqRef.current;
       setSearchingUsers(true);
       try {
         const r = await api.searchOneMundoUsers(debouncedSearch);
+        // Stale-response guard: a previous, slower query must not clobber the
+        // results of a newer one the user has since typed.
+        if (reqId !== searchReqRef.current) return;
         // [WAVE 63 #fam-crash] Same defense as loadFamilyUsers — never let
         // `data` be a non-array. Filter out null entries that could crash the
         // family tab merge in filteredItems below.
@@ -362,10 +369,24 @@ function ContactsScreenInner() {
           const safe = (Array.isArray(r?.data) ? r.data : []).filter(u => u && typeof u === 'object');
           try { console.log('[FAMILIA-DIAG][contacts][searchUsers][ok]', 'count=', safe.length); } catch {}
           setSearchResults(safe);
+        } else {
+          // Endpoint reachable but returned a non-success (e.g. action not yet
+          // deployed, or a 4xx wrapped in success:false). Clear server results
+          // so filteredItems falls back to the local familyUsers filter —
+          // never silently render an empty family tab on a backend hiccup.
+          try { console.log('[FAMILIA-DIAG][contacts][searchUsers][not_success]', r?.message); } catch {}
+          setSearchResults([]);
         }
       } catch (e) {
+        // Network throw / missing endpoint. Drop server results so the local
+        // filter shows through (graceful fallback), but only for the latest
+        // request so we don't wipe a newer successful response.
+        if (reqId !== searchReqRef.current) return;
         try { console.log('[FAMILIA-DIAG][contacts][searchUsers][error]', e?.message); } catch {}
-      } finally { setSearchingUsers(false); }
+        setSearchResults([]);
+      } finally {
+        if (reqId === searchReqRef.current) setSearchingUsers(false);
+      }
     }, 200);
     return () => { if (searchTimerRef.current) clearTimeout(searchTimerRef.current); };
   }, [debouncedSearch, activeTab]);

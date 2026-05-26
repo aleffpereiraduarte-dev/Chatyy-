@@ -27,10 +27,22 @@
 // endpoints (chat_list / chat_messages) so reload-tab paints from the
 // SW cache while the network refresh happens in the background. Cuts
 // the visible round-trip on cold tab open from ~150 ms to ~5 ms.
+// v11 → v12: NUKE_CACHES (logout) now hard-evicts API_CACHE /api/* entries
+// + a `_nuking` flag blocks the SWR branch mid-nuke so a new user on the
+// same browser can't see the previous user's cached chat_list. activate
+// now claims clients BEFORE cache eviction. CACHE_NAME bumped so this
+// deploy's activate clears the prior generation.
 
-const CACHE_NAME  = 'chatyy-v11';
+const CACHE_NAME  = 'chatyy-v12';
 const API_CACHE   = 'chatyy-api-v4';
 const MEDIA_CACHE = 'chatyy-media-v1';
+
+// Set true while a NUKE_CACHES (logout / account switch) is in flight so the
+// SWR branch refuses to serve a cached API response mid-nuke — otherwise a
+// reload that races the nuke could paint the previous user's chat_list from
+// a cache slot that's about to be deleted. See MEMORY.md
+// "Login deve nukar cache (2026-05-11)".
+let _nuking = false;
 
 // Chat-read endpoints eligible for stale-while-revalidate. The cached
 // response paints instantly; a background fetch updates the cache for
@@ -135,16 +147,25 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
-    // Drop any cache whose name isn't in our current generation.
+    // Take control of open clients BEFORE cleanup so the new SW is the one
+    // serving requests during eviction (avoids the old SW handing out stale
+    // entries we're about to delete).
+    try { await self.clients.claim(); } catch {}
+    // Drop any cache whose name isn't in our current generation. The explicit
+    // keep-set handles our three known stores; the chatyy-* prefix sweep is
+    // defensive so a stale install with an unexpected `chatyy-*` cache name
+    // (e.g. a future-renamed store left behind by a half-applied deploy)
+    // self-heals instead of lingering forever.
     const keep = new Set([CACHE_NAME, API_CACHE, MEDIA_CACHE]);
     const names = await caches.keys();
-    await Promise.all(names.filter(n => !keep.has(n)).map(n => caches.delete(n)));
+    await Promise.all(
+      names.filter(n => !keep.has(n)).map(n => caches.delete(n))
+    );
     // Enable navigation preload so the browser can start the HTML fetch in
     // parallel with the SW boot, shaving a round-trip on cold navigations.
     if (self.registration.navigationPreload) {
       try { await self.registration.navigationPreload.enable(); } catch {}
     }
-    await self.clients.claim();
   })());
 });
 
@@ -200,6 +221,12 @@ self.addEventListener('fetch', (e) => {
     const action = url.searchParams.get('action');
     if (action && SWR_CHAT_ACTIONS.has(action) && url.pathname.endsWith('/api/chat.php')) {
       e.respondWith((async () => {
+        // Mid-nuke (logout / account switch): never serve from API_CACHE, the
+        // cached payload may belong to the user we're logging out. Go straight
+        // to network so the new user only ever sees their own data.
+        if (_nuking) {
+          try { return await fetch(e.request); } catch { return offlineJson(); }
+        }
         const cached = await caches.match(e.request, { cacheName: API_CACHE });
         const network = fetch(e.request).then((r) => {
           if (r && r.ok) {
@@ -368,10 +395,32 @@ self.addEventListener('message', (e) => {
   // "Login deve nukar cache (2026-05-11)".
   if (e.data?.type === 'NUKE_CACHES') {
     e.waitUntil((async () => {
+      // Block the SWR branch from serving any cached API response while the
+      // nuke is in flight. Without this, a reload racing the nuke could paint
+      // the previous user's chat_list from a cache slot mid-delete.
+      _nuking = true;
       try {
+        // Delete EVERY cache store (CACHE_NAME, API_CACHE, MEDIA_CACHE, and
+        // any stragglers). This evicts all /api/* entries from API_CACHE so
+        // a new user on the same browser can't get the previous user's
+        // cached chat_list via the SWR path.
         const names = await caches.keys();
         await Promise.all(names.map(n => caches.delete(n)));
+        // Belt-and-suspenders: API_CACHE may have been re-created by an
+        // in-flight cachePut between keys() and delete(). Sweep its /api/*
+        // entries explicitly so nothing user-scoped survives the nuke.
+        try {
+          const apiCache = await caches.open(API_CACHE);
+          const reqs = await apiCache.keys();
+          await Promise.all(
+            reqs
+              .filter(r => { try { return new URL(r.url).pathname.startsWith('/api/'); } catch { return true; } })
+              .map(r => apiCache.delete(r))
+          );
+          await caches.delete(API_CACHE);
+        } catch {}
       } catch {}
+      finally { _nuking = false; }
     })());
   }
 });

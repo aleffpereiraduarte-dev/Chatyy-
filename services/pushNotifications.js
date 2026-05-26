@@ -525,8 +525,27 @@ export async function registerForPushNotifications() {
       return null;
     }
 
-    // Android notification channels
+    // Android notification channels.
+    //
+    // setNotificationChannelAsync is idempotent at the OS level (re-calling
+    // with the same id updates the existing channel, it does NOT create a
+    // duplicate), but it's a relatively expensive native round-trip and
+    // re-running the whole block on every registerForPushNotifications() call
+    // (which fires on every 6h foreground refresh) is wasted work. We guard
+    // it behind a versioned AsyncStorage flag: the set only (re)registers
+    // when the CHANNELS_VERSION below changes. Bump CHANNELS_VERSION whenever
+    // a channel definition is added/changed so existing installs pick it up
+    // on their next foreground.
     if (Platform.OS === 'android') {
+      const CHANNELS_VERSION = 2;
+      const CHANNELS_FLAG_KEY = `channels_v${CHANNELS_VERSION}_created`;
+      let _channelsAlreadyCreated = false;
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        _channelsAlreadyCreated = (await AsyncStorage.getItem(CHANNELS_FLAG_KEY)) === '1';
+      } catch {}
+
+      if (!_channelsAlreadyCreated) {
       // Main email channel
       await Notifications.setNotificationChannelAsync('email', {
         name: 'New Emails',
@@ -650,6 +669,14 @@ export async function registerForPushNotifications() {
         importance: Notifications.AndroidImportance.DEFAULT,
         sound: 'default',
       });
+
+        // Mark this channel-set version as created so the block is skipped on
+        // subsequent registrations until CHANNELS_VERSION is bumped.
+        try {
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          await AsyncStorage.setItem(CHANNELS_FLAG_KEY, '1');
+        } catch {}
+      }
     }
 
     // Register notification categories with actions

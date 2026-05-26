@@ -554,9 +554,16 @@ function ActiveSessionsChip({ grantsData, isDark, colors, t, ghostMode, onOpen, 
   let timeLabel = '';
   if (earliestExp !== null) {
     const secs = Math.max(0, earliestExp - Date.now() / 1000);
+    // Clock-skew grace: client/server clocks drift a couple seconds, so a
+    // session that's actually still live can momentarily compute secs≈0 and
+    // flash "0s restantes" before the next poll bumps it back up. Floor the
+    // seconds bucket at 3s so we never flash a bare "0s" for a session the
+    // backend still considers active. Once it's genuinely expired the chip
+    // is removed entirely (outgoing list empties), so this only smooths the
+    // tail, it doesn't lie about a finished share.
     if (secs > 3600) timeLabel = `${Math.round(secs / 3600)}h ${t?.('snapmap.remaining') || 'restantes'}`;
     else if (secs > 60) timeLabel = `${Math.round(secs / 60)}min ${t?.('snapmap.remaining') || 'restantes'}`;
-    else timeLabel = `${Math.round(secs)}s ${t?.('snapmap.remaining') || 'restantes'}`;
+    else timeLabel = `${Math.max(3, Math.round(secs))}s ${t?.('snapmap.remaining') || 'restantes'}`;
   } else {
     timeLabel = '∞ ' + (t?.('snapmap.alwaysOn') || 'sempre ativo');
   }
@@ -1050,6 +1057,45 @@ export default function SnapMapScreen() {
       api.friendLocationPing(p.email).catch(() => {});
     });
   }, [pinsPayload, filteredShares, user]);
+
+  // [2026-05-26 stale-pin foreground nudge] The effect above only fires the
+  // wake-ping when a pin crosses the 5min stale threshold *while the app is
+  // foregrounded and the poll is ticking*. But JS timers freeze in the
+  // background, so a pin that went stale overnight (e.g. "sem atualização há
+  // 23h") never gets nudged when the user re-opens the map — it just sits
+  // there gray. On every active→foreground transition, walk the current
+  // shares and ping any pin older than 10min so the sharer's app gets a
+  // chance to wake and post a fresh fix. Same per-sharer cooldown ref as the
+  // poll-driven path so we don't double-ping. We read shares from a ref so
+  // this listener isn't torn down/recreated on every shares update.
+  const sharesForPingRef = useRef(filteredShares);
+  sharesForPingRef.current = filteredShares;
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    const RESUME_STALE_MS = 10 * 60 * 1000; // 10min
+    const COOLDOWN_MS = 90 * 1000;
+    let lastState = AppState.currentState;
+    const sub = AppState.addEventListener('change', (next) => {
+      const wasInactive = lastState !== 'active';
+      lastState = next;
+      if (next !== 'active' || !wasInactive) return;
+      const now = Date.now();
+      (sharesForPingRef.current || []).forEach((s) => {
+        if (!s?.email) return;
+        if (user?.email && s.email.toLowerCase() === user.email.toLowerCase()) return;
+        if (!s.updated_at) return;
+        let ageMs = 0;
+        try { ageMs = now - new Date(String(s.updated_at).replace(' ', 'T') + 'Z').getTime(); } catch { return; }
+        if (ageMs < RESUME_STALE_MS) return;
+        const last = lastPingedRef.current[s.email] || 0;
+        if (now - last < COOLDOWN_MS) return;
+        lastPingedRef.current[s.email] = now;
+        api.friendLocationPing(s.email).catch(() => {});
+      });
+    });
+    return () => { try { sub?.remove?.(); } catch {} };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   const mePayload = useMemo(() => (
     myLocation ? { lat: myLocation.lat, lng: myLocation.lng } : null

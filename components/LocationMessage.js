@@ -53,18 +53,24 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
   }, [content]);
 
   // Watchdog: some Android RN Image instances NEVER fire onLoad nor onError
-  // (silent network stall, SSL handshake hang, or image loader pool exhausted).
-  // After 6s without either callback we force fallback to OSM, then if still
-  // nothing after another 6s we show the solid pin. Without this the bubble
-  // stays gray forever — the visual symptom users keep reporting.
+  // (silent network stall, SSL handshake hang, image loader pool exhausted,
+  // or the Image getting recycled out of the list before either callback
+  // fires). Without this the bubble stays gray forever — the visual symptom
+  // users keep reporting.
+  //
+  // [2026-05-26] Tightened from 6s→4s per step, and once we're on the 2nd
+  // provider (osm) a single timeout drops straight to the solid fallback
+  // instead of stretching the worst case to ~12s of gray. We also clear the
+  // pending timer on unmount via the returned cleanup so a recycled cell
+  // doesn't leave a dangling setState-after-unmount.
   useEffect(() => {
-    if (!location || tileLoaded || tileError || tileProvider === 'failed') return;
+    if (!location || tileLoaded || tileError || tileProvider === 'failed') return undefined;
     const id = setTimeout(() => {
       if (!tileLoaded && !tileError) {
         if (tileProvider === 'carto') setTileProvider('osm');
-        else if (tileProvider === 'osm') { setTileProvider('failed'); setTileError(true); }
+        else { setTileProvider('failed'); setTileError(true); }
       }
-    }, 6000);
+    }, 4000);
     return () => clearTimeout(id);
   }, [location, tileLoaded, tileError, tileProvider]);
 

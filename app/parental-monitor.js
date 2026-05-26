@@ -158,7 +158,10 @@ function ParentalMonitorScreenInner() {
     try {
       const r = await api.parentalGetRestrictions(childEmail);
       if (!mounted.current) return;
-      if (r?.success) setRestrictions(r.data?.restrictions || {});
+      // Backend returns restrictions either nested (data.restrictions) or at
+      // the data root depending on version — tolerate both so the toggles
+      // hydrate instead of rendering an empty (all-defaults) sheet.
+      if (r?.success) setRestrictions(r?.data?.restrictions || r?.data || {});
     } catch {}
   }, [childEmail, mounted]);
 
@@ -296,6 +299,10 @@ function ParentalMonitorScreenInner() {
         setSavedMsg(t('parental.saved'));
         if (savedTimerRef.current) clearTimeout(savedTimerRef.current);
         savedTimerRef.current = setTimeout(() => { if (mounted.current) setSavedMsg(''); }, 2000);
+        // Immediately re-pull the authoritative restrictions so the child
+        // device reflects the new limits without waiting for the next
+        // AppState foreground refresh. Idempotent + best-effort.
+        loadRestrictions?.();
       } catch {
         loadRestrictions?.();
       } finally {

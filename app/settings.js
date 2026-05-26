@@ -834,7 +834,10 @@ function SettingsScreenInner() {
   const [chatPrivacy, setChatPrivacy] = useState({
     last_seen: 'everyone',
     profile_photo: 'everyone',
-    read_receipts: true,
+    // Privacy-safe default: read receipts stay OFF until the server value
+    // loads. Defaulting to `true` pre-sync would briefly leak read state on
+    // a slow/failed chatPrivacyGet. The real value hydrates below.
+    read_receipts: false,
     story_privacy: 'everyone',
     group_add: 'everyone',
     // [#gap_notifications 2026-05-19] Suppress push notifications for
@@ -858,7 +861,7 @@ function SettingsScreenInner() {
             ...prev,
             last_seen:     r.data.last_seen     || 'everyone',
             profile_photo: r.data.profile_photo || 'everyone',
-            read_receipts: r.data.read_receipts !== undefined ? !!r.data.read_receipts : true,
+            read_receipts: r.data.read_receipts !== undefined ? !!r.data.read_receipts : false,
             // Backend exposes story_privacy for "Status" and group_add for
             // "Grupos". Defaults reflect the chat_privacy_set valid set.
             story_privacy: r.data.story_privacy || 'everyone',
@@ -892,12 +895,14 @@ function SettingsScreenInner() {
       const next = { ...prev, ...patch };
       // Only ship the keys that changed — chat_privacy_set merges unspecified
       // columns to their existing values so partial PATCHes are safe.
-      api.chatPrivacySet?.(patch).catch(() => {});
-      // [mute-call-ringtone, 2026-05-19] Mirror the toggle to local
-      // storage immediately so services/ringtone.js (which doesn't have an
-      // observer on the network response) sees the new value before the
-      // next inbound ring.
-      if (Object.prototype.hasOwnProperty.call(patch, 'mute_call_ringtone')) {
+      // [mute-call-ringtone, 2026-05-19] Mirror the toggle to local storage so
+      // services/ringtone.js (which has no observer on the network response)
+      // sees the new value before the next inbound ring — but ONLY after the
+      // API confirms. Writing the mirror unconditionally before the call meant
+      // a failed chatPrivacySet left the local mirror desynced from the server
+      // (ringtone honored a value the account never actually saved).
+      const _mirrorMuteRingtone = () => {
+        if (!Object.prototype.hasOwnProperty.call(patch, 'mute_call_ringtone')) return;
         try {
           const v = patch.mute_call_ringtone ? 'true' : 'false';
           if (Platform.OS === 'web') {
@@ -908,6 +913,14 @@ function SettingsScreenInner() {
             }).catch(() => {});
           }
         } catch {}
+      };
+      const _p = api.chatPrivacySet?.(patch);
+      if (_p && typeof _p.then === 'function') {
+        _p.then((r) => { if (r?.success !== false) _mirrorMuteRingtone(); }).catch(() => {});
+      } else {
+        // No promise returned (API stub missing) — fall back to mirroring so
+        // local-only builds still pick up the toggle.
+        _mirrorMuteRingtone();
       }
       return next;
     });

@@ -14,9 +14,34 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, Animated, Platform, StyleSheet, Pressable } from 'react-native';
 
-const INSTALL_DISMISS_KEY = 'pwa_install_dismissed_at';
 const INSTALL_DISMISS_COOLDOWN = 7 * 24 * 3600 * 1000; // 7 days
-const ALREADY_INSTALLED_KEY = 'pwa_already_installed';
+
+// These flags used to be global, so User A dismissing the install banner (or
+// the browser marking "already installed") suppressed it for User B on the
+// same browser after an account switch. Scope them to the active account email
+// (localStorage `mail_active_account`, the same key services/api.js uses) so
+// each user gets their own dismissal state. `appinstalled` is genuinely a
+// per-browser/per-device fact, so we ALSO keep a device-global copy of the
+// installed flag — once the PWA is installed nobody should see the install
+// banner regardless of which account is active.
+const PWA_KEY_PREFIX = 'pwa_';
+function _activeEmail() {
+  try {
+    if (typeof localStorage === 'undefined') return '';
+    return localStorage.getItem('mail_active_account') || '';
+  } catch { return ''; }
+}
+function installDismissKey() {
+  const e = _activeEmail();
+  return e ? `${PWA_KEY_PREFIX}install_dismissed_at:${e}` : `${PWA_KEY_PREFIX}install_dismissed_at`;
+}
+function alreadyInstalledKey() {
+  const e = _activeEmail();
+  return e ? `${PWA_KEY_PREFIX}already_installed:${e}` : `${PWA_KEY_PREFIX}already_installed`;
+}
+// Device-global installed flag (not per-user): once installed, the install
+// banner is moot for everyone on this browser.
+const DEVICE_INSTALLED_KEY = `${PWA_KEY_PREFIX}device_installed`;
 
 export default function PWAPrompts({ colors, isDark, t }) {
   const [installPromptEvent, setInstallPromptEvent] = useState(null);
@@ -31,10 +56,12 @@ export default function PWAPrompts({ colors, isDark, t }) {
     // ── Install flow ──
     const onBeforeInstall = (e) => {
       try { e.preventDefault(); } catch {}
-      // Skip if we recently dismissed or already installed.
+      // Skip if this device already has it installed, or THIS user recently
+      // dismissed / already installed for their account.
       try {
-        if (localStorage.getItem(ALREADY_INSTALLED_KEY) === '1') return;
-        const last = parseInt(localStorage.getItem(INSTALL_DISMISS_KEY) || '0', 10);
+        if (localStorage.getItem(DEVICE_INSTALLED_KEY) === '1') return;
+        if (localStorage.getItem(alreadyInstalledKey()) === '1') return;
+        const last = parseInt(localStorage.getItem(installDismissKey()) || '0', 10);
         if (last && Date.now() - last < INSTALL_DISMISS_COOLDOWN) return;
       } catch {}
       setInstallPromptEvent(e);
@@ -42,7 +69,9 @@ export default function PWAPrompts({ colors, isDark, t }) {
     window.addEventListener('beforeinstallprompt', onBeforeInstall);
 
     const onInstalled = () => {
-      try { localStorage.setItem(ALREADY_INSTALLED_KEY, '1'); } catch {}
+      // Real install event = device-global fact (and per-user, for symmetry).
+      try { localStorage.setItem(DEVICE_INSTALLED_KEY, '1'); } catch {}
+      try { localStorage.setItem(alreadyInstalledKey(), '1'); } catch {}
       setInstallPromptEvent(null);
     };
     window.addEventListener('appinstalled', onInstalled);
@@ -97,7 +126,7 @@ export default function PWAPrompts({ colors, isDark, t }) {
   if (!installPromptEvent && !showUpdate) return null;
 
   const dismissInstall = () => {
-    try { localStorage.setItem(INSTALL_DISMISS_KEY, String(Date.now())); } catch {}
+    try { localStorage.setItem(installDismissKey(), String(Date.now())); } catch {}
     setInstallPromptEvent(null);
   };
   const acceptInstall = async () => {
@@ -107,7 +136,8 @@ export default function PWAPrompts({ colors, isDark, t }) {
       e.prompt();
       const choice = await e.userChoice;
       if (choice?.outcome === 'accepted') {
-        try { localStorage.setItem(ALREADY_INSTALLED_KEY, '1'); } catch {}
+        try { localStorage.setItem(alreadyInstalledKey(), '1'); } catch {}
+        try { localStorage.setItem(DEVICE_INSTALLED_KEY, '1'); } catch {}
       }
     } catch {}
   };

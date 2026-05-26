@@ -779,6 +779,11 @@ function InboxScreenInner() {
         }
       } catch {}
     }
+    // Search should span ALL categories (Gmail behavior), not just the tab
+    // the user happens to be on. Reset to 'all' before searching so a query
+    // typed while on the "Promotions"/"Social"/"Unread" tab isn't silently
+    // scoped to that category.
+    if (searchText.trim()) setActiveCategory('all');
     doSearch(searchText);
     setShowSearchOperators(false);
     if (searchText.trim()) saveRecentSearch(searchText.trim());

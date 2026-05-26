@@ -40,7 +40,7 @@ const safeAlert = (title, message, buttons) => {
 
 // Relative time formatter — inline (no util dependency for portability).
 // Returns labels like "Em 23 min", "Em 2h", "Amanhã 14:00", "Há 5 min".
-function formatRelativeTime(dateStr, t) {
+function formatRelativeTime(dateStr, t, language) {
   if (!dateStr) return '';
   const now = new Date();
   const date = new Date(dateStr);
@@ -50,7 +50,11 @@ function formatRelativeTime(dateStr, t) {
   const diffHr = Math.round(diffMs / 3600000);
   const absDiffMin = Math.abs(diffMin);
   const absDiffHr = Math.abs(diffHr);
-  const locale = t?.('_locale') || undefined;
+  // Derive the Intl locale from the app language (e.g. "pt-BR"/"en"/"es").
+  // The old `t('_locale')` returned the literal key '_locale' (no such i18n
+  // entry) → an invalid locale that toLocale* silently ignored, so dates
+  // never matched the app language. `undefined` falls back to device locale.
+  const locale = (typeof language === 'string' && language) ? language : undefined;
 
   if (diffMs > 0) {
     if (diffMin < 60) return t('meetings.inMinutes', { n: diffMin });
@@ -224,15 +228,16 @@ function HeroLiveCard({ meeting, colors, isDark, onPress, onJoin, t }) {
 }
 
 function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t, highlightAmber }) {
+  const { language } = useLanguage();
   const live = isLive(meeting);
   const past = isPast(meeting);
   const joinable = canJoin(meeting);
 
   const timeLabel = past
-    ? formatRelativeTime(meeting.ended_at || meeting.created_at, t)
+    ? formatRelativeTime(meeting.ended_at || meeting.created_at, t, language)
     : meeting.scheduled_at
-      ? formatRelativeTime(meeting.scheduled_at, t)
-      : formatRelativeTime(meeting.created_at, t);
+      ? formatRelativeTime(meeting.scheduled_at, t, language)
+      : formatRelativeTime(meeting.created_at, t, language);
 
   const duration = formatDuration(meeting, t);
 

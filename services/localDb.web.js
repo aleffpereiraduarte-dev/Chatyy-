@@ -46,12 +46,70 @@ function getIDB() {
   });
 }
 
+// ── Quota-aware write helper ──
+// IDB `put` errors surface asynchronously via the request/transaction error
+// events, NOT via a synchronous throw — so a plain try/catch around the put
+// never catches QuotaExceededError and writes fail silently forever. This
+// wraps a write in a transaction, awaits its completion, and on a quota error
+// evicts the oldest conversations once and retries the write a single time.
+function _isQuotaError(err) {
+  if (!err) return false;
+  const name = err.name || err.code || '';
+  return name === 'QuotaExceededError' ||
+         name === 'NS_ERROR_DOM_QUOTA_REACHED' ||  // Firefox
+         /quota/i.test(String(err.message || ''));
+}
+
+// Run `writeFn(store)` inside a readwrite tx on `storeName`, resolving when the
+// transaction completes. Resolves { ok, err } instead of rejecting so callers
+// stay simple. `writeFn` should issue the put()s; do not await inside it.
+function _runWrite(d, storeName, writeFn) {
+  return new Promise((resolve) => {
+    let quota = false, errObj = null;
+    try {
+      const tx = d.transaction(storeName, 'readwrite');
+      const store = tx.objectStore(storeName);
+      tx.oncomplete = () => resolve({ ok: true });
+      tx.onerror = () => resolve({ ok: false, err: errObj || tx.error, quota: quota || _isQuotaError(tx.error) });
+      tx.onabort = () => resolve({ ok: false, err: errObj || tx.error, quota: quota || _isQuotaError(tx.error) });
+      // writeFn issues put() calls; capture per-request quota errors so we can
+      // distinguish "out of space" (recoverable via eviction) from other faults.
+      writeFn(store, (req) => {
+        if (!req) return;
+        req.onerror = (e) => {
+          errObj = req.error;
+          if (_isQuotaError(req.error)) { quota = true; try { e.preventDefault(); } catch {} }
+        };
+      });
+    } catch (err) {
+      resolve({ ok: false, err, quota: _isQuotaError(err) });
+    }
+  });
+}
+
+// Perform a quota-aware write: try once; on quota exhaustion evict oldest
+// conversations and retry exactly once. Errors otherwise stay swallowed (same
+// best-effort contract as before) but no longer disappear into a silent put().
+async function _quotaAwareWrite(d, storeName, writeFn) {
+  let res = await _runWrite(d, storeName, writeFn);
+  if (res.ok) return true;
+  if (res.quota) {
+    try { await evictOldestConversations(0, 0, true); } catch {}  // force eviction now
+    res = await _runWrite(d, storeName, writeFn);
+    if (res.ok) return true;
+    try { console.warn('[localDb.web] write still failing after quota eviction:', storeName, res.err?.name || res.err); } catch {}
+    return false;
+  }
+  return false;
+}
+
 // ── Generic TTL cache ──
 export async function webCacheSet(key, data, ttlSec = 300) {
   try {
     const d = await getIDB(); if (!d) return;
-    const tx = d.transaction('cache', 'readwrite');
-    tx.objectStore('cache').put({ key, data, exp: Date.now() + ttlSec * 1000 });
+    await _quotaAwareWrite(d, 'cache', (store, track) => {
+      track(store.put({ key, data, exp: Date.now() + ttlSec * 1000 }));
+    });
   } catch {}
 }
 export async function webCacheGet(key) {
@@ -69,9 +127,9 @@ export async function webCacheGet(key) {
 export async function webSaveEmails(folder, emails) {
   try {
     const d = await getIDB(); if (!d) return;
-    const tx = d.transaction('emails', 'readwrite');
-    const s = tx.objectStore('emails');
-    emails.forEach(e => s.put({ ...e, folder, _cid: folder + ':' + (e.uid || e.id), _ts: Date.now() }));
+    await _quotaAwareWrite(d, 'emails', (s, track) => {
+      emails.forEach(e => track(s.put({ ...e, folder, _cid: folder + ':' + (e.uid || e.id), _ts: Date.now() })));
+    });
   } catch {}
 }
 export async function webGetEmails(folder) {
@@ -89,8 +147,9 @@ export async function webGetEmails(folder) {
 export async function webSaveConversations(convs) {
   try {
     const d = await getIDB(); if (!d) return;
-    const tx = d.transaction('conversations', 'readwrite');
-    convs.forEach(c => tx.objectStore('conversations').put({ ...c, _ts: Date.now() }));
+    await _quotaAwareWrite(d, 'conversations', (store, track) => {
+      convs.forEach(c => track(store.put({ ...c, _ts: Date.now() })));
+    });
   } catch {}
 }
 export async function webGetConversations() {
@@ -113,8 +172,9 @@ export async function webGetConversations() {
 export async function webSaveMessages(convId, msgs) {
   try {
     const d = await getIDB(); if (!d) return;
-    const tx = d.transaction('messages', 'readwrite');
-    msgs.forEach(m => tx.objectStore('messages').put({ ...m, conversation_id: convId, _ts: Date.now() }));
+    await _quotaAwareWrite(d, 'messages', (store, track) => {
+      msgs.forEach(m => track(store.put({ ...m, conversation_id: convId, _ts: Date.now() })));
+    });
   } catch {}
 }
 export async function webGetMessages(convId) {
@@ -196,10 +256,14 @@ function _isPinnedConv(c) {
 // 100 MB cap is safely below the smallest browser quota we hit in the
 // wild (Safari private mode ~200 MB), so we evict before the browser
 // surprises us with its own eviction. See localDb.js for full rationale.
-export async function evictOldestConversations(maxBytes = 100 * 1024 * 1024, targetBytes = 80 * 1024 * 1024) {
+export async function evictOldestConversations(maxBytes = 100 * 1024 * 1024, targetBytes = 80 * 1024 * 1024, force = false) {
   try {
     const sz = await getCacheSize();
-    if (!sz.sizeBytes || sz.sizeBytes <= maxBytes) return 0;
+    // Normally we only evict once we're over the byte cap. But the quota-error
+    // recovery path (force=true) must evict even when navigator.storage.estimate
+    // reports 0 (Safari private mode / some browsers) — the browser already
+    // told us it's out of space, so trust that over the estimate.
+    if (!force && (!sz.sizeBytes || sz.sizeBytes <= maxBytes)) return 0;
     const d = await getIDB();
     if (!d) return 0;
     const convs = await new Promise((r) => {
@@ -232,6 +296,10 @@ export async function evictOldestConversations(maxBytes = 100 * 1024 * 1024, tar
         });
       } catch {}
       evicted++;
+      // Forced (quota-recovery) eviction: drop a bounded batch of the oldest
+      // conversations to free space for the retry, rather than wiping the whole
+      // cache on a single QuotaExceededError.
+      if (force && evicted >= 20) break;
       if (evicted % 10 === 0) {
         try {
           const newSz = await getCacheSize();

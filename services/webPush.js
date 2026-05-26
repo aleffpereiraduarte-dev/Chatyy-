@@ -41,29 +41,47 @@ let _registered = false;
 // permission still granted — neither holds during teardown.
 let _cachedWebToken = null;
 
+// Typed status so Settings/diagnostics can surface WHY web push is off instead
+// of a silent null. Set by the getToken path; read via getWebPushStatus().
+//   IDLE             — not yet attempted
+//   MISSING_VAPID    — VAPID public key absent/empty on a production build
+//   UNSUPPORTED      — not web, no Notification API, etc.
+//   DENIED           — user denied notification permission
+//   REGISTERED       — token obtained + accepted by backend
+//   EMPTY_TOKEN      — getToken() returned empty
+//   ERROR            — registration threw
+let _status = 'IDLE';
+export function getWebPushStatus() { return _status; }
+
 export async function registerForWebPush() {
   if (Platform.OS !== 'web') return null;
   if (typeof window === 'undefined') return null;
   if (_registered || _registering) return null;
   _registering = true;
   try {
-    // Permission gate first
-    if (!('Notification' in window)) return null;
-    if (Notification.permission === 'denied') return null;
-    if (Notification.permission !== 'granted') {
-      const perm = await Notification.requestPermission();
-      if (perm !== 'granted') return null;
-    }
-
+    // VAPID is a HARD requirement for web push — getToken() cannot succeed
+    // without it. Check before the permission prompt so we don't ask the user
+    // for a permission we can't use. An empty key on a production build is a
+    // real misconfiguration (ops didn't ship the Web Push certificate), so
+    // log it loudly and expose MISSING_VAPID for Settings to surface. We do
+    // NOT throw — boot must not break — we just fail this path with a status.
     if (!VAPID_PUBLIC_KEY) {
-      // Web push is gated on ops shipping a VAPID public key. Until then the
-      // platform falls back to in-app + native push, so this is expected on
-      // the web build. Keep the log out of production console — it confused
-      // users investigating F12 (looked like a bug, isn't).
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      _status = 'MISSING_VAPID';
+      const isDev = (typeof __DEV__ !== 'undefined' && __DEV__);
+      if (isDev) {
         console.warn('[webPush] VAPID public key not configured — skipping');
+      } else {
+        console.error('[webPush] MISSING_VAPID: web push certificate not configured on this build — web push is disabled. Configure VAPID_PUBLIC_KEY (Firebase Console → Cloud Messaging → Web Push certificates).');
       }
       return null;
+    }
+
+    // Permission gate (after the VAPID check above)
+    if (!('Notification' in window)) { _status = 'UNSUPPORTED'; return null; }
+    if (Notification.permission === 'denied') { _status = 'DENIED'; return null; }
+    if (Notification.permission !== 'granted') {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') { _status = 'DENIED'; return null; }
     }
 
     // Wait for service worker (already registered by _layout.js useEffect).
@@ -85,6 +103,7 @@ export async function registerForWebPush() {
       serviceWorkerRegistration: reg,
     });
     if (!token) {
+      _status = 'EMPTY_TOKEN';
       console.warn('[webPush] getToken returned empty');
       return null;
     }
@@ -93,12 +112,15 @@ export async function registerForWebPush() {
     if (r?.success) {
       _registered = true;
       _cachedWebToken = token;
+      _status = 'REGISTERED';
       console.log('[webPush] registered, token len=', token.length);
     } else {
+      _status = 'ERROR';
       console.warn('[webPush] backend rejected token:', r?.error);
     }
     return token;
   } catch (err) {
+    _status = 'ERROR';
     console.warn('[webPush] registration failed:', err?.message || err);
     return null;
   } finally {

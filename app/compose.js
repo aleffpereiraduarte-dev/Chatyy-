@@ -27,7 +27,9 @@ function _safeFallbackSanitize(html) {
     .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
     .replace(/\son\w+\s*=\s*[^\s>]*/gi, '')
     .replace(/javascript:/gi, '')
-    .replace(/data:text\/html/gi, '');
+    .replace(/vbscript:/gi, '')
+    .replace(/data:text\/html/gi, '')
+    .replace(/data:application\//gi, '');
 }
 function sanitizeQuotedHtml(html) {
   if (Platform.OS !== 'web') return html;
@@ -748,12 +750,28 @@ export default function ComposeScreen() {
       if (draftUidRef.current) {
         const staleUid = draftUidRef.current;
         draftUidRef.current = null;
+        let deleted = false;
         try {
-          await api.apiCall('draft_delete', { uid: staleUid }, 'POST');
+          const dr = await api.apiCall('draft_delete', { uid: staleUid }, 'POST');
+          deleted = !!dr?.success;
         } catch {}
+        // Single best-effort retry before reporting failure.
+        if (!deleted) {
+          try {
+            const dr2 = await api.apiCall('draft_delete', { uid: staleUid }, 'POST');
+            deleted = !!dr2?.success;
+          } catch {}
+        }
         if (mountedRef.current) {
-          setDraftStatus('idle');
-          setLastSavedAt(null);
+          if (deleted) {
+            setDraftStatus('idle');
+            setLastSavedAt(null);
+          } else {
+            // Don't claim the draft was deleted — surface the error and
+            // restore the uid so a later save/delete can still target it.
+            draftUidRef.current = staleUid;
+            setDraftStatus('error');
+          }
         }
       } else if (mountedRef.current) {
         setDraftStatus('idle');

@@ -72,6 +72,11 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
   const [address, setAddress] = useState('');
   const [error, setError] = useState(null);
   const [sending, setSending] = useState(false);
+  // True while the only fix we have is an aged cached position (no fresh
+  // GPS read returned yet AND the cache is older than ~30s). Drives a
+  // subtle "localização aproximada" hint so we don't present a stale fix
+  // as exact. Cleared the moment a fresh fix lands.
+  const [approxOnly, setApproxOnly] = useState(false);
   // WhatsApp-style live-share confirmation: after the user taps a duration
   // chip we DON'T immediately start broadcasting. We swap the sheet body
   // for a confirmation view (map preview + selected duration + privacy
@@ -109,6 +114,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
     setError(null);
     setCoords(null);
     setAddress('');
+    setApproxOnly(false);
 
     (async () => {
       try {
@@ -128,13 +134,23 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
         // the UI; this is purely for control-flow decisions in this effect.
         let bestCoords = null;
 
-        // 1) Try cached last-known position first — instant.
+        // 1) Try cached last-known position first — instant. Tightened
+        //    maxAge from 60s to 10s so a long-stale fix isn't shown as
+        //    "current". We still accept an older cache as a preview seed
+        //    (so the user sees *something* immediately), but if that fix
+        //    is older than ~30s we flag it `approxOnly` and surface a
+        //    subtle "localização aproximada" hint rather than presenting
+        //    it as exact. A fresh GPS read below clears the flag.
         try {
-          const cached = await Location.getLastKnownPositionAsync({ maxAge: 60000, requiredAccuracy: 200 });
+          const cached = await Location.getLastKnownPositionAsync({ maxAge: 10000, requiredAccuracy: 200 });
           if (!active || cancelRef.current) return;
           if (cached?.coords) {
             bestCoords = cached.coords;
             setCoords(cached.coords);
+            const cachedTs = cached.timestamp || 0;
+            const cacheAge = cachedTs ? (Date.now() - cachedTs) : 0;
+            // Only mark approximate if the cache is meaningfully old (>30s).
+            if (cacheAge > 30000) setApproxOnly(true);
             // We still attempt a fresh read below for accuracy, but the user
             // already sees a preview.
           }
@@ -163,6 +179,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
         if (fresh?.coords) {
           bestCoords = fresh.coords;
           setCoords(fresh.coords);
+          setApproxOnly(false); // fresh fix supersedes the aged cache
         } else if (!bestCoords) {
           // Both fresh attempts failed AND we have no cache either.
           setError(t?.('chatConv.locationUnavailable') || 'Não foi possível obter sua localização. Verifique se o GPS está ligado.');
@@ -343,11 +360,19 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
               <Text style={{ fontSize: 14, color: colors.text, marginBottom: 4, fontWeight: '600' }} numberOfLines={2}>
                 {address || (t?.('chatConv.locationCurrent') || 'Sua localização atual')}
               </Text>
-              <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 18 }}>
+              <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: approxOnly ? 6 : 18 }}>
                 {coords.latitude.toFixed(5)}, {coords.longitude.toFixed(5)}
                 {coords.accuracy ? ` · ±${Math.round(coords.accuracy)}m` : ''}
                 {loading ? ` · ${t?.('chatConv.locationRefining') || 'refinando…'}` : ''}
               </Text>
+              {/* Subtle approximate-location hint: shown when the only fix
+                  we have is an aged cache (>30s) and a fresh GPS read hasn't
+                  returned yet. Sending is still allowed. */}
+              {approxOnly && (
+                <Text style={{ fontSize: 11, color: '#D97706', marginBottom: 18, fontWeight: '600' }} numberOfLines={1}>
+                  {t?.('chatConv.locationApprox') || 'Localização aproximada'}
+                </Text>
+              )}
 
               {/* Send button */}
               <TouchableOpacity

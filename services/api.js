@@ -6354,6 +6354,17 @@ export async function fileUpload(file, folderId = null) {
   }
 }
 
+// SECURITY TODO: this embeds the full bearer token in the query string, which
+// leaks into browser history, server access logs, and Referer headers. The
+// attachment path solved this with a short-lived `dt` token minted by
+// `attachment_token` (see getAttachmentUrl + mintAttachmentDownloadToken on the
+// backend), but that token is bound to (uid, folder, part) for IMAP
+// attachments and does NOT cover drive file ids — there is no
+// drive-download-token mint endpoint yet. Until the backend exposes a
+// `drive_dl_token` (short-lived, bound to the drive file id) we keep the bearer
+// here so downloads don't break. When that endpoint lands, mirror the
+// getAttachmentUrl pattern: serve a cached `dt`, prefetch in the background,
+// and fall back to the bearer only if the mint isn't deployed.
 export function fileDownloadUrl(fileId) {
   return `${API_URL}?action=drive_download&id=${fileId}&token=${encodeURIComponent(authToken || '')}`;
 }
