@@ -297,6 +297,12 @@ function _formatReceiptDate(ts, t) {
 // _setAppLocale(language) below.
 let _appLocale;
 function _setAppLocale(lang) { _appLocale = lang || undefined; }
+// Module-level translator so module-scoped helpers (e.g. MediaStatusFooter)
+// can localize a few strings without access to useLanguage(). Refreshed on
+// every render of the top-level component via _setAppT(t) below.
+let _appT;
+function _setAppT(t) { _appT = t; }
+function _mt(key, fallback) { try { return (_appT && _appT(key)) || fallback; } catch (e) { return fallback; } }
 function formatTime(dateStr) {
   const d = new Date(_normalizeIso(dateStr));
   if (isNaN(d.getTime())) return '';
@@ -798,7 +804,7 @@ function MediaStatusFooter({ msg, isOwn, variant }) {
         alignSelf: isOwn ? 'flex-end' : 'flex-start', paddingHorizontal: 2,
       }}>
         {!!msg.edited_at && (
-          <Text style={{ fontSize: 10, color: 'rgba(120,120,120,0.85)', fontStyle: 'italic' }}>edited</Text>
+          <Text style={{ fontSize: 10, color: 'rgba(120,120,120,0.85)', fontStyle: 'italic' }}>{_mt('chatConv.edited', 'editada')}</Text>
         )}
         <Text style={{ fontSize: 10.5, color: 'rgba(120,120,120,0.95)', fontWeight: '500' }}>{time}</Text>
         <Checks />
@@ -815,7 +821,7 @@ function MediaStatusFooter({ msg, isOwn, variant }) {
       paddingHorizontal: 7, paddingVertical: 2.5,
     }}>
       {!!msg.edited_at && (
-        <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.8)', fontStyle: 'italic' }}>edited</Text>
+        <Text style={{ fontSize: 10, color: 'rgba(255,255,255,0.8)', fontStyle: 'italic' }}>{_mt('chatConv.edited', 'editada')}</Text>
       )}
       <Text style={{ fontSize: 10.5, color: 'rgba(255,255,255,0.95)', fontWeight: '500' }}>{time}</Text>
       <Checks />
@@ -6445,6 +6451,7 @@ export default function ChatConversationScreen() {
   const { user } = useAuth();
   const { t, language } = useLanguage();
   _setAppLocale(language);
+  _setAppT(t);
   const confirm = useConfirm();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -23810,53 +23817,62 @@ export default function ChatConversationScreen() {
               <Text style={[styles.replyBarLabel, { color: _composerReplyColor }]}>
                 {editingMsg ? t('chat.editing') : t('chat.replyingTo', { name: replyTo?.sender_name || t('chat.message') })}
               </Text>
-              <Text style={[styles.replyBarText, { color: colors.textSecondary }]} numberOfLines={3} ellipsizeMode="tail">
-                {(() => {
-                  // WAVE 67 (2026-05-21): show the full reply text up to 3
-                  // lines like WhatsApp — was capped at 60 chars + single line
-                  // which truncated mid-sentence. Cap raised to 240 chars
-                  // (~3 lines of preview width) so very long messages still
-                  // get a ceiling but normal messages show in full.
-                  const _trim = (s) => {
-                    const str = String(s || '');
-                    return str.length > 240 ? (str.slice(0, 240) + '…') : str;
-                  };
-                  if (editingMsg) return _trim(editingMsg.content);
-                  // Partial-text quote takes priority over the type-based
-                  // preview so the user sees exactly what snippet they're
-                  // replying to.
-                  if (replyTo?.quoteText) return '“' + _trim(replyTo.quoteText) + '”';
-                  if (replyTo?.type === 'image')   return '📷 ' + (t('chat.photo') || 'Foto');
-                  if (replyTo?.type === 'video')   return '🎥 ' + (t('chat.video') || 'Vídeo');
-                  if (replyTo?.type === 'audio')   return '🎤 ' + (t('chat.audio') || 'Áudio');
-                  if (replyTo?.type === 'file')    return '📄 ' + _trim(replyTo?.file_name || t('chat.file') || 'Arquivo');
-                  if (replyTo?.type === 'gif')     return '🎞️ GIF';
-                  if (replyTo?.type === 'sticker') return '💟 ' + (t('chat.sticker') || 'Figurinha');
-                  if (replyTo?.type === 'location') return '📍 ' + (t('chatConv.location') || 'Localização');
-                  if (replyTo?.type === 'contact')  return '👤 ' + (t('chatConv.contact') || 'Contato');
-                  if (replyTo?.type === 'poll')     return '📊 ' + (t('chat.poll') || 'Enquete');
-                  if (replyTo?.type === 'call_card') return '📞 ' + (t('chat.call') || 'Chamada');
-                  // status_reply payload is { reply_text, status:{ type, ... } }.
-                  // Show the human-readable reply text + a type-tag so the
-                  // compose preview doesn't dump the raw JSON.
-                  if (replyTo?.type === 'status_reply') {
-                    const sr = replyTo?.status_reply || (() => { try { return JSON.parse(replyTo?.content || '{}'); } catch { return {}; }})();
-                    const txt = (sr?.reply_text || '').trim();
-                    const stType = sr?.status?.type;
-                    const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
-                              : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
-                              : (t('status.statusLabel') || 'Status');
-                    return txt ? (_trim(txt) + ' · ' + tag) : tag;
-                  }
-                  const c = String(replyTo?.content || '').trim();
-                  if (!c) return '';
-                  if (/^https?:\/\//i.test(c)) {
-                    if (replyTo?.file_url || /\.(gif|webp)(\?|$)/i.test(c)) return '🎞️ GIF';
-                    return '🔗 ' + (t('chat.link') || 'Link');
-                  }
-                  return _trim(c);
-                })()}
-              </Text>
+              {(() => {
+                // WAVE 67 (2026-05-21): show the full reply text up to 3
+                // lines like WhatsApp — was capped at 60 chars + single line
+                // which truncated mid-sentence. Cap raised to 240 chars
+                // (~3 lines of preview width) so very long messages still
+                // get a ceiling but normal messages show in full.
+                const _trim = (s) => {
+                  const str = String(s || '');
+                  return str.length > 240 ? (str.slice(0, 240) + '…') : str;
+                };
+                const _txtStyle = [styles.replyBarText, { color: colors.textSecondary }];
+                const _plain = (label) => (
+                  <Text style={_txtStyle} numberOfLines={3} ellipsizeMode="tail">{label}</Text>
+                );
+                // SVG icon + label row (replaces the old emoji glyph prefixes).
+                const _iconLabel = (IconCmp, label) => (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                    <IconCmp size={13} color={colors.textSecondary} />
+                    <Text style={[...(_txtStyle), { flex: 1 }]} numberOfLines={3} ellipsizeMode="tail">{label}</Text>
+                  </View>
+                );
+                if (editingMsg) return _plain(_trim(editingMsg.content));
+                // Partial-text quote takes priority over the type-based
+                // preview so the user sees exactly what snippet they're
+                // replying to.
+                if (replyTo?.quoteText) return _plain('“' + _trim(replyTo.quoteText) + '”');
+                if (replyTo?.type === 'image')   return _iconLabel(IconImage, (t('chat.photo') || 'Foto'));
+                if (replyTo?.type === 'video')   return _iconLabel(IconVideo, (t('chat.video') || 'Vídeo'));
+                if (replyTo?.type === 'audio')   return _iconLabel(IconMic, (t('chat.audio') || 'Áudio'));
+                if (replyTo?.type === 'file')    return _iconLabel(IconFileText, _trim(replyTo?.file_name || t('chat.file') || 'Arquivo'));
+                if (replyTo?.type === 'gif')     return _iconLabel(IconFilm, 'GIF');
+                if (replyTo?.type === 'sticker') return _iconLabel(IconImage, (t('chat.sticker') || 'Figurinha'));
+                if (replyTo?.type === 'location') return _iconLabel(IconMapPin, (t('chatConv.location') || 'Localização'));
+                if (replyTo?.type === 'contact')  return _iconLabel(IconUser, (t('chatConv.contact') || 'Contato'));
+                if (replyTo?.type === 'poll')     return _iconLabel(IconBarChart, (t('chat.poll') || 'Enquete'));
+                if (replyTo?.type === 'call_card') return _iconLabel(IconPhone, (t('chat.call') || 'Chamada'));
+                // status_reply payload is { reply_text, status:{ type, ... } }.
+                // Show the human-readable reply text + a type-tag so the
+                // compose preview doesn't dump the raw JSON.
+                if (replyTo?.type === 'status_reply') {
+                  const sr = replyTo?.status_reply || (() => { try { return JSON.parse(replyTo?.content || '{}'); } catch { return {}; }})();
+                  const txt = (sr?.reply_text || '').trim();
+                  const stType = sr?.status?.type;
+                  const tag = stType === 'image' ? (t('status.typePhoto') || 'Foto')
+                            : stType === 'video' ? (t('status.typeVideo') || 'Vídeo')
+                            : (t('status.statusLabel') || 'Status');
+                  return _plain(txt ? (_trim(txt) + ' · ' + tag) : tag);
+                }
+                const c = String(replyTo?.content || '').trim();
+                if (!c) return _plain('');
+                if (/^https?:\/\//i.test(c)) {
+                  if (replyTo?.file_url || /\.(gif|webp)(\?|$)/i.test(c)) return _iconLabel(IconFilm, 'GIF');
+                  return _iconLabel(IconLink, (t('chat.link') || 'Link'));
+                }
+                return _plain(_trim(c));
+              })()}
             </View>
             {!editingMsg && (replyTo?.type === 'image' || replyTo?.type === 'video') && replyTo?.file_url && (
               <Image
@@ -23870,7 +23886,7 @@ export default function ChatConversationScreen() {
             onPress={() => { setReplyTo(null); setEditingMsg(null); setInputText(''); }}
             style={styles.replyBarClose}
           >
-            <IconX size={20} color={isDark ? '#aebac1' : '#8696a0'} />
+            <IconX size={20} color={colors.textTertiary} />
           </TouchableOpacity>
         </ReplyPreviewBar>
         );
@@ -24666,7 +24682,7 @@ export default function ChatConversationScreen() {
                   }
                 }}
                 delayLongPress={400}
-                style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', alignSelf: 'flex-end', transform: [{ scale: sending ? 0.92 : 1 }], ...(Platform.OS === 'web' ? { transition: 'transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1)', cursor: 'pointer', boxShadow: '0 4px 14px rgba(124,58,237,0.35)' } : {}), ...Platform.select({ ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.35, shadowRadius: 8 }, android: { elevation: 5 }, default: {} }) }}
+                style={[styles.sendBtn, { backgroundColor: '#7C3AED', transform: [{ scale: sending ? 0.92 : 1 }] }]}
                 accessibilityLabel={t('chatConv.send') || 'Send message'}
                 accessibilityRole="button"
               >
@@ -29373,9 +29389,11 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     alignSelf: 'flex-start',
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 14 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0 2px 8px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.05)' },
+      // Flatter WhatsApp-style hairline shadow (was 0.08/14/elev2) — lighter
+      // bubbles read cleaner and scroll smoother on long threads.
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.04)' },
     }),
   },
   // WAVE 129 (2026-05-22, bug #1354 / foto 7192): originally added

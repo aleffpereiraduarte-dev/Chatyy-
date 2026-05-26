@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animate
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import BrandFab from './BrandFab';
-import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar } from './Icons';
+import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar, IconVerifiedBadge } from './Icons';
 import SwipeAction from './SwipeAction';
 import ScheduleCallModal from './ScheduleCallModal';
 import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts, voipVerifiedNumberRequest, voipVerifiedNumberConfirm, getProfile, callNotify as apiCallNotify } from '../services/api';
@@ -739,10 +739,12 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
               call has an attached voicemail. Tapping the row already opens
               the conversation, where the bubble is visible. */}
           {(item.has_voicemail || item.voicemail_id) ? (
-            <Text
-              style={{ fontSize: 12, color: RED, marginLeft: 4 }}
+            <View
+              style={{ marginLeft: 4 }}
               accessibilityLabel={t?.('voicemail.attached') || 'Mensagem de voz'}
-            >🎤</Text>
+            >
+              <IconMic size={12} color={RED} />
+            </View>
           ) : null}
         </View>
       </View>
@@ -2559,8 +2561,9 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
               backgroundColor: callerIdVerified ? 'rgba(52,199,89,0.14)' : 'rgba(0,122,255,0.12)',
             }}
           >
+            {callerIdVerified ? <IconVerifiedBadge size={13} color="#34C759" /> : null}
             <Text style={{ fontSize: 13, fontWeight: '700', color: callerIdVerified ? '#34C759' : BLUE }}>
-              {callerIdVerified ? '✓ Verificado' : 'Verificar nº'}
+              {callerIdVerified ? 'Verificado' : 'Verificar nº'}
             </Text>
           </TouchableOpacity>
         </View>

@@ -2046,7 +2046,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             accessibilityRole="button"
             accessibilityLabel={soundSaved ? (t?.('feed.unsaveSound') || 'Remover som dos salvos') : (t?.('feed.saveSound') || 'Salvar som')}
           >
-            <Text style={{ fontSize: 16, opacity: soundSaved ? 1 : 0.7 }}>{soundSaved ? '💾' : '💾'}</Text>
+            {soundSaved ? <IconBookmarkFilled size={16} color="#fff" /> : <IconBookmark size={16} color="#fff" />}
           </TouchableOpacity>
         </View>
       </View>

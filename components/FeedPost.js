@@ -21,7 +21,7 @@ import AvatarCircle from './AvatarCircle';
 import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMoreHorizontal, IconTrash,
-  IconMapPin, IconPlay, IconPause, IconPin,
+  IconMapPin, IconPlay, IconPause, IconPin, IconMusic,
 } from './Icons';
 import * as api from '../services/api';
 import { useLanguage } from '../context/LanguageContext';
@@ -1093,7 +1093,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
       {(post.duet_of || post.stitch_of) && (
         <View style={[styles.derivativeLabel, { backgroundColor: colors.primary + '15' }]}>
           <Text style={[styles.derivativeLabelText, { color: colors.primary }]}>
-            {post.duet_of ? `🎭 ${t('feed.duetWith') || 'Dueto com'} @${post.original_author || ''}` : `✂️ ${t('feed.stitchWith') || 'Stitch com'} @${post.original_author || ''}`}
+            {post.duet_of ? `${t('feed.duetWith') || 'Dueto com'} @${post.original_author || ''}` : `${t('feed.stitchWith') || 'Stitch com'} @${post.original_author || ''}`}
           </Text>
         </View>
       )}
@@ -1101,8 +1101,9 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
       {/* Sound info */}
       {post.sound_name && (
         <TouchableOpacity style={[styles.soundBar, { backgroundColor: isDark ? '#1a1a1a' : '#f5f5f5' }]}>
-          <Text style={[styles.soundText, { color: colors.text }]} numberOfLines={1}>
-            {'♫ '}{post.sound_name}{post.sound_artist ? ` - ${post.sound_artist}` : ''}
+          <IconMusic size={12} color={colors.text} />
+          <Text style={[styles.soundText, { color: colors.text, marginLeft: 6 }]} numberOfLines={1}>
+            {post.sound_name}{post.sound_artist ? ` - ${post.sound_artist}` : ''}
           </Text>
         </TouchableOpacity>
       )}

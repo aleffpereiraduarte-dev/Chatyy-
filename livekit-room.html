@@ -406,6 +406,14 @@
     const stage = $('stage');
     const tiles = new Map(); // identity → { el, video, label, mutedIcon }
 
+    // Count-aware grid: 2 cols up to 4 people, 3 cols for 5+. The >=720px CSS
+    // media query already bumps to 4 cols on tablets/desktop; this overrides
+    // the mobile base inline. 10+ keeps 3 cols and relies on vertical scroll.
+    function updateGridColumns() {
+      const n = tiles.size;
+      stage.style.gridTemplateColumns = (n <= 4) ? 'repeat(2, 1fr)' : 'repeat(3, 1fr)';
+    }
+
     function ensureTile(identity, opts) {
       opts = opts || {};
       let t = tiles.get(identity);
@@ -441,6 +449,7 @@
       el.classList.add('cam-off'); // até receber video track
       t = { el, video, label, avatar, mutedIcon, hasVideo: false };
       tiles.set(identity, t);
+      updateGridColumns();
       return t;
     }
 
@@ -450,6 +459,7 @@
       try { t.video.srcObject = null; } catch (_) {}
       t.el.remove();
       tiles.delete(identity);
+      updateGridColumns();
     }
 
     function updateTileName(identity, name) {

@@ -1810,7 +1810,18 @@ export default function StoryViewer({
             </TouchableOpacity>
           ) : null}
           <TouchableOpacity
-            onPress={onClose}
+            onPress={() => {
+              // Mount-grace guard — the X button sits at the very top of the
+              // screen (top: insets.top+20), exactly where the chat-list status
+              // ring strip lives. The opening tap on a ring can leak its touch-up
+              // into this freshly-mounted button and fire onClose the instant the
+              // viewer mounts ("abre e fecha na hora"). Every other interactive
+              // surface in this viewer (left/right/center tap zones, swipe-down)
+              // already swallows the leaked opening tap via isFreshMount(); the
+              // close button was missed in the 2026-05-25 hardening pass.
+              if (isFreshMount()) return;
+              onClose?.();
+            }}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={{
               width: 38, height: 38, borderRadius: 19,

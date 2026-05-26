@@ -749,6 +749,212 @@ export function refreshDataSaver() {
   return _dataSaver;
 }
 
+// ── Auto-save received media to the phone gallery (WhatsApp "Media visibility") ──
+//
+// WhatsApp's "Save to camera roll" / "Media visibility" setting: every photo
+// or video the user RECEIVES gets copied into the OS Photos app / camera roll
+// automatically, so it's findable outside the chat. Default ON, like WhatsApp.
+//
+// Implementation notes:
+//  - Setting persisted under AUTO_SAVE_GALLERY_KEY. Default true (ON). settings.js
+//    flips it via setAutoSaveMediaToGallery(); the gate reads the cached flag
+//    synchronously so the download success path doesn't await storage.
+//  - Only IMAGE + VIDEO are saved (never audio / docs / stickers / gifs).
+//  - De-dupe: a persisted Set of urlToKey() keys (MMKV) so the SAME photo is
+//    never written to the gallery twice — critical, because cacheMedia can run
+//    again on re-render / re-download / reconnect sweeps and would otherwise
+//    spam the camera roll.
+//  - RECEIVED-only: the caller (prefetchIncomingMessageMedia) sets opts.received
+//    on the cacheMedia call. The ChatMedia render path (used for BOTH sent and
+//    received bubbles) does NOT, so the user's own sent media — already in their
+//    gallery — is never re-saved.
+//  - Permission requested once via ML.requestPermissionsAsync(); if denied we
+//    silently disable for the session (no alert spam, WhatsApp behavior).
+//  - Grouped into a "Chatyy" album when straightforward (mirrors ChatMediaViewer).
+const AUTO_SAVE_GALLERY_KEY = 'autoSaveMediaToGallery';
+let _autoSaveGallery = true; // default ON (WhatsApp parity)
+let _autoSaveGalleryHydrated = false;
+// Session flag: flips false the moment we learn the OS denied photo-write
+// permission, so we stop attempting saves (and stop re-prompting) until the
+// app is relaunched / the user re-toggles.
+let _autoSavePermDenied = false;
+
+function _coerceAutoSaveGallery(v) {
+  // Default ON: only an explicit 'false' / false turns it off.
+  if (v === false || v === 'false' || v === '0') return false;
+  return true;
+}
+
+function _hydrateAutoSaveGallery() {
+  if (_autoSaveGalleryHydrated) return;
+  _autoSaveGalleryHydrated = true;
+  if (Platform.OS === 'web') return; // no gallery on web
+  // Read from the same MMKV layer the dedupe Set uses so a single store covers
+  // both. MMKV (services/mmkv) hydrates from AsyncStorage at splash; settings.js
+  // also mirrors the flag into AsyncStorage directly, so we read both and let
+  // an explicit stored value win over the default.
+  try {
+    const mmkv = require('./mmkv');
+    const raw = mmkv.getBoolean?.(AUTO_SAVE_GALLERY_KEY);
+    if (raw === true || raw === false) _autoSaveGallery = raw;
+  } catch {}
+  // AsyncStorage fallback (settings.js writes a plain 'true'/'false' string).
+  try {
+    import('@react-native-async-storage/async-storage').then(m => {
+      m.default.getItem(AUTO_SAVE_GALLERY_KEY).then(raw => {
+        if (raw != null) _autoSaveGallery = _coerceAutoSaveGallery(raw);
+      }).catch(() => {});
+    }).catch(() => {});
+  } catch {}
+}
+_hydrateAutoSaveGallery();
+
+export function isAutoSaveMediaToGalleryOn() {
+  _hydrateAutoSaveGallery();
+  return _autoSaveGallery;
+}
+
+// settings.js calls this on toggle. Persists to BOTH the MMKV layer (instant,
+// survives restart) and AsyncStorage (so the hydrate fallback above + any other
+// reader sees it). Re-enabling clears the session permission-denied latch so a
+// user who fixed permissions in OS Settings gets saves again without relaunch.
+export function setAutoSaveMediaToGallery(on) {
+  const next = !!on;
+  _autoSaveGallery = next;
+  _autoSaveGalleryHydrated = true;
+  if (next) _autoSavePermDenied = false;
+  if (Platform.OS === 'web') return next;
+  try { require('./mmkv').setBoolean?.(AUTO_SAVE_GALLERY_KEY, next); } catch {}
+  try {
+    import('@react-native-async-storage/async-storage').then(m => {
+      m.default.setItem(AUTO_SAVE_GALLERY_KEY, String(next)).catch(() => {});
+    }).catch(() => {});
+  } catch {}
+  return next;
+}
+
+// Persisted Set of already-saved media keys (urlToKey buckets). Lives in MMKV
+// so it survives relaunch — without persistence, every cold start would re-save
+// the entire visible history to the gallery.
+const AUTO_SAVE_GALLERY_DONE_KEY = 'media_autosaved_gallery_v1';
+const _autoSavedKeys = new Set();
+let _autoSavedHydrated = false;
+let _autoSavedPersistTimer = null;
+
+function _hydrateAutoSavedKeys() {
+  if (_autoSavedHydrated) return;
+  _autoSavedHydrated = true;
+  if (Platform.OS === 'web') return;
+  try {
+    const mmkv = require('./mmkv');
+    const raw = mmkv.getString?.(AUTO_SAVE_GALLERY_DONE_KEY);
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (Array.isArray(arr)) for (const k of arr) if (typeof k === 'string') _autoSavedKeys.add(k);
+  } catch {}
+}
+_hydrateAutoSavedKeys();
+
+function _scheduleAutoSavedPersist() {
+  if (Platform.OS === 'web') return;
+  if (_autoSavedPersistTimer) return;
+  _autoSavedPersistTimer = setTimeout(() => {
+    _autoSavedPersistTimer = null;
+    try {
+      // Cap the persisted set so it can't grow without bound on heavy accounts.
+      // Keep the most-recent ~5000 keys (insertion order = Set iteration order).
+      let arr = [...ceilingSet(_autoSavedKeys, 5000)];
+      require('./mmkv').setString?.(AUTO_SAVE_GALLERY_DONE_KEY, JSON.stringify(arr));
+    } catch {}
+  }, 3000);
+}
+
+// Trim a Set to its last `max` insertion-ordered entries (mutating in place).
+function ceilingSet(set, max) {
+  if (set.size <= max) return set;
+  const arr = [...set];
+  const keep = arr.slice(arr.length - max);
+  set.clear();
+  for (const k of keep) set.add(k);
+  return set;
+}
+
+/**
+ * Fire-and-forget: copy a freshly-downloaded RECEIVED photo/video into the
+ * phone's gallery / camera roll, exactly once. Safe to call from any download
+ * success path — every guard short-circuits cheaply.
+ *
+ *   localUri  — file:// path of the on-disk copy (cacheMedia result).
+ *   key       — urlToKey() bucket for this media (dedupe identity).
+ *   mediaType — 'image' | 'video' | 'photo' | 'audio' | 'document' | ...
+ *
+ * No-ops on: web, setting OFF, non-image/video type, missing key/uri,
+ * permission denied (latched for the session), already-saved key.
+ */
+export function maybeAutoSaveToGallery(localUri, key, mediaType) {
+  if (Platform.OS === 'web') return;
+  if (!localUri || typeof localUri !== 'string' || !localUri.startsWith('file://')) return;
+  if (!key) return;
+  // Setting gate (default ON).
+  if (!isAutoSaveMediaToGalleryOn()) return;
+  if (_autoSavePermDenied) return;
+  // Only photos + videos go to the gallery. Audio / docs / stickers / gifs
+  // stay inside the app's media store. _bucketForType folds image/photo →
+  // 'photos' and video → 'videos'; everything else is excluded here.
+  const bucket = _bucketForType(mediaType);
+  if (bucket !== 'photos' && bucket !== 'videos') return;
+  // De-dupe — never write the same media to the gallery twice.
+  _hydrateAutoSavedKeys();
+  if (_autoSavedKeys.has(key)) return;
+  // Mark BEFORE the async save so a concurrent second call (re-render race)
+  // doesn't double-fire. If the save fails we leave the mark in place — a
+  // failed save shouldn't retry-spam the gallery; the user can manually save
+  // from the viewer. (Permission-denied is handled separately via the latch.)
+  _autoSavedKeys.add(key);
+  _scheduleAutoSavedPersist();
+
+  (async () => {
+    let ML;
+    try { ML = require('expo-media-library'); } catch { return; }
+    if (!ML) return;
+    try {
+      // Request write permission once. true = write-only access on iOS.
+      const perm = await ML.requestPermissionsAsync(true);
+      const granted = perm && (perm.status === 'granted' || perm.accessPrivileges === 'all' || perm.accessPrivileges === 'limited' || perm.granted === true);
+      if (!granted) {
+        // Silently disable for the session — no alert spam (WhatsApp behavior).
+        _autoSavePermDenied = true;
+        // Roll back the dedupe mark so that, if the user grants permission
+        // later (re-toggle clears the latch), this media can still be saved.
+        _autoSavedKeys.delete(key);
+        return;
+      }
+      // Mirror ChatMediaViewer's robust pipeline: createAssetAsync → album.
+      // Fall back to saveToLibraryAsync if createAssetAsync doesn't return an id.
+      let savedAsset = null;
+      try {
+        const asset = await ML.createAssetAsync(localUri);
+        if (asset && asset.id) savedAsset = asset;
+        else await ML.saveToLibraryAsync(localUri);
+      } catch {
+        try { await ML.saveToLibraryAsync(localUri); } catch { /* save failed; keep dedupe mark */ }
+      }
+      // Best-effort: group into a "Chatyy" album so it's discoverable in
+      // Photos > Albums (iOS) / Gallery > Chatyy (Android). Failure here does
+      // NOT undo the save — the asset is already in the library.
+      if (savedAsset && savedAsset.id) {
+        try {
+          const album = await ML.getAlbumAsync('Chatyy');
+          if (album) await ML.addAssetsToAlbumAsync([savedAsset], album, false);
+          else await ML.createAlbumAsync('Chatyy', savedAsset, false);
+        } catch {}
+      }
+    } catch {
+      // Unexpected ML error — keep the dedupe mark (don't retry-spam).
+    }
+  })();
+}
+
 // ── Cumulative network-usage counter (settings.js getNetStats()) ──────────
 // settings.js calls mediaCache.getNetStats() to render "Network usage", but
 // the function didn't exist (always showed "—"). We maintain a persisted
@@ -1061,6 +1267,15 @@ export async function cacheMedia(url, opts = {}) {
   _inflightDownloads.set(key, dlPromise);
   try {
     const result = await dlPromise;
+    // [WhatsApp "Media visibility" 2026-05-26] Auto-save RECEIVED photos/videos
+    // into the phone gallery. Only when the caller marked this download as
+    // inbound (opts.received) — the ChatMedia render path (sent + received
+    // bubbles) leaves it unset, so the user's own sent media is never re-saved.
+    // De-duped + permission-gated + type-filtered inside the helper, so it's
+    // safe to call unconditionally on every successful inbound download.
+    if (opts.received && result && typeof result === 'string' && result.startsWith('file://') && Platform.OS !== 'web') {
+      try { maybeAutoSaveToGallery(result, key, opts.mediaType || _bucketForUrl(url)); } catch {}
+    }
     // [#1215 2026-05-19] PHONE-FIRST MEDIA WRITE-BACK
     // When a foto/áudio/vídeo/gif/sticker/file download lands, mirror the
     // file:// path into the messages row's local_path column. This is what
@@ -1300,9 +1515,16 @@ export function prefetchIncomingMessageMedia(message) {
       // [#1215 2026-05-19] Pass messageId so cacheMedia can write the
       // resulting file:// path back into the messages row's local_path
       // column on success — phone-first storage parity.
+      // Mark this as a RECEIVED download + tag the media type so cacheMedia's
+      // success path can auto-save photos/videos into the phone gallery
+      // (WhatsApp "Media visibility"). Only image/video reach the gallery;
+      // file/gif/sticker are excluded inside maybeAutoSaveToGallery.
+      const _mediaType = isImage ? 'image' : isVideo ? 'video' : (t || null);
       const _opts = convId != null
-        ? { conversationId: convId, messageId: message.id }
-        : (message.id != null ? { messageId: message.id } : undefined);
+        ? { conversationId: convId, messageId: message.id, received: true, mediaType: _mediaType }
+        : (message.id != null
+            ? { messageId: message.id, received: true, mediaType: _mediaType }
+            : { received: true, mediaType: _mediaType });
       cacheMedia(url, _opts).catch(() => {});
     }
   } catch {}

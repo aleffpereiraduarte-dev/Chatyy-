@@ -7,7 +7,21 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Animated, Dimensions,
   Platform, Image, Pressable, ScrollView, FlatList, Linking, Modal, Alert,
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+// expo-camera is a native module. On some Android builds the binding can be
+// absent/broken; importing or calling `useCameraPermissions()` at mount would
+// then throw and take down the whole host screen (P0: opening own profile
+// crashed on Android because StatusCamera mounts there). Resolve defensively
+// and provide a no-op permissions hook fallback so a degraded camera surfaces
+// a friendly "camera unavailable" state instead of a hard crash. The hook
+// reference is stable for the lifetime of the module, so calling it
+// unconditionally below never violates the rules-of-hooks.
+let CameraView = null;
+let useCameraPermissions = () => [null, async () => ({ granted: false, canAskAgain: false })];
+try {
+  const _cam = require('expo-camera');
+  if (_cam?.CameraView) CameraView = _cam.CameraView;
+  if (typeof _cam?.useCameraPermissions === 'function') useCameraPermissions = _cam.useCameraPermissions;
+} catch {}
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CachedImage from './CachedImage';

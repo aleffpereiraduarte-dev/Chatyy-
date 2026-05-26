@@ -2111,6 +2111,18 @@ class CallActivity : ComponentActivity() {
     } catch (_: Throwable) {}
     eventsJob?.cancel()
     connectJob?.cancel()
+    // [BUG 1 fix 2026-05-26] Proactively tear down the LK Room NOW instead of
+    // deferring all teardown to onDestroy. NativeCallRoom.disconnect() nulls
+    // its Room field immediately and bounds the WS teardown with a 10s timeout
+    // (NativeCallRoom ~383-416), so a fast redial to the same person can run
+    // LiveKit.create on a clean slate rather than racing a still-alive engine
+    // from the just-ended call. Idempotent — onDestroy's NativeCallRoom.clear()
+    // is a harmless no-op afterward.
+    try {
+      NativeCallRoom.disconnect()
+    } catch (t: Throwable) {
+      Log.w(TAG, "NativeCallRoom.disconnect() in finishCall failed: ${t.message}")
+    }
     ExpoCallKitModule.emitCallEnded(callId)
     finish()
     // [#1176 polish, 2026-05-18] Symmetric slide-down exit — matches the
@@ -2542,6 +2554,18 @@ class CallActivity : ComponentActivity() {
     // lock). The system clamps to 100:239 / 239:100 anyway.
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     if (isInPictureInPictureMode) return
+    // [BUG 2 fix 2026-05-26] CallActivity lives in an isolated empty-affinity
+    // task; entering PiP shrinks it but never brings the main RN app task
+    // forward, leaving the user on a dead surface where taps go nowhere.
+    // Bring the host app to front BEFORE entering PiP so the mini-window
+    // floats over the live app instead of a blank task.
+    try {
+      val launch = packageManager.getLaunchIntentForPackage(packageName)
+      if (launch != null) {
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        startActivity(launch)
+      }
+    } catch (t: Throwable) { Log.w(TAG, "bring app to front for PiP failed: ${t.message}") }
     try {
       enterPictureInPictureMode(buildPipParams())
       Log.d(TAG, "Entered PiP (hasVideo=$hasVideo remoteRenderer=${remoteRenderer != null})")
@@ -3847,11 +3871,13 @@ private fun BottomActionBar(
         label = "Adicionar",
         onClick = onAddParticipant,
       )
-      ActionPill(
-        icon = Icons.Filled.EmojiEmotions,
-        label = "Reagir",
-        onClick = onShowReactions,
-      )
+      // [BUG 4 removal 2026-05-26] "Reagir" (EmojiEmotions → onShowReactions)
+      // SEND pill REMOVED per founder. The RECEIVE path is untouched: incoming
+      // peer reactions still animate via spawnReaction + the "R:" data/WS
+      // handler, and FloatingEmoji still renders them. Only the send button is
+      // gone — the onShowReactions callback + showReactions state +
+      // EmojiQuickBar remain in the signature (harmless, unused) so other call
+      // sites don't break.
       // [button-removal 2026-05-26] "Levantar mão" (FrontHand) and "Sem ruído"
       // (GraphicEq) pills REMOVED per founder. Hand-raise is gone entirely.
       // Noise suppression stays ALWAYS ON internally — the RNNoiseProcessor is

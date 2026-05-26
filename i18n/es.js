@@ -2537,6 +2537,8 @@ export default {
   'settings.mediaWifi': 'Wi-Fi',
   'settings.mediaWifiMobile': 'Wi-Fi + Movil',
   'settings.mediaNever': 'Nunca',
+  'settings.autoSaveGallery': 'Guardar en la galería',
+  'settings.autoSaveGalleryDesc': 'Las fotos y vídeos recibidos se guardan en la app Fotos automáticamente.',
   // Storage section (WhatsApp Settings → Storage parity)
   'settings.storage.title': 'Almacenamiento',
   'settings.storage.used': 'Usado',

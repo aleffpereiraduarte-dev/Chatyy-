@@ -414,6 +414,12 @@ function SettingsScreenInner() {
   // when this is OFF the auto-roaming detector force-enables low-data when
   // NetInfo flags an expensive cellular link.
   const [lowDataCalls, setLowDataCalls] = useState(false);
+  // [WhatsApp "Media visibility" 2026-05-26] Auto-save received photos/videos
+  // into the phone gallery / camera roll. Default ON, like WhatsApp. Persisted
+  // under `autoSaveMediaToGallery`; mediaCache reads the same key + mirrors it
+  // so cacheMedia's inbound download success path saves to the OS gallery
+  // without an app restart.
+  const [autoSaveGallery, setAutoSaveGallery] = useState(true);
   // Default = Chatyy purple (was WhatsApp green '#075E54'). Stored as a
   // hex so chat-conversation.js renders it correctly — gradient swatches
   // below are previews; the dominant hex is what we actually persist.
@@ -596,12 +602,14 @@ function SettingsScreenInner() {
       if (kv.media_auto_dl_roaming === 'true') setMediaRoaming(true);
       if (typeof kv.wallpaper_default === 'string' && kv.wallpaper_default.length > 0) setWallpaperDefault(kv.wallpaper_default);
       if (kv.chatyy_low_data_calls === 'true' || kv.chatyy_low_data_calls === '1') setLowDataCalls(true);
+      // Default ON — only an explicit 'false' turns it off.
+      if (kv.autoSaveMediaToGallery === 'false' || kv.autoSaveMediaToGallery === '0') setAutoSaveGallery(false);
     };
     const KEYS = [
       'enter_sends', 'autocorrect_enabled', 'voice_speed_default',
       'beta_features', 'language_auto', 'data_saver', 'bubble_shape',
       'notif_led_color', 'media_auto_dl_roaming', 'wallpaper_default',
-      'chatyy_low_data_calls',
+      'chatyy_low_data_calls', 'autoSaveMediaToGallery',
     ];
     if (Platform.OS === 'web') {
       const kv = {};
@@ -3176,7 +3184,7 @@ function SettingsScreenInner() {
             into mediaCache.setMediaDownloadPrefs so the cellular gate respects
             the new pref without an app restart. Mobile-only (web has no
             cellular concept). */}
-        {Platform.OS !== 'web' && sectionMatches(t('settings.mediaAutoDownload'), t('settings.mediaPhotos'), t('settings.mediaAudio'), t('settings.mediaVideos'), t('settings.mediaDocs'), t('settings.roaming.title'), 'storage', 'auto-download', 'roaming') && (
+        {Platform.OS !== 'web' && sectionMatches(t('settings.mediaAutoDownload'), t('settings.mediaPhotos'), t('settings.mediaAudio'), t('settings.mediaVideos'), t('settings.mediaDocs'), t('settings.roaming.title'), t('settings.autoSaveGallery'), 'storage', 'auto-download', 'roaming', 'galeria', 'gallery') && (
         <View ref={registerSectionRef('mediaAutoDownload')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.mediaAutoDownload')}</Text>
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
@@ -3296,6 +3304,47 @@ function SettingsScreenInner() {
               }}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
               thumbColor={mediaRoaming ? colors.primary : '#fff'}
+            />
+          </View>
+
+          {/* [WhatsApp "Media visibility" 2026-05-26] Auto-save received
+              photos + videos into the phone gallery / camera roll. Default ON.
+              Persists under `autoSaveMediaToGallery`; mediaCache reads the same
+              key and saves on each successful inbound download (de-duped +
+              permission-gated inside the service). */}
+          <View
+            style={[
+              s.settingRow,
+              {
+                borderBottomColor: colors.borderLight,
+                borderBottomWidth: 0,
+                marginTop: Spacing.sm,
+                paddingTop: Spacing.md,
+                borderTopWidth: StyleSheet.hairlineWidth,
+                borderTopColor: colors.borderLight,
+              },
+            ]}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>
+                {t('settings.autoSaveGallery') || 'Salvar na galeria'}
+              </Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.autoSaveGalleryDesc') || 'Fotos e vídeos recebidos vão para o app Fotos automaticamente.'}
+              </Text>
+            </View>
+            <Switch
+              value={autoSaveGallery}
+              onValueChange={(v) => {
+                setAutoSaveGallery(v);
+                setStorage('autoSaveMediaToGallery', String(v));
+                try {
+                  const mc = require('../services/mediaCache');
+                  mc.setAutoSaveMediaToGallery?.(v);
+                } catch {}
+              }}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={autoSaveGallery ? colors.primary : '#fff'}
             />
           </View>
 

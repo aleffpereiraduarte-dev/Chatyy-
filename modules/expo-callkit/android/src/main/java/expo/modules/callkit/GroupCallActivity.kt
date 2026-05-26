@@ -807,6 +807,16 @@ class GroupCallActivity : ComponentActivity() {
     if (!hasVideo) return
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     if (isInPictureInPictureMode) return
+    // [BUG 2 fix 2026-05-26] GroupCallActivity also runs in an isolated
+    // empty-affinity task; bring the host RN app to front BEFORE entering PiP
+    // so the user isn't left on a dead surface behind the mini-window.
+    try {
+      val launch = packageManager.getLaunchIntentForPackage(packageName)
+      if (launch != null) {
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        startActivity(launch)
+      }
+    } catch (t: Throwable) { Log.w(TAG, "bring app to front for PiP failed: ${t.message}") }
     try {
       val params = PictureInPictureParams.Builder()
         .setAspectRatio(Rational(9, 16))

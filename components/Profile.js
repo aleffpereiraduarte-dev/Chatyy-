@@ -3533,7 +3533,15 @@ export default function Profile({
     </Modal>
   ) : null;
 
-  const statusCameraNode = actions?.is_self ? (
+  // [2026-05-26 P0 Android] StatusCamera is a heavy native component — it calls
+  // `useCameraPermissions()` (expo-camera) at MOUNT, which reaches into the
+  // native ExpoCamera module the moment the component mounts, even while the
+  // sheet is hidden (visible=false). On Android, opening your OWN profile
+  // mounted this hidden camera sheet on every render and a failure in that
+  // mount-time native call crashed the whole profile screen (iOS tolerated it).
+  // Fix: only mount StatusCamera AFTER the user actually opens it. Defers ALL
+  // camera/native initialization off the profile-open path. Pure JS → OTA-able.
+  const statusCameraNode = actions?.is_self && statusCameraOpen ? (
     <StatusCamera
       visible={statusCameraOpen}
       onClose={() => setStatusCameraOpen(false)}

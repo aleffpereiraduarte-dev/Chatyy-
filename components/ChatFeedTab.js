@@ -1172,7 +1172,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
       return (
         <View style={{ paddingVertical: 28, alignItems: 'center', gap: 6 }}>
           <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
-            {t?.('feed.allCaughtUp') || 'Você está em dia 🎉'}
+            {t?.('feed.allCaughtUp') || 'Você está em dia'}
           </Text>
           <Text style={{ color: colors.textTertiary, fontSize: 11 }}>
             {t?.('feed.pullToRefreshNew') || 'Puxe pra baixo pra ver novidades'}

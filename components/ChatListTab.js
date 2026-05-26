@@ -7172,7 +7172,7 @@ const s = StyleSheet.create({
   rowNameUnread: { fontWeight: '700', letterSpacing: -0.35 },
   // Timestamp sits flush-right, tabular-ish so the right column stays aligned
   // across rows regardless of "agora" vs "14:32" vs "Ontem".
-  rowTime: { fontSize: 12, letterSpacing: -0.1, fontWeight: '500' },
+  rowTime: { fontSize: 12, letterSpacing: -0.1, fontWeight: '500', fontVariant: ['tabular-nums'] },
   rowBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',

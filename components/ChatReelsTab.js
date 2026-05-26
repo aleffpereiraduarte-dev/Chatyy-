@@ -23,7 +23,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconSearch, IconCamera } from './Icons';
+import { IconSearch, IconCamera, IconChevronUp } from './Icons';
 import ReelsViewer from './ReelsViewer';
 
 const BRAND = '#7C3AED';
@@ -280,7 +280,7 @@ export default function ChatReelsTab({ active, parentActive: parentActiveProp, t
               { transform: [{ translateY: hintArrowY }] },
             ]}
           >
-            <Text style={styles.hintArrowGlyph}>↑</Text>
+            <IconChevronUp size={22} color="#fff" />
           </Animated.View>
           <View style={styles.hintBubble}>
             <Text style={styles.hintText}>

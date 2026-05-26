@@ -1146,6 +1146,18 @@ class ExpoCallKitModule : Module() {
       val callId: String = (params["call_id"] as? String)?.takeIf { it.isNotEmpty() }
         ?: "call_${System.currentTimeMillis()}_${java.util.UUID.randomUUID().toString().substring(0, 8)}"
 
+      // [BUG 1 fix 2026-05-26 — REVERTED preconnect, kept clean teardown only]
+      // Do NOT preconnect for OUTGOING here. preconnect() actually does
+      // r.connect() to the SFU (NativeCallRoom.kt:541); CallActivity.bringUpRoom
+      // still cold-creates its OWN Room (we did NOT wire adoption for outgoing,
+      // because the warm Room lacks bringUpRoom's tuned roomOptions — h264 pin,
+      // simulcast ladder, Opus dtx/red). Preconnecting WITHOUT adoption =
+      // two connected Rooms with the SAME identity → SFU duplicate-identity
+      // eviction (regression #1207) on EVERY outgoing call, not just redials.
+      // The real redial lag is the previous engine's teardown racing the new
+      // connect — fixed by the synchronous NativeCallRoom.disconnect() in
+      // CallActivity.finishCall(). That alone is the safe win; no orphan Room.
+
       try {
         // [#1217 2026-05-19] FULL NATIVE — gate reverted. Always launch
         // CallActivity for outgoing calls.

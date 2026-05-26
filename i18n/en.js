@@ -2494,6 +2494,8 @@ export default {
   'settings.mediaWifi': 'Wi-Fi',
   'settings.mediaWifiMobile': 'Wi-Fi + Mobile',
   'settings.mediaNever': 'Never',
+  'settings.autoSaveGallery': 'Save to gallery',
+  'settings.autoSaveGalleryDesc': 'Received photos and videos are added to the Photos app automatically.',
   // Storage section (WhatsApp Settings → Storage parity)
   'settings.storage.title': 'Storage',
   'settings.storage.used': 'Used',

@@ -9,7 +9,7 @@ import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
 import BrandFab from './BrandFab';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown } from './Icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
 import * as Haptics from 'expo-haptics';
@@ -2710,9 +2710,9 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                 {t?.('status.muted') || 'Silenciados'}
               </Text>
               <Text style={[styles.sectionCount, { color: colors.textSecondary }]}>{mutedStatuses.length}</Text>
-              <Text style={{ color: colors.textSecondary, fontSize: 14, marginRight: 16 }}>
-                {showMuted ? '−' : '+'}
-              </Text>
+              <View style={{ marginRight: 16 }}>
+                {showMuted ? <IconChevronUp size={16} color={colors.textSecondary} /> : <IconChevronDown size={16} color={colors.textSecondary} />}
+              </View>
             </TouchableOpacity>
             {showMuted && mutedStatuses.map((s) => renderStatusRow(s))}
           </View>
