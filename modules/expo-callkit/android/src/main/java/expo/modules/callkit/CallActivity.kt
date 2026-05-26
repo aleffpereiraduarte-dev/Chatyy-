@@ -1537,6 +1537,10 @@ class CallActivity : ComponentActivity() {
     when (event) {
       is RoomEvent.Connected -> {
         Log.d(TAG, "RoomEvent.Connected")
+        // [ring-fix 2026-05-25] Room connected → kill any lingering incoming
+        // ringtone (receiver side) defensively, in case the accept-path stop
+        // didn't run on this device/OEM.
+        try { IncomingRinger.stop() } catch (_: Throwable) {}
         // [WAVE 161B 2026-05-24] On the caller side this fires when WE
         // joined the SFU (often ~200ms after tapping Call) — NOT when the
         // callee picked up. Keep the "Chamando…" label until the real
@@ -1609,6 +1613,23 @@ class CallActivity : ComponentActivity() {
       }
       is RoomEvent.TrackSubscribed -> {
         val track = event.track
+        // [ring-fix 2026-05-25] A subscribed REMOTE track means the peer
+        // PUBLISHED media = they truly answered (the callee preconnect is
+        // subscribe-only and publishes nothing until pickup). Media-truth
+        // fallback for when the WS call_accepted is delayed/lost — without it
+        // the caller's audio connects but the UI stays on "Chamando…" with the
+        // ringback looping forever ("conecta mas fica chamando"; mirrors iOS #1349).
+        try { IncomingRinger.stop() } catch (_: Throwable) {}
+        if (isOutgoing && !peerAnswered) {
+          peerAnswered = true
+          stopRingback()
+          state.status = "Conectado"
+          state.isReconnecting = false
+          if (state.connectionStartedAt == 0L) {
+            state.connectionStartedAt = System.currentTimeMillis()
+          }
+          Log.d(TAG, "TrackSubscribed: remote media → peer answered, ringback stopped")
+        }
         if (track is VideoTrack) {
           Log.d(TAG, "TrackSubscribed (video) sid=${event.publication.sid}")
           state.hasRemoteVideo = true
