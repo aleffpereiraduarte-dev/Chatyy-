@@ -893,6 +893,8 @@ export default {
   'compose.errorSend': 'Erro ao enviar',
   'compose.errorSchedule': 'Erro ao agendar envio',
   'compose.errorConnection': 'Erro de conexão',
+  'compose.errorInvalidRecipient': 'Endereço inválido: {email}',
+  'compose.errorTooLarge': 'Mensagem maior que 25 MB. Compartilhe um link em vez de anexar.',
   'compose.undoSending': 'Enviando em {n}s...',
   'compose.originalMessage': '--- Mensagem original ---',
   'compose.forwardedMessage': '--- Mensagem encaminhada ---',

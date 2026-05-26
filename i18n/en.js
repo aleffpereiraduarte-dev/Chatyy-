@@ -913,6 +913,8 @@ export default {
   'compose.errorSend': 'Error sending',
   'compose.errorSchedule': 'Error scheduling send',
   'compose.errorConnection': 'Connection error',
+  'compose.errorInvalidRecipient': 'Invalid address: {email}',
+  'compose.errorTooLarge': 'Message larger than 25 MB. Share a link instead of attaching.',
   'compose.undoSending': 'Sending in {n}s...',
   'compose.originalMessage': '--- Original message ---',
   'compose.forwardedMessage': '--- Forwarded message ---',

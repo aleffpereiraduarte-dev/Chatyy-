@@ -60,6 +60,50 @@ import {
 
 const DRAFT_SAVE_INTERVAL = 5000;
 
+// ── Gmail-level limits (protect data processing/storage from pathological
+//    input). Generous enough that normal use never trips them. ──
+const MAX_SUBJECT_LEN = 255;          // Gmail truncates display beyond this
+const MAX_BODY_LEN = 100000;          // ~100KB of text content
+const MAX_EMAIL_LEN = 254;            // RFC 5321 addr-spec total
+const MAX_EMAIL_LOCAL_LEN = 64;       // local part (before @)
+const MAX_EMAIL_DOMAIN_LEN = 255;     // domain part (after @)
+const MAX_MESSAGE_BYTES = 25 * 1024 * 1024; // Gmail's hard 25 MB total
+
+// Validate a single email address against Gmail/RFC limits + basic format.
+// Accepts either a bare addr-spec ("a@b.com") or a "Name <a@b.com>" entry.
+// Returns true when the addr-spec is well-formed and within all length caps.
+function isValidRecipient(entry) {
+  if (!entry || typeof entry !== 'string') return false;
+  let addr = entry.trim();
+  const m = addr.match(/<([^>]+)>/);
+  if (m) addr = m[1].trim();
+  if (!addr || addr.length > MAX_EMAIL_LEN) return false;
+  const at = addr.indexOf('@');
+  if (at <= 0 || at !== addr.lastIndexOf('@')) return false; // exactly one @, non-empty local
+  const local = addr.slice(0, at);
+  const domain = addr.slice(at + 1);
+  if (!local || local.length > MAX_EMAIL_LOCAL_LEN) return false;
+  if (!domain || domain.length > MAX_EMAIL_DOMAIN_LEN) return false;
+  // Domain must have a dot and no whitespace; local must have no whitespace.
+  if (/\s/.test(local) || /\s/.test(domain)) return false;
+  if (!domain.includes('.')) return false;
+  return true;
+}
+
+// Approximate UTF-8 byte length without relying on TextEncoder (RN web/native).
+function utf8ByteLength(str) {
+  if (!str) return 0;
+  let bytes = 0;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    if (c < 0x80) bytes += 1;
+    else if (c < 0x800) bytes += 2;
+    else if (c >= 0xd800 && c <= 0xdbff) { bytes += 4; i++; } // surrogate pair
+    else bytes += 3;
+  }
+  return bytes;
+}
+
 // Format date for reply/forward headers using device locale
 function formatGmailDate(dateStr) {
   if (!dateStr) return '';
@@ -224,7 +268,7 @@ function SubjectField({ value, onChangeText, placeholder, label, colors }) {
           onBlur={() => setFocused(false)}
           placeholder={focused ? placeholder : ''}
           placeholderTextColor={colors.textTertiary}
-          maxLength={200}
+          maxLength={255}
           style={[
             {
               fontSize: 16,
@@ -244,11 +288,11 @@ function SubjectField({ value, onChangeText, placeholder, label, colors }) {
             bottom: 6,
             fontSize: 10,
             fontWeight: '500',
-            color: (value && value.length > 180) ? '#ef4444' : colors.textTertiary,
+            color: (value && value.length > 235) ? '#ef4444' : colors.textTertiary,
             letterSpacing: 0.3,
           }}
         >
-          {(value || '').length}/200
+          {(value || '').length}/255
         </Text>
       </Animated.View>
     </View>
@@ -918,6 +962,27 @@ export default function ComposeScreen() {
     if (currentTo.length === 0) { setError(t('compose.errorRecipient')); return; }
     if (!body.trim() && !subject.trim()) { setError(t('compose.errorEmpty')); return; }
 
+    // ── Recipient validation (Gmail/RFC length + format) ──
+    // Flag the first invalid/over-length address across To/Cc/Bcc and block
+    // send so we never hand a malformed addr-spec to the backend.
+    const allRecipients = [...currentTo, ...cc, ...bcc];
+    const bad = allRecipients.find(c => !isValidRecipient(c?.email));
+    if (bad) {
+      setError(t('compose.errorInvalidRecipient', { email: (bad.email || '').slice(0, 80) }));
+      return;
+    }
+
+    // ── Total message size (Gmail's 25 MB hard limit) ──
+    // Sum body bytes + every attachment size (drive refs carry no bytes).
+    const bodyBytes = utf8ByteLength(body || '') + utf8ByteLength(subject || '');
+    const attachBytes = attachments.reduce(
+      (sum, f) => sum + (f?.is_drive_ref ? 0 : (f?.size || 0)), 0
+    );
+    if (bodyBytes + attachBytes > MAX_MESSAGE_BYTES) {
+      setError(t('compose.errorTooLarge'));
+      return;
+    }
+
     const delay = undoDelayRef.current;
     setError('');
     setSending(true);
@@ -1090,6 +1155,17 @@ export default function ComposeScreen() {
 
   const handleAddAttachment = (file) => setAttachments(prev => [...prev, file]);
   const handleRemoveAttachment = (index) => setAttachments(prev => prev.filter((_, i) => i !== index));
+
+  // Body soft-cap (~100KB of text/HTML). RichTextEditor is not a plain
+  // TextInput so we cap on change instead of via maxLength. We slice the raw
+  // value (HTML markup included) so a runaway paste can't blow up storage.
+  const handleBodyChange = useCallback((next) => {
+    if (typeof next === 'string' && next.length > MAX_BODY_LEN) {
+      setBody(next.slice(0, MAX_BODY_LEN));
+    } else {
+      setBody(next);
+    }
+  }, []);
 
   // --- Success screen ---
   if (success) {
@@ -1668,7 +1744,7 @@ export default function ComposeScreen() {
               <View style={s.replyBodyContainer}>
                 <RichTextEditor
                   value={body}
-                  onChange={setBody}
+                  onChange={handleBodyChange}
                   placeholder={t('compose.replyWritePlaceholder')}
                   minHeight={180}
                 />
@@ -1853,7 +1929,7 @@ export default function ComposeScreen() {
             ]}>
               <RichTextEditor
                 value={body}
-                onChange={setBody}
+                onChange={handleBodyChange}
                 placeholder={t('compose.bodyPlaceholder') || 'Comece a escrever...'}
                 minHeight={quotedHtml ? 280 : 360}
                 cardMode

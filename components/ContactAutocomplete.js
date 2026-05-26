@@ -4,13 +4,36 @@ import {
   Platform, ActivityIndicator,
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
+import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { apiCall } from '../services/api';
-import { IconX, IconUser, IconMail, IconSend, IconInbox } from './Icons';
+import { IconX, IconUser, IconMail, IconSend, IconInbox, IconAlertTriangle } from './Icons';
 import AvatarCircle from './AvatarCircle';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const DEBOUNCE_MS = 300;
+
+// Gmail/RFC 5321 address length caps. A chip is only accepted when the
+// addr-spec passes EMAIL_REGEX *and* fits within these limits; anything over
+// is flagged inline so a pathological address never reaches the send pipeline.
+const MAX_EMAIL_LEN = 254;
+const MAX_EMAIL_LOCAL_LEN = 64;
+const MAX_EMAIL_DOMAIN_LEN = 255;
+
+function emailWithinLimits(email) {
+  if (!email || email.length > MAX_EMAIL_LEN) return false;
+  const at = email.indexOf('@');
+  if (at <= 0) return false;
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  if (local.length > MAX_EMAIL_LOCAL_LEN) return false;
+  if (!domain || domain.length > MAX_EMAIL_DOMAIN_LEN) return false;
+  return true;
+}
+
+function isValidEmail(email) {
+  return EMAIL_REGEX.test(email) && emailWithinLimits(email);
+}
 
 // Auto-correct common domain typos (chatyy.com → chatyy.com.br, onemundo.com → onemundo.com.br)
 function fixEmail(email) {
@@ -24,10 +47,12 @@ function fixEmail(email) {
 
 function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, ref) {
   const { colors } = useTheme();
+  const { t } = useLanguage();
   const [inputText, setInputText] = useState('');
   const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [focused, setFocused] = useState(false);
+  const [invalidMsg, setInvalidMsg] = useState('');
   const debounceRef = useRef(null);
   const inputRef = useRef(null);
   const selectedEmailsRef = useRef(new Set()); // Cache selected emails to avoid recalc
@@ -107,6 +132,7 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
 
   const handleChangeText = (text) => {
     setInputText(text);
+    if (invalidMsg) setInvalidMsg('');
     fetchContacts(text.trim());
   };
 
@@ -117,6 +143,7 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
     // Clear input and suggestions FIRST (before onChange triggers parent re-render)
     setInputText('');
     setSuggestions([]);
+    setInvalidMsg('');
 
     // Then update parent state
     if (!already) {
@@ -141,7 +168,7 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
     if (!trimmed) return;
 
     // If valid email, add directly
-    if (EMAIL_REGEX.test(trimmed)) {
+    if (isValidEmail(trimmed)) {
       addContact({ email: trimmed, name: '' });
       return;
     }
@@ -151,6 +178,11 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
       addContact(suggestions[0]);
       return;
     }
+
+    // Looks like an email attempt but failed format/length → flag inline.
+    if (trimmed.includes('@')) {
+      setInvalidMsg(t('compose.errorInvalidRecipient', { email: trimmed.slice(0, 60) }));
+    }
   };
 
   // Expose flush method so parent can commit pending input before send
@@ -158,8 +190,10 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
     flush: () => {
       // Use closure to capture current inputText
       const trimmed = fixEmail(inputText);
-      if (trimmed && EMAIL_REGEX.test(trimmed)) {
+      if (trimmed && isValidEmail(trimmed)) {
         addContact({ email: trimmed, name: '' });
+      } else if (trimmed && trimmed.includes('@')) {
+        setInvalidMsg(t('compose.errorInvalidRecipient', { email: trimmed.slice(0, 60) }));
       }
     },
   }), [inputText]); // Only depend on inputText, addContact is in closure
@@ -177,8 +211,10 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
     if (key === ',' || key === ';') {
       e.preventDefault?.();
       const trimmed = fixEmail(inputText);
-      if (trimmed && EMAIL_REGEX.test(trimmed)) {
+      if (trimmed && isValidEmail(trimmed)) {
         addContact({ email: trimmed, name: '' });
+      } else if (trimmed && trimmed.includes('@')) {
+        setInvalidMsg(t('compose.errorInvalidRecipient', { email: trimmed.slice(0, 60) }));
       }
     }
   };
@@ -293,6 +329,17 @@ function ContactAutocompleteInner({ value = [], onChange, placeholder, label }, 
       </View>
       </View>
 
+      {/* Inline invalid-recipient error (length/format). Non-blocking visual
+          cue; doSend in compose also re-validates before sending. */}
+      {!!invalidMsg && (
+        <View style={styles.invalidRow}>
+          <IconAlertTriangle size={12} color={colors.error} />
+          <Text style={[styles.invalidText, { color: colors.error }]} numberOfLines={2}>
+            {invalidMsg}
+          </Text>
+        </View>
+      )}
+
       {/* Dropdown */}
       {showDropdown && (
         <View style={[
@@ -383,6 +430,18 @@ const styles = StyleSheet.create({
   },
   inputFull: {
     flex: 1,
+  },
+  // Inline invalid-recipient error
+  invalidRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+    paddingLeft: 50, // align under the input column (label width)
+  },
+  invalidText: {
+    fontSize: FontSize.sm,
+    flexShrink: 1,
   },
   // Dropdown
   dropdown: {
