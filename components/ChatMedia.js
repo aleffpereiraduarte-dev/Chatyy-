@@ -41,6 +41,17 @@ import * as api from '../services/api';
 
 function resolveAbsolute(url) {
   if (!url) return '';
+  // [2026-05-26] The chat image bubble hands `<ChatMedia uri={fullUri}>` a
+  // value that may ALREADY be resolved to a local `file://` (cached photo on
+  // disk via resolveMediaUri/syncIndex), or a picker `content://`/`ph://`, or
+  // a web `blob:`/`data:` preview. Never run those back through getMediaUrl /
+  // the BASE_URL fallback — that would turn `file:///var/...` into
+  // `https://chatyy.com.brfile:///var/...` (broken) and the photo would never
+  // paint (empty gray box). Return local URIs untouched so the file is loaded
+  // directly. http/relative inputs still go through getMediaUrl for CDN rewrite.
+  if (/^(file|content|ph|asset|assets-library|blob|data):/i.test(url)) {
+    return url;
+  }
   try { return api.getMediaUrl(url); } catch {}
   return url.startsWith('http') ? url : `https://chatyy.com.br${url}`;
 }

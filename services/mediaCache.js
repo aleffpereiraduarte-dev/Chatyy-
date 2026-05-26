@@ -944,6 +944,13 @@ function _shouldAutoDownload(url) {
 // background prefetch path leaves opts.force unset so cellular saves data.
 export async function cacheMedia(url, opts = {}) {
   if (!url || Platform.OS === 'web') return url;
+  // [2026-05-26] Already-local URIs (file://, content://, ph://, etc.) are not
+  // remote assets to download — the bytes are already on the device. Callers
+  // can reach here when a chat image bubble's pre-resolved `file://` path is
+  // handed to ChatMedia → useChatMediaUri → cacheMedia. Attempting
+  // downloadAsync on a file:// source is wasteful and can error; just return
+  // the local URI so the bubble renders it directly.
+  if (/^(file|content|ph|asset|assets-library|data):/i.test(url)) return url;
   const fs = getFS();
   if (!fs) return url;
 

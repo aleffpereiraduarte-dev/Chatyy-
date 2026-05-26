@@ -546,9 +546,15 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       try { getMediaPipe()?.stopFaceLandmarker?.(); } catch (e) {
         if (__DEV__) console.warn('[StatusCamera] stopFaceLandmarker pre-capture failed:', e?.message);
       }
-      // Yield one frame so the native session actually tears down and releases
-      // the camera before expo-camera asks for the still.
-      await new Promise(r => setTimeout(r, 0));
+      // Wait for the native AVCaptureSession (iOS) / CameraX bindToLifecycle
+      // (Android) to ACTUALLY release the front lens before expo-camera asks
+      // for the still. A single `setTimeout(0)` tick was NOT enough — the
+      // teardown is async on the native side, so the capture still raced the
+      // un-released session and timed out at 4s ("trava na hora de tirar").
+      // 350ms is the empirical floor for the session to fully release while
+      // staying imperceptible. Definitive fix is the single-session
+      // Vision-Camera AR rebuild (no second camera session at all).
+      await new Promise(r => setTimeout(r, 350));
     }
     let photo = null;
     try {

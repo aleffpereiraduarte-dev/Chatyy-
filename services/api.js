@@ -149,6 +149,21 @@ export function getBaseUrl() {
 export function getMediaUrl(fileUrl) {
   if (!fileUrl) return '';
   if (typeof fileUrl !== 'string') return '';
+  // [2026-05-26] CRITICAL: pass LOCAL / already-resolved URIs through
+  // untouched. Callers like ChatMedia (and the chat image bubble's `fullUri`)
+  // can hand us a value that resolveMediaUri/syncIndex already turned into a
+  // `file://` (cached photo on disk), or a picker `content://`/`ph://`, or a
+  // web `blob:`/`data:` preview. None of these start with `http` nor `/data/`,
+  // so the BASE_URL fallback at the bottom would glue the origin host in front
+  // of them → `https://chatyy.com.brfile:///var/...` = a broken URL that
+  // ExpoImage can't load. On iOS that failed load painted transparent and
+  // never reliably fired onError, leaving the chat photo bubble as an empty
+  // gray skeleton box (timestamp + ✓✓ overlaid). Stickers/GIFs were fine
+  // because they pass a raw http/CDN URL straight through. Guard it here so
+  // the function is idempotent on local/absolute inputs.
+  if (/^(file|content|ph|asset|assets-library|blob|data):/i.test(fileUrl)) {
+    return fileUrl;
+  }
   // Already a full URL — rewrite self-hosted paths to the CDN so feed/reels
   // load from Cloudflare edge instead of the origin (60-80% faster TTFB on
   // mobile). External third-party URLs pass through untouched.
