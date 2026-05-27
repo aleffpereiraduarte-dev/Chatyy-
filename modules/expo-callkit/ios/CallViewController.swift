@@ -884,6 +884,29 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             if let preRoom = NativeCallRoom.shared.currentRoom() {
                 self.room = preRoom
                 NativeCallRoom.shared.attachDelegate(self)
+                // [iOS black-video fix 2026-05-27] BACKFILL the remote video.
+                // preconnectRoom connects to the SFU DURING the ring with
+                // delegate=nil, so the peer's already-published camera gets
+                // auto-subscribed BEFORE this attachDelegate runs. LiveKit fires
+                // didSubscribeTrack only at the moment of subscription and never
+                // re-emits — so that track is never bound to remoteVideoView and
+                // the remote stays BLACK on incoming-answer (only direction the
+                // founder sees black). Walk the already-subscribed remote video
+                // publications and bind them via the exact same path as
+                // didSubscribeTrack. Idempotent if the delegate later re-fires.
+                for rp in preRoom.remoteParticipants.values {
+                    for pub in rp.trackPublications.values where pub.kind == .video && pub.isSubscribed {
+                        if let vt = pub.track as? VideoTrack {
+                            DispatchQueue.main.async { [weak self] in
+                                guard let self = self else { return }
+                                self.session.remoteVideoTrack = vt
+                                self.stopRingbackTone(reason: "adopt_backfill")
+                                if #available(iOS 15.0, *) { self.attachPiPRenderer(to: vt) }
+                            }
+                            break
+                        }
+                    }
+                }
             }
             // Update session.status if already connected.
             if NativeCallRoom.shared.state == .connected {
