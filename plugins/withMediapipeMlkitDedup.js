@@ -119,15 +119,20 @@ module.exports = function withMediapipeMlkitDedup(config) {
       let contents = fs.readFileSync(podfilePath, 'utf8');
       if (contents.includes(HOOK_MARKER)) return cfg;
 
-      // Inject inside the RN template's post_install block, right before its
-      // closing `end` — same strategy as withFixResourceSigning so CocoaPods sees
-      // a single post_install hook.
-      const rnPostInstallRe = /(post_install do \|installer\|\s*\n\s*react_native_post_install\([\s\S]*?\)\s*\n)(\s*end)/;
-      const m = contents.match(rnPostInstallRe);
-      if (m) {
-        contents = contents.replace(rnPostInstallRe, `$1${INJECT_BODY}$2`);
+      // Inject right AFTER the `post_install do |installer|` opening line, INSIDE
+      // the existing block. CocoaPods allows only ONE post_install hook, and the RN
+      // template (plus withFixResourceSigning, which also injects at the top of the
+      // block) already emits one. Anchoring on the OPENING line — not on
+      // `react_native_post_install(` — is robust regardless of what other plugins
+      // injected first (the previous regex required react_native_post_install to be
+      // the first statement, which broke once withFixResourceSigning landed above it,
+      // causing a SECOND hook to be appended → "multiple post_install hooks
+      // unsupported"). Our begin/rescue body is valid anywhere in the block.
+      const openRe = /(post_install do \|installer\|[^\n]*\n)/;
+      if (openRe.test(contents)) {
+        contents = contents.replace(openRe, `$1${INJECT_BODY}\n`);
       } else {
-        // Fallback: no RN-template post_install present — safe to append our own.
+        // Fallback: no post_install present at all — safe to append our own.
         contents += `\npost_install do |installer|${INJECT_BODY}end\n`;
       }
       fs.writeFileSync(podfilePath, contents);
