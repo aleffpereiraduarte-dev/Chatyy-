@@ -24,7 +24,15 @@ import {
 // the ONE camera session: it renders the preview AND draws the dog-ears /
 // glasses / etc. overlay on the same Skia canvas. No second AVCaptureSession /
 // CameraX bind fighting for the front lens (the old dual-session freeze bug).
-import StatusVisionCamera from './status/StatusVisionCamera';
+// [2026-05-27 iOS boot crash-loop fix] LAZY import. StatusVisionCamera pulls in
+// react-native-vision-camera + @shopify/react-native-skia + react-native-worklets-core,
+// and EACH of those THROWS at module-eval on iOS if its native binding isn't
+// installed. StatusCamera is imported at app boot (ChatListTab), so a STATIC
+// import dragged that throw onto the launch path → the JS bundle aborted during
+// boot → expo-updates ErrorRecovery → SIGABRT crash-loop (build 282, the first
+// iOS build to ever run this AR stack). React.lazy defers evaluating the AR
+// native stack until the camera actually opens, so it can never crash launch.
+const StatusVisionCamera = React.lazy(() => import('./status/StatusVisionCamera'));
 import { FACE_FILTER_PRESETS } from './status/FaceFilters';
 
 // Haptics (graceful — `expo-haptics` may not be present in every build)
@@ -1128,14 +1136,16 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
             Native-only: the vision-camera / Skia / worklets stack is stubbed
             on web (metro WEB_STUBS), so we never mount it in the browser. */}
         {Platform.OS !== 'web' ? (
-          <StatusVisionCamera
-            ref={cameraRef}
-            facing={facing}
-            mode={captureMode === 'video' ? 'video' : 'picture'}
-            arFilterKey={FACE_FILTER_PRESETS[arFilterIdx]?.key || 'none'}
-            isActive={visible && !preview}
-            onError={(e) => { if (__DEV__) console.warn('[StatusCamera] vision-camera error:', e?.message || e); }}
-          />
+          <React.Suspense fallback={<View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />}>
+            <StatusVisionCamera
+              ref={cameraRef}
+              facing={facing}
+              mode={captureMode === 'video' ? 'video' : 'picture'}
+              arFilterKey={FACE_FILTER_PRESETS[arFilterIdx]?.key || 'none'}
+              isActive={visible && !preview}
+              onError={(e) => { if (__DEV__) console.warn('[StatusCamera] vision-camera error:', e?.message || e); }}
+            />
+          </React.Suspense>
         ) : (
           <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />
         )}
