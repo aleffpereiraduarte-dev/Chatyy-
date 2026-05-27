@@ -3935,10 +3935,16 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // leaves the strip in place. Native driver because translateY only.
   const pullTranslateY = useRef(new Animated.Value(0)).current;
   const onListScroll = useCallback((e) => {
-    const y = e?.nativeEvent?.contentOffset?.y;
-    if (typeof y !== 'number') return;
-    // Damp by 0.6 so the strip doesn't out-pace the pull (matches iOS feel).
-    pullTranslateY.setValue(y < 0 ? Math.max(y * 0.6, -120) : 0);
+    // [highlight overlap fix 2026-05-27] This used to translate the status
+    // strip on overscroll (y<0) to "track" the pull-to-refresh gesture, but the
+    // strip is a fixed SIBLING above the FlatList — translating it desynced
+    // from the list's native rubber-band bounce, so on iOS the strip slid OVER
+    // the first conversation row ("highlight não desce junto, fica estranho").
+    // Keeping the strip static (like the filters row above it, which never
+    // glitches on refresh) is the clean, low-risk fix. The proper WhatsApp-style
+    // refactor (fold the whole top into the scrollable ListHeaderComponent) is
+    // deferred to the polish pass.
+    pullTranslateY.setValue(0);
   }, [pullTranslateY]);
 
   const navigateToConversation = useCallback((conv) => {

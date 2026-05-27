@@ -275,6 +275,22 @@ async function handleMessage(msg) {
       _onStateChange?.('connected');
       _tickInterval = setInterval(() => _onStateChange?.('tick'), 1000);
       if (msg.id) _ws?.send(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: { method: msg.method } }));
+      // [viva-voz fix 2026-05-27] On iOS the call was stuck on SPEAKER even
+      // though placeCall set earpiece up-front. Root cause = a race: the
+      // @livekit/react-native-webrtc RTCAudioSession reconfigures the shared
+      // AVAudioSession (often to speaker / .videoChat defaults) WHEN media
+      // starts flowing — i.e. AFTER our activateForCall(false). So we re-assert
+      // earpiece the moment the call truly connects, and again ~600ms later to
+      // win the race against WebRTC's late session mutation. The user's manual
+      // speaker toggle still works afterwards (it calls setSpeaker(true)).
+      if (Platform.OS !== 'web') {
+        const forceEarpiece = () => {
+          try { require('react-native-incall-manager').default.setForceSpeakerphoneOn(false); } catch {}
+          try { require('../modules/expo-audio-session').default?.setSpeaker?.(false); } catch {}
+        };
+        forceEarpiece();
+        setTimeout(forceEarpiece, 600);
+      }
       return;
     }
 
