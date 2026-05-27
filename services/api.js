@@ -4157,15 +4157,22 @@ export async function chatMute(conversationId, muteUntil = null) {
 }
 
 export async function chatPin(conversationId, messageId) {
-  // Stage 1: queue the pin intent locally first so a network blip doesn't
-  // lose it. The pinned/starred state lives in chat_pinned_messages /
-  // chat_starred_messages PG tables — no local table for them yet, so the
-  // offline_queue is the only durable store for the intent.
+  // chat_pin is a TOGGLE on the server (flips chat_messages.pinned_at). Same
+  // hazard as chatPinMessage: pre-queuing an offline replay AND POSTing online
+  // makes the offline_queue drain re-fire the toggle → unpins it after an app
+  // restart. POST first; only queue on failure so the toggle applies once.
   const ld = _ld();
-  if (ld && typeof ld.queueOfflineAction === 'function') {
-    try { await ld.queueOfflineAction('chat_pin', { conversation_id: conversationId, message_id: messageId }); } catch {}
+  const payload = { conversation_id: conversationId, message_id: messageId };
+  let r;
+  try {
+    r = await apiCall('chat_pin', payload, 'POST');
+  } catch (e) {
+    r = { success: false, error: e?.message || 'pin_failed' };
   }
-  return apiCall('chat_pin', { conversation_id: conversationId, message_id: messageId }, 'POST');
+  if (!r?.success && ld && typeof ld.queueOfflineAction === 'function') {
+    try { await ld.queueOfflineAction('chat_pin', payload); } catch {}
+  }
+  return r;
 }
 
 // Saved Messages (Telegram-style self-chat). Lazy-creates on first call.
@@ -6193,12 +6200,27 @@ export async function chatPinMessage(messageId, durationSeconds) {
   if (durationSeconds && Number.isFinite(durationSeconds)) {
     payload.duration_seconds = durationSeconds;
   }
-  // Stage 1: queue pin intent locally first (no local pinned_messages table yet).
+  // chat_pin_message is a TOGGLE on the server (pin if absent, unpin if present).
+  // We must NOT both POST online AND pre-queue an offline replay: the localDb
+  // offline_queue drains by re-firing apiCall(action, payload), so a queued
+  // chat_pin_message replays the SAME toggle a second time → UNPINS the message
+  // → the pin "disappears after closing + reopening the app" (Lester QA #12,
+  // 2026-05-27). Correct pattern for a toggle: POST first; only fall back to the
+  // offline queue if the request actually failed (offline / network error), so
+  // the toggle is applied exactly once.
   const ld = _ld();
-  if (ld && typeof ld.queueOfflineAction === 'function') {
-    try { await ld.queueOfflineAction('chat_pin_message', payload); } catch {}
+  let r;
+  try {
+    r = await apiCall('chat_pin_message', payload, 'POST');
+  } catch (e) {
+    r = { success: false, error: e?.message || 'pin_failed' };
   }
-  const r = await apiCall('chat_pin_message', payload, 'POST');
+  if (!r?.success) {
+    if (ld && typeof ld.queueOfflineAction === 'function') {
+      try { await ld.queueOfflineAction('chat_pin_message', payload); } catch {}
+    }
+    return r;
+  }
   // [pin persistence] chat_pinned_messages is an SWR-cached read. The generic
   // chat_* mutation hook in apiCall only busts `chat_list`, so without an
   // explicit invalidation here the next conversation open could serve a stale
