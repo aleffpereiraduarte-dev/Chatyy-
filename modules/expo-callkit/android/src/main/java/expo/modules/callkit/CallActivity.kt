@@ -587,7 +587,18 @@ class CallActivity : ComponentActivity() {
             // (handleVideoRequestData → enterVideoModeAndPublish). For an
             // already-video call, fall through to the normal mute/unmute path.
             if (desired && !state.isVideo) {
+              // [audio→video fix 2026-05-27] Notify the peer (so their UI can
+              // show "X ligou a câmera" / auto-upgrade on TrackSubscribed) BUT
+              // turn OUR OWN camera on immediately — don't make the local camera
+              // contingent on the peer replying `accepted`. Before, the toggle
+              // only sent the request and waited up to 30s; if the peer never
+              // replied the local camera never turned on → "tento mudar pra
+              // câmera e não funciona, tenho que desligar e ligar de novo".
+              // enterVideoModeAndPublish() requests CAMERA perm if missing,
+              // (re)creates+overlays the local renderer, sets isVideo/isCameraOn,
+              // setCameraEnabled(true) and binds the local track. WhatsApp-style.
               requestVideoUpgrade()
+              enterVideoModeAndPublish()
               return@onToggleCam
             }
             state.isCameraOn = desired
@@ -1569,7 +1580,15 @@ class CallActivity : ComponentActivity() {
     NativeCallRoom.publish(r, callId, callId, applicationContext)
 
     remoteRenderer?.let { r.initVideoRenderer(it) }
-    localRenderer?.let { r.initVideoRenderer(it) }
+    localRenderer?.let {
+      r.initVideoRenderer(it)
+      // [self-preview fix 2026-05-27] Two SurfaceViewRenderers (remote full-bleed
+      // + local PiP) both punch their own Surface window. Without forcing the
+      // local one onto the overlay window, it composites BEHIND the remote
+      // surface → "no vídeo eu não me vejo" (self-view blank). Must be set
+      // before the surface attaches to a window — here, before Compose mounts it.
+      try { it.setZOrderMediaOverlay(true) } catch (_: Throwable) {}
+    }
 
     eventsJob = lifecycleScope.launch {
       r.events.collect { event ->
@@ -2465,7 +2484,12 @@ class CallActivity : ComponentActivity() {
         remoteRenderer = SurfaceViewRenderer(this).also { r.initVideoRenderer(it) }
       }
       if (localRenderer == null) {
-        localRenderer = SurfaceViewRenderer(this).also { r.initVideoRenderer(it) }
+        localRenderer = SurfaceViewRenderer(this).also {
+          r.initVideoRenderer(it)
+          // [self-preview fix 2026-05-27] overlay window so the local PiP isn't
+          // occluded by the remote full-bleed surface (see bringUpRoom).
+          try { it.setZOrderMediaOverlay(true) } catch (_: Throwable) {}
+        }
       }
     } catch (t: Throwable) {
       Log.w(TAG, "enterVideoModeAndPublish: renderer alloc failed: ${t.message}")
