@@ -600,11 +600,17 @@ function AppInit({ onNotification, setOtaToast }) {
           const now = Date.now();
           if (callId === lastNavCallId && (now - lastNavAt) < 8000) return;
           lastNavCallId = callId; lastNavAt = now;
-          const isVideo = data?.hasVideo ? '1' : '0';
-          const nm = encodeURIComponent(data?.callerName || '');
-          const em = encodeURIComponent(data?.callerEmail || '');
-          const cv = encodeURIComponent(data?.conversationId || '');
-          router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${nm}&contactEmail=${em}&isVideo=${isVideo}&conversationId=${cv}&isCaller=0&adoptNative=1`);
+          // [iOS foreground-answer drop fix 2026-05-27] DO NOT hand off to the
+          // JS /call.js on answer anymore. The native CallViewController (already
+          // presented by CXAnswerCallAction) is a fully-functional call UI with
+          // h264 video, and it WORKED. The handoff (router.push '/call?adoptNative=1'
+          // → /call.js adopts the shared Room → calls dismissNativeCallVC) made the
+          // native VC's deinit DISCONNECT the adopted Room → "atende e a tela
+          // desliga" (only when answering, app open, callee iOS). Founder: "ele
+          // funcionava com o nativo, o problema era o vídeo". Keep the native
+          // screen as the answer UI; outgoing calls still use JS /call.js.
+          // (Native build also adds a cededToJs deinit guard as belt-and-braces.)
+          void callId;
         } catch {}
       }) || (() => {});
     } catch {}

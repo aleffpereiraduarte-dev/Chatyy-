@@ -1122,6 +1122,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // user can re-present + re-adopt it. Real hangup (End button) leaves this
     // false → deinit disconnects as before. Reset on restoreFromMinimize().
     private var isMinimizing: Bool = false
+    // [iOS foreground-answer drop fix 2026-05-27] True when JS /call.js has
+    // ADOPTED this VC's shared Room and asked us to dismiss for the seamless
+    // handoff (dismissIfPresented). Like isMinimizing, this MUST suppress the
+    // deinit Room teardown — the Room is owned by NativeCallRoom.shared and JS
+    // is now the live UI. Without this, answering with the app OPEN tore down
+    // the adopted Room → "atende e a tela desliga" (regression from b58151cb;
+    // the db5c53ef deinit guard only covered minimize, not the JS handoff).
+    private var cededToJs: Bool = false
 
     private func handleHangup() {
         if didHangup {
@@ -2522,15 +2530,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // (End button → handleHangup, or remote didDisconnect) already
         // disconnects the Room + clears the singleton, and leaves isMinimizing
         // false so this belt-and-braces path still cleans up on those flows.
-        if let r = self.room, !isMinimizing {
+        if let r = self.room, !isMinimizing, !cededToJs {
             // [#1207 NativeCallRoom REAL] Belt-and-braces: usually handleHangup
             // or didDisconnect have already cleared the singleton by the time
             // deinit runs, but force-quit can short-circuit those. Idempotent —
             // clear() on an already-empty singleton is a no-op print.
             NativeCallRoom.shared.clear()
             Task { await r.disconnect() }
-        } else if isMinimizing {
-            print("[CallVC] deinit while minimizing — keeping Room alive (owned by NativeCallRoom.shared) callId=\(callId)")
+        } else if isMinimizing || cededToJs {
+            print("[CallVC] deinit while \(cededToJs ? "ceding to JS" : "minimizing") — keeping Room alive (owned by NativeCallRoom.shared) callId=\(callId)")
         }
         if let obs = pipResignObserver { NotificationCenter.default.removeObserver(obs) }
         if let obs = dtmfObserver { NotificationCenter.default.removeObserver(obs); dtmfObserver = nil }
