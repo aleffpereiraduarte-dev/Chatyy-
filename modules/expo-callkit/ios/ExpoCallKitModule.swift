@@ -169,8 +169,8 @@ public class ExpoCallKitModule: Module {
   /// fallback when its own `self.dismiss(animated:)` is swallowed (no
   /// presenter / mid-transition / sibling modal). ProviderDelegate is private
   /// to this file so we forward through a static on the module.
-  static func dismissActiveCallSurfacesFromVC(reason: String) {
-    ProviderDelegate.dismissActiveCallSurfaces(reason: reason)
+  static func dismissActiveCallSurfacesFromVC(reason: String, forCallId: String? = nil) {
+    ProviderDelegate.dismissActiveCallSurfaces(reason: reason, forCallId: forCallId)
   }
 
   /// [STAGE-A 2026-05-20] GAP #3 — Atomically-updated flag set in
@@ -1642,7 +1642,10 @@ public class ExpoCallKitModule: Module {
       // presented CallViewController is a UIKit modal — CallKit doesn't tear
       // it down. Dismiss it explicitly here. Idempotent vs. the local-hangup
       // CXEndCallAction path which also dismisses.
-      ProviderDelegate.dismissActiveCallSurfaces(reason: "remote_call_end")
+      // [CALL-CLOSE callId-scope 2026-05-27] Scope to the ended callId so a
+      // stale/duplicate remote call_end for an OLD call cannot dismiss the
+      // CallViewController of the call we just answered.
+      ProviderDelegate.dismissActiveCallSurfaces(reason: "remote_call_end", forCallId: callId)
     }
 
     // __chatyy_native_call_sync 2026-05-19 — observe call-state notifications
@@ -2857,7 +2860,7 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
   /// this stays a private extension to ProviderDelegate without forcing
   /// CallViewController.swift / GroupCallViewController.swift edits (Wave B/C
   /// is in restored state — see commit 2026-05-19).
-  static func dismissActiveCallSurfaces(reason: String) {
+  static func dismissActiveCallSurfaces(reason: String, forCallId: String? = nil) {
     guard let root = resolvePresentingViewController() else {
       print("[ProviderDelegate] dismissActiveCallSurfaces(\(reason)): no presenting VC")
       return
@@ -2880,7 +2883,25 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
         || name == "LiveBroadcastViewController"
         || name == "LiveViewerViewController"
       {
-        print("[ProviderDelegate] dismissActiveCallSurfaces(\(reason)): dismissing \(name)")
+        // [CALL-CLOSE callId-scope 2026-05-27] ROOT CAUSE of "atende e a tela
+        // fecha": this helper was previously called UNCONDITIONALLY from the
+        // WS `call_end` paths (handleIncomingCallEndLocked + the module's
+        // ExpoCallKitNativeCallEnded observer). A STALE/DUPLICATE `call_end`
+        // frame for a DIFFERENT (older) callId — re-delivered after a WS
+        // reconnect, fired by the backend chat_call_state GC, or a late BYE
+        // from a prior call — would dismiss the FRESHLY-presented
+        // CallViewController for the call the user JUST answered. Scope the
+        // dismissal to the ended callId: only tear down the CallViewController
+        // when its `.callId` matches `forCallId` (or when no callId is given,
+        // i.e. a true global teardown sweep like provider reset / hangup).
+        if let wantId = forCallId, !wantId.isEmpty,
+           let call = vc as? CallViewController, call.callId != wantId {
+          NSLog("[CALL-CLOSE] dismissActiveCallSurfaces(\(reason)): SKIP — presented callId=\(call.callId) != ended callId=\(wantId) (stale call_end guard)")
+          nativeCallDiag("dismiss_skip_stale_callid", wantId, "presented=\(call.callId)")
+          continue
+        }
+        NSLog("[CALL-CLOSE] dismissActiveCallSurfaces(\(reason)): dismissing \(name) forCallId=\(forCallId ?? "<any>")")
+        nativeCallDiag("dismiss_surface", forCallId ?? "", "vc=\(name) reason=\(reason)")
         vc.dismiss(animated: true, completion: nil)
       }
     }

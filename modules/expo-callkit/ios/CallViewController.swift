@@ -938,13 +938,35 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     if self.hasVideo {
                         let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
                         let publishOpts = Self.defaultVideoPublishOptions()
-                        if let pub = try? await r.localParticipant.setCamera(
-                            enabled: true,
-                            captureOptions: captureOpts,
-                            publishOptions: publishOpts
-                        ), let track = pub.track as? LocalVideoTrack {
-                            await MainActor.run { self.session.localVideoTrack = track }
-                            print("[CallVC] STAGE-A: camera published on answer (deferred from preconnect, #1330)")
+                        // [#1358 self-preview fix 2026-05-27] Was `try?` which
+                        // SWALLOWED any camera-publish failure → the PiP self-view
+                        // never appeared ("só vejo a pessoa, não a gente"). Catch
+                        // the error + log to voip_diag, and on success bind the
+                        // track via BOTH the Combine sink (session.localVideoTrack)
+                        // AND a direct applyLocalVideoTrack() on MainActor as
+                        // defense-in-depth in case the sink raced setupVideoViews.
+                        // applyLocalVideoTrack is idempotent.
+                        do {
+                            let pub = try await r.localParticipant.setCamera(
+                                enabled: true,
+                                captureOptions: captureOpts,
+                                publishOptions: publishOpts
+                            )
+                            if let track = pub?.track as? LocalVideoTrack {
+                                await MainActor.run {
+                                    self.session.camEnabled = true
+                                    self.session.localVideoTrack = track
+                                    self.applyLocalVideoTrack(track)
+                                }
+                                print("[CallVC] STAGE-A: camera published on answer (deferred from preconnect, #1330)")
+                                nativeCallDiag("stage_a_cam_published", self.callId)
+                            } else {
+                                print("[CallVC] STAGE-A: camera publish returned no track")
+                                nativeCallDiag("stage_a_cam_no_track", self.callId)
+                            }
+                        } catch {
+                            print("[CallVC] STAGE-A: post-answer CAMERA publish failed: \(error)")
+                            nativeCallDiag("stage_a_cam_publish_failed", self.callId, "\(error)")
                         }
                     }
                 }
@@ -1163,6 +1185,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             return
         }
         didHangup = true
+        // [CALL-CLOSE diag 2026-05-27] Mark this teardown path so the next
+        // answered call's voip_diag trace shows EXACTLY which path closed it.
+        nativeCallDiag("call_close_handleHangup", callId)
         // [minimize-drop fix 2026-05-26] This is a REAL hangup, not a minimize.
         // Clear the minimize flag so the Room teardown below + deinit run, and
         // release the strong holder so the VC can finally dealloc. handleHangup
@@ -2554,6 +2579,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // disconnects the Room + clears the singleton, and leaves isMinimizing
         // false so this belt-and-braces path still cleans up on those flows.
         if let r = self.room, !isMinimizing, !cededToJs {
+            // [CALL-CLOSE diag 2026-05-27] The VC deallocated while NOT
+            // minimizing/ceding → this tears down the Room. If this fires right
+            // after answer, a premature dismiss/double-present dropped the VC's
+            // only strong ref (the suspected double-VC teardown). Surfacing it
+            // here on the voip_diag log tells us if THIS is the close path.
+            nativeCallDiag("call_close_deinit_teardown", callId)
             // [#1207 NativeCallRoom REAL] Belt-and-braces: usually handleHangup
             // or didDisconnect have already cleared the singleton by the time
             // deinit runs, but force-quit can short-circuit those. Idempotent —
@@ -3553,6 +3584,10 @@ extension CallViewController: RoomDelegate {
         // [CALL-TRACE 2026-05-20 WAVE42] Step 9/12 — RoomDelegate.disconnect.
         NSLog("[CallTrace][9/12] RoomEvent type=Disconnected callId=\(callId) err=\(String(describing: error)) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
         print("[CallVC] didDisconnectWithError — error=\(String(describing: error))")
+        // [CALL-CLOSE diag 2026-05-27] LK Room disconnected — if this fires
+        // right after answer, the SFU/token/network dropped the room (NOT the
+        // stale-call_end path). Distinguishes "Room died" from "UI dismissed".
+        nativeCallDiag("call_close_lk_disconnect", callId, "err=\(String(describing: error))")
         // [#1207 NativeCallRoom REAL] Fanout to JS BEFORE we tear down the
         // session. JS listeners need the disconnect event so they can swap
         // back to the chat header / call list. We also clear() so a future

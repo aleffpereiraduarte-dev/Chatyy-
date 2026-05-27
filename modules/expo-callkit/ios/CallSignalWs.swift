@@ -590,6 +590,10 @@ final class CallSignalWs: NSObject {
             return
         }
         NSLog("[CallSignalWs] call_end \(callId) reason=\(reason) — dismissing native call UI")
+        // [CALL-CLOSE diag 2026-05-27] Surface every inbound call_end on the
+        // per-user voip_diag log so the next answered call reveals if a
+        // stale/duplicate frame is what fired the close.
+        nativeCallDiag("ws_call_end_recv", callId, "reason=\(reason)")
 
         // Drop the dedup entry so a follow-up invite with the same id (rare,
         // but possible across server reconnects) is not silently filtered.
@@ -676,7 +680,12 @@ final class CallSignalWs: NSObject {
             }
             // 4. Force-dismiss any lingering native call VC in case CallKit
             //    didn't cascade the dismissal (e.g. presentation chain race).
-            ExpoCallKitModule.dismissActiveCallSurfacesFromVC(reason: "ws_call_end_\(callId)")
+            // [CALL-CLOSE callId-scope 2026-05-27] Pass the ended callId so a
+            // STALE/DUPLICATE call_end (older call, WS-reconnect re-delivery,
+            // backend GC) cannot tear down the CallViewController of the call
+            // the user just answered. Root cause of "atende no nativo e a
+            // ligação fecha".
+            ExpoCallKitModule.dismissActiveCallSurfacesFromVC(reason: "ws_call_end_\(callId)", forCallId: callId)
         }
     }
 
