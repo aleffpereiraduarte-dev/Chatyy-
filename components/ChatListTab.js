@@ -2006,17 +2006,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                   allViewed={allViewed}
                   isLive={isLive}
                   liveLabel={liveAoVivo}
-                  badge={isLive ? null : 'reply'}
-                  badgeAccessibilityLabel={t('status.reply') || 'Responder'}
-                  onBadgePress={isLive ? undefined : () => { try {
-                    const { chatCreate } = require('../services/api');
-                    chatCreate([s.email], '', 'direct').then(r => {
-                      const cid = r?.data?.conversation_id || r?.data?.id;
-                      if (!cid) return;
-                      const name = encodeURIComponent(s.name || s.email?.split('@')[0] || '');
-                      router.push(`/chat-conversation?id=${cid}&name=${name}&type=direct&email=${encodeURIComponent(s.email)}&replyStatus=1`);
-                    }).catch(() => {});
-                  } catch {} }}
+                  badge={null}
                   isDark={isDark}
                   colors={colors}
                 />
