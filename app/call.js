@@ -364,6 +364,9 @@ function CallScreenInner() {
   useEffect(() => { videoEnabledRef.current = videoEnabled; }, [videoEnabled]);
 
   const [speakerOn, setSpeakerOn] = useState(isVideoCall ? true : false);
+  // True once the USER deliberately changed the audio route — stops the
+  // post-connect earpiece re-assert (viva-voz fix) from fighting their choice.
+  const speakerToggledRef = useRef(false);
   const [callDuration, setCallDuration] = useState(0);
   const callDurationRef = useRef(0);
   const [peerConnected, setPeerConnected] = useState(false);
@@ -1343,6 +1346,22 @@ function CallScreenInner() {
         const ck = require('../services/callkeep');
         ck.setSpeakerEnabled?.(!!isVideoCall);
       } catch {}
+      // [viva-voz fix 2026-05-27] The earpiece route set above runs on MOUNT,
+      // but CallKit's didActivate + LiveKit's audio-session activation fire a
+      // beat LATER and reset the route to SPEAKER — so an AUDIO call lands stuck
+      // on viva-voz (Suporte call print, Alto-falante pill roxo/ON). Re-assert
+      // earpiece a couple times AFTER those late activations to win the race.
+      // Audio calls only; guarded by speakerToggledRef so we never fight a user
+      // who deliberately tapped speaker in the first 2s.
+      if (!isVideoCall) {
+        const reEarpiece = () => {
+          if (speakerToggledRef.current) return;
+          try { require('../services/callkeep').setSpeakerEnabled?.(false); } catch {}
+          try { LK_AudioSession?.selectAudioOutput?.('earpiece'); } catch {}
+        };
+        setTimeout(reEarpiece, 700);
+        setTimeout(reEarpiece, 1800);
+      }
     }
 
     // [bug 2026-05-15 livekit-server-side-diag]
@@ -1545,32 +1564,31 @@ function CallScreenInner() {
       },
       publishDefaults: {
         ...audioOpts.publishDefaults,
-        // [2026-05-25] Force VP9 to match the native pin. Without an explicit
-        // videoCodec LiveKit defaults to VP8 (defaultVideoCodec='vp8'), so the
-        // JS Room (web + mobile-fallback paths) was publishing VP8 while the
-        // native Room pins VP9 → codec downgrade / quality loss on any peer
-        // that negotiates down to the lowest common codec. backupCodec ships a
-        // VP8 simulcast stream for clients that can't decode VP9 (older Safari)
-        // so we keep universal compatibility without losing VP9 where it works.
-        videoCodec: 'vp9',
-        backupCodec: { codec: 'vp8', simulcast: true },
-        // [HD tuning 2026-05-26] 3-layer simulcast ladder (h180/h360/h720) so
-        // the SFU can forward the best tier each receiver's bandwidth/viewport
-        // can take — that + adaptiveStream/dynacast is what downshifts a weak
-        // link smoothly (720p→360p→180p) instead of freezing. Top (h720) layer
-        // bumped 1.5M → 1.8M for healthy HD headroom (target ~1.7M, native iOS/
-        // Android cap 2.0M for VP9 — kept slightly under to match the JS web
-        // path's lower-power encoders).
-        videoSimulcastLayers: [
-          { width: 320, height: 180, encoding: { maxBitrate: 180_000, maxFramerate: 15 } },
-          { width: 640, height: 360, encoding: { maxBitrate: 600_000, maxFramerate: 30 } },
-          { width: 1280, height: 720, encoding: { maxBitrate: 1_800_000, maxFramerate: 30 } },
-        ],
-        // [HD tuning 2026-05-26] maintain-framerate — WhatsApp/FaceTime-like
-        // default for 1:1 talking-head: under congestion the encoder drops
-        // RESOLUTION first and keeps fps smooth (motion fidelity on a face >
-        // sharpness). The simulcast ladder above provides the lower-res tiers
-        // to step down to. WebRTC RTCDegradationPreference string value.
+        // [VIDEO FIX 2026-05-27] ROOT CAUSE "no iOS o outro celular não vê o
+        // vídeo (tela preta)": this JS Room (web + mobile-fallback paths) was
+        // publishing VP9 + a 3-layer simulcast ladder, but the 2026-05-26 native
+        // fix switched ALL three native surfaces (CallViewController.swift,
+        // NativeCallRoom.swift, Android CallActivity.kt) to `preferredCodec h264`
+        // + `simulcast:false`. Two reasons that fix is mandatory and the JS path
+        // had to follow:
+        //   1. VP9 has UNRELIABLE hardware DECODE on mobile (esp. iPhones) — a
+        //      VP9-published track frequently never produces a decodable frame on
+        //      the subscriber → "remote shows only the avatar / black video".
+        //   2. standard libwebrtc (react-native-webrtc m144) has NO H.264
+        //      simulcast — so once we pin H.264 the simulcast ladder builds an
+        //      invalid multi-encoding offer → publish fails silently.
+        // Leaving JS on VP9 made the SFU negotiation ASYMMETRIC vs the 3 native
+        // surfaces, so an iOS peer on the JS/fallback Room published a codec the
+        // other phone couldn't render. H.264 is hardware-decoded on EVERY iPhone
+        // + Android (and decodes fine on web), so all FOUR surfaces now agree.
+        // No simulcast → single H.264 encoding (benign in 1:1; adaptiveStream +
+        // dynacast + maintain-framerate still shed resolution under congestion).
+        videoCodec: 'h264',
+        simulcast: false,
+        videoEncoding: { maxBitrate: 1_800_000, maxFramerate: 30 },
+        // [HD tuning] maintain-framerate — WhatsApp/FaceTime-like default for a
+        // 1:1 talking head: under congestion drop RESOLUTION first, keep fps
+        // smooth (motion fidelity on a face > sharpness).
         degradationPreference: 'maintain-framerate',
       },
       // [2026-05-15 #827] iOS broadcast extension wiring. When the user taps
@@ -2318,14 +2336,17 @@ function CallScreenInner() {
             }
           } catch {}
         }
+        // [VIDEO FIX 2026-05-27] H.264 has NO simulcast in libwebrtc, so the
+        // low-data publish must also be simulcast:false (was simulcast:true + a
+        // 2-layer ladder — under H.264 that builds an invalid multi-encoding
+        // offer → setCameraEnabled fails silently → black video on cellular/
+        // roaming). Single H.264 encoding capped at 200 kbps / 15 fps; the SFU +
+        // adaptiveStream still trim it. Must match the publishDefaults pin above.
         const camPubOpts = lowData
           ? {
+              videoCodec: 'h264',
+              simulcast: false,
               videoEncoding: { maxBitrate: 200000, maxFramerate: 15 },
-              videoSimulcastLayers: [
-                { width: 320, height: 180, encoding: { maxBitrate: 90000, maxFramerate: 15 } },
-                { width: 640, height: 360, encoding: { maxBitrate: 200000, maxFramerate: 15 } },
-              ],
-              simulcast: true,
             }
           : undefined;
         try {
@@ -3657,6 +3678,7 @@ function CallScreenInner() {
 
   const handleToggleSpeaker = useCallback(async () => {
     const newSpeakerOn = !speakerOn;
+    speakerToggledRef.current = true;
     setSpeakerOn(newSpeakerOn);
     // LiveKit AudioSession on iOS owns route selection. On Android we still
     // call InCallManager because some OEMs ignore AudioSession overrides.
