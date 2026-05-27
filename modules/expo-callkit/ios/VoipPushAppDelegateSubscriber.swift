@@ -914,6 +914,17 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
                 hasVideo: hasVideo,
                 payload: p
             )
+            // [2026-05-27 caller-side fix] Tell the CALLER we answered. This
+            // VoIP-push answer is owned by `earlyProvider`; the module's
+            // CXAnswer (the only place that fires call_answered) NEVER runs for
+            // push calls. Without this, the caller's /call.js never receives the
+            // WS call_accepted frame → ringback tone never stops, the caller is
+            // stuck on speaker, and the UI sits on "Chamando" forever (founder
+            // report: "a pessoa atende e o toque continua / fica no viva-voz").
+            // C++ WS routes the frame to the caller by callerEmail (required).
+            let convId = (p["conversation_id"] as? String)
+                ?? (p["conversationId"] as? String) ?? ""
+            CallSignalWs.shared.fireCallAnswered(callId: callId, conversationId: convId, callerEmail: callerEmail)
         }
     }
 
