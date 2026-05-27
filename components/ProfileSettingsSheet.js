@@ -31,6 +31,7 @@ import {
 } from './Icons';
 import * as api from '../services/api';
 import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
+import { useBiometric } from '../context/BiometricContext';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { WALLET_ENABLED, MONETIZATION_ENABLED } from '../constants/featureFlags';
 
@@ -567,31 +568,22 @@ function SecurityScreen({ colors, t, router, onClose }) {
   // Most security controls live in the main settings screen (biometric,
   // sessions, password change). We surface the common ones inline and
   // route heavier flows to /settings with the right anchor.
-  const [biometricOn, setBiometricOn] = useState(false);
-  const [biometricAvailable, setBiometricAvailable] = useState(false);
+  // [2026-05-27 Lester QA #8] Biometric lock state MUST come from the real
+  // BiometricContext. The old local version wrote `biometric_enabled` to
+  // AsyncStorage and only flipped a local boolean — but BiometricProvider
+  // persists via SecureStore and gates the auto-lock on ITS OWN
+  // `biometricEnabled`. So enabling the lock here was a no-op: wrong store,
+  // and the provider never armed the lock → "allows access without Face ID".
+  // Now we drive the provider directly (which also runs the Face ID confirm
+  // before arming, and persists to the store the lock screen actually reads).
+  const { biometricEnabled, biometricAvailable, toggleBiometric: ctxToggleBiometric } = useBiometric();
 
-  useEffect(() => {
-    (async () => {
-      try {
-        const LA = require('expo-local-authentication');
-        const supported = await LA.hasHardwareAsync?.();
-        const enrolled = await LA.isEnrolledAsync?.();
-        setBiometricAvailable(!!(supported && enrolled));
-      } catch {}
-      try {
-        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-        const v = await AsyncStorage.getItem('biometric_enabled');
-        setBiometricOn(v === 'true');
-      } catch {}
-    })();
-  }, []);
-
+  // ToggleRow passes the desired value; the context toggle is value-less (it
+  // flips current state + runs the biometric confirm), so only fire it when
+  // the requested state differs from what the provider already has.
   const toggleBiometric = async (v) => {
-    setBiometricOn(v);
-    try {
-      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-      await AsyncStorage.setItem('biometric_enabled', v ? 'true' : 'false');
-    } catch {}
+    if (!!v === !!biometricEnabled) return;
+    try { await ctxToggleBiometric(); } catch {}
   };
 
   const goDetailedSettings = (section) => {
@@ -607,7 +599,7 @@ function SecurityScreen({ colors, t, router, onClose }) {
             icon={IconLock}
             label={t?.('settings.biometricLock') || 'Bloqueio biométrico'}
             description={t?.('settings.biometricDesc') || 'Exigir Face ID/Touch ID ao abrir o app'}
-            value={biometricOn}
+            value={biometricEnabled}
             onChange={toggleBiometric}
             colors={colors}
           />
