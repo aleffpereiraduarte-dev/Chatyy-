@@ -47,15 +47,20 @@ module.exports = function withFixResourceSigning(config) {
         /\n# --- withFixResourceSigning ---\s*\npost_install do \|installer\|[\s\S]*?^end\s*$/m,
         ''
       );
-      // Inject our logic inside the RN template's post_install block, right
-      // before its closing `end`. Match the specific call signature so we
-      // don't target the wrong `end`.
-      const rnPostInstallRe = /(post_install do \|installer\|\s*\n\s*react_native_post_install\([\s\S]*?\)\s*\n)(\s*end)/;
-      const m = contents.match(rnPostInstallRe);
-      if (m) {
-        contents = contents.replace(rnPostInstallRe, `$1${INJECT_BODY}$2`);
+      // Inject right AFTER the `post_install do |installer|` opening line.
+      // Anchoring on the OPENING line (not on `react_native_post_install(`) makes
+      // this robust to OTHER plugins (e.g. withMediapipeMlkitDedup) that also
+      // inject into the same block — Expo applies dangerous mods LIFO, so another
+      // plugin may have already inserted code between `post_install` and
+      // `react_native_post_install(`, which broke the old call-signature regex and
+      // made this fall back to appending a SECOND hook ("multiple post_install
+      // hooks unsupported"). Our body assumes `installer` is in scope, which holds
+      // anywhere inside the block.
+      const openRe = /(post_install do \|installer\|[^\n]*\n)/;
+      if (openRe.test(contents)) {
+        contents = contents.replace(openRe, `$1${INJECT_BODY}\n`);
       } else {
-        // Fallback: no RN-template post_install — we're alone, safe to append.
+        // Fallback: no post_install at all — we're alone, safe to append.
         contents += `\npost_install do |installer|${INJECT_BODY}end\n`;
       }
       fs.writeFileSync(podfilePath, contents);
