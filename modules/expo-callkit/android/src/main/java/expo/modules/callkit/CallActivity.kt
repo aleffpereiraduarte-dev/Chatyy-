@@ -1369,26 +1369,27 @@ class CallActivity : ComponentActivity() {
     // constructor params, so we set them post-construction.
     try {
       val pdCls = publishDefaults.javaClass
-      val codecField = pdCls.declaredFields.firstOrNull {
-        it.name.contains("codec", ignoreCase = true) ||
-        it.name.contains("preferredCodec", ignoreCase = true)
+      // [iOS-sees-black fix 2026-05-27] Set EVERY String codec field to h264 —
+      // NOT just the first. firstOrNull{contains "codec"} could land on
+      // `backupCodec` (declared before `videoCodec`), leaving videoCodec at the
+      // SDK default (VP8) OR leaving a VP8 BACKUP encoding the SFU may forward to
+      // the iOS subscriber → "no iOS só imagem preta" while Android (which decodes
+      // VP8/VP9 fine) still shows the iOS h264 stream. Pinning videoCodec AND
+      // backupCodec to h264 removes every non-h264 path. H.264 is HW-decoded on
+      // every iPhone — must match CallViewController.swift / NativeCallRoom.swift.
+      val codecFields = pdCls.declaredFields.filter {
+        it.name.contains("codec", ignoreCase = true) && it.type == String::class.java
       }
-      if (codecField != null) {
-        codecField.isAccessible = true
-        // [remote-video render fix 2026-05-26] vp9 → h264. ROOT CAUSE of the iOS
-        // caller seeing only the Android peer's avatar on a video call: Android
-        // hard-pinned VP9 here, but VP9 has unreliable cross-platform DECODE on
-        // mobile (many iPhones lack VP9 HW decode; the SFU does NOT silently
-        // downshift a hard-pinned VP9 publisher per-subscriber), so the iOS
-        // subscriber got a remote VideoTrack that never produced a decodable
-        // frame. H.264 is hardware-decoded on EVERY iPhone + Android (the
-        // WhatsApp/FaceTime/Meet-mobile interop default). Mirror of the iOS
-        // change in CallViewController.swift + NativeCallRoom.swift — all three
-        // publish sites must agree or codec negotiation is asymmetric.
-        codecField.set(publishDefaults, "h264")
-        Log.d(TAG, "VideoTrackPublishDefaults.${codecField.name} = h264 (cross-platform decode)")
+      if (codecFields.isNotEmpty()) {
+        for (f in codecFields) {
+          try {
+            f.isAccessible = true
+            f.set(publishDefaults, "h264")
+            Log.d(TAG, "VideoTrackPublishDefaults.${f.name} = h264")
+          } catch (e: Throwable) { Log.w(TAG, "codec set ${f.name} failed: ${e.message}") }
+        }
       } else {
-        Log.d(TAG, "no codec field on VideoTrackPublishDefaults — SDK defaults stay (VP8)")
+        Log.d(TAG, "no String codec field on VideoTrackPublishDefaults — SDK defaults stay (VP8)")
       }
       // [HD tuning 2026-05-26] degradationPreference = MAINTAIN_FRAMERATE.
       // WhatsApp/FaceTime-like default for 1:1 talking-head video: under
