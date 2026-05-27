@@ -3693,6 +3693,15 @@ function CallScreenInner() {
         console.warn('[Call] LK selectAudioOutput err:', e?.message);
       }
     }
+    // [viva-voz toggle fix 2026-05-27] On iOS the LK AudioSession.selectAudioOutput
+    // ALONE often does NOT flip the route when CallKit/native owns the
+    // AVAudioSession — the reliable switch is ExpoCallKit.setSpeakerEnabled
+    // (overrideOutputAudioPort .speaker/.none). The MOUNT path already used this
+    // (#981) but this TOGGLE handler didn't → user could never turn viva-voz ON
+    // ("botão viva-voz não liga", só ficava no fone). Call both.
+    if (Platform.OS === 'ios') {
+      try { require('../services/callkeep').setSpeakerEnabled?.(newSpeakerOn); } catch {}
+    }
     if (Platform.OS === 'android') {
       try {
         const InCallManager = require('react-native-incall-manager').default;
@@ -3738,6 +3747,11 @@ function CallScreenInner() {
       } catch (e) {
         console.warn('[Call] LK selectAudioOutput route err:', e?.message);
       }
+    }
+    // [viva-voz toggle fix 2026-05-27] iOS needs the native CallKit override too
+    // (see handleToggleSpeaker). speaker → .speaker, anything else → earpiece.
+    if (Platform.OS === 'ios') {
+      try { require('../services/callkeep').setSpeakerEnabled?.(route === 'speaker'); } catch {}
     }
     if (Platform.OS === 'android') {
       try {
