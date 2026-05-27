@@ -303,7 +303,6 @@
       "expo-video",
       "./plugins/withFixResourceSigning.js",
       "./plugins/withManualIosSigning.js",
-      "./plugins/withMediapipeMlkitDedup.js",
       "expo-iap",
       [
         "react-native-vision-camera",

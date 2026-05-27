@@ -1,0 +1,6 @@
+{
+  "name": "expo-apple-vision-face",
+  "version": "1.0.0",
+  "description": "iOS Apple Vision face detection as a VisionCamera frame-processor plugin (detectFacesVision)",
+  "main": "index.ts"
+}

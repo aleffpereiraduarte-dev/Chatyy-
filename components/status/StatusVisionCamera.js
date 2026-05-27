@@ -37,7 +37,16 @@ import { View, StyleSheet } from 'react-native';
 import {
   Camera, useCameraDevice, useSkiaFrameProcessor, runAsync,
 } from 'react-native-vision-camera';
-import { useFaceDetector } from 'react-native-vision-camera-face-detector';
+// [2026-05-26 one ML stack per platform] Face detection comes from a platform
+// shim, NOT directly from react-native-vision-camera-face-detector:
+//   Android → MLKit (the lib's useFaceDetector / `detectFaces` plugin)
+//   iOS     → Apple Vision (`detectFacesVision` plugin, local
+//             modules/expo-apple-vision-face module — MLKit is removed from iOS
+//             to avoid the MediaPipe protobuf link collision; see
+//             react-native.config.js). The shim returns the SAME
+//             { detectFaces, stopListeners } surface and the SAME Face shape,
+//             so the Skia overlay below is unchanged on both platforms.
+import { useFaceDetectorShim } from './faceDetectorShim';
 import { Skia, useImage } from '@shopify/react-native-skia';
 import { useSharedValue } from 'react-native-worklets-core';
 import { resolveFilterPreset } from './FaceFilters';
@@ -62,18 +71,25 @@ function StatusVisionCameraInner(
   const device = useCameraDevice(facing === 'front' ? 'front' : 'back');
   const camera = useRef(null);
 
-  // MLKit face detector plugin (same session — frame-processor plugin).
+  // Face detector plugin (same session — frame-processor plugin). On Android
+  // this is MLKit; on iOS it's Apple Vision (the shim picks the right engine —
+  // see faceDetectorShim.js). Either way it exposes a worklet-callable
+  // detectFaces(frame) -> Face[] with the SAME bounds + landmark shape.
+  //
   // autoMode:false is REQUIRED when drawing on the frame via Skia so the
-  // landmark/bounds coords stay in raw frame-pixel space (not pre-scaled
-  // to the screen). cameraFacing lets the plugin mirror correctly.
-  const faceDetector = useFaceDetector({
+  // landmark/bounds coords stay in the oriented frame-pixel drawing space (not
+  // pre-scaled to the screen). cameraFacing lets the plugin mirror correctly.
+  // Memoize the options object so the underlying plugin instance is stable
+  // across renders (the iOS shim memoizes on this object identity).
+  const detectorOptions = useMemo(() => ({
     performanceMode: 'fast',
     landmarkMode: 'all',
     contourMode: 'none',
     classificationMode: 'none',
     autoMode: false,
     cameraFacing: facing === 'front' ? 'front' : 'back',
-  });
+  }), [facing]);
+  const faceDetector = useFaceDetectorShim(detectorOptions);
   const { detectFaces } = faceDetector;
 
   // Last-known face packet (worklet shared value). Written by runAsync from
