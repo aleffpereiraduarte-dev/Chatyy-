@@ -3934,20 +3934,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // strip. Only kicks in for negative offsets (overscroll); regular scroll
   // leaves the strip in place. Native driver because translateY only.
   const pullTranslateY = useRef(new Animated.Value(0)).current;
-  const onListScroll = useCallback((e) => {
-    // [highlight follow fix 2026-05-27 v2] Founder: "se eu desço a página pra
-    // fazer refresh, ele tem que descer ACOMPANHANDO a página, não ficar
-    // travado." On pull-to-refresh the FlatList overscrolls (contentOffset.y < 0)
-    // and its content visually moves DOWN by exactly |y|. The strip is a sibling
-    // ABOVE the list, so to move in lockstep it must translate DOWN by the SAME
-    // |y| (1:1). The earlier bug was `y * 0.6` — the strip lagged the content by
-    // 40%, so the first conversation row slid OVER it → "overlap". My previous
-    // over-correction pinned it to 0 → "travado". 1:1 follows the page perfectly
-    // AND can't overlap (strip + content move together). Normal scroll (y>=0)
-    // leaves it at 0.
-    const y = e?.nativeEvent?.contentOffset?.y ?? 0;
-    pullTranslateY.setValue(y < 0 ? -y : 0);
-  }, [pullTranslateY]);
+  const onListScroll = useCallback(() => {
+    // [highlight follow fix 2026-05-27 v3] No-op now. The status strip lives
+    // inside ListHeaderComponent and scrolls/bounces natively with the content,
+    // so there's nothing to translate on scroll anymore (the old translateY hack
+    // double-moved it). Kept as an empty handler in case future scroll-driven UI
+    // needs it; pullTranslateY is retained but no longer drives the strip.
+  }, []);
 
   const navigateToConversation = useCallback((conv) => {
     // Debounce guard: without this a double-tap pushed two chat-conversation
@@ -5702,12 +5695,15 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       )}
 
       {/* Status stories (Instagram-style) — only when not searching.
-          Wrapped in an Animated.View tied to pullTranslateY so the strip
-          slides down with the pull-to-refresh gesture (audit gap #1). */}
+          [highlight follow fix 2026-05-27 v3 — ROOT CAUSE] This strip lives
+          INSIDE ListHeaderComponent, so it ALREADY scrolls + rubber-band bounces
+          WITH the list as part of the content. The old Animated.View translateY
+          wrapper added a SECOND movement on top of that natural scroll:
+          0.6x lagged the content (overlap), 1:1 doubled it ("muito solto, não
+          acompanha o resto do content"). Rendering it plainly = it moves EXACTLY
+          with everything else, because it IS content. No transform = perfect. */}
       {!(searchQuery || '').trim() && (
-        <Animated.View style={{ transform: [{ translateY: pullTranslateY }] }}>
-          <StatusStoriesRow colors={colors} isDark={isDark} user={user} router={router} t={t} setActiveTab={setActiveTab} />
-        </Animated.View>
+        <StatusStoriesRow colors={colors} isDark={isDark} user={user} router={router} t={t} setActiveTab={setActiveTab} />
       )}
       {renderArchivedHeader()}
       {renderLockedHeader()}
