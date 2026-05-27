@@ -33,6 +33,20 @@ import {
 // iOS build to ever run this AR stack). React.lazy defers evaluating the AR
 // native stack until the camera actually opens, so it can never crash launch.
 const StatusVisionCamera = React.lazy(() => import('./status/StatusVisionCamera'));
+// [2026-05-27 iOS build 282 P0 crash — OTA stopgap] On iOS the AR native stack
+// (vision-camera + Skia + worklets-core + Apple Vision face shim) is broken/
+// mislinked: when StatusVisionCamera mounts and its native frame-processor
+// fires, it throws an ObjC NSException whose Hermes conversion corrupts the JS
+// heap → EXC_BAD_ACCESS / SIGSEGV (com.meta.react.turbomodulemanager.queue →
+// convertNSExceptionToJSError). A JS error boundary / React.Suspense CANNOT
+// catch a native SIGSEGV, so the only OTA-safe fix is to NOT mount the AR stack
+// on iOS at all — fall back to a plain expo-camera capture (no AR filters).
+// Android keeps the lazy StatusVisionCamera AR path (MLKit works there). iOS AR
+// will be restored in the next NATIVE build (Apple Vision linkage). expo-camera
+// is already a dependency (useCameraPermissions above), so this is JS-only.
+// StatusPlainCamera is a STATIC import (no native eval throw at module load —
+// CameraView is part of the already-linked expo-camera native module).
+import StatusPlainCamera from './status/StatusPlainCamera';
 import { FACE_FILTER_PRESETS } from './status/FaceFilters';
 
 // Haptics (graceful — `expo-haptics` may not be present in every build)
@@ -1135,7 +1149,21 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
             meta and is re-applied downstream by the viewer/composer.
             Native-only: the vision-camera / Skia / worklets stack is stubbed
             on web (metro WEB_STUBS), so we never mount it in the browser. */}
-        {Platform.OS !== 'web' ? (
+        {Platform.OS === 'ios' ? (
+          // iOS stopgap (build 282 crash): plain expo-camera, NO AR. Same
+          // imperative ref surface (takePictureAsync/recordAsync/stopRecording)
+          // so facing toggle + photo/video capture + isActive all work through
+          // the same cameraRef. arFilterKey passed but ignored (no AR on iOS
+          // until the next native build). No Suspense needed — static import.
+          <StatusPlainCamera
+            ref={cameraRef}
+            facing={facing}
+            mode={captureMode === 'video' ? 'video' : 'picture'}
+            arFilterKey={FACE_FILTER_PRESETS[arFilterIdx]?.key || 'none'}
+            isActive={visible && !preview}
+            onError={(e) => { if (__DEV__) console.warn('[StatusCamera] plain-camera error:', e?.message || e); }}
+          />
+        ) : Platform.OS === 'android' ? (
           <React.Suspense fallback={<View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />}>
             <StatusVisionCamera
               ref={cameraRef}
