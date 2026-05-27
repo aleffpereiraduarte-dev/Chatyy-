@@ -525,13 +525,21 @@ class CallActivity : ComponentActivity() {
       )
     }
 
-    // Pre-create the SurfaceViewRenderers if this is a video call. They get
-    // mounted inside the Compose tree via AndroidView; LiveKit.initVideoRenderer
-    // is invoked once the Room exists.
-    if (hasVideo) {
-      remoteRenderer = SurfaceViewRenderer(this)
-      localRenderer = SurfaceViewRenderer(this)
-    }
+    // Pre-create BOTH SurfaceViewRenderers ALWAYS — even for an audio-only call.
+    // [#11 voice→video fix 2026-05-27] These are passed as props into the Compose
+    // tree at setContent and mounted via AndroidView gated on state.isVideo.
+    // `remoteRenderer` is a plain var (not Compose state), so if we leave it null
+    // for a voice call and only allocate it later inside RoomEvent.TrackSubscribed
+    // (when the peer opens their camera mid-call), the Compose AndroidView still
+    // holds the captured null reference → the freshly-allocated renderer is NEVER
+    // mounted → no surface → the peer's video stays BLACK. That was exactly
+    // "vídeo do caller não aparece no Android quando a ligação começa em voz e
+    // abre a câmera". Creating them up-front means the renderer object is stable
+    // and already initVideoRenderer'd (bringUpRoom, below) so the moment isVideo
+    // flips true the surface mounts and frames flow. Idle renderers are cheap and
+    // are only attached to a window once isVideo is true.
+    remoteRenderer = SurfaceViewRenderer(this)
+    localRenderer = SurfaceViewRenderer(this)
 
     // Mount the Compose UI.
     setContent {

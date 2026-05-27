@@ -931,7 +931,14 @@ function InboxScreenInner() {
     setShowSidebar(false);
     if (route === '__search__') { setShowGlobalSearch(true); return; }
     if (route === '__notifications__') { setShowNotifHub(true); return; }
-    if (SIDE_PANEL_ROUTES[route]) {
+    // [#21 iPad fix 2026-05-27] The in-place side panels are WEB-ONLY — they
+    // render an <iframe src={route}> (see the `Platform.OS === 'web'` guard on
+    // the panel map below). On a wide native device (iPad: width>=768 →
+    // isDesktop=true) routing into `sidePanels` state pushed the route into a
+    // panel that NEVER renders → tapping "Chatyy" quick-access did nothing
+    // ("conversation not popping, only persists on iPad"). On native, always do
+    // a real navigation instead.
+    if (Platform.OS === 'web' && SIDE_PANEL_ROUTES[route]) {
       setSidePanels(prev => {
         if (prev.includes(route)) return prev.filter(r => r !== route);
         // Allow up to 3 simultaneous side panels — email list auto-hides when >= 2 are open.
