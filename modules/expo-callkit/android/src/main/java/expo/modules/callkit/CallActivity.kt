@@ -600,6 +600,11 @@ class CallActivity : ComponentActivity() {
                   } else {
                     track.enabled = false
                     track.stopCapture()
+                    // [2026-05-27] Blank the local self-preview surface. Without
+                    // this the SurfaceViewRenderer keeps the LAST captured frame
+                    // buffered, so turning the camera OFF leaves the frozen image
+                    // on screen ("closed camera but video still shows" — Lester QA).
+                    try { localRenderer?.clearImage() } catch (_: Throwable) {}
                   }
                   Log.d(TAG, "camera ${if (desired) "unmute" else "mute"} (no republish)")
                 } else if (desired) {
@@ -1901,9 +1906,13 @@ class CallActivity : ComponentActivity() {
         if (pub.source == Track.Source.CAMERA || pub.track is VideoTrack) {
           Log.d(TAG, "remote camera muted → placeholder")
           state.hasRemoteVideo = false
+          // [2026-05-27] BLANK the renderer surface. The old comment assumed "LK
+          // blanks the frame on mute" — it does NOT on Android, so the peer's
+          // last frame stayed frozen under the avatar. clearImage() paints black;
+          // on unmute the same track resumes frames into the already-bound renderer.
+          try { remoteRenderer?.clearImage() } catch (_: Throwable) {}
           // Group grid: drop the tile to its avatar by clearing the renderer ref
-          // is NOT done here (the track + renderer stay valid for fast unmute);
-          // ParticipantTile shows the frozen frame which LK blanks on mute.
+          // is NOT done here (the track + renderer stay valid for fast unmute).
         }
       }
       is RoomEvent.TrackUnmuted -> if (event.participant !is LocalParticipant) {
