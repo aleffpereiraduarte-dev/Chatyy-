@@ -32,6 +32,15 @@ Pod::Spec.new do |s|
   # call screen. Reflection-loaded so a missing pod doesn't break the
   # module — but adding it here means the symbols are present at runtime
   # by default. Pinned to ~> 0.10 to track current iOS releases.
+  #
+  # [2026-05-26] This pod statically vendors its OWN copies of
+  # GTMSessionFetcher + GoogleToolboxForMac, which collide at link time with
+  # the standalone copies pulled by GoogleMLKit/FaceDetection (the Status AR
+  # face-filters via react-native-vision-camera-face-detector) →
+  # `ld: NNN duplicate symbols`. BOTH features are required, so the duplicate
+  # object files are stripped from MediaPipe's static .a in a Podfile
+  # post_install injected by the `withMediapipeMlkitDedup` config plugin
+  # (plugins/withMediapipeMlkitDedup.js). DO NOT remove this dependency.
   s.dependency 'MediaPipeTasksVision', '~> 0.10'
 
   # [2026-05-17 screen share — LiveKit] Screen-share frame transmission relies

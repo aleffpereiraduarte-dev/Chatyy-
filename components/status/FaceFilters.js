@@ -1,20 +1,20 @@
-// FaceFilters — AR face-overlay filter presets driven by MediaPipe
-// FaceLandmarker (Apache 2.0). On-device, 30fps target (15fps fallback
-// on weak devices). Each preset declares which landmarks anchor which
-// PNG overlay; the runtime queries MediaPipe per frame and re-positions
-// the bundled assets accordingly.
+// FaceFilters — AR face-overlay filter PRESET DATA (asset + anchor specs).
 //
-// Why this lives in its own module:
-//   - StatusCamera.js shouldn't import the native MediaPipe binding
-//     directly (build hangs on web) — we lazy-require it on first use.
-//   - Filter list is data-driven so we can A/B preset order remotely
-//     without a JS bundle bump.
-//   - Graceful fallback: if the binding isn't loaded (web, debug
-//     simulator), the filter is rendered as a static SVG overlay using
-//     the camera preview center as a stand-in anchor.
+// [2026-05-26] This module is now DATA-ONLY for the live AR path. The actual
+// face tracking + overlay draw runs in StatusVisionCamera.js, which uses
+// react-native-vision-camera-face-detector's MLKit `useFaceDetector` inside a
+// single-session Skia frame processor. StatusVisionCamera imports only
+// `resolveFilterPreset` / `FACE_FILTER_PRESETS` from here; it does NOT use the
+// legacy `getMediaPipe()` loader (kept as a no-op for the disabled
+// FaceFilterOverlay only). The historical landmark-index notes below refer to
+// the old MediaPipe-478 numbering and are retained for reference; the live
+// path anchors on MLKit's named landmarks (LEFT_EYE, NOSE_BASE, etc.).
 //
-// MediaPipe FaceLandmarker returns 478 normalized landmarks. The ones we
-// anchor on:
+// On-device, 30fps target (15fps fallback on weak devices). Each preset
+// declares which landmarks anchor which PNG overlay.
+//
+// (Legacy reference) MediaPipe FaceLandmarker returns 478 normalized
+// landmarks. The ones the old overlay anchored on:
 //   landmark[1]   → nose tip (used for sunglasses center, hearts eyes)
 //   landmark[10]  → forehead center (party hat anchor)
 //   landmark[152] → chin (vampire teeth lower mouth)
@@ -98,61 +98,20 @@ export const FACE_FILTER_PRESETS = [
   },
 ];
 
-// Lazy native binding loader. The real face tracking ships via
-// `expo-native-toolkit`'s ExpoMediaPipeFace native module (iOS Vision
-// + Android ML Kit Face Detection). We expose a stable surface here so
-// the overlay code doesn't need to know which backend is wired:
+// [2026-05-26 DEAD PATH — hard no-op] The legacy second-camera-session face
+// tracker (ExpoMediaPipeFace / expo-mediapipe-face, consumed only by the
+// now-disabled FaceFilterOverlay) is gone. AR face tracking is owned entirely
+// by the SINGLE-session Skia frame processor in StatusVisionCamera.js, which
+// uses react-native-vision-camera-face-detector's MLKit detector directly and
+// does NOT call into this function.
 //
-//   startFaceLandmarker({ fps })  → bool
-//   stopFaceLandmarker()          → void
-//   addListener('faceLandmarks', cb) → { remove() }
-//
-// If the binding can't be loaded (web, debug simulator without the
-// rebuilt binary), we return null and the overlay falls back to its
-// static centered anchor — the filter still renders, just no tracking.
-let _mp = null;
-let _mpAttempted = false;
+// We keep `getMediaPipe()` as an exported no-op (returns null) purely so the
+// orphaned FaceFilterOverlay.js — which is hard-disabled and imported nowhere —
+// still resolves at module-eval without throwing. There is NO native binding
+// behind it anymore. Do NOT re-introduce a `requireNativeModule(...)` call
+// here: the only modern AR consumer is StatusVisionCamera via useFaceDetector.
 export function getMediaPipe() {
-  if (_mpAttempted) return _mp;
-  _mpAttempted = true;
-  if (Platform.OS === 'web') return null;
-
-  // 1) Preferred: expo-native-toolkit ships ExpoMediaPipeFace as a
-  //    sibling native module. Use requireNativeModule so we don't
-  //    crash if the JS package is present but the native side isn't
-  //    linked yet (older binaries on test devices).
-  try {
-    const { requireNativeModule } = require('expo');
-    const mod = requireNativeModule('ExpoMediaPipeFace');
-    if (mod && typeof mod.startFaceLandmarker === 'function') {
-      _mp = wrapEmitter(mod);
-      return _mp;
-    }
-  } catch {}
-
-  // 2) Legacy fallback: standalone expo-mediapipe-face package, if a
-  //    future release moves out of expo-native-toolkit.
-  try {
-    const mp = require('expo-mediapipe-face');
-    if (mp && typeof mp.startFaceLandmarker === 'function') {
-      _mp = mp;
-      return _mp;
-    }
-  } catch {}
-
   return null;
-}
-
-// expo-modules's NativeModule exposes addListener but requires a
-// matching `Events()` declaration on the native side. Both iOS and
-// Android emit "faceLandmarks", so we just forward the call.
-function wrapEmitter(mod) {
-  return {
-    startFaceLandmarker: (opts) => mod.startFaceLandmarker(opts || {}),
-    stopFaceLandmarker: () => mod.stopFaceLandmarker(),
-    setTargetFps: (fps) => mod.setTargetFps?.(fps),
-    addListener: (name, cb) => mod.addListener(name, cb),
-  };
 }
 
 // Heuristic device-class probe — drops the inference cap to 15fps when
