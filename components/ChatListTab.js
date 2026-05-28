@@ -2292,13 +2292,21 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                 } finally { setStatusPublishing(false); }
                 return;
               }
-              const { uri, type, isBoomerang } = payload || {};
+              // 2026-05-28 Lester QA: a destruturação antiga só capturava
+              // uri/type/isBoomerang e DESCARTAVA music+filter+beauty —
+              // mesmo se o user adicionou música no StatusCamera, ela nunca
+              // chegava no statusPublish abaixo. Agora propagamos a meta toda.
+              const { uri, type, isBoomerang, music, filter, beauty, face_filter } = payload || {};
               if (!uri) return;
               const isVideo = type === 'video';
               setStatusEditor({
                 uri,
                 type: isVideo ? 'video' : 'image',
                 isBoomerang: !!isBoomerang,
+                music: music || null,
+                filter: filter || null,
+                beauty: beauty || null,
+                face_filter: face_filter || null,
                 file: { uri, name: isVideo ? 'status.mp4' : 'status.jpg', type: isVideo ? 'video/mp4' : 'image/jpeg' },
               });
               setStatusCaption('');
@@ -2440,7 +2448,16 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                     const extraMeta = statusEditor.isBoomerang
                       ? { is_boomerang: true, caption: statusCaption.trim() }
                       : (statusCaption.trim() ? { caption: statusCaption.trim() } : null);
-                    const pubRes = await api.statusPublish(up.data.url, statusEditor.type === 'video' ? 'video' : 'image', '#000000', null, extraMeta);
+                    // 2026-05-28 Lester QA: statusEditor agora preserva music
+                    // do StatusCamera. Mapeia pro shape que o backend espera
+                    // (mesmo formato usado pelos outros callsites).
+                    const pubMusic = statusEditor.music ? {
+                      title: statusEditor.music.title || statusEditor.music.name || '',
+                      artist: statusEditor.music.artist || '',
+                      previewUrl: statusEditor.music.previewUrl || statusEditor.music.preview_url || statusEditor.music.url || '',
+                      coverUrl: statusEditor.music.coverUrl || statusEditor.music.cover_url || statusEditor.music.artwork || '',
+                    } : null;
+                    const pubRes = await api.statusPublish(up.data.url, statusEditor.type === 'video' ? 'video' : 'image', '#000000', pubMusic, extraMeta);
                     setStatusEditor(null); setStatusCaption(''); setEditorFilterIdx(0);
                     // Optimistic insert — show the new status in the row
                     // immediately while the next load() refreshes from the

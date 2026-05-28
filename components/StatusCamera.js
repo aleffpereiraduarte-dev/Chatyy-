@@ -955,6 +955,13 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       // downstream code (caption translation, telemetry) doesn't see a
       // stray 1x value.
       speed: appliedSpeed,
+      // 2026-05-28 Lester QA: importar foto/vídeo da galeria + adicionar
+      // música no editor → confirm caía no handleConfirm que DROPAVA
+      // music + beauty no onCapture (só camera capture path passava).
+      // Resultado: status publicava SEM música. Agora propaga consistente
+      // com os outros onCapture (record/boomerang/multi-segment).
+      music: musicTrack || undefined,
+      beauty: beauty || undefined,
       // AR face filter — passes the preset key downstream so the viewer
       // can re-render the overlay during playback (web/native respect
       // this in `currentViewerItem.meta.face_filter`).
@@ -966,7 +973,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     setFilterIdx(0);
     setImportSpeed(1);
     setVoiceoverUri(null);
-  }, [preview, activeFilter, onCapture, importSpeed, voiceoverUri, applySpeedToVideo, muxVoiceoverOntoVideo, arFilterIdx]);
+  }, [preview, activeFilter, onCapture, importSpeed, voiceoverUri, applySpeedToVideo, muxVoiceoverOntoVideo, arFilterIdx, musicTrack, beauty]);
 
   // ─── Guards ───
   if (!visible) return null;
