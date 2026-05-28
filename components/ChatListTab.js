@@ -2714,8 +2714,14 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     let alive = true;
     api.chatFoldersList().then(r => {
       if (!alive) return;
-      if (r?.success && Array.isArray(r.data?.folders)) {
-        setChatFolders(r.data.folders);
+      // Lester 2026-05-28: backend retorna {items: [...]}, frontend lia
+      // r.data.folders (que não existe) → setChatFolders([]) → lista some
+      // após cold start. Aceita ambos: items (atual) ou folders (legacy).
+      if (r?.success && r?.data) {
+        const list = Array.isArray(r.data.items)
+          ? r.data.items
+          : (Array.isArray(r.data.folders) ? r.data.folders : []);
+        setChatFolders(list);
       }
     }).catch(() => {});
     return () => { alive = false; };
