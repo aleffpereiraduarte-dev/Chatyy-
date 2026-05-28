@@ -3140,20 +3140,23 @@ const styles = StyleSheet.create({
   dayHeaderTitle: { fontSize: FontSize.md, fontWeight: '600' },
   dayEventCount: { fontSize: FontSize.sm },
 
-  // Swipe container
+  // Swipe container. Lester QA #30 2026-05-28: the colored edit/delete corners
+  // were peeking out behind the event card because the background radius (12)
+  // was smaller than eventCard (16) — outer corner of the background curls
+  // OUTSIDE the foreground curve. Match the radius and the corners hide.
   swipeContainer: { position: 'relative', marginHorizontal: Spacing.md, marginBottom: Spacing.sm },
   swipeActions: {
     position: 'absolute', top: 0, bottom: 0, left: 0, right: 0,
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'stretch',
-    borderRadius: BorderRadius.lg, overflow: 'hidden',
+    borderRadius: 16, overflow: 'hidden',
   },
   swipeActionLeft: {
     width: 80, alignItems: 'center', justifyContent: 'center', gap: 4,
-    borderTopLeftRadius: BorderRadius.lg, borderBottomLeftRadius: BorderRadius.lg,
+    borderTopLeftRadius: 16, borderBottomLeftRadius: 16,
   },
   swipeActionRight: {
     width: 80, alignItems: 'center', justifyContent: 'center', gap: 4,
-    borderTopRightRadius: BorderRadius.lg, borderBottomRightRadius: BorderRadius.lg,
+    borderTopRightRadius: 16, borderBottomRightRadius: 16,
   },
   swipeActionText: { color: '#fff', fontSize: 10, fontWeight: '700' },
 
