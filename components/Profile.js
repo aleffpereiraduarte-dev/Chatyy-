@@ -3067,6 +3067,33 @@ export default function Profile({
       onReact={async (story, emoji) => {
         try { await api.apiCall?.('status_react', { status_id: story?.id, emoji }, 'POST'); } catch {}
       }}
+      // [2026-05-28 Lester QA] Trash icon in highlight viewer was wiring
+      // nothing — StoryViewer fires onDelete?.(id) but no handler was passed,
+      // so tapping the trash silently did nothing. Now removes the item
+      // from this highlight (Instagram-style: photo leaves the destaque,
+      // original status untouched), updates the viewer's local state, and
+      // auto-closes/prunes the highlight tile when it becomes empty.
+      onDelete={async (statusId) => {
+        if (!statusId || !highlightViewer.highlightId) return;
+        try { await api.statusHighlightRemoveStatus?.(highlightViewer.highlightId, statusId); } catch {}
+        // Drop the item locally; if the user just removed the last one,
+        // close the viewer AND remove the now-empty destaque from the row.
+        const nextItems = (highlightViewer.items || []).filter(x => Number(x.id) !== Number(statusId));
+        if (nextItems.length === 0) {
+          const hid = highlightViewer.highlightId;
+          setHighlightViewer({ open: false, items: [], title: '', startIdx: 0, highlightId: null });
+          setHighlights(prev => prev.filter(x => Number(x.id) !== Number(hid)));
+          try { await api.statusHighlightDelete?.(hid); } catch {}
+        } else {
+          // Reset startIdx if we removed the last visible story so the
+          // viewer doesn't read past the new end.
+          setHighlightViewer(prev => ({
+            ...prev,
+            items: nextItems,
+            startIdx: Math.min(prev.startIdx || 0, nextItems.length - 1),
+          }));
+        }
+      }}
       onMentionPress={({ email, username }) => {
         const target = email || username;
         if (!target) return;
