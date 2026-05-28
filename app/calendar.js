@@ -1678,9 +1678,12 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
             <View style={styles.recurrenceRow}>
               {[
                 { label: t('calendar.recurrenceNone'), value: '' },
-                { label: t('calendar.recurrenceDaily'), value: 'FREQ=DAILY' },
-                { label: t('calendar.recurrenceWeekly'), value: 'FREQ=WEEKLY' },
-                { label: t('calendar.recurrenceMonthly'), value: 'FREQ=MONTHLY' },
+                // Lester QA #33 2026-05-28: backend rejects RRULE strings ("FREQ=...")
+                // and only stores the bare DAILY/WEEKLY/MONTHLY tokens (see
+                // calendar.php:624). Send those tokens so create succeeds.
+                { label: t('calendar.recurrenceDaily'), value: 'DAILY' },
+                { label: t('calendar.recurrenceWeekly'), value: 'WEEKLY' },
+                { label: t('calendar.recurrenceMonthly'), value: 'MONTHLY' },
               ].map(opt => (
                 <TouchableOpacity
                   key={opt.value}
