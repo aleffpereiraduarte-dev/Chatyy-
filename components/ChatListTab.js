@@ -4231,7 +4231,65 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           ]
         );
       },
-      onAddToList: (conv) => { try { router?.push(`/chat-folders?addId=${conv.id}`); } catch {} },
+      onAddToList: (conv) => {
+        // Lester QA #34 2026-05-28: o handler antigo navegava pra
+        // /chat-folders?addId=... mas esse route NUNCA existiu (app/chat-folders.js
+        // não foi criado) → Unmatched Route → "page error". Folders na verdade
+        // são collection-based (chat_folders.conversation_ids é um JSON array),
+        // então o que o usuário precisa é só escolher um folder (ou criar) e
+        // a gente faz chatFoldersUpdate com o convId concatenado.
+        try {
+          const folders = Array.isArray(chatFolders) ? chatFolders : [];
+          // Já está nessa folder? Filtra pra mostrar só as que ainda não têm
+          // esse convId — evita o usuário clicar e "nada acontecer".
+          const eligible = folders.filter(f => {
+            const ids = Array.isArray(f?.conversation_ids) ? f.conversation_ids : [];
+            return !ids.map(Number).includes(Number(conv.id));
+          });
+          const buttons = eligible.map(f => ({
+            text: `${f.icon || '📂'}  ${f.name}`,
+            onPress: async () => {
+              try {
+                const nextIds = [...(Array.isArray(f.conversation_ids) ? f.conversation_ids : []), Number(conv.id)];
+                await api.chatFoldersUpdate(f.id, { conversation_ids: nextIds });
+                setChatFolders(prev => prev.map(x => x.id === f.id ? { ...x, conversation_ids: nextIds } : x));
+              } catch {}
+            },
+          }));
+          // Sempre oferece "Criar nova lista" via prompt simples.
+          buttons.push({
+            text: t('chat.createNewList') || 'Criar nova lista',
+            onPress: async () => {
+              try {
+                const name = (typeof window !== 'undefined' && window.prompt)
+                  ? window.prompt(t('chat.newListName') || 'Nome da lista')
+                  : null;
+                const trimmed = (name || '').trim();
+                if (!trimmed) return;
+                const r = await api.chatFoldersCreate(trimmed, '📂', 'manual', null);
+                if (r?.success && r?.data?.id) {
+                  // Backend create já aceita conversation_ids; chamar de novo
+                  // pra anexar o conv atual e refletir local.
+                  const newId = r.data.id;
+                  await api.chatFoldersUpdate(newId, { conversation_ids: [Number(conv.id)] });
+                  setChatFolders(prev => [
+                    ...prev,
+                    { id: newId, name: trimmed, icon: '📂', conversation_ids: [Number(conv.id)], position: prev.length },
+                  ]);
+                }
+              } catch {}
+            },
+          });
+          buttons.push({ text: t('common.cancel') || 'Cancelar', style: 'cancel' });
+          safeAlert(
+            t('chat.addToList') || 'Adicionar a lista',
+            eligible.length === 0
+              ? (t('chat.noEligibleLists') || 'Nenhuma lista disponível. Crie uma nova.')
+              : (t('chat.pickList') || 'Escolha uma lista:'),
+            buttons,
+          );
+        } catch {}
+      },
       // Pinned-only: enter the wiggle/drag reorder mode for the avatar grid.
       // Sheet only surfaces this entry when conv.pinned, so we don't need a
       // guard here.
