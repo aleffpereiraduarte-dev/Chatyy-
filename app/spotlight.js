@@ -28,7 +28,7 @@ function resolveMediaUrl(u) {
 }
 import {
   IconArrowLeft, IconHeart, IconHeartOutline, IconMessageCircle,
-  IconShare, IconBookmark, IconBookmarkFilled, IconPlus,
+  IconShare, IconBookmark, IconBookmarkFilled, IconPlus, IconPlay,
 } from '../components/Icons';
 
 const { width: SW, height: SH } = Dimensions.get('window');
