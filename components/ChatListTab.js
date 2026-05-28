@@ -2810,6 +2810,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   }, []);
   const handleContactBannerPress = useCallback(async () => {
     if (Platform.OS === 'web') return;
+    // [2026-05-28] Persist dismissal on TAP too (not only the X). #878:
+    // tapping "Encontrar amigos" navigated away but never stamped the
+    // dismissed-at key, so the banner reappeared every cold start.
+    try { AsyncStorage.setItem('chat:contactBannerDismissedAt', String(Date.now())).catch(() => {}); } catch {}
     if (contactBanner === 'cta') {
       // First run: ask permission, sync, jump to chat-new with the matches.
       setContactBannerSyncing(true);

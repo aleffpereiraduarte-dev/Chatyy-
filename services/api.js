@@ -5785,8 +5785,10 @@ export async function chatBroadcastSend(broadcastId, content, type = 'text') {
 }
 
 // Channels
-export async function chatCreateChannel(name, description = '') {
-  return apiCall('chat_create_channel', { name, description }, 'POST');
+export async function chatCreateChannel(name, description = '', isPublic = false) {
+  // [2026-05-28] 3rd arg `isPublic` was dropped → CreateGroupFlow channels
+  // were always created private regardless of the toggle. Forward is_public.
+  return apiCall('chat_create_channel', { name, description, is_public: isPublic ? 1 : 0 }, 'POST');
 }
 export async function chatDiscoverChannels() {
   return apiCall('chat_discover_channels', {});
@@ -5839,7 +5841,14 @@ export async function chatExport(conversationId, format = 'txt') {
 
 // Group invite link
 export async function chatGroupInviteLink(conversationId, regenerate = false) {
-  return apiCall('chat_group_invite_link', { conversation_id: conversationId, regenerate }, 'POST');
+  // [2026-05-28] Backend reads `mode` ('get'|'create'|'rotate'|'revoke'), not
+  // `regenerate` — so a regenerate request was silently treated as 'get'.
+  // Map regenerate→'rotate' and keep sending `regenerate` for back-compat.
+  return apiCall('chat_group_invite_link', {
+    conversation_id: conversationId,
+    regenerate,
+    mode: regenerate ? 'rotate' : 'get',
+  }, 'POST');
 }
 
 // Join group via invite link

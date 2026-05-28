@@ -664,7 +664,13 @@ function SilenceToggle({ isDark }) {
 }
 
 const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language, onPress, onInfoPress, onCallBack, onLongPress }) {
-  const isMissed = item.type === 'missed';
+  // [2026-05-28] Server-sourced rows carry the kind in `item.type`
+  // (audio|video|group) and the outcome in `item.status` (missed|answered|
+  // declined|busy|ringing). Checking only `item.type === 'missed'` meant
+  // server rows NEVER went red — only locally-added missed entries did
+  // (#949 regression). Honor both, and never paint an outgoing call red.
+  const isMissed = (item.status === 'missed' || item.type === 'missed')
+    && item.direction !== 'outgoing';
   const nameColor = isMissed ? RED : (isDark ? '#ffffff' : '#000000');
   const subColor = isDark ? '#8e8e93' : '#8e8e93';
   const label = getCallLabel(item.type, t);

@@ -587,8 +587,13 @@ function SecurityScreen({ colors, t, router, onClose }) {
   };
 
   const goDetailedSettings = (section) => {
-    onClose?.();
-    setTimeout(() => router?.push(`/settings?section=${section}`), 150);
+    // [2026-05-28] Navigate BEFORE closing the sheet. On iOS, calling
+    // onClose() first dismisses the modal, and a queued setTimeout push can
+    // get cancelled by the modal-dismiss transition → the Security rows
+    // appeared dead (#1366). Push synchronously, then close the sheet a tick
+    // later so the destination is already on the stack.
+    try { router?.push(`/settings?section=${section}`); } catch {}
+    setTimeout(() => { try { onClose?.(); } catch {} }, 60);
   };
 
   return (
