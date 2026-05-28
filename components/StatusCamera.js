@@ -1149,21 +1149,14 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
             meta and is re-applied downstream by the viewer/composer.
             Native-only: the vision-camera / Skia / worklets stack is stubbed
             on web (metro WEB_STUBS), so we never mount it in the browser. */}
-        {Platform.OS === 'ios' ? (
-          // iOS stopgap (build 282 crash): plain expo-camera, NO AR. Same
-          // imperative ref surface (takePictureAsync/recordAsync/stopRecording)
-          // so facing toggle + photo/video capture + isActive all work through
-          // the same cameraRef. arFilterKey passed but ignored (no AR on iOS
-          // until the next native build). No Suspense needed — static import.
-          <StatusPlainCamera
-            ref={cameraRef}
-            facing={facing}
-            mode={captureMode === 'video' ? 'video' : 'picture'}
-            arFilterKey={FACE_FILTER_PRESETS[arFilterIdx]?.key || 'none'}
-            isActive={visible && !preview}
-            onError={(e) => { if (__DEV__) console.warn('[StatusCamera] plain-camera error:', e?.message || e); }}
-          />
-        ) : Platform.OS === 'android' ? (
+        {(Platform.OS === 'ios' || Platform.OS === 'android') ? (
+          // 2026-05-28 Lester QA: iOS estava travado em StatusPlainCamera (sem AR)
+          // como stopgap do crash do build 282. O native rebuild de 2026-05-26
+          // já trouxe o módulo expo-apple-vision-face (Apple Vision face
+          // detector registrado como `detectFacesVision`), e o faceDetectorShim
+          // já roteia automaticamente: Android → MLKit, iOS → Apple Vision.
+          // Os dois caminhos compartilham o mesmo StatusVisionCamera. Resultado:
+          // AR (cachorrinho/óculos/etc.) volta a funcionar no iOS.
           <React.Suspense fallback={<View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />}>
             <StatusVisionCamera
               ref={cameraRef}

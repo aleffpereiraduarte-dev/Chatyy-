@@ -41,12 +41,29 @@ if (Platform.OS === 'android') {
 // same options the JS passes (cameraFacing etc.) so the native side can mirror
 // orientation the way MLKit does.
 function createAppleVisionDetector(options) {
-  const plugin = VisionCameraProxy.initFrameProcessorPlugin('detectFacesVision', {
-    ...options,
-  });
+  let plugin = null;
+  try {
+    plugin = VisionCameraProxy.initFrameProcessorPlugin('detectFacesVision', {
+      ...options,
+    });
+  } catch (e) {
+    if (__DEV__) console.warn('[faceDetectorShim] detectFacesVision init threw:', e?.message || e);
+  }
 
+  // 2026-05-28: if the native plugin isn't linked (user is on a TestFlight
+  // build older than 2.4.8 that doesn't include expo-apple-vision-face),
+  // we used to throw, which would crash StatusCamera when it opened. Now
+  // we degrade gracefully: AR overlay simply doesn't render, but the camera
+  // preview + capture still work.
   if (!plugin) {
-    throw new Error('Failed to load Frame Processor Plugin "detectFacesVision"!');
+    if (__DEV__) console.warn('[faceDetectorShim] detectFacesVision plugin not available; AR disabled on this iOS build');
+    return {
+      detectFaces: () => {
+        'worklet';
+        return [];
+      },
+      stopListeners: () => {},
+    };
   }
 
   return {
