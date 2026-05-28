@@ -106,6 +106,53 @@ function localTzAbbrev() {
   } catch { return ''; }
 }
 
+// Current GMT±N offset for a given IANA zone, used in the timezone picker
+// so the user sees `São Paulo (GMT-3)` even when not currently in DST.
+function tzOffsetLabel(timeZone) {
+  try {
+    const fmt = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' });
+    const parts = fmt.formatToParts(new Date());
+    const off = parts.find(p => p.type === 'timeZoneName')?.value || '';
+    return off || '';
+  } catch { return ''; }
+}
+
+// Curated list of common IANA timezones for the picker. Kept short on
+// purpose — Lester QA #32 2026-05-28 only asked for the button to work and
+// list timezones; a 300-entry IANA dump would be hostile UX. Users with
+// exotic needs can request more later. "system" is special: defer to the
+// device tz at render time.
+const COMMON_TIMEZONES = [
+  'system',
+  'America/Sao_Paulo',
+  'America/New_York',
+  'America/Chicago',
+  'America/Denver',
+  'America/Los_Angeles',
+  'America/Mexico_City',
+  'America/Buenos_Aires',
+  'America/Bogota',
+  'America/Lima',
+  'America/Santiago',
+  'Europe/London',
+  'Europe/Lisbon',
+  'Europe/Madrid',
+  'Europe/Paris',
+  'Europe/Berlin',
+  'Europe/Rome',
+  'Europe/Moscow',
+  'Asia/Dubai',
+  'Asia/Kolkata',
+  'Asia/Singapore',
+  'Asia/Hong_Kong',
+  'Asia/Shanghai',
+  'Asia/Tokyo',
+  'Asia/Seoul',
+  'Australia/Sydney',
+  'Pacific/Auckland',
+  'UTC',
+];
+
 function formatTimeRange(startStr, endStr, allDay, t, opts = {}) {
   if (allDay) return t ? t('calendar.allDay') : 'All day';
   const base = `${formatTime(startStr)} - ${formatTime(endStr)}`;
@@ -1818,12 +1865,25 @@ function CalendarScreenInner() {
   // "Show timezone" toggle — appends a "(GMT-3)" suffix to event time ranges.
   // Persisted in localStorage on web / AsyncStorage on native, key `cal_show_tz`.
   const [showTz, setShowTz] = useState(false);
+  // Lester QA #32 2026-05-28: the timezone button just toggled the suffix
+  // silently — no list, no feedback. Now it opens a picker so the user can
+  // (a) pick a timezone other than device-local and (b) toggle the suffix.
+  const [tzPickerOpen, setTzPickerOpen] = useState(false);
+  // `system` defers to the device tz at render time.
+  const [tzPref, setTzPref] = useState('system');
   useEffect(() => {
     if (Platform.OS === 'web') {
-      try { if (typeof localStorage !== 'undefined' && localStorage.getItem('cal_show_tz') === '1') setShowTz(true); } catch {}
+      try {
+        if (typeof localStorage !== 'undefined') {
+          if (localStorage.getItem('cal_show_tz') === '1') setShowTz(true);
+          const t = localStorage.getItem('cal_tz_pref');
+          if (t) setTzPref(t);
+        }
+      } catch {}
     } else {
       import('@react-native-async-storage/async-storage').then(m => {
         m.default.getItem('cal_show_tz').then(v => { if (v === '1') setShowTz(true); }).catch(() => {});
+        m.default.getItem('cal_tz_pref').then(v => { if (v) setTzPref(v); }).catch(() => {});
       }).catch(() => {});
     }
   }, []);
@@ -1837,6 +1897,23 @@ function CalendarScreenInner() {
       }).catch(() => {});
     }
   }, []);
+  const persistTzPref = useCallback((next) => {
+    setTzPref(next);
+    // Picking a non-default tz auto-enables the suffix so the user has
+    // visible confirmation the change took effect.
+    if (next !== 'system' && !showTz) persistShowTz(true);
+    if (Platform.OS === 'web') {
+      try { typeof localStorage !== 'undefined' && localStorage.setItem('cal_tz_pref', next); } catch {}
+    } else {
+      import('@react-native-async-storage/async-storage').then(m => {
+        m.default.setItem('cal_tz_pref', next).catch(() => {});
+      }).catch(() => {});
+    }
+  }, [showTz, persistShowTz]);
+  const deviceTz = useMemo(() => {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; }
+  }, []);
+  const effectiveTz = tzPref === 'system' ? deviceTz : tzPref;
 
   // Load calendars on mount
   useEffect(() => {
@@ -2661,7 +2738,7 @@ function CalendarScreenInner() {
           </View>
           {!_CAL_HEADER_COMPACT && (
             <TouchableOpacity
-              onPress={() => persistShowTz(!showTz)}
+              onPress={() => setTzPickerOpen(true)}
               style={[styles.tzGhostBtn, showTz && styles.tzGhostBtnActive]}
               accessibilityLabel={t('calendar.showTz') || t('calendar.timezones')}
             >
@@ -2860,6 +2937,75 @@ function CalendarScreenInner() {
         existingEvents={dayEvents}
         t={t}
       />
+
+      {/* Timezone picker — Lester QA #32 2026-05-28. Tap on the Timezones
+          button opens this; lets the user pick a display timezone and toggle
+          the GMT suffix. "System" defers to device tz. */}
+      <Modal
+        visible={tzPickerOpen}
+        animationType="slide"
+        transparent
+        onRequestClose={() => setTzPickerOpen(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'flex-end' }}>
+          <View style={{ backgroundColor: colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '80%' }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10 }}>
+              <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
+                {t('calendar.timezones')}
+              </Text>
+              <TouchableOpacity onPress={() => setTzPickerOpen(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Text style={{ color: colors.primary, fontSize: 15, fontWeight: '600' }}>
+                  {t('common.done') || t('common.close') || 'OK'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
+              <Text style={{ color: colors.text, fontSize: 14, flex: 1 }}>
+                {t('calendar.showTz') || 'Mostrar fuso (GMT)'}
+              </Text>
+              <Switch value={showTz} onValueChange={persistShowTz} />
+            </View>
+            <ScrollView>
+              {COMMON_TIMEZONES.map((zone) => {
+                const isSystem = zone === 'system';
+                const display = isSystem ? (deviceTz || 'system') : zone;
+                const label = isSystem
+                  ? `${t('common.system') || 'Sistema'} (${deviceTz || ''})`.trim()
+                  : zone.replace(/_/g, ' ');
+                const off = isSystem ? tzOffsetLabel(deviceTz) : tzOffsetLabel(zone);
+                const selected = tzPref === zone;
+                return (
+                  <TouchableOpacity
+                    key={zone}
+                    onPress={() => { persistTzPref(zone); setTzPickerOpen(false); }}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+                      paddingHorizontal: 16, paddingVertical: 13,
+                      backgroundColor: selected ? (colors.primary + '12') : 'transparent',
+                    }}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: colors.text, fontSize: 15, fontWeight: selected ? '700' : '500' }}>
+                        {label}
+                      </Text>
+                      {!isSystem && (
+                        <Text style={{ color: colors.muted || '#888', fontSize: 12, marginTop: 2 }}>
+                          {display}
+                        </Text>
+                      )}
+                    </View>
+                    {!!off && (
+                      <Text style={{ color: selected ? colors.primary : (colors.muted || '#888'), fontSize: 13, fontWeight: '600', marginLeft: 12 }}>
+                        {off}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
