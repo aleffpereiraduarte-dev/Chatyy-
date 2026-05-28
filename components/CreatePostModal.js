@@ -725,9 +725,12 @@ export default function CreatePostModal({
       };
       input.click();
     } else {
-      import('expo-image-picker').then(({ launchImageLibraryAsync, MediaTypeOptions }) => {
+      // expo SDK 55: MediaTypeOptions is deprecated. Lester QA 2026-05-28
+      // reported a yellow warning ("Aviso") on photo pick — that was the
+      // deprecation log surfacing in LogBox. Use the new array form.
+      import('expo-image-picker').then(({ launchImageLibraryAsync }) => {
         launchImageLibraryAsync({
-          mediaTypes: MediaTypeOptions.All,
+          mediaTypes: ['images', 'videos'],
           allowsMultipleSelection: true,
           quality: 0.8,
           selectionLimit: MAX_MEDIA,
@@ -827,9 +830,9 @@ export default function CreatePostModal({
       };
       input.click();
     } else {
-      import('expo-image-picker').then(({ launchCameraAsync, MediaTypeOptions }) => {
+      import('expo-image-picker').then(({ launchCameraAsync }) => {
         launchCameraAsync({
-          mediaTypes: MediaTypeOptions.All,
+          mediaTypes: ['images', 'videos'],
           quality: 0.8,
           videoMaxDuration: 60,
         }).then(async (result) => {
