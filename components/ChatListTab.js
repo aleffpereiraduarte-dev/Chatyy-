@@ -4281,28 +4281,49 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               } catch {}
             },
           }));
-          // Sempre oferece "Criar nova lista" via prompt simples.
+          // Cross-platform "Criar nova lista". window.prompt só existe na web;
+          // iOS tem Alert.prompt (RN built-in); Android cai num default nome
+          // "Lista N" auto-gerado (a tela /chat-folders já permite renomear).
+          // (Lester QA #34 STILL: mobile usuários clicavam e nada acontecia
+          // porque a função saía no `if (!trimmed) return` — window.prompt
+          // retornava null/undefined em RN.)
+          const createNewListWithName = async (rawName) => {
+            try {
+              const trimmed = String(rawName || '').trim();
+              if (!trimmed) return;
+              const r = await api.chatFoldersCreate(trimmed, '📂', 'manual', null);
+              if (r?.success && r?.data?.id) {
+                const newId = r.data.id;
+                await api.chatFoldersUpdate(newId, { conversation_ids: [Number(conv.id)] });
+                setChatFolders(prev => [
+                  ...prev,
+                  { id: newId, name: trimmed, icon: '📂', conversation_ids: [Number(conv.id)], position: prev.length },
+                ]);
+              }
+            } catch {}
+          };
           buttons.push({
             text: t('chat.createNewList') || 'Criar nova lista',
-            onPress: async () => {
-              try {
-                const name = (typeof window !== 'undefined' && window.prompt)
-                  ? window.prompt(t('chat.newListName') || 'Nome da lista')
-                  : null;
-                const trimmed = (name || '').trim();
-                if (!trimmed) return;
-                const r = await api.chatFoldersCreate(trimmed, '📂', 'manual', null);
-                if (r?.success && r?.data?.id) {
-                  // Backend create já aceita conversation_ids; chamar de novo
-                  // pra anexar o conv atual e refletir local.
-                  const newId = r.data.id;
-                  await api.chatFoldersUpdate(newId, { conversation_ids: [Number(conv.id)] });
-                  setChatFolders(prev => [
-                    ...prev,
-                    { id: newId, name: trimmed, icon: '📂', conversation_ids: [Number(conv.id)], position: prev.length },
-                  ]);
-                }
-              } catch {}
+            onPress: () => {
+              if (Platform.OS === 'web' && typeof window !== 'undefined' && window.prompt) {
+                createNewListWithName(window.prompt(t('chat.newListName') || 'Nome da lista'));
+              } else if (Platform.OS === 'ios' && Alert.prompt) {
+                Alert.prompt(
+                  t('chat.newListName') || 'Nome da lista',
+                  '',
+                  [
+                    { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                    { text: t('common.create') || 'Criar', onPress: (txt) => createNewListWithName(txt) },
+                  ],
+                  'plain-text',
+                  ''
+                );
+              } else {
+                // Android: no native input picker — auto-name + open
+                // /chat-folders so user can rename + add more.
+                const defaultName = `${t('chat.list') || 'Lista'} ${(chatFolders?.length || 0) + 1}`;
+                createNewListWithName(defaultName);
+              }
             },
           });
           buttons.push({ text: t('common.cancel') || 'Cancelar', style: 'cancel' });
@@ -4366,8 +4387,24 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           destructive: true,
         });
         if (!ok) return;
-        try { await api.chatClearHistory(conv.id); } catch {}
-        setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, last_message: '', last_message_at: c.last_message_at } : c));
+        // Mirror actions.onClear from #28 fix: backend first, abort local
+        // wipe on failure, then wipe ALL three caches + watermark.
+        // (Lester QA #28 STILL reported broken — root cause was this iOS-only
+        // path on line 4361 still using the old one-line wipe.)
+        let serverOk = false;
+        try {
+          const r = await api.chatClearHistory(conv.id);
+          serverOk = !!(r && r.success !== false);
+        } catch (e) { console.warn('[chatListTab] chatClearHistory failed', e?.message || e); }
+        if (!serverOk) {
+          safeAlert(t('common.error') || 'Erro', t('chat.clearChatFailed') || 'Não foi possível limpar a conversa. Tente de novo.');
+          return;
+        }
+        try { const sm = require('../services/smartChatCache'); await Promise.resolve(sm.clearConversation?.(conv.id)); } catch {}
+        try { const ldb = require('../services/localDb'); if (typeof ldb.clearConversationMessages === 'function') await ldb.clearConversationMessages(conv.id); } catch {}
+        try { const cc = require('../services/chatCache'); if (typeof cc.clearConversationMessages === 'function') await cc.clearConversationMessages(conv.id); } catch {}
+        try { const AsyncStorage = require('@react-native-async-storage/async-storage').default; await AsyncStorage.setItem(`cleared_at_${conv.id}`, String(Date.now())); } catch {}
+        setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, last_message: '', last_message_preview: '', last_message_at: c.last_message_at, unread_count: 0 } : c));
       };
       const confirmBlock = async () => {
         if (!peerEmail) return;
@@ -4422,7 +4459,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             else if (idx === 3) handleLockToggle();
             else if (idx === 4) handleArchiveConversation(conv);
             else if (idx === 5) {
-              try { router?.push(`/chat-folders?addId=${conv.id}`); } catch {}
+              // Lester QA #34 STILL: this iOS-only ActionSheet path bypassed
+              // the onAddToList fix because it called router.push directly.
+              // Delegate to the same handler the other entry points use.
+              try { actions?.onAddToList?.(conv); } catch {}
             }
             else if (idx === 6) enterSelectionMode(conv.id);
             else if (idx === blockIdx) confirmBlock();
