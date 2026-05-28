@@ -190,6 +190,13 @@ export default {
   'chat.clearChatConfirm': 'Delete all messages? The conversation stays in the list.',
   'chat.clear': 'Clear',
   'chat.addToList': 'Add to list',
+  'chat.createNewList': 'Create new list',
+  'chat.newListName': 'List name',
+  'chat.noEligibleLists': 'No lists available. Create a new one.',
+  'chat.pickList': 'Pick a list:',
+  'chat.list': 'List',
+  'chat.clearChatFailed': 'Could not clear the conversation. Try again.',
+  'common.create': 'Create',
   'chat.block': 'Block',
   'chat.blockUserConfirm': 'You will no longer exchange messages or calls.',
 

@@ -191,6 +191,13 @@ export default {
   'chat.clearChatConfirm': 'Supprimer tous les messages ? La conversation reste dans la liste.',
   'chat.clear': 'Effacer',
   'chat.addToList': 'Ajouter à la liste',
+  'chat.createNewList': 'Créer une nouvelle liste',
+  'chat.newListName': 'Nom de la liste',
+  'chat.noEligibleLists': 'Aucune liste disponible. Créez-en une nouvelle.',
+  'chat.pickList': 'Choisissez une liste :',
+  'chat.list': 'Liste',
+  'chat.clearChatFailed': 'Impossible d\'effacer la conversation. Réessayez.',
+  'common.create': 'Créer',
   'chat.block': 'Bloquer',
   'chat.blockUserConfirm': 'Tu ne pourras plus échanger de messages ou d\'appels.',
 
