@@ -348,7 +348,7 @@ export default function ReelsRecorder({
     haptic('light');
     try {
       const res = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+        mediaTypes: ['videos'],
         videoMaxDuration: Math.ceil(maxMs / 1000),
         quality: 0.92,
         allowsMultipleSelection: false,

@@ -573,7 +573,7 @@ function ProductPhotoPicker({ photoUrl, onChange, colors }) {
       const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (status !== 'granted') { safeAlert('Permissão negada', 'Acesso à galeria necessário'); setPicking(false); return; }
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,

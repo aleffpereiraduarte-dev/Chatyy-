@@ -141,7 +141,7 @@ export default function PhotoNew() {
       if (!perm.granted) return;
       const remaining = MAX_ITEMS - items.length;
       const pick = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.All,
+        mediaTypes: ['images', 'videos'],
         allowsMultipleSelection: true,
         selectionLimit: remaining,
         quality: 0.9,

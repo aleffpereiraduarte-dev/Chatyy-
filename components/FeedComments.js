@@ -762,7 +762,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
         const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!perm.granted) return;
         const r = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+          mediaTypes: ['videos'],
           allowsEditing: true,
           videoMaxDuration: 15,
           quality: 0.7,

@@ -686,7 +686,7 @@ function DriveScreenInner() {
         const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!perm.granted) { safeAlert(t('drive.permissionNeeded'), t('drive.photoPermissionMsg')); return; }
         const result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.All,
+          mediaTypes: ['images', 'videos'],
           allowsMultipleSelection: true,
           quality: 0.9,
         });

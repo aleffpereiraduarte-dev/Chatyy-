@@ -1462,9 +1462,9 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   input.click();
                 } else {
                   try {
-                    const { launchImageLibraryAsync, MediaTypeOptions } = await import('expo-image-picker');
+                    const { launchImageLibraryAsync } = await import('expo-image-picker');
                     const result = await launchImageLibraryAsync({
-                      mediaTypes: MediaTypeOptions.Images,
+                      mediaTypes: ['images'],
                       quality: 0.6, allowsEditing: true,
                     });
                     if (!result.canceled && result.assets?.[0]) {

@@ -506,7 +506,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) return null;
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 0.85,
         allowsEditing: purpose === 'cover',
         aspect: purpose === 'cover' ? [1, 1] : undefined,
@@ -593,7 +593,7 @@ function CreatePackModal({ colors, onClose, onCreated, t }) {
         const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!perm.granted) return;
         const result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+          mediaTypes: ['videos'],
           videoMaxDuration: 3,
           quality: 0.8,
         });

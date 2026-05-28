@@ -1816,7 +1816,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                 (async () => {
                   try {
                     const ImagePicker = await import('expo-image-picker');
-                    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 1.0, videoMaxDuration: 60 });
+                    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 1.0, videoMaxDuration: 60 });
                     if (!r.canceled && r.assets?.[0]) {
                       const asset = r.assets[0];
                       const isVideo = asset.mimeType?.startsWith('video') || asset.uri?.includes('.mp4');
@@ -1853,7 +1853,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
               (async () => {
                 try {
                   const ImagePicker = await import('expo-image-picker');
-                  const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 1.0, videoMaxDuration: 60 });
+                  const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 1.0, videoMaxDuration: 60 });
                   if (!r.canceled && r.assets?.[0]) {
                     const asset = r.assets[0];
                     const isVideo = asset.mimeType?.startsWith('video') || asset.uri?.includes('.mp4');
@@ -1872,7 +1872,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
                     const ImagePicker = await import('expo-image-picker');
                     const perm = await ImagePicker.requestCameraPermissionsAsync();
                     if (!perm.granted) return;
-                    const r = await ImagePicker.launchCameraAsync({ mediaTypes: ImagePicker.MediaTypeOptions.All, quality: 1.0, videoMaxDuration: 60 });
+                    const r = await ImagePicker.launchCameraAsync({ mediaTypes: ['images', 'videos'], quality: 1.0, videoMaxDuration: 60 });
                     if (!r.canceled && r.assets?.[0]) {
                       const asset = r.assets[0];
                       const isVideo = asset.mimeType?.startsWith('video') || asset.duration > 0;

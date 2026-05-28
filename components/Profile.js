@@ -1724,7 +1724,7 @@ export default function Profile({
                   return;
                 }
                 const pick = await ImagePicker.launchImageLibraryAsync({
-                  mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                  mediaTypes: ['images'],
                   allowsMultipleSelection: true,
                   // Instagram caps highlights at ~100 items. Backend already
                   // accepts up to 100 ids per highlight (see

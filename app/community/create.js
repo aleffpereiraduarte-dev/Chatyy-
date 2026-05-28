@@ -52,7 +52,7 @@ export default function CommunityCreateScreen() {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) return;
       const r = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true, aspect: [1, 1], quality: 0.85,
       });
       if (!r.canceled && r.assets?.[0]?.uri) {

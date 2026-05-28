@@ -122,7 +122,7 @@ export default function HighlightEditSheet({
         return;
       }
       const pick = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsMultipleSelection: false,
         quality: 0.85,
       });

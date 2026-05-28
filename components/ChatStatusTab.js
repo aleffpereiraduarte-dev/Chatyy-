@@ -2222,7 +2222,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
         const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!perm.granted) return;
         const result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.All,
+          mediaTypes: ['images', 'videos'],
           allowsMultipleSelection: true,
           selectionLimit: 10,
           quality: 0.8,

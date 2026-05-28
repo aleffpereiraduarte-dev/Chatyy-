@@ -368,7 +368,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
       if (!perm.granted) return;
       const launch = source === 'camera' ? ImagePicker.launchCameraAsync : ImagePicker.launchImageLibraryAsync;
       const result = await launch({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         quality: 0.85,
         allowsEditing: true,
         aspect: [1, 1],
@@ -403,7 +403,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
         const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
         if (!perm.granted) return;
         const result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+          mediaTypes: ['videos'],
           quality: 0.85,
           videoMaxDuration: 5,
           allowsEditing: false,

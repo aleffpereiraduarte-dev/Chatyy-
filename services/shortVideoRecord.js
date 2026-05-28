@@ -87,7 +87,7 @@ export async function captureShortVideoFromCamera() {
     // videoMaxDuration is a SOFT cap on iOS (user can stop earlier) and a
     // HARD cap on Android. Either way we re-validate post-capture below.
     const result = await IP.launchCameraAsync({
-      mediaTypes: IP.MediaTypeOptions?.Videos ?? 'Videos',
+      mediaTypes: ['videos'],
       videoMaxDuration: SHORT_VIDEO_TUNING.MAX_DURATION_SEC,
       // 0.6 ≈ medium quality; we recompress aggressively in step 3 anyway.
       quality: 0.6,
@@ -134,7 +134,7 @@ export async function pickShortVideoFromLibrary() {
     const perm = await IP.requestMediaLibraryPermissionsAsync();
     if (!perm?.granted) return { success: false, reason: 'permission_denied' };
     const result = await IP.launchImageLibraryAsync({
-      mediaTypes: IP.MediaTypeOptions?.Videos ?? 'Videos',
+      mediaTypes: ['videos'],
       allowsEditing: false,
       quality: 1,
     });

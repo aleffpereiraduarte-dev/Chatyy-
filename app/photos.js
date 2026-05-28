@@ -2967,12 +2967,12 @@ export default function PhotosScreen() {
 
       const pick = mode === 'camera'
         ? await ImagePicker.launchCameraAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            mediaTypes: ['images', 'videos'],
             quality: 0.9,
             videoMaxDuration: 60,
           })
         : await ImagePicker.launchImageLibraryAsync({
-            mediaTypes: ImagePicker.MediaTypeOptions.All,
+            mediaTypes: ['images', 'videos'],
             allowsMultipleSelection: true,
             selectionLimit: 10,
             quality: 0.9,

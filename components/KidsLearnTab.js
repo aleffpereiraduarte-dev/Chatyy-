@@ -500,7 +500,7 @@ export default function KidsLearnTab() {
         {ImagePicker && (
           <TouchableOpacity style={s.iconBtn} onPress={async () => {
             try {
-              const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, quality: 0.8 });
+              const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images'], quality: 0.8 });
               if (!r.canceled && r.assets?.[0]) sendMessage(input.trim() || 'Me ajuda com esse dever de casa!');
             } catch {}
           }} activeOpacity={0.7} accessibilityLabel="Photo" accessibilityRole="button">

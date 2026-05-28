@@ -1165,7 +1165,7 @@ function SettingsScreenInner() {
       const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!perm.granted) return;
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         aspect: [1, 1],
         quality: 0.8,
@@ -2351,7 +2351,7 @@ function SettingsScreenInner() {
                 const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
                 if (!perm.granted) return;
                 const result = await ImagePicker.launchImageLibraryAsync({
-                  mediaTypes: ImagePicker.MediaTypeOptions.Images,
+                  mediaTypes: ['images'],
                   allowsEditing: false,
                   quality: 0.85,
                 });
