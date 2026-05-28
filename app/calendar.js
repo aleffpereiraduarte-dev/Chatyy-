@@ -163,6 +163,30 @@ function formatTimeRange(startStr, endStr, allDay, t, opts = {}) {
   return base;
 }
 
+// Build the recurrence_rule string the backend stores:
+//   - 'DAILY'                                → 'DAILY'
+//   - 'WEEKLY' + days[]                      → 'FREQ=WEEKLY;BYDAY=MO,WE,FR'
+//   - 'WEEKLY' + empty days                  → 'WEEKLY' (every week, same weekday)
+//   - 'MONTHLY' + day=15                     → 'FREQ=MONTHLY;BYMONTHDAY=15'
+//   - 'MONTHLY' + day=-1                     → 'FREQ=MONTHLY;BYMONTHDAY=-1' (last day)
+//   - 'MONTHLY' + day=null                   → 'MONTHLY' (every month, same day)
+//   - '' or null                             → ''
+function buildRecurrenceRule(freq, weeklyDays, monthlyDay) {
+  if (!freq) return '';
+  if (freq === 'DAILY') return 'DAILY';
+  if (freq === 'WEEKLY') {
+    const days = Array.isArray(weeklyDays) ? weeklyDays.filter(Boolean) : [];
+    return days.length > 0 ? `FREQ=WEEKLY;BYDAY=${days.join(',')}` : 'WEEKLY';
+  }
+  if (freq === 'MONTHLY') {
+    if (monthlyDay === null || monthlyDay === undefined || monthlyDay === '') return 'MONTHLY';
+    const n = Number(monthlyDay);
+    if (!Number.isFinite(n) || n === 0 || n < -31 || n > 31) return 'MONTHLY';
+    return `FREQ=MONTHLY;BYMONTHDAY=${n}`;
+  }
+  return freq;
+}
+
 // Parse RRULE-ish string to a friendly recurrence label.
 // Accepts strings like "FREQ=WEEKLY;BYDAY=MO,WE" or just "WEEKLY".
 function formatRecurrenceLabel(rule, startAt, t) {
@@ -1356,6 +1380,11 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
   const [attendeesText, setAttendeesText] = useState('');
   const [saving, setSaving] = useState(false);
   const [recurrence, setRecurrence] = useState('');
+  // Weekly BYDAY: array of ['MO','WE','FR']. Empty = "same day as start" semantics
+  // (server treats bare WEEKLY this way for back-compat).
+  const [weeklyDays, setWeeklyDays] = useState([]);
+  // Monthly BYMONTHDAY: 1..31, or -1 for "last day of month".
+  const [monthlyDay, setMonthlyDay] = useState(null);
   const [reminder, setReminder] = useState('none');
 
   useEffect(() => {
@@ -1389,6 +1418,11 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
       setAttendeesText('');
       setSaving(false);
       setRecurrence('');
+      // Default BYDAY to the weekday of the event's start, BYMONTHDAY to its day.
+      const seed = selectedDate || new Date();
+      const wdMap = ['SU','MO','TU','WE','TH','FR','SA'];
+      setWeeklyDays([wdMap[seed.getDay()]]);
+      setMonthlyDay(seed.getDate());
       setReminder('none');
     }
   }, [visible, selectedDate, calendars]);
@@ -1470,7 +1504,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
         color: selectedColor,
         calendar_id: calendarId,
         attendees,
-        recurrence_rule: recurrence,
+        recurrence_rule: buildRecurrenceRule(recurrence, weeklyDays, monthlyDay),
         reminder,
       });
       onClose();
@@ -1678,9 +1712,6 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
             <View style={styles.recurrenceRow}>
               {[
                 { label: t('calendar.recurrenceNone'), value: '' },
-                // Lester QA #33 2026-05-28: backend rejects RRULE strings ("FREQ=...")
-                // and only stores the bare DAILY/WEEKLY/MONTHLY tokens (see
-                // calendar.php:624). Send those tokens so create succeeds.
                 { label: t('calendar.recurrenceDaily'), value: 'DAILY' },
                 { label: t('calendar.recurrenceWeekly'), value: 'WEEKLY' },
                 { label: t('calendar.recurrenceMonthly'), value: 'MONTHLY' },
@@ -1699,6 +1730,84 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                 </TouchableOpacity>
               ))}
             </View>
+
+            {/* Weekly BYDAY picker — 7 round chips. Multi-select. */}
+            {recurrence === 'WEEKLY' && (
+              <>
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary, marginTop: 10 }]}>
+                  {t('calendar.repeatOnDays') || 'Repetir nos dias'}
+                </Text>
+                <View style={styles.weekdayRow}>
+                  {[
+                    { tok: 'SU', label: t('calendar.weekdayShortSu') || 'D' },
+                    { tok: 'MO', label: t('calendar.weekdayShortMo') || 'S' },
+                    { tok: 'TU', label: t('calendar.weekdayShortTu') || 'T' },
+                    { tok: 'WE', label: t('calendar.weekdayShortWe') || 'Q' },
+                    { tok: 'TH', label: t('calendar.weekdayShortTh') || 'Q' },
+                    { tok: 'FR', label: t('calendar.weekdayShortFr') || 'S' },
+                    { tok: 'SA', label: t('calendar.weekdayShortSa') || 'S' },
+                  ].map(d => {
+                    const active = weeklyDays.includes(d.tok);
+                    return (
+                      <TouchableOpacity
+                        key={d.tok}
+                        onPress={() => setWeeklyDays(prev => prev.includes(d.tok)
+                          ? prev.filter(x => x !== d.tok)
+                          : [...prev, d.tok])}
+                        style={[styles.weekdayChip, {
+                          borderColor: active ? colors.primary : colors.border,
+                          backgroundColor: active ? colors.primary : colors.surface,
+                        }]}
+                      >
+                        <Text style={[styles.weekdayChipText, { color: active ? '#fff' : colors.text }]}>
+                          {d.label}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </>
+            )}
+
+            {/* Monthly BYMONTHDAY picker — horizontal scroll of 1-31 + "Last day". */}
+            {recurrence === 'MONTHLY' && (
+              <>
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary, marginTop: 10 }]}>
+                  {t('calendar.repeatOnDayOfMonth') || 'Dia do mês'}
+                </Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.monthDayScroll} contentContainerStyle={{ paddingRight: 16 }}>
+                  {[...Array(31)].map((_, i) => {
+                    const day = i + 1;
+                    const active = Number(monthlyDay) === day;
+                    return (
+                      <TouchableOpacity
+                        key={day}
+                        onPress={() => setMonthlyDay(day)}
+                        style={[styles.monthDayChip, {
+                          borderColor: active ? colors.primary : colors.border,
+                          backgroundColor: active ? colors.primary : colors.surface,
+                        }]}
+                      >
+                        <Text style={[styles.monthDayChipText, { color: active ? '#fff' : colors.text }]}>
+                          {day}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                  <TouchableOpacity
+                    onPress={() => setMonthlyDay(-1)}
+                    style={[styles.monthDayChipLast, {
+                      borderColor: Number(monthlyDay) === -1 ? colors.primary : colors.border,
+                      backgroundColor: Number(monthlyDay) === -1 ? colors.primary : colors.surface,
+                    }]}
+                  >
+                    <Text style={[styles.monthDayChipText, { color: Number(monthlyDay) === -1 ? '#fff' : colors.text }]}>
+                      {t('calendar.lastDayOfMonth') || 'Último'}
+                    </Text>
+                  </TouchableOpacity>
+                </ScrollView>
+              </>
+            )}
 
             {/* Color picker */}
             <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>{t('calendar.color')}</Text>
@@ -3491,6 +3600,22 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.md, borderWidth: 1,
   },
   recurrenceChipText: { fontSize: FontSize.sm, fontWeight: '500' },
+  weekdayRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6, marginBottom: 4 },
+  weekdayChip: {
+    width: 36, height: 36, borderRadius: 18, borderWidth: 1,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  weekdayChipText: { fontSize: FontSize.sm, fontWeight: '600' },
+  monthDayScroll: { marginTop: 6, marginBottom: 4, maxHeight: 48 },
+  monthDayChip: {
+    width: 36, height: 36, borderRadius: 10, borderWidth: 1, marginRight: 6,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  monthDayChipLast: {
+    paddingHorizontal: 12, height: 36, borderRadius: 10, borderWidth: 1, marginRight: 6,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  monthDayChipText: { fontSize: FontSize.sm, fontWeight: '600' },
 
   // AI Reminders
   remindersCard: { marginHorizontal: Spacing.lg, marginVertical: Spacing.sm, borderWidth: 1, borderRadius: BorderRadius.md, padding: Spacing.md },
