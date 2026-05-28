@@ -5,6 +5,7 @@ import {
   Switch, ActivityIndicator, Platform, Alert, Image, Linking, Share, Modal, Pressable,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as Haptics from 'expo-haptics';
 import AvatarCircle from '../components/AvatarCircle';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -364,6 +365,28 @@ function SettingsScreenInner() {
   const [deleteError, setDeleteError] = useState('');
   const [deleteAcknowledged, setDeleteAcknowledged] = useState(false);
   const [deleteTypedWord, setDeleteTypedWord] = useState('');
+  // Defensive nav for Security rows. iOS QA (2026-05-28) reported that
+  // change-phone, activity-log, advanced-key, advanced-privacy "did
+  // nothing" when tapped. Symptoms suggest the route push was dropped
+  // (modal-over-modal race, lingering present transition, or unhandled
+  // throw in the row's onPress). This wrapper: (1) gives haptic feedback
+  // so the user knows the press registered, (2) schedules the push on
+  // the NEXT frame so the current event handler returns cleanly before
+  // the navigation animation starts (prevents the silent UIKit "drop
+  // 2nd presentation" iOS bug), (3) surfaces any sync throw via Alert
+  // so failures are visible instead of silent.
+  const safeNav = useCallback((path) => {
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+    const fire = () => {
+      try { router.push(path); }
+      catch (e) {
+        try { Alert.alert('Erro de navegação', `${path}\n${String(e?.message || e)}`); } catch {}
+      }
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(fire);
+    else setTimeout(fire, 0);
+  }, [router]);
+
   // Alterar senha — modal state
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
   const [cpCurrent, setCpCurrent] = useState('');
@@ -2784,7 +2807,7 @@ function SettingsScreenInner() {
                 flow (confirm old → pick new → OTP → success). */}
             <TouchableOpacity
               style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-              onPress={() => router.push('/change-phone')}
+              onPress={() => safeNav('/change-phone')}
               activeOpacity={0.65}
             >
               <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
@@ -2807,7 +2830,7 @@ function SettingsScreenInner() {
                 BYOK set, chat delete, message delete-for-all, etc.). */}
             <TouchableOpacity
               style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-              onPress={() => router.push('/activity-log')}
+              onPress={() => safeNav('/activity-log')}
               activeOpacity={0.65}
             >
               <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
@@ -2830,7 +2853,7 @@ function SettingsScreenInner() {
                 privacy preference. */}
             <TouchableOpacity
               style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-              onPress={() => router.push('/advanced-key')}
+              onPress={() => safeNav('/advanced-key')}
               activeOpacity={0.65}
             >
               <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
@@ -2895,7 +2918,7 @@ function SettingsScreenInner() {
                 row so the main Security section stays scannable. */}
             <TouchableOpacity
               style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
-              onPress={() => router.push('/advanced-privacy')}
+              onPress={() => safeNav('/advanced-privacy')}
               activeOpacity={0.65}
             >
               <View style={[s.settingInfo, { flexDirection: 'row', alignItems: 'center', gap: 10 }]}>
