@@ -7204,6 +7204,31 @@ export default function ChatConversationScreen() {
     } catch {}
     return null;
   })();
+
+  // 2026-05-28 Lester QA "Limpar conversa volta tudo": even after backend gate
+  // added in chat_envelopes_pull, users may have stale messages persisted in
+  // SQLite from BEFORE the fix (envelopePuller wrote them, then we wiped, then
+  // we wiped again, etc). On every mount, if a `cleared_at_<conv_id>` watermark
+  // exists in AsyncStorage AND any cached message has created_at <= cleared_at,
+  // nuke the local cache so the screen reflects the cleared state. One-shot
+  // cleanup that runs in the background — doesn't block first paint.
+  useEffect(() => {
+    if (!conversationId) return;
+    (async () => {
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const raw = await AsyncStorage.getItem(`cleared_at_${conversationId}`);
+        if (!raw) return;
+        const clearedTs = Number(raw);
+        if (!clearedTs) return;
+        const cc = require('../services/chatCache');
+        const ldb = require('../services/localDb');
+        if (typeof cc.clearConversationMessages === 'function') await cc.clearConversationMessages(conversationId);
+        if (typeof ldb.clearConversationMessages === 'function') await ldb.clearConversationMessages(conversationId);
+        try { SmartCache.clearConversation?.(conversationId); } catch {}
+      } catch {}
+    })();
+  }, [conversationId]);
   // Normalize cached messages immediately so type='call_card'/'poll'/'location'
   // detection works in the JS-side handlers (tap to redial, vote, etc).
   // Tracks whether the cached snapshot contains stale placeholder bubbles

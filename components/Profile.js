@@ -3489,7 +3489,17 @@ export default function Profile({
       if (uploadR?.success && uploadR.data?.url) {
         const statusType = capture.type === 'video' ? 'video' : 'image';
         const extraMeta = capture.isBoomerang ? { is_boomerang: true } : {};
-        const r = await api.statusPublish?.(uploadR.data.url, statusType, '#000000', null, extraMeta);
+        // 2026-05-28 Lester QA: música selecionada no StatusCamera (pela foto
+        // de perfil) não aparecia no status publicado. handleAvatarCameraCapture
+        // ignorava `capture.music`. ChatStatusTab tinha o mesmo bug
+        // (já corrigido no commit b05ff920). Aqui é o terceiro callsite.
+        const camMusic = capture?.music ? {
+          title: capture.music.title || capture.music.name || '',
+          artist: capture.music.artist || '',
+          previewUrl: capture.music.previewUrl || capture.music.preview_url || capture.music.url || '',
+          coverUrl: capture.music.coverUrl || capture.music.cover_url || capture.music.artwork || '',
+        } : null;
+        const r = await api.statusPublish?.(uploadR.data.url, statusType, '#000000', camMusic, extraMeta);
         if (r?.success) {
           // Re-fetch the profile so the new story appears in the row + ring.
           setData(prev => prev);

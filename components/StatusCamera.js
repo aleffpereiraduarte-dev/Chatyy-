@@ -1149,14 +1149,8 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
             meta and is re-applied downstream by the viewer/composer.
             Native-only: the vision-camera / Skia / worklets stack is stubbed
             on web (metro WEB_STUBS), so we never mount it in the browser. */}
-        {(Platform.OS === 'ios' || Platform.OS === 'android') ? (
-          // 2026-05-28 Lester QA: iOS estava travado em StatusPlainCamera (sem AR)
-          // como stopgap do crash do build 282. O native rebuild de 2026-05-26
-          // já trouxe o módulo expo-apple-vision-face (Apple Vision face
-          // detector registrado como `detectFacesVision`), e o faceDetectorShim
-          // já roteia automaticamente: Android → MLKit, iOS → Apple Vision.
-          // Os dois caminhos compartilham o mesmo StatusVisionCamera. Resultado:
-          // AR (cachorrinho/óculos/etc.) volta a funcionar no iOS.
+        {Platform.OS === 'android' ? (
+          // Android: real StatusVisionCamera with MLKit face detector (works).
           <React.Suspense fallback={<View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />}>
             <StatusVisionCamera
               ref={cameraRef}
@@ -1167,6 +1161,26 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
               onError={(e) => { if (__DEV__) console.warn('[StatusCamera] vision-camera error:', e?.message || e); }}
             />
           </React.Suspense>
+        ) : Platform.OS === 'ios' ? (
+          // 2026-05-28 EMERGENCY REVERT: P0 native crash when opening "Adicionar
+          // ao status" via profile photo. Crash report (Lester, iPhone 17 / iOS
+          // 26.5 / build 292) shows EXC_BAD_ACCESS in Hermes GCScope::_newChunkAndPHV
+          // with the bad pointer 0x0a39363838373242 — ASCII "\n96887:B", classic
+          // string-misinterpreted-as-pointer signature from a worklet/frame-processor
+          // returning a malformed JSI value. The `detectFacesVision` plugin (Apple
+          // Vision via modules/expo-apple-vision-face) seems to be the regression
+          // — it ships native in v2.4.8 but interacts badly with the iOS 26 Hermes
+          // GC. Falling back to StatusPlainCamera on iOS until we can debug the
+          // plugin's worklet path. iOS loses AR filters TEMPORARILY but stops
+          // crashing. (Memory: iOS_AR_VIA_APPLE_VISION_2026_05_26 — but build 292
+          // crash shows the Apple Vision path isn't yet stable.)
+          <StatusPlainCamera
+            ref={cameraRef}
+            facing={facing}
+            mode={captureMode === 'video' ? 'video' : 'picture'}
+            isActive={visible && !preview}
+            onError={(e) => { if (__DEV__) console.warn('[StatusCamera] plain-camera error:', e?.message || e); }}
+          />
         ) : (
           <View style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }]} />
         )}
