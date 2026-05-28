@@ -2222,10 +2222,19 @@ function CalendarScreenInner() {
       const calendarIds = deviceCalendars.map(c => c.id);
       const deviceEvents = await ExpoCalendar.getEventsAsync(calendarIds, startDate, endDate);
 
-      // Auto-sync: import new events without asking
-      const existingKeys = new Set(events.map(e => `${(e.title || '').toLowerCase()}|${(e.start_at || '').substring(0, 16)}`));
+      // Auto-sync: import new events without asking.
+      // Lester QA #31 2026-05-28: the dedup key was comparing two different
+      // time formats — backend stores local-time strings (formatDateTimeForAPI)
+      // while the device side was doing .toISOString() (UTC). For a user in
+      // UTC-3 the keys never matched, so every event imported again on every
+      // sync. Normalize both sides through formatDateTimeForAPI to compare
+      // local minute-level timestamps.
+      const norm = (d) => {
+        try { return formatDateTimeForAPI(new Date(d)).substring(0, 16); } catch { return ''; }
+      };
+      const existingKeys = new Set(events.map(e => `${(e.title || '').toLowerCase()}|${norm(e.start_at)}`));
       const newEvents = (deviceEvents || []).filter(de => {
-        const key = `${(de.title || '').toLowerCase()}|${new Date(de.startDate).toISOString().substring(0, 16)}`;
+        const key = `${(de.title || '').toLowerCase()}|${norm(de.startDate)}`;
         return !existingKeys.has(key);
       });
 
@@ -2329,10 +2338,14 @@ function CalendarScreenInner() {
       const startDate = new Date(currentYear, currentMonth - 1, 1);
       const endDate = new Date(currentYear, currentMonth + 2, 0);
       const deviceEvents = await ExpoCalendar.getEventsAsync([targetCalId], startDate, endDate);
-      const deviceKeys = new Set(deviceEvents.map(de => `${(de.title || '').toLowerCase()}|${new Date(de.startDate).toISOString().substring(0, 16)}`));
+      // Same local-time dedup as handleSyncDeviceCalendar — see Lester QA #31.
+      const normKey = (d) => {
+        try { return formatDateTimeForAPI(new Date(d)).substring(0, 16); } catch { return ''; }
+      };
+      const deviceKeys = new Set(deviceEvents.map(de => `${(de.title || '').toLowerCase()}|${normKey(de.startDate)}`));
 
       const toExport = events.filter(e => {
-        const key = `${(e.title || '').toLowerCase()}|${(e.start_at || '').substring(0, 16)}`;
+        const key = `${(e.title || '').toLowerCase()}|${normKey(e.start_at)}`;
         return !deviceKeys.has(key);
       });
 
