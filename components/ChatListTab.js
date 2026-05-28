@@ -4235,7 +4235,38 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                   const AsyncStorage = require('@react-native-async-storage/async-storage').default;
                   await AsyncStorage.setItem(`cleared_at_${conv.id}`, String(Date.now()));
                 } catch {}
-                setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, last_message: '', last_message_preview: '', unread_count: 0 } : c));
+                // Lester 2026-05-28: o preview vinha de conv.last_message.content
+                // (objeto, não string). Setar last_message: '' não esvaziava o
+                // bubble preview da chat list. Tem que null o objeto inteiro +
+                // bump cleared_message_at pra sort, e persistir nas caches locais
+                // pra não voltar no cold start.
+                const clearedAtIso = new Date().toISOString();
+                setConversations(prev => prev.map(c => c.id === conv.id ? {
+                  ...c,
+                  last_message: null,
+                  last_message_preview: '',
+                  last_message_text: '',
+                  last_message_type: null,
+                  last_message_sender: null,
+                  last_message_at: clearedAtIso,
+                  unread_count: 0,
+                } : c));
+                // Persistir o "limpou" nas caches que rehidratam o chat list ao
+                // abrir o app (smartChatCache.chatList + MMKV chat_list_cache).
+                try {
+                  const sm = require('../services/smartChatCache');
+                  if (typeof sm.updateConversationFields === 'function') {
+                    sm.updateConversationFields(conv.id, {
+                      last_message: null,
+                      last_message_preview: '',
+                      last_message_text: '',
+                      last_message_at: clearedAtIso,
+                      unread_count: 0,
+                    });
+                  } else if (typeof sm.clearChatListEntry === 'function') {
+                    sm.clearChatListEntry(conv.id);
+                  }
+                } catch {}
               },
             },
           ]
@@ -4797,6 +4828,15 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         if (ft === 'channels') return c.type === 'channel';
         if (ft === 'tag' && fv) return (c.tags || '').split(',').includes(fv);
         if (ft === 'name' && fv) return (c.name || '').toLowerCase().includes(String(fv).toLowerCase());
+        // Lester 2026-05-28: lista 'manual' não tinha case — caía no `return true`
+        // e a lista virava TODOS os contatos em vez de só os que o user adicionou.
+        // conversation_ids vem como JSON array do backend; normaliza pra Number.
+        if (ft === 'manual') {
+          const ids = Array.isArray(folderFilter.conversation_ids)
+            ? folderFilter.conversation_ids.map(Number)
+            : [];
+          return ids.includes(Number(c.id));
+        }
         return true;
       }
       return true;

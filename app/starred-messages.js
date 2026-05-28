@@ -22,7 +22,7 @@ export default function StarredMessagesScreen() {
     try {
       const r = await api.apiCall('chat_starred_messages');
       if (r?.success && r.data) {
-        const list = Array.isArray(r.data) ? r.data : (r.data.messages || []);
+        const list = Array.isArray(r.data) ? r.data : (r.data.items || r.data.messages || []);
         setMessages(list);
       }
     } catch (e) { console.warn('[starred] load:', e); }
