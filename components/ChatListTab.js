@@ -4194,21 +4194,46 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               text: t('chat.clear') || 'Limpar', style: 'destructive',
               onPress: async () => {
                 // Server: mark cleared_at on this user's member row so
-                // future chat_messages fetches hide everything older.
-                try { await api.chatClearHistory(conv.id); } catch {}
-                // Wipe local caches so the open-the-chat path doesn't
-                // re-paint the cleared messages from device storage.
-                // Lester QA 2026-05-28: backend was wired but local
-                // SQLite + MMKV cache survived → "Limpar não limpa".
+                // future chat_messages fetches hide everything older. If
+                // server rejects, ABORT the local wipe so we don't end up
+                // with a "cleared on this device but server still has it"
+                // ghost on the next cold start (the 2nd Lester report).
+                let serverOk = false;
+                try {
+                  const r = await api.chatClearHistory(conv.id);
+                  serverOk = !!(r && r.success !== false);
+                } catch (e) {
+                  console.warn('[chatListTab] chatClearHistory failed', e?.message || e);
+                }
+                if (!serverOk) {
+                  safeAlert(t('common.error') || 'Erro', t('chat.clearChatFailed') || 'Não foi possível limpar a conversa. Tente de novo.');
+                  return;
+                }
+                // Local wipe: smartChatCache + localDb + chatCache (MMKV
+                // mirror, was the missing piece on the first attempt — its
+                // _readMessages re-painted bubbles on cold start).
                 try {
                   const sm = require('../services/smartChatCache');
-                  sm.clearConversation?.(conv.id);
+                  await Promise.resolve(sm.clearConversation?.(conv.id));
                 } catch {}
                 try {
                   const ldb = require('../services/localDb');
                   if (typeof ldb.clearConversationMessages === 'function') {
-                    ldb.clearConversationMessages(conv.id).catch(() => {});
+                    await ldb.clearConversationMessages(conv.id);
                   }
+                } catch {}
+                try {
+                  const cc = require('../services/chatCache');
+                  if (typeof cc.clearConversationMessages === 'function') {
+                    await cc.clearConversationMessages(conv.id);
+                  }
+                } catch {}
+                // Watermark so bootstrap/delta sync paths can refuse to
+                // re-import any envelope older than this clear timestamp
+                // (envelopePuller / chatDeltaSync respect this).
+                try {
+                  const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+                  await AsyncStorage.setItem(`cleared_at_${conv.id}`, String(Date.now()));
                 } catch {}
                 setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, last_message: '', last_message_preview: '', unread_count: 0 } : c));
               },

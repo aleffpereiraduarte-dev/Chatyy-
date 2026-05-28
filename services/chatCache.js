@@ -534,6 +534,31 @@ export async function updateCachedMessage(conversationId, messageId, updates) {
   } catch {}
 }
 
+// Clear ALL messages of a conversation but keep the conversation row in lists.
+// 2026-05-28 Lester QA #28: per-user "Limpar conversa" was only wiping
+// smartChatCache + localDb. The MMKV-backed `chat_msgs_${cid}` mirror in
+// chatCache.js survived → cold-start ChatList readers (getCachedMessagesSync,
+// _readMessages) re-paint the just-cleared bubbles. Mirror what
+// removeConversationFromCache does for messages — keep the conv row.
+export async function clearConversationMessages(conversationId) {
+  if (conversationId == null) return;
+  const cid = conversationId;
+  if (isNative && isDbReady()) {
+    try { await dbSaveMessages(cid, []); } catch {}
+  }
+  try { _hotCache.delete(`chat_msgs_${cid}`); } catch {}
+  try { _kvRemove(`chat_msgs_${cid}`); } catch {}
+  try { await clearPendingMessages(cid); } catch {}
+  if (Platform.OS === 'web') {
+    try {
+      const { webSaveMessagesForConversation } = require('./localDb');
+      if (typeof webSaveMessagesForConversation === 'function') {
+        await webSaveMessagesForConversation(cid, []);
+      }
+    } catch {}
+  }
+}
+
 // Clear all chat cache
 export async function clearChatCache() {
   // Publish the in-flight clear promise so concurrent readers

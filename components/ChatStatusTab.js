@@ -2084,7 +2084,13 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       if (uploadR?.success && uploadR.data?.url) {
         const statusType = capture.type === 'video' ? 'video' : 'image';
         const extraMeta = capture.isBoomerang ? { is_boomerang: true } : {};
-        const r = await api.statusPublish(uploadR.data.url, statusType, '#000000', null, extraMeta);
+        const camMusic = capture.music ? {
+          title: capture.music.title || capture.music.name || '',
+          artist: capture.music.artist || '',
+          previewUrl: capture.music.previewUrl || capture.music.preview_url || capture.music.url || '',
+          coverUrl: capture.music.coverUrl || capture.music.cover_url || capture.music.artwork || '',
+        } : null;
+        const r = await api.statusPublish(uploadR.data.url, statusType, '#000000', camMusic, extraMeta);
         if (r?.success) {
           loadStatuses();
         } else {

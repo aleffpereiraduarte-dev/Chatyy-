@@ -2662,7 +2662,7 @@ export default function Profile({
                 ? _ti('profile.empty.postsSelfSub', 'Compartilhe sua primeira foto ou Reel.')
                 : _ti('profile.empty.postsOtherSub', 'Quando publicar, vai aparecer aqui.')}
               ctaLabel={actions.is_self ? _ti('profile.empty.postsCta', 'Criar publicação') : undefined}
-              onPress={actions.is_self ? () => router?.push('/feed?compose=1') : undefined}
+              onPress={actions.is_self ? () => router?.push('/spotlight?createPost=1') : undefined}
             />
           );
         }
