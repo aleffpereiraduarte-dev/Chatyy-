@@ -6,6 +6,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Animated, Dimensions,
   Platform, Image, Pressable, ScrollView, FlatList, Linking, Modal, Alert,
+  TextInput,
 } from 'react-native';
 // Camera permission still comes from expo-camera's hook (lightweight, no
 // session) — the actual preview/capture now runs on react-native-vision-camera
@@ -15,6 +16,7 @@ import { useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CachedImage from './CachedImage';
+import * as api from '../services/api';
 import {
   IconRefresh, IconX, IconZap, IconSparkles, IconClock, IconGrid,
   IconImage, IconUndo2, IconMusic,
@@ -242,6 +244,26 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
   const [beauty, setBeauty] = useState(false);        // beauty filter toggle
   const [musicTrack, setMusicTrack] = useState(null); // {id, title} or null
   const [musicPickerOpen, setMusicPickerOpen] = useState(false);
+  // Pixabay catalog + search (mirrors the picker in CreatePostModal/Reels).
+  // tracks[]: {id, title, artist, preview_url, duration_sec, image_url}
+  const [musicCatalog, setMusicCatalog] = useState([]);
+  const [musicLoading, setMusicLoading] = useState(false);
+  const [musicQuery, setMusicQuery] = useState('');
+  const loadMusicCatalog = useCallback(async (q = '') => {
+    setMusicLoading(true);
+    try {
+      const r = q
+        ? await api.reelsMusicSearch?.(q)
+        : await api.reelsMusicCatalog?.();
+      if (r?.success && Array.isArray(r.data?.tracks)) setMusicCatalog(r.data.tracks);
+      else setMusicCatalog([]);
+    } catch { setMusicCatalog([]); }
+    setMusicLoading(false);
+  }, []);
+  useEffect(() => {
+    if (!musicPickerOpen) return;
+    if (musicCatalog.length === 0 && !musicLoading) loadMusicCatalog('');
+  }, [musicPickerOpen]); // eslint-disable-line react-hooks/exhaustive-deps
   const [galleryThumb, setGalleryThumb] = useState(null); // last roll asset uri
   const [showSwipeHint, setShowSwipeHint] = useState(true);
   // Multi-clip recording — TikTok-style. Each tap adds a finished segment
@@ -1394,7 +1416,13 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       {/* AR face filter carousel — sits just above the color filter strip.
           Six bundled presets (none/dog/cat/sunglasses/heart eyes/party hat/
           vampire). Swipe horizontally to switch; tap to apply. Each preset
-          PNG ships in assets/ar-filters/. */}
+          PNG ships in assets/ar-filters/.
+          [2026-05-28] HIDDEN on iOS — StatusPlainCamera fallback (see comment
+          ~L1172) doesn't run the AR overlay pipeline (Apple Vision crash on
+          iOS 26 / Hermes GC pending native fix). Showing the strip lets the
+          user select a preset that silently does nothing. Hide until the
+          next native build restores the AR path. Android keeps the strip. */}
+      {Platform.OS !== 'ios' && (
       <View style={s.arFilterStrip} pointerEvents="box-none">
         <ScrollView
           horizontal
@@ -1436,6 +1464,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           })}
         </ScrollView>
       </View>
+      )}
 
       {/* Live filter chip strip (Feature E) — horizontal scroll above the
           mode bar so users can pick a look while framing. Tap = apply. */}
@@ -1549,7 +1578,11 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
         <View style={{ width: 50, height: 50 }} pointerEvents="none" />
       </View>
 
-      {/* Music picker placeholder modal (Feature 6) */}
+      {/* Music picker — Pixabay royalty-free catalog (Wave 14 backend).
+          Tap a track → setMusicTrack({title, artist, previewUrl, coverUrl})
+          which downstream maps to status meta.music in ChatListTab + backend
+          status_create music_* columns. "Sem música" clears any selection.
+          The catalog is also used by the Reels composer (CreatePostModal). */}
       <Modal
         transparent
         visible={musicPickerOpen}
@@ -1560,9 +1593,77 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           <View style={s.musicSheet}>
             <View style={s.musicSheetHandle} />
             <Text style={s.musicSheetTitle}>Adicionar som</Text>
-            <Text style={s.musicSheetEmpty}>Em breve — biblioteca de áudio do Chatyy</Text>
+            <View style={s.musicSearchRow}>
+              <TextInput
+                value={musicQuery}
+                onChangeText={setMusicQuery}
+                onSubmitEditing={() => loadMusicCatalog(musicQuery.trim())}
+                placeholder="Buscar música…"
+                placeholderTextColor="rgba(255,255,255,0.45)"
+                returnKeyType="search"
+                style={s.musicSearchInput}
+              />
+              {musicQuery ? (
+                <TouchableOpacity onPress={() => { setMusicQuery(''); loadMusicCatalog(''); }} style={s.musicSearchClear}>
+                  <Text style={s.musicSearchClearTxt}>×</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+            <FlatList
+              data={[{ id: '__none__', title: 'Sem música', artist: '', preview_url: '', image_url: '' }, ...musicCatalog]}
+              keyExtractor={(it) => String(it.id)}
+              style={s.musicList}
+              keyboardShouldPersistTaps="handled"
+              ListEmptyComponent={musicLoading ? null : (
+                <Text style={s.musicSheetEmpty}>Nenhuma faixa encontrada</Text>
+              )}
+              renderItem={({ item }) => {
+                const isNone = item.id === '__none__';
+                const selected = isNone
+                  ? !musicTrack
+                  : musicTrack?.previewUrl && musicTrack.previewUrl === item.preview_url;
+                return (
+                  <TouchableOpacity
+                    style={[s.musicRow, selected && s.musicRowActive]}
+                    onPress={() => {
+                      haptic('light');
+                      if (isNone) {
+                        setMusicTrack(null);
+                      } else {
+                        setMusicTrack({
+                          id: String(item.id),
+                          title: item.title || 'Untitled',
+                          artist: item.artist || '',
+                          previewUrl: item.preview_url || '',
+                          coverUrl: item.image_url || '',
+                        });
+                      }
+                      setMusicPickerOpen(false);
+                    }}
+                  >
+                    {isNone ? (
+                      <View style={s.musicCoverNone}>
+                        <Text style={s.musicCoverNoneTxt}>—</Text>
+                      </View>
+                    ) : (
+                      <Image
+                        source={{ uri: item.image_url || undefined }}
+                        style={s.musicCover}
+                      />
+                    )}
+                    <View style={{ flex: 1, marginLeft: 12 }}>
+                      <Text style={s.musicTitle} numberOfLines={1}>{item.title || 'Untitled'}</Text>
+                      {!isNone && (
+                        <Text style={s.musicArtist} numberOfLines={1}>{item.artist || 'Pixabay'}</Text>
+                      )}
+                    </View>
+                    {selected ? <Text style={s.musicCheck}>✓</Text> : null}
+                  </TouchableOpacity>
+                );
+              }}
+            />
             <TouchableOpacity
-              onPress={() => { haptic('light'); setMusicTrack(null); setMusicPickerOpen(false); }}
+              onPress={() => { haptic('light'); setMusicPickerOpen(false); }}
               style={s.musicSheetClose}
             >
               <Text style={s.musicSheetCloseTxt}>Fechar</Text>
@@ -1851,7 +1952,7 @@ const s = StyleSheet.create({
     backgroundColor: '#1A0F2E',
     borderTopLeftRadius: 24, borderTopRightRadius: 24,
     paddingHorizontal: 24, paddingTop: 12, paddingBottom: 36,
-    minHeight: 240,
+    maxHeight: '85%',
   },
   musicSheetHandle: {
     alignSelf: 'center', width: 38, height: 4, borderRadius: 2,
@@ -1860,12 +1961,41 @@ const s = StyleSheet.create({
   musicSheetTitle: { color: '#fff', fontSize: 18, fontWeight: '800' },
   musicSheetEmpty: {
     color: 'rgba(255,255,255,0.6)', fontSize: 14, marginTop: 14, marginBottom: 22,
+    textAlign: 'center',
   },
   musicSheetClose: {
     backgroundColor: BRAND_PURPLE_LIGHT,
     paddingVertical: 14, borderRadius: 22, alignItems: 'center',
+    marginTop: 8,
   },
   musicSheetCloseTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  musicSearchRow: {
+    flexDirection: 'row', alignItems: 'center', marginTop: 12, marginBottom: 8,
+    backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12,
+    paddingHorizontal: 12,
+  },
+  musicSearchInput: {
+    flex: 1, color: '#fff', fontSize: 14, paddingVertical: 10,
+  },
+  musicSearchClear: { paddingHorizontal: 8, paddingVertical: 4 },
+  musicSearchClearTxt: { color: 'rgba(255,255,255,0.7)', fontSize: 22, lineHeight: 22 },
+  musicList: { maxHeight: 380, marginBottom: 8 },
+  musicRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 10, paddingHorizontal: 8, borderRadius: 12,
+    marginBottom: 4,
+  },
+  musicRowActive: { backgroundColor: 'rgba(155,116,255,0.18)' },
+  musicCover: { width: 44, height: 44, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.08)' },
+  musicCoverNone: {
+    width: 44, height: 44, borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  musicCoverNoneTxt: { color: 'rgba(255,255,255,0.55)', fontSize: 20, fontWeight: '700' },
+  musicTitle: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  musicArtist: { color: 'rgba(255,255,255,0.55)', fontSize: 12, marginTop: 2 },
+  musicCheck: { color: BRAND_PURPLE_LIGHT, fontSize: 18, fontWeight: '800', marginLeft: 8 },
 
   // Record badge
   recBadge: {
