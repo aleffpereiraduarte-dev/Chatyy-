@@ -1476,7 +1476,7 @@ export default function RootLayout() {
                   <Stack.Screen name="login" options={{ animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="signup-phone" options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="signup-username" options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="change-phone" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="change-phone" options={{ headerShown: false, presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
                   <Stack.Screen name="linked-phones" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="verify-phone-required" options={{ animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="inbox" options={{ animation: 'fade', animationDuration: 100 }} />
@@ -1514,9 +1514,13 @@ export default function RootLayout() {
                   <Stack.Screen name="starred-messages" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="linked-devices" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="companion-qr" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="activity-log" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="advanced-key" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="advanced-privacy" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
+                  {/* iOS QA 2026-05-28: these 4 are opened from /settings (modal).
+                      iOS drops 'card' pushes from inside a modal — new screen renders BEHIND
+                      the modal so the user sees no change. Switching to 'modal' presentation
+                      makes them overlay /settings correctly. */}
+                  <Stack.Screen name="activity-log" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
+                  <Stack.Screen name="advanced-key" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
+                  <Stack.Screen name="advanced-privacy" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
                   <Stack.Screen name="profile-qr" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="email-signatures" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="email-import" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
