@@ -699,6 +699,21 @@ export async function deleteConversation(id) {
   }
 }
 
+// WhatsApp-style "Clear chat history": wipes only the messages for a
+// conversation while keeping the conversation row + pin/mute/folder
+// settings intact. Backend sets cleared_at server-side; this kills the
+// local cache so the chat doesn't repopulate from device storage on
+// next open.
+export async function clearConversationMessages(id) {
+  if (Platform.OS === 'web') return;
+  try {
+    await _ensureDb();
+    await db.runAsync('DELETE FROM messages WHERE conversation_id = ?', id);
+  } catch (e) {
+    console.warn('[localDb] clearConversationMessages:', e?.message);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 4. Messages
 // ---------------------------------------------------------------------------

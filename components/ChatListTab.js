@@ -4193,8 +4193,24 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             {
               text: t('chat.clear') || 'Limpar', style: 'destructive',
               onPress: async () => {
+                // Server: mark cleared_at on this user's member row so
+                // future chat_messages fetches hide everything older.
                 try { await api.chatClearHistory(conv.id); } catch {}
-                setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, last_message: '' } : c));
+                // Wipe local caches so the open-the-chat path doesn't
+                // re-paint the cleared messages from device storage.
+                // Lester QA 2026-05-28: backend was wired but local
+                // SQLite + MMKV cache survived → "Limpar não limpa".
+                try {
+                  const sm = require('../services/smartChatCache');
+                  sm.clearConversation?.(conv.id);
+                } catch {}
+                try {
+                  const ldb = require('../services/localDb');
+                  if (typeof ldb.clearConversationMessages === 'function') {
+                    ldb.clearConversationMessages(conv.id).catch(() => {});
+                  }
+                } catch {}
+                setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, last_message: '', last_message_preview: '', unread_count: 0 } : c));
               },
             },
           ]
