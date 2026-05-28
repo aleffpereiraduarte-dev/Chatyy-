@@ -878,6 +878,24 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
 });
 
 
+// ─── Status camera boundary ─────────────────────────────────────────
+// 2026-05-28 Lester QA: clicking "Adicionar ao status" on the avatar
+// crashed the whole app. StatusCamera uses React.lazy + Suspense for
+// StatusVisionCamera — that handles the loading state, but does NOT
+// catch runtime errors (a missing native module on an older build, a
+// frame-processor throwing, etc). A bare class component catching the
+// error + calling onCrash to dismiss the sheet keeps the profile alive.
+class ProfileStatusCameraBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { crashed: false }; }
+  static getDerivedStateFromError() { return { crashed: true }; }
+  componentDidCatch(err) {
+    try { console.warn('[Profile/StatusCamera] crashed', err?.message || err); } catch {}
+    try { require('./services/crashReporter')?.reportCrash?.({ type: 'render_error', context: 'profile_status_camera', message: err?.message, stack: err?.stack }); } catch {}
+    try { this.props.onCrash?.(); } catch {}
+  }
+  render() { return this.state.crashed ? null : this.props.children; }
+}
+
 // ─── Main Profile component ──────────────────────────────────────────
 export default function Profile({
   mode = 'peek',           // "peek" | "full"
@@ -3576,13 +3594,20 @@ export default function Profile({
   // mount-time native call crashed the whole profile screen (iOS tolerated it).
   // Fix: only mount StatusCamera AFTER the user actually opens it. Defers ALL
   // camera/native initialization off the profile-open path. Pure JS → OTA-able.
+  // 2026-05-28 Lester QA: opening "Adicionar ao status" pela foto de perfil
+  // crashava o app — StatusCamera mounta StatusVisionCamera via React.lazy,
+  // e qualquer erro em runtime (módulo nativo faltando em build velho, frame
+  // processor falhando, etc.) propaga até o root sem boundary. Wrap aqui
+  // pra fechar o sheet em vez de derrubar a tela inteira.
   const statusCameraNode = actions?.is_self && statusCameraOpen ? (
-    <StatusCamera
-      visible={statusCameraOpen}
-      onClose={() => setStatusCameraOpen(false)}
-      onCapture={handleAvatarCameraCapture}
-      t={t}
-    />
+    <ProfileStatusCameraBoundary onCrash={() => setStatusCameraOpen(false)}>
+      <StatusCamera
+        visible={statusCameraOpen}
+        onClose={() => setStatusCameraOpen(false)}
+        onCapture={handleAvatarCameraCapture}
+        t={t}
+      />
+    </ProfileStatusCameraBoundary>
   ) : null;
 
   // Tiny non-blocking "Publicando…" overlay while the captured status is

@@ -226,14 +226,26 @@ async function pullOnce() {
         _decryptFailsInSession = 0;
         if (saveMessage) {
           try {
-            // [#1206 2026-05-19] CRITICAL FIX — id must be INTEGER, not the
-            // raw `cmi_…` string. SQLite coerces non-numeric strings to
-            // rowid 0, so every envelope was overwriting the same row.
-            // Use a deterministic negative-int32 hash of client_message_id
-            // as the placeholder primary key (negative space = no collision
-            // with server's positive PG ids). client_temp_id keeps the
-            // real string so the server-confirm swap path in saveMessage()
-            // can later delete this placeholder and insert the real row.
+            // 2026-05-28 Lester QA: "Limpar conversa" re-paints porque
+            // envelopes ANTERIORES ao clear ainda eram entregues pelo WS
+            // após reconnect. Backend agora filtra, mas mantemos
+            // belt-and-suspenders local: pula envelope cujo created_at
+            // <= cleared_at_<conv_id> persistido (ChatListTab grava esse
+            // watermark sempre que user limpa). Continue ainda permite ack
+            // pra server tirar da fila — não voltamos a pullar.
+            try {
+              const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+              const clearedRaw = await AsyncStorage.getItem(`cleared_at_${env.conversation_id}`);
+              if (clearedRaw) {
+                const clearedTs = Number(clearedRaw);
+                const envTs = Date.parse(env.created_at || 0) || 0;
+                if (clearedTs && envTs && envTs <= clearedTs) {
+                  // ack so server stops re-firing envelope_available
+                  if (env.id != null) okIds.push(env.id);
+                  continue;
+                }
+              }
+            } catch { /* AsyncStorage unavailable on web fallback — skip */ }
             const placeholderId = _hashClientId(env.client_message_id);
             await saveMessage({
               id: placeholderId,
