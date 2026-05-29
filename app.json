@@ -103,11 +103,11 @@
           "INSendMessageIntent"
         ]
       },
-      "buildNumber": "292"
+      "buildNumber": "293"
     },
     "android": {
       "package": "com.onemundo.mail",
-      "versionCode": 523,
+      "versionCode": 524,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.VIBRATE",

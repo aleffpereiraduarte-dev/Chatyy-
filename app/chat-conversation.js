@@ -16033,17 +16033,42 @@ export default function ChatConversationScreen() {
 
   const handleStarMessage = async (msg) => {
     setSelectedMsg(null);
-    const isStarred = msg.starred;
+    // Guard against optimistic / not-yet-acked messages. Sending bubbles carry
+    // a string client id ('msg_...' / client_message_id) until the server
+    // assigns a numeric row id; calling chat_star_message with that id 400s
+    // ("message not found") and the optimistic flip would then silently revert
+    // — the exact "favoritar não funciona" the user reported. Require a real
+    // numeric id and a non-pending row before hitting the backend.
+    const numericId = Number(msg.id);
+    if (msg.pending || !Number.isInteger(numericId) || numericId <= 0) {
+      try { if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning); } catch {}
+      safeAlert(
+        t('chatConv.starPendingTitle') || 'Aguarde',
+        t('chatConv.starPendingMsg') || 'Espere a mensagem terminar de enviar para favoritar.'
+      );
+      return;
+    }
+    const isStarred = !!msg.starred;
     // Optimistic update
     setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, starred: !isStarred } : m));
     try {
-      const r = await api.chatStarMessage(msg.id, !isStarred);
-      if (!r.success) {
-        // Revert on failure
+      const r = await api.chatStarMessage(numericId, !isStarred);
+      if (!r || r.success === false) {
+        // Revert on failure + surface it (no more silent no-op)
         setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, starred: isStarred } : m));
+        safeAlert(
+          t('common.error') || 'Erro',
+          t('chatConv.starFailed') || 'Não foi possível favoritar a mensagem. Tente novamente.'
+        );
+      } else {
+        try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
       }
     } catch {
       setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, starred: isStarred } : m));
+      safeAlert(
+        t('common.error') || 'Erro',
+        t('chatConv.starFailed') || 'Não foi possível favoritar a mensagem. Tente novamente.'
+      );
     }
   };
 
@@ -21820,10 +21845,15 @@ export default function ChatConversationScreen() {
           {msg.type !== 'sticker' && msg.type !== 'gif' && !(msg.type === 'image' && !(msg.content && msg.content !== msg.file_name)) && msg.type !== 'video' && (
             <View style={styles.msgMeta}>
               {disappearingTimer > 0 ? <IconClock size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} style={{ marginRight: 2 }} /> : null}
-              {/* WAVE 46 (2026-05-21): removed inline ⭐ in the meta row for
-                  starred messages — keeps the bubble clean. Functionality
-                  preserved: long-press menu "Favoritar", bulk-select star,
-                  header menu → "Favoritas" modal. */}
+              {/* WAVE 46 (2026-05-21) removed the inline star to keep the bubble
+                  clean — but QA 2026-05-29 showed users had no in-bubble signal
+                  that "Favoritar" worked, so a star tap felt like a no-op. Bring
+                  back a MINIMAL star, but only when the message is actually
+                  starred (msg.starred now arrives from chat_messages — Fix B).
+                  Tiny (10px) + same meta color = clean look, real feedback. */}
+              {!!msg.starred && (
+                <IconStarFilled size={10} color={isOwn ? 'rgba(255,255,255,0.7)' : colors.textTertiary} style={{ marginRight: 2 }} />
+              )}
               {!!msg._e2e && (
                 <IconLock size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} style={{ marginRight: 2 }} />
               )}
