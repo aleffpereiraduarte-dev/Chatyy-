@@ -48,7 +48,7 @@ import {
   IconArchive, IconMessageSquare, IconFilm, IconShare, IconMail, IconUserPlus, IconBookmark,
   IconReceipt, IconPackage,
   IconRotateCw, IconRotateCcw, IconFlipHorizontal, IconFlipVertical, IconCrop, IconPencil, IconUndo,
-  IconLink,
+  IconLink, IconAlertCircle, IconPenTool,
 } from '../components/Icons';
 import * as Clipboard from 'expo-clipboard';
 import { WebView } from 'react-native-webview';
@@ -3365,7 +3365,7 @@ function VoicemailBubble({ voicemail, messageId, isOwn, colors, t, ownTextColor,
       <View style={{
         flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4,
       }}>
-        <Text style={{ fontSize: 18 }}>🎤</Text>
+        <IconMic size={18} color={isOwn ? ownTextColor : colors.text} />
         <View style={{ flex: 1 }}>
           <Text style={{ fontSize: 13, fontWeight: '700', color: isOwn ? ownTextColor : colors.text }}>
             {t?.('voicemail.title') || 'Mensagem de voz'}
@@ -19757,7 +19757,7 @@ export default function ChatConversationScreen() {
           }
           let LottieView = null;
           try { const M = require('lottie-react-native'); LottieView = M.default || M; } catch {}
-          if (!LottieView) return <Text style={{ fontSize: 64, lineHeight: 72 }}>🎞️</Text>;
+          if (!LottieView) return <IconFilm size={64} color="#7C3AED" />;
           return (
             <View>
               <LottieView
@@ -22364,7 +22364,7 @@ export default function ChatConversationScreen() {
             alignItems: 'center',
             shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 24,
           }}>
-            <Text style={{ fontSize: 48 }}>📎</Text>
+            <IconPaperclip size={48} color={colors.text} />
             <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text, marginTop: 8 }}>
               {t('chatConv.dropToSend') || 'Solte para enviar'}
             </Text>
@@ -22931,7 +22931,7 @@ export default function ChatConversationScreen() {
                   backgroundColor: searchFilters.starredOnly ? '#3b82f6' : 'transparent',
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  {searchFilters.starredOnly && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>✓</Text>}
+                  {searchFilters.starredOnly && <IconCheck size={12} color="#fff" />}
                 </View>
                 <Text style={{ fontSize: 13, color: colors.text, fontWeight: '500' }}>
                   {t('search.filter.starredOnly') || 'Apenas favoritos'}
@@ -23689,7 +23689,7 @@ export default function ChatConversationScreen() {
               borderRadius: 24, paddingHorizontal: 16, height: 42,
               borderWidth: 1, borderColor: colors.border,
             }}>
-              <Text style={{ fontSize: 16, color: colors.textTertiary }}>🔍</Text>
+              <IconSearch size={16} color={colors.textTertiary} />
               <TextInput
                 value={contactPickerSearch}
                 onChangeText={setContactPickerSearch}
@@ -24390,7 +24390,7 @@ export default function ChatConversationScreen() {
                 style={{ paddingHorizontal: 8, paddingVertical: 6 }}
                 accessibilityLabel={t('common.dismiss') || 'Dispensar'}
               >
-                <Text style={{ fontSize: 14, color: colors.textTertiary, fontWeight: '600' }}>✕</Text>
+                <IconX size={14} color={colors.textTertiary} />
               </TouchableOpacity>
             </View>
           );
@@ -24420,7 +24420,10 @@ export default function ChatConversationScreen() {
                   borderRadius: 18,
                 }}
               >
-                <Text style={{ color: colors.text, fontSize: 13 }}>✨ {reply}</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <IconSparkles size={13} color={colors.text} />
+                  <Text style={{ color: colors.text, fontSize: 13 }}>{reply}</Text>
+                </View>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -25074,7 +25077,7 @@ export default function ChatConversationScreen() {
                   <Text style={{ flex: 1, fontSize: 15, color: colors.text, fontWeight: isCurrent ? '700' : '500' }}>
                     {opt.label}
                   </Text>
-                  {isCurrent && <Text style={{ color: '#7C3AED', fontWeight: '800', fontSize: 18 }}>✓</Text>}
+                  {isCurrent && <IconCheck size={18} color="#7C3AED" />}
                 </TouchableOpacity>
               );
             })}
@@ -25134,7 +25137,10 @@ export default function ChatConversationScreen() {
       {chatLeakWarning && (
         <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.6)', justifyContent:'center', alignItems:'center', padding:20, zIndex:99999 }}>
           <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:24, maxWidth:400, width:'100%' }}>
-            <Text style={{ fontSize:18, fontWeight:'700', color:'#dc2626', marginBottom:8 }}>🔒 Informacao sensivel</Text>
+            <View style={{ flexDirection:'row', alignItems:'center', gap:8, marginBottom:8 }}>
+              <IconLock size={18} color="#dc2626" />
+              <Text style={{ fontSize:18, fontWeight:'700', color:'#dc2626' }}>Informacao sensivel</Text>
+            </View>
             <Text style={{ fontSize:14, color:colors.text, marginBottom:16 }}>{chatLeakWarning.warning}</Text>
             <View style={{ flexDirection:'row', gap:8 }}>
               <TouchableOpacity onPress={() => setChatLeakWarning(null)} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:colors.background, alignItems:'center' }}><Text style={{ color:colors.text, fontWeight:'600' }}>Editar</Text></TouchableOpacity>
@@ -25261,7 +25267,10 @@ export default function ChatConversationScreen() {
         <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.7)', justifyContent:'center', alignItems:'center', padding:16, zIndex:99999 }}>
           <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:20, maxWidth:500, width:'100%', maxHeight:'85%' }}>
             <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
-              <Text style={{ fontSize:18, fontWeight:'700', color:colors.text }}>🎙️ Audio</Text>
+              <View style={{ flexDirection:'row', alignItems:'center', gap:8 }}>
+                <IconMic size={18} color={colors.text} />
+                <Text style={{ fontSize:18, fontWeight:'700', color:colors.text }}>Audio</Text>
+              </View>
               <TouchableOpacity onPress={() => setAudioTranscription(null)}><Text style={{ fontSize:24, color:colors.textSecondary }}>×</Text></TouchableOpacity>
             </View>
             {audioTranscription.loading ? (
@@ -25366,7 +25375,10 @@ export default function ChatConversationScreen() {
               }}
               style={{ paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}
             >
-              <Text style={{ fontSize: 15, color: colors.text, fontWeight: '600' }}>📦 {t('chat.export') || 'Exportar conversa'} (.zip)</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <IconPackage size={15} color={colors.text} />
+                <Text style={{ fontSize: 15, color: colors.text, fontWeight: '600' }}>{t('chat.export') || 'Exportar conversa'} (.zip)</Text>
+              </View>
               <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>HTML + JSON + TXT</Text>
             </TouchableOpacity>
             {['txt', 'json'].map(fmt => (
@@ -25441,7 +25453,10 @@ export default function ChatConversationScreen() {
               }}
               style={{ paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}
             >
-              <Text style={{ fontSize: 15, color: '#ef4444' }}>🗑 {t('chatConv.clearChat') || 'Limpar conversa'}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <IconTrash size={15} color="#ef4444" />
+                <Text style={{ fontSize: 15, color: '#ef4444' }}>{t('chatConv.clearChat') || 'Limpar conversa'}</Text>
+              </View>
             </TouchableOpacity>
             <TouchableOpacity onPress={() => setShowExportModal(false)} style={{ paddingVertical: 14 }}>
               <Text style={{ fontSize: 15, color: colors.textSecondary, textAlign: 'center' }}>{t('common.cancel') || 'Cancel'}</Text>
@@ -26108,7 +26123,7 @@ export default function ChatConversationScreen() {
                   }}
                   activeOpacity={0.6}
                 >
-                  <Text style={{ fontSize: 18, marginLeft: 0, marginRight: 4 }}>✨</Text>
+                  <View style={{ marginLeft: 0, marginRight: 4 }}><IconSparkles size={18} color={colors.text} /></View>
                   <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>Transcrever + resumir</Text>
                 </TouchableOpacity>
               )}
@@ -27288,7 +27303,7 @@ export default function ChatConversationScreen() {
                     backgroundColor: isSelected ? '#7C3AED' : 'transparent',
                     alignItems: 'center', justifyContent: 'center',
                   }}>
-                    {isSelected && <Text style={{ color: '#fff', fontSize: 12, fontWeight: '900' }}>✓</Text>}
+                    {isSelected && <IconCheck size={12} color="#fff" />}
                   </View>
                 </TouchableOpacity>
               );
@@ -28223,7 +28238,7 @@ export default function ChatConversationScreen() {
                 style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12 }}
               >
                 <Text style={{ fontSize: 15, color: colors.text }}>{opt.label}</Text>
-                {slowModeSeconds === opt.value && <Text style={{ color: colors.primary, fontSize: 18 }}>✓</Text>}
+                {slowModeSeconds === opt.value && <IconCheck size={18} color={colors.primary} />}
               </TouchableOpacity>
             ))}
           </Pressable>
@@ -28249,11 +28264,11 @@ export default function ChatConversationScreen() {
               onPress={() => { setActiveTopic(null); setShowTopicsModal(false); }}
               style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border }}
             >
-              <Text style={{ fontSize: 22 }}>📋</Text>
+              <IconFileText size={22} color={colors.text} />
               <Text style={{ flex: 1, fontSize: 15, color: colors.text, fontWeight: '500' }}>
                 {t('chat.allMessages') || 'Todas as mensagens'}
               </Text>
-              {!activeTopic && <Text style={{ color: colors.primary, fontSize: 16 }}>✓</Text>}
+              {!activeTopic && <IconCheck size={16} color={colors.primary} />}
             </TouchableOpacity>
 
             <ScrollView style={{ maxHeight: 280 }}>
@@ -28270,7 +28285,7 @@ export default function ChatConversationScreen() {
                         {(topic.message_count || 0)} {t('chat.messages') || 'mensagens'}
                       </Text>
                     </View>
-                    {activeTopic?.id === topic.id && <Text style={{ color: colors.primary, fontSize: 16 }}>✓</Text>}
+                    {activeTopic?.id === topic.id && <IconCheck size={16} color={colors.primary} />}
                   </TouchableOpacity>
                   {isGroupAdmin && (
                     <TouchableOpacity
@@ -29103,7 +29118,7 @@ export default function ChatConversationScreen() {
                 </View>
               ) : aiSummary.error ? (
                 <View style={{ alignItems: 'center', paddingVertical: 30 }}>
-                  <Text style={{ fontSize: 40, marginBottom: 10 }}>😓</Text>
+                  <View style={{ marginBottom: 10 }}><IconAlertCircle size={40} color={colors.textSecondary} /></View>
                   <Text style={{ fontSize: 15, color: colors.text, fontWeight: '600', textAlign: 'center', marginBottom: 6 }}>
                     {t('chatConv.aiSummaryFailed') || 'Não foi possível resumir'}
                   </Text>
@@ -29218,7 +29233,7 @@ export default function ChatConversationScreen() {
           <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, width: 340, maxWidth: '90%', padding: 20 }} onPress={e => e.stopPropagation()}>
             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={{ fontSize: 22 }}>✨</Text>
+                <IconSparkles size={22} color={colors.primary} />
                 <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{t('chatAi.title') || 'Chatyy AI'}</Text>
               </View>
               <TouchableOpacity onPress={() => { setShowAiModal(false); setAiResult(null); }}>
@@ -29261,10 +29276,10 @@ export default function ChatConversationScreen() {
             ) : (
               <View>
                 {[
-                  { key: 'summarize', icon: '📝', label: t('chatAi.summarize') || 'Summarize conversation', desc: t('chatAi.summarizeDesc') || 'Generate a summary of recent messages' },
-                  { key: 'translate', icon: '🌐', label: t('chatAi.translate') || 'Translate last message', desc: t('chatAi.translateDesc') || 'Translate the last received message' },
-                  { key: 'suggest', icon: '💡', label: t('chatAi.suggest') || 'Suggest reply', desc: t('chatAi.suggestDesc') || 'AI suggests a contextual reply' },
-                  { key: 'fix', icon: '🔧', label: t('chatAi.fix') || 'Fix text', desc: t('chatAi.fixDesc') || 'Fix grammar and spelling' },
+                  { key: 'summarize', icon: IconFileText, label: t('chatAi.summarize') || 'Summarize conversation', desc: t('chatAi.summarizeDesc') || 'Generate a summary of recent messages' },
+                  { key: 'translate', icon: IconGlobe, label: t('chatAi.translate') || 'Translate last message', desc: t('chatAi.translateDesc') || 'Translate the last received message' },
+                  { key: 'suggest', icon: IconSparkles, label: t('chatAi.suggest') || 'Suggest reply', desc: t('chatAi.suggestDesc') || 'AI suggests a contextual reply' },
+                  { key: 'fix', icon: IconPenTool, label: t('chatAi.fix') || 'Fix text', desc: t('chatAi.fixDesc') || 'Fix grammar and spelling' },
                 ].map((opt) => (
                   <TouchableOpacity
                     key={opt.key}
@@ -29291,7 +29306,7 @@ export default function ChatConversationScreen() {
                     }}
                     activeOpacity={0.7}
                   >
-                    <Text style={{ fontSize: 24 }}>{opt.icon}</Text>
+                    <opt.icon size={24} color={colors.primary} />
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }}>{opt.label}</Text>
                       <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>{opt.desc}</Text>

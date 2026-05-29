@@ -16,6 +16,7 @@ import { useAuth } from '../../context/AuthContext';
 import * as api from '../../services/api';
 import {
   IconArrowLeft, IconTrash, IconPlus, IconStar, IconX, IconShare,
+  IconPackage, IconFilm,
 } from '../../components/Icons';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { PLANS_ENABLED } from '../../constants/featureFlags';
@@ -255,7 +256,7 @@ export default function StickerMyPacksScreen() {
         <ActivityIndicator size="large" color={colors.primary} style={{ marginTop: 36 }} />
       ) : packs.length === 0 ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 30 }}>
-          <Text style={{ fontSize: 48 }}>📦</Text>
+          <IconPackage size={48} color={colors.textSecondary || '#9ca3af'} />
           <Text style={{ marginTop: 12, fontSize: 15, color: colors.text, fontWeight: '700' }}>
             {t?.('chat.noPacksInstalled') || 'Você ainda não instalou pacotes'}
           </Text>
@@ -322,7 +323,7 @@ export default function StickerMyPacksScreen() {
                   {cover ? (
                     <Image source={{ uri: cover }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                   ) : (
-                    <Text style={{ fontSize: 26 }}>{item.animated ? '🎬' : '📦'}</Text>
+                    item.animated ? <IconFilm size={26} color={colors.textSecondary || '#9ca3af'} /> : <IconPackage size={26} color={colors.textSecondary || '#9ca3af'} />
                   )}
                 </View>
                 <View style={{ flex: 1 }}>

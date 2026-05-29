@@ -9,6 +9,7 @@ import Svg, { Path, Circle as SvgCircle, Line, Rect, G, Polygon, Defs, LinearGra
 import { isChildAccount, getChildRestrictions, refreshChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useRouter } from 'expo-router';
+import { IconLock } from './Icons';
 
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
@@ -556,7 +557,7 @@ export default function ChildRestrictionGuard({ children }) {
       <Animated.View style={[sty.bedtime, { opacity: fadeAnim, backgroundColor: '#1e1b4b' }]}>
         <Animated.View style={{ alignItems: 'center', zIndex: 1, transform: [{ scale: bounceAnim }] }}>
           <View style={{ width: 110, height: 110, borderRadius: 55, backgroundColor: 'rgba(167,139,250,0.18)', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
-            <Text style={{ fontSize: 64 }}>{'🔒'}</Text>
+            <IconLock size={64} color="#7C3AED" />
           </View>
           <Text style={[sty.bedTitle, { color: '#fff' }]}>
             {t('kids.restriction.locked') || 'App pausado pelos pais'}

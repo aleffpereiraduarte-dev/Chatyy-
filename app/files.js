@@ -20,7 +20,7 @@ import {
   IconUpload, IconDownload, IconTrash, IconStar, IconStarFilled, IconSearch,
   IconEdit, IconMoreVert, IconArrowLeft, IconPlus, IconClock, IconChevronRight,
   IconPaperclip, IconCheck, IconX, IconArchive, IconCamera, IconInbox,
-  IconEye, IconPlay, IconCloud,
+  IconEye, IconPlay, IconCloud, IconSparkles,
 } from '../components/Icons';
 import FileViewer from '../components/FileViewer';
 import { ListSkeleton } from '../components/SkeletonLoader';
@@ -2944,7 +2944,7 @@ function FilesScreenInner() {
                   } catch {}
                 }}>
                   <View style={[styles.actionItemIcon, { backgroundColor: '#a855f7' }]}>
-                    <Text style={{ fontSize: 16, color: '#fff' }}>✨</Text>
+                    <IconSparkles size={16} color="#fff" />
                   </View>
                   <Text style={[styles.actionItemText, { color: '#a855f7', fontWeight: '700' }]}>{t('files.analyzeWithOne') || 'Analisar com One AI'}</Text>
                 </TouchableOpacity>

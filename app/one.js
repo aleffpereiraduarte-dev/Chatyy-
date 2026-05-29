@@ -15,7 +15,7 @@ import {
   IconX, IconBell, IconMenu, IconMic, IconMicOff, IconVolume2, IconVolumeX,
   IconPhone, IconStop, IconFolder, IconUsers, IconCamera, IconEdit,
   IconChevronUp, IconChevronDown, IconTrash, IconCopy, IconRepeat,
-  IconThumbsDown,
+  IconThumbsDown, IconCheck,
 } from '../components/Icons';
 // SVG primitives for the send-button gradient + empty-state sparkle illustration.
 // Pure-SVG keeps us off expo-linear-gradient (not a dep) and renders identically
@@ -1299,7 +1299,14 @@ function CodeBlockWithCopy({ code, isDark }) {
   return (
     <View style={st.codeBlockWrap}>
       <TouchableOpacity onPress={handleCopy} style={st.codeCopyBtn} activeOpacity={0.7} accessibilityLabel="Copy code">
-        <Text style={st.codeCopyBtnText}>{copied ? '✓ Copied' : 'Copy'}</Text>
+        {copied ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+            <IconCheck size={11} color="#ccc" />
+            <Text style={st.codeCopyBtnText}>Copied</Text>
+          </View>
+        ) : (
+          <Text style={st.codeCopyBtnText}>Copy</Text>
+        )}
       </TouchableOpacity>
       <View style={[st.codeBlock, isDark && { backgroundColor: '#1a1a1a' }]}>
         <Text style={st.codeText} selectable>{code}</Text>
@@ -1706,7 +1713,7 @@ function ModelPickerSheet({ visible, onClose, isDark, t, currentModelId, onPick 
                     {t(m.sub) || ''}
                   </Text>
                 </View>
-                {active ? <Text style={{ color: ACCENT_DARK, fontSize: 18 }}>✓</Text> : null}
+                {active ? <IconCheck size={18} color={ACCENT_DARK} /> : null}
               </TouchableOpacity>
             );
           })}
@@ -2529,7 +2536,7 @@ export default function OneScreen() {
             list.unshift({ key: 'wf_' + Date.now(), label, msg: cmd });
             await AS.setItem('one_workflows', JSON.stringify(list.slice(0, 20)));
             setInputText('');
-            setMessages(prev => [...prev, { id: 'wfs-' + Date.now(), role: 'assistant', content: (t('one.workflowSaved') || '✨ Workflow salvo') + ': **' + label + '**\n\n' + (t('one.workflowHint') || 'Agora aparece como botão roxo no topo. Longo toque remove.'), actions: [], userName: firstName }]);
+            setMessages(prev => [...prev, { id: 'wfs-' + Date.now(), role: 'assistant', content: (t('one.workflowSaved') || 'Workflow salvo') + ': **' + label + '**\n\n' + (t('one.workflowHint') || 'Agora aparece como botão roxo no topo. Longo toque remove.'), actions: [], userName: firstName }]);
           } catch {}
           return;
         }

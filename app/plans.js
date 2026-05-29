@@ -1682,7 +1682,7 @@ export default function PlansScreen() {
                   backgroundColor: 'rgba(255,255,255,0.06)',
                   borderWidth: 1, borderColor: 'rgba(196, 181, 253, 0.18)',
                 }}>
-                  <Text style={{ color: '#10b981', fontSize: 11, fontWeight: '900' }}>{p.icon}</Text>
+                  {p.icon === '✓' ? <IconCheck size={11} color="#10b981" /> : <Text style={{ color: '#10b981', fontSize: 11, fontWeight: '900' }}>{p.icon}</Text>}
                   <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11.5, fontWeight: '600' }}>{p.label}</Text>
                 </View>
               ))}

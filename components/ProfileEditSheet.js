@@ -47,7 +47,7 @@ async function ensurePhotoPermission(t) {
   }
 }
 import AvatarCircle from './AvatarCircle';
-import { IconX, IconCamera, IconLink, IconPlus, IconTrash } from './Icons';
+import { IconX, IconCamera, IconLink, IconPlus, IconTrash, IconCheck } from './Icons';
 import { Image as ExpoImage } from 'expo-image';
 
 const MAX_BIO = 150;
@@ -185,7 +185,7 @@ function UsernameIndicator({ status, colors }) {
         backgroundColor: '#10b981',
         alignItems: 'center', justifyContent: 'center',
       }}>
-        <Text style={{ color: '#fff', fontSize: 11, fontWeight: '900', lineHeight: 13 }}>✓</Text>
+        <IconCheck size={11} color="#fff" strokeWidth={3} />
       </View>
     );
   }

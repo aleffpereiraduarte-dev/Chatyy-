@@ -4081,11 +4081,11 @@ function CallScreenInner() {
   // ───── Video filters (web only — kept as cosmetic stub) ─────
   const VIDEO_FILTERS = useMemo(() => [
     { key: null, label: 'Normal', color: '#fff' },
-    { key: 'warm', label: '☀️ Warm', color: '#ff9800' },
-    { key: 'cool', label: '❄️ Cool', color: '#03a9f4' },
-    { key: 'bw', label: '⬛ B&W', color: '#888' },
-    { key: 'vintage', label: '📷 Vintage', color: '#d4a574' },
-    { key: 'beauty', label: '✨ Beauty', color: '#e91e63' },
+    { key: 'warm', label: 'Warm', color: '#ff9800' },
+    { key: 'cool', label: 'Cool', color: '#03a9f4' },
+    { key: 'bw', label: 'B&W', color: '#888' },
+    { key: 'vintage', label: 'Vintage', color: '#d4a574' },
+    { key: 'beauty', label: 'Beauty', color: '#e91e63' },
   ], []);
 
   useEffect(() => {

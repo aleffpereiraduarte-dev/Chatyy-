@@ -5074,7 +5074,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                       backgroundColor: sel ? '#FF6B6B' : 'transparent',
                       alignItems: 'center', justifyContent: 'center',
                     }}>
-                      {sel ? <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14 }}>{'✓'}</Text> : null}
+                      {sel ? <IconCheck size={14} color="#fff" strokeWidth={3} /> : null}
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: isDark ? '#fff' : '#111', fontSize: 15, fontWeight: '600' }} numberOfLines={1}>

@@ -58,6 +58,7 @@ import {
   IconX, IconSparkles, IconSend, IconCheckCircle,
   IconClock, IconFileText, IconPaperclip, IconFilm,
   IconChevronDown, IconChevronUp, IconArrowLeft, IconArchive,
+  IconLock, IconAlertTriangle, IconCheck,
 } from '../components/Icons';
 
 const DRAFT_SAVE_INTERVAL = 5000;
@@ -1560,7 +1561,7 @@ export default function ComposeScreen() {
           }}>
             <IconSparkles size={12} color={colors.primary} />
             <Text style={{ color: colors.primary, fontSize: 12, fontWeight: '600' }}>
-              {t('compose.aiImproved') || '✨ Texto melhorado'}
+              {t('compose.aiImproved') || 'Texto melhorado'}
             </Text>
           </View>
         )}
@@ -1594,8 +1595,9 @@ export default function ComposeScreen() {
           accessibilityRole="button"
           accessibilityState={{ checked: trackOpens }}
         >
+          {trackOpens ? <IconCheck size={13} color={colors.primary} /> : null}
           <Text style={[s.toolBtnText, { color: trackOpens ? colors.primary : colors.textSecondary }]}>
-            {trackOpens ? '✓ ' : ''}{t('compose.trackOpens') || 'Confirmar leitura'}
+            {t('compose.trackOpens') || 'Confirmar leitura'}
           </Text>
         </TouchableOpacity>
         {/* Visual divider — toggles cluster (read receipts + confidential) */}
@@ -1608,8 +1610,9 @@ export default function ComposeScreen() {
           accessibilityRole="button"
           accessibilityState={{ checked: confidential }}
         >
+          {confidential ? <IconLock size={13} color={colors.primary} /> : null}
           <Text style={[s.toolBtnText, { color: confidential ? colors.primary : colors.textSecondary }]}>
-            {confidential ? '🔒 ' : ''}{t('compose.confidential') || 'Confidencial'}
+            {t('compose.confidential') || 'Confidencial'}
             {confidential ? ` · ${confidentialExpiry}d` : ''}
           </Text>
         </TouchableOpacity>
@@ -1621,8 +1624,9 @@ export default function ComposeScreen() {
           accessibilityRole="button"
           accessibilityState={{ checked: pgpEncrypt }}
         >
+          {pgpEncrypt ? <IconLock size={13} color={colors.primary} /> : null}
           <Text style={[s.toolBtnText, { color: pgpEncrypt ? colors.primary : colors.textSecondary }]}>
-            {pgpEncrypt ? '🔐 ' : ''}{t('compose.pgpEncrypt') || 'Criptografar'}
+            {t('compose.pgpEncrypt') || 'Criptografar'}
           </Text>
         </TouchableOpacity>
         {/* Send & Archive toggle — only meaningful when replying. Sticky pref
@@ -1647,7 +1651,7 @@ export default function ComposeScreen() {
           >
             <IconArchive size={13} color={sendAndArchive ? colors.primary : colors.textSecondary} />
             <Text style={[s.toolBtnText, { color: sendAndArchive ? colors.primary : colors.textSecondary }]}>
-              {sendAndArchive ? '✓ ' : ''}{t('compose.sendAndArchive') || 'Enviar + Arquivar'}
+              {t('compose.sendAndArchive') || 'Enviar + Arquivar'}
             </Text>
           </TouchableOpacity>
         )}
@@ -2154,7 +2158,10 @@ export default function ComposeScreen() {
       {leakWarning && (
         <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.6)', justifyContent:'center', alignItems:'center', padding:20, zIndex:9999 }}>
           <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:24, maxWidth:400, width:'100%' }}>
-            <Text style={{ fontSize:18, fontWeight:'700', color:'#dc2626', marginBottom:8 }}>🔒 {t('compose.leakWarning') || 'Informação sensível detectada'}</Text>
+            <View style={{ flexDirection:'row', alignItems:'center', gap:6, marginBottom:8 }}>
+              <IconLock size={18} color="#dc2626" />
+              <Text style={{ fontSize:18, fontWeight:'700', color:'#dc2626', flexShrink:1 }}>{t('compose.leakWarning') || 'Informação sensível detectada'}</Text>
+            </View>
             <Text style={{ fontSize:14, color:colors.text, marginBottom:8 }}>
               {leakWarning.warning}
             </Text>
@@ -2183,7 +2190,10 @@ export default function ComposeScreen() {
       {toneWarning && (
         <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.5)', justifyContent:'center', alignItems:'center', padding:20, zIndex:9999 }}>
           <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:24, maxWidth:400, width:'100%' }}>
-            <Text style={{ fontSize:18, fontWeight:'700', color:'#ef4444', marginBottom:8 }}>⚠️ {t('compose.toneWarning') || 'Tom detectado'}: {toneWarning.tone}</Text>
+            <View style={{ flexDirection:'row', alignItems:'center', gap:6, marginBottom:8 }}>
+              <IconAlertTriangle size={18} color="#ef4444" />
+              <Text style={{ fontSize:18, fontWeight:'700', color:'#ef4444', flexShrink:1 }}>{t('compose.toneWarning') || 'Tom detectado'}: {toneWarning.tone}</Text>
+            </View>
             <Text style={{ fontSize:14, color:colors.text, marginBottom:16 }}>
               {(t('compose.toneWarningBody') || 'Sua mensagem soa {tone} (intensidade {score}/100). Recomendamos revisar antes de enviar.')
                 .replace('{tone}', toneWarning.tone === 'hostile' ? (t('compose.toneHostile') || 'hostil') : toneWarning.tone === 'angry' ? (t('compose.toneAngry') || 'irritada') : (t('compose.toneAggressive') || 'agressiva'))

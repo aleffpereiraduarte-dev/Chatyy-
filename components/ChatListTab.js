@@ -2375,7 +2375,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
           {/* Close button */}
           <View style={{ position:'absolute', top: Platform.OS === 'ios' ? 54 : 40, left:12, right:12, flexDirection:'row', justifyContent:'space-between', alignItems:'center', zIndex: 10 }}>
             <TouchableOpacity onPress={() => { setStatusEditor(null); setStatusCaption(''); setEditorFilterIdx(0); }} style={{ width:40, height:40, borderRadius:20, backgroundColor:'rgba(0,0,0,0.55)', alignItems:'center', justifyContent:'center' }}>
-              <Text style={{ color:'#fff', fontSize:20 }}>✕</Text>
+              <IconX size={20} color="#fff" />
             </TouchableOpacity>
             {STATUS_FILTERS[editorFilterIdx]?.key !== 'normal' && (
               <View style={{ backgroundColor:'rgba(0,0,0,0.5)', borderRadius:16, paddingHorizontal:12, paddingVertical:5 }}>

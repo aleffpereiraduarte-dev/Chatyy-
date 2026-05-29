@@ -17,7 +17,7 @@ import { useConfirm } from '../components/ConfirmModal';
 import {
   IconArrowLeft, IconVideo, IconCopy, IconCheck, IconX,
   IconClock, IconEdit, IconTrash, IconUsers, IconCalendar, IconUser,
-  IconMapPin, IconLock, IconShare, IconSparkles, IconPlus,
+  IconMapPin, IconLock, IconShare, IconSparkles, IconPlus, IconStarFilled,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 
@@ -517,7 +517,7 @@ export default function MeetingDetailScreen() {
                     <AvatarCircle name={p.display_name || p.email} email={p.email} size={48} />
                     {p.role === 'host' && (
                       <View style={[styles.hostStar, { backgroundColor: ACCENT, borderColor: colors.background }]}>
-                        <Text style={styles.hostStarText}>★</Text>
+                        <IconStarFilled size={10} color="#fff" />
                       </View>
                     )}
                   </View>
@@ -525,10 +525,16 @@ export default function MeetingDetailScreen() {
                     {p.display_name || (p.email || '').split('@')[0]}
                   </Text>
                   {p.rsvp_status === 'accepted' && (
-                    <Text style={[styles.participantRsvp, { color: ACCENT }]} numberOfLines={1}>✓ {t('meetings.rsvpAccepted')}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <IconCheck size={13} color={ACCENT} />
+                      <Text style={[styles.participantRsvp, { color: ACCENT }]} numberOfLines={1}>{t('meetings.rsvpAccepted')}</Text>
+                    </View>
                   )}
                   {p.rsvp_status === 'declined' && (
-                    <Text style={[styles.participantRsvp, { color: '#ef4444' }]} numberOfLines={1}>✕ {t('meetings.rsvpDeclined')}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <IconX size={13} color="#ef4444" />
+                      <Text style={[styles.participantRsvp, { color: '#ef4444' }]} numberOfLines={1}>{t('meetings.rsvpDeclined')}</Text>
+                    </View>
                   )}
                   {p.rsvp_status === 'tentative' && (
                     <Text style={[styles.participantRsvp, { color: '#f59e0b' }]} numberOfLines={1}>? {t('meetings.rsvpTentative')}</Text>

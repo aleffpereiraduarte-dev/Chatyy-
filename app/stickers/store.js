@@ -23,7 +23,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useTheme } from '../../context/ThemeContext';
 import { useLanguage } from '../../context/LanguageContext';
 import * as api from '../../services/api';
-import { IconArrowLeft, IconSearch, IconX, IconCheck, IconPlus, IconStar, IconSparkles } from '../../components/Icons';
+import { IconArrowLeft, IconSearch, IconX, IconCheck, IconPlus, IconStar, IconSparkles, IconPackage, IconFilm, IconImage } from '../../components/Icons';
 import CachedImage from '../../components/CachedImage';
 
 const SCREEN_W = Dimensions.get('window').width;
@@ -70,7 +70,7 @@ function PackCard({ pack, installedSet, onInstall, onUninstall, onPress, colors,
           {cover ? (
             <Image source={{ uri: cover }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
           ) : (
-            <Text style={{ fontSize: 44 }}>{pack.animated ? '🎬' : '📦'}</Text>
+            pack.animated ? <IconFilm size={44} color={colors.textSecondary || '#9ca3af'} /> : <IconPackage size={44} color={colors.textSecondary || '#9ca3af'} />
           )}
           {pack.premium && (
             <View style={{
@@ -247,7 +247,7 @@ function PackDetailModal({ pack, visible, onClose, installedSet, onInstall, onUn
               {pack.cover_url ? (
                 <Image source={{ uri: resolveCoverUri(pack.cover_url) }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
               ) : (
-                <Text style={{ fontSize: 28 }}>{pack.animated ? '🎬' : '📦'}</Text>
+                pack.animated ? <IconFilm size={28} color={colors.textSecondary || '#9ca3af'} /> : <IconPackage size={28} color={colors.textSecondary || '#9ca3af'} />
               )}
             </View>
             <View style={{ flex: 1 }}>
@@ -274,7 +274,7 @@ function PackDetailModal({ pack, visible, onClose, installedSet, onInstall, onUn
               <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 24 }} />
             ) : items.length === 0 ? (
               <View style={{ alignItems: 'center', justifyContent: 'center', paddingVertical: 40 }}>
-                <Text style={{ fontSize: 36 }}>📦</Text>
+                <IconPackage size={36} color={colors.textSecondary || '#9ca3af'} />
                 <Text style={{ marginTop: 8, fontSize: 13, color: colors.textTertiary }}>
                   {t?.('chat.emptyPack') || 'Pacote vazio'}
                 </Text>
@@ -296,7 +296,9 @@ function PackDetailModal({ pack, visible, onClose, installedSet, onInstall, onUn
                       {uri ? (
                         <CachedImage source={{ uri }} style={{ width: '90%', height: '90%' }} resizeMode="contain" />
                       ) : (
-                        <Text style={{ fontSize: 28 }}>{item.emoji || item.emoji_alt || '🖼️'}</Text>
+                        item.emoji || item.emoji_alt
+                          ? <Text style={{ fontSize: 28 }}>{item.emoji || item.emoji_alt}</Text>
+                          : <IconImage size={28} color={colors.textSecondary || '#9ca3af'} />
                       )}
                     </View>
                   );

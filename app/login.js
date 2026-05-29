@@ -2754,7 +2754,7 @@ export default function LoginScreen() {
                     <Text style={{ fontSize: 16, color: isDark ? '#fff' : '#000', fontWeight: '500' }}>{item.name}</Text>
                     <Text style={{ fontSize: 13, color: isDark ? '#8e8e93' : '#666' }}>{item.label}</Text>
                   </View>
-                  {item.code === phoneCountryCode && <Text style={{ color: colors.primary, fontSize: 18 }}>✓</Text>}
+                  {item.code === phoneCountryCode && <IconCheck size={18} color={colors.primary} />}
                 </TouchableOpacity>
               )}
             />

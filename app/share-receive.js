@@ -14,7 +14,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
-import { IconX, IconSearch, IconSend, IconImage, IconCamera, IconMessageSquare } from '../components/Icons';
+import { IconX, IconSearch, IconSend, IconImage, IconCamera, IconMessageSquare, IconMessageCircle, IconPaperclip, IconFilm } from '../components/Icons';
 
 export default function ShareReceiveScreen() {
   const router = useRouter();
@@ -210,9 +210,12 @@ export default function ShareReceiveScreen() {
         <View style={{ flex: 1 }}>
           <Text style={[s.headerTitle, { color: colors.text }]}>{t('share.title') || 'Compartilhar no Chatyy'}</Text>
           {sharedPayload?.type ? (
-            <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
-              {sharedPayload.type === 'image' ? '🖼️ Imagem' : sharedPayload.type === 'video' ? '🎬 Vídeo' : sharedPayload.type === 'text' ? '✏️ Texto' : '📎 Arquivo'}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 2 }}>
+              {sharedPayload.type === 'image' ? <IconImage size={12} color={colors.textSecondary} /> : sharedPayload.type === 'video' ? <IconFilm size={12} color={colors.textSecondary} /> : sharedPayload.type === 'text' ? <IconMessageSquare size={12} color={colors.textSecondary} /> : <IconPaperclip size={12} color={colors.textSecondary} />}
+              <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                {sharedPayload.type === 'image' ? 'Imagem' : sharedPayload.type === 'video' ? 'Vídeo' : sharedPayload.type === 'text' ? 'Texto' : 'Arquivo'}
+              </Text>
+            </View>
           ) : null}
         </View>
       </View>
@@ -228,7 +231,10 @@ export default function ShareReceiveScreen() {
           </View>
         ) : sharedPayload?.uri ? (
           <View style={{ marginHorizontal: 12, marginTop: 12, padding: 14, borderRadius: 14, backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)' }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 13 }}>📎 {sharedPayload.name || sharedPayload.uri.split('/').pop()}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+              <IconPaperclip size={13} color={colors.textSecondary} />
+              <Text style={{ color: colors.textSecondary, fontSize: 13 }}>{sharedPayload.name || sharedPayload.uri.split('/').pop()}</Text>
+            </View>
           </View>
         ) : null}
 
@@ -293,7 +299,7 @@ export default function ShareReceiveScreen() {
             </View>
           ) : filtered.length === 0 ? (
             <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-              <Text style={{ fontSize: 38, marginBottom: 10 }}>💬</Text>
+              <IconMessageCircle size={38} color={colors.textSecondary} style={{ marginBottom: 10 }} />
               <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: 'center' }}>
                 {t('share.noChats') || 'Nenhuma conversa ainda. Use uma ação rápida acima.'}
               </Text>

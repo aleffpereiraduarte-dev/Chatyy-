@@ -18,7 +18,7 @@ import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMusic, IconPlay, IconPause,
   IconX, IconSend, IconChevronDown, IconCamera, IconVolume2, IconVolumeX, IconEye,
-  IconRepeat, IconLink, IconCopy, IconMoreHorizontal,
+  IconRepeat, IconLink, IconCopy, IconMoreHorizontal, IconDiamond,
 } from './Icons';
 // Reels P1 monetization shares the same diamond catalog + wallet ledger
 // as Live gifts. We render a local TipSheetWrapper (defined below) that
@@ -766,7 +766,7 @@ const FloatingDiamond = memo(function FloatingDiamond({ label }) {
         transform: [{ translateY }],
       }}
     >
-      <Text style={{ color: '#fff', fontSize: 16 }}>💎</Text>
+      <IconDiamond size={16} color="#fff" />
       <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>
         {label || 'Diamante'}
       </Text>
@@ -1940,7 +1940,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             accessibilityLabel={t?.('feed.tipCreator') || 'Mandar diamante'}
             accessibilityRole="button"
           >
-            <Text style={{ fontSize: 26 }}>💎</Text>
+            <IconDiamond size={26} color="#fff" />
           </TouchableOpacity>
         )}
 

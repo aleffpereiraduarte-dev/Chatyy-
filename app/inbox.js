@@ -36,7 +36,7 @@ import {
   IconUser, IconLogout, IconCompose, IconPlus, IconSearch, IconFolder, IconShield,
   IconMessageSquare, IconCalendar, IconFilm, IconGlobe, IconZap, IconImage,
   IconStar, IconArchive, IconLink, IconStickyNote, IconBell, IconPenTool, IconFilter, IconCheck,
-  IconWifiOff, IconBookmark,
+  IconWifiOff, IconBookmark, IconSparkles,
 } from '../components/Icons';
 import CategoryTabs from '../components/CategoryTabs';
 const QuickSettingsPanel = lazy(() => import('../components/QuickSettingsPanel'));
@@ -1680,7 +1680,7 @@ function InboxScreenInner() {
         {currentFolder === 'INBOX' && aiBriefing && (
           <View style={{ marginHorizontal:12, marginTop:12, backgroundColor:colors.primary+'15', borderLeftWidth:4, borderLeftColor:colors.primary, padding:14, borderRadius:8 }}>
             <View style={{ flexDirection:'row', alignItems:'center', marginBottom:6 }}>
-              <Text style={{ fontSize:18, marginRight:8 }}>✨</Text>
+              <IconSparkles size={18} color={colors.primary} style={{ marginRight:8 }} />
               <Text style={{ fontWeight:'700', color:colors.text, flex:1 }}>Briefing AI</Text>
               <TouchableOpacity onPress={() => setAiBriefing(null)}><Text style={{ color:colors.textSecondary, fontSize:18 }}>×</Text></TouchableOpacity>
             </View>

@@ -18,7 +18,7 @@ import { useTheme } from '../../context/ThemeContext';
 import { useAuth } from '../../context/AuthContext';
 import * as api from '../../services/api';
 import AvatarCircle from '../../components/AvatarCircle';
-import { IconHeart, IconMessageSquare, IconShare, IconX } from '../../components/Icons';
+import { IconHeart, IconMessageSquare, IconShare, IconX, IconMapPin, IconDownload } from '../../components/Icons';
 
 const { width: SCREEN_W } = Dimensions.get('window');
 
@@ -146,7 +146,10 @@ export default function FeedPostPublic() {
         <View style={{ marginLeft: 12, flex: 1 }}>
           <Text style={[styles.authorName, { color: colors.text }]}>{post.author_name || post.author_email?.split('@')[0]}</Text>
           {!!post.location && (
-            <Text style={{ fontSize: 12, color: colors.textSecondary }}>📍 {post.location}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+              <IconMapPin size={12} color={colors.textSecondary} />
+              <Text style={{ fontSize: 12, color: colors.textSecondary }}>{post.location}</Text>
+            </View>
           )}
         </View>
       </View>
@@ -211,7 +214,10 @@ export default function FeedPostPublic() {
                 activeOpacity={0.85}
                 accessibilityLabel="Download on App Store"
               >
-                <Text style={styles.storeText}>⬇ App Store</Text>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <IconDownload size={14} color="#fff" />
+                  <Text style={styles.storeText}>App Store</Text>
+                </View>
               </TouchableOpacity>
               <TouchableOpacity
                 onPress={() => (typeof window !== 'undefined') && window.open('https://play.google.com/store/apps/details?id=com.onemundo.mail', '_blank')}

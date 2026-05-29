@@ -563,9 +563,9 @@ function AppInit({ onNotification, setOtaToast }) {
         // user found those noisy and not useful.
         const update = await Updates.checkForUpdateAsync();
         if (!update.isAvailable) return;
-        setOtaToast({ text: '⬇ Baixando atualização…', kind: 'info' });
+        setOtaToast({ text: 'Baixando atualização…', kind: 'info' });
         await Updates.fetchUpdateAsync();
-        setOtaToast({ text: '✓ Atualização pronta! Recarregando…', kind: 'success' });
+        setOtaToast({ text: 'Atualização pronta! Recarregando…', kind: 'success' });
         setTimeout(() => { try { Updates.reloadAsync(); } catch {} }, 1100);
       } catch (e) {}
     })();

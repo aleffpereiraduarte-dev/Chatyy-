@@ -1542,7 +1542,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                     <Text style={{ flex: 1, fontSize: 15, color: active ? colors.primary : colors.text, fontWeight: active ? '700' : '500' }}>
                       {t(`lang.${item.code}`) || item.code}
                     </Text>
-                    {active ? <Text style={{ color: colors.primary, fontSize: 18, fontWeight: '700' }}>✓</Text> : null}
+                    {active ? <IconCheck size={18} color={colors.primary} /> : null}
                   </TouchableOpacity>
                 );
               }}

@@ -19,7 +19,7 @@ import CachedImage from './CachedImage';
 import * as api from '../services/api';
 import {
   IconRefresh, IconX, IconZap, IconSparkles, IconClock, IconGrid,
-  IconImage, IconUndo2, IconMusic,
+  IconImage, IconUndo2, IconMusic, IconCheck,
 } from './Icons';
 // AR face-filter pipeline — SINGLE SESSION (react-native-vision-camera v4 +
 // Skia frame processor + MLKit face-detector plugin). StatusVisionCamera owns
@@ -1657,7 +1657,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
                         <Text style={s.musicArtist} numberOfLines={1}>{item.artist || 'Pixabay'}</Text>
                       )}
                     </View>
-                    {selected ? <Text style={s.musicCheck}>✓</Text> : null}
+                    {selected ? <View style={{ marginLeft: 8 }}><IconCheck size={18} color={BRAND_PURPLE_LIGHT} strokeWidth={3} /></View> : null}
                   </TouchableOpacity>
                 );
               }}

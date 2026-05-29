@@ -15,7 +15,7 @@ import LiveChatOverlay from '../components/live/LiveChatOverlay';
 import AvatarCircle from '../components/AvatarCircle';
 import { cleanParticipantName, prettifyHandle } from '../services/displayName';
 import formatLiveChatContent from '../utils/formatLiveChatContent';
-import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark, IconChevronRight, IconChevronDown, IconBarChart, IconBrush, IconBookmarkFilled, IconPlay } from '../components/Icons';
+import { IconX, IconCameraFlip, IconMic, IconMicOff, IconVideo, IconVideoOff, IconHeart, IconShare, IconSend, IconSettings, IconUserPlus, IconSparkles, IconFilter, IconPin, IconStar, IconStarFilled, IconGlobe, IconLock, IconUsers, IconEye, IconStop, IconCheck, IconBookmark, IconChevronRight, IconChevronDown, IconBarChart, IconBrush, IconBookmarkFilled, IconPlay, IconRepeat, IconCalendar } from '../components/Icons';
 import { useTheme } from '../context/ThemeContext';
 import AnimatedViewerCount from '../components/AnimatedViewerCount';
 import LiveTopGifters from '../components/LiveTopGifters';
@@ -3634,7 +3634,7 @@ export default function LiveBroadcastScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={t('live.multistream') || 'Multistream'}
               >
-                <Text style={styles.preExtraBtnIcon}>🔁</Text>
+                <IconRepeat size={16} color="#fff" />
                 <Text style={styles.preExtraBtnText} numberOfLines={1}>
                   {t('live.multistream') || 'Multistream'}
                 </Text>
@@ -3651,7 +3651,7 @@ export default function LiveBroadcastScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={t('live.scheduleTitle') || 'Agendar live'}
               >
-                <Text style={styles.preExtraBtnIcon}>📅</Text>
+                <IconCalendar size={16} color="#fff" />
                 <Text style={styles.preExtraBtnText} numberOfLines={1}>
                   {t('live.scheduleLive') || 'Agendar'}
                 </Text>
@@ -4840,7 +4840,7 @@ export default function LiveBroadcastScreen() {
                       <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12 }} numberOfLines={1}>{item.email}</Text>
                     </View>
                     <View style={{ width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: selected ? '#7C3AED' : 'rgba(255,255,255,0.3)', backgroundColor: selected ? '#7C3AED' : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
-                      {selected ? <Text style={{ color: '#fff', fontWeight: '900', fontSize: 12 }}>✓</Text> : null}
+                      {selected ? <IconCheck size={12} color="#fff" /> : null}
                     </View>
                   </TouchableOpacity>
                 );
@@ -5207,7 +5207,7 @@ export default function LiveBroadcastScreen() {
                 activeOpacity={0.7}
               >
                 <Text style={liveSheetStyles.rowLabel}>{o.label}</Text>
-                {slowModeSeconds === o.sec ? <Text style={{ color: '#a78bfa', fontWeight: '800' }}>✓</Text> : null}
+                {slowModeSeconds === o.sec ? <IconCheck size={12} color="#a78bfa" /> : null}
               </TouchableOpacity>
             ))}
           </View>

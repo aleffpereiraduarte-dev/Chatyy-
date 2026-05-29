@@ -14,6 +14,7 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import * as api from '../services/api';
+import { IconSmartphone } from '../components/Icons';
 
 export default function VerifyPhoneRequiredScreen() {
   const { colors } = useTheme();
@@ -87,7 +88,7 @@ export default function VerifyPhoneRequiredScreen() {
     >
       <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 24, justifyContent: 'center' }}>
         <View style={{ alignItems: 'center', marginBottom: 32 }}>
-          <Text style={{ fontSize: 56 }}>📱</Text>
+          <IconSmartphone size={56} color="#7C3AED" />
           <Text style={{ fontSize: 22, fontWeight: '700', color: colors.text, marginTop: 16, textAlign: 'center' }}>
             Verifique seu telefone
           </Text>

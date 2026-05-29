@@ -15,6 +15,7 @@ import React, { useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Image, ScrollView, Linking, Platform,
 } from 'react-native';
+import { IconTag } from '../Icons';
 
 function formatPrice(cents) {
   const v = (Number(cents) || 0) / 100;
@@ -74,7 +75,7 @@ export default function LiveShoppingOverlay({
                 <Image source={{ uri: p.image_url }} style={styles.image} resizeMode="cover" />
               ) : (
                 <View style={[styles.image, styles.imageFallback]}>
-                  <Text style={styles.imageFallbackText}>🛍</Text>
+                  <IconTag size={28} color="#9ca3af" />
                 </View>
               )}
               {p.price_cents > 0 ? (

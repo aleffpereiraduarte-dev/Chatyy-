@@ -23,7 +23,7 @@ import {
 } from 'react-native';
 import * as api from '../../services/api';
 import { BASE_URL } from '../../services/api';
-import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare, IconEye, IconMusic, IconVolume2, IconVolumeX, IconPause, IconArrowRight, IconDownload } from '../Icons';
+import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare, IconEye, IconMusic, IconVolume2, IconVolumeX, IconPause, IconArrowRight, IconDownload, IconCamera, IconAlertTriangle } from '../Icons';
 import AvatarCircle from '../AvatarCircle';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect } from 'react-native-svg';
@@ -426,7 +426,7 @@ const StoryMedia = React.memo(function StoryMedia({
       }
       return (
         <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
-          <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 40, marginBottom: 12 }}>📷</Text>
+          <View style={{ marginBottom: 12 }}><IconCamera size={40} color="rgba(255,255,255,0.55)" /></View>
           <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
             {t?.('status.unavailable') || 'Mídia indisponível'}
           </Text>
@@ -458,7 +458,7 @@ const StoryMedia = React.memo(function StoryMedia({
       if (videoError) {
         return (
           <View style={{ flex: 1, backgroundColor: '#0f172a', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
-            <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 38, marginBottom: 14 }}>⚠</Text>
+            <View style={{ marginBottom: 14 }}><IconAlertTriangle size={38} color="rgba(255,255,255,0.55)" /></View>
             <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
               {t?.('status.videoUnavailable') || 'Vídeo indisponível'}
             </Text>
@@ -586,7 +586,7 @@ const StoryMedia = React.memo(function StoryMedia({
     if (imageError) {
       return (
         <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
-          <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 38, marginBottom: 14 }}>⚠</Text>
+          <View style={{ marginBottom: 14 }}><IconAlertTriangle size={38} color="rgba(255,255,255,0.55)" /></View>
           <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
             {t?.('status.imageUnavailable') || 'Imagem indisponível'}
           </Text>

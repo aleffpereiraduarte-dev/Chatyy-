@@ -652,7 +652,7 @@ export default function PhotosScreen() {
       }
       if (perm.status !== 'granted' && perm.accessPrivileges !== 'all') {
         if (perm.accessPrivileges === 'limited') {
-          setPhotoError('⚠️ Acesso LIMITADO: só vejo ' + (perm.totalCount || 'algumas') + ' fotos.\n\nPara fazer backup de TODAS:\nAjustes → Chatyy → Fotos → "Acesso Total"');
+          setPhotoError('Acesso LIMITADO: só vejo ' + (perm.totalCount || 'algumas') + ' fotos.\n\nPara fazer backup de TODAS:\nAjustes → Chatyy → Fotos → "Acesso Total"');
         } else {
           setPhotoError('Permissão negada. Vá em Ajustes → Chatyy → Fotos e permita acesso.');
         }
@@ -2846,7 +2846,7 @@ export default function PhotosScreen() {
               paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.border + '60',
             }}>
               <Text style={{ fontSize: 11, color: colors.textTertiary, flex: 1 }}>
-                💡 Mantenha o app aberto para um backup mais rápido
+                Mantenha o app aberto para um backup mais rápido
               </Text>
             </View>
           </View>
@@ -4620,7 +4620,10 @@ export default function PhotosScreen() {
               onPress={generateAiCaption}
               style={{ alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.55)', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, marginTop: 4, maxWidth: '85%' }}
             >
-              <Text style={{ color: '#fff', fontSize: 13, fontStyle: 'italic' }} numberOfLines={2}>✨ {aiCaption}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <IconSparkles size={13} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 13, fontStyle: 'italic', flexShrink: 1 }} numberOfLines={2}>{aiCaption}</Text>
+              </View>
             </TouchableOpacity>
           )}
 
@@ -4647,7 +4650,7 @@ export default function PhotosScreen() {
             </TouchableOpacity>
 
             <TouchableOpacity style={s.viewerAction} onPress={generateAiCaption} disabled={aiCaptionLoading}>
-              <Text style={{ fontSize: 22 }}>{aiCaptionLoading ? '...' : '✨'}</Text>
+              {aiCaptionLoading ? <Text style={{ fontSize: 22, color: '#fff' }}>...</Text> : <IconSparkles size={22} color="#fff" />}
               <Text style={s.viewerActionText}>Caption</Text>
             </TouchableOpacity>
 

@@ -23,7 +23,7 @@ import {
 } from 'react-native';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
-import { IconHeart, IconStar, IconUserPlus } from '../Icons';
+import { IconHeart, IconStar, IconUserPlus, IconStarFilled } from '../Icons';
 import formatLiveChatContent from '../../utils/formatLiveChatContent';
 
 // Tier accent — matches the rest of the live UI brand palette.
@@ -112,7 +112,7 @@ const CommentRow = memo(function CommentRow({
           <View style={[styles.nameChip, { backgroundColor: chipBg }]}>
             <Text style={styles.name} numberOfLines={1}>{m.name}</Text>
             {tier === 'host' ? <Text style={styles.tierBadge}>HOST</Text> : null}
-            {tier === 'gift' ? <Text style={styles.tierBadge}>★</Text> : null}
+            {tier === 'gift' ? <IconStarFilled size={12} color="#FFD700" /> : null}
             {(tier === 'guest' || tier === 'cohost') ? <Text style={styles.tierBadge}>COLAB</Text> : null}
           </View>
           <Text style={styles.text} numberOfLines={3}>{formatLiveChatContent(m.content)}</Text>

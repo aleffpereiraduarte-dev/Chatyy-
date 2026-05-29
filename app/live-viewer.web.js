@@ -28,6 +28,7 @@ import * as api from '../services/api';
 // native bindings). On mobile this file is never bundled because of the
 // `.web.js` extension.
 import { Room, RoomEvent, Track } from 'livekit-client';
+import { IconEye } from '../components/Icons';
 
 // hls.js is loaded dynamically only when we need it (CF HLS pipeline). Keeps
 // the initial bundle smaller for LiveKit-only viewers.
@@ -464,7 +465,7 @@ export default function LiveViewerWeb() {
         </View>
 
         <View style={styles.viewerPill}>
-          <Text style={styles.viewerEye}>👁</Text>
+          <IconEye size={16} color="#fff" />
           <Text style={styles.viewerCount}>{viewerCount}</Text>
         </View>
       </View>

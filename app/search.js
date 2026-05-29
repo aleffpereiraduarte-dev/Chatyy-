@@ -6,7 +6,7 @@ import {
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconArrowLeft, IconSearch, IconX, IconHash, IconVideo } from '../components/Icons';
+import { IconArrowLeft, IconSearch, IconX, IconHash, IconVideo, IconMusic } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import * as api from '../services/api';
 
@@ -252,7 +252,7 @@ export default function SearchScreen() {
                 <Image source={{ uri: s.image_url || s.artwork_url }} style={{ width: 46, height: 46, borderRadius: 8 }} />
               ) : (
                 <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)', borderRadius: 8 }]}>
-                  <Text style={{ fontSize: 20 }}>♫</Text>
+                  <IconMusic size={20} color="#7C3AED" />
                 </View>
               )}
               <View style={styles.rowText}>

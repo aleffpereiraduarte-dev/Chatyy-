@@ -33,6 +33,7 @@ import Svg, { Path as SvgPath } from 'react-native-svg';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
+import { IconSmile } from '../components/Icons';
 import CallParticipantList from '../components/CallParticipantList';
 import HostControlsSheet from '../components/HostControlsSheet';
 import { useAuth } from '../context/AuthContext';
@@ -744,7 +745,7 @@ export default function GroupCallScreen() {
         style={styles.reactionToggle}
         accessibilityLabel={t('call.reactions') || 'Reactions'}
       >
-        <Text style={styles.reactionToggleText}>😀</Text>
+        <IconSmile size={22} color="#fff" />
       </TouchableOpacity>
     </View>
   );
