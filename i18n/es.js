@@ -1170,6 +1170,20 @@ export default {
 
   // Common
   'common.cancel': 'Cancelar',
+  // QA i18n gap-fill (2026-05-29): keys previously only had inline PT fallbacks.
+  'common.system': 'Sistema',
+  'calendar.lastDayOfMonth': 'Último',
+  'calendar.repeatOnDayOfMonth': 'Día del mes',
+  'calendar.repeatOnDays': 'Repetir los días',
+  'call.participantLimitReached': 'Límite de participantes alcanzado',
+  'compose.attachmentsNotSaved': 'Los adjuntos no se guardan en borradores',
+  'eventDetail.endBeforeStart': 'La hora de fin debe ser posterior al inicio',
+  'login.loading': 'Cargando...',
+  'login.qrLoading': 'Generando QR...',
+  'photos.noAlbumsDesc': 'Crea álbumes para organizar tus fotos favoritas.',
+  'photos.peopleEmptyTitle': 'Nadie por aquí todavía',
+  'photos.restoreEconomyNotice': 'Las copias economy se restauran en calidad reducida.',
+  'photos.restoreSkippedMsg': '{n} ya estaban en el dispositivo.',
   'common.clear': 'Limpiar',
   'common.confirm': 'Confirmar',
   'common.close': 'Cerrar',

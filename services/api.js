@@ -7609,6 +7609,32 @@ export async function notificationsUnreadCount() {
 export async function notificationsDelete(id) {
   return apiCall('notifications_delete', { id }, 'POST');
 }
+// Mark notifications read. Accepts { all:true } (mark every unread),
+// { ids:[...] } (mark a list — backend takes one id per call, so fan out),
+// or { id } / bare id. Previously this fn didn't exist → NotificationsHub's
+// mark-as-read silently no-op'd and the unread badge never cleared.
+export async function notificationsRead(opts = {}) {
+  if (opts && opts.all) return apiCall('notifications_mark_read', {}, 'POST');
+  if (opts && Array.isArray(opts.ids)) {
+    const results = await Promise.all(
+      opts.ids.map((id) => apiCall('notifications_mark_read', { id }, 'POST').catch(() => null))
+    );
+    return { success: true, data: { results } };
+  }
+  const id = (opts && typeof opts === 'object') ? opts.id : opts;
+  return apiCall('notifications_mark_read', id ? { id } : {}, 'POST');
+}
+// Upcoming scheduled lives. scope 'followed' = lives from hosts you follow,
+// 'mine' = your own. Returns { items:[...] }. live-discover.js fell back to
+// skeletons because this fn was missing; now it surfaces real upcoming lives.
+export async function liveScheduled(scope = 'followed') {
+  return apiCall('live_schedule_list', { scope }, 'POST');
+}
+// Report a status (story). Delegates to chat_report_user (confirmed handler).
+// ChatStatusTab's report option silently no-op'd before this existed.
+export async function statusReport(targetEmail, reason = 'inappropriate_status') {
+  return apiCall('chat_report_user', { email: targetEmail, reason }, 'POST');
+}
 
 // ============================================================
 // FOLLOW / PROFILE API

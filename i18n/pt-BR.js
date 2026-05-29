@@ -1150,6 +1150,20 @@ export default {
 
   // Common
   'common.cancel': 'Cancelar',
+  // QA i18n gap-fill (2026-05-29): keys had only inline PT fallbacks → leaked PT in EN/ES.
+  'common.system': 'Sistema',
+  'calendar.lastDayOfMonth': 'Último',
+  'calendar.repeatOnDayOfMonth': 'Dia do mês',
+  'calendar.repeatOnDays': 'Repetir nos dias',
+  'call.participantLimitReached': 'Limite de participantes atingido',
+  'compose.attachmentsNotSaved': 'Anexos não são salvos no rascunho',
+  'eventDetail.endBeforeStart': 'Horário final deve ser depois do início',
+  'login.loading': 'Carregando...',
+  'login.qrLoading': 'Gerando QR...',
+  'photos.noAlbumsDesc': 'Crie álbuns para organizar suas fotos favoritas.',
+  'photos.peopleEmptyTitle': 'Ninguém por aqui ainda',
+  'photos.restoreEconomyNotice': 'Backups economy restauram em qualidade reduzida.',
+  'photos.restoreSkippedMsg': '{n} já estavam no dispositivo.',
   'common.clear': 'Limpar',
   'common.confirm': 'Confirmar',
   'common.close': 'Fechar',

@@ -1170,6 +1170,20 @@ export default {
 
   // Common
   'common.cancel': 'Cancel',
+  // QA i18n gap-fill (2026-05-29): keys previously only had inline PT fallbacks.
+  'common.system': 'System',
+  'calendar.lastDayOfMonth': 'Last',
+  'calendar.repeatOnDayOfMonth': 'Day of month',
+  'calendar.repeatOnDays': 'Repeat on days',
+  'call.participantLimitReached': 'Participant limit reached',
+  'compose.attachmentsNotSaved': 'Attachments are not saved in drafts',
+  'eventDetail.endBeforeStart': 'End time must be after start time',
+  'login.loading': 'Loading...',
+  'login.qrLoading': 'Generating QR...',
+  'photos.noAlbumsDesc': 'Create albums to organize your favorite photos.',
+  'photos.peopleEmptyTitle': 'No one here yet',
+  'photos.restoreEconomyNotice': 'Economy backups restore in reduced quality.',
+  'photos.restoreSkippedMsg': '{n} were already on the device.',
   'common.clear': 'Clear',
   'common.confirm': 'Confirm',
   'common.close': 'Close',
