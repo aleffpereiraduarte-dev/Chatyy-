@@ -8155,6 +8155,10 @@ export default function ChatConversationScreen() {
   // the later `const` initializer runs → "Cannot access 'ss' before
   // initialization" crash on chat open. Native runs were lenient; web wasn't.
   const [disappearingTimer, setDisappearingTimer] = useState(0);
+  // ISO-Z timestamp of WHEN disappearing was enabled for this conversation.
+  // Only messages sent at/after this moment vanish — the prior history stays
+  // (WhatsApp semantics). null/empty = nothing disappears. (Lester QA 2026-05-29)
+  const [disappearingSetAt, setDisappearingSetAt] = useState(null);
   const [showDisappearingModal, setShowDisappearingModal] = useState(false);
 
   // Load dismissed state for E2E banner (per-conversation)
@@ -9583,6 +9587,7 @@ export default function ChatConversationScreen() {
           });
         }
         if (r.data?.disappearing_timer !== undefined) setDisappearingTimer(r.data.disappearing_timer);
+        if (r.data?.disappearing_set_at !== undefined) setDisappearingSetAt(r.data.disappearing_set_at || null);
         if (r.data?.vanish_mode !== undefined) setVanishMode(!!r.data.vanish_mode);
 
         if (!beforeId && newMsgs.length > 0 && chatyySettings.read_receipts !== false) {
@@ -17113,13 +17118,20 @@ export default function ChatConversationScreen() {
     // off vanishTickNow (30s ticker) so it repaints. Keep meta rows, system
     // messages, and optimistic rows without a parseable created_at.
     let base = enrichedMessages;
-    if (disappearingTimer > 0) {
+    // WhatsApp semantics: ONLY messages sent at/after disappearing was enabled
+    // vanish. The prior history MUST stay visible. disappearingSetAt gates it —
+    // without that gate this filter hid the ENTIRE conversation the moment you
+    // turned it on (Lester QA 2026-05-29). If we don't know set_at yet, don't
+    // hide anything (safe default — server cron also skips when set_at missing).
+    const setAtMs = disappearingSetAt ? Date.parse(disappearingSetAt) : NaN;
+    if (disappearingTimer > 0 && Number.isFinite(setAtMs)) {
       const cutoff = vanishTickNow - disappearingTimer * 1000;
       base = enrichedMessages.filter(m => {
         if (!m || m._type === 'separator' || m._type === 'unread_separator' || m.type === 'system') return true;
         const t = Date.parse(m.created_at);
         if (!Number.isFinite(t)) return true; // unsent/optimistic — keep
-        return t > cutoff;
+        if (t < setAtMs) return true;          // sent BEFORE disappearing was on — keep forever
+        return t > cutoff;                     // a disappearing msg: hide once older than timer
       });
     }
     if (!isSavedMode) return base;
@@ -17144,7 +17156,7 @@ export default function ChatConversationScreen() {
       }
       return true;
     });
-  }, [enrichedMessages, isSavedMode, savedSearch, savedFilter, disappearingTimer, vanishTickNow]);
+  }, [enrichedMessages, isSavedMode, savedSearch, savedFilter, disappearingTimer, disappearingSetAt, vanishTickNow]);
 
   // PERF: stable callback for FlatList — was an inline arrow recreated
   // every render, which `windowSize`-aware FlatList treats as a new prop
