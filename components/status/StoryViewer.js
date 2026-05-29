@@ -378,12 +378,19 @@ const StoryMedia = React.memo(function StoryMedia({
       // Gradient text status — bg_color is a `gradient:<id>` token instead
       // of a hex value. Paint the SVG behind the text in absoluteFill so
       // the gradient bleeds edge-to-edge while the centered Text stays put.
-      const gradient = _resolveTextGradient(cur.bg_color);
+      // Backend serializes chat_user_status.bg_color into the wire field
+      // `background` (status_list / status_create / WS / manifest all use that
+      // key — there is NO `bg_color` key on the wire). Reading only cur.bg_color
+      // made every text+music status fall back to plain green / black-no-gradient
+      // = the "status sem foto/sem visual" bug. Accept both keys (matches the
+      // ChatStatusTab pattern: cur?.background || cur?.bg_color).
+      const _bg = cur.bg_color || cur.background;
+      const gradient = _resolveTextGradient(_bg);
       const stops = gradient
         ? (gradient.colors.length > 1 ? gradient.colors : [gradient.colors[0], gradient.colors[0]])
         : null;
       return (
-        <View style={{ flex: 1, backgroundColor: gradient ? '#000' : (cur.bg_color || '#25D366'), alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+        <View style={{ flex: 1, backgroundColor: gradient ? '#000' : (_bg || '#25D366'), alignItems: 'center', justifyContent: 'center', padding: 30 }}>
           {gradient ? (
             <Svg
               pointerEvents="none"

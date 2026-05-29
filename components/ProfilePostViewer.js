@@ -216,31 +216,40 @@ export default function ProfilePostViewer({
   const handleDelete = useCallback(() => {
     const post = posts[index];
     if (!post || deleting) return;
+    const errMsg = t ? t('profile.deletePostError') : 'Não foi possível excluir a publicação.';
+    const doDelete = async () => {
+      setDeleting(true);
+      try {
+        const r = await api.feedDeletePost(post.id);
+        // apiCall returns {success, data} (no `ok` field) — accept either shape.
+        if (r && r.ok !== false && r.success !== false) {
+          onDeleted?.(post.id);
+          onClose?.();
+        } else if (!WEB) {
+          Alert.alert(t ? t('common.error') : 'Erro', (r && r.error) || errMsg);
+        }
+      } catch (e) {
+        if (!WEB) Alert.alert(t ? t('common.error') : 'Erro', errMsg);
+      } finally {
+        setDeleting(false);
+      }
+    };
+    // react-native-web's Alert.alert is a no-op (class Alert { static alert(){} }),
+    // so the native confirm path silently never fires on chatyy.com.br — the trash
+    // button looked dead on web. Branch to window.confirm like FeedPost.js does.
+    if (WEB) {
+      const ok = (typeof window !== 'undefined' && window.confirm)
+        ? window.confirm(t ? t('profile.deletePostConfirm') : 'Tem certeza que deseja excluir esta publicação? Esta ação não pode ser desfeita.')
+        : true;
+      if (ok) doDelete();
+      return;
+    }
     Alert.alert(
       t ? t('profile.deletePostTitle') : 'Excluir publicação',
       t ? t('profile.deletePostConfirm') : 'Tem certeza que deseja excluir esta publicação? Esta ação não pode ser desfeita.',
       [
         { text: t ? t('common.cancel') : 'Cancelar', style: 'cancel' },
-        {
-          text: t ? t('common.delete') : 'Excluir',
-          style: 'destructive',
-          onPress: async () => {
-            setDeleting(true);
-            try {
-              const r = await api.feedDeletePost(post.id);
-              if (r && r.ok !== false) {
-                onDeleted?.(post.id);
-                onClose?.();
-              } else {
-                Alert.alert(t ? t('common.error') : 'Erro', (r && r.error) || (t ? t('profile.deletePostError') : 'Não foi possível excluir a publicação.'));
-              }
-            } catch (e) {
-              Alert.alert(t ? t('common.error') : 'Erro', t ? t('profile.deletePostError') : 'Não foi possível excluir a publicação.');
-            } finally {
-              setDeleting(false);
-            }
-          },
-        },
+        { text: t ? t('common.delete') : 'Excluir', style: 'destructive', onPress: doDelete },
       ],
     );
   }, [posts, index, deleting, onDeleted, onClose, t]);

@@ -17081,10 +17081,26 @@ export default function ChatConversationScreen() {
   // same `enrichedMessages` reference and the saved path only recomputes
   // when filter/query actually changes.
   const flatListData = useMemo(() => {
-    if (!isSavedMode) return enrichedMessages;
+    // Disappearing messages: hide bubbles older than the TTL ON-SCREEN even
+    // before the server cron hard-deletes them. The cron (cron-disappearing.php)
+    // deletes silently with no WS push, so on an open thread the expired bubble
+    // used to linger until a manual refetch — looked like "nunca somem". Driven
+    // off vanishTickNow (30s ticker) so it repaints. Keep meta rows, system
+    // messages, and optimistic rows without a parseable created_at.
+    let base = enrichedMessages;
+    if (disappearingTimer > 0) {
+      const cutoff = vanishTickNow - disappearingTimer * 1000;
+      base = enrichedMessages.filter(m => {
+        if (!m || m._type === 'separator' || m._type === 'unread_separator' || m.type === 'system') return true;
+        const t = Date.parse(m.created_at);
+        if (!Number.isFinite(t)) return true; // unsent/optimistic — keep
+        return t > cutoff;
+      });
+    }
+    if (!isSavedMode) return base;
     const q = String(savedSearch || '').trim().toLowerCase();
     const f = savedFilter;
-    return enrichedMessages.filter(m => {
+    return base.filter(m => {
       const isMeta = !m || m._type === 'separator' || m._type === 'unread_separator' || m.type === 'system';
       // type filter
       if (!isMeta) {
@@ -17103,7 +17119,7 @@ export default function ChatConversationScreen() {
       }
       return true;
     });
-  }, [enrichedMessages, isSavedMode, savedSearch, savedFilter]);
+  }, [enrichedMessages, isSavedMode, savedSearch, savedFilter, disappearingTimer, vanishTickNow]);
 
   // PERF: stable callback for FlatList — was an inline arrow recreated
   // every render, which `windowSize`-aware FlatList treats as a new prop
