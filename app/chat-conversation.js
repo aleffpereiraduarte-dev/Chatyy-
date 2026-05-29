@@ -8687,9 +8687,14 @@ export default function ChatConversationScreen() {
         }
       } catch {}
       setKeyboardHeight(e.endCoordinates.height);
-      requestAnimationFrame(() => {
-        try { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); } catch {}
-      });
+      // Only snap to newest when already near the bottom. If the user is reading
+      // history (scrolled up — e.g. to quote/reply), opening the keyboard must
+      // NOT yank them down. Inverted list: offset 0 == bottom (newest).
+      if (!isScrolledUpRef.current) {
+        requestAnimationFrame(() => {
+          try { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); } catch {}
+        });
+      }
     };
     const onHide = (e) => {
       try {
@@ -9550,6 +9555,9 @@ export default function ChatConversationScreen() {
                   if (email && forceFullHistoryDownload) {
                     forceFullHistoryDownload(api.apiCall, email, { includeAllMedia: true }).catch(e => {
                       console.warn('[per-conv-boot] force download fail:', e?.message);
+                      // Failed (flaky net) → un-mark so the next open retries the
+                      // full-history download instead of staying stuck on one page.
+                      try { globalThis.__chatyy_conv_boot_set?.delete(_bootKey); } catch {}
                     });
                   }
                 } catch (e) { console.warn('[per-conv-boot] init fail:', e?.message); }
@@ -25437,6 +25445,18 @@ export default function ChatConversationScreen() {
                     const r = await api.apiCall('chat_clear', { conversation_id: conversationId }, 'POST');
                     if (r?.success) {
                       setMessages([]);
+                      // Lester "Limpar volta tudo": write the cleared_at watermark +
+                      // wipe local stores so envelope pull / bootstrap / cold-open
+                      // (mount-read at ~7220) don't resurrect the cleared messages.
+                      // Mirrors the list-row clear at ChatListTab.js:4263.
+                      try {
+                        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+                        await AsyncStorage.setItem(`cleared_at_${conversationId}`, String(Date.now()));
+                        await AsyncStorage.removeItem(`chatMsgs_${conversationId}`);
+                      } catch {}
+                      try { const cc = require('../services/chatCache'); if (typeof cc.clearConversationMessages === 'function') await cc.clearConversationMessages(conversationId); } catch {}
+                      try { const ldb = require('../services/localDb'); if (typeof ldb.clearConversationMessages === 'function') await ldb.clearConversationMessages(conversationId); } catch {}
+                      try { SmartCache.clearConversation?.(conversationId); } catch {}
                       try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
                     }
                   } catch {} finally {
@@ -27059,6 +27079,12 @@ export default function ChatConversationScreen() {
                             if (r?.success) {
                               setMessages([]);
                               try { await AsyncStorage.removeItem(`chatMsgs_${conversationId}`); } catch {}
+                              // Watermark + local wipe so cleared history doesn't
+                              // resurrect via envelope pull / bootstrap / cold-open.
+                              try { await AsyncStorage.setItem(`cleared_at_${conversationId}`, String(Date.now())); } catch {}
+                              try { const cc = require('../services/chatCache'); if (typeof cc.clearConversationMessages === 'function') await cc.clearConversationMessages(conversationId); } catch {}
+                              try { const ldb = require('../services/localDb'); if (typeof ldb.clearConversationMessages === 'function') await ldb.clearConversationMessages(conversationId); } catch {}
+                              try { SmartCache.clearConversation?.(conversationId); } catch {}
                             } else {
                               safeAlert(t('common.error') || 'Erro', r?.message || 'Falha ao limpar histórico');
                             }
