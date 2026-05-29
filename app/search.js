@@ -369,6 +369,12 @@ export default function SearchScreen() {
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.tabBar}
+        /* RN-Web: a horizontal ScrollView is a flex child of this column
+           container and, without a height cap, STRETCHES to fill the leftover
+           vertical space — then tabBar's alignItems:'center' parked the pills
+           in the middle of the screen with a huge gap under the search bar
+           (QA 2026-05-29). flexGrow:0 + maxHeight keeps it a thin tab row. */
+        style={{ flexGrow: 0, flexShrink: 0, maxHeight: 52 }}
       >
         {TABS.map((tb) => {
           const active = tab === tb.key;
