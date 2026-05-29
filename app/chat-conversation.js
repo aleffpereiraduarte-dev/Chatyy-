@@ -16010,8 +16010,13 @@ export default function ChatConversationScreen() {
     setStarredLoading(true);
     try {
       const r = await api.chatStarredMessages();
-      if (r.success && r.data?.messages) {
-        setStarredMessages(r.data.messages);
+      // Backend returns the list at r.data.items (chat_starred_messages →
+      // ['items'=>...]). The old code read r.data.messages (always undefined),
+      // so the "Favoritas" modal was always empty even with starred msgs.
+      // Tolerate array/items/messages shapes. (QA #36)
+      if (r.success && r.data) {
+        const list = Array.isArray(r.data) ? r.data : (r.data.items || r.data.messages || []);
+        setStarredMessages(list);
       }
     } catch {} finally {
       setStarredLoading(false);
