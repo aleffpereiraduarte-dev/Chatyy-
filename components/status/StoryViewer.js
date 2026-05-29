@@ -715,30 +715,44 @@ const StoryMedia = React.memo(function StoryMedia({
 // on screen. Lives INSIDE the viewer so music plays from EVERY entry point
 // (home status strip, profile, chat tab), not only ChatStatusTab — previously
 // StoryViewer only showed the music *name* pill and never played audio, so the
-// user saw "nome aparece mas a música não toca" from most surfaces. expo-av
-// Audio.Sound honors playsInSilentModeIOS (a WebView <audio> is muted by the
-// iOS audio session when the ringer switch is off). No-op if expo-av or the url
-// is missing. Loops the ~30s preview while the story is visible & not paused.
-let _StatusAudio = null;
-try { _StatusAudio = require('expo-av').Audio; } catch {}
+// user saw "nome aparece mas a música não toca" from most surfaces.
+//
+// CRITICAL (2026-05-29): this project is Expo SDK 55, which DROPPED expo-av in
+// favor of expo-audio. The previous version did `require('expo-av').Audio`,
+// which THROWS (module not installed) → caught → `_StatusAudio` stayed null →
+// the player early-returned and NOTHING ever played, from any surface. That was
+// the real reason "a música não toca" survived every prior fix. Rewritten on
+// expo-audio's imperative API (createAudioPlayer + setAudioModeAsync). Note the
+// option names differ from expo-av: `playsInSilentMode` (not ...IOS) so iOS
+// plays with the ringer switch off; player is property-driven (.loop/.volume/
+// .play()/.remove()) and auto-loads its source. No-op if the module or url is
+// missing. Loops the ~30s preview while the story is visible & not paused.
+let _expoAudio = null;
+try { _expoAudio = require('expo-audio'); } catch {}
 function StatusMusicPlayer({ url, active }) {
-  const soundRef = useRef(null);
+  const playerRef = useRef(null);
   useEffect(() => {
+    // Tear down any previous track first (item changed / paused / closed).
+    if (playerRef.current) { try { playerRef.current.remove(); } catch {} playerRef.current = null; }
+    if (!url || !active || !_expoAudio || !_expoAudio.createAudioPlayer) return;
     let cancelled = false;
     (async () => {
-      // Tear down any previous track first (item changed / paused / closed).
-      if (soundRef.current) { try { await soundRef.current.unloadAsync(); } catch {} soundRef.current = null; }
-      if (!url || !active || !_StatusAudio || !_StatusAudio.Sound) return;
+      // iOS: must set the audio session BEFORE playing or the ringer switch
+      // mutes us. playsInSilentMode is the expo-audio spelling.
+      try { await _expoAudio.setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: false }); } catch {}
+      if (cancelled) return;
       try {
-        try { await _StatusAudio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: false, shouldDuckAndroid: true }); } catch {}
-        const { sound } = await _StatusAudio.Sound.createAsync({ uri: url }, { shouldPlay: true, isLooping: true, volume: 1.0 });
-        if (cancelled) { try { await sound.unloadAsync(); } catch {} return; }
-        soundRef.current = sound;
+        const player = _expoAudio.createAudioPlayer({ uri: url });
+        player.loop = true;
+        player.volume = 1.0;
+        player.play(); // source auto-loads; play() is safe to call immediately
+        if (cancelled) { try { player.remove(); } catch {} return; }
+        playerRef.current = player;
       } catch {}
     })();
     return () => {
       cancelled = true;
-      if (soundRef.current) { try { soundRef.current.unloadAsync(); } catch {} soundRef.current = null; }
+      if (playerRef.current) { try { playerRef.current.remove(); } catch {} playerRef.current = null; }
     };
   }, [url, active]);
   return null;

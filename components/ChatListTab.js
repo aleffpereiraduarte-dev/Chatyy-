@@ -2718,9 +2718,18 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // r.data.folders (que não existe) → setChatFolders([]) → lista some
       // após cold start. Aceita ambos: items (atual) ou folders (legacy).
       if (r?.success && r?.data) {
-        const list = Array.isArray(r.data.items)
+        const raw = Array.isArray(r.data.items)
           ? r.data.items
           : (Array.isArray(r.data.folders) ? r.data.folders : []);
+        // 2026-05-29: keep ONLY user-created manual lists as chips. The legacy
+        // seed folders (id 1 "All"/filter_type='all', "Groups"/"Personal"/
+        // "Channels"=type, "Unread") were rendered as list chips, and the chip
+        // filter falls through to `return true` for all/type → tapping one
+        // showed EVERY conversation. Founder read that as "criar uma lista
+        // jogou toda a chatlist pra dentro dela". The built-in FilterChips
+        // (Todos/Não lidas/Grupos/Canais) already cover those, so the seeds are
+        // pure duplicates — drop them.
+        const list = raw.filter(f => (f?.filter_type || 'manual') === 'manual');
         setChatFolders(list);
       }
     }).catch(() => {});
