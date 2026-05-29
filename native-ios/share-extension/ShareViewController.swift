@@ -1327,6 +1327,17 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
             refreshLoadingProgressUI()
             return
         }
+        // EMPTY-TOKEN GUARD (highest priority): if the host app never wrote
+        // an auth token to the App Group (user not logged in / first launch),
+        // every upload below would 401 and leave the user staring at a stuck
+        // "Enviando" overlay. Abort up front with an actionable message
+        // instead. Reuses the existing showError() alert.
+        if authToken.isEmpty {
+            ShareDiag.recordError("sendTapped: ABORT — auth_token MISSING (host not logged in)")
+            showError("Abra o Chatyy e faça login antes de compartilhar.")
+            return
+        }
+
         let caption = captionField.text ?? ""
 
         // Total ops = (selected destinations) × (payloads). Each payload
@@ -1364,7 +1375,10 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
                 let after: (Bool, String?) -> Void = { [weak self] ok, err in
                     DispatchQueue.main.async {
                         done += 1
-                        if !ok { anyFailure = true; lastErr = err }
+                        if !ok {
+                            anyFailure = true; lastErr = err
+                            ShareDiag.recordError("upload result FAIL (\(done)/\(total)) err=\(err ?? "?")")
+                        }
                         // BUG #1: surface the FIRST failure in the overlay
                         // so the user sees what went wrong, not an opaque
                         // "Enviando" forever. The final alert still summarises
