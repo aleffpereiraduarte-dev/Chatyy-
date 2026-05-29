@@ -60,8 +60,56 @@ function resolveStatusMedia(u) {
 
 // Stable component for native audio playback via hidden WebView
 // Using a proper component (not IIFE) prevents remounting on every parent render
+// Real native audio via expo-av Audio.Sound. Honors setAudioModeAsync
+// ({playsInSilentModeIOS:true}) so status music plays even with the iOS
+// silent switch ON, and uses the proper AVAudioSession. (The old hidden
+// <audio autoplay> WebView was muted by the WKWebView audio session on iOS
+// silent mode → song NAME showed but no sound played.)
+function ExpoAvStatusAudio({ url, Audio }) {
+  const soundRef = useRef(null);
+  useEffect(() => {
+    let cancelled = false;
+    let unregister = () => {};
+    (async () => {
+      try {
+        try {
+          await Audio.setAudioModeAsync?.({
+            playsInSilentModeIOS: true,
+            allowsRecordingIOS: false,
+            staysActiveInBackground: false,
+            shouldDuckAndroid: true,
+            playThroughEarpieceAndroid: false,
+          });
+        } catch {}
+        const { sound } = await Audio.Sound.createAsync(
+          { uri: url },
+          { shouldPlay: true, isLooping: true, volume: 0.85 }
+        );
+        if (cancelled) { try { await sound.unloadAsync(); } catch {} return; }
+        soundRef.current = sound;
+        // Stop on incoming call (call_invite WS → stopAllAudio()).
+        try {
+          const { registerMediaPlayer } = require('../services/audioManager');
+          unregister = registerMediaPlayer(() => { try { sound.pauseAsync(); } catch {} });
+        } catch {}
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+      try { unregister(); } catch {}
+      const s = soundRef.current; soundRef.current = null;
+      if (s) { (async () => { try { await s.stopAsync(); } catch {} try { await s.unloadAsync(); } catch {} })(); }
+    };
+  }, [url]);
+  return null;
+}
+
 function NativeAudioPlayer({ url }) {
   if (!url || Platform.OS === 'web') return null;
+  let Audio = null;
+  try { Audio = require('expo-av').Audio; } catch {}
+  if (Audio && Audio.Sound) return <ExpoAvStatusAudio url={url} Audio={Audio} />;
+  // Fallback for older binaries where expo-av isn't linked: hidden WebView.
   const WebView = require('react-native-webview').WebView;
   const html = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><audio id="a" src="${url}" autoplay loop playsinline webkit-playsinline></audio><script>var a=document.getElementById('a');a.play().catch(function(){});document.addEventListener('visibilitychange',function(){if(!document.hidden)a.play().catch(function(){});});</script></body></html>`;
   return (
