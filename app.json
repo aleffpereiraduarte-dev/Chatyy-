@@ -103,7 +103,7 @@
           "INSendMessageIntent"
         ]
       },
-      "buildNumber": "296"
+      "buildNumber": "297"
     },
     "android": {
       "package": "com.onemundo.mail",
