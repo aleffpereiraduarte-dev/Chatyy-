@@ -12,11 +12,11 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, Pressable, Image, FlatList,
-  Platform, Dimensions, StyleSheet, ActivityIndicator,
+  Platform, Dimensions, StyleSheet, ActivityIndicator, Alert,
 } from 'react-native';
 import CachedImage from './CachedImage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { IconX, IconHeart, IconMessageSquare } from './Icons';
+import { IconX, IconHeart, IconMessageSquare, IconTrash } from './Icons';
 import { BASE_URL } from '../services/api';
 import * as api from '../services/api';
 import AvatarCircle from './AvatarCircle';
@@ -195,7 +195,7 @@ function PostItem({ post, author, colors, width, onClose, router, t, onOpenLiker
 }
 
 export default function ProfilePostViewer({
-  visible, posts = [], startIndex = 0, author, onClose, colors, isDark, t, router, user,
+  visible, posts = [], startIndex = 0, author, onClose, colors, isDark, t, router, user, onDeleted,
 }) {
   // Safe-area top — the top bar used a hardcoded `top: 20` on Android which
   // tucked the close button under the system clock on edge-to-edge windows.
@@ -205,6 +205,45 @@ export default function ProfilePostViewer({
   const listRef = useRef(null);
   const [likersPost, setLikersPost] = useState(null);
   const [commentsPost, setCommentsPost] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+
+  // Owner can delete their own posts — compare viewer's email to the profile author's.
+  const isOwner = !!(
+    user?.email && author?.email &&
+    String(user.email).trim().toLowerCase() === String(author.email).trim().toLowerCase()
+  );
+
+  const handleDelete = useCallback(() => {
+    const post = posts[index];
+    if (!post || deleting) return;
+    Alert.alert(
+      t ? t('profile.deletePostTitle') : 'Excluir publicação',
+      t ? t('profile.deletePostConfirm') : 'Tem certeza que deseja excluir esta publicação? Esta ação não pode ser desfeita.',
+      [
+        { text: t ? t('common.cancel') : 'Cancelar', style: 'cancel' },
+        {
+          text: t ? t('common.delete') : 'Excluir',
+          style: 'destructive',
+          onPress: async () => {
+            setDeleting(true);
+            try {
+              const r = await api.feedDeletePost(post.id);
+              if (r && r.ok !== false) {
+                onDeleted?.(post.id);
+                onClose?.();
+              } else {
+                Alert.alert(t ? t('common.error') : 'Erro', (r && r.error) || (t ? t('profile.deletePostError') : 'Não foi possível excluir a publicação.'));
+              }
+            } catch (e) {
+              Alert.alert(t ? t('common.error') : 'Erro', t ? t('profile.deletePostError') : 'Não foi possível excluir a publicação.');
+            } finally {
+              setDeleting(false);
+            }
+          },
+        },
+      ],
+    );
+  }, [posts, index, deleting, onDeleted, onClose, t]);
 
   useEffect(() => {
     setIndex(startIndex);
@@ -238,7 +277,18 @@ export default function ProfilePostViewer({
           <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>
             {index + 1} / {posts.length}
           </Text>
-          <View style={{ width: 40 }} />
+          {isOwner ? (
+            <TouchableOpacity
+              onPress={handleDelete}
+              disabled={deleting}
+              style={{ padding: 8, opacity: deleting ? 0.5 : 1 }}
+              accessibilityLabel={t ? t('common.delete') : 'Excluir'}
+            >
+              {deleting ? <ActivityIndicator size="small" color="#fff" /> : <IconTrash size={24} color="#fff" />}
+            </TouchableOpacity>
+          ) : (
+            <View style={{ width: 40 }} />
+          )}
         </View>
 
         <FlatList

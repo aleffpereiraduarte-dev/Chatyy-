@@ -2950,6 +2950,12 @@ export default function Profile({
       t={t}
       router={router}
       user={currentUser}
+      onDeleted={(deletedId) => setData(d => (d ? {
+        ...d,
+        posts: (d.posts || []).filter(p => p.id !== deletedId),
+        reels: (d.reels || []).filter(p => p.id !== deletedId),
+        shared_media: (d.shared_media || []).filter(p => p.id !== deletedId),
+      } : d))}
     />
   );
 
