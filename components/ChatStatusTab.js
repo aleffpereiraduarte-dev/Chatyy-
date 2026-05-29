@@ -1837,25 +1837,15 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     }
   }, [viewerIndex, goToPrevPerson]);
 
-  // Play music when viewing a status with music
+  // Status music playback now lives INSIDE StoryViewer (components/status/
+  // StoryViewer.js) so it plays from EVERY entry point (home strip / profile /
+  // chat tab), not only here — StoryViewer previously showed just the music
+  // NAME and never played audio ("nome aparece mas a música não toca"). Keep
+  // this effect stop-only so we never double-play (StoryViewer's expo-av player
+  // + this one) when ChatStatusTab is the surface that opened the viewer.
   useEffect(() => {
-    if (!viewerVisible || viewerStatuses.length === 0) {
-      setNativeAudioSrc(null);
-      stopStatusAudio();
-      return;
-    }
-    const item = viewerStatuses[viewerIndex];
-    if (item?.music_preview_url) {
-      if (Platform.OS === 'web') {
-        playStatusAudio(item.music_preview_url);
-      } else {
-        // Native: set state directly to render WebView audio player
-        setNativeAudioSrc(item.music_preview_url);
-      }
-    } else {
-      setNativeAudioSrc(null);
-      stopStatusAudio();
-    }
+    setNativeAudioSrc(null);
+    stopStatusAudio();
   }, [viewerVisible, viewerIndex, viewerStatuses]);
 
   // Per-item duration override: when a video reports its real length the

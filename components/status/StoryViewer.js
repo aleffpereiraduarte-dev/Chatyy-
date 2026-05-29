@@ -711,6 +711,39 @@ const StoryMedia = React.memo(function StoryMedia({
       );
 });
 
+// Status music player — plays the chosen track preview WHILE a music status is
+// on screen. Lives INSIDE the viewer so music plays from EVERY entry point
+// (home status strip, profile, chat tab), not only ChatStatusTab — previously
+// StoryViewer only showed the music *name* pill and never played audio, so the
+// user saw "nome aparece mas a música não toca" from most surfaces. expo-av
+// Audio.Sound honors playsInSilentModeIOS (a WebView <audio> is muted by the
+// iOS audio session when the ringer switch is off). No-op if expo-av or the url
+// is missing. Loops the ~30s preview while the story is visible & not paused.
+let _StatusAudio = null;
+try { _StatusAudio = require('expo-av').Audio; } catch {}
+function StatusMusicPlayer({ url, active }) {
+  const soundRef = useRef(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      // Tear down any previous track first (item changed / paused / closed).
+      if (soundRef.current) { try { await soundRef.current.unloadAsync(); } catch {} soundRef.current = null; }
+      if (!url || !active || !_StatusAudio || !_StatusAudio.Sound) return;
+      try {
+        try { await _StatusAudio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: false, shouldDuckAndroid: true }); } catch {}
+        const { sound } = await _StatusAudio.Sound.createAsync({ uri: url }, { shouldPlay: true, isLooping: true, volume: 1.0 });
+        if (cancelled) { try { await sound.unloadAsync(); } catch {} return; }
+        soundRef.current = sound;
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+      if (soundRef.current) { try { soundRef.current.unloadAsync(); } catch {} soundRef.current = null; }
+    };
+  }, [url, active]);
+  return null;
+}
+
 export default function StoryViewer({
   visible,
   stories: storiesProp,
@@ -1684,6 +1717,10 @@ export default function StoryViewer({
 
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
+      {/* Music playback for music statuses — plays while this item is shown and
+          the viewer isn't paused; skipped for video (video carries its own
+          audio). Renders nothing visually. */}
+      <StatusMusicPlayer url={isVideo ? null : (cur?.music_preview_url || null)} active={!paused} />
       <Animated.View
         style={{
           flex: 1, backgroundColor: '#000',
