@@ -6,7 +6,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
-import { IconArrowLeft, IconSearch, IconStar } from '../components/Icons';
+import { IconArrowLeft, IconSearch, IconStar, IconCheck } from '../components/Icons';
 import { emailToDisplayName } from '../services/api';
 
 export default function CloseFriendsScreen() {
@@ -133,7 +133,7 @@ export default function CloseFriendsScreen() {
                   backgroundColor: isIn ? '#22C55E' : 'transparent',
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  {isIn && <Text style={{ color: '#fff', fontSize: 14, fontWeight: '900' }}>✓</Text>}
+                  {isIn && <IconCheck size={15} color="#fff" strokeWidth={3} />}
                 </View>
               </TouchableOpacity>
             );

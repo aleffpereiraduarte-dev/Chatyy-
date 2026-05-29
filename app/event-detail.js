@@ -18,6 +18,17 @@ import {
   IconPlus, IconBell,
 } from '../components/Icons';
 
+// Human-readable recurrence label — never surface the raw RRULE
+// (e.g. "FREQ=MONTHLY;BYMONTHDAY=15") to the user.
+function describeRecurrence(rule, t) {
+  if (!rule) return '';
+  const u = String(rule).toUpperCase();
+  if (u.includes('DAILY')) return t('eventDetail.recurrenceDaily');
+  if (u.includes('WEEKLY')) return t('eventDetail.recurrenceWeekly');
+  if (u.includes('MONTHLY')) return t('eventDetail.recurrenceMonthly');
+  return t('eventDetail.recurrence');
+}
+
 const PRESET_COLORS = ['#4285F4', '#EA4335', '#34A853', '#FBBC05', '#8E24AA', '#F4511E', '#0097A7', '#616161'];
 
 const REMINDER_OPTIONS = [
@@ -1011,7 +1022,7 @@ function EventDetailScreenInner() {
               </View>
               <View style={styles.infoContent}>
                 <Text style={[styles.infoLabel, { color: colors.textSecondary }]}>{t('eventDetail.recurrence')}</Text>
-                <Text style={[styles.infoValue, { color: colors.text }]}>{event.recurrence_rule}</Text>
+                <Text style={[styles.infoValue, { color: colors.text }]}>{describeRecurrence(event.recurrence_rule, t)}</Text>
               </View>
             </View>
           )}

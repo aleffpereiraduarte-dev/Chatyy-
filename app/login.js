@@ -1548,7 +1548,7 @@ export default function LoginScreen() {
             // hidden above the keyboard while the user saw a blank area.
             justifyContent: 'flex-start', paddingTop: 56, paddingVertical: 24,
           }]}>
-            <Animated.View style={[s.cardWrap, { opacity: cardFadeAnim, transform: [{ translateY: cardSlideAnim }] }]}>
+            <Animated.View style={[s.cardWrap, isDesktop && { maxWidth: 480 }, { opacity: cardFadeAnim, transform: [{ translateY: cardSlideAnim }] }]}>
               {/* Login card — Google-style on desktop (purple-shadowed white
                   card centered on the page) and floating-clean on mobile to
                   match the unified Telegram flow (no card background, the
@@ -1558,8 +1558,15 @@ export default function LoginScreen() {
                 backgroundColor: isDark ? '#303134' : '#ffffff',
                 borderWidth: 1,
                 borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(124,58,237,0.08)',
+                borderRadius: 24,
+                paddingTop: 44, paddingBottom: 36,
+                paddingHorizontal: Platform.OS === 'web' ? 48 : 24,
                 ...(Platform.OS === 'web' ? {
-                  boxShadow: '0 4px 16px rgba(124,58,237,0.08), 0 12px 40px rgba(60,64,67,0.10)',
+                  // Soft layered shadow — a tight close shadow for crispness +
+                  // a wide diffuse one for the "floating" depth Telegram Web has.
+                  boxShadow: isDark
+                    ? '0 2px 8px rgba(0,0,0,0.30), 0 18px 60px rgba(0,0,0,0.40)'
+                    : '0 1px 2px rgba(60,64,67,0.06), 0 6px 20px rgba(124,58,237,0.07), 0 24px 64px rgba(60,64,67,0.10)',
                 } : {
                   shadowColor: '#7C3AED',
                   shadowOffset: { width: 0, height: 6 },
@@ -1709,18 +1716,21 @@ export default function LoginScreen() {
                       mobile users a fallback to legacy email/password. */}
                   {isDesktop && <View style={{
                     flexDirection: 'row',
-                    backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(60,64,67,0.06)',
-                    borderRadius: 12,
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(60,64,67,0.05)',
+                    borderWidth: 1,
+                    borderColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(60,64,67,0.05)',
+                    borderRadius: 14,
                     padding: 4,
-                    marginTop: 24, marginBottom: 18,
+                    marginTop: 28, marginBottom: 22,
                     gap: 4,
                   }}>
                     <TouchableOpacity
                       style={{
-                        flex: 1, paddingVertical: 9, borderRadius: 9,
+                        flex: 1, paddingVertical: 11, borderRadius: 10,
                         flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-                        backgroundColor: loginMode === 'phone' ? (isDark ? '#3a3d41' : '#fff') : 'transparent',
-                        ...(loginMode === 'phone' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 3px rgba(0,0,0,0.4)' : '0 1px 3px rgba(60,64,67,0.18)' } : {}),
+                        backgroundColor: loginMode === 'phone' ? (isDark ? '#43464b' : '#fff') : 'transparent',
+                        ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, box-shadow 160ms ease' } : {}),
+                        ...(loginMode === 'phone' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.45)' : '0 1px 4px rgba(60,64,67,0.16)' } : {}),
                         ...(loginMode === 'phone' && Platform.OS !== 'web' ? {
                           shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
                         } : {}),
@@ -1736,10 +1746,11 @@ export default function LoginScreen() {
                     {isDesktop && (
                       <TouchableOpacity
                         style={{
-                          flex: 1, paddingVertical: 9, borderRadius: 9,
+                          flex: 1, paddingVertical: 11, borderRadius: 10,
                           flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-                          backgroundColor: loginMode === 'qr' ? (isDark ? '#3a3d41' : '#fff') : 'transparent',
-                          ...(loginMode === 'qr' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 3px rgba(0,0,0,0.4)' : '0 1px 3px rgba(60,64,67,0.18)' } : {}),
+                          backgroundColor: loginMode === 'qr' ? (isDark ? '#43464b' : '#fff') : 'transparent',
+                          ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, box-shadow 160ms ease' } : {}),
+                          ...(loginMode === 'qr' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.45)' : '0 1px 4px rgba(60,64,67,0.16)' } : {}),
                           ...(loginMode === 'qr' && Platform.OS !== 'web' ? {
                             shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
                           } : {}),
@@ -1755,10 +1766,11 @@ export default function LoginScreen() {
                     )}
                     <TouchableOpacity
                       style={{
-                        flex: 1, paddingVertical: 9, borderRadius: 9,
+                        flex: 1, paddingVertical: 11, borderRadius: 10,
                         flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-                        backgroundColor: loginMode === 'email' ? (isDark ? '#3a3d41' : '#fff') : 'transparent',
-                        ...(loginMode === 'email' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 3px rgba(0,0,0,0.4)' : '0 1px 3px rgba(60,64,67,0.18)' } : {}),
+                        backgroundColor: loginMode === 'email' ? (isDark ? '#43464b' : '#fff') : 'transparent',
+                        ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, box-shadow 160ms ease' } : {}),
+                        ...(loginMode === 'email' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.45)' : '0 1px 4px rgba(60,64,67,0.16)' } : {}),
                         ...(loginMode === 'email' && Platform.OS !== 'web' ? {
                           shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
                         } : {}),
@@ -2159,44 +2171,103 @@ export default function LoginScreen() {
 
                   ) : loginMode === 'qr' && isDesktop ? (
                     /* ── QR LOGIN ── */
+                    (() => {
+                      // Framed QR container — rounded card with a subtle border,
+                      // generous inner padding, and four brand-purple corner
+                      // accents (Telegram/banking-app "scan-here" framing). The
+                      // QR image, skeleton, and expired/connected states all
+                      // share this single frame so the panel never looks empty.
+                      const frameSize = 248;
+                      const cornerColor = colors.primary;
+                      const cornerLen = 26;
+                      const cornerThick = 3;
+                      const Corner = ({ pos }) => {
+                        const base = { position: 'absolute', width: cornerLen, height: cornerLen };
+                        const v = { position: 'absolute', width: cornerThick, height: cornerLen, backgroundColor: cornerColor, borderRadius: cornerThick };
+                        const h = { position: 'absolute', width: cornerLen, height: cornerThick, backgroundColor: cornerColor, borderRadius: cornerThick };
+                        const map = {
+                          tl: { top: -1, left: -1 }, tr: { top: -1, right: -1 },
+                          bl: { bottom: -1, left: -1 }, br: { bottom: -1, right: -1 },
+                        };
+                        const isTop = pos[0] === 't';
+                        const isLeft = pos[1] === 'l';
+                        return (
+                          <View pointerEvents="none" style={[base, map[pos]]}>
+                            <View style={[v, isLeft ? { left: 0 } : { right: 0 }, isTop ? { top: 0 } : { bottom: 0 }]} />
+                            <View style={[h, isTop ? { top: 0 } : { bottom: 0 }, isLeft ? { left: 0 } : { right: 0 }]} />
+                          </View>
+                        );
+                      };
+                      const stepRow = (n, text) => (
+                        <View key={n} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 12 }}>
+                          <View style={{
+                            width: 24, height: 24, borderRadius: 12, marginTop: 1,
+                            alignItems: 'center', justifyContent: 'center',
+                            backgroundColor: isDark ? 'rgba(124,58,237,0.20)' : 'rgba(124,58,237,0.10)',
+                          }}>
+                            <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>{n}</Text>
+                          </View>
+                          <Text style={{ flex: 1, fontSize: 14, lineHeight: 21, color: isDark ? '#e8eaed' : '#3c4043' }}>{text}</Text>
+                        </View>
+                      );
+                      return (
                     <View style={s.qrPanel}>
-                      {qrStatus === 'loading' && (
-                        <View style={s.qrLoadingWrap}>
+                      {(qrStatus === 'loading' || qrStatus === 'idle') && (
+                        <View style={{
+                          width: frameSize, height: frameSize, borderRadius: 20,
+                          borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.08)' : '#eceef1',
+                          backgroundColor: isDark ? '#2a2d31' : '#f6f7f9',
+                          alignItems: 'center', justifyContent: 'center', marginBottom: 22,
+                        }}>
                           <ActivityIndicator size="large" color={colors.primary} />
+                          <Text style={{ marginTop: 14, fontSize: 13, color: isDark ? '#9aa0a6' : '#80868b' }}>
+                            {t('login.qrLoading') || t('login.loading') || '...'}
+                          </Text>
                         </View>
                       )}
                       {qrStatus === 'confirmed' && (
-                        <View style={s.qrLoadingWrap}>
-                          <Text style={[s.qrConnectedText, { color: colors.primary }]}>
+                        <View style={{
+                          width: frameSize, height: frameSize, borderRadius: 20,
+                          borderWidth: 1, borderColor: isDark ? 'rgba(124,58,237,0.30)' : 'rgba(124,58,237,0.18)',
+                          backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.05)',
+                          alignItems: 'center', justifyContent: 'center', marginBottom: 22, padding: 24,
+                        }}>
+                          <Text style={[s.qrConnectedText, { color: colors.primary, textAlign: 'center' }]}>
                             {t('login.qrConnected')}
                           </Text>
-                          <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 12 }} />
+                          <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 14 }} />
                         </View>
                       )}
                       {(qrStatus === 'pending' || qrStatus === 'expired') && (
                         <>
-                          <View style={[s.qrImageWrap, {
-                            borderColor: isDark ? '#5f6368' : '#dadce0',
+                          <View style={{
+                            width: frameSize, height: frameSize, borderRadius: 20,
+                            borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.08)' : '#eceef1',
                             backgroundColor: '#ffffff',
-                          }]}>
+                            alignItems: 'center', justifyContent: 'center',
+                            marginBottom: 18, padding: 16,
+                            ...(Platform.OS === 'web' ? { boxShadow: isDark ? '0 6px 18px rgba(0,0,0,0.35)' : '0 6px 18px rgba(60,64,67,0.08)' } : {}),
+                          }}>
+                            {/* corner accents */}
+                            <Corner pos="tl" /><Corner pos="tr" /><Corner pos="bl" /><Corner pos="br" />
                             {qrStatus === 'pending' && qrToken ? (
                               <Image
                                 source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent('chatyy://qr/' + qrToken)}&size=250x250&format=png&margin=8` }}
-                                style={s.qrImage}
+                                style={{ width: frameSize - 48, height: frameSize - 48 }}
                                 resizeMode="contain"
                               />
                             ) : (
-                              <View style={s.qrExpiredOverlay}>
+                              <View style={{ alignItems: 'center', justifyContent: 'center' }}>
                                 <View style={{ marginBottom: 8 }}>
                                   <IconRefresh size={40} color="#9ca3af" />
                                 </View>
-                                <Text style={{ fontSize: 14, fontWeight: '500', color: isDark ? '#9aa0a6' : '#5f6368' }}>
+                                <Text style={{ fontSize: 14, fontWeight: '500', color: '#5f6368' }}>
                                   {t('login.qrExpired')}
                                 </Text>
                               </View>
                             )}
                             {qrStatus === 'expired' && (
-                              <View style={[s.qrExpiredOverlay, { backgroundColor: 'rgba(255,255,255,0.9)' }]}>
+                              <View style={[s.qrExpiredOverlay, { backgroundColor: 'rgba(255,255,255,0.92)', borderRadius: 20 }]}>
                                 <TouchableOpacity onPress={handleRefreshQR} activeOpacity={0.7} style={{ alignItems: 'center', padding: 16 }}>
                                   <View style={{ marginBottom: 8 }}>
                                     <IconRefresh size={36} color={colors.primary} />
@@ -2209,26 +2280,31 @@ export default function LoginScreen() {
                             )}
                           </View>
                           {qrStatus === 'pending' && (
-                            <Text style={{ fontSize: 13, marginBottom: 16, textAlign: 'center', color: isDark ? '#9aa0a6' : '#5f6368' }}>
-                              {t('login.qrExpires')} {qrCountdown}s
-                            </Text>
+                            <View style={{
+                              flexDirection: 'row', alignItems: 'center', gap: 6,
+                              paddingHorizontal: 12, paddingVertical: 5, borderRadius: 999,
+                              backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(60,64,67,0.06)',
+                              marginBottom: 22,
+                            }}>
+                              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary }} />
+                              <Text style={{ fontSize: 12, fontWeight: '500', color: isDark ? '#9aa0a6' : '#80868b' }}>
+                                {t('login.qrExpires')} {qrCountdown}s
+                              </Text>
+                            </View>
                           )}
-                          <Text style={{ fontSize: 14, textAlign: 'center', marginBottom: 20, lineHeight: 22, color: isDark ? '#9aa0a6' : '#5f6368' }}>
+                          <Text style={{ fontSize: 14, textAlign: 'center', marginBottom: 18, lineHeight: 22, color: isDark ? '#9aa0a6' : '#5f6368' }}>
                             {t('login.qrSubtitle')}
                           </Text>
-                          <View style={{ alignSelf: 'stretch', paddingHorizontal: 12, gap: 8 }}>
-                            <Text style={{ fontSize: 14, lineHeight: 20, color: isDark ? '#e8eaed' : '#202124' }}>1. {t('login.qrStep1')}</Text>
-                            <Text style={{ fontSize: 14, lineHeight: 20, color: isDark ? '#e8eaed' : '#202124' }}>2. {t('login.qrStep2')}</Text>
-                            <Text style={{ fontSize: 14, lineHeight: 20, color: isDark ? '#e8eaed' : '#202124' }}>3. {t('login.qrStep3')}</Text>
+                          <View style={{ alignSelf: 'stretch', gap: 14 }}>
+                            {stepRow(1, t('login.qrStep1'))}
+                            {stepRow(2, t('login.qrStep2'))}
+                            {stepRow(3, t('login.qrStep3'))}
                           </View>
                         </>
                       )}
-                      {qrStatus === 'idle' && (
-                        <View style={s.qrLoadingWrap}>
-                          <ActivityIndicator size="large" color={colors.primary} />
-                        </View>
-                      )}
                     </View>
+                      );
+                    })()
 
                   ) : step === 1 ? (
                     /* ── EMAIL STEP 1 ── */
@@ -3140,7 +3216,7 @@ const s = StyleSheet.create({
 
   /* QR Code Panel */
   qrPanel: {
-    alignItems: 'center', paddingTop: 24, paddingBottom: 8,
+    alignItems: 'center', paddingTop: 28, paddingBottom: 12,
   },
   qrLoadingWrap: {
     alignItems: 'center', justifyContent: 'center', height: 280, width: '100%',

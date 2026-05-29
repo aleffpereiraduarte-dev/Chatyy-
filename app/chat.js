@@ -678,8 +678,8 @@ function ChatHub() {
     calls: t('chat.tabCalls') || 'Ligacoes',
     chats: t('chat.tabChats') || 'Conversas',
     config: t('chat.tabConfig') || 'Configuracoes',
-    learn: 'Professora ONE 🎓',
-    tv: 'Chatyy TV 🎬',
+    learn: 'Professora ONE',
+    tv: 'Chatyy TV',
     channels: t('channel.title') || 'Channels',
     communities: t('community.title') || 'Communities',
   };

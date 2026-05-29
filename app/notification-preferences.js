@@ -26,6 +26,7 @@ import {
   Pressable,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { IconCheck } from '../components/Icons';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { apiCall } from '../services/api';
@@ -517,7 +518,7 @@ function SoundPickerModal({ visible, keyword, value, onClose, onPick, colors }) 
                 >
                   <Text style={{ flex: 1, fontSize: 15, color: colors.text }}>{opt.label}</Text>
                   {active && (
-                    <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 18 }}>✓</Text>
+                    <IconCheck size={18} color={colors.primary} strokeWidth={2.5} />
                   )}
                 </TouchableOpacity>
               );

@@ -26375,7 +26375,7 @@ export default function ChatConversationScreen() {
                     {t('chatConv.stickerReactPremiumBody') || 'Assine o Chatyy Premium para reagir com qualquer figurinha dos seus pacotes.'}
                   </Text>
                   <TouchableOpacity
-                    onPress={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); try { router.push('/premium'); } catch {} }}
+                    onPress={() => { setShowFullEmojiPicker(false); setReactionPickerTab('emoji'); try { router.push('/plans'); } catch {} }}
                     style={{ backgroundColor: colors.primary, paddingHorizontal: 22, paddingVertical: 10, borderRadius: 22 }}
                   >
                     <Text style={{ color: '#fff', fontWeight: '700' }}>{t('chatConv.upgradePremium') || 'Ver Premium'}</Text>

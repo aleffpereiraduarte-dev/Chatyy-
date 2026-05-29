@@ -2405,7 +2405,7 @@ export default function OneScreen() {
           content: params.content || '',
           new: '1',
         }).toString();
-        router.push(`/notes-edit?${q}`);
+        router.push(`/notes?${q}`);
       }
       else if (kind === 'search_contacts' && params.query) {
         router.push(`/contacts?q=${encodeURIComponent(params.query)}`);
