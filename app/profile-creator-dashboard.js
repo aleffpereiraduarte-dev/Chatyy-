@@ -20,6 +20,8 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import AvatarCircle from '../components/AvatarCircle';
 import * as api from '../services/api';
+import { formatMoneyActive } from '../services/currencyService';
+import { useCurrency } from '../context/CurrencyContext';
 import { IconArrowLeft } from '../components/Icons';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
 
@@ -29,9 +31,11 @@ const ACCENT_PINK = '#EC4899';
 const GREEN = '#10B981';
 const AMBER = '#F59E0B';
 
+// Display-only: revenue/tip stats are stored in BRL cents; render them
+// in the user's selected display currency (read-only dashboard — no
+// charge or cashout entry happens here).
 function formatCents(cents) {
-  const v = (Number(cents) || 0) / 100;
-  return `R$ ${v.toFixed(2).replace('.', ',')}`;
+  return formatMoneyActive(Number(cents) || 0);
 }
 
 // Same Sparkline shape as profile-insights — pure SVG, 7-point curve.
@@ -70,6 +74,9 @@ export default function CreatorDashboardScreen() {
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
+  // Re-render the stat cards (formatted via module-level formatCents →
+  // formatMoneyActive) when the user switches display currency.
+  useCurrency();
 
   // [2026-05-22 monetization-pause] The whole dashboard is paid-monetization
   // aggregates (tips, payouts, subscribers). While MONETIZATION_ENABLED is

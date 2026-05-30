@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { DEFAULT_E2EE } from '../constants/featureFlags';
 
 // ─── Edge Network — auto-detect fastest server ───
 // Tests all edge servers in parallel, picks the one with lowest latency.
@@ -3235,10 +3236,24 @@ export function setEnvelopeMode(enabled) {
 }
 
 export async function loadEnvelopeMode() {
-  // Stage 7 (2026-05-18): E2E default-ON, WhatsApp-style. Every conversation
-  // is encrypted unless the user explicitly opts out (persisted as '0').
-  // Legacy persisted '1' from Stage 6 still resolves ON. Anything else
-  // (null / unset / first-launch) → ON.
+  // [2026-05-29 staged re-enable groundwork] The single source of truth is the
+  // DEFAULT_E2EE build flag (constants/featureFlags.js). When it's false this
+  // is a hard kill-switch: no persisted opt-in can enable envelope mode, so
+  // flipping the build flag OFF reliably reverts even devices that previously
+  // opted in (raw === '1'). This is intentional — re-enabling blindly broke
+  // delivery before, and the flag must be the only lever.
+  //
+  // When DEFAULT_E2EE is later flipped true (after dual-device QA), this falls
+  // back to the WhatsApp-style default-ON semantics: encrypted unless the user
+  // explicitly opted out (persisted '0').
+  if (DEFAULT_E2EE !== true) {
+    try {
+      if (typeof globalThis !== 'undefined') {
+        globalThis.__chatyy_envelope_mode = false;
+      }
+    } catch {}
+    return false;
+  }
   let raw = null;
   try {
     if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
@@ -3247,7 +3262,7 @@ export async function loadEnvelopeMode() {
       raw = await _readAsyncStorage(_ENVELOPE_MODE_KEY);
     }
   } catch {}
-  // Default ON: only an explicit '0' opt-out turns it off.
+  // Default ON (flag is true): only an explicit '0' opt-out turns it off.
   const flag = raw !== '0';
   try {
     if (typeof globalThis !== 'undefined') {
@@ -3266,9 +3281,12 @@ export async function loadEnvelopeMode() {
 // `chat_message` WS broadcast, receiver renders instantly. Power users
 // can flip back via setEnvelopeMode(true). When the decrypt path is
 // proven stable in a future round, flip this back to default-ON.
+// [2026-05-29] Boot default derives from the DEFAULT_E2EE build flag (which is
+// false today → plaintext). loadEnvelopeMode() below re-resolves once storage
+// is readable, but it ALSO honors DEFAULT_E2EE so the kill-switch holds.
 try {
   if (typeof globalThis !== 'undefined' && globalThis.__chatyy_envelope_mode === undefined) {
-    globalThis.__chatyy_envelope_mode = false;
+    globalThis.__chatyy_envelope_mode = (DEFAULT_E2EE === true);
   }
 } catch {}
 try { loadEnvelopeMode().catch(() => {}); } catch {}
@@ -3580,6 +3598,14 @@ export async function chatTranslateMessage(messageId, targetLang = 'pt') {
 }
 export async function chatSetSlowMode(conversationId, seconds) {
   return apiCall('chat_set_slow_mode', { conversation_id: conversationId, seconds }, 'POST');
+}
+
+// Real all-time conversation statistics, aggregated server-side over the
+// full chat_messages history (not the client's loaded window). Returns
+// totals, per-participant share, media-type breakdown, busiest day/hour,
+// a 14-day daily series, average reply gap, and the first message.
+export async function chatConversationStats(conversationId) {
+  return apiCall('chat_conversation_stats', { conversation_id: conversationId }, 'POST');
 }
 
 // Ask the server for a fresh URL for a chat-media message whose local cache

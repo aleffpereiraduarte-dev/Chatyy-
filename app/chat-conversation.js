@@ -8381,6 +8381,32 @@ export default function ChatConversationScreen() {
   // in services/pushNotifications.js can read it on the next conv push.
   const [showNotifSettingsSheet, setShowNotifSettingsSheet] = useState(false);
   const [showStatsModal, setShowStatsModal] = useState(false);
+  // Real server-computed stats (chat_conversation_stats). Loaded on open so
+  // the modal reflects the FULL conversation history, not the rendered window.
+  const [statsData, setStatsData] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [statsError, setStatsError] = useState('');
+  const loadConversationStats = useCallback(async () => {
+    if (!conversationId) return;
+    setStatsLoading(true);
+    setStatsError('');
+    try {
+      const r = await api.chatConversationStats(conversationId);
+      if (r?.success && r.data) {
+        setStatsData(r.data);
+      } else {
+        setStatsError(r?.message || 'failed');
+      }
+    } catch (e) {
+      setStatsError(e?.message || 'failed');
+    } finally {
+      setStatsLoading(false);
+    }
+  }, [conversationId]);
+  // Fetch whenever the modal opens.
+  useEffect(() => {
+    if (showStatsModal) loadConversationStats();
+  }, [showStatsModal, loadConversationStats]);
   const [aiSummary, setAiSummary] = useState({ visible: false, loading: false, text: '', error: '', messageCount: 0 });
   const [showWebSearch, setShowWebSearch] = useState(false);
   const [webSearchQuery, setWebSearchQuery] = useState('');

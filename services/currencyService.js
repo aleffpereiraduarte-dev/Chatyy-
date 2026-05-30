@@ -64,6 +64,32 @@ const TTL_MS = 24 * 60 * 60 * 1000; // 24h
 let _memCache = null;          // { base, rates, fetchedAt }
 let _inflight = null;          // dedupe concurrent getRates() calls
 
+// Active display currency, mirrored here by CurrencyContext so that
+// module-level formatters (which have no access to React hooks — e.g.
+// marketplace.js `formatBRL`) can still convert to the user's chosen
+// currency. Defaults to BRL until the context resolves the persisted
+// choice on mount.
+let _activeCurrency = 'BRL';
+
+// Called by CurrencyContext whenever the user's display currency changes.
+export function setActiveCurrency(code) {
+  if (typeof code === 'string' && SUPPORTED_CURRENCIES.includes(code)) {
+    _activeCurrency = code;
+  }
+}
+
+export function getActiveCurrency() {
+  return _activeCurrency;
+}
+
+// Display-only formatter that uses whatever currency the user currently
+// has selected (no hook required). Pass BRL centavos; get back a
+// localized, converted string. For hook-bearing components prefer
+// useCurrency().format(), which reacts to live currency changes.
+export function formatMoneyActive(centavosBRL, locale = 'pt-BR') {
+  return formatMoney(centavosBRL, _activeCurrency, locale);
+}
+
 async function _readPersisted() {
   try {
     let raw = null;

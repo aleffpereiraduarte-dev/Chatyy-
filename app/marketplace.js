@@ -12,6 +12,8 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
+import { formatMoneyActive } from '../services/currencyService';
+import { useCurrency } from '../context/CurrencyContext';
 import AvatarCircle from '../components/AvatarCircle';
 import {
   IconArrowLeft, IconSearch, IconPlus, IconX, IconCamera, IconHeart,
@@ -30,11 +32,14 @@ const safeAlert = (title, message, buttons) => {
   } else { Alert.alert(title, message, buttons); }
 };
 
-// ─── BRL formatter ────────────────────────────────────────────────────────────
+// ─── Price formatter ──────────────────────────────────────────────────────────
+// Display-only: converts the canonical BRL-cents price to the user's
+// selected display currency via the shared FX service. Listing prices
+// are STORED in BRL cents; conversion never touches the stored value or
+// the offer/charge path (parseBRL below stays BRL-canonical).
 function formatBRL(cents) {
-  if (cents == null || isNaN(cents)) return 'R$ 0,00';
-  const value = Number(cents) / 100;
-  return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  if (cents == null || isNaN(cents)) return formatMoneyActive(0);
+  return formatMoneyActive(Number(cents));
 }
 
 function parseBRL(text) {
@@ -913,6 +918,10 @@ export default function MarketplaceScreen() {
   const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  // Subscribe to the display currency so price labels (rendered via the
+  // module-level formatBRL → formatMoneyActive) re-render when the user
+  // switches currency in settings while this screen is mounted.
+  useCurrency();
 
   const [activeTab, setActiveTab] = useState('browse');
   const [createVisible, setCreateVisible] = useState(false);

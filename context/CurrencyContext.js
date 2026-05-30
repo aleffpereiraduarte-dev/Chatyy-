@@ -18,6 +18,7 @@ import {
   detectCurrency,
   getRates,
   formatMoney as _formatMoney,
+  setActiveCurrency,
   SUPPORTED_CURRENCIES,
   CURRENCY_SYMBOLS,
 } from '../services/currencyService';
@@ -54,6 +55,13 @@ export function CurrencyProvider({ children }) {
   // manually-chosen / auto-detected value on mount.
   const [currency, setCurrencyState] = useState('BRL');
   const [autoDetected, setAutoDetected] = useState(true);
+
+  // Mirror the chosen currency into the service singleton so that
+  // module-level formatters (e.g. marketplace.js formatBRL) convert to
+  // the same currency without needing a hook.
+  useEffect(() => {
+    setActiveCurrency(currency);
+  }, [currency]);
 
   useEffect(() => {
     let cancelled = false;

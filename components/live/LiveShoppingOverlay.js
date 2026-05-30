@@ -16,11 +16,15 @@ import {
   View, Text, TouchableOpacity, StyleSheet, Image, ScrollView, Linking, Platform,
 } from 'react-native';
 import { IconTag } from '../Icons';
+import { formatMoneyActive } from '../../services/currencyService';
 
+// Display-only: product prices are stored in BRL cents; render them in
+// the user's selected display currency. The actual purchase happens via
+// the external link_url, so this never touches a charge path.
 function formatPrice(cents) {
-  const v = (Number(cents) || 0) / 100;
+  const v = Number(cents) || 0;
   if (!v) return '';
-  return `R$ ${v.toFixed(2).replace('.', ',')}`;
+  return formatMoneyActive(v);
 }
 
 export default function LiveShoppingOverlay({

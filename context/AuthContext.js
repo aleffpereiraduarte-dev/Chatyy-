@@ -5,6 +5,7 @@ import { router } from 'expo-router';
 import * as api from '../services/api';
 import { clearAll as clearAllCache, setCacheUser } from '../services/cache';
 import { initDeltaSync, stopDeltaSync } from '../services/deltaSync';
+import { DEFAULT_E2EE } from '../constants/featureFlags';
 
 // Force the biometric app-lock to re-fire on identity changes. Imported via a
 // thin module-level bridge (NOT the React context) because BiometricProvider
@@ -248,15 +249,25 @@ function _bootSyncEngines() {
   } catch (e) {
     console.warn('[Auth] deltaSync init failed:', e?.message);
   }
-  // [#1188 2026-05-19] KILL-SWITCH: envelope mode OFF. Receiver-side decrypt
-  // has been failing silently — users report messages not arriving in real
-  // time on Android+iOS even after multiple fix attempts. Falling back to
-  // plaintext PHP send path (chat_messages + WS chat_message broadcast) which
-  // ALWAYS worked. envelopePuller stays available behind setEnvelopeMode(true)
-  // for opt-in testing. Restore by removing this block when decrypt is
-  // proven stable end-to-end in QA.
-  try { globalThis.__chatyy_envelope_mode = false; } catch {}
-  // Don't start envelopePuller — there are no envelopes in plaintext mode.
+  // [#1188 2026-05-19 / 2026-05-29] KILL-SWITCH: envelope mode is gated on the
+  // DEFAULT_E2EE build flag (constants/featureFlags.js), which is FALSE today.
+  // Receiver-side decrypt was failing silently — users reported messages not
+  // arriving in real time on Android+iOS even after multiple fix attempts. So
+  // we fall back to the plaintext PHP send path (chat_messages + WS
+  // chat_message broadcast) which ALWAYS worked. The envelope pipeline is fully
+  // wired and only engages once DEFAULT_E2EE is flipped true after dual-device
+  // QA. When OFF we must NOT start the foreground envelopePuller (there are no
+  // envelopes in plaintext mode and the pull loop would just burn battery).
+  const _e2eeOn = (DEFAULT_E2EE === true);
+  try { globalThis.__chatyy_envelope_mode = _e2eeOn; } catch {}
+  if (_e2eeOn) {
+    try {
+      const { startEnvelopePuller } = require('../services/envelopePuller');
+      startEnvelopePuller();
+    } catch (e) {
+      console.warn('[Auth] envelopePuller start failed:', e?.message);
+    }
+  }
 
   // [#1188 Agent H 2026-05-19] Publish this device's pubkey on EVERY auth.
   // Was previously called ONLY in QR-pair login (login.js:808 +

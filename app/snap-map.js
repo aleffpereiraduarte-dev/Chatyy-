@@ -72,9 +72,13 @@ let GMAPS_KEY = '';
 try { GMAPS_KEY = require('expo-constants').default?.expoConfig?.extra?.GOOGLE_MAPS_KEY || ''; } catch {}
 
 // mailWs is the singleton WS bridge — re-uses the connection chat-conv
-// holds, so subscribing here is essentially free.
+// holds, so subscribing here is essentially free. The module is
+// `services/websocket` (there is no `services/mailWs` — the old path
+// silently resolved to null, leaving the location_update subscription dead,
+// so real-time pin updates never fired and the map only refreshed on the
+// 30s poll). chat-conversation.js uses this exact module + `.on(event)` API.
 let mailWs = null;
-try { mailWs = require('../services/mailWs').default; } catch {}
+try { mailWs = require('../services/websocket').default; } catch {}
 
 const { width: SW, height: SH } = Dimensions.get('window');
 
@@ -246,14 +250,39 @@ function bootGmaps() {
     this.div = null;
   };
   AvatarOverlay.prototype.update = function(pin) {
+    // Capture where we currently sit BEFORE swapping in the new pin, so a
+    // live location_update glides the avatar to the new coords rather than
+    // snapping. Visual chrome (ring/stale/badge) updates immediately; only
+    // the position is animated.
+    var fromLat = (this.pin && isFinite(this.pin.lat)) ? this.pin.lat : pin.lat;
+    var fromLng = (this.pin && isFinite(this.pin.lng)) ? this.pin.lng : pin.lng;
+    var toLat = pin.lat, toLng = pin.lng;
     this.pin = pin;
     if (this.div) {
       this.div.className = 'pin' + (pin.is_unlimited ? ' unlimited' : '') + (pin.is_stale ? ' stale' : '');
       this.div.innerHTML = pinHtml(pin);
-      var self = this;
-      this.div.addEventListener('click', function(){ rnPost({ type: 'pin_tap', email: self.pin.email }); });
+      var self0 = this;
+      this.div.addEventListener('click', function(){ rnPost({ type: 'pin_tap', email: self0.pin.email }); });
     }
-    this.draw();
+    if (this.__glideRAF) { cancelAnimationFrame(this.__glideRAF); this.__glideRAF = null; }
+    var dLat = toLat - fromLat, dLng = toLng - fromLng;
+    // First placement or a long jump → no glide.
+    if (!isFinite(fromLat) || !isFinite(fromLng) || Math.abs(dLat) > 0.02 || Math.abs(dLng) > 0.02 || (dLat === 0 && dLng === 0)) {
+      this.draw();
+      return;
+    }
+    var self = this, dur = 700;
+    var start = (window.performance && performance.now) ? performance.now() : Date.now();
+    function step(now) {
+      var t = Math.min(1, ((now || Date.now()) - start) / dur);
+      var e = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // easeInOutQuad
+      self.pin.lat = fromLat + dLat * e;
+      self.pin.lng = fromLng + dLng * e;
+      self.draw();
+      if (t < 1) { self.__glideRAF = requestAnimationFrame(step); }
+      else { self.pin.lat = toLat; self.pin.lng = toLng; self.draw(); self.__glideRAF = null; }
+    }
+    self.__glideRAF = requestAnimationFrame(step);
   };
 
   // Same OverlayView contract for the "you are here" blue dot — pointer-
@@ -385,6 +414,31 @@ function bootLeaflet() {
 
     var lOverlays = {};
     var lMe = null;
+    // Smoothly glide a Leaflet marker from its current latlng to a new one
+    // over ~700ms instead of teleporting. A real-time WS location_update
+    // should look like the friend *walking* to the new spot, not blinking
+    // there. We linearly interpolate lat/lng per animation frame; if a newer
+    // update arrives mid-glide we cancel and re-aim from the live position.
+    function glideMarker(marker, toLat, toLng) {
+      try {
+        if (marker.__glideRAF) { cancelAnimationFrame(marker.__glideRAF); marker.__glideRAF = null; }
+        var from = marker.getLatLng();
+        var fLat = from.lat, fLng = from.lng;
+        // First placement or a long jump (>~2km) → snap, don't animate.
+        var dLat = toLat - fLat, dLng = toLng - fLng;
+        if (Math.abs(dLat) > 0.02 || Math.abs(dLng) > 0.02) { marker.setLatLng([toLat, toLng]); return; }
+        var dur = 700, start = (window.performance && performance.now) ? performance.now() : Date.now();
+        function step(now) {
+          var t = Math.min(1, ((now || Date.now()) - start) / dur);
+          // easeInOutQuad for a natural settle.
+          var e = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+          marker.setLatLng([fLat + dLat * e, fLng + dLng * e]);
+          if (t < 1) { marker.__glideRAF = requestAnimationFrame(step); }
+          else { marker.__glideRAF = null; }
+        }
+        marker.__glideRAF = requestAnimationFrame(step);
+      } catch (e) { try { marker.setLatLng([toLat, toLng]); } catch (e2) {} }
+    }
     function makePinIcon(pin) {
       return L.divIcon({
         className: '',
@@ -402,7 +456,7 @@ function bootLeaflet() {
         if (!isFinite(p.lat) || !isFinite(p.lng)) return;
         seen[p.email] = true;
         if (lOverlays[p.email]) {
-          lOverlays[p.email].setLatLng([p.lat, p.lng]);
+          glideMarker(lOverlays[p.email], p.lat, p.lng);
           lOverlays[p.email].setIcon(makePinIcon(p));
         } else {
           var m = L.marker([p.lat, p.lng], { icon: makePinIcon(p) }).addTo(map);
@@ -515,12 +569,22 @@ function formatDistance(m) {
   return `${Math.round(m / 1000)} km`;
 }
 
+// Format `now` as the poll's UTC "YYYY-MM-DD HH:MM:SS" so a live WS patch's
+// updated_at parses identically to backend rows (which lack a 'Z' and get one
+// appended by the readers). Keeps freshness math consistent across both paths.
+function wsUtcStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+}
+
 function ago(updatedAt) {
   if (!updatedAt) return '';
   let ts = 0;
   try { ts = new Date(updatedAt.replace(' ', 'T') + 'Z').getTime(); } catch {}
   if (!ts) return '';
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (s < 5) return 'agora';
   if (s < 60) return `há ${s}s`;
   if (s < 3600) return `há ${Math.round(s / 60)}min`;
   if (s < 86400) return `há ${Math.round(s / 3600)}h`;
@@ -687,13 +751,16 @@ export default function SnapMapScreen() {
     } catch {}
   }, [ghostMode]);
 
-  // Now-tick: drives the "há Xmin" labels + stale ring re-renders. We
-  // re-render the list every 30s so distance/freshness stays current even
-  // when no new WS events arrive (which is exactly what looks like a
-  // "disconnect" to users — the pin frozen with an old timestamp).
+  // Now-tick: drives the "há Xs/Xmin" labels + stale ring re-renders. We
+  // re-render every 10s so the per-pin freshness badge reads "atualizado
+  // agora" → "há 10s" → "há 20s" responsively while a share is active,
+  // instead of looking frozen for half a minute (which users read as a
+  // "disconnect" — the pin stuck with an old timestamp). 10s is cheap: it
+  // only re-runs the pinsPayload useMemo, the WebView diff is a no-op when
+  // coords/labels are unchanged.
   const [nowTick, setNowTick] = useState(Date.now());
   useEffect(() => {
-    const t = setInterval(() => setNowTick(Date.now()), 30000);
+    const t = setInterval(() => setNowTick(Date.now()), 10000);
     return () => clearInterval(t);
   }, []);
 
@@ -863,7 +930,13 @@ export default function SnapMapScreen() {
       if (!data || !data.sharer_email) return;
       setShares((prev) => {
         const i = prev.findIndex((p) => (p.email || '').toLowerCase() === data.sharer_email.toLowerCase());
-        const patched = { ...(i >= 0 ? prev[i] : {}), ...data, email: data.sharer_email, updated_at: new Date().toISOString() };
+        // Stamp in the SAME shape the poll returns ("YYYY-MM-DD HH:MM:SS",
+        // implicitly UTC) so ago()/pinsPayload — which parse via
+        // `.replace(' ','T') + 'Z'` — read it correctly. Using
+        // toISOString() here would produce "...Z" and the parser would
+        // append a 2nd Z → Invalid Date → the freshness badge silently
+        // vanishes on exactly the live-WS-update path. wsUtcStamp() avoids that.
+        const patched = { ...(i >= 0 ? prev[i] : {}), ...data, email: data.sharer_email, updated_at: wsUtcStamp() };
         if (i >= 0) {
           const next = prev.slice();
           next[i] = patched;
