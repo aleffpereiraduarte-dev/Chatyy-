@@ -659,6 +659,11 @@ function ChatHub() {
   // refresh/re-render doesn't re-open the composer.
   const [autoNewStatus, setAutoNewStatus] = useState(() => params.new === '1');
   const [pendingReels, setPendingReels] = useState(false);
+  // [2026-05-30 STATUS CONSOLIDATION] When the chat-list home strip (ChatListTab)
+  // taps a story ring, it flips to the canonical `status` tab and stashes the
+  // tapped email here so ChatStatusTab deep-opens that user's viewer. This
+  // replaces ChatListTab's OWN duplicate StoryViewer — one status system now.
+  const [openStatusEmail, setOpenStatusEmail] = useState(null);
   useEffect(() => {
     if (autoNewStatus) {
       const t = setTimeout(() => setAutoNewStatus(false), 500);
@@ -670,7 +675,21 @@ function ChatHub() {
   // de aba (Chats/Calls). Sem esse flag o ReelsViewer só checava useIsFocused
   // (route ainda é /chat = true) e o native ShortsPlayer mantinha tocando
   // áudio em background. Cada tab agora recebe `tabActive` próprio.
-  const tabProps = { colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed: () => setPendingReels(false), tabActive: activeTab };
+  // requestOpenStatus(email): single entry point the chat-list strip calls to
+  // open a story on the canonical status tab. Switches tab + stashes the email;
+  // ChatStatusTab consumes openStatusEmail and clears it via onOpenStatusConsumed.
+  const requestOpenStatus = useCallback((email) => {
+    setOpenStatusEmail(email || null);
+    try { setActiveTab('status'); } catch {}
+  }, [setActiveTab]);
+  // requestNewStatus(): chat-list strip → open the canonical status composer.
+  // Switches to the status tab and flips autoNewStatus so ChatStatusTab opens
+  // its creator. Re-armable across taps (unlike the mount-only params.new path).
+  const requestNewStatus = useCallback(() => {
+    try { setActiveTab('status'); } catch {}
+    setAutoNewStatus(true);
+  }, [setActiveTab]);
+  const tabProps = { colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, openStatusEmail, onOpenStatusConsumed: () => setOpenStatusEmail(null), requestOpenStatus, requestNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed: () => setPendingReels(false), tabActive: activeTab };
 
   const titles = {
     feed: t('feed.title') || 'Feed',

@@ -4452,6 +4452,12 @@ export default {
   'post.noCatalogSounds': 'Sin resultados. Prueba otra búsqueda.',
   // Creator dashboard
   'profile.creatorDashboard': 'Panel de creador',
+  'creatorDashboard.comingSoonTitle': 'Herramientas de creador muy pronto',
+  'creatorDashboard.comingSoonBody': 'Estamos preparando herramientas para que monetices tu contenido. Te avisaremos en cuanto estén listas.',
+  'creatorDashboard.perk1': 'Recibe diamantes y propinas de tus fans',
+  'creatorDashboard.perk2': 'Suscripciones mensuales a tu contenido',
+  'creatorDashboard.perk3': 'Retira tus ganancias',
+  'creatorDashboard.backToApp': 'Volver',
   'profile.monthlyRevenue': 'Ingresos mensuales',
   'profile.subscriberCountLine': '{n} suscriptores activos',
   'profile.tipsLast7d': 'Diamantes recibidos (7d)',

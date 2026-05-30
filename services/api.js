@@ -54,7 +54,16 @@ try {
 let API_URL = 'https://chatyy.com.br/api/email.php';
 export function getApiUrl() { return API_URL; }
 export let BASE_URL = 'https://chatyy.com.br';
-export const CDN_URL = 'https://media.chatyy.com.br';
+// [2026-05-30] media.chatyy.com.br is a Cloudflare CNAME → public.r2.dev (R2)
+// that was NEVER bound to a bucket → it 404s EVERY /data/ path (verified: even
+// `/` 404s). The actual chat/status/sticker/reel files live on the origin disk,
+// served 200 by chatyy.com.br/data/ (which is also Cloudflare-proxied, so still
+// edge-cached). Pointing CDN_URL at the dead R2 host meant every photo/sticker
+// 404'd then fell back to a slow origin retry = "fotos demorando carregar".
+// Until media.chatyy.com.br is repointed/bound at the DNS layer, serve from the
+// origin host that works. getMediaUrl() below also rewrites any baked-in
+// media.chatyy.com.br URL (in already-sent messages) to this host.
+export const CDN_URL = 'https://chatyy.com.br';
 // Android cellular (Brazil 4G in particular) often takes >15s for the first
 // round-trip through Cloudflare proxy + PHP-FPM. 15s was producing
 // "timeout" aborts that left messages stuck in the offline queue while the
@@ -171,6 +180,13 @@ export function getMediaUrl(fileUrl) {
   if (fileUrl.startsWith('http')) {
     try {
       const u = new URL(fileUrl);
+      // [2026-05-30] Rewrite the dead R2 CDN host → working origin. Old messages
+      // already stored absolute https://media.chatyy.com.br/data/... URLs that
+      // 404 (unbound R2). chatyy.com.br serves the same physical file 200 and is
+      // still Cloudflare-edge-cached. Do this for ALL paths on that host.
+      if (u.hostname === 'media.chatyy.com.br') {
+        return 'https://chatyy.com.br' + u.pathname + (u.search || '');
+      }
       if (u.hostname === 'chatyy.com.br' || u.hostname === 'www.chatyy.com.br' || u.hostname === 'mail.onemundo.com.br') {
         const p = u.pathname;
         // /data/status/ added so status fotos/videos + reels/feed bytes
@@ -4295,9 +4311,13 @@ export async function chatSaved() {
   return apiCall('chat_saved', {}, 'POST');
 }
 
-// Export conversation history as ZIP (server-side build, signed download URL)
-export async function chatExportZip(conversationId) {
-  return apiCall('chat_export_zip', { conversation_id: conversationId }, 'POST');
+// Export conversation history as ZIP (server-side build, signed download URL).
+// Optional { from, to } ISO date strings filter the message range server-side.
+export async function chatExportZip(conversationId, opts = {}) {
+  const body = { conversation_id: conversationId };
+  if (opts && opts.from) body.from = opts.from;
+  if (opts && opts.to) body.to = opts.to;
+  return apiCall('chat_export_zip', body, 'POST');
 }
 
 // Secret chat: create direct conv + auto-enable E2EE via existing e2ee orchestrator
@@ -4834,6 +4854,12 @@ export async function statusPublish(content, type = 'text', bgColor = '#7C3AED',
     }
     // cross_post_feed — server creates a feed_posts row with same media when true.
     if (extraMeta.cross_post_feed === true) params.cross_post_feed = true;
+    // highlight_only — Instagram-model Destaques. Server inserts the row but
+    // immediately archives it so it NEVER appears in the 24h ephemeral status
+    // feed (status_list/manifest gate on archived_at IS NULL); the highlight
+    // still resolves it via status_highlight_items by id. Use this when adding
+    // photos to a profile highlight so they don't pollute the status strip.
+    if (extraMeta.highlight_only === true) params.highlight_only = true;
     // except_emails — author-side hide list when privacy === 'except'. The
     // backend persists it under meta and filters status_list per viewer.
     if (Array.isArray(extraMeta.except_emails) && extraMeta.except_emails.length > 0) {
@@ -5866,9 +5892,13 @@ export async function chatMediaGallery(conversationId, type = null, limit = 50, 
   return apiCall('chat_media_gallery', params, 'POST');
 }
 
-// Chat export
-export async function chatExport(conversationId, format = 'txt') {
-  return apiCall('chat_export', { conversation_id: conversationId, format });
+// Chat export (single-format text/json/html). Optional { from, to } ISO date
+// strings filter the message range server-side.
+export async function chatExport(conversationId, format = 'txt', opts = {}) {
+  const body = { conversation_id: conversationId, format };
+  if (opts && opts.from) body.from = opts.from;
+  if (opts && opts.to) body.to = opts.to;
+  return apiCall('chat_export', body, 'POST');
 }
 
 // Group invite link

@@ -4503,6 +4503,12 @@ export default {
   'post.noCatalogSounds': 'Sem resultados. Tente outra busca.',
   // Creator dashboard
   'profile.creatorDashboard': 'Painel de criador',
+  'creatorDashboard.comingSoonTitle': 'Recursos de criador em breve',
+  'creatorDashboard.comingSoonBody': 'Estamos preparando ferramentas pra você monetizar seu conteúdo. Avisamos assim que liberar.',
+  'creatorDashboard.perk1': 'Receba diamantes e gorjetas dos fãs',
+  'creatorDashboard.perk2': 'Assinaturas mensais do seu conteúdo',
+  'creatorDashboard.perk3': 'Saque dos seus ganhos via Pix',
+  'creatorDashboard.backToApp': 'Voltar',
   'profile.monthlyRevenue': 'Receita mensal',
   'profile.subscriberCountLine': '{n} assinantes ativos',
   'profile.tipsLast7d': 'Diamantes recebidos (7d)',

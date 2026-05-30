@@ -4446,6 +4446,12 @@ export default {
   'post.noCatalogSounds': 'No results. Try a different search.',
   // Creator dashboard
   'profile.creatorDashboard': 'Creator dashboard',
+  'creatorDashboard.comingSoonTitle': 'Creator tools coming soon',
+  'creatorDashboard.comingSoonBody': "We're building tools to help you monetize your content. We'll let you know the moment they go live.",
+  'creatorDashboard.perk1': 'Earn diamonds and tips from fans',
+  'creatorDashboard.perk2': 'Monthly subscriptions to your content',
+  'creatorDashboard.perk3': 'Cash out your earnings',
+  'creatorDashboard.backToApp': 'Back',
   'profile.monthlyRevenue': 'Monthly revenue',
   'profile.subscriberCountLine': '{n} active subscribers',
   'profile.tipsLast7d': 'Tips received (7d)',

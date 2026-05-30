@@ -1857,7 +1857,15 @@ export default function Profile({
                       continue;
                     }
                     if (!coverUrl) coverUrl = url;
-                    const pub = await api.statusPublish(url, 'image', '#7C3AED');
+                    // [2026-05-30] highlight_only:true — Destaques são coleções
+                    // PERMANENTES no perfil (modelo Instagram), separadas do
+                    // status efêmero de 24h. Antes este publish criava um STATUS
+                    // real que aparecia no feed de stories por 24h (reclamação do
+                    // founder: "destaque vai pro status"). Agora o backend insere
+                    // a linha já arquivada — referenciável pelo destaque mas
+                    // invisível no status_list/manifest. Reproduz na adição de
+                    // status existentes ao destaque (abaixo) também.
+                    const pub = await api.statusPublish(url, 'image', '#7C3AED', null, { highlight_only: true });
                     const sid = pub?.id || pub?.data?.id || pub?.status_id;
                     if (sid) {
                       statusIds.push(sid);

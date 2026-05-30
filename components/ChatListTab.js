@@ -1266,7 +1266,7 @@ const _saveNativeConversations = (convs) => {
 };
 
 // ── Status Stories Row (Instagram-style, unified with Notes) ──
-function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
+function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, requestOpenStatus, requestNewStatus }) {
   // Status feed comes from the shared hook now: WS deltas, MMKV preload,
   // fingerprint-diff-anti-flicker, 30d disk cache, video warm-cache. The
   // local `statuses` state lives just to keep the optimistic mutation
@@ -1590,53 +1590,17 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   // entro de novo aí aparece".
   const [pendingStatusEmail, setPendingStatusEmail] = useState(null);
   const pendingTimeoutRef = useRef(null);
+  // [2026-05-30 STATUS CONSOLIDATION] Single status system. The chat-list home
+  // strip no longer renders its OWN StoryViewer (that duplicated the canonical
+  // viewer on the status tab and confused users — founder: "muita coisa /
+  // status confuso"). Tapping any ring now flips to the `status` tab and
+  // deep-opens that user there via requestOpenStatus. If the host didn't wire
+  // requestOpenStatus (older shell), fall back to switching to the status tab.
   const openStatus = (email) => {
-    setStatusViewIdx(0);
-    if (!email) {
-      setStatusViewerEmail(null);
-      setStatusViewerLockedGroup(null);
-      setStatusViewerLockedItems(null);
-      setPendingStatusEmail(null);
-      return;
-    }
-    const lc = String(email).toLowerCase();
-    const g = statuses.find(s => String(s.email || '').toLowerCase() === lc);
-    const isPlaceholder = !!g && (g.items || []).length > 0 && (g.items || []).every(it => it?._placeholder);
-    if (g && !isPlaceholder) {
-      // Happy path: real items already cached. Open immediately and lock
-      // the snapshot so a mid-watch refetch can't collapse the modal.
-      setStatusViewerLockedGroup(g);
-      setStatusViewerLockedItems(g.items || []);
-      setStatusViewerEmail(email);
-      setPendingStatusEmail(null);
-      return;
-    }
-    // Placeholder or missing group → wait for real data. Mark pending +
-    // force a refetch + arm a 4s timeout fallback. Effect below opens the
-    // viewer the moment real items arrive.
-    setStatusViewerLockedGroup(null);
-    setStatusViewerLockedItems(null);
-    setStatusViewerEmail(null);
-    setPendingStatusEmail(email);
-    try { refetchStatuses?.(); } catch {}
-    if (pendingTimeoutRef.current) clearTimeout(pendingTimeoutRef.current);
-    pendingTimeoutRef.current = setTimeout(() => {
-      // Last-chance fallback after 4s: open with whatever we have (placeholder
-      // or all) so the user isn't stuck on a tap with no feedback. Viewer's
-      // per-item _placeholder loading state will cover the visual gap.
-      setPendingStatusEmail(prev => {
-        if (prev) {
-          setStatusViewerEmail(prev);
-          const lc2 = String(prev).toLowerCase();
-          const g2 = statuses.find(s => String(s.email || '').toLowerCase() === lc2);
-          if (g2) {
-            setStatusViewerLockedGroup(g2);
-            setStatusViewerLockedItems(g2.items || []);
-          }
-        }
-        return null;
-      });
-    }, 4000);
+    if (!email) return;
+    if (typeof requestOpenStatus === 'function') { requestOpenStatus(email); return; }
+    try { setActiveTab?.('status'); } catch {}
+    try { router?.push?.('/chat?tab=status'); } catch {}
   };
   // Resolve pending open the moment hookGroups lands with real items.
   useEffect(() => {
@@ -1830,59 +1794,23 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
               }
             };
 
-            if (myStatus) {
-              // If the user already has an active story, tapping the ring
-              // should OPEN it — that's the muscle memory from Instagram /
-              // WhatsApp. The "+" badge at the bottom-right of the ring
-              // (always visible) is the path to ADD another.
-              //
-              // Previously this opened Alert.alert with 3 options (View /
-              // Add / Cancel) but multi-button Alert doesn't render on web
-              // at all and felt noisy on native. Opening directly is the
-              // expected UX.
-              const group = statuses.find(s => s.email === user?.email);
-              const hasItems = group?.items?.length > 0;
-              if (hasItems) {
-                openStatus(user?.email);
-                return;
-              }
-              // Status expired → fall through to composer
+            // [2026-05-30 STATUS CONSOLIDATION] One status system. Whether
+            // viewing your active story or creating a new one, the chat-list
+            // strip routes to the canonical status tab (ChatStatusTab) — it
+            // owns the viewer AND the full composer (camera, filters, music,
+            // text gradients). The home strip no longer carries its own
+            // duplicate composer/editor/StoryViewer.
+            const group = statuses.find(s => s.email === user?.email);
+            const hasItems = group?.items?.length > 0;
+            if (myStatus && hasItems) {
+              // Active story → open it on the status tab.
+              openStatus(user?.email);
+              return;
             }
-            if (Platform.OS === 'web') {
-              // Web: file picker (no custom camera)
-              (async () => {
-                try {
-                  const ImagePicker = await import('expo-image-picker');
-                  const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ['images', 'videos'], quality: 1.0, videoMaxDuration: 60 });
-                  if (!r.canceled && r.assets?.[0]) {
-                    const asset = r.assets[0];
-                    const isVideo = asset.mimeType?.startsWith('video') || asset.uri?.includes('.mp4');
-                    setStatusEditor({ uri: asset.uri, type: isVideo ? 'video' : 'image', file: { uri: asset.uri, name: isVideo ? 'status.mp4' : 'status.jpg', type: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg') } });
-                    setStatusCaption('');
-                  }
-                } catch {}
-              })();
-            } else {
-              // Native: try custom camera, fallback to system picker if it crashes
-              try {
-                setShowCustomCamera(true);
-              } catch {
-                (async () => {
-                  try {
-                    const ImagePicker = await import('expo-image-picker');
-                    const perm = await ImagePicker.requestCameraPermissionsAsync();
-                    if (!perm.granted) return;
-                    const r = await ImagePicker.launchCameraAsync({ mediaTypes: ['images', 'videos'], quality: 1.0, videoMaxDuration: 60 });
-                    if (!r.canceled && r.assets?.[0]) {
-                      const asset = r.assets[0];
-                      const isVideo = asset.mimeType?.startsWith('video') || asset.duration > 0;
-                      setStatusEditor({ uri: asset.uri, type: isVideo ? 'video' : 'image', file: { uri: asset.uri, name: isVideo ? 'status.mp4' : 'status.jpg', type: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg') } });
-                      setStatusCaption('');
-                    }
-                  } catch {}
-                })();
-              }
-            }
+            // No active story → open the status tab's composer.
+            if (typeof requestNewStatus === 'function') { requestNewStatus(); return; }
+            try { setActiveTab?.('status'); } catch {}
+            try { router?.push?.('/chat?tab=status&new=1'); } catch {}
           }}
           onLongPress={() => setShowNoteModal(true)}
           activeOpacity={0.7}
@@ -2545,7 +2473,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab }) {
   );
 }
 
-export default function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setActiveTab }) {
+export default function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setActiveTab, requestOpenStatus, requestNewStatus }) {
   const confirm = useConfirm();
   const { language } = useLanguage();
   // Try MMKV preload first; fall back to the native SQLite cache (iOS).
@@ -5776,11 +5704,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           <TouchableOpacity
             activeOpacity={0.85}
             onPress={() => {
+              // [2026-05-30 STATUS CONSOLIDATION] Open your status on the
+              // canonical status tab (one viewer), not ChatListTab's own.
               const me = (user?.email || '').toLowerCase();
-              setStatusViewerEmail(me);
-              const myItems = (statuses.find(s => (s.email || '').toLowerCase() === me)?.items) || [];
-              const targetIdx = Math.max(0, myItems.findIndex(it => it.id === reactionToast.status_id));
-              setStatusViewIdx(targetIdx);
+              if (typeof requestOpenStatus === 'function') { requestOpenStatus(me); }
+              else { setStatusViewerEmail(me); }
               if (reactionToastTimer.current) clearTimeout(reactionToastTimer.current);
               Animated.timing(reactionToastY, { toValue: -120, duration: 180, useNativeDriver: true })
                 .start(() => setReactionToast(null));
@@ -5936,7 +5864,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           acompanha o resto do content"). Rendering it plainly = it moves EXACTLY
           with everything else, because it IS content. No transform = perfect. */}
       {!(searchQuery || '').trim() && (
-        <StatusStoriesRow colors={colors} isDark={isDark} user={user} router={router} t={t} setActiveTab={setActiveTab} />
+        <StatusStoriesRow colors={colors} isDark={isDark} user={user} router={router} t={t} setActiveTab={setActiveTab} requestOpenStatus={requestOpenStatus} requestNewStatus={requestNewStatus} />
       )}
       {renderArchivedHeader()}
       {renderLockedHeader()}

@@ -104,12 +104,59 @@ function ExpoAvStatusAudio({ url, Audio }) {
   return null;
 }
 
+// [2026-05-30] SDK 55 player. Expo SDK 55 DROPPED expo-av in favor of
+// expo-audio (imperative createAudioPlayer API). The old code required
+// expo-av (throws on SDK 55) → fell back to the WebView <audio> which iOS
+// WKWebView mutes under the silent switch → song NAME but no sound. This
+// mirrors the WORKING StatusMusicPlayer in components/status/StoryViewer.js:
+// setAudioModeAsync({ playsInSilentMode:true }) so audio plays even with the
+// iOS mute switch ON, then createAudioPlayer + play() + loop.
+function ExpoAudioStatusPlayer({ url }) {
+  const playerRef = useRef(null);
+  useEffect(() => {
+    let cancelled = false;
+    let unregister = () => {};
+    let expoAudio = null;
+    try { expoAudio = require('expo-audio'); } catch {}
+    if (!expoAudio || !expoAudio.createAudioPlayer) return undefined;
+    (async () => {
+      try {
+        // playsInSilentMode is the expo-audio spelling (expo-av used IOS suffix).
+        try { await expoAudio.setAudioModeAsync({ playsInSilentMode: true, shouldPlayInBackground: false }); } catch {}
+        if (cancelled) return;
+        const player = expoAudio.createAudioPlayer({ uri: url });
+        playerRef.current = player;
+        try { player.loop = true; } catch {}
+        try { player.volume = 0.85; } catch {}
+        try { player.play(); } catch {}
+        // Stop on incoming call (call_invite WS → stopAllAudio()).
+        try {
+          const { registerMediaPlayer } = require('../services/audioManager');
+          unregister = registerMediaPlayer(() => { try { player.pause(); } catch {} });
+        } catch {}
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+      try { unregister(); } catch {}
+      const p = playerRef.current; playerRef.current = null;
+      if (p) { try { p.pause(); } catch {} try { p.remove?.(); } catch {} }
+    };
+  }, [url]);
+  return null;
+}
+
 function NativeAudioPlayer({ url }) {
   if (!url || Platform.OS === 'web') return null;
+  // SDK 55: prefer expo-audio (expo-av is gone). Falls back to expo-av for
+  // legacy binaries, then to the muted WebView only as a last resort.
+  let expoAudio = null;
+  try { expoAudio = require('expo-audio'); } catch {}
+  if (expoAudio && expoAudio.createAudioPlayer) return <ExpoAudioStatusPlayer url={url} />;
   let Audio = null;
   try { Audio = require('expo-av').Audio; } catch {}
   if (Audio && Audio.Sound) return <ExpoAvStatusAudio url={url} Audio={Audio} />;
-  // Fallback for older binaries where expo-av isn't linked: hidden WebView.
+  // Fallback for older binaries where neither is linked: hidden WebView.
   const WebView = require('react-native-webview').WebView;
   const html = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><audio id="a" src="${url}" autoplay loop playsinline webkit-playsinline></audio><script>var a=document.getElementById('a');a.play().catch(function(){});document.addEventListener('visibilitychange',function(){if(!document.hidden)a.play().catch(function(){});});</script></body></html>`;
   return (
@@ -893,7 +940,7 @@ const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, 
 // migrated into hooks/useStatuses.js. The local mine/others state below
 // gets seeded by the hook's mirror useEffect.)
 
-export default function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus }) {
+export default function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openStatusEmail, onOpenStatusConsumed }) {
   // Real safe-area insets — `StatusBar.currentHeight` (the const fallback used
   // before) returned 0 on a few Pixel/Galaxy devices when the composer Modal
   // mounted before the system bar measurement settled, leaving the back/Save/
@@ -1564,18 +1611,18 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // Profile screen routes here with new=1 when user taps the "Novo" circle.
   // Kick the composer open as soon as the tab mounts so they don't also have
   // to hit "+" themselves.
-  const _autoOpenedRef = useRef(false);
+  // [2026-05-30] Re-armable: fire whenever autoNewStatus flips TRUE. The host
+  // (chat.js) resets it to false ~500ms after each request, so the chat-list
+  // strip's "+ new status" can re-open the composer every tap — not just once
+  // per mount. (Was one-shot-locked via a ref, which broke repeated opens
+  // after the status-consolidation redirect routed all composes through here.)
   useEffect(() => {
-    if (autoNewStatus && !_autoOpenedRef.current) {
-      _autoOpenedRef.current = true;
-      // Slight delay so the tab finishes mounting before the modal appears.
-      // openCreator is declared ~350 lines below this effect; keeping it in
-      // the deps array would crash with TDZ ("Cannot access 'openCreator'
-      // before initialization") because the deps array is evaluated synchronously
-      // at render time. The closure inside the setTimeout resolves the binding
-      // when it fires (well after render completes), so the call still works.
-      setTimeout(() => { try { openCreator('text'); } catch {} }, 250);
-    }
+    if (!autoNewStatus) return;
+    // Slight delay so the tab finishes mounting/switching before the modal
+    // appears. openCreator is declared below; the setTimeout closure resolves
+    // the binding when it fires (after render) to avoid a TDZ in the deps array.
+    const _to = setTimeout(() => { try { openCreator('text'); } catch {} }, 250);
+    return () => clearTimeout(_to);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoNewStatus]);
 
@@ -1726,6 +1773,37 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // Keep the ref in sync so panResponder can call it
   closeViewerRef.current = closeViewer;
 
+  // [2026-05-30 STATUS CONSOLIDATION] Deep-open a specific user's story when
+  // another surface (the chat-list home strip) redirects here. ChatListTab no
+  // longer renders its OWN StoryViewer — it flips to this canonical status tab
+  // and passes the tapped email via `openStatusEmail`. We resolve the group
+  // from the same hook data this tab already uses and open the viewer; if the
+  // items haven't landed yet we stash the email in the pending ref so the
+  // hook-sync effect opens it the moment real items arrive (same path as a
+  // manifest-only tap). Idempotent: clears the prop via onOpenStatusConsumed.
+  const _openStatusHandledRef = useRef(null);
+  useEffect(() => {
+    const target = String(openStatusEmail || '').trim();
+    if (!target) { _openStatusHandledRef.current = null; return; }
+    if (_openStatusHandledRef.current === target.toLowerCase()) return;
+    _openStatusHandledRef.current = target.toLowerCase();
+    const lc = target.toLowerCase();
+    const isMine = lc === String(currentEmail || '').toLowerCase();
+    const group = isMine && myStatuses.length > 0
+      ? { ownerEmail: currentEmail, ownerName: currentName, items: myStatuses }
+      : (contactStatuses || []).find(g => String(g.ownerEmail || '').toLowerCase() === lc);
+    if (group && (group.items || []).length > 0 && !(group.items || []).every(it => it?._placeholder)) {
+      setTimeout(() => { try { openViewer(group); } catch {} }, 0);
+    } else {
+      // Items not cached yet — stash + force refetch. The hook-sync effect
+      // (~line 1569) opens the viewer when the group's real items arrive.
+      _pendingViewerEmailRef.current = target;
+      try { loadStatuses?.(); } catch {}
+    }
+    try { onOpenStatusConsumed?.(); } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openStatusEmail, myStatuses, contactStatuses, currentEmail, currentName]);
+
   // Switch to next person's statuses
   const goToNextPerson = useCallback(() => {
     const nextIdx = currentGroupIndex + 1;
@@ -1837,16 +1915,34 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     }
   }, [viewerIndex, goToPrevPerson]);
 
-  // Status music playback now lives INSIDE StoryViewer (components/status/
-  // StoryViewer.js) so it plays from EVERY entry point (home strip / profile /
-  // chat tab), not only here — StoryViewer previously showed just the music
-  // NAME and never played audio ("nome aparece mas a música não toca"). Keep
-  // this effect stop-only so we never double-play (StoryViewer's expo-av player
-  // + this one) when ChatStatusTab is the surface that opened the viewer.
+  // [2026-05-30] Status music playback. CRITICAL FIX: this surface
+  // (ChatStatusTab — the chatlist main status page) renders its OWN inline
+  // Modal viewer, NOT the shared StoryViewer. A previous comment claimed
+  // "music lives inside StoryViewer" and left this effect STOP-ONLY — so when
+  // the user opened a music status from the MAIN status page, the song NAME
+  // showed but audio NEVER played ("nome aparece mas a música não toca").
+  // Most viewing happens here, so most users never heard the music.
+  //
+  // Now: when the visible item is a NON-video status with a music preview URL,
+  // actually start playback (web Audio + native expo-audio via NativeAudioPlayer
+  // → setNativeAudioSrc). Video statuses keep their own audio track and must
+  // NOT duel a music overlay, matching StoryViewer (url = isVideo ? null : ...).
+  // Stop on close / item change / pause.
   useEffect(() => {
     setNativeAudioSrc(null);
     stopStatusAudio();
-  }, [viewerVisible, viewerIndex, viewerStatuses]);
+    if (!viewerVisible) return undefined;
+    const item = viewerStatuses[viewerIndex];
+    if (!item) return undefined;
+    const isVideo = item.type === 'video';
+    const musicUrl = !isVideo ? (item.music_preview_url || '') : '';
+    if (!musicUrl || isPaused) return undefined;
+    // playStatusAudio: web → HTMLAudio; native → sets _nativeAudioUrl which
+    // the registered callback pipes into setNativeAudioSrc → <NativeAudioPlayer>
+    // (expo-audio under SDK 55). See playStatusAudio() near top of file.
+    playStatusAudio(musicUrl);
+    return () => { stopStatusAudio(); };
+  }, [viewerVisible, viewerIndex, viewerStatuses, isPaused]);
 
   // Per-item duration override: when a video reports its real length the
   // progress bar uses that instead of STATUS_DURATION (5s). Falls back to

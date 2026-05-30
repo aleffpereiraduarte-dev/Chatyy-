@@ -68,6 +68,7 @@ import MessageEffectPicker from '../components/MessageEffectPicker';
 import MessageScreenEffect, { SCREEN_EFFECT_IDS } from '../components/MessageScreenEffect';
 import MessageBubbleEffect from '../components/MessageBubbleEffect';
 import MediaGallery from '../components/MediaGallery';
+import ExportConversationModal from '../components/ExportConversationModal';
 import FormatToolbar from '../components/FormatToolbar';
 import RichTextOverlay from '../components/RichTextOverlay';
 import LocationPickerSheet from '../components/LocationPickerSheet';
@@ -3779,6 +3780,17 @@ function CallMessage({ content, isOwn, colors, currentEmail, isDarkMode }) {
 // ATTACHMENT MENU (+ Button)
 // ============================================================
 
+// Small "GIF" badge icon for the attach menu (GIF was relocated here from
+// the composer pill to stop keyboard-open mis-taps). Renders the GIF
+// wordmark inside the colored circle the menu already provides.
+function IconGifBadge({ size = 24, color = '#fff' }) {
+  return (
+    <Text style={{ fontSize: Math.round(size * 0.42), fontWeight: '900', color, letterSpacing: 0.5 }}>
+      GIF
+    </Text>
+  );
+}
+
 function AttachmentMenu({ visible, onClose, onPick, colors }) {
   const { t } = useLanguage();
   const sheetAnim = useRef(new Animated.Value(0)).current;
@@ -3806,6 +3818,10 @@ function AttachmentMenu({ visible, onClose, onPick, colors }) {
   // redundantes aqui.
   const items = [
     { key: 'gallery', icon: IconImage, label: t('chatConv.gallery') || 'Galeria', color: '#8b5cf6' },
+    // GIF relocated here from the composer pill — see handlePickAttachment
+    // 'gif' case. Keeps the feature one tap away without crowding the
+    // text-input edge where stray keyboard-open taps used to land.
+    { key: 'gif', icon: IconGifBadge, label: t('chatConv.gif') || 'GIF', color: '#ec4899' },
     { key: 'file', icon: IconFileText, label: t('chatConv.file') || 'Arquivo', color: '#3b82f6' },
     // [2026-05-15] "Localização" agora abre LocationPickerSheet que já tem
     // chips 15min/1h/8h pra share ao vivo — botão "Loc. ao vivo" separado
@@ -13102,6 +13118,11 @@ export default function ChatConversationScreen() {
       case 'camera':       return handleCamera();
       case 'gallery':      return handleGallery();
       case 'file':         return handleAttachFile();
+      // GIF moved out of the composer pill (was sitting right at the
+      // text-input's right edge → fat-finger mis-tap every time the
+      // keyboard opened). Now lives in the + menu (and the left-swipe
+      // gesture on the pill still toggles it for power users).
+      case 'gif':          return (setShowGifPicker(true), setShowStickerPicker(false));
       case 'audio':        return handlePickAudioFile();
       case 'location':     return setShowLocationPickerSheet(true);
       case 'liveLocation': return handleShareLiveLocation();
@@ -21550,7 +21571,11 @@ export default function ChatConversationScreen() {
               // pick up a slightly warmer white / darker navy-tinted purple
               // so the contrast against the background is stronger.
               ? [styles.bubbleOwn, { backgroundColor: isDark ? '#5B21B6' : '#E6DBFF' }]
-              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#231835' : '#FFFFFF'), ...(isDark ? {} : { borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.06)' }) }],
+              // [bubble-redesign 2026-05-30] Received bubble: cleaner neutral
+              // surface — light stays crisp white with a hairline; dark moves
+              // to a slightly lighter slate-purple (#262135) so body text and
+              // the meta row keep strong contrast against the wallpaper.
+              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#262135' : '#FFFFFF'), ...(isDark ? {} : { borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.05)' }) }],
             // Bubble shape (settings.js `bubble_shape`). Layered AFTER the
             // default bubbleOwn/bubbleOther corner radii so it overrides them,
             // but BEFORE the isFirstInGroup tail override below so the tail
@@ -21589,7 +21614,7 @@ export default function ChatConversationScreen() {
                   : 'M8,0 L0,0 C0,0 0,3 1,5.5 C3,9.5 8,13 8,13 Z'}
                 fill={isOwn
                   ? (isDark ? '#5B21B6' : '#E6DBFF')
-                  : (isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#231835' : '#FFFFFF'))}
+                  : (isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#262135' : '#FFFFFF'))}
               />
             </Svg>
           )}
@@ -23209,7 +23234,7 @@ export default function ChatConversationScreen() {
             return `${messages.length}_${messages[messages.length - 1]?.id || 0}_${voteSum}_${txCount}_${reactSum}_${editSum}`;
           })()}
           ownBubbleColor={isDark ? '#5B21B6' : '#E6DBFF'}
-          otherBubbleColor={isDark ? '#231835' : '#ffffff'}
+          otherBubbleColor={isDark ? '#262135' : '#ffffff'}
           listBackgroundColor={isDark ? '#0E0A18' : '#F6F0FE'}
           textColor={isDark ? '#f0f2f5' : '#111b21'}
           metaColor={isDark ? 'rgba(240,242,245,0.55)' : 'rgba(76,29,149,0.55)'}
@@ -24863,22 +24888,13 @@ export default function ChatConversationScreen() {
               </TouchableOpacity>
             )}
 
-            {/* GIF button - only when empty */}
-            {!inputText.trim() && (
-              <TouchableOpacity
-                onPress={() => { setShowGifPicker(prev => !prev); setShowStickerPicker(false); }}
-                style={{ width: 34, height: 44, alignItems: 'center', justifyContent: 'center' }}
-                accessibilityLabel={t('chatConv.gif') || 'GIF'}
-                accessibilityRole="button"
-              >
-                <View style={{
-                  paddingHorizontal: 5, paddingVertical: 1, borderRadius: 4,
-                  borderWidth: 1.5, borderColor: showGifPicker ? '#7C3AED' : (isDark ? '#8696a0' : '#8696a0'),
-                }}>
-                  <Text style={{ fontSize: 10, fontWeight: '800', color: showGifPicker ? '#7C3AED' : (isDark ? '#8696a0' : '#8696a0') }}>GIF</Text>
-                </View>
-              </TouchableOpacity>
-            )}
+            {/* GIF button removed from the composer pill (2026-05-30):
+                it sat flush against the text-input's right edge, so opening
+                the keyboard routinely landed a stray thumb-tap on it. GIF is
+                now reachable via the + attach menu (key 'gif') and the
+                existing left-swipe gesture on the pill (composerSwipeHandlers).
+                Keeping showGifPicker state intact — only the inline trigger
+                is gone. */}
 
             {/* Camera button - inside pill, right side, only when empty */}
             {!inputText.trim() && (
@@ -25449,137 +25465,17 @@ export default function ChatConversationScreen() {
         t={t}
       />
 
-      {/* Export Modal */}
-      <Modal visible={showExportModal} transparent animationType="fade" onRequestClose={() => setShowExportModal(false)}>
-        <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }} onPress={() => setShowExportModal(false)}>
-          <Pressable style={{ backgroundColor: colors.surface, borderRadius: 16, padding: 20, width: 300 }} onPress={() => {}}>
-            <Text style={{ fontSize: 17, fontWeight: '600', color: colors.text, marginBottom: 16 }}>{t('chat.exportChat')}</Text>
-            {/* Full backup (ZIP with messages.json + chat.html + chat.txt) */}
-            <TouchableOpacity
-              onPress={async () => {
-                setShowExportModal(false);
-                try {
-                  const r = await api.chatExportZip(conversationId);
-                  if (r?.success && r.data?.url) {
-                    const origin = (typeof window !== 'undefined' && window.location?.origin)
-                      ? window.location.origin
-                      : (require('../services/api').API_BASE_URL || '').replace(/\/api\/?$/, '');
-                    const fullUrl = (origin || 'https://chatyy.com.br') + r.data.url;
-                    if (Platform.OS === 'web') {
-                      const a = document.createElement('a');
-                      a.href = fullUrl;
-                      a.download = fullUrl.split('/').pop();
-                      a.click();
-                    } else {
-                      const { Linking } = require('react-native');
-                      await Linking.openURL(fullUrl);
-                    }
-                  }
-                } catch {}
-              }}
-              style={{ paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <IconPackage size={15} color={colors.text} />
-                <Text style={{ fontSize: 15, color: colors.text, fontWeight: '600' }}>{t('chat.export') || 'Exportar conversa'} (.zip)</Text>
-              </View>
-              <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>HTML + JSON + TXT</Text>
-            </TouchableOpacity>
-            {['txt', 'json'].map(fmt => (
-              <TouchableOpacity
-                key={fmt}
-                onPress={async () => {
-                  setShowExportModal(false);
-                  try {
-                    const r = await api.chatExport(conversationId, fmt);
-                    if (r.success && r.data?.content) {
-                      if (Platform.OS === 'web') {
-                        const blob = new Blob([r.data.content], { type: fmt === 'json' ? 'application/json' : 'text/plain' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a'); a.href = url; a.download = r.data.filename; a.click();
-                        URL.revokeObjectURL(url);
-                      } else {
-                        // Native: share via system share sheet, then clean up temp file
-                        let FileSystem; try { FileSystem = require('expo-file-system/legacy'); } catch { FileSystem = require('expo-file-system'); }
-                        const filePath = `${FileSystem.cacheDirectory}${r.data.filename}`;
-                        try {
-                          await FileSystem.writeAsStringAsync(filePath, r.data.content, { encoding: FileSystem.EncodingType.UTF8 });
-                          const Sharing = require('expo-sharing');
-                          if (await Sharing.isAvailableAsync()) {
-                            await Sharing.shareAsync(filePath, { mimeType: fmt === 'json' ? 'application/json' : 'text/plain' });
-                          } else {
-                            await Share.share({ message: r.data.content, title: r.data.filename });
-                          }
-                        } catch {
-                          await Share.share({ message: r.data.content, title: r.data.filename });
-                        } finally {
-                          // Always clean up exported temp file
-                          try { await FileSystem.deleteAsync(filePath, { idempotent: true }); } catch {}
-                        }
-                      }
-                    }
-                  } catch {}
-                }}
-                style={{ paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}
-              >
-                <Text style={{ fontSize: 15, color: colors.text }}>{fmt === 'txt' ? t('chat.exportTxt') : t('chat.exportJson')}</Text>
-              </TouchableOpacity>
-            ))}
-            {/* Clear chat — soft delete (per-user, keeps conversation) */}
-            <TouchableOpacity
-              onPress={() => {
-                setShowExportModal(false);
-                const doClear = async () => {
-                  if (clearInflightRef.current) return;
-                  clearInflightRef.current = true;
-                  try {
-                    const r = await api.apiCall('chat_clear', { conversation_id: conversationId }, 'POST');
-                    if (r?.success) {
-                      setMessages([]);
-                      // Lester "Limpar volta tudo": write the cleared_at watermark +
-                      // wipe local stores so envelope pull / bootstrap / cold-open
-                      // (mount-read at ~7220) don't resurrect the cleared messages.
-                      // Mirrors the list-row clear at ChatListTab.js:4263.
-                      try {
-                        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-                        await AsyncStorage.setItem(`cleared_at_${conversationId}`, String(Date.now()));
-                        await AsyncStorage.removeItem(`chatMsgs_${conversationId}`);
-                      } catch {}
-                      try { const cc = require('../services/chatCache'); if (typeof cc.clearConversationMessages === 'function') await cc.clearConversationMessages(conversationId); } catch {}
-                      try { const ldb = require('../services/localDb'); if (typeof ldb.clearConversationMessages === 'function') await ldb.clearConversationMessages(conversationId); } catch {}
-                      try { SmartCache.clearConversation?.(conversationId); } catch {}
-                      try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
-                    }
-                  } catch {} finally {
-                    clearInflightRef.current = false;
-                  }
-                };
-                if (Platform.OS === 'web') {
-                  if (window.confirm(t('chatConv.clearChatConfirm') || 'Limpar todas as mensagens dessa conversa? (so para voce)')) doClear();
-                } else {
-                  Alert.alert(
-                    t('chatConv.clearChat') || 'Limpar conversa',
-                    t('chatConv.clearChatConfirm') || 'Apagar todas as mensagens dessa conversa? Isso so afeta voce.',
-                    [
-                      { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-                      { text: t('chatConv.clear') || 'Limpar', style: 'destructive', onPress: doClear },
-                    ]
-                  );
-                }
-              }}
-              style={{ paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.border }}
-            >
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <IconTrash size={15} color="#ef4444" />
-                <Text style={{ fontSize: 15, color: '#ef4444' }}>{t('chatConv.clearChat') || 'Limpar conversa'}</Text>
-              </View>
-            </TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowExportModal(false)} style={{ paddingVertical: 14 }}>
-              <Text style={{ fontSize: 15, color: colors.textSecondary, textAlign: 'center' }}>{t('common.cancel') || 'Cancel'}</Text>
-            </TouchableOpacity>
-          </Pressable>
-        </Pressable>
-      </Modal>
+      {/* Export Modal — WhatsApp-style sheet (components/ExportConversationModal).
+          Format choice (zip/txt/json) + optional date range, real backend
+          export via chat_export / chat_export_zip with share/download. */}
+      <ExportConversationModal
+        visible={showExportModal}
+        onClose={() => setShowExportModal(false)}
+        conversationId={conversationId}
+        conversationName={conversationName}
+        colors={colors}
+        t={t}
+      />
 
       {/* Reaction Detail Modal */}
       <ReactionDetailModal
@@ -26003,45 +25899,12 @@ export default function ChatConversationScreen() {
                 </TouchableOpacity>
               )}
 
-              {/* Save to "Saved Messages" — clones the message into the user's
-                  chat-with-self. Distinct from "Galeria" (which saves media
-                  to the device camera roll) and from Star (which marks
-                  in-place). Telegram-style "Salvar" — works for any message
-                  type so a user can keep a personal copy of important pins. */}
-              {!selectedMsg?.deleted_at && (
-                <TouchableOpacity
-                  style={styles.ctxIconBtn}
-                  onPress={async () => {
-                    const msg = selectedMsg;
-                    setSelectedMsg(null);
-                    if (!msg || typeof msg.id !== 'number' || msg.id <= 0) return;
-                    try {
-                      const r = await api.chatCloneToSaved(msg.id);
-                      if (r?.success) {
-                        safeAlert(
-                          t('chatConv.savedToFavs') || 'Salvo',
-                          t('chat.savedMessages') || 'Saved Messages'
-                        );
-                      } else {
-                        safeAlert(
-                          t('common.error') || 'Erro',
-                          r?.message || (t('chatConv.savedToFavsError') || 'Falha ao salvar')
-                        );
-                      }
-                    } catch (e) {
-                      safeAlert(t('common.error') || 'Erro', String(e?.message || e));
-                    }
-                  }}
-                  activeOpacity={0.6}
-                >
-                  <View style={[styles.ctxIconCircle, { backgroundColor: '#10B98120' }]}>
-                    <IconBookmark size={20} color="#10B981" />
-                  </View>
-                  <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>
-                    {t('chatConv.saveToFavs') || 'Salvar'}
-                  </Text>
-                </TouchableOpacity>
-              )}
+              {/* [2026-05-30] In-bubble "Salvar" (clone to the Saved Messages
+                  self-chat) removed per product call — the saved-messages
+                  entry point was confusing alongside Star/Favoritas. The
+                  Star action above covers keeping important messages.
+                  Backend chat_clone_to_saved + the /saved-messages screen
+                  still exist, so this can be re-enabled if desired. */}
 
               {/* Select — enters WhatsApp-style multi-select mode. Promoted
                   to the primary bar because users kept missing it buried in
@@ -29699,8 +29562,12 @@ const styles = StyleSheet.create({
   // beneath.
   replyText: { fontSize: 13, lineHeight: 17, opacity: 0.82 },
   bubble: {
-    borderRadius: 18, paddingHorizontal: 14,
-    paddingTop: 7, paddingBottom: 6,
+    // [bubble-redesign 2026-05-30] Tighter, consistent padding + slightly
+    // rounder corners for a WhatsApp/Telegram-grade feel. Vertical padding
+    // is symmetric (8/8) so the text block sits centered and the meta row
+    // beneath it never looks cramped against the bottom edge.
+    borderRadius: 20, paddingHorizontal: 13,
+    paddingTop: 8, paddingBottom: 7,
     minWidth: 82,
     // flexShrink + alignSelf so Yoga measures the Text intrinsic width
     // BEFORE applying minWidth — without these, the first render in a
@@ -29712,11 +29579,12 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     alignSelf: 'flex-start',
     ...Platform.select({
-      // Flatter WhatsApp-style hairline shadow (was 0.08/14/elev2) — lighter
-      // bubbles read cleaner and scroll smoother on long threads.
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 3 },
+      // Soft, single-direction elevation — a gentle drop shadow that lifts
+      // the bubble off the wallpaper without the muddy halo a large radius
+      // gives. Tuned to read on both light and dark themes.
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4 },
       android: { elevation: 1 },
-      web: { boxShadow: '0 1px 2px rgba(0,0,0,0.04)' },
+      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.06)' },
     }),
   },
   // WAVE 129 (2026-05-22, bug #1354 / foto 7192): originally added
@@ -29733,12 +29601,12 @@ const styles = StyleSheet.create({
   // bubble edge instead of being hard-clipped mid-word.
   bubbleWithReply: { minWidth: 200 },
   bubbleOwn: {
-    borderTopLeftRadius: 18, borderTopRightRadius: 18,
-    borderBottomLeftRadius: 18, borderBottomRightRadius: 5,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    borderBottomLeftRadius: 20, borderBottomRightRadius: 6,
   },
   bubbleOther: {
-    borderTopLeftRadius: 18, borderTopRightRadius: 18,
-    borderBottomLeftRadius: 5, borderBottomRightRadius: 18,
+    borderTopLeftRadius: 20, borderTopRightRadius: 20,
+    borderBottomLeftRadius: 6, borderBottomRightRadius: 20,
     borderWidth: 0, borderColor: 'transparent',
   },
   bubbleDeleted: { opacity: 0.55, paddingHorizontal: 12, paddingVertical: 8 },
