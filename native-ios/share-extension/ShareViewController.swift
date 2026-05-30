@@ -209,6 +209,10 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         // share-sheet for 2-10s ("fica carregando travado").
         loadStartedAt = Date()
         setupUI()
+        // WhatsApp parity: if the App-Group recents snapshot was empty (fresh
+        // install / cache cleared / never opened the chat list), fetch the
+        // conversation list live so "Enviar para uma conversa" is never blank.
+        fetchRecentConversationsIfEmpty()
         extractSharedContent { [weak self] in
             DispatchQueue.main.async { self?.onContentLoaded() }
         }
@@ -293,14 +297,55 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         if let data = ud.data(forKey: "chatyy.recent_conversations"),
            let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
             allConversations = arr.compactMap { ShareConversation.from(dict: $0) }
-            // First 5 → "Frequentemente contatados", rest → "Conversas recentes"
-            // (the JS side already sorted by lastMessageAt desc).
-            if allConversations.count > 5 {
-                frequentConversations = Array(allConversations.prefix(5))
-                recentConversations = Array(allConversations.dropFirst(5))
-            } else {
-                frequentConversations = allConversations
-                recentConversations = []
+            applyConversationsSplit()
+        }
+    }
+
+    /// First 5 → "Frequentemente contatados", rest → "Conversas recentes"
+    /// (the source is already sorted by lastMessageAt desc). Factored out so
+    /// both the App-Group snapshot path and the live API-fetch fallback feed
+    /// the same section layout.
+    private func applyConversationsSplit() {
+        if allConversations.count > 5 {
+            frequentConversations = Array(allConversations.prefix(5))
+            recentConversations = Array(allConversations.dropFirst(5))
+        } else {
+            frequentConversations = allConversations
+            recentConversations = []
+        }
+    }
+
+    /// WhatsApp parity (2026-05-30): the App-Group snapshot is only written
+    /// when the host app's chat list / auth flow runs. If the user shares a
+    /// photo before ever opening the chat list this install (fresh install,
+    /// cleared cache, or straight from Photos.app), the snapshot is empty and
+    /// the sheet showed "Nenhuma conversa ainda" — exactly the founder's
+    /// report. Since we already hold the auth token + base URL, just fetch
+    /// the conversation list directly from the API and repaint. Best-effort,
+    /// silent on failure (the quick-action rows still work).
+    private func fetchRecentConversationsIfEmpty() {
+        guard allConversations.isEmpty, !authToken.isEmpty else { return }
+        ShareDiag.recordInfo("recents empty — fetching chat_list from API")
+        ChatyyAPI.fetchRecentConversations(baseUrl: baseUrl, token: authToken) { [weak self] convs in
+            guard let self = self, !convs.isEmpty else { return }
+            DispatchQueue.main.async {
+                // Don't clobber a selection the user already made from the
+                // (possibly intent-preselected) virtual rows.
+                self.allConversations = convs
+                self.applyConversationsSplit()
+                // Re-run intent preselect now that we have real rows to match.
+                self.preselectFromIntentIfNeeded()
+                self.tableView.reloadData()
+                self.updateSendBar()
+                // Mirror the freshly-fetched list back into the App Group so
+                // the NEXT share is instant (no network round-trip).
+                if let ud = UserDefaults(suiteName: self.appGroupId),
+                   let data = try? JSONSerialization.data(withJSONObject: convs.map { [
+                       "id": $0.id, "name": $0.name, "email": $0.email,
+                       "avatarUrl": $0.avatarUrl, "type": $0.type,
+                   ] }) {
+                    ud.set(data, forKey: "chatyy.recent_conversations")
+                }
             }
         }
     }
@@ -2144,6 +2189,56 @@ private enum ChatyyAPI {
         req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         session.dataTask(with: req) { data, resp, err in
             handleJSONResponse(data: data, resp: resp, err: err, completion: completion)
+        }.resume()
+    }
+
+    /// WhatsApp parity (2026-05-30): fetch the user's conversation list so the
+    /// ShareExtension can populate "Enviar para uma conversa" even when the
+    /// App-Group snapshot is empty. Hits `chat_list` (returns a bare array
+    /// payload under `data`). Maps the same fields the host app caches:
+    /// id / name / avatar / is_group / other_email. Best-effort — calls back
+    /// with [] on any error so the caller just keeps the quick-action rows.
+    static func fetchRecentConversations(baseUrl: String, token: String,
+                                         completion: @escaping ([ShareConversation]) -> Void) {
+        guard let url = URL(string: "\(baseUrl)/api/email.php?action=chat_list") else {
+            completion([]); return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.timeoutInterval = 15
+        req.httpBody = "{}".data(using: .utf8)
+        session.dataTask(with: req) { data, _, err in
+            if let err = err {
+                ShareDiag.recordWarn("fetchRecentConversations: \(err.localizedDescription)")
+                completion([]); return
+            }
+            guard let data = data,
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { completion([]); return }
+            // chat_list returns { success, data: [ {...} ] }. Tolerate the bare
+            // array and a `conversations`-keyed variant too.
+            let arr = (json["data"] as? [[String: Any]])
+                ?? (json["conversations"] as? [[String: Any]])
+                ?? []
+            let convs: [ShareConversation] = arr.compactMap { row in
+                guard let idAny = row["id"] else { return nil }
+                let id = String(describing: idAny)
+                let other = (row["other_email"] as? String) ?? (row["email"] as? String) ?? ""
+                let nm = (row["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+                    ?? (row["display_name"] as? String)
+                    ?? (other.isEmpty ? "" : String(other.split(separator: "@").first ?? ""))
+                let isGroup = (row["is_group"] as? String == "1")
+                    || (row["is_group"] as? Bool == true)
+                    || (row["is_group"] as? Int == 1)
+                let avatar = (row["avatar_url"] as? String) ?? (row["avatar"] as? String) ?? ""
+                let type = (row["type"] as? String) ?? (isGroup ? "group" : "direct")
+                return ShareConversation(id: id, name: nm, email: other.lowercased(),
+                                         avatarUrl: avatar, type: type)
+            }
+            ShareDiag.recordInfo("fetchRecentConversations: \(convs.count) conversations")
+            completion(convs)
         }.resume()
     }
 
