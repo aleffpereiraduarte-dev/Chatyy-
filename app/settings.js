@@ -1869,38 +1869,68 @@ function SettingsScreenInner() {
               conceptually ("Idioma e moeda"). FX rates fetched from
               chat_currency_rates and cached 24h; first launch auto-detects
               from device locale. */}
-          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
-            <View style={s.settingInfo}>
-              <Text style={[s.settingLabel, { color: colors.text }]}>
+          <View style={{ paddingVertical: Spacing.md, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.borderLight, marginTop: Spacing.sm }}>
+            {/* Header: label + auto-detect badge */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+              <IconGlobe size={15} color={colors.textSecondary} style={{ marginRight: 6 }} />
+              <Text style={[s.settingLabel, { color: colors.text, flex: 1 }]}>
                 {t('settings.currencyLabel') || 'Moeda'}
               </Text>
-              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {currencyAutoDetected
-                  ? (t('settings.currencyAuto') || 'Auto') + ' · ' + userCurrency
-                  : userCurrency}
-              </Text>
-            </View>
-            <View style={[s.perPageBtns, { flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: '60%' }]}>
-              {supportedCurrencies.map(code => (
-                <TouchableOpacity
-                  key={code}
-                  style={[
-                    s.perPageBtn,
-                    { borderColor: colors.divider, marginBottom: 4 },
-                    userCurrency === code && { backgroundColor: colors.primary, borderColor: colors.primary },
-                  ]}
-                  onPress={() => setUserCurrency(code)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`${t('settings.currency.' + code) || code} (${currencySymbols[code] || ''})`}
-                >
-                  <Text style={[
-                    s.perPageText, { color: colors.text },
-                    userCurrency === code && { color: '#fff' },
-                  ]}>
-                    {currencySymbols[code] || ''} {code}
+              {currencyAutoDetected && (
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center',
+                  backgroundColor: (colors.success || '#10B981') + '1F',
+                  borderRadius: 999, paddingHorizontal: 9, paddingVertical: 3,
+                }}>
+                  <IconCheck size={12} color={colors.success || '#10B981'} style={{ marginRight: 3 }} />
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: colors.success || '#10B981' }}>
+                    {t('settings.currencyAuto') || 'Auto'}
                   </Text>
-                </TouchableOpacity>
-              ))}
+                </View>
+              )}
+            </View>
+            <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
+              {(t('settings.currencyDesc') || 'Usada para exibir valores no app.') + ' · ' + userCurrency}
+            </Text>
+            {/* Currency swatch chips — symbol prominent, selected highlight */}
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {supportedCurrencies.map(code => {
+                const selected = userCurrency === code;
+                return (
+                  <TouchableOpacity
+                    key={code}
+                    activeOpacity={0.8}
+                    style={{
+                      flexDirection: 'row', alignItems: 'center',
+                      paddingHorizontal: 14, paddingVertical: 9,
+                      borderRadius: 12, borderWidth: selected ? 1.5 : 1,
+                      borderColor: selected ? colors.primary : colors.borderLight,
+                      backgroundColor: selected ? colors.primary + '14' : colors.surfaceVariant || 'transparent',
+                    }}
+                    onPress={() => setUserCurrency(code)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    accessibilityLabel={`${t('settings.currency.' + code) || code} (${currencySymbols[code] || ''})`}
+                  >
+                    <Text style={{
+                      fontSize: 15, fontWeight: '800', marginRight: 6,
+                      color: selected ? colors.primary : colors.textSecondary,
+                    }}>
+                      {currencySymbols[code] || ''}
+                    </Text>
+                    <Text style={{
+                      fontSize: 13, fontWeight: selected ? '700' : '600',
+                      color: selected ? colors.primary : colors.text,
+                      letterSpacing: 0.3,
+                    }}>
+                      {code}
+                    </Text>
+                    {selected && (
+                      <IconCheck size={14} color={colors.primary} style={{ marginLeft: 6 }} />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           </View>
         </View>
@@ -2305,37 +2335,48 @@ function SettingsScreenInner() {
                   accessibilityRole="button"
                   accessibilityLabel={`Wallpaper ${g.label}`}
                 >
+                  {/* Outer ring keeps the tile a constant 70px so the
+                      selected highlight never nudges the grid layout. */}
                   <View style={{
-                    width: 64, height: 64, borderRadius: 14, overflow: 'hidden',
-                    borderWidth: selected ? 3 : 1,
-                    borderColor: selected ? colors.primary : colors.borderLight,
+                    width: 70, height: 70, borderRadius: 18, padding: selected ? 3 : 0,
+                    backgroundColor: selected ? colors.primary : 'transparent',
                     alignItems: 'center', justifyContent: 'center',
+                    ...(Platform.OS === 'web'
+                      ? { boxShadow: '0 2px 6px rgba(0,0,0,0.12)' }
+                      : { shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 5, shadowOffset: { width: 0, height: 2 }, elevation: 2 }),
                   }}>
-                    <Svg width={62} height={62} style={{ position: 'absolute', top: 0, left: 0 }}>
-                      <Defs>
-                        <SvgLinearGradient id={`wp_${g.id.replace('#','')}`} x1="0" y1="0" x2="1" y2="1">
-                          <Stop offset="0" stopColor={g.from} stopOpacity="1" />
-                          <Stop offset="1" stopColor={g.to} stopOpacity="1" />
-                        </SvgLinearGradient>
-                      </Defs>
-                      <SvgRect x="0" y="0" width="62" height="62" fill={`url(#wp_${g.id.replace('#','')})`} />
-                    </Svg>
-                    {selected && (
-                      <View style={{
-                        width: 28, height: 28, borderRadius: 14,
-                        backgroundColor: 'rgba(0,0,0,0.35)',
-                        alignItems: 'center', justifyContent: 'center',
-                      }}>
-                        <IconCheck size={18} color="#fff" />
-                      </View>
-                    )}
+                    <View style={{
+                      flex: 1, alignSelf: 'stretch', borderRadius: 16, overflow: 'hidden',
+                      borderWidth: selected ? 0 : 1,
+                      borderColor: colors.borderLight,
+                      alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <Svg width="100%" height="100%" style={{ position: 'absolute', top: 0, left: 0 }}>
+                        <Defs>
+                          <SvgLinearGradient id={`wp_${g.id.replace('#','')}`} x1="0" y1="0" x2="1" y2="1">
+                            <Stop offset="0" stopColor={g.from} stopOpacity="1" />
+                            <Stop offset="1" stopColor={g.to} stopOpacity="1" />
+                          </SvgLinearGradient>
+                        </Defs>
+                        <SvgRect x="0" y="0" width="100%" height="100%" fill={`url(#wp_${g.id.replace('#','')})`} />
+                      </Svg>
+                      {selected && (
+                        <View style={{
+                          width: 30, height: 30, borderRadius: 15,
+                          backgroundColor: 'rgba(0,0,0,0.4)',
+                          alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <IconCheck size={18} color="#fff" />
+                        </View>
+                      )}
+                    </View>
                   </View>
                   <Text
                     numberOfLines={1}
                     style={{
-                      fontSize: 11, color: selected ? colors.primary : colors.textSecondary,
-                      marginTop: 6, fontWeight: selected ? '700' : '500',
-                      textAlign: 'center', maxWidth: 76,
+                      fontSize: 11.5, color: selected ? colors.primary : colors.textSecondary,
+                      marginTop: 7, fontWeight: selected ? '700' : '500',
+                      textAlign: 'center', maxWidth: 76, letterSpacing: 0.2,
                     }}
                   >
                     {g.label}

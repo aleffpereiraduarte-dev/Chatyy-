@@ -22,10 +22,10 @@
  * full refetch round-trip.
  */
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable, ScrollView,
-  ActivityIndicator, Platform, StyleSheet, Alert, Image,
+  ActivityIndicator, Platform, StyleSheet, Alert, Image, Animated, Easing,
 } from 'react-native';
 import * as api from '../services/api';
 import { IconX, IconCheck, IconCamera, IconTrash, IconEdit } from './Icons';
@@ -34,6 +34,12 @@ let _ExpoImage = null;
 try { _ExpoImage = require('expo-image').Image; } catch (e) {}
 
 const WEB = Platform.OS === 'web';
+
+// Module-level cache keyed by highlight id, so reopening the same highlight is
+// instant (Instagram-feel) instead of blanking out for a fresh round-trip.
+// Invalidated implicitly: edits mutate `items`/`coverUrl` in component state and
+// also patch the cache below, so the next open reflects the change.
+const _hlCache = new Map(); // id -> { items, stories, stats }
 
 function resolveMedia(url) {
   if (!url) return '';
@@ -63,28 +69,49 @@ export default function HighlightEditSheet({
   const border = c.border || (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
   const accent = '#7C3AED';
 
-  // Pull data when sheet opens.
+  // Pull data when sheet opens. The 3 endpoints run in PARALLEL (Promise.all)
+  // so the slowest one — not their sum — gates the spinner. A per-id cache
+  // makes reopening the same highlight paint instantly with no refetch.
   useEffect(() => {
     if (!visible || !highlight?.id) return;
     setTitle(highlight.title || highlight.name || '');
     setCoverUrl(highlight.cover_url || '');
+
+    const cached = _hlCache.get(highlight.id);
+    if (cached) {
+      // Instant paint from cache; skip the network round-trip entirely.
+      setItems(cached.items);
+      setStories(cached.stories);
+      setStats(cached.stats);
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setItems([]);
     setLoading(true);
     Promise.all([
       api.statusHighlightItems?.(highlight.id).catch(() => null),
       api.statusList?.().catch(() => null),
       api.statusHighlightStats?.(highlight.id).catch(() => null),
     ]).then(([r1, r2, r3]) => {
+      if (cancelled) return;
       const its = r1?.data?.items || r1?.items || [];
-      setItems(Array.isArray(its) ? its : []);
+      const itemsArr = Array.isArray(its) ? its : [];
+      setItems(itemsArr);
       // statusList returns the signed-in user's own active stories. The
       // shape is { groups: [{ email, statuses: [...] }] } or { statuses: [...] }.
       // We only want the current user's own statuses as cover candidates.
       const sList = r2?.data?.statuses || r2?.statuses
                  || (r2?.data?.groups?.[0]?.statuses) || [];
-      setStories(Array.isArray(sList) ? sList : []);
+      const storiesArr = Array.isArray(sList) ? sList : [];
+      setStories(storiesArr);
       const st = r3?.data || r3 || {};
-      setStats({ viewers: Number(st.viewers || 0), items: Number(st.items || its.length || 0) });
-    }).finally(() => setLoading(false));
+      const statsObj = { viewers: Number(st.viewers || 0), items: Number(st.items || itemsArr.length || 0) };
+      setStats(statsObj);
+      _hlCache.set(highlight.id, { items: itemsArr, stories: storiesArr, stats: statsObj });
+    }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
   }, [visible, highlight?.id]);
 
   const saveTitle = useCallback(async () => {
@@ -163,7 +190,12 @@ export default function HighlightEditSheet({
             try {
               const r = await api.statusHighlightRemoveStatus?.(highlight.id, statusId);
               if (r?.success) {
-                setItems(prev => prev.filter(x => Number(x.id) !== Number(statusId)));
+                setItems(prev => {
+                  const next = prev.filter(x => Number(x.id) !== Number(statusId));
+                  const cached = _hlCache.get(highlight.id);
+                  if (cached) _hlCache.set(highlight.id, { ...cached, items: next });
+                  return next;
+                });
               }
             } catch {}
           },
@@ -182,6 +214,7 @@ export default function HighlightEditSheet({
           text: T('common.delete', 'Apagar'), style: 'destructive',
           onPress: async () => {
             try { await api.statusHighlightDelete?.(highlight.id); } catch {}
+            _hlCache.delete(highlight.id);
             onDeleted?.(highlight.id);
             onClose?.();
           },
@@ -189,6 +222,37 @@ export default function HighlightEditSheet({
       ]
     );
   }, [highlight, onDeleted, onClose, T]);
+
+  // Shimmer skeleton — instead of a bare spinner, paint the same grid layout
+  // (title pill + 8 tiles) pulsing, so the sheet never flashes blank. This is
+  // what makes the open feel "instant" even on a cold fetch.
+  const shimmer = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!visible || !loading) return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmer, { toValue: 1, duration: 700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+        Animated.timing(shimmer, { toValue: 0, duration: 700, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [visible, loading, shimmer]);
+
+  const SkeletonGrid = () => {
+    const baseBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+    const op = shimmer.interpolate({ inputRange: [0, 1], outputRange: [0.45, 1] });
+    return (
+      <View>
+        <Animated.View style={{ width: 180, height: 13, borderRadius: 6, backgroundColor: baseBg, opacity: op, marginBottom: 14 }} />
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+          {Array.from({ length: 8 }).map((_, i) => (
+            <Animated.View key={i} style={{ width: 84, height: 84, borderRadius: 8, marginRight: 8, marginBottom: 8, backgroundColor: baseBg, opacity: op }} />
+          ))}
+        </View>
+      </View>
+    );
+  };
 
   const Tile = ({ url, onPress, selected }) => {
     const sz = 84;
@@ -281,7 +345,7 @@ export default function HighlightEditSheet({
 
           <ScrollView contentContainerStyle={{ padding: 14, paddingBottom: 30 }}>
             {loading ? (
-              <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={accent} /></View>
+              <SkeletonGrid />
             ) : tab === 'cover' ? (
               <>
                 <Text style={{ color: sub, fontSize: 13, fontWeight: '500', marginBottom: 8 }}>

@@ -14,12 +14,20 @@ import {
   IconArrowLeft, IconPlus, IconSearch, IconX, IconCheck,
   IconStickyNote, IconPin, IconTrash, IconArchive, IconEdit, IconFolder,
   IconMail, IconCopy, IconDownload, IconSend, IconMenu, IconZap, IconRotateCcw,
+  IconBell, IconClock,
 } from '../components/Icons';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { queueOfflineAction, isOnline } from '../services/offlineCache';
 import BrandFab from '../components/BrandFab';
 let NoteGridSkeleton = null; try { NoteGridSkeleton = require('../components/SkeletonLoader').NoteGridSkeleton; } catch {}
+// J.2 — native date/time picker for the "Lembrar" reminder. Optional require
+// so web (which uses <input type="datetime-local">) and any build without the
+// native module degrade gracefully.
+let DateTimePicker = null;
+if (Platform.OS !== 'web') {
+  try { DateTimePicker = require('@react-native-community/datetimepicker').default; } catch {}
+}
 
 // ---- Note Color Definitions with Gradients ----
 const NOTE_COLORS = [
@@ -747,6 +755,9 @@ export default function NotesScreen() {
   const editorStickyRef = useRef(false);
   const editorNotebookRef = useRef(null);
   const editorTagsRef = useRef([]);
+  // J.2 — "Lembrar" reminder. Holds an ISO datetime (or null). Sent to the
+  // notes-save API as `reminder_at`; a backend cron fires the push.
+  const editorReminderRef = useRef(null);
 
   // Animation refs
   const emptyAnim = useRef(new Animated.Value(0)).current;
@@ -920,6 +931,7 @@ export default function NotesScreen() {
       editorStickyRef.current = note.is_sticky;
       editorNotebookRef.current = note.notebook_id;
       editorTagsRef.current = note.tags || [];
+      editorReminderRef.current = note.reminder_at || null;
     } else {
       setEditingNote(null);
       editorTitleRef.current = '';
@@ -929,6 +941,7 @@ export default function NotesScreen() {
       editorStickyRef.current = false;
       editorNotebookRef.current = selectedNotebook;
       editorTagsRef.current = [];
+      editorReminderRef.current = null;
     }
     setEditorVisible(true);
   }, [selectedNotebook]);
@@ -971,10 +984,14 @@ export default function NotesScreen() {
     const is_sticky = editorStickyRef.current ? 1 : 0;
     const notebook_id = editorNotebookRef.current;
     const tags = editorTagsRef.current;
+    // J.2 — pass-through to the notes-save API. Backend column + cron push are
+    // being added by another agent; notesCreate/notesUpdate forward extra keys
+    // verbatim, so this lands once the backend accepts `reminder_at`.
+    const reminder_at = editorReminderRef.current || null;
 
     if (!title.trim() && !content.trim()) return;
 
-    const payload = { title, content, color, is_pinned, is_sticky, notebook_id, tags };
+    const payload = { title, content, color, is_pinned, is_sticky, notebook_id, tags, reminder_at };
 
     // Optimistic update + replay queue path. Use a stable temp id for new
     // notes so the next auto-save tick targets the same entry.
@@ -2139,6 +2156,7 @@ export default function NotesScreen() {
           stickyRef={editorStickyRef}
           notebookRef={editorNotebookRef}
           tagsRef={editorTagsRef}
+          reminderRef={editorReminderRef}
           allNotes={notes}
           onOpenNote={openEditor}
           onClose={closeEditor}
@@ -2434,7 +2452,7 @@ export default function NotesScreen() {
 }
 
 // ---- Note Editor (Full Screen - Premium) ----
-function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, colorRef, pinnedRef, stickyRef, notebookRef, tagsRef, allNotes = [], onOpenNote, onClose, onAutoSave, onDelete, onSendEmail, onExportPdf, onCopyText, allTags = [] }) {
+function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, colorRef, pinnedRef, stickyRef, notebookRef, tagsRef, reminderRef, allNotes = [], onOpenNote, onClose, onAutoSave, onDelete, onSendEmail, onExportPdf, onCopyText, allTags = [] }) {
   const [title, setTitle] = useState(titleRef.current);
   const [content, setContent] = useState(contentRef.current);
   const [selectedColor, setSelectedColor] = useState(colorRef.current);
@@ -2444,6 +2462,10 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
   const [showColorBar, setShowColorBar] = useState(false);
   const [showNotebookPicker, setShowNotebookPicker] = useState(false);
   const [tags, setTags] = useState(tagsRef?.current || []);
+  // J.2 — "Lembrar" reminder datetime (ISO string or null) + picker visibility.
+  const [reminderAt, setReminderAt] = useState(reminderRef?.current || null);
+  const [showReminderPicker, setShowReminderPicker] = useState(false);
+  const [androidReminderMode, setAndroidReminderMode] = useState('date');
   const [tagInput, setTagInput] = useState('');
   const [showTagInput, setShowTagInput] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
@@ -2498,6 +2520,50 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
 
   const charCount = (content || '').length;
 
+  // J.2 — reminder helpers. Value is stored as a local-wallclock ISO-ish
+  // string ("YYYY-MM-DDTHH:mm:00") so the backend keeps the user's intended
+  // time (same convention as the rest of the notes payload).
+  const reminderDate = useMemo(() => (reminderAt ? safeParseDate(reminderAt) : null), [reminderAt]);
+  const toLocalDateTimeInput = (d) => {
+    if (!d) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const toLocalIso = (d) => (d ? `${toLocalDateTimeInput(d)}:00` : null);
+  const reminderLabel = useMemo(() => {
+    if (!reminderDate) return '';
+    try {
+      return reminderDate.toLocaleString(undefined, {
+        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+      });
+    } catch { return toLocalDateTimeInput(reminderDate); }
+  }, [reminderDate]);
+  const reminderIsPast = !!(reminderDate && reminderDate.getTime() < Date.now());
+  const setReminder = useCallback((d) => {
+    updateAndSave('reminder', d ? toLocalIso(d) : null);
+  }, [updateAndSave]);
+  // Android fires date then time in two steps.
+  const onAndroidReminderChange = useCallback((event, picked) => {
+    if (event?.type === 'dismissed') { setShowReminderPicker(false); return; }
+    if (!picked) { setShowReminderPicker(false); return; }
+    if (androidReminderMode === 'date') {
+      const base = reminderDate || new Date(Date.now() + 60 * 60 * 1000);
+      const merged = new Date(picked);
+      merged.setHours(base.getHours(), base.getMinutes(), 0, 0);
+      setReminder(merged);
+      setAndroidReminderMode('time');
+      // Re-open immediately for the time step.
+      setTimeout(() => setShowReminderPicker(true), 0);
+    } else {
+      const base = reminderDate || new Date();
+      const merged = new Date(base);
+      merged.setHours(picked.getHours(), picked.getMinutes(), 0, 0);
+      setReminder(merged);
+      setShowReminderPicker(false);
+      setAndroidReminderMode('date');
+    }
+  }, [androidReminderMode, reminderDate, setReminder]);
+
   const updateAndSave = useCallback((field, value) => {
     if (field === 'title') { titleRef.current = value; setTitle(value); }
     else if (field === 'content') { contentRef.current = value; setContent(value); }
@@ -2512,6 +2578,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
     else if (field === 'sticky') { stickyRef.current = value; setIsSticky(value); }
     else if (field === 'notebook') { notebookRef.current = value; setSelectedNotebookId(value); }
     else if (field === 'tags') { if (tagsRef) tagsRef.current = value; setTags(value); }
+    else if (field === 'reminder') { if (reminderRef) reminderRef.current = value; setReminderAt(value); }
     setSavingPulse(true);
     onAutoSave();
     // Mock save latency feedback ~600ms
@@ -2916,6 +2983,90 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
           </TouchableOpacity>
         )}
       </View>
+
+      {/* J.2 — "Lembrar" reminder row. Tap to set a date/time; a backend cron
+          fires a push at that moment (column + cron added separately). */}
+      <View style={s.editorReminderRow}>
+        <TouchableOpacity
+          onPress={() => {
+            if (Platform.OS === 'web') return; // web uses the inline input below
+            setAndroidReminderMode('date');
+            setShowReminderPicker(true);
+          }}
+          style={[s.editorReminderChip, {
+            borderColor: reminderAt
+              ? (reminderIsPast ? (colors.error || '#dc2626') : BRAND)
+              : (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)'),
+            backgroundColor: reminderAt ? (BRAND + '14') : 'transparent',
+          }]}
+          accessibilityLabel={t('notes.reminder') || 'Lembrar'}
+        >
+          <IconBell size={14} color={reminderAt ? (reminderIsPast ? (colors.error || '#dc2626') : BRAND) : secondaryText} />
+          <Text
+            style={[s.editorReminderText, { color: reminderAt ? (reminderIsPast ? (colors.error || '#dc2626') : BRAND) : secondaryText }]}
+            numberOfLines={1}
+          >
+            {reminderAt
+              ? `${t('notes.remindAt') || 'Lembrar'} ${reminderLabel}${reminderIsPast ? ' · ' + (t('notes.reminderPast') || 'passado') : ''}`
+              : (t('notes.addReminder') || 'Lembrar')}
+          </Text>
+        </TouchableOpacity>
+        {!!reminderAt && (
+          <TouchableOpacity
+            onPress={() => setReminder(null)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            style={s.editorReminderClear}
+            accessibilityLabel={t('common.clear') || 'Limpar'}
+          >
+            <IconX size={13} color={secondaryText} />
+          </TouchableOpacity>
+        )}
+        {/* Web: inline native datetime input */}
+        {Platform.OS === 'web' && (
+          <input
+            type="datetime-local"
+            value={reminderDate ? toLocalDateTimeInput(reminderDate) : ''}
+            min={toLocalDateTimeInput(new Date())}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (!v) { setReminder(null); return; }
+              const d = new Date(v);
+              if (!isNaN(d.getTime())) setReminder(d);
+            }}
+            style={{
+              marginLeft: 8, padding: 6, fontSize: 13, borderRadius: 8,
+              border: `1px solid ${isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.12)'}`,
+              backgroundColor: 'transparent', color: textColor,
+            }}
+          />
+        )}
+      </View>
+      {/* Native date/time picker (iOS inline modal-ish / Android dialog) */}
+      {Platform.OS !== 'web' && showReminderPicker && DateTimePicker && (
+        Platform.OS === 'ios' ? (
+          <View style={[s.editorReminderPickerWrap, { backgroundColor: isDark ? 'rgba(40,40,60,0.95)' : 'rgba(255,255,255,0.98)', borderColor: isDark ? 'rgba(255,255,255,0.1)' : colors.border }]}>
+            <DateTimePicker
+              value={reminderDate || new Date(Date.now() + 60 * 60 * 1000)}
+              mode="datetime"
+              display="spinner"
+              minimumDate={new Date()}
+              themeVariant={isDark ? 'dark' : 'light'}
+              onChange={(_, v) => { if (v) setReminder(v); }}
+            />
+            <TouchableOpacity onPress={() => setShowReminderPicker(false)} style={s.editorReminderDone}>
+              <Text style={{ color: BRAND, fontWeight: '700', fontSize: 15 }}>{t('common.done') || 'OK'}</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <DateTimePicker
+            value={reminderDate || new Date(Date.now() + 60 * 60 * 1000)}
+            mode={androidReminderMode}
+            display="default"
+            minimumDate={androidReminderMode === 'date' ? new Date() : undefined}
+            onChange={onAndroidReminderChange}
+          />
+        )
+      )}
 
       {/* Title & Content */}
       <ScrollView style={s.editorBody} keyboardShouldPersistTaps="handled">
@@ -4023,6 +4174,24 @@ const s = StyleSheet.create({
     borderRadius: 10, borderWidth: 1, gap: 6,
   },
   editorNotebookText: { fontSize: 13, fontWeight: '500' },
+
+  // J.2 — Reminder row in editor
+  editorReminderRow: {
+    flexDirection: 'row', alignItems: 'center',
+    marginLeft: 20, marginTop: 10, paddingRight: 20,
+  },
+  editorReminderChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, borderWidth: 1,
+    maxWidth: '85%',
+  },
+  editorReminderText: { fontSize: 13, fontWeight: '600' },
+  editorReminderClear: { marginLeft: 8, padding: 2 },
+  editorReminderPickerWrap: {
+    marginHorizontal: 20, marginTop: 10, borderRadius: 12, borderWidth: 1,
+    paddingBottom: 6, overflow: 'hidden',
+  },
+  editorReminderDone: { alignSelf: 'flex-end', paddingHorizontal: 16, paddingVertical: 8 },
 
   // Tags in editor
   editorTagsRow: {

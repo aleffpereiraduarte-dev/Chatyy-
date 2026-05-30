@@ -4,23 +4,33 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { IconArrowLeft, IconStar, IconMessageSquare } from '../components/Icons';
+import { IconArrowLeft, IconStar, IconMessageSquare, IconBookmark, IconArrowRight } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import * as api from '../services/api';
 
+// Unified "Salvas | Favoritas" screen (E.3).
+//
+// These are two genuinely different concepts, so neither is destroyed:
+//   - Salvas    = your Telegram-style self-chat ("Mensagens Salvas"). Lives in
+//                 a real conversation; opening it routes to /saved-messages.
+//   - Favoritas = individual starred messages bookmarked across any chat
+//                 (chat_starred_messages).
+// A top tab switcher puts both under one entry with a short explanation per tab
+// so the user understands the difference instead of seeing two mystery screens.
 export default function StarredMessagesScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
 
+  const [tab, setTab] = useState('starred'); // 'saved' | 'starred'
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const r = await api.apiCall('chat_starred_messages');
+      const r = await api.chatStarredMessages();
       if (r?.success && r.data) {
         const list = Array.isArray(r.data) ? r.data : (r.data.items || r.data.messages || []);
         setMessages(list);
@@ -30,6 +40,10 @@ export default function StarredMessagesScreen() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  const openSavedMessages = useCallback(() => {
+    try { router.push('/saved-messages'); } catch (e) { console.warn('[starred] saved nav:', e); }
+  }, [router]);
 
   const openConversation = (msg) => {
     if (!msg?.conversation_id) return;
@@ -53,16 +67,67 @@ export default function StarredMessagesScreen() {
     } catch { return ''; }
   };
 
+  const tabAccent = isDark ? '#A78BFA' : '#fff';
+  const tabInactive = 'rgba(255,255,255,0.6)';
+
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       <View style={[styles.header, { backgroundColor: isDark ? '#1a1a2e' : '#7C3AED', paddingTop: 10 }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.title}>{t('starred.title') || 'Starred messages'}</Text>
+        <Text style={styles.title}>{t('saved.unifiedTitle') || 'Salvas e favoritas'}</Text>
       </View>
 
-      {loading ? (
+      {/* Tab switcher — Salvas | Favoritas */}
+      <View style={[styles.tabBar, { backgroundColor: isDark ? '#1a1a2e' : '#7C3AED' }]}>
+        <TouchableOpacity
+          style={[styles.tab, tab === 'saved' && { borderBottomColor: tabAccent }]}
+          onPress={() => setTab('saved')}
+          activeOpacity={0.8}
+        >
+          <IconBookmark size={16} color={tab === 'saved' ? tabAccent : tabInactive} />
+          <Text style={[styles.tabText, { color: tab === 'saved' ? tabAccent : tabInactive }]}>
+            {t('saved.tabSaved') || 'Salvas'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, tab === 'starred' && { borderBottomColor: tabAccent }]}
+          onPress={() => setTab('starred')}
+          activeOpacity={0.8}
+        >
+          <IconStar size={16} color={tab === 'starred' ? tabAccent : tabInactive} />
+          <Text style={[styles.tabText, { color: tab === 'starred' ? tabAccent : tabInactive }]}>
+            {t('saved.tabStarred') || 'Favoritas'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {tab === 'saved' ? (
+        <View style={styles.savedPane}>
+          <Text style={[styles.paneExplain, { color: colors.secondaryText }]}>
+            {t('saved.savedExplain') || 'Suas anotações pessoais — uma conversa só sua, estilo bloco de notas.'}
+          </Text>
+          <TouchableOpacity
+            onPress={openSavedMessages}
+            activeOpacity={0.85}
+            style={[styles.savedCard, { backgroundColor: isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.06)', borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(124,58,237,0.18)' }]}
+          >
+            <View style={[styles.savedIcon, { backgroundColor: '#7C3AED' }]}>
+              <IconBookmark size={22} color="#fff" />
+            </View>
+            <View style={styles.savedCardBody}>
+              <Text style={[styles.savedCardTitle, { color: colors.text }]}>
+                {t('chat.savedMessages') || 'Mensagens Salvas'}
+              </Text>
+              <Text style={[styles.savedCardSub, { color: colors.secondaryText }]}>
+                {t('saved.openHint') || 'Abrir sua conversa de anotações'}
+              </Text>
+            </View>
+            <IconArrowRight size={20} color={colors.secondaryText} />
+          </TouchableOpacity>
+        </View>
+      ) : loading ? (
         <View style={styles.loading}>
           <ActivityIndicator color="#7C3AED" size="large" />
         </View>
@@ -80,6 +145,11 @@ export default function StarredMessagesScreen() {
         <FlatList
           data={messages}
           keyExtractor={(m) => String(m.id)}
+          ListHeaderComponent={(
+            <Text style={[styles.paneExplain, { color: colors.secondaryText, paddingTop: 14 }]}>
+              {t('saved.starredExplain') || 'Mensagens marcadas com estrela em qualquer conversa.'}
+            </Text>
+          )}
           renderItem={({ item }) => (
             <TouchableOpacity onPress={() => openConversation(item)} style={[styles.row, { borderBottomColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }]}>
               <AvatarCircle name={item.sender_name || item.sender_email} email={item.sender_email} size={44} />
@@ -117,6 +187,16 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: 14 },
   backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   title: { color: '#fff', fontSize: 20, fontWeight: '700', marginLeft: 8 },
+  tabBar: { flexDirection: 'row', paddingHorizontal: 12 },
+  tab: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, paddingVertical: 12, borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  tabText: { fontSize: 14, fontWeight: '700' },
+  savedPane: { padding: 16 },
+  paneExplain: { fontSize: 13, paddingHorizontal: 16, marginBottom: 12, lineHeight: 18 },
+  savedCard: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 14, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth },
+  savedIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  savedCardBody: { flex: 1 },
+  savedCardTitle: { fontSize: 16, fontWeight: '700' },
+  savedCardSub: { fontSize: 13, marginTop: 2 },
   loading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   empty: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32, gap: 12 },
   emptyTitle: { fontSize: 17, fontWeight: '600' },

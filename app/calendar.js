@@ -153,12 +153,26 @@ const COMMON_TIMEZONES = [
   'UTC',
 ];
 
+// Short IANA → human label for the header chip, e.g.
+// "America/Sao_Paulo" → "Sao Paulo". Keeps the header from overflowing.
+function shortTzLabel(tz) {
+  if (!tz) return '';
+  const parts = String(tz).split('/');
+  return parts[parts.length - 1].replace(/_/g, ' ');
+}
+
 function formatTimeRange(startStr, endStr, allDay, t, opts = {}) {
   if (allDay) return t ? t('calendar.allDay') : 'All day';
-  const base = `${formatTime(startStr)} - ${formatTime(endStr)}`;
+  // When a display timezone is active, render the wall-clock in THAT zone so
+  // a manual override (e.g. picking "New York") actually shifts the shown
+  // hours — not just the GMT suffix. Falls back to the device-local format.
+  const tz = opts.tz;
+  const base = tz
+    ? `${formatTimeInZone(startStr, tz)} - ${formatTimeInZone(endStr, tz)}`
+    : `${formatTime(startStr)} - ${formatTime(endStr)}`;
   if (opts.showTz) {
-    const tz = localTzAbbrev();
-    if (tz) return `${base} (${tz})`;
+    const suffix = tz ? (tzOffsetLabel(tz) || shortTzLabel(tz)) : localTzAbbrev();
+    if (suffix) return `${base} (${suffix})`;
   }
   return base;
 }
@@ -1207,33 +1221,66 @@ function getRelativeTime(startAt, t) {
 // ============================================================
 // Swipeable Event Card
 // ============================================================
-function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMeeting, t, showTz }) {
+// Reveal width of each side action + the distance past which a swipe fires
+// the action directly (a full "fling"). Below that, the card rests open so
+// the user can tap the revealed Edit/Cancel button to confirm — far more
+// reliable than the old fire-on-release, which deleted on accidental flicks.
+const SWIPE_ACTION_W = 80;
+const SWIPE_COMMIT = 150;
+
+function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMeeting, t, showTz, displayTz }) {
   const translateX = useRef(new Animated.Value(0)).current;
+  // Track the current rest position (0 = closed, +W = edit open, -W = cancel
+  // open) so a tap can decide whether to close or to open the menu.
+  const openSideRef = useRef(0);
+  const restToRef = useRef(0);
+
+  const settle = useCallback((to) => {
+    restToRef.current = to;
+    openSideRef.current = to > 0 ? 1 : to < 0 ? -1 : 0;
+    Animated.spring(translateX, {
+      toValue: to, useNativeDriver: false, friction: 9, tension: 90,
+    }).start();
+  }, [translateX]);
+
+  const close = useCallback(() => settle(0), [settle]);
+  const fireEdit = useCallback(() => { close(); onEdit && onEdit(event); }, [close, onEdit, event]);
+  const fireDelete = useCallback(() => { close(); onDelete && onDelete(event); }, [close, onDelete, event]);
+
   const panResponder = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gs) => Math.abs(gs.dx) > 15 && Math.abs(gs.dx) > Math.abs(gs.dy) * 2,
-      onMoveShouldSetPanResponderCapture: (_, gs) => Math.abs(gs.dx) > 25 && Math.abs(gs.dx) > Math.abs(gs.dy) * 2,
+      // Only claim the gesture for clearly-horizontal drags so vertical list
+      // scrolling stays smooth. Capture at a slightly higher threshold.
+      onMoveShouldSetPanResponder: (_, gs) =>
+        Math.abs(gs.dx) > 12 && Math.abs(gs.dx) > Math.abs(gs.dy) * 1.8,
+      onMoveShouldSetPanResponderCapture: (_, gs) =>
+        Math.abs(gs.dx) > 20 && Math.abs(gs.dx) > Math.abs(gs.dy) * 1.8,
       onPanResponderTerminationRequest: () => false,
       onPanResponderMove: (_, gs) => {
-        // Clamp swipe: right for edit (max 80), left for delete (max -80)
-        const clamped = Math.max(-80, Math.min(80, gs.dx));
-        translateX.setValue(clamped);
+        // Drag relative to the current rest position so re-grabbing an
+        // already-open card feels continuous, not a jump back to 0.
+        const next = Math.max(-SWIPE_COMMIT - 30, Math.min(SWIPE_COMMIT + 30, restToRef.current + gs.dx));
+        translateX.setValue(next);
       },
       onPanResponderRelease: (_, gs) => {
-        if (gs.dx > 50 && onEdit) {
-          // Swipe right -> edit
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start();
-          onEdit(event);
-        } else if (gs.dx < -50 && onDelete) {
-          // Swipe left -> delete
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start();
-          onDelete(event);
-        } else {
-          Animated.spring(translateX, { toValue: 0, useNativeDriver: false }).start();
-        }
+        const pos = restToRef.current + gs.dx;
+        if (pos > SWIPE_COMMIT && onEdit) { fireEdit(); return; }
+        if (pos < -SWIPE_COMMIT && onDelete) { fireDelete(); return; }
+        // Snap to the nearest rest state (open reveal vs closed).
+        if (pos > SWIPE_ACTION_W * 0.55 && onEdit) settle(SWIPE_ACTION_W);
+        else if (pos < -SWIPE_ACTION_W * 0.55 && onDelete) settle(-SWIPE_ACTION_W);
+        else close();
       },
+      onPanResponderTerminate: () => settle(restToRef.current),
     })
   ).current;
+
+  // Tapping the card: if a reveal is open, the tap just closes it (so the
+  // open action never gets dismissed by an accidental navigation).
+  const handleCardPress = useCallback(() => {
+    if (openSideRef.current !== 0) { close(); return; }
+    onPress && onPress();
+  }, [close, onPress]);
 
   const borderColor = event.color || event.calendar_color || colors.primary;
   const relTime = getRelativeTime(event.start_at, t);
@@ -1250,21 +1297,32 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
 
   return (
     <View style={styles.swipeContainer}>
-      {/* Background actions revealed by swipe */}
+      {/* Background actions revealed by swipe — now tappable so the user can
+          swipe to reveal, then tap to confirm (or full-swipe to fire). */}
       <View style={styles.swipeActions}>
-        <View style={[styles.swipeActionLeft, { backgroundColor: colors.primary }]}>
+        <TouchableOpacity
+          style={[styles.swipeActionLeft, { backgroundColor: colors.primary }]}
+          onPress={fireEdit}
+          activeOpacity={0.85}
+          accessibilityLabel={t('calendar.edit')}
+        >
           <IconEdit size={20} color="#fff" />
           <Text style={styles.swipeActionText}>{t('calendar.edit')}</Text>
-        </View>
-        <View style={[styles.swipeActionRight, { backgroundColor: colors.error || '#EA4335' }]}>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.swipeActionRight, { backgroundColor: colors.error || '#EA4335' }]}
+          onPress={fireDelete}
+          activeOpacity={0.85}
+          accessibilityLabel={t('calendar.delete')}
+        >
           <IconTrash size={20} color="#fff" />
           <Text style={styles.swipeActionText}>{t('calendar.delete')}</Text>
-        </View>
+        </TouchableOpacity>
       </View>
       <Animated.View style={{ transform: [{ translateX }] }} {...panResponder.panHandlers}>
         <TouchableOpacity
           style={[styles.eventCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
-          onPress={onPress}
+          onPress={handleCardPress}
           activeOpacity={0.7}
         >
           {/* Colored left border accent */}
@@ -1283,7 +1341,7 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
             <View style={styles.eventMeta}>
               <IconClock size={13} color={colors.textSecondary} />
               <Text style={[styles.eventMetaText, { color: colors.textSecondary }]}>
-                {formatTimeRange(event.start_at, event.end_at, event.all_day, t, { showTz })}
+                {formatTimeRange(event.start_at, event.end_at, event.all_day, t, { showTz, tz: displayTz })}
               </Text>
             </View>
             {!!event.location && (
@@ -2674,6 +2732,7 @@ function CalendarScreenInner() {
       onJoinMeeting={handleJoinMeeting}
       t={t}
       showTz={showTz}
+      displayTz={tzPref === 'system' ? null : effectiveTz}
     />
   );
 
@@ -2855,8 +2914,15 @@ function CalendarScreenInner() {
               accessibilityLabel={t('calendar.showTz') || t('calendar.timezones')}
             >
               <IconClock size={14} color="#fff" />
-              <Text style={[styles.tzGhostBtnText, { opacity: showTz ? 1 : 0.78 }]}>
-                {t('calendar.timezones')}
+              {/* Show the ACTIVE zone right on the chip so the user always
+                  knows which fuso the times are in (device by default). */}
+              <Text
+                style={[styles.tzGhostBtnText, { opacity: showTz ? 1 : 0.85 }]}
+                numberOfLines={1}
+              >
+                {tzPref === 'system'
+                  ? `${t('common.system') || 'Dispositivo'}${deviceTz ? ' · ' + shortTzLabel(deviceTz) : ''}`
+                  : shortTzLabel(effectiveTz)}
               </Text>
             </TouchableOpacity>
           )}
@@ -3082,7 +3148,7 @@ function CalendarScreenInner() {
                 const isSystem = zone === 'system';
                 const display = isSystem ? (deviceTz || 'system') : zone;
                 const label = isSystem
-                  ? `${t('common.system') || 'Sistema'} (${deviceTz || ''})`.trim()
+                  ? `${t('common.system') || 'Dispositivo'}${deviceTz ? ' (' + shortTzLabel(deviceTz) + ')' : ''}`.trim()
                   : zone.replace(/_/g, ' ');
                 const off = isSystem ? tzOffsetLabel(deviceTz) : tzOffsetLabel(zone);
                 const selected = tzPref === zone;
@@ -3100,9 +3166,14 @@ function CalendarScreenInner() {
                       <Text style={{ color: colors.text, fontSize: 15, fontWeight: selected ? '700' : '500' }}>
                         {label}
                       </Text>
-                      {!isSystem && (
-                        <Text style={{ color: colors.muted || '#888', fontSize: 12, marginTop: 2 }}>
-                          {display}
+                      <Text style={{ color: colors.muted || '#888', fontSize: 12, marginTop: 2 }}>
+                        {isSystem
+                          ? `${t('calendar.autoDetect') || 'Automático'}${deviceTz ? ' · ' + deviceTz : ''}`
+                          : display}
+                      </Text>
+                      {isSystem && (
+                        <Text style={{ color: colors.primary, fontSize: 11, fontWeight: '700', marginTop: 1 }}>
+                          {t('calendar.recommended') || 'Padrão'}
                         </Text>
                       )}
                     </View>

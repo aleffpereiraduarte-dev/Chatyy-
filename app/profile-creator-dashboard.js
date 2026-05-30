@@ -12,7 +12,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Platform, StyleSheet, RefreshControl,
 } from 'react-native';
-import { useRouter, Redirect } from 'expo-router';
+import { useRouter } from 'expo-router';
 import Svg, { Path, Circle } from 'react-native-svg';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED } from '../constants/featureFlags';
@@ -67,15 +67,67 @@ function Sparkline({ data, color = ACCENT, width = 260, height = 64 }) {
 }
 
 export default function CreatorDashboardScreen() {
-  // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag —
-  // the whole dashboard is paid-monetization aggregates (tips, payouts,
-  // subscribers). Redirect away while monetization is paused.
-  if (!MONETIZATION_ENABLED) {
-    return <Redirect href="/chat" />;
-  }
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
+
+  // [2026-05-22 monetization-pause] The whole dashboard is paid-monetization
+  // aggregates (tips, payouts, subscribers). While MONETIZATION_ENABLED is
+  // off we DON'T flip the global flag — instead we render a clean "em breve"
+  // empty state so the screen never appears broken/blank when reached.
+  // NOTE: re-enabling the panel = set MONETIZATION_ENABLED=true in
+  // constants/featureFlags.js (business decision), not an edit here.
+  if (!MONETIZATION_ENABLED) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.background }}>
+        <View style={[styles.header, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
+          <TouchableOpacity onPress={() => { try { router.back(); } catch {} }} style={styles.backBtn} accessibilityLabel={t?.('common.back') || 'Voltar'}>
+            <IconArrowLeft size={22} color={colors.text} />
+          </TouchableOpacity>
+          <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
+            {t?.('profile.creatorDashboard') || 'Painel de criador'}
+          </Text>
+          <View style={{ width: 22 }} />
+        </View>
+        <ScrollView contentContainerStyle={styles.gateBody} showsVerticalScrollIndicator={false}>
+          <View style={[styles.gateBadge, { backgroundColor: ACCENT_DEEP }]}>
+            <View style={[styles.heroOverlay, { backgroundColor: ACCENT_PINK }]} />
+            <View style={[styles.heroOverlay2, { backgroundColor: ACCENT }]} />
+            <Text style={styles.gateBadgeIcon}>◆</Text>
+          </View>
+          <Text style={[styles.gateTitle, { color: colors.text }]}>
+            {t?.('creatorDashboard.comingSoonTitle') || 'Recursos de criador em breve'}
+          </Text>
+          <Text style={[styles.gateSub, { color: colors.textSecondary }]}>
+            {t?.('creatorDashboard.comingSoonBody')
+              || 'Diamantes, gorjetas, assinaturas e saques ainda não estão disponíveis. Continue postando e crescendo — quando a monetização abrir, seus ganhos vão aparecer aqui.'}
+          </Text>
+          <View style={[styles.gateList, { borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)' }]}>
+            {[
+              t?.('creatorDashboard.perk1') || 'Receba diamantes e gorjetas dos fãs',
+              t?.('creatorDashboard.perk2') || 'Assinaturas mensais do seu conteúdo',
+              t?.('creatorDashboard.perk3') || 'Saque dos seus ganhos via Pix',
+            ].map((line, i) => (
+              <View key={i} style={styles.gateListRow}>
+                <View style={[styles.gateDot, { backgroundColor: ACCENT }]} />
+                <Text style={[styles.gateListText, { color: colors.text }]}>{line}</Text>
+              </View>
+            ))}
+          </View>
+          <TouchableOpacity
+            activeOpacity={0.85}
+            onPress={() => { try { router.back(); } catch {} }}
+            style={[styles.gateCta, { backgroundColor: ACCENT }]}
+            accessibilityRole="button"
+          >
+            <Text style={styles.gateCtaText}>
+              {t?.('creatorDashboard.backToApp') || 'Voltar'}
+            </Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  }
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [data, setData] = useState({
@@ -486,4 +538,26 @@ const styles = StyleSheet.create({
   emptyIconText: { fontSize: 28, color: ACCENT, fontWeight: '700' },
   emptyTitle: { fontSize: 14, fontWeight: '700', textAlign: 'center' },
   emptySub: { fontSize: 12, textAlign: 'center', paddingHorizontal: 20 },
+  // Monetization-paused gate (empty state)
+  gateBody: { paddingHorizontal: 28, paddingTop: 48, paddingBottom: 40, alignItems: 'center' },
+  gateBadge: {
+    width: 96, height: 96, borderRadius: 28,
+    alignItems: 'center', justifyContent: 'center',
+    overflow: 'hidden', marginBottom: 24,
+  },
+  gateBadgeIcon: { fontSize: 44, color: '#fff', fontWeight: '700', zIndex: 2 },
+  gateTitle: { fontSize: 20, fontWeight: '800', textAlign: 'center', letterSpacing: -0.3 },
+  gateSub: { fontSize: 14, lineHeight: 21, textAlign: 'center', marginTop: 10 },
+  gateList: {
+    alignSelf: 'stretch', marginTop: 24, borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth, paddingVertical: 6, paddingHorizontal: 14,
+  },
+  gateListRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 11 },
+  gateDot: { width: 7, height: 7, borderRadius: 4, marginRight: 12 },
+  gateListText: { flex: 1, fontSize: 14, fontWeight: '600' },
+  gateCta: {
+    alignSelf: 'stretch', marginTop: 28, paddingVertical: 14,
+    borderRadius: 14, alignItems: 'center',
+  },
+  gateCtaText: { color: '#fff', fontSize: 15, fontWeight: '700' },
 });
