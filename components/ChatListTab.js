@@ -5117,7 +5117,33 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     return base.filter(c => !draftConvIds.has(String(c.id)));
   }, [filteredConversations, hasDraftSection, draftsSectionOpen, draftConvIds, pinnedAvatarsMode, pinnedConversations]);
 
-  const FilterChip = useCallback(({ label, value, count }) => {
+  // [F.5 2026-05-29] Long-press a user-created list chip → confirm → delete.
+  // Only the manual folder chips (those passed a `folder` prop) are deletable;
+  // the built-in filters (all/unread/groups/…) ignore long-press.
+  const handleDeleteFolderChip = useCallback((folder) => {
+    if (!folder?.id) return;
+    try { const Haptics = require('expo-haptics'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+    safeAlert(
+      t('chat.deleteListTitle') || 'Excluir lista',
+      (t('chat.deleteListMsg') || 'Tem certeza que deseja excluir a lista') + ` "${folder.name}"?`,
+      [
+        { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+        {
+          text: t('common.delete') || 'Excluir',
+          style: 'destructive',
+          onPress: async () => {
+            // Optimistic removal + reset filter if we were viewing it.
+            setChatFolders(prev => prev.filter(x => x.id !== folder.id));
+            setFilter(prev => (prev === `folder_${folder.id}` ? 'all' : prev));
+            try { await api.chatFoldersDelete(folder.id); } catch {}
+            try { const Haptics = require('expo-haptics'); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+          },
+        },
+      ]
+    );
+  }, [t]);
+
+  const FilterChip = useCallback(({ label, value, count, folder }) => {
     const active = filter === value;
     return (
       <TouchableOpacity
@@ -5133,6 +5159,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           isWeb && { transition: 'all 0.18s cubic-bezier(0.4,0,0.2,1)', cursor: 'pointer' },
         ]}
         onPress={() => setFilter(filter === value ? 'all' : value)}
+        onLongPress={folder ? () => handleDeleteFolderChip(folder) : undefined}
+        delayLongPress={350}
         activeOpacity={0.7}
       >
         <Text style={[s.chipText, active ? { color: '#fff' } : { color: isDark ? '#cbd5e1' : '#475569' }]}>
@@ -5150,7 +5178,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         ) : null}
       </TouchableOpacity>
     );
-  }, [filter, isDark]);
+  }, [filter, isDark, handleDeleteFolderChip]);
 
   const renderPinnedLabel = () => {
     if (filter !== 'all' || pinnedCount === 0) return null;
@@ -6222,7 +6250,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         <FilterChip label={t('chat.filterGroups') || 'Grupos'} value="groups" count={groupCount} />
         <FilterChip label={t('chat.channels') || 'Canais'} value="channels" count={channelCount} />
         {chatFolders.map(f => (
-          <FilterChip key={f.id} label={(f.icon ? f.icon + ' ' : '') + f.name} value={`folder_${f.id}`} />
+          <FilterChip key={f.id} label={(f.icon ? f.icon + ' ' : '') + f.name} value={`folder_${f.id}`} folder={f} />
         ))}
         <FilterChip label={t('chat.filterArchived') || 'Arquivadas'} value="archived" count={archivedCount} />
       </ScrollView>

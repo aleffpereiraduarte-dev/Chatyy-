@@ -4792,6 +4792,12 @@ export async function statusPublish(content, type = 'text', bgColor = '#7C3AED',
     params.music_artist = musicData.artist || '';
     params.music_preview_url = musicData.previewUrl || '';
     params.music_cover_url = musicData.coverUrl || '';
+    // music_start_ms — offset (in ms) into the track where playback should
+    // begin (the user-picked "trecho" via the trim scrubber). WhatsApp/IG
+    // store a start offset; StoryViewer seeks the player to it on load.
+    if (musicData.startMs != null && Number.isFinite(Number(musicData.startMs))) {
+      params.music_start_ms = Math.max(0, Math.round(Number(musicData.startMs)));
+    }
   }
   // Forward whitelisted meta keys (caption, stickers, draws, poll already
   // separated above) so the backend persists them. Skip ones already

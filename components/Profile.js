@@ -21,7 +21,7 @@
 
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  View, Text, TouchableOpacity, StyleSheet, ScrollView, Image,
+  View, Text, TouchableOpacity, StyleSheet, ScrollView, Image, FlatList,
   Platform, Modal, Pressable, ActivityIndicator, Dimensions, Animated, Alert, TextInput,
   PanResponder, Easing, Switch, Linking, AppState, DeviceEventEmitter,
 } from 'react-native';
@@ -76,6 +76,14 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 //      reported "perfil só fica carregando, não salva cache").
 const _profileCache = new Map(); // key -> { data, ts }
 const PROFILE_TTL_MS = 2 * 60 * 1000; // 2 min — fresh enough for presence
+
+// [B.2] Highlights cache — keyed by owner email. Re-opening a profile paints
+// the destaques strip INSTANTLY from this in-memory cache (IG-grade: no
+// skeleton flash, no N+1 refetch on every open). refetchHighlights still runs
+// in the background to revalidate; the cached strip just removes the cold-start
+// spinner. Cleared together with the profile cache below.
+const _highlightsCache = new Map(); // email -> { list, ts }
+const HIGHLIGHTS_TTL_MS = 5 * 60 * 1000;
 const PROFILE_MMKV_PREFIX = 'profile_v1:';
 
 let _mmkv = null;
@@ -92,6 +100,7 @@ function _mmkvKey(key) {
 export function invalidateProfileCache(key) {
   if (key == null) {
     _profileCache.clear();
+    try { _highlightsCache.clear(); } catch {}
     try {
       const mmkv = _getMmkv();
       mmkv?.getAllKeys?.()?.forEach?.(k => {
@@ -102,6 +111,7 @@ export function invalidateProfileCache(key) {
   }
   const k = String(key).toLowerCase();
   _profileCache.delete(k);
+  try { _highlightsCache.delete(k); } catch {}
   try { _getMmkv()?.remove?.(_mmkvKey(k)); } catch {}
 }
 
@@ -958,11 +968,24 @@ export default function Profile({
   // setData(r.data) ran after an optimistic create, the new destaque
   // disappeared until the next mount (user report: "adicionei o destaque
   // e some, não deixa ver"). Independent state survives those overwrites.
-  const [highlights, setHighlights] = useState([]);
+  // [B.2] Seed from the highlights cache so re-opening a profile within TTL
+  // paints the strip instantly (no skeleton). Keyed by the `email` prop when
+  // available (full-profile route); username-only opens hydrate via effect once
+  // identity resolves. refetchHighlights still revalidates in the background.
+  const _hlSeed = (() => {
+    try {
+      const k = String(email || '').toLowerCase();
+      const c = k && _highlightsCache.get(k);
+      if (c && Array.isArray(c.list) && (Date.now() - c.ts) < HIGHLIGHTS_TTL_MS) return c.list;
+    } catch {}
+    return null;
+  })();
+  const [highlights, setHighlights] = useState(_hlSeed || []);
   // [WAVE 52 / 2026-05-21] Loading state powers the skeleton row that paints
   // 4 shimmer circles while the first statusHighlightList resolves — IG shows
-  // the strip outline immediately on profile open, never a blank gap.
-  const [highlightsLoading, setHighlightsLoading] = useState(true);
+  // the strip outline immediately on profile open, never a blank gap. When we
+  // had a cache hit, start NOT loading so the cached strip shows immediately.
+  const [highlightsLoading, setHighlightsLoading] = useState(!_hlSeed);
   // [2026-05-18 IG-Pro] Action sheet + edit/share modals for highlights.
   // The action sheet opens on long-press of a highlight tile and routes
   // into either the inline edit sheet (rename/cover/items) or the share
@@ -1195,17 +1218,25 @@ export default function Profile({
       // call (which runs ~immediately after create), even though the row is
       // valid in PG. The next AppState-triggered refetch will reconcile.
       setHighlights(prev => {
-        if (!Array.isArray(prev) || prev.length === 0) return normalized;
-        const backendIds = new Set(normalized.map(h => h.id));
-        const pendingOptimistic = prev.filter(h =>
-          !backendIds.has(h.id)
-          && Array.isArray(h.status_ids) && h.status_ids.length > 0
-          // Only keep optimistic adds — anything we read from backend before
-          // should have been in normalized; if it's not, the backend chose
-          // to hide it (true zombie) and we respect that.
-          && (typeof h._optimistic === 'boolean' ? h._optimistic : true)
-        );
-        return [...pendingOptimistic, ...normalized];
+        let next;
+        if (!Array.isArray(prev) || prev.length === 0) {
+          next = normalized;
+        } else {
+          const backendIds = new Set(normalized.map(h => h.id));
+          const pendingOptimistic = prev.filter(h =>
+            !backendIds.has(h.id)
+            && Array.isArray(h.status_ids) && h.status_ids.length > 0
+            // Only keep optimistic adds — anything we read from backend before
+            // should have been in normalized; if it's not, the backend chose
+            // to hide it (true zombie) and we respect that.
+            && (typeof h._optimistic === 'boolean' ? h._optimistic : true)
+          );
+          next = [...pendingOptimistic, ...normalized];
+        }
+        // [B.2] Persist to the in-memory cache so the next profile open within
+        // TTL paints this strip without a skeleton or refetch flash.
+        try { _highlightsCache.set(String(identity.email).toLowerCase(), { list: next, ts: Date.now() }); } catch {}
+        return next;
       });
     } catch {} finally {
       // [WAVE 52] Drop the skeleton once the first list resolves (success or
@@ -1214,6 +1245,21 @@ export default function Profile({
       setHighlightsLoading(false);
     }
   }, [identity?.email]);
+
+  // [B.2] Hydrate the strip from cache the moment identity.email is known (for
+  // username-only opens where the `email` prop wasn't available at mount). Only
+  // paints when local state is still empty so it never clobbers fresh data.
+  useEffect(() => {
+    if (!identity?.email) return;
+    if (Array.isArray(highlights) && highlights.length > 0) return;
+    try {
+      const c = _highlightsCache.get(String(identity.email).toLowerCase());
+      if (c && Array.isArray(c.list) && c.list.length > 0 && (Date.now() - c.ts) < HIGHLIGHTS_TTL_MS) {
+        setHighlights(c.list);
+        setHighlightsLoading(false);
+      }
+    } catch {}
+  }, [identity?.email]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     let cancelled = false;
@@ -1715,16 +1761,13 @@ export default function Profile({
       );
     }
     if (highlights.length === 0 && !isSelf) return null;
-    return (
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 6, gap: 16 }}
-      >
-        {isSelf && (
+    // [B.2] "+" add tile lives in ListHeaderComponent so the windowed FlatList
+    // below only virtualizes the real highlight tiles.
+    const renderAddTile = () => (
+      isSelf ? (
           <TouchableOpacity
             activeOpacity={0.8}
-            style={{ alignItems: 'center', width: SIZE + 8 }}
+            style={{ alignItems: 'center', width: SIZE + 8, marginRight: 16 }}
             onPress={async () => {
               // Instagram-style highlight composer: pick photos → name → upload as
               // statuses → bundle into highlight. Pre-2026-05-09 só criava um
@@ -1890,8 +1933,10 @@ export default function Profile({
               {t?.('profile.newHighlight') || 'Novo'}
             </Text>
           </TouchableOpacity>
-        )}
-        {highlights.map(h => {
+      ) : null
+    );
+    // [B.2] Per-tile renderer for the windowed FlatList below.
+    const renderHighlightTile = (h) => {
           const cover = h.cover_url ? resolveMedia(h.cover_url) : null;
           // Instagram gradient ring (purple → fuchsia → orange) so destaques
           // stand out from regular avatars. Painted via SVG when available;
@@ -2015,8 +2060,26 @@ export default function Profile({
               </Text>
             </TouchableOpacity>
           );
-        })}
-      </ScrollView>
+    };
+    // [B.2] Windowed horizontal FlatList — virtualizes the destaques strip so a
+    // profile with 50+ highlights doesn't render every tile up front (IG-grade
+    // smoothness on mid-tier Android). removeClippedSubviews + small batch.
+    return (
+      <FlatList
+        data={highlights}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        keyExtractor={(h) => String(h.id)}
+        ListHeaderComponent={renderAddTile}
+        renderItem={({ item }) => renderHighlightTile(item)}
+        removeClippedSubviews
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={5}
+        updateCellsBatchingPeriod={50}
+        contentContainerStyle={{ paddingHorizontal: 14, paddingVertical: 6 }}
+        ItemSeparatorComponent={() => <View style={{ width: 16 }} />}
+      />
     );
   };
 
@@ -3504,6 +3567,10 @@ export default function Profile({
           artist: capture.music.artist || '',
           previewUrl: capture.music.previewUrl || capture.music.preview_url || capture.music.url || '',
           coverUrl: capture.music.coverUrl || capture.music.cover_url || capture.music.artwork || '',
+          // music_start_ms — user-picked start offset (the "trecho" trimmed in
+          // StatusCamera). Forward so statusPublish persists it and StoryViewer
+          // seeks the player there on load.
+          startMs: capture.music.startMs ?? capture.music.start_ms ?? 0,
         } : null;
         const r = await api.statusPublish?.(uploadR.data.url, statusType, '#000000', camMusic, extraMeta);
         if (r?.success) {

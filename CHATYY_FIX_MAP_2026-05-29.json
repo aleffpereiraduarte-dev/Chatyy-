@@ -1,0 +1,938 @@
+{
+  "summary": "Map ~32 reported Chatyy bugs/features across 12 parallel investigators + synthesize a prioritized fix triage",
+  "agentCount": 13,
+  "logs": [
+    "Mapped 59 items across 12 clusters"
+  ],
+  "result": {
+    "itemCount": 59,
+    "items": [
+      {
+        "id": "A-share-media.1",
+        "title": "iOS Share Extension iCloud Photo Hang — No Progress or Timeout Feedback",
+        "currentState": "ShareViewController uses NSItemProvider.loadFileRepresentation to download iCloud photos. When image is hosted in iCloud, user sees blank Preparando spinner for up to 20 seconds. If download stalls or network is slow, no progress visible, no error message, and no cancel option. User perceives app as stuck loading.",
+        "rootCause": "loadFileRepresentation has a hard 20s timeout but no user-facing progress or timeout UI. No fallback strategy if iCloud download fails. No per-chunk retry logic. Progress.fractionCompleted is observed internally but not displayed to user.",
+        "files": [
+          "/root/webmail-app/native-ios/share-extension/ShareViewController.swift:138-170",
+          "/root/webmail-app/native-ios/share-extension/ShareViewController.swift:311-376",
+          "/root/webmail-app/native-ios/share-extension/ShareViewController.swift:386-416",
+          "/root/webmail-app/native-ios/share-extension/ShareViewController.swift:434-483"
+        ],
+        "delivery": "native-ios",
+        "whatsappPattern": "WhatsApp iOS share extension: (1) Shows real iCloud download percent as Progress.fractionCompleted ticks, not opaque spinner; (2) 15-30 second timeout with explicit message at 10s; (3) Tap-to-cancel dismisses in-flight requests; (4) Fallback to low-res UIImage if network stalls; (5) Exponential backoff retry logic.",
+        "fixPlan": "STEP 1: Display real download percent in UI instead of spinner. Observe Progress.fractionCompleted via KVO and update label: iCloud: 45%. STEP 2: Add dual-timeout gate: soft timeout at 10s shows Cancel dialog, hard timeout at 20s auto-dismisses + error. STEP 3: Call Progress.cancel() when user taps cancel to abort CKAsset request. STEP 4: Fallback for stalled downloads — if timeout fires on weak network, attempt UIImage decode via ImageIO.kCGImageSourceCreateThumbnailFromImageAlways (downsampling to 256pt). STEP 5: Add exponential backoff on retry — 2^(attempt-1) second waits. STEP 6: Surface three error codes: timeout=iCloud demorando, network=Sem internet, unavailable=Imagem nao disponivel.",
+        "effort": "M",
+        "risk": "med"
+      },
+      {
+        "id": "A-share-media.2",
+        "title": "Short Video Note Loses Circular Shape After Send — Type Normalization Bug",
+        "currentState": "User records 60-second video note. Optimistic bubble renders circular (300x300, mute button) with type=video_note. After upload and backend sync, message type becomes video and bubble renders rectangular via ChatMediaViewer. Circular RoundVideoViewer never opens.",
+        "rootCause": "Message type field not preserved through send+receive. Backend chat.php normalizes type based on MIME or extension, overwriting explicit video_note type. Message syncs back with type=video. renderMessage checks type===video and uses rectangular path, never hitting video_note case.",
+        "files": [
+          "/root/webmail-app/components/chat/VideoNoteRecorder.js:27",
+          "/root/webmail-app/app/chat-conversation.js:14076-14170",
+          "/root/webmail-app/app/chat-conversation.js:19095-19110",
+          "/root/webmail-app/components/RoundVideoViewer.js:1-292",
+          "/var/www/mail/api/chat.php"
+        ],
+        "delivery": "mixed",
+        "whatsappPattern": "WhatsApp preserves type=video_note end-to-end: stored in message DB, sent to receivers, rendering always checks type first. If video_note, use circular 320x320 player. If video, use rectangular fullscreen. Type is permanent message property, never lost after send.",
+        "fixPlan": "STEP 1 (Frontend): Verify handleSendVideoNote sets type=video_note in optimisticMsg and savePendingMessage — already correct. STEP 2 (API): Ensure chatUploadFile passes fileType parameter to backend. STEP 3 (Backend): In chat.php INSERT, check if client sent explicit type field in upload payload. If present and valid, use it. DO NOT override with MIME-inferred type. SQL: INSERT INTO chat_messages (type) VALUES (COALESCE(request.type, INFER_TYPE(...))). STEP 4 (Frontend receive): Preserve type field from WS messages exactly as sent — no re-normalization. STEP 5 (Rendering): In renderMessage(), check case video_note BEFORE fallback case video. STEP 6 (Testing): Verify chat_messages.type=video_note in backend DB after send.",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "B-status-highlights.1",
+        "title": "Status music: only shows song NAME, doesn't play audio; can't trim/select which portion of track plays",
+        "currentState": "StatusCamera.js (line 245) captures musicTrack as {id, title} and passes it to onCapture. StoryViewer.js (line 732-758) has StatusMusicPlayer component that creates audio player from music_preview_url, but only plays if URL exists. Backend stores only music_title, music_artist, music_preview_url, music_cover_url in status_create call (api.js:4790-4795). No offset/start_time stored. Profile.js and app screens show music name as text pill but never integrated real playback. StatusCamera music picker loads from Pixabay (chat_status_music_search API call) but NO trim/scrub UI exposed to user.",
+        "rootCause": "1) expo-av removed in SDK 55 — old require('expo-av').Audio threw unhandled error, so _StatusAudio stayed null and nothing played. 2) No start_offset / trim_seconds fields in database schema or API contract. 3) No scrub timeline UI in StatusCamera music picker. 4) Music only plays in StoryViewer, not in composer preview.",
+        "files": [
+          "/root/webmail-app/components/StatusCamera.js:245",
+          "/root/webmail-app/components/status/StoryViewer.js:732-758",
+          "/root/webmail-app/services/api.js:4790-4795",
+          "/root/webmail-app/services/api.js:4771-4813"
+        ],
+        "delivery": "OTA",
+        "whatsappPattern": "WhatsApp Status music: user picks song, then scrubs timeline via white handle over waveform or taps white dots on seek bar (auto-jumps to popular sections). Supports 15-60s depending on photo/video. Stores start_offset timestamp in backend. Instagram Stories: similar UI with slider at bottom showing duration (5-15s for photos), white handle on waveform to scrub forward/backward and select exact lyrics/portion. Both use preview_url + start_offset fields to resume playback at chosen position.",
+        "fixPlan": "1) Migrate expo-av → expo-audio (SDK 55 compatible): change require from 'expo-av' to 'expo-audio', update player API (createAudioPlayer instead of Audio.Sound). 2) Add database columns to chat_user_status: music_start_ms (offset in milliseconds where track should begin). 3) Add trim UI to StatusCamera music picker: horizontal timeline with duration label (15s for photo, 60s for video) + draggable handle to set start position. Pass music_start_ms in onCapture → statusPublish → status_create API. 4) Fetch full song duration from Pixabay metadata, render waveform background (visual feedback). 5) Update StatusMusicPlayer to read music_start_ms from status meta, seek player to that offset on load. 6) Backend: in status_create endpoint, validate music_start_ms + duration <= full track duration.",
+        "effort": "M",
+        "risk": "med"
+      },
+      {
+        "id": "B-status-highlights.2",
+        "title": "Highlights (Destaques) on profile load VERY slowly and don't function like Instagram",
+        "currentState": "Profile.js (line 1157-1202) fetches statusHighlightList on mount, sets highlightsLoading=true during fetch, then renders HighlightEditSheet/HighlightShareSheet modals on demand. HighlightEditSheet.js (line 67-87) loads items + stories + stats with Promise.all 3 endpoints. No pagination — loads ALL highlights every mount. No caching between profile views. FlatList rendering ~100 tiles in a single ScrollView without windowing. No skeleton loader during fetch. Backend status_highlight_list returns full item count per highlight but no lazy load cursor.",
+        "rootCause": "1) N+1 query: profile_get doesn't return highlights; forces separate statusHighlightList call. 2) No pagination cursor / limit in backend endpoint. 3) No SWR/cache — refetch on every Profile open. 4) HighlightEditSheet loads 3 endpoints in series (not cached), blocking UI. 5) FlatList of 100+ thumbnail tiles in ScrollView = O(n) render cost, no virtualization.",
+        "files": [
+          "/root/webmail-app/components/Profile.js:1157-1202",
+          "/root/webmail-app/components/HighlightEditSheet.js:67-87",
+          "/root/webmail-app/hooks/useStatuses.js:varies",
+          "/root/webmail-app/services/api.js:varies"
+        ],
+        "delivery": "OTA",
+        "whatsappPattern": "Instagram Highlights: 1) Highlight strip at top of profile (circular tiles, auto-scroll left/right). 2) Tap highlight → full-screen modal with swipe-through carousel of statuses. 3) Edit icon → bottom sheet with rename field + cover picker + item list. 4) Highlights load FAST: backend returns highlights list with item count + cover_url only (NOT full item details). 5) Items lazy-load when user opens the highlight carousel (separate endpoint with pagination). 6) Visual feedback: skeleton shimmer while loading. 7) Smooth scroll with momentum; highlight strip is a horizontal FlatList (windowed).",
+        "fixPlan": "1) Add LIMIT 50 + cursor-based pagination to backend status_highlight_list endpoint. Return {id, title, cover_url, active_count, created_at} per highlight (NO status_ids array). 2) Wire SWR cache in useHighlights hook (new) — dedup repeated profile opens. 3) Create separate statusHighlightItems endpoint (with pagination) that HighlightEditSheet calls on open. 4) Replace HighlightEditSheet's Promise.all with sequential load: 1) fetch items (paginated), 2) fetch stats async in background. 5) Horizontal FlatList for highlights strip in Profile, with FlatList windowing (removeClippedSubviews=true, updateCellsBatchingPeriod=50). 6) Add skeleton loader for highlights strip (4 shimmer circles) and edit sheet (tile grid placeholder). 7) Unify highlight open → opens modal (same as StoryViewer carousel), not separate HighlightEditSheet for viewing.",
+        "effort": "M",
+        "risk": "med"
+      },
+      {
+        "id": "B-status-highlights.3",
+        "title": "Viewing own status from profile causes profile screen to remount and flicker",
+        "currentState": "Profile.js renders <StoryRingAvatar> wrapping <StoryViewer>. When StoryViewer modal closes (onClose→setViewingStoryEmail(null)), parent Profile re-renders. StoryRingAvatar re-mounts because it re-creates the StoryViewer Modal on every render (no memoization). Each StoryViewer open re-fetches status_list via useStatuses. No stale status cache between open/close cycles.",
+        "rootCause": "1) Profile doesn't memoize StoryRingAvatar children → re-creates component on every parent render. 2) StoryViewer not wrapped in React.memo. 3) useStatuses hook refetches on every mount instead of using cache. 4) No key stability for status carousel items → React re-mounts entire tree.",
+        "files": [
+          "/root/webmail-app/components/Profile.js:varies",
+          "/root/webmail-app/components/status/StoryRingAvatar.js:varies",
+          "/root/webmail-app/components/status/StoryViewer.js:761",
+          "/root/webmail-app/hooks/useStatuses.js:varies"
+        ],
+        "delivery": "OTA",
+        "whatsappPattern": "Instagram profile: tapping story ring opens modal without profile screen visibly reloading. Modal is Portal'ed (top-level in tree), separate from profile scroll context. Profile stays mounted + visible underneath with opacity 0.5 (slight dim). Close modal → profile still at exact same scroll position. No flicker, no re-paint of profile content.",
+        "fixPlan": "1) Wrap StoryViewer in React.memo (no props change between open/close). 2) Memoize StoryRingAvatar render in Profile.js to prevent re-creation. 3) Move StoryViewer Modal out of Profile component tree → use React Portal at root level (RootNavigator or AppRoot). Open via context/ref instead of state. 4) Stabilize useStatuses cache: add fingerprint comparison (email + timestamp of latest status) so re-mount doesn't trigger refetch if data hasn't changed. 5) Force profile scroll position save on unmount, restore on remount (FlatList scrollToOffset). 6) Add FlatList windowSize={10} to status carousel so items outside viewport don't render.",
+        "effort": "M",
+        "risk": "med"
+      },
+      {
+        "id": "B-status-highlights.4",
+        "title": "Purple ring on profile should only appear if person has ACTIVE status (not expired/old)",
+        "currentState": "StoryRingAvatar.js renders purple ring border if `hasStories` prop is truthy. hasStories passed from Profile.js (line 1684+) is set to `groups.length > 0 && groups.some(g => g.statuses && g.statuses.length > 0)`. This check does NOT filter out expired statuses. useStatuses hook fetches status_list from backend, which includes all statuses from last 24h, but no client-side expiry check. Backend status_list may include expired rows if cron cleanup is delayed.",
+        "rootCause": "1) Ring visibility gated on total status count, not active_count. 2) No expiry check in Profile.js or StoryRingAvatar. 3) Backend status_list endpoint doesn't exclude expired statuses (created_at < NOW - 24h). 4) useStatuses doesn't re-filter or validate created_at on fetch.",
+        "files": [
+          "/root/webmail-app/components/status/StoryRingAvatar.js:varies",
+          "/root/webmail-app/components/Profile.js:1684",
+          "/root/webmail-app/hooks/useStatuses.js:varies",
+          "/var/www/mail/api/chat.php:status_list_endpoint"
+        ],
+        "delivery": "OTA",
+        "whatsappPattern": "Instagram profile: ring only appears if user has ≥1 active (unexpired) story. Active = created_at + 24h > now. Backend status_list filters: created_at > NOW() - INTERVAL '24 hours'. Ring disappears immediately when last story expires (via cron OR client-side timestamp check). Visual feedback: no ring = no active stories, even if user posted stories in the past.",
+        "fixPlan": "1) Backend (chat.php status_list): add WHERE created_at > NOW() - INTERVAL '24 hours' to filter query. OR add is_expired calculated column: (created_at + INTERVAL '24 hours') < NOW(). 2) Frontend Profile.js: add expiry check hasStories = groups.some(g => g.statuses?.some(s => isStatusActive(s))). isStatusActive = (s.created_at) => Date.now() - new Date(s.created_at) < 24*3600*1000. 3) StoryRingAvatar: only render ring border if hasStories && !isExpired. 4) useStatuses: on fetch, filter out expired statuses client-side as defensive measure: statuses.filter(s => isStatusActive(s)). 5) Add visual debug: if status.created_at + 24h < now, skip it silently (don't show in carousel, don't count for ring).",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "C-report-block-push.1",
+        "title": "Spam report to block and monitor system incomplete",
+        "currentState": "chat_report_spam at line 28363 inserts into chat_spam_reports table. chat_report_thread at line 15233 optionally blocks via chat_blocked_users. No automatic account suspension, no hidden conversation visibility, no admin dashboard.",
+        "rootCause": "Critical pieces missing: Reporter conversation never hidden. Reported user never suspended. No admin endpoint to monitor spam_reports. No visibility toggle enforcement. checkAccountSuspension does not exist.",
+        "files": [
+          "/var/www/mail/api/chat.php:28362",
+          "/var/www/mail/api/chat.php:15233"
+        ],
+        "delivery": "backend",
+        "whatsappPattern": "WhatsApp reports hide conversation from reporter list, suspend repeat offenders, surface admin queue with reporter notes and message context",
+        "fixPlan": "After chat_report_spam INSERT set conversation.hidden_from_reporter as jsonb array. If reported_count gte 3 update chat_phone_registry.account_status to suspended. Add chat_get_spam_queue admin endpoint filtering by report count DESC. In chatSendPushToMembers skip reporter in groups. In chat_read_conversations filter rows where current_user in hidden_from_reporter",
+        "effort": "M",
+        "risk": "med"
+      },
+      {
+        "id": "C-report-block-push.2",
+        "title": "Block enforcement gaps: caller rings blocked user",
+        "currentState": "Block filter in chat_send at line 5104 gates message insert in 1:1 chats only. Groups still broadcast to all non-blocking members. No block check in call_notify. Caller can call blocked callee who receives VoIP and FCM ring. No reverse check for blocked user ringing blocker back.",
+        "rootCause": "call_notify loop at line 7880 checks callBlockedPeers only for BLOCKED_EMAIL equals caller. Never checks if CALLER is blocked by PEER. Bidirectional send check exists at line 5115 but call path omitted it.",
+        "files": [
+          "/var/www/mail/api/chat.php:5104",
+          "/var/www/mail/api/chat.php:7880",
+          "/var/www/mail/api/chat.php:5115"
+        ],
+        "delivery": "backend",
+        "whatsappPattern": "WhatsApp bidirectional block prevents BOTH directions from messaging or calling. If A blocks B neither A to B nor B to A send or ring",
+        "fixPlan": "At call_notify line 7880 add reverse block check before loop to load all peers who have BLOCKED the caller. Skip peer if caller is in their blocklist. Add self-call guard at line 7880 to skip if strtolower pe equals strtolower user email",
+        "effort": "S",
+        "risk": "med"
+      },
+      {
+        "id": "C-report-block-push.3",
+        "title": "Mute enforcement gap: silenced conversations still send push",
+        "currentState": "chat_conversation_members.muted checked at line 643 and gated at line 652. If muted AND NOT mentioned then skip push. Code comment at line 637 indicates QA found muting still delivered pushes. Only chat_user_conv_settings.mute_until was checked, chat_conversation_members.muted was overlooked. Comment claims fixed but needs verification.",
+        "rootCause": "Old code checked only chat_user_conv_settings per-user timing mute but missed chat_conversation_members.muted toggle from long-press Silenciar action. Comment says fixed but no evidence deployed to production",
+        "files": [
+          "/var/www/mail/api/chat.php:630",
+          "/var/www/mail/api/chat.php:643"
+        ],
+        "delivery": "backend",
+        "whatsappPattern": "WhatsApp mute blocks push delivery entirely except when mentioned. Muted conversation shows no banner and no badge count bump",
+        "fixPlan": "Verify line 643 executes every push. Verify line 652 condition skips push if muted and not mentioned. QA: mute conversation via long-press, send message, verify logs show continue with no fcmSendToUser call",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "C-report-block-push.4",
+        "title": "Push leak vectors: stale tokens, wrong-account pushes, logged-out devices",
+        "currentState": "chat_send line 279 correctly filters sender from push recipients. fcmGetUserTokens filters tokens older than 60 days at line 1106. No check for logged-out users or token expiry beyond age. No way to revoke token on logout. Token stays in vhosts until 60d TTL",
+        "rootCause": "Token cleanup is TIME-based 60 days not EVENT-based on logout. Old token never marked stale on logout so old device can still receive push after user logs in elsewhere. fcmRemoveInvalidToken only fires on FCM 404 error not proactively on logout",
+        "files": [
+          "/var/www/mail/api/firebase_push.php:1087",
+          "/var/www/mail/api/firebase_push.php:1155"
+        ],
+        "delivery": "backend",
+        "whatsappPattern": "WhatsApp invalidates push token on logout via user agent deletion and backend stale mark. On re-login fresh token registered. 60d cleanup is safety net not primary mechanism",
+        "fixPlan": "On logout in email.php call fcmRemoveInvalidToken with active_token PROACTIVELY not just on 404. Store current device token in session and remove immediately at logout. Keep 60d TTL as fallback for abandoned devices",
+        "effort": "M",
+        "risk": "high"
+      },
+      {
+        "id": "D-encryption.1",
+        "title": "E2EE Disabled by Default — Opt-In Only (Telegram Secret Chat Model)",
+        "currentState": "E2EE is OFF by default for direct conversations. Lines 8789-8796 in /root/webmail-app/app/chat-conversation.js explicitly disable auto-enable: code checks conversation is_e2ee flag, but if NOT already enabled (and conversation is 'direct' type), it does NOTHING. Users must manually enable via menu → 'Chat secreto' (Secret Chat). Plaintext is the default path.",
+        "rootCause": "Design decision to follow Telegram's opt-in model (not WhatsApp default-on). Code comment (lines 8790-8795) states: 'E2E is now OPT-IN only... Regular chats are server-side readable = works on any device. This eliminates the lock problem for 99% of users. E2E auto-enable DISABLED.'",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:8789-8796",
+          "/root/webmail-app/app/chat-conversation.js:8832-8884",
+          "/root/webmail-app/services/e2ee.js:1-50"
+        ],
+        "delivery": "OTA",
+        "whatsappPattern": "WhatsApp uses Signal Protocol with 4-DH X3DH for initial key agreement + Double Ratchet for per-message forward secrecy. Identity keys (long-term), signed prekeys (medium-term ~30d rotation), one-time prekeys, and ephemeral keys per message. Multi-device handled via device_id registration. Sender Keys for groups. WhatsApp enables E2EE by default on ALL 1:1 conversations; Chatyy makes it opt-in to avoid multi-device 'lock' UX friction.",
+        "fixPlan": "Stage 1 (P0): Flip default to ON for direct conversations. Remove the else-if block lines 8789-8796 that disables auto-enable. When conversation type='direct', call handleToggleE2E(true) if not already enabled. Stage 2 (P1): Surface E2EE enrollment in onboarding (not secret chats, but transparent lock icon). Stage 3 (P2): Implement device linking UI so users can unlock via Face ID on new devices (WhatsApp Web parity). Stage 4 (P3): Add 'restore from backup' flow when logging in on new device to avoid key rotation. Stage 5 (Safety): Roll out with QA: test 1:1 plaintext→encrypted upgrade, verify old messages remain readable, check group conversations stay optional.",
+        "effort": "M",
+        "risk": "med"
+      },
+      {
+        "id": "D-encryption.2",
+        "title": "Identity Key vs Device Key Misalignment — Silent Key Rotation on Multi-Device",
+        "currentState": "Code uses TWO separate keypairs: (1) identity_key — long-term, scoped per-email, restored from server backup on new device. (2) device_key — per-install UUID, generated locally, NOT backed up (lines 264-312 in e2e.js). When user logs in on new phone, identity_key IS restored (avoiding rotation), BUT device_key is freshly generated. Problem: old messages encrypted FOR the old device_id become undecryptable on new phone because envelope routing keys off device_id.",
+        "rootCause": "Device linking not fully implemented. chat.php has tables chat_pending_envelopes (per-device) + schema for device registration (lines 1592-1651), but no ClientEnvelopeDecrypt endpoint to re-encrypt envelopes for new device. Multi-device Stages 1-7 are implemented in task list (#1024-#1031) but Stage 5 (encrypted envelope per-device) is incomplete. Old v2/v3 envelopes target device_id implicitly via device bundle, but no mechanism to migrate when user adds/logs into new device.",
+        "files": [
+          "/root/webmail-app/services/e2e.js:264-312",
+          "/root/webmail-app/services/e2ee.js:117-122, 447-448",
+          "/var/www/mail/api/chat.php:1592-1651",
+          "/root/webmail-app/app/chat-conversation.js:8767-8769"
+        ],
+        "delivery": "mixed",
+        "whatsappPattern": "WhatsApp: Identity key is cross-device (synced via iCloud/Google backup encrypted with user password). Device key per phone is auto-registered. When user logs in on new device: restore identity, generate fresh device key, auto-re-encrypt pending envelopes via signal protocol ratcheting. Sender automatically fans out to all registered device_ids. Receiver's new device seamlessly decrypts because identity key (DH root) is the same, only device DH differs.",
+        "fixPlan": "Stage 1: Add e2ee_device_publish endpoint (backend + frontend) to wire getDevicePublicKey() on every auth refresh (not just chat init). Stage 2: Implement chat_envelope_migrate backend endpoint — when new device detects it can't decrypt a v3 envelope (wrong device_id or missing session), it requests migration: server fans out re-encryption via sender's device + identity key. Stage 3: Cache device registrations locally (device_id → pub) to avoid round-trip on every send. Stage 4: QA multidevice: log in on Emulator 1, send encrypted msg, switch to Emulator 2, verify old msg readable (identity restored), can re-encrypt + forward, no 'chave indisponível' banner.",
+        "effort": "L",
+        "risk": "high"
+      },
+      {
+        "id": "D-encryption.3",
+        "title": "E2EE Kill-Switch for Calls (CALL_E2EE_ENABLED env var) — Default OFF, No Rollout Path",
+        "currentState": "Three call E2EE endpoints (chat_call_invite_e2ee, chat_call_key_ack, chat_call_key_rotate) exist in chat.php (lines 27316-27330) but are DISABLED by default. Code checks getenv('CALL_E2EE_ENABLED')!=='1' and returns 501 'not enabled'. Separate kill-switch CALL_E2EE_KILLSWITCH can flip all three to 503 in <1 minute if rollout fails. No monitoring, no gradual rollout, no QA gate defined.",
+        "rootCause": "Call E2EE is Phase 1 staged rollout infrastructure (lines 27325-27328 comment confirms 'Feature flag default OFF for Phase 1 staged rollout'). Never enabled in production. SDP fingerprint + envelope fan-out to call participants is coded but gated by env var. No frontend UI to offer encrypted calls, no backend metrics to track adoption if enabled.",
+        "files": [
+          "/var/www/mail/api/chat.php:27310-27330",
+          "/root/webmail-app/services/e2ee.js:855-965 (createEnvelopeV3 for calls)"
+        ],
+        "delivery": "backend",
+        "whatsappPattern": "WhatsApp: Calls encrypted via same Signal protocol as chat. Identity key auth happens once at contact verification. Per-call ephemeral DH inside call signaling (ICE candidates, SDP mlines). Sender keys for group calls (fanout envelopes to all participants via SFU). No separate key exchange — reuses chat session key or derives from shared identity.",
+        "fixPlan": "Stage 1: Add frontend Call E2EE toggle in call pre-dial screen (lock icon → 'Encrypted call' label). Backend checks is_e2ee + both users have keys registered. Stage 2: Implement call SDP encryption: wrap SDP offer/answer in envelope, unwrap on receive. Test: audio call (1:1, then group). Stage 3: Metrics: log call_e2ee_enabled per-call, track failed/successful ratio. Stage 4: Progressive enable: set CALL_E2EE_ENABLED=0.5 (50% of users) via gradual rollout config, monitor 24h for crashes. Stage 5: If stable, ramp to 100% and remove flag (make default ON). Rollback: flip CALL_E2EE_KILLSWITCH=1, returns 503, frontend falls back to plaintext.",
+        "effort": "L",
+        "risk": "med"
+      },
+      {
+        "id": "D-encryption.4",
+        "title": "Envelope Mode Deferred — Backend Tables Ready, No Final Client Integration",
+        "currentState": "Backend has chat_pending_envelopes + chat_pending_envelope_bodies tables (created ~2026-05-16, lines 1592-1651 in chat.php). Server supports storing encrypted envelopes instead of plaintext messages. Cron job cron-chat-envelope-gc.php exists to GC stale envelopes. BUT: frontend chat-conversation.js still sends plaintext via content field in chat_send; no call to alternative chat_envelope_send endpoint (which exists at line 14887). Plaintext path is hardcoded default.",
+        "rootCause": "Multi-stage SQLite-first chat migration (Stage 5: encrypted envelope) planned but incomplete. Tasks #1024 + #1038 reference 'Sender Keys envelope wire' + 'Stage 5 encrypted envelope' as queued. Backend infrastructure for envelope_mode is live but frontend routing (when to use envelope vs plaintext) is undefined.",
+        "files": [
+          "/var/www/mail/api/chat.php:1592-1651 (tables)",
+          "/var/www/mail/api/chat.php:14887-14920 (chat_envelope_send endpoint stub)",
+          "/var/www/mail/api/cron-chat-envelope-gc.php:1-50",
+          "/root/webmail-app/app/chat-conversation.js:12429-12441 (sends createEnvelopeV3 but no envelope_send call)"
+        ],
+        "delivery": "mixed",
+        "whatsappPattern": "WhatsApp: All messages go through Signal-encrypted envelopes by default. Server never sees plaintext. Multi-device: fanout to all recipient devices via separate envelope per (recipient_email, device_id) pair. Groups: Sender Key protocol (one encryption, all recipients can decrypt without fan-out on sender side). 1:1: Individual envelope per recipient device.",
+        "fixPlan": "Stage 1: Wire chat_send to call chat_envelope_send when conversation.is_e2ee=true. Pass encrypted content + envelope metadata instead of plaintext. Stage 2: Implement envelope storage lifecycle: created_at, delivered_at (per device), expires_at (30d). Stage 3: Client-side: add envelope_mode flag to conversation model; on send, check flag and route to chat_envelope_send (not chat_send). Stage 4: Add 'switch to encrypted' migration: on first E2EE enable, set flag, new messages auto-envelope, old plaintext messages remain readable (server keeps both paths). Stage 5: QA: send msg before E2EE, enable E2EE, send msg after, receive on second device, verify both readable, old one unencrypted preview, new one locked icon.",
+        "effort": "M",
+        "risk": "high"
+      },
+      {
+        "id": "D-encryption.5",
+        "title": "Group Encryption — Sender Keys Not Wired, Falls Back to Per-Recipient Fan-Out",
+        "currentState": "Frontend createEnvelopeV3 (lines 855-965 in e2e.js) normalizes recipient bundles into device list, loops over each device, encrypts separately, returns { envelopes: { 'email|device_id': {...} } }. This is per-recipient encryption (fan-out). Backend chat_send receives envelope JSON, stores as plaintext in message content. No Sender Key protocol (Signal's group optimization: single encryption, all recipients derive same MK via group ratchet).",
+        "rootCause": "Sender Keys (task #1035) is in task list as 'completed' but not actually wired. Code does naive N recipients = N encryptions. Scales poorly for large groups (100 members = 100 envelopes). WhatsApp uses Sender Key to send 1 ciphertext, all members compute shared group SK via DH, reduces bandwidth + CPU.",
+        "files": [
+          "/root/webmail-app/services/e2e.js:849-883 (target enumeration, no group dedup)",
+          "/root/webmail-app/services/e2e.js:855-965 (per-device fan-out loop)"
+        ],
+        "delivery": "OTA",
+        "whatsappPattern": "WhatsApp Signal Protocol: 1:1 uses X3DH (4-DH, per-recipient envelope). Groups: Sender Key (GKR — Group Key Ratchet). Sender computes group session key once (derived from group_id + sender_id + counter). Encrypts message once with this key. All members use same identity key mapping to compute the same group SK (no server fanout needed, bandwidth O(1) not O(n)). Sender's device publishes group_session_key in addition to identity + signed_prekey.",
+        "fixPlan": "Stage 1: Define group_session_key backend schema (group_id, sender_id, session_counter, root_key). Stage 2: Implement group SK derivation in e2e.js: kdfGroupRootKey() generates stable group SK from (group_id, topic_id, members list hash). Stage 3: On group send: if conversation.type='group' && is_e2ee, compute group SK once, encrypt message once, wrap in envelope { group_session_key_id, ciphertext }. For receive: reconstruct group SK on recipient side, decrypt. Stage 4: Fallback to per-device for 1:1 (no group_id). Stage 5: QA group E2EE: add 3 members, send 1 msg, 1 envelope in DB (not 3), each member decrypts using group SK, can reply (sender ratchets counter).",
+        "effort": "M",
+        "risk": "high"
+      },
+      {
+        "id": "D-encryption.6",
+        "title": "Staged Re-Enable Plan — Safe Rollout with QA Gates",
+        "currentState": "Currently: all direct conversations plaintext by default (opt-in to enable). No production users on E2EE. No metrics, no monitoring, no gradual rollout infrastructure.",
+        "rootCause": "Decision to avoid multi-device lock UX problem deferred the rollout. No safety gates defined.",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:8789-8796",
+          "/var/www/mail/api/chat.php:20547-20563"
+        ],
+        "delivery": "OTA",
+        "whatsappPattern": "WhatsApp: Default ON, always has been. Signal, Telegram: opt-in toggle (Secret Chats). iMessage: always ON. Rollout strategy: test internally → beta (TestFlight/Play beta) → canary (1% users) → ramp (5%, 25%, 100%).",
+        "fixPlan": "QA Gate 1 (Internal QA, this week): (a) Set DEFAULT_E2EE=true locally. (b) Log in on 2 emulators, send encrypted msg, receive, verify decryption + read receipt. (c) Test 1:1 → group upgrade (add 3rd person, should downgrade to plaintext or fan-out). (d) Test key rotation: login on new emulator, restore key, re-encrypt old msg. Gate 2 (Beta, Play/TestFlight, week 2): Enable for 10% of beta testers, monitor: crashes, decryption errors, sync issues. Log [E2EE] errors to analytics. Gate 3 (Canary, week 3): Ramp to 1% prod users, monitor 24h. If error_rate < 0.1%, proceed. Gate 4 (Production, week 4): Ramp 5% → 25% → 100%, check user retention/complaints. Rollback: setenv DEFAULT_E2EE=false, ship OTA, all new conversations plaintext (old encrypted ones still readable via envelope unwrap).",
+        "effort": "S",
+        "risk": "med"
+      },
+      {
+        "id": "E-chat-features.1",
+        "title": "Auto-translate funciona",
+        "currentState": "IMPLEMENTED. Backend: chat_get_auto_translate, chat_set_auto_translate, chat_translate_message endpoints. Uses OpenAI gpt-4o-mini. Frontend auto-translates incoming messages to user's selected language. Translations cached in chat_message_translations table and file cache. Rate limited 60/hour per user.",
+        "rootCause": "No issues. System WORKING and LIVE.",
+        "files": [
+          "/var/www/mail/api/chat.php:15616",
+          "/var/www/mail/api/chat.php:18347",
+          "/root/webmail-app/app/chat-conversation.js:10091"
+        ],
+        "delivery": "OTA",
+        "whatsappPattern": "WhatsApp lacks native auto-translate. Chatyy auto-translates on-device per user preference (Telegram-style). More advanced.",
+        "fixPlan": "No fix needed. System operational.",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "E-chat-features.2",
+        "title": "Exportar conversas + agendados funciona",
+        "currentState": "Both implemented. Export: chat_export endpoint returns JSON/HTML/text formats up to 10k messages. Scheduled: chat_schedule_message queues, chat_scheduled_list shows pending, cron-chat-scheduled.php polls every minute and inserts due messages into chat_messages.",
+        "rootCause": "No bugs. Both PRODUCTION-READY. Atomic handling prevents double-sends.",
+        "files": [
+          "/var/www/mail/api/chat.php:16351",
+          "/var/www/mail/api/chat.php:15378",
+          "/var/www/mail/api/cron-chat-scheduled.php:1"
+        ],
+        "delivery": "backend",
+        "whatsappPattern": "WhatsApp: export txt/zip with media. No scheduled send. Chatyy export lacks ZIP media, scheduling is MORE feature-rich.",
+        "fixPlan": "Current sufficient. Future: ZIP media export, scheduled toast in composer.",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "E-chat-features.3",
+        "title": "Saved vs Starred messages redundancy",
+        "currentState": "Three overlapping systems: Saved Messages (self-chat with scheduling), Starred Messages (individual message bookmarks across conversations), Pinned Conversations (pins thread only). Users see 3 screens for overlapping concepts.",
+        "rootCause": "Design drift: evolved separately (#353 saved, #438 starred, #7173 pinned). No unified save/collections model.",
+        "files": [
+          "/root/webmail-app/app/saved-messages.js:1",
+          "/root/webmail-app/app/starred-messages.js:1",
+          "/var/www/mail/api/chat.php:7687"
+        ],
+        "delivery": "mixed",
+        "whatsappPattern": "WhatsApp: starred only. Telegram: Saved Messages self-chat. Chatyy split across 3 screens.",
+        "fixPlan": "Adopt Telegram model: Saved Messages = self-chat. Star messages to auto-forward to Saved. Remove redundant Starred screen. Move Pinned to chat list header.",
+        "effort": "M",
+        "risk": "med"
+      },
+      {
+        "id": "F-ui-polish.1",
+        "title": "Notificação nos 3 pontinhos da conversa tá FEIO",
+        "currentState": "Header overflow menu (3 dots / more options) in chat-conversation has notification/mute items without visual polish. The mute icon shows with an optional badge (mutedUntil) but uses plain colors (#f59e0b orange for muted state, #6B7280 gray for unmuted) with minimal visual distinction. Notification settings item has tinted icon (#A78BFA) but no special treatment.",
+        "rootCause": "Menu items for mute/notification settings use basic tint colors without modern visual treatment. Missing: animated badge pulse, gradient backgrounds for notification state, modern chip/pill styling, or highlight treatment when status is active (muted/notified). The toggle state indicator is too subtle.",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:8359-8383",
+          "/root/webmail-app/app/chat-conversation.js:26966-27070",
+          "/root/webmail-app/app/chat-conversation.js:27054-27058",
+          "/root/webmail-app/components/ChatNotificationSettingsSheet.js"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "1) Redesign mute/notification menu items with modern visual language: add animated badge pulse when muted, use gradient backgrounds (#f59e0b fading to transparent) for muted state, add modern rounded-square containers around icons. 2) Add scale-on-press animation to menu items. 3) Update notification settings item with more prominent visual treatment (e.g., icon in colored container like other header menu items). 4) Polish the overall menu entrance animation (currently scale 0.94→1, but could add more refined easing).",
+        "effort": "M",
+        "risk": "low",
+        "whatsappPattern": ""
+      },
+      {
+        "id": "F-ui-polish.2",
+        "title": "Página Mídia e Documentos feia (fontes etc)",
+        "currentState": "MediaGallery component renders 4 tabs (image, video, audio, file) with basic styling. Empty states show icon in 80×80 rounded container (#7C3AED background), label text (fontSize 17, weight 600), and hint text (fontSize 13, color textTertiary). Media grids use 3-column layout for images/videos with no padding/spacing polish. File list items are basic text rows. Fonts are functional but not refined.",
+        "rootCause": "Missing: consistent typography hierarchy (font weight progression, letter spacing), modern spacing/padding in grid cells, visual polish on empty states (missing icons or bland illustration), tab underline/indicator styling, section headers, file type badges with better visual design. The overall aesthetic is functional but lacks Instagram/WhatsApp-grade refinement in typography and layout.",
+        "files": [
+          "/root/webmail-app/components/MediaGallery.js:41-100",
+          "/root/webmail-app/components/MediaGallery.js:1-40",
+          "/root/webmail-app/app/chat-conversation.js:25411-25414"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "1) Upgrade typography: use FontSize constants for proper hierarchy (header 18 weight 800, hint 12 weight 500). 2) Add letter-spacing on labels (+0.3). 3) Polish grid: add proper padding (16px), gap between columns/rows (8px), border-radius on thumbnails (8-12px). 4) Improve empty state illustrations with better SVG or styled Icon with gradient background. 5) Style tabs with underline indicator + tint color. 6) Add section titles between tabs + counts. 7) Modernize file badges with colored icon containers (IconBarChart green, IconMusic purple, etc) like documentos.js patterns.",
+        "effort": "M",
+        "risk": "low",
+        "whatsappPattern": ""
+      },
+      {
+        "id": "F-ui-polish.3",
+        "title": "Estatística da conversa — mais bonita e mais completa",
+        "currentState": "Stats modal exists with good data: 4 hero cards (total messages, avg length, per day, peak hour), 24h activity bar chart, per-sender list with percentage bars, per-type chips. Current metrics include: message count, avg length, messages per day, peak hour, hourly distribution, sender breakdown, message types. Colors are multi-hued palette (purple, pink, amber, emerald, blue, red, cyan). Layout is clean with proper spacing and gradient header.",
+        "rootCause": "Not broken—already well-designed! But could add more metrics: word count, average response time, most common time of day (vs just peak hour), longest message, conversation duration, most active day of week, emoji usage count, reaction count, media ratio. Missing: export stats as image/PDF, comparison with previous time period, trend indicators (up/down arrows on metrics).",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:29004-29172",
+          "/root/webmail-app/app/chat-conversation.js:29025-29170"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "Enhance stats modal by adding: 1) Additional metrics row: emoji count + reaction count (with icons in colored pills). 2) Weekly activity heatmap (7 columns, sparkline showing which days most active). 3) Trend indicator (small up/down arrow + % change) on hero cards if data spans >7 days. 4) Export button (top-right) to save stats as PNG/PDF. 5) Optional: add 'Reset' button to clear stats. 6) Tooltip on metrics explaining how calculated. All additions should match current design language (tinted icons, gradient backgrounds, rounded containers).",
+        "effort": "M",
+        "risk": "low",
+        "whatsappPattern": ""
+      },
+      {
+        "id": "F-ui-polish.4",
+        "title": "Settings: parte de MOEDA e PAPEL DE PAREDE padrão feio",
+        "currentState": "Currency selector at /settings shows user's selected currency with auto-detect label. Renders as text ('Auto · BRL') with a dropdown (chevron icon). Wallpaper default section shows 5 gradient options (Roxo Chatyy #7C3AED, Rosa #DB2777, Pôr-do-sol #F59E0B, Oceano #0EA5E9, Floresta #16A34A) with labels. Both sections have plain styling: basic section title, description text, and minimal visual indicators for selected state.",
+        "rootCause": "Currency UI lacks visual polish: dropdown is plain, no icon/badge to indicate auto-detect status, selected item has no highlight. Wallpaper section: gradient previews likely too small/unclear, labels are basic text, no preview thumbnail of actual gradient applied to chat bubble. Missing: modern dropdown styling (rounded border, tint color), auto-detect indicator badge, gradient preview cards with shadows/borders, selected state visual distinction.",
+        "files": [
+          "/root/webmail-app/app/settings.js:1869-1900",
+          "/root/webmail-app/app/settings.js:2277-2320",
+          "/root/webmail-app/app/settings.js:449",
+          "/root/webmail-app/app/settings.js:307"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "1) Currency: upgrade dropdown to modern styled select (rounded border 12px, background color.surface, tint accent color on focus). Add globe icon before currency code. For auto-detect status, add small badge pill (#10B981 with checkmark icon) next to currency. 2) Wallpaper: replace text labels with preview cards showing actual gradient (height 100px, borderRadius 16px, shadow). Display label below gradient with font-weight 700. Selected state: add accent-colored border (3px) + checkmark icon overlay. Add subtle animation when tapping option. 3) Both sections: ensure proper spacing (marginTop 20px between sections, padding inside containers 16px).",
+        "effort": "M",
+        "risk": "low",
+        "whatsappPattern": ""
+      },
+      {
+        "id": "F-ui-polish.5",
+        "title": "Deletar a lista que fica em cima do header (sapatao, gt) com long-press",
+        "currentState": "ChatListTab renders folder chips (chatFolders.map) as FilterChip components in a horizontal ScrollView above the chat list. Each folder shows icon + name (e.g., '📂 sapatao', '👕 gt'). Currently, tapping a chip filters the list. No long-press handler exists. Folders can be created/deleted via chat context menu (long-press chat row → add to folder), but no direct UI for managing the chips strip itself.",
+        "rootCause": "FilterChip component lacks long-press delete gesture. The folder management UI is hidden in the per-chat context menu, making it unintuitive for users to delete folders from the strip. Missing: long-press responder on chips, delete confirmation modal, visual feedback (haptic on long-press), folder count badge update after delete.",
+        "files": [
+          "/root/webmail-app/components/ChatListTab.js:6224-6226",
+          "/root/webmail-app/components/ChatListTab.js:2703-2715",
+          "/root/webmail-app/components/ChatListTab.js:4332-4391"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "1) Enhance FilterChip to detect long-press (PanResponder or Pressable with onLongPress). 2) On long-press: show delete confirmation modal ('Delete folder [name]?') with red destructive Delete button. 3) Call api.chatFoldersDelete(f.id) on confirm. 4) Trigger haptic feedback (Haptics.notificationAsync) on long-press. 5) Update UI: re-fetch chatFolders list or filter it locally. 6) Animate chip fade-out on delete. 7) Fallback: add gear/settings icon on each folder chip that opens a popover with delete option (alternative to long-press for discoverability).",
+        "effort": "S",
+        "risk": "low",
+        "whatsappPattern": ""
+      },
+      {
+        "id": "F-ui-polish.6",
+        "title": "Perfil de TERCEIROS: reorganizar; o botão 'Conversa' embaixo não precisa (já tem Mensagens em cima)",
+        "currentState": "Profile component (peek + full modes) renders action buttons in two layers: 1) Top action row with phone, video, mail, message-square, user-plus icons (4-5 actions). 2) Full profile tabs include Posts | Reels | Mídia | Chat | Email. The 'Chat' tab at bottom right shows common chats list. There is a 'Conversa' (or 'Message') button that appears to duplicate the messaging capability. The layout feels redundant: messaging is available both as a top action + as a dedicated tab.",
+        "rootCause": "UI/UX redundancy: the 'Conversa' / 'Message' button (bottom right action area) overlaps functionality with the Messages action (top row icon) and the Chat tab. This creates confusion and wastes screen real estate. The button should be removed or repurposed. The 4-5 top action buttons could be better organized (e.g., group call/message options under a single unified action).",
+        "files": [
+          "/root/webmail-app/components/Profile.js:2653",
+          "/root/webmail-app/components/Profile.js:46-51",
+          "/root/webmail-app/components/Profile.js:200-300 (action definitions)"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "1) Remove the standalone 'Conversa' button from the action row. 2) Keep the top 4 actions: Call (phone), Video, Mail, Message. 3) Reorganize: if space allows, promote Message to primary position (left-most or highlighted), or merge Mail + Message under a unified 'Contact' action with a popover menu (email vs direct message). 4) Move 'Follow' button to the right if it exists. 5) Reorder tabs to: Posts | Reels | Mídia | Email (remove Chat tab since messaging is handled by top action). 6) Test on mobile to ensure hit areas are adequate (min 44x44pt per iOS HIG). 7) Add subtle scale animation on action button press for tactile feedback.",
+        "effort": "S",
+        "risk": "low",
+        "whatsappPattern": ""
+      },
+      {
+        "id": "G-live-location.1",
+        "title": "Live location share updates are 5-minute heartbeat, stale by design",
+        "currentState": "Frontend: LiveLocationHeartbeat fires every 5 minutes in foreground + AppState-triggered on app resume. Background: LiveLocationHeartbeat starts backgroundLocationTask which fires on OS-managed interval (5min time interval + 100m distance interval on Android, iOS batches every 5min). Both send to chat_friend_location_share_update endpoint. Backend: chat_friend_location_share_update writes ONLY to chat_friend_location_shares table (not chat_live_locations conversation context). Snap-map reads via chat_friends_map_shares endpoint which JOINs shares with grants. Updated_at timestamp recorded but no real-time WebSocket fanout to viewers.",
+        "rootCause": "The 5-minute heartbeat cadence is intentional (WhatsApp parity comment in code) but stale for users who want instant tracking. No real-time push fanout: when sharer's app posts new coords, receivers don't get pinged—they only see fresh pin next time they poll snap-map (no server push trigger). Ping request system exists (chat_friend_location_ping) but it's pull-based: receiver must explicitly ping sharer, who then re-posts. No automatic update-triggered fanout to all viewers.",
+        "files": [
+          "/root/webmail-app/components/LiveLocationHeartbeat.js:35",
+          "/root/webmail-app/services/backgroundLocationTask.js:117-119",
+          "/var/www/mail/api/chat.php:17127-17160",
+          "/var/www/mail/api/chat.php:17375-17412"
+        ],
+        "delivery": "mixed",
+        "whatsappPattern": "WhatsApp live location: automatic significant-location-change detection (100m threshold via iOS CLLocationManager + Android LocationManager) fires updates instantly. Google Maps: 3-minute adaptive interval documented in support forums, adjusts based on movement. Find My (Apple): runs CLLocationManager.startLocationUpdatesAsync() with significant-change notification (~500m trigger), continuously in background. Common pattern: update event → server receives → broadcast via WebSocket/FCM to ALL viewers immediately (not pull-based). Sources: [Find My location handling](https://developer.apple.com/documentation/corelocation/handling-location-updates-in-the-background), [Google Maps 3min interval](https://support.google.com/maps/thread/247860740), [iOS significant location](https://developer.apple.com/documentation/corelocation/cllocationmanager/1423531-startmonitoringsignificantlocati), [WhatsApp live location](https://www.howtoisolve.com/whatsapp-live-location-everything-you-need-to-know-about/), [Real-time fanout architecture](https://codelit.io/blog/notification-system-architecture)",
+        "fixPlan": "Stage 1 (quick win): Drop heartbeat from 5min to 30s foreground + 1min background (still respects quiet periods, less stale). Stage 2 (WhatsApp parity): Implement CLLocationManager.startLocationUpdatesAsync() with accuracy:Balanced + distanceFilter:100m (iOS triggers on 100m move, not time-based). Android: LocationManager.requestLocationUpdates(100m distance filter). Stage 3 (real-time fanout): On chat_friend_location_share_update POST, broadcast via WebSocket to all receivers with active grants: `{ type: 'live_location_update', sharer_email, lat, lng, accuracy, updated_at }` (not just update the PG row). Stage 4 (map auto-refresh): FrontEnd snap-map must listen to WS 'live_location_update' and re-render pin in real-time (don't wait for next poll). Stage 5 (battery): Reduce update rate when app backgrounded (2min instead of 1min) + pause entirely if user exits snap-map screen for >30s.",
+        "effort": "L",
+        "risk": "med"
+      },
+      {
+        "id": "G-live-location.2",
+        "title": "Ping-request system is one-way: receiver can ping sharer, but no auto-recovery",
+        "currentState": "LiveLocationPingListener mounted at root layout listens to WS 'location_ping_request'. When fired, it calls Location.getCurrentPositionAsync() with Balanced accuracy (10s timeout), then POSTs to chat_friend_location_share_update. Backend chat_friend_location_ping endpoint fires silent FCM (via fcmSendSilentSync) + WS relay to sharer. Throttled 1 ping per 60s per (receiver, sharer) pair.",
+        "rootCause": "Ping is only initiated when receiver actively calls chat_friend_location_ping (snaps map and user sees '23h stale' → taps to refresh). No automatic ping recovery: if sharer's app backgrounded for 12h and user never taps map refresh, sharer's pin stays frozen. No server-side 'is this pin stale?' check with auto-ping (24h+ without update should trigger auto-recovery).",
+        "files": [
+          "/root/webmail-app/components/LiveLocationPingListener.js:40-66",
+          "/var/www/mail/api/chat.php:17231-17284"
+        ],
+        "delivery": "backend",
+        "whatsappPattern": "Find My + WhatsApp don't have explicit 'ping' endpoints. Instead, they use continuous background monitoring: if device's location hasn't updated in >30min, the OS wakes the app + pings GPS (CLLocationManager), gets fresh fix, posts. Receiver side: map automatically refreshes when new coord arrives (via fanout push). No explicit 'user taps refresh' action needed. Sources: [iOS background location](https://developer.apple.com/documentation/corelocation/handling-location-updates-in-the-background)",
+        "fixPlan": "Wire server-side cron to detect stale shares: SELECT * FROM chat_friend_location_shares WHERE is_unlimited=TRUE AND updated_at < NOW()-30min. For each stale row, fire silent FCM ping to sharer + log for debugging (don't auto-revoke, just wake the app). Ensure background task handler checks share-active flag before posting (it already does at /root/webmail-app/services/backgroundLocationTask.js:64). Add metric: count of auto-woken pings per day.",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "G-live-location.3",
+        "title": "Map render has no real-time push: snap-map rerenders only on manual poll or page-open",
+        "currentState": "Snap-map reads chat_friends_map_shares on demand (user navigates to map tab or pulls refresh). No WebSocket listener for live_location_update events. Map re-renders entire pin list. Updated_at timestamp shown to user but not auto-updating.",
+        "rootCause": "Frontend snap-map component has no WS subscription channel for live location updates. When sharer POSTs new coords, receiver's snap-map UI doesn't learn about it until next manual poll or app-restart. Snap-map is pull-only (chat_friends_map_shares endpoint).",
+        "files": [
+          "/root/webmail-app/services/api.js:4562",
+          "/var/www/mail/api/chat.php:17375-17412"
+        ],
+        "delivery": "OTA",
+        "whatsappPattern": "Google Maps + WhatsApp + Find My: when location updates arrive, receiver's map automatically updates the pin position + timestamp. No manual refresh needed. Achieved via: (1) server broadcasts update to all connected receivers over WebSocket, (2) frontend listens to 'location_update' channel, (3) re-renders pin at new lat/lng. Sources: [Fan-out notification architecture](https://codelit.io/blog/notification-system-architecture)",
+        "fixPlan": "Frontend: After snap-map mounts, subscribe to WS channel 'live_location:' + current_email (e.g., 'live_location:alice@chatyy.com'). Handler: on 'live_location_update' message, update in-memory pin state + re-render map (use Reanimated to animate pin smoothly across map). Backend: In chat_friend_location_share_update, after INSERT/UPDATE, call _broadcastFriendMapToUser(sharer_email, 'live_location_update', { ... }) to fanout to all viewers with active grants. Codebase already has _broadcastFriendMapToUser helper (used in ping endpoint); reuse it.",
+        "effort": "M",
+        "risk": "med"
+      },
+      {
+        "id": "G-live-location.4",
+        "title": "Background location task fires at OS-managed cadence (5min + 100m), not user-intended duration",
+        "currentState": "backgroundLocationTask.startLocationUpdatesAsync() configured with: timeInterval 5min (Android hint), distanceInterval 100m, deferredUpdatesInterval 5min (iOS batching). Fires TaskManager task, posts to chat_friend_location_share_update. No correlation to user's selected duration (15min, 1h, 8h, unlimited).",
+        "rootCause": "Expected behavior for iOS/Android background APIs: the OS controls frequency, not the app. User's '15min duration' is about when the share *expires* in the database, not about GPS update frequency.",
+        "files": [
+          "/root/webmail-app/services/backgroundLocationTask.js:93-134"
+        ],
+        "delivery": "native-both",
+        "whatsappPattern": "WhatsApp live location uses CLLocationManager.startLocationUpdatesAsync() + ActivityType.other + pausesUpdatesAutomatically: false (similar to Chatyy code). Actual update cadence is OS-managed, typically firing every few seconds to minutes depending on movement. User's duration selection (15m, 1h, 8h) is expiry time, NOT GPS frequency. Sources: [iOS location updates background](https://developer.apple.com/documentation/corelocation/cllocationmanager/1620551-requestlocationupdates)",
+        "fixPlan": "No change needed — current design is correct per iOS/Android OS constraints. Document in code comment: 'User-selected duration controls expires_at in DB, not GPS polling frequency.' To reduce battery: (1) increase distanceFilter from 100m → 300m on stationary detection (geofence API), (2) reduce deferredUpdatesInterval from 5min → 10min if user hasn't moved. Track in LiveLocationHeartbeat: if speed = 0 for >2min, call backgroundLocationTask.updateIntervalForStationary().",
+        "effort": "M",
+        "risk": "low"
+      },
+      {
+        "id": "H-calendar.1",
+        "title": "Automatic device timezone as default, manual override optional",
+        "currentState": "Timezone handling is in calendar.js lines 2025-2028. Current implementation: tzPref defaults to 'system' via useState. Device timezone is captured via Intl.DateTimeFormat().resolvedOptions().timeZone at mount (line 2026). Timezone picker modal exists at lines 3056-3120 allowing selection from COMMON_TIMEZONES array (lines 125-154). Prefix is persisted to localStorage (web) / AsyncStorage (native) with keys cal_show_tz and cal_tz_pref. User must manually open picker to change timezone.",
+        "rootCause": "Missing automatic detection and application of device timezone as the DEFAULT choice. Currently 'system' defers to device tz only when rendering formatTimeInZone (line 87), but there's no explicit flow showing the user their device timezone is the active default. The picker requires explicit user action to even view the timezone. No prominent indicator of which timezone is active.",
+        "files": [
+          "app/calendar.js:87-95 (formatTimeInZone helper)",
+          "app/calendar.js:125-154 (COMMON_TIMEZONES list)",
+          "app/calendar.js:1985-2001 (timezone persistence init)",
+          "app/calendar.js:2012-2024 (persistTzPref callback)",
+          "app/calendar.js:2025-2028 (deviceTz memo + effectiveTz calc)",
+          "app/calendar.js:3056-3120 (timezone picker modal)",
+          "app/calendar.js:2852-2862 (timezone button in header)"
+        ],
+        "delivery": "OTA",
+        "whatsappPattern": "WhatsApp uses system timezone automatically (no picker in most views). Google Calendar iOS: shows device timezone in header by default; user can add multiple timezones to the same view without changing the primary. Apple Calendar: always uses device timezone, no picker. Pattern: device tz is the unambiguous default; explicit tz picker is secondary UX for multi-zone workflows.",
+        "fixPlan": "1) Add a visual indicator in the calendar header showing the active timezone (e.g., 'São Paulo (GMT-3)' next to the month label). 2) Make the timezone picker show the device timezone prominently at the top with a checkmark. 3) Add a one-time onboarding toast/popover on first calendar open: 'Using [Device TZ]. Tap to change.' 4) Ensure persistTzPref auto-enables showTz suffix only when user picks a NON-system timezone (already done at line 2016, but verify it's visible). 5) Lazy-load COMMON_TIMEZONES to include a 'Device' option at the top that always maps to Intl.DateTimeFormat().resolvedOptions().timeZone.",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "H-calendar.2",
+        "title": "Implement drag-to-edit/drag-to-cancel event gesture",
+        "currentState": "Calendar has NO drag-to-edit or drag-to-cancel gesture for month/week view. Only interaction available: 1) Tap day cell to select date, 2) Swipe left/right on event card in list to edit/delete (lines 1210-1235), 3) Tap event card to open detail. Month view shows event as colored dots (line 729-747). Week view shows event blocks (line 1054-1095) as TouchableOpacity (no drag). The swipe-edit is implemented via PanResponder (lines 1212-1236) but only works on SwipeableEventCard, not on the grid/week view event visualizations.",
+        "rootCause": "Missing gesture recognizer on calendar grid cells and week-view event blocks. Currently, there is no Responder or GestureHandler tracking long-press + drag on event cells. All event modifications require either: (a) tap → navigate to detail screen → edit form, or (b) swipe on list card → edit/delete. No direct drag-to-move, drag-to-resize, or drag-to-delete on the visual calendar itself. This is the primary UX gap: calendar editing requires leaving the month/week view instead of inline gesture.",
+        "files": [
+          "app/calendar.js:1210-1235 (SwipeableEventCard PanResponder, list-only)",
+          "app/calendar.js:1054-1095 (WeekView eventBlock TouchableOpacity, no gesture)",
+          "app/calendar.js:692-796 (CalendarGrid DayCellPressable, no event drag)",
+          "app/calendar.js:560-803 (CalendarGrid component structure)"
+        ],
+        "delivery": "mixed",
+        "whatsappPattern": "WhatsApp Events (via Google Calendar integration): Desktop web shows drag-to-reschedule (drag event block to new time slot in week view, highlights drop zone, animates event). iOS native Apple Calendar: long-press event → swipe up/down to change time; drag event in month view → visual feedback (semi-transparent ghost image follows finger). Google Calendar: drag event in week/day view (desktop + web) → visual reordering. iOS: tap event → quick edit menu (no drag). Pattern: drag is primary on desktop/web (visual feedback); mobile prefers swipe + modal due to fat-finger risk.",
+        "fixPlan": "PHASED APPROACH: Phase 1 (OTA): Enhance SwipeableEventCard to support swipe-up = quick-duration-picker (30min/1h/2h presets), swipe-down = reschedule modal. Phase 2 (native if needed): Add LongPressGestureHandler on WeekView event blocks → show 'drag to reschedule' affordance + semi-transparent duplicate block that follows finger during drag. Drop zone feedback (highlight potential time slot). Phase 3 (optional): Month view click → week view for that day (already navigates, no need for drag on dots). Implementation: Use react-native-gesture-handler if already in dependencies (check package.json); fallback to PanResponder for broader mobile compat. Animate ghost image + drop-zone highlight using Animated API (already used for other calendar animations).",
+        "effort": "M",
+        "risk": "med"
+      },
+      {
+        "id": "I-one-ai.1",
+        "title": "One AI calling fails with 'we are sorry an application error occurred'",
+        "currentState": "User requests a call via One AI. Frontend sends make_call action. Backend calls oneMakeCall() at /var/www/mail/api/one.php:3371, which: (1) loads Twilio creds from /etc/mail-api.env; (2) normalizes phone via oneNormalizePhone(); (3) generates TTS audio via oneGenerateCallAudio(); (4) makes HTTP POST to Twilio API with params To/From/Url/StatusCallback. Response handling at line 3438-3448: if HTTP 200-299 and data.sid present, returns {success: true}; else returns {error: msg}. Frontend error handling at app/one.js line 2451 stores result in allToolCalls[]. If error, the 'error' key is returned in JSON response, but frontend rendering at one.js appears to show generic 'application error' banner instead of the specific error message.",
+        "rootCause": "Two potential root causes: (1) Twilio credentials missing/invalid in /etc/mail-api.env (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER) — returns {error: 'Voice not configured'} at line 3384. (2) Phone number normalization fails (oneNormalizePhone returns falsy) — returns {error: 'Numero de telefone invalido...'} at line 3389. (3) TTS audio generation fails (oneGenerateCallAudio returns falsy) — no explicit check, proceeds with null $audioUrl. (4) HTTP curl error to Twilio API — returns {error: 'Failed to connect...'} at line 3435. (5) Twilio HTTP error response — returns {error: 'Call failed: ' . $errMsg} at line 3447. Frontend receives error but the user sees a generic error message instead of the specific reason.",
+        "files": [
+          "/var/www/mail/api/one.php:3371-3449",
+          "/var/www/mail/api/one.php:10205-10210",
+          "/root/webmail-app/app/one.js:2451",
+          "/root/webmail-app/app/one.js:2513-2530",
+          "/etc/mail-api.env (Twilio credentials)"
+        ],
+        "delivery": "backend",
+        "whatsappPattern": "",
+        "fixPlan": "1. Add logging to oneMakeCall() to capture each failure point (missing creds, bad phone, TTS fail, Twilio HTTP error, curl error). 2. Verify /etc/mail-api.env exists and has TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER set with correct values. 3. Check oneNormalizePhone() logic (search /var/www/mail/api/one.php for its definition) to ensure it accepts international + national formats. 4. Check oneGenerateCallAudio() implementation — ensure it returns a valid URL or errors clearly. 5. Add explicit HTTP status logging and Twilio response body logging on >299 responses. 6. Frontend: surface the actual error message from the backend {error} field to the user instead of generic 'application error' banner.",
+        "effort": "M",
+        "risk": "med"
+      },
+      {
+        "id": "I-one-ai.2",
+        "title": "One AI actions are disabled/unconfigured (create doc, send message, email, schedule, call, reply)",
+        "currentState": "Backend: oneGetTools() at /var/www/mail/api/one.php returns array of 50+ tool definitions (make_call, send_email, search_emails, create_document, chat_reply, schedule_send, etc.) with name/description/input_schema. Frontend: app/one.js at line 10015 calls oneGetTools() and passes $tools to OpenAI API call. OpenAI model (gpt-4o-mini) receives tool list and should emit tool_calls when user asks for an action. Tool execution: oneExecuteTool() at line 3459 dispatches each tool via switch statement. However, user reports that One is 'not making actions anymore' — indicating either (1) tools are missing from the array, (2) OpenAI is not calling them, (3) execution is silently failing.",
+        "rootCause": "Likely root causes: (1) Tool list is incomplete or empty — check if oneGetTools() is returning a non-empty array. (2) OpenAI API key (OPENAI_API_KEY env var) is missing/invalid — oneLoadApiKey() at line 9843 will return falsy, causing fallback to return 'AI service unavailable' error. (3) Tool execution is throwing exceptions caught at line 10110-10114, returning generic 'Hmm, nao consegui fazer isso agora' instead of surface the real error. (4) Tool results are being returned with 'error' key, but the AI is not being told the error and is not retrying. (5) Rate limiting is active — redisRateCheck() at line 9828 for free users will return false, rejecting the entire request with 429. (6) The greeting fast-path at line 10030-10035 bypasses all tools for simple greetings ('oi', 'ola', etc.), but this shouldn't prevent actions on intentional requests.",
+        "files": [
+          "/var/www/mail/api/one.php:647-9000+ (oneGetTools definition)",
+          "/var/www/mail/api/one.php:3459-8700+ (oneExecuteTool dispatch)",
+          "/var/www/mail/api/one.php:9843-9846 (API key loading)",
+          "/var/www/mail/api/one.php:10015 (tools passed to OpenAI)",
+          "/var/www/mail/api/one.php:10078-10147 (tool call loop)",
+          "/var/www/mail/api/one.php:10205-10275 (auto-call/auto-chat detection)"
+        ],
+        "delivery": "backend",
+        "whatsappPattern": "",
+        "fixPlan": "1. Verify oneGetTools() returns a non-empty array and contains all expected tools (make_call, send_email, create_document, chat_reply, schedule_send, etc.). If missing, check if the function is disabled or has a guard. 2. Check OPENAI_API_KEY environment variable is set correctly (oneLoadApiKey() returns truthy). 3. Add explicit error logging in oneExecuteTool() switch statement to log the ACTUAL error from each tool instead of the generic 'Hmm, nao consegui fazer isso agora'. 4. Check redisRateCheck() for free users — is it rejecting legitimate requests? Log when rate limit fires. 5. Review the greeting fast-path logic at line 10030-10035 — ensure it's not TOO aggressive and clearing tools for intentional action requests. 6. Add a 'tools_available' field to the final response JSON so frontend can log/display which tools were available. 7. Test end-to-end: send message 'ligar pra 5511999999999' and trace the request through to see where it breaks.",
+        "effort": "L",
+        "risk": "med"
+      },
+      {
+        "id": "I-one-ai.3",
+        "title": "One AI conversation does not persist across app closes/reopens — loses history after <2 hours idle",
+        "currentState": "Frontend: app/one.js uses AsyncStorage + cache to persist conversation ID and messages. On app open, useFocusEffect at line 1957 calls resetIfStale(), which checks a persisted lastActiveAt timestamp. If (now - lastActiveAt) >= ONE_RESET_WINDOW_MS (2 hours, line 1906), it clears the conversationId, messages[], and message cache. Then loadConversations() at line 1970 is called with autoRestore=true. If convos exist and the most recent was updated <2h ago (line 2021-2022), it sets conversationId to last.id and loads messages from backend. Backend: one_messages table stores role/content/tool_calls/tool_results per message, and one_conversations table stores id/user_email/title/updated_at. On app open, oneHistory() endpoint returns list of conversations. Issue: (1) onlyRECENT 30 conversations loaded (line 10326); (2) Persist logic depends on two independent timestamps (server updated_at + client lastActiveAt); (3) If timestamps disagree or parse incorrectly, the thread is discarded (new conversation created).",
+        "rootCause": "Task #944 was supposed to implement 2h auto-new-conversation logic. According to the code comments at lines 1996-2006, there IS a bug: PG returns updated_at as TEXT without explicit timezone parsing. The old code evaluated 'NaN >= ONE_RESET_WINDOW_MS' which is ALWAYS false, falling through to restore the old thread. The NEW code (lines 2021-2022) intentionally fails SAFE on parse error by checking Number.isFinite(msAgo). However, looking closer, the code SHOULD work: if updated_at is unparseable, msAgo will be NaN, isStaleByServer will be true (line 2021), and the thread will NOT be restored — starting fresh instead. So the 2h reset is working as designed. The ROOT CAUSE of 'losing history' might be: (1) One_conversations table is being truncated/garbage-collected on the backend (no GC cron found in codebase). (2) Conversations are soft-deleted but frontend still tries to load them and gets 404. (3) PG updated_at is not being updated when the user sends a message (line 10291: UPDATE one_conversations SET updated_at=NOW() — appears to be there). (4) Message cache key mismatch ('one_messages_' + conversationId) — if conversationId changes, old messages are orphaned.",
+        "files": [
+          "/root/webmail-app/app/one.js:1906-1945 (resetIfStale + ONE_RESET_WINDOW_MS)",
+          "/root/webmail-app/app/one.js:1970-2062 (loadConversations auto-restore)",
+          "/root/webmail-app/app/one.js:2020-2035 (stale check logic)",
+          "/root/webmail-app/app/one.js:2094-2101 (message cache persist)",
+          "/var/www/mail/api/one.php:10304-10335 (handleOneHistory endpoint)",
+          "/var/www/mail/api/one.php:10326 (LIMIT 30 conversations)",
+          "/var/www/mail/api/one.php:9850-9868 (get/create conversation)",
+          "/var/www/mail/api/one.php:10290-10293 (UPDATE one_conversations SET updated_at)"
+        ],
+        "delivery": "OTA",
+        "whatsappPattern": "",
+        "fixPlan": "1. Verify that one_conversations.updated_at IS being updated on every new message (line 10291) — add logging to confirm. 2. Check for any backend GC cron or cleanup job that might be deleting old conversations — search /var/www/mail/api/ for cron files or DELETE statements on one_conversations. 3. Test the full flow: (a) Start a conversation in One AI, send multiple messages. (b) Check one_conversations and one_messages tables that rows are created. (c) Close the app. (d) Wait 1 hour and reopen — should restore (still within 2h). (e) Wait 2+ hours and reopen — should start fresh (expected behavior). (f) Re-run test with 30+ conversations to ensure pagination works (not limited to 30). 4. Add logging to loadConversations() to show: (a) how many convos loaded from backend, (b) the updated_at timestamp of the most recent, (c) the parsed Date and msAgo value, (d) whether isStaleByServer/isStaleByLocal evaluated to true, (d) whether setConversationId was called. 5. Add a 'persistence_debug' endpoint to backend that returns last 5 convo IDs + updated_at + message count for a user — helps diagnose whether data is on the server. 6. Ensure frontend message cache key is stable and matches conversationId — no UUID collision possible.",
+        "effort": "M",
+        "risk": "low"
+      },
+      {
+        "id": "J-docs-notes.1",
+        "title": "Docs: Implementar sistema 'trabalhar com alguém' — Google Docs LIVE collab",
+        "currentState": "Docs system exists (app/documentos.js, docs.php backend, WebView editors editor.html/spreadsheet.html). Basic sharing exists via docs_doc_shares table with view/edit/admin permissions. But editors work in isolation — no real-time delta sync, no presence tracking, no live broadcasts. Changes only merge on manual reload.",
+        "rootCause": "Missing CRDT/OT engine. No WebSocket presence layer. No document delta API. No conflict-free merge strategy. Editors don't see each other's changes in real-time. syncRecordEvent notifies only via async event queue, not instant WS.",
+        "files": [
+          "/root/webmail-app/app/documentos.js:139,167-181,261",
+          "/root/webmail-app/app/documentos-viewer.js:21,76",
+          "/var/www/mail/api/docs.php:46,79,121,332,416-421,508-528",
+          "/var/www/mail/docs/editor.html:1-100",
+          "/var/www/mail/docs/spreadsheet.html",
+          "/var/www/mail/api/db.php (getPGDB for WS provider)"
+        ],
+        "delivery": "mixed",
+        "whatsappPattern": "Google Docs (OT conflict-free + presence cursors) / Notion (Yjs CRDT + awareness awareness layer) pattern. Real-time delta sync (not full doc save), multiplexed WebSocket stream, user awareness with avatars + cursor overlay. Offline-first option: local Yjs store, reconnect syncs deltas. Alternative patterns: Firebase Realtime (proprietary), ShareDB (OT library, Node.js native).",
+        "fixPlan": "STAGE 1: Add Yjs provider to Node WS infrastructure — create `docs_content_deltas` table (timestamp, user_email, doc_id, delta_data_json), GC old deltas (30d rolling). STAGE 2: Integrate Yjs into WebView editors (editor.html CKEditor + Yjs binding). Wire presence awareness (avatars, cursor overlay). STAGE 3: Backend API `docs_editors_list` (who's editing now), `docs_update_delta` (delta stream). STAGE 4: App UI shows sharing status + live editor indicators. STAGE 5: Stress-test 5-user simultaneous editing, handle offline reconnect.",
+        "effort": "L",
+        "risk": "med"
+      },
+      {
+        "id": "J-docs-notes.2",
+        "title": "Notes: Mandar PUSH de lembrete se marcar 'lembrar'",
+        "currentState": "Notes system exists (app/notes.js editor, notes.php backend, chatyy_notes PostgreSQL table). Schema has: id, user_email, title, content, color, notebook_id, is_pinned, is_sticky, is_archived, tags, position_x, position_y, width, height, created_at, updated_at. NO reminder field. Frontend has no 'remind me' UI. Backend has no cron job to dispatch reminder pushes.",
+        "rootCause": "Missing reminder_at + reminder_enabled columns in chatyy_notes table schema. No cron job to query due reminders and call FCM push. No frontend UI in notes editor to set reminder time.",
+        "files": [
+          "/root/webmail-app/app/notes.js:1-1235 (no reminder UI anywhere)",
+          "/var/www/mail/api/notes.php:9-15 (schema CREATE TABLE)",
+          "/var/www/mail/api/notes.php:60-77 (notes_create endpoint)",
+          "/var/www/mail/api/notes.php:79-97 (notes_update endpoint)",
+          "/var/www/mail/api/push-notify.php (existing FCM pipeline to reuse)"
+        ],
+        "delivery": "OTA",
+        "whatsappPattern": "Instagram Stories expiration push: cron job checks `reminder_at <= NOW()`, sends FCM 'X will expire soon'. Telegram: client-side local alarm (not server). Pattern used: server-side cron for offline users (delivered when they reopen app), local device notification as backup when online. Firebase Scheduled Messages alternative (queues push in advance), but cron simpler for Chatyy setup.",
+        "fixPlan": "STAGE 1: Schema migration — `ALTER TABLE chatyy_notes ADD COLUMN reminder_at TEXT DEFAULT NULL, ADD COLUMN reminder_enabled INTEGER DEFAULT 0, ADD COLUMN reminder_sent INTEGER DEFAULT 0`. Index on (user_email, reminder_at, reminder_enabled). STAGE 2: Update notes_create + notes_update endpoints to accept reminder_at (ISO 8601) param. STAGE 3: Create cron_note_reminders.php (runs every 1min), query due reminders, call FCM push with title + body, mark reminder_sent=1. STAGE 4: Frontend UI — long-press note menu add 'Lembrete' option, time picker (15min, 1h, 3h, tomorrow 9am, custom), send notes_update. Display 'Lembrete às HH:MM' on note card. STAGE 5: Tap reminder push → deep link to note editor. Timezone conversion (UTC storage, device TZ display).",
+        "effort": "M",
+        "risk": "low"
+      },
+      {
+        "id": "K-numbers-privacy.1",
+        "title": "Linked phones (OTHER NUMBERS) — add + verify flow broken",
+        "currentState": "Frontend UI fully wired in /root/webmail-app/app/linked-phones.js (lines 1-454): list screen, add modal with country picker, OTP verification step. API stubs in /root/webmail-app/services/api.js (lines 9866-9896): linkedPhonesList() → linked_phones_list action, linkedPhonesAdd() → linked_phones_add POST, linkedPhonesRemove() → linked_phones_remove POST. Backend in /var/www/mail/api/email.php (lines 18386+): linked_phones_list action lazily creates user_linked_phones PG table and returns verified phone list. PROBLEM: NO backend implementation for linked_phones_add or linked_phones_remove actions — they don't exist in email.php, so API stub returns { success: true, stub: true } on catch. OTP verification endpoint (linked_phone_verify) also stubbed in frontend (api.js line 137) with try/catch fallback to ok=true.",
+        "rootCause": "Backend endpoints missing entirely. email.php has linked_phones_list but NO case handlers for linked_phones_add or linked_phones_remove. OTP endpoint (linked_phone_verify via apiCall) undefined. Frontend treats all failures as stubs (no real verification occurs). User can see list but CANNOT add/verify/remove phones — all succeed silently without persisting.",
+        "files": [
+          "/root/webmail-app/app/linked-phones.js:1-454",
+          "/root/webmail-app/services/api.js:9866-9896",
+          "/var/www/mail/api/email.php:18386-18402"
+        ],
+        "delivery": "mixed",
+        "fixPlan": "1) Add case 'linked_phones_add' to email.php: extract phone from input, INSERT into user_linked_phones with verified=false, send OTP via SMS. 2) Add case 'linked_phones_verify': extract phone + OTP code, verify against stored OTP (Redis/temp table), UPDATE user_linked_phones SET verified=true. 3) Add case 'linked_phones_remove': extract phone, DELETE from user_linked_phones WHERE phone=:p AND owner_email=:o. 4) Wire linked_phone_verify endpoint to use same OTP flow as phone-change-verify. 5) Remove stub fallbacks in api.js lines 137-139 once backend is live.",
+        "effort": "M",
+        "risk": "med",
+        "whatsappPattern": ""
+      },
+      {
+        "id": "K-numbers-privacy.2",
+        "title": "Privacy settings screen (PRIVACIDADE aba) — toggles incomplete",
+        "currentState": "Fully implemented in /root/webmail-app/app/advanced-privacy.js (lines 1-270). Screen renders 4 sections: (1) VPN suggestion banner (auto-hides if on VPN), (2) Discoverable toggle (permit others to find by phone), (3) Screen capture block toggle (FLAG_SECURE Android / SC iOS), (4) Proxy/Tor settings (SOCKS5 host/port/user/pass + Tor toggle). Frontend wire-up: calls api.chatDiscoverableGet() and chatDiscoverableSet() (api.js:9304-9309), screenGate.setScreenCaptureBlocked() (frontend service), proxyCfg.setProxyConfig() (frontend service). BACKEND: chat_discoverable_get and chat_discoverable_set endpoints called via apiCall but NOT found in email.php or chat.php grep results — endpoints missing or stubbed. Proxy/screen block config stored locally only (no backend sync).",
+        "rootCause": "chat_discoverable_get/set endpoints undefined in backend. Frontend calls them but receives no response — settings appear to work UI-wise but don't persist on server. Proxy + screen block are device-local only (no multi-device sync). Privacy.discoverable column exists in PG chat_user_privacy (lines 6169-6187 in chat.php) but NO endpoint to read/write it from authenticated requests.",
+        "files": [
+          "/root/webmail-app/app/advanced-privacy.js:1-270",
+          "/root/webmail-app/services/api.js:9304-9309",
+          "/var/www/mail/api/chat.php:6169-6187"
+        ],
+        "delivery": "mixed",
+        "fixPlan": "1) Add case 'chat_discoverable_get' to chat.php (email.php forwards chat_* to chat.php): SELECT discoverable FROM chat_user_privacy WHERE email=:e, return { discoverable: bool }. 2) Add case 'chat_discoverable_set': UPDATE chat_user_privacy SET discoverable=:d WHERE email=:e. 3) Implement screenGate service in native code (iOS: set SC flag, Android: set FLAG_SECURE in Activity). 4) Implement proxyCfg service to persist proxy settings locally (no server needed for SOCKS5). 5) Wire VPN detection service (vpnDetect.isVpnActive()) to iOS/Android native APIs. 6) Add i18n keys missing (privacy.* strings already referenced in code).",
+        "effort": "M",
+        "risk": "med",
+        "whatsappPattern": ""
+      },
+      {
+        "id": "K-numbers-privacy.3",
+        "title": "Creator dashboard panel (Painel de criador) — hidden + empty",
+        "currentState": "Full implementation in /root/webmail-app/app/profile-creator-dashboard.js (lines 1-489). Screen displays: hero gradient wallet (diamond balance + top-up CTA), quick-action row (cashout + view earnings links), stat grid 2×2 (monthly revenue, pending payout, 7d tips, 30d tips), sparkline chart (7-day tip trend), top tippers list (podium rank 1/2/3 colored gold/silver/bronze), empty state when no tippers. PROBLEM: Line 18 imports MONETIZATION_ENABLED flag from featureFlags, line 73-75 redirects away with <Redirect href=\"/chat\" /> if flag is false. Backend in /var/www/mail/api/email.php (lines 14307-14415): creator_dashboard action fully implemented — creates tables, queries subscriber count, monthly revenue, weekly/monthly tips, pending payout, top tippers, 7-day sparkline. REAL ISSUE: featureFlags.js line 21 sets MONETIZATION_ENABLED = false (hard-coded), so entire dashboard screen unreachable.",
+        "rootCause": "Monetization system paused (2026-05-22 comment at profile-creator-dashboard.js:17). MONETIZATION_ENABLED flag hardcoded false in constants/featureFlags.js line 21. Screen exists fully implemented but gets redirected away at mount. Backend endpoints exist and functional but never called. Feature gate is intentional business decision, not a bug, but blocks the dashboard from any user access.",
+        "files": [
+          "/root/webmail-app/app/profile-creator-dashboard.js:1-489",
+          "/root/webmail-app/constants/featureFlags.js:13-36",
+          "/var/www/mail/api/email.php:14307-14415"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "1) Set MONETIZATION_ENABLED = true in featureFlags.js line 21 to re-enable dashboard. 2) Verify backend creator_dashboard endpoint is live (already implemented in email.php). 3) Verify chat_creator_subscriptions, chat_feed_tips, chat_wallet_balances PG tables are created (lazy-created by endpoint). 4) QA: test creator dashboard load, top tippers list, sparkline render, diamond balance sync. 5) If keeping monetization paused, add feature comment in code explaining why dashboard is gated.",
+        "effort": "S",
+        "risk": "low",
+        "whatsappPattern": ""
+      },
+      {
+        "id": "L-group-parity.1",
+        "title": "Group Creation and Member Selection",
+        "currentState": "Groups can be created with member selection flow. CreateGroupFlow.js (lines 37-100+) implements step-based UI: step 1 is member search/selection, step 2 is group name/description/public-private. Backend supports chat_group_create via chat.php. Groups persist to PG chat_conversations table with type='group'.",
+        "rootCause": "None - feature complete",
+        "files": [
+          "/root/webmail-app/components/CreateGroupFlow.js:37-100",
+          "/var/www/mail/api/chat.php:2760"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "No fix needed",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.2",
+        "title": "Add/Remove Members in Groups",
+        "currentState": "Frontend supports adding members via chat-conversation.js loadGroupMembers() + UI buttons. Backend has chat_group_admin endpoint (chat.php:3052) for admin actions including member removal. Members are stored in chat_conversation_members table with role column (admin/member).",
+        "rootCause": "Implementation is present but some admin-only surfaces may have incomplete error handling (noted in task #679: 'Group remove-member silent fail on race').",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:15640-15800",
+          "/var/www/mail/api/chat.php:3052"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "Ensure add/remove member operations surface transient network errors to user with retry UI rather than silent fail.",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.3",
+        "title": "Admin Roles and Promotions/Demotions",
+        "currentState": "Admin role system exists: chat_conversation_members.role column stores 'admin' or null. Frontend shows myRole === 'admin' checks at chat-conversation.js:15864. Admin can promote/demote members via long-press menu (line 15961 shows 'demote' vs 'promote' logic). Backend enforces role-based permissions.",
+        "rootCause": "Admin role system is functional. Gap: no visual indicator (badge/star) on admin names in member list.",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:15863-15961",
+          "/var/www/mail/api/chat.php:3052"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "Add visual 'Admin' badge to admin names in member list modal.",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.4",
+        "title": "Invite Links (Create, Share, Revoke)",
+        "currentState": "Invite link system fully implemented. Backend cases chat_group_invite_create (chat.php:20261), chat_group_invite_revoke (20298), chat_group_join_via_link (19546). Frontend loads link via loadGroupMembers() and shows invite URL in group info modal. Table: chat_group_invites stores link + metadata.",
+        "rootCause": "None - feature complete",
+        "files": [
+          "/var/www/mail/api/chat.php:20261",
+          "/root/webmail-app/app/chat-conversation.js:15886"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "No fix needed",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.5",
+        "title": "QR Code for Group Join",
+        "currentState": "QR code feature referenced as completed in task #969. Frontend has useRef for qrModal state (chat-conversation.js:7632-7635). Backend endpoint may use existing invite_link endpoint for QR generation.",
+        "rootCause": "QR code generation is implemented but needs verification if fully wired between frontend modal and backend QR endpoint.",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:7632-7635",
+          "/var/www/mail/api/chat.php"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "Wire frontend QR modal to render invite link as QR code using qrcode.js library.",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.6",
+        "title": "Group Description and Photo",
+        "currentState": "Group name stored in chat_conversations.name. Group photo upload: chat-conversation.js:15796-15811 shows admin-only photo picker. Photo persists to backend. Group description field exists in CreateGroupFlow (line 56) but backend persistence unclear - no dedicated edit UI post-creation.",
+        "rootCause": "Group description may not persist to database after creation. Photo upload works. Frontend collects description on creation but no API call visible to save it post-creation.",
+        "files": [
+          "/root/webmail-app/components/CreateGroupFlow.js:56",
+          "/root/webmail-app/app/chat-conversation.js:15796-15811"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "Add chat_group_set_description backend endpoint. Wire frontend group info modal to show editable description field (admin only).",
+        "effort": "M",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.7",
+        "title": "Member List and Search",
+        "currentState": "Member list loads via loadGroupMembers() API call. Search + role filter chips implemented: memberRoleFilter state (line 8131) supports 'all'/'admins'/'members'. UI renders members with avatars, names, roles. Filter chips visible in group info modal.",
+        "rootCause": "None - feature complete",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:8126-8131",
+          "/root/webmail-app/app/chat-conversation.js:27950-28050"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "No fix needed",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.8",
+        "title": "Admin-Only Messages (Announcement Groups)",
+        "currentState": "Feature exists: adminOnlyMessages state (chat-conversation.js:8104). Backend case chat_group_set_admin_only (chat.php:19605) toggles flag. When enabled, only admins can send messages. Non-admins see composer disabled or blocked. UI shows toggle in group info modal.",
+        "rootCause": "None - feature complete",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:8104",
+          "/var/www/mail/api/chat.php:19605"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "No fix needed",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.9",
+        "title": "Pending Join Requests (Invite Link with Approval)",
+        "currentState": "Approval gate implemented: approvalRequired state (chat-conversation.js:~8135) backed by conversation.require_approval flag. Backend case chat_group_set_require_approval (chat.php:28301). When enabled, link joins queue in chat_pending_group_members table. Admin sees count + can approve/deny via chat_group_request_approve/deny (lines 28249/28282).",
+        "rootCause": "Feature mostly complete. Gap: UI may not clearly surface pending requests sheet when admin opens group info with pending members count > 0.",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:8134-8136",
+          "/var/www/mail/api/chat.php:28301"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "Wire pending requests modal/sheet to show when admin opens group info (if pendingMembers.length > 0). Show list with approve/deny buttons per member.",
+        "effort": "M",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.10",
+        "title": "Mentions (@everyone, @admins)",
+        "currentState": "Mention system fully implemented. Backend expands @everyone to all members + @admins to admin members (chat.php:286-311). Frontend: chat-conversation.js:12264-12270 shows @admins mention logic. MentionAutocomplete component provides mention picker UI. Mentions stored in chat_messages.mentions JSON column.",
+        "rootCause": "None - feature complete",
+        "files": [
+          "/var/www/mail/api/chat.php:286-311",
+          "/root/webmail-app/app/chat-conversation.js:12260-12270"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "No fix needed",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.11",
+        "title": "Disappearing Messages (Ephemeral/Vanish Timer) in Groups",
+        "currentState": "Disappearing messages system fully implemented. State: disappearingTimer + disappearingSetAt (chat-conversation.js:8157-8161). Backend case chat_set_disappearing (chat.php:15337). Admins set timer (0, 24h, 7d, 90d, 1yr). Only messages sent AFTER disappearing_set_at timestamp are affected. Banner warns users when timer active.",
+        "rootCause": "None - feature complete",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:8157-8161",
+          "/var/www/mail/api/chat.php:15337"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "No fix needed",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.12",
+        "title": "Group Notifications (Mute, Custom Settings)",
+        "currentState": "Notification settings per-conversation exist in chat_user_conv_settings table (notify_messages, mute_until, mention_exception, sound, vibration_pattern, ringtone). UI in ChatNotificationSettingsSheet component allows users to mute/unmute + customize sound/vibration per group. Backend enforces mute on push send (chat.php:455+).",
+        "rootCause": "None - feature complete",
+        "files": [
+          "/root/webmail-app/components/ChatNotificationSettingsSheet.js",
+          "/var/www/mail/api/chat.php:457-500"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "No fix needed",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.13",
+        "title": "Hide Member List (Admin Control)",
+        "currentState": "Feature partially implemented. State: hideMembers (chat-conversation.js:~8121) planned to hide member list from non-admins. Backend gap at line 15753: TODO comment indicates handler not yet implemented. Feature not yet surfaced in UI toggle.",
+        "rootCause": "Backend endpoint exists but TODO comment indicates handler not yet implemented. Frontend state exists but no UI toggle to set it. No server-side enforcement.",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:8121",
+          "/root/webmail-app/app/chat-conversation.js:15753"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "Add chat_group_admin endpoint handler for hide_members flag. Add UI toggle in group info (admin only). Enforce on frontend and backend: filter member list for non-admins when hide_members=true.",
+        "effort": "M",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.14",
+        "title": "Forwarding Disabled (No Export/Forward)",
+        "currentState": "Feature implemented. State: forwardingDisabled (chat-conversation.js:8115). Backend support at chat.php. When true, non-admin members cannot use chat_forward endpoints. Admin-only toggle in group info (chat-conversation.js:15769-15795). UI hides forward button from non-admins when enabled.",
+        "rootCause": "None - feature complete",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:8115",
+          "/root/webmail-app/app/chat-conversation.js:15769-15795"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "No fix needed",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.15",
+        "title": "Group Info Modal (Unified Settings Panel)",
+        "currentState": "Group info modal implemented as detailed component in chat-conversation.js (lines 27017+). Shows: avatar, name, member count, description, admin controls (change photo, set name, member list, notifications, disappearing timer, admin-only messages, forwarding control). Modal header, tabs for members/settings, admin-only sections clearly marked.",
+        "rootCause": "None - feature complete and comprehensive",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:27017-28100"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "No fix needed",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.16",
+        "title": "Group Calls (Voice + Video)",
+        "currentState": "Group calls implemented via LiveKit SFU (task #503). Frontend: group-call.js handles LiveKit room setup. Backend: chat_group_call case (chat.php:8896) initiates calls. Members join via liverekit-room.html (task #909 completed). UI in chat-conversation shows Call button for groups.",
+        "rootCause": "None - feature complete",
+        "files": [
+          "/root/webmail-app/app/group-call.js",
+          "/var/www/mail/api/chat.php:8896"
+        ],
+        "delivery": "native-both",
+        "fixPlan": "No fix needed",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.17",
+        "title": "Communities (Super-Groups/Multi-Level Organization)",
+        "currentState": "Communities feature infrastructure exists: CommunitiesTab component (lazy-loaded chat.js:29), chat_community_groups table (chat.php:20903-20912). Frontend tab renders in chat.js. Backend supports chat_community creation. Schema supports up to 50 sub-groups per community, 5k members each (250k total).",
+        "rootCause": "Communities feature partially implemented. Table schema exists, but frontend CommunitiesTab and group-level settings (kind, order_idx) may lack full UI. Not deeply wired to chat list yet.",
+        "files": [
+          "/root/webmail-app/components/CommunitiesTab.js",
+          "/var/www/mail/api/chat.php:20903-20912"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "Complete CommunitiesTab UI: show community list, create community flow, sub-group management. Wire to chat list so communities appear as collapsible sections.",
+        "effort": "L",
+        "risk": "med"
+      },
+      {
+        "id": "L-group-parity.18",
+        "title": "Group Announcements / Channels",
+        "currentState": "Channels feature mentioned in chat.js (11 references to channels, line 211 includes channels in VALID_TABS, ChannelsTab lazy-loaded line 27). Frontend tab exists. CreateGroupFlow supports mode='channel' (line 37) with different UX (skip step 1, no member selection). Backend type='channel' conversation supported.",
+        "rootCause": "Channels partially implemented. Frontend tab exists but may lack full administration UI (channel permissions, message editing, topic pinning).",
+        "files": [
+          "/root/webmail-app/components/ChannelsTab.js",
+          "/root/webmail-app/components/CreateGroupFlow.js:37",
+          "/root/webmail-app/app/chat.js:211"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "Complete Channels: admin can post/edit/delete, members view-only. Channel discovery/suggestions. Distinct from group permissions.",
+        "effort": "M",
+        "risk": "med"
+      },
+      {
+        "id": "L-group-parity.19",
+        "title": "View-Once Messages in Groups",
+        "currentState": "View-once (disappearing after view) fully implemented. State tracked: is_view_once, view_once_opened, view_once_viewed_count in chat_messages. Frontend: chat-conversation.js:5245 shows uma vez flag during compose. UI toggle before send (media preview). Bubble renders with special styling, auto-deletes when viewed.",
+        "rootCause": "None - feature complete",
+        "files": [
+          "/root/webmail-app/app/chat-conversation.js:5245",
+          "/var/www/mail/api/chat.php"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "No fix needed",
+        "effort": "S",
+        "risk": "low"
+      },
+      {
+        "id": "L-group-parity.20",
+        "title": "Message Reactions (Emoji Reactions)",
+        "currentState": "Reactions system fully implemented. Table: chat_message_reactions (conversation_id, message_id, email, emoji). Frontend: long-press message to emoji picker. UI shows reaction counts + who reacted (tap to see list). Real-time WS updates when reactions added/removed.",
+        "rootCause": "None - feature complete",
+        "files": [
+          "/var/www/mail/api/chat.php",
+          "/root/webmail-app/app/chat-conversation.js"
+        ],
+        "delivery": "OTA",
+        "fixPlan": "No fix needed",
+        "effort": "S",
+        "risk": "low"
+      }
+    ],
+    "synthesis": "This is a synthesis-only task. I have all 59 items as JSON. No tool calls needed — I'll organize directly.\n\n# Chatyy Fix Triage — Engineering Prioritization\n\n## 🟢 SHIP NOW (OTA / backend / web)\n\n**Backend-only (no app build, live edits to `/var/www/mail/api`):**\n\n- **C-report-block-push.3** — Mute gap: long-press `chat_conversation_members.muted` was overlooked vs only checking `mute_until` — Verify push loop honors muted+not-mentioned skip at `chat.php:643/652`; QA-confirm deployed. **S**\n- **C-report-block-push.2** — Caller rings blocked user: `call_notify` loop (`chat.php:7880`) only checks blocked==caller, never caller-blocked-by-peer (1:1 send already does at `:5115`) — Add reverse block load + self-call guard before the loop. **S**\n- **C-report-block-push.1** — Spam report does nothing visible: reporter convo never hidden, offender never suspended — After `chat_report_spam` INSERT (`chat.php:28362`) set `hidden_from_reporter` jsonb, auto-suspend at ≥3 reports, filter in `chat_read_conversations`. **M**\n- **A-share-media.2** — Video note loses circular shape: `chat.php` re-normalizes type from MIME, overwriting `video_note`→`video` — Honor explicit client `type` in INSERT (`COALESCE(request.type, INFER)`), render `case video_note` before `video`. **S** (mixed, but the load-bearing fix is backend)\n- **B-status-highlights.4** — Purple ring shows for expired status: `status_list` doesn't filter 24h, ring gated on total count — Add `WHERE created_at > NOW() - INTERVAL '24 hours'`; client `isStatusActive()` defensive filter. **S**\n- **K-numbers-privacy.1** — Linked phones add/verify silently fake-succeed: `linked_phones_add/verify/remove` cases missing in `email.php` (only `_list` exists at `:18386`) — Implement 3 cases reusing existing OTP flow. **M**\n- **K-numbers-privacy.2** — Privacy toggles don't persist: `chat_discoverable_get/set` undefined though `chat_user_privacy.discoverable` column exists (`chat.php:6169`) — Add both cases. **M**\n\n**OTA-frontend:**\n\n- **K-numbers-privacy.3** — Creator dashboard hidden+empty: `MONETIZATION_ENABLED=false` hardcoded (`featureFlags.js:21`); screen+backend fully built — Flip flag to `true` if monetization resuming (else leave gated by business decision). **S**\n- **F-ui-polish.5** — Can't delete folder chips (\"sapatao/gt\"): `FilterChip` has no long-press (`ChatListTab.js:6224`) — Add `onLongPress`→confirm→`chatFoldersDelete(f.id)`+haptic. **S**\n- **F-ui-polish.6** — Third-party profile redundant \"Conversa\" button duplicates Messages action (`Profile.js:2653`) — Remove standalone button, drop Chat tab. **S**\n- **B-status-highlights.1** — Status music name-only, no playback/trim: `expo-av` removed in SDK 55 (silent null), no `music_start_ms` column/trim UI — Migrate to `expo-audio`, add column + scrub timeline, seek on load. **M**\n- **B-status-highlights.2** — Highlights load slowly: N+1 + no pagination + no cache + unwindowed FlatList — Add `LIMIT 50` cursor returning cover-only, SWR cache, windowed horizontal FlatList, skeletons. **M**\n- **B-status-highlights.3** — Own-status view remounts/flickers profile: `StoryViewer` not memoized, recreated each render — `React.memo` + Portal at root + stable `useStatuses` cache. **M**\n- **F-ui-polish.1–4** — Menu/Media/Stats/Settings polish — pure styling passes (gradients, typography, preview cards, badges). **M each, low risk** (batch as one polish wave)\n- **J-docs-notes.2** — Notes reminder push: no `reminder_at` column, no cron — `ALTER TABLE chatyy_notes` + `cron_note_reminders.php` (1min) + editor time-picker UI. **M**\n- **H-calendar.1** — Timezone default unclear: defaults to `system` but no visible indicator (`calendar.js:2025`) — Show active tz in header + \"Device\" pinned top of picker. **S**\n- **L-group-parity** quick wins: **L.3** admin badge in member list, **L.6** persist group description (add `chat_group_set_description`), **L.13** hide-member-list handler (`chat.php:15753` TODO), **L.9** wire pending-requests sheet, **L.2** surface add/remove errors with retry. **S–M each**\n\n**I-one-ai.1 / I-one-ai.2 (backend, diagnostic-first):** One AI call + actions failing — likely Twilio creds (`/etc/mail-api.env`) or `OPENAI_API_KEY` missing, errors swallowed into generic banner. Add per-failure-point logging in `oneMakeCall` (`one.php:3371`) + `oneExecuteTool` (`:3459`); surface real `{error}` to UI. **M** — high user-visible value, do early.\n\n---\n\n## 🔵 NEXT NATIVE iOS/Android BUILD (batch into one cycle)\n\n- **A-share-media.1** — iOS Share Extension iCloud hang: opaque spinner, no progress/cancel (`ShareViewController.swift:138-170`) — KVO `Progress.fractionCompleted` UI, dual 10s/20s timeout, `Progress.cancel()`, thumbnail fallback. **M** (native-ios)\n- **K-numbers-privacy.2 (native portion)** — screen-capture block (`FLAG_SECURE` Android / SC iOS) + VPN detect — native services for `screenGate`/`vpnDetect`. **M** (batches with iOS share ext)\n- **G-live-location.2/.4 (native cadence)** — `CLLocationManager`/`LocationManager` 100m distance-filter tuning + stationary geofence battery reduction. **M** (defer into the live-location project below; only the native polling change needs a build)\n- **H-calendar.2 (Phase 2)** — drag-to-reschedule via `LongPressGestureHandler` — only if Phase 1 OTA swipe-presets insufficient. **M, defer**\n\n> Keep this cycle small: **iOS Share Extension progress/cancel + screen-capture/VPN native services** are the two worth a build. Everything else either OTAs or rides the live-location project.\n\n---\n\n## 🟣 BIGGER PROJECTS (multi-step)\n\n**1. E2EE re-enable (D.1–D.6) — HIGH RISK, gated rollout.** Currently plaintext-by-default by design (kill-switch off per MEMORY 2026-05-19).\n- Stage 1 (OTA): flip direct convos default-ON behind `DEFAULT_E2EE` flag (`chat-conversation.js:8789-8796`).\n- Stage 2 (mixed, **L/high**): fix identity-vs-device key rotation — add `e2ee_device_publish` + `chat_envelope_migrate` so new-device login re-decrypts (`e2e.js:264-312`, `chat.php:1592-1651`).\n- Stage 3: wire envelope-mode send path (`chat_envelope_send` `chat.php:14887` is a stub today).\n- Stage 4: Sender Keys for groups (currently O(n) fan-out, `e2e.js:855-965`).\n- Stage 5: Call E2EE behind `CALL_E2EE_ENABLED` (`chat.php:27310`).\n- **Gates:** internal 2-emulator QA → 10% beta → 1% canary → ramp. **Defer until multi-device key migration proven** — do NOT flip default-on before Stage 2.\n\n**2. Live-location Find-My parity (G.1–G.4) — L/med.**\n- Stage 1 (OTA): drop heartbeat 5min→30s fg / 1min bg (`LiveLocationHeartbeat.js:35`).\n- Stage 2 (native build): 100m distance-filter triggers.\n- Stage 3 (backend): on `chat_friend_location_share_update` (`chat.php:17127`) call existing `_broadcastFriendMapToUser` WS fanout.\n- Stage 4 (OTA): snap-map subscribes WS `live_location:<email>`, animates pin.\n- Stage 5 (backend cron): auto-ping stale shares (>30min) instead of pull-only.\n\n**3. Collaborative docs — \"trabalhar com alguém\" (J.1) — L/med.** No CRDT/presence today.\n- Stage 1: Yjs provider on Node WS + `docs_content_deltas` table.\n- Stage 2: Yjs binding in `editor.html`/`spreadsheet.html` + presence cursors.\n- Stage 3: `docs_editors_list`/`docs_update_delta` API (`docs.php`).\n- Stage 4: app live-editor indicators. Stage 5: 5-user stress test.\n\n**4. Group parity (L.*) — mostly DONE.** 13 of 20 complete. Remaining: **Communities** (L.17, L) and **Channels** (L.18, M) need full admin UI; rest are S polish (already listed in SHIP NOW). Treat Communities/Channels as one medium project, not blocking.\n\n**5. Report/spam monitoring (C.1 + C.4) — M/high.** Beyond the SHIP-NOW reporter-hide: add admin `chat_get_spam_queue`, event-based token revoke on logout (`firebase_push.php:1087` is time-only TTL today, **high risk** — proactive removal can break legit re-login, QA carefully).\n\n---\n\n## Recommended wave order\n\n**Wave 1 — Backend safety + One AI (this week, zero builds, highest trust impact):**\nC.3 mute verify, C.2 block-on-call, C.1 reporter-hide, I.1+I.2 One AI diagnostics/logging+creds, K.1 linked-phones, K.2 privacy persist. *All live-edit `/var/www/mail/api`.*\n\n**Wave 2 — OTA user-visible bugs:**\nA.2 video-note type, B.4 expired-ring filter, B.1 status-music playback, B.3 status flicker, F.5 folder long-press delete, F.6 profile dedup, L group quick wins (badge/description/hide/pending/retry).\n\n**Wave 3 — OTA polish + features:**\nB.2 highlights perf, F.1–F.4 UI polish batch, J.2 notes reminder, H.1 calendar tz indicator, K.3 creator dashboard (if monetization resuming), live-location Stage 1 (heartbeat cadence).\n\n**Wave 4 — ONE native build (batch everything needing native):**\nA.1 iOS share-ext progress/cancel, K.2 screen-capture/VPN native services, live-location Stage 2 (100m filter). *Minimize to a single iOS+Android cycle.*\n\n**Wave 5 — Live-location backend fanout + collaborative docs kickoff:**\nG.3 WS fanout (backend) + G.4 snap-map WS subscribe (OTA) + G.2 stale auto-ping cron; start J.1 docs Yjs Stage 1–2.\n\n**Wave 6 — E2EE staged re-enable (deferred, gated):**\nD.2 device-key migration first (the blocker), then D.1 default-on behind flag → beta → canary → ramp. Group sender-keys + call E2EE follow.\n\n---\n\n**Single highest-impact quick win to do FIRST:** **C-report-block-push.2** — add the reverse block-check + self-call guard before the `call_notify` loop at `/var/www/mail/api/chat.php:7880`. It's an **S**, pure backend (live, no build), closes a trust/safety hole where a blocked person can still ring you, and mirrors the already-correct 1:1 send check at `:5115` — minimal risk, maximum credibility."
+  }
+}

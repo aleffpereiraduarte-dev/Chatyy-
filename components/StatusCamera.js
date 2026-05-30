@@ -6,7 +6,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Animated, Dimensions,
   Platform, Image, Pressable, ScrollView, FlatList, Linking, Modal, Alert,
-  TextInput,
+  TextInput, PanResponder, LayoutAnimation,
 } from 'react-native';
 // Camera permission still comes from expo-camera's hook (lightweight, no
 // session) — the actual preview/capture now runs on react-native-vision-camera
@@ -62,6 +62,11 @@ const haptic = (kind) => {
     else _Haptics.impactAsync?.(_Haptics.ImpactFeedbackStyle?.Light);
   } catch {}
 };
+
+// expo-audio (SDK 55) for the music trim PREVIEW — lets the user HEAR the
+// chosen trecho before publishing. Graceful require: no-op if absent.
+let _expoAudioSC = null;
+try { _expoAudioSC = require('expo-audio'); } catch {}
 
 const SCREEN_W = Dimensions.get('window').width;
 const SCREEN_H = Dimensions.get('window').height;
@@ -242,8 +247,15 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
   // ── TikTok-grade additions ──
   const [speed, setSpeed] = useState(1);              // playback speed
   const [beauty, setBeauty] = useState(false);        // beauty filter toggle
-  const [musicTrack, setMusicTrack] = useState(null); // {id, title} or null
+  const [musicTrack, setMusicTrack] = useState(null); // {id, title, startMs} or null
   const [musicPickerOpen, setMusicPickerOpen] = useState(false);
+  // Trim/scrub flow (WhatsApp/IG-style "pick the TRECHO"): when the user taps a
+  // track we don't publish immediately — we open a trim view with a draggable
+  // start handle over a timeline so they choose WHERE the song begins. The
+  // chosen offset rides through onCapture → statusPublish as music_start_ms and
+  // StoryViewer seeks the player there on load.
+  const [trimTrack, setTrimTrack] = useState(null); // track being trimmed, or null
+  const [trimStartMs, setTrimStartMs] = useState(0); // chosen start offset (ms)
   // Pixabay catalog + search (mirrors the picker in CreatePostModal/Reels).
   // tracks[]: {id, title, artist, preview_url, duration_sec, image_url}
   const [musicCatalog, setMusicCatalog] = useState([]);
@@ -264,6 +276,96 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     if (!musicPickerOpen) return;
     if (musicCatalog.length === 0 && !musicLoading) loadMusicCatalog('');
   }, [musicPickerOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Music trim/scrub ──
+  // How long the chosen clip will play in the status: 15s for a photo, up to
+  // 60s for a video (WhatsApp/IG durations). The start handle slides between 0
+  // and (fullDuration - clipWindow).
+  const trimClipMs = (captureMode === 'video' || captureMode === 'story') ? 60000 : 15000;
+  // Full track duration. Pixabay preview clips are short; default to 30s when
+  // the catalog didn't report a duration so the handle still has travel.
+  const trimFullMs = Math.max(
+    trimClipMs,
+    Math.round(((trimTrack?.durationSec || 30)) * 1000),
+  );
+  const trimMaxStartMs = Math.max(0, trimFullMs - trimClipMs);
+  const TRIM_TRACK_W = Math.min(SCREEN_W - 80, 320); // px width of the timeline
+  const trimTrackWRef = useRef(TRIM_TRACK_W);
+  trimTrackWRef.current = TRIM_TRACK_W;
+  const trimStartMsRef = useRef(0);
+  trimStartMsRef.current = trimStartMs;
+  const trimMaxStartRef = useRef(trimMaxStartMs);
+  trimMaxStartRef.current = trimMaxStartMs;
+  const trimPan = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: () => { haptic('light'); },
+      onPanResponderMove: (_e, g) => {
+        const tw = trimTrackWRef.current || 1;
+        const maxStart = trimMaxStartRef.current || 0;
+        if (maxStart <= 0) return;
+        // dx0 is captured per-grant: convert the cumulative finger delta into a
+        // ratio of the track width and apply to the base start (clamped).
+        const base = trimPan.current._baseMs || 0;
+        const deltaMs = (g.dx / tw) * (trimMaxStartRef.current + 1);
+        let next = base + deltaMs;
+        if (next < 0) next = 0;
+        if (next > maxStart) next = maxStart;
+        setTrimStartMs(Math.round(next));
+      },
+      onPanResponderRelease: () => { trimPan.current._baseMs = trimStartMsRef.current; },
+    })
+  );
+  // Re-base the handle on grant so dragging is relative to current position.
+  useEffect(() => { if (trimPan.current) trimPan.current._baseMs = trimStartMs; }, [trimTrack]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Preview audio while trimming — plays the chosen ~clip window starting at the
+  // handle so the user HEARS the trecho before committing. expo-audio (SDK 55).
+  const trimPlayerRef = useRef(null);
+  useEffect(() => {
+    if (trimPlayerRef.current) { try { trimPlayerRef.current.remove(); } catch {} trimPlayerRef.current = null; }
+    const url = trimTrack?.previewUrl;
+    if (!url || !_expoAudioSC || !_expoAudioSC.createAudioPlayer) return;
+    let cancelled = false;
+    (async () => {
+      try { await _expoAudioSC.setAudioModeAsync?.({ playsInSilentMode: true, shouldPlayInBackground: false }); } catch {}
+      if (cancelled) return;
+      try {
+        const player = _expoAudioSC.createAudioPlayer({ uri: url });
+        player.loop = true;
+        player.volume = 1.0;
+        const startSec = Math.max(0, trimStartMs) / 1000;
+        if (startSec > 0) { try { await player.seekTo(startSec); } catch {} }
+        if (cancelled) { try { player.remove(); } catch {} return; }
+        player.play();
+        trimPlayerRef.current = player;
+      } catch {}
+    })();
+    return () => { cancelled = true; if (trimPlayerRef.current) { try { trimPlayerRef.current.remove(); } catch {} trimPlayerRef.current = null; } };
+    // Re-seek on start change too (cheap — recreates the short preview clip).
+  }, [trimTrack, trimStartMs]);
+
+  const commitTrim = useCallback(() => {
+    if (!trimTrack) return;
+    haptic('medium');
+    setMusicTrack({
+      id: trimTrack.id,
+      title: trimTrack.title,
+      artist: trimTrack.artist,
+      previewUrl: trimTrack.previewUrl,
+      coverUrl: trimTrack.coverUrl,
+      startMs: Math.round(trimStartMs),
+    });
+    if (trimPlayerRef.current) { try { trimPlayerRef.current.remove(); } catch {} trimPlayerRef.current = null; }
+    setTrimTrack(null);
+    setMusicPickerOpen(false);
+  }, [trimTrack, trimStartMs]);
+  const cancelTrim = useCallback(() => {
+    if (trimPlayerRef.current) { try { trimPlayerRef.current.remove(); } catch {} trimPlayerRef.current = null; }
+    setTrimTrack(null);
+  }, []);
+
   const [galleryThumb, setGalleryThumb] = useState(null); // last roll asset uri
   const [showSwipeHint, setShowSwipeHint] = useState(true);
   // Multi-clip recording — TikTok-style. Each tap adds a finished segment
@@ -1592,6 +1694,58 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
         <View style={s.musicSheetBackdrop}>
           <View style={s.musicSheet}>
             <View style={s.musicSheetHandle} />
+            {trimTrack ? (
+              // ── TRIM / SCRUB VIEW ── pick WHERE the song starts (the trecho).
+              <View style={s.trimWrap}>
+                <Text style={s.musicSheetTitle} numberOfLines={1}>{trimTrack.title}</Text>
+                {trimTrack.artist ? (
+                  <Text style={[s.musicArtist, { marginTop: 2, marginBottom: 6 }]} numberOfLines={1}>{trimTrack.artist}</Text>
+                ) : null}
+                <Text style={s.trimHint}>
+                  Arraste para escolher o trecho · {Math.round(trimClipMs / 1000)}s
+                </Text>
+                {/* Timeline with a draggable start handle. The filled window
+                    shows the clip that will play; the dot is the grab handle. */}
+                <View style={[s.trimTrack, { width: TRIM_TRACK_W }]}>
+                  <View
+                    style={[
+                      s.trimWindow,
+                      {
+                        left: trimMaxStartMs > 0
+                          ? (trimStartMs / trimMaxStartMs) * (TRIM_TRACK_W - TRIM_TRACK_W * (trimClipMs / trimFullMs))
+                          : 0,
+                        width: TRIM_TRACK_W * Math.min(1, trimClipMs / trimFullMs),
+                      },
+                    ]}
+                  />
+                  <View
+                    {...trimPan.current.panHandlers}
+                    style={[
+                      s.trimHandle,
+                      {
+                        left: trimMaxStartMs > 0
+                          ? (trimStartMs / trimMaxStartMs) * (TRIM_TRACK_W - 28)
+                          : 0,
+                      },
+                    ]}
+                  >
+                    <View style={s.trimHandleBar} />
+                  </View>
+                </View>
+                <Text style={s.trimTime}>
+                  Início: {Math.floor(trimStartMs / 1000)}s
+                </Text>
+                <View style={s.trimBtnRow}>
+                  <TouchableOpacity onPress={cancelTrim} style={[s.trimBtn, s.trimBtnGhost]}>
+                    <Text style={s.trimBtnGhostTxt}>Voltar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={commitTrim} style={[s.trimBtn, s.trimBtnPrimary]}>
+                    <Text style={s.trimBtnPrimaryTxt}>Pronto</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+            <>
             <Text style={s.musicSheetTitle}>Adicionar som</Text>
             <View style={s.musicSearchRow}>
               <TextInput
@@ -1629,16 +1783,21 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
                       haptic('light');
                       if (isNone) {
                         setMusicTrack(null);
+                        setMusicPickerOpen(false);
                       } else {
-                        setMusicTrack({
+                        // Don't publish-select yet — open the trim view so the
+                        // user picks WHERE the song starts (the "trecho"),
+                        // WhatsApp/IG-style. Selection is committed on "Pronto".
+                        setTrimTrack({
                           id: String(item.id),
                           title: item.title || 'Untitled',
                           artist: item.artist || '',
                           previewUrl: item.preview_url || '',
                           coverUrl: item.image_url || '',
+                          durationSec: Number(item.duration_sec || item.duration || 0) || 0,
                         });
+                        setTrimStartMs(0);
                       }
-                      setMusicPickerOpen(false);
                     }}
                   >
                     {isNone ? (
@@ -1668,6 +1827,8 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
             >
               <Text style={s.musicSheetCloseTxt}>Fechar</Text>
             </TouchableOpacity>
+            </>
+            )}
           </View>
         </View>
       </Modal>
@@ -1969,6 +2130,30 @@ const s = StyleSheet.create({
     marginTop: 8,
   },
   musicSheetCloseTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
+  // ── Music trim / scrub ──
+  trimWrap: { paddingHorizontal: 4, paddingBottom: 8 },
+  trimHint: { color: 'rgba(255,255,255,0.6)', fontSize: 12, fontWeight: '600', marginTop: 10, marginBottom: 14 },
+  trimTrack: {
+    height: 44, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.12)',
+    alignSelf: 'center', justifyContent: 'center', overflow: 'visible',
+  },
+  trimWindow: {
+    position: 'absolute', top: 0, bottom: 0, borderRadius: 12,
+    backgroundColor: 'rgba(124,58,237,0.35)', borderWidth: 1.5, borderColor: BRAND_PURPLE_LIGHT,
+  },
+  trimHandle: {
+    position: 'absolute', top: -6, width: 28, height: 56, borderRadius: 14,
+    backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 4, shadowOffset: { width: 0, height: 2 }, elevation: 4,
+  },
+  trimHandleBar: { width: 4, height: 24, borderRadius: 2, backgroundColor: BRAND_PURPLE },
+  trimTime: { color: '#fff', fontSize: 13, fontWeight: '700', textAlign: 'center', marginTop: 14 },
+  trimBtnRow: { flexDirection: 'row', marginTop: 18, gap: 12 },
+  trimBtn: { flex: 1, paddingVertical: 14, borderRadius: 22, alignItems: 'center' },
+  trimBtnGhost: { backgroundColor: 'rgba(255,255,255,0.12)' },
+  trimBtnGhostTxt: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  trimBtnPrimary: { backgroundColor: BRAND_PURPLE_LIGHT },
+  trimBtnPrimaryTxt: { color: '#fff', fontSize: 15, fontWeight: '800' },
   musicSearchRow: {
     flexDirection: 'row', alignItems: 'center', marginTop: 12, marginBottom: 8,
     backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 12,

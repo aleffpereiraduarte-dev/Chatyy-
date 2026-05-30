@@ -729,7 +729,7 @@ const StoryMedia = React.memo(function StoryMedia({
 // missing. Loops the ~30s preview while the story is visible & not paused.
 let _expoAudio = null;
 try { _expoAudio = require('expo-audio'); } catch {}
-function StatusMusicPlayer({ url, active }) {
+function StatusMusicPlayer({ url, active, startMs = 0 }) {
   const playerRef = useRef(null);
   useEffect(() => {
     // Tear down any previous track first (item changed / paused / closed).
@@ -745,8 +745,14 @@ function StatusMusicPlayer({ url, active }) {
         const player = _expoAudio.createAudioPlayer({ uri: url });
         player.loop = true;
         player.volume = 1.0;
-        player.play(); // source auto-loads; play() is safe to call immediately
+        // Seek to the author-picked "trecho" start offset (music_start_ms) so
+        // playback begins where they trimmed it — WhatsApp/IG store this offset.
+        // expo-audio's seekTo takes SECONDS; guard since source may still be
+        // loading (seek is best-effort, the player re-applies on play()).
+        const startSec = Math.max(0, Number(startMs) || 0) / 1000;
+        if (startSec > 0) { try { await player.seekTo(startSec); } catch {} }
         if (cancelled) { try { player.remove(); } catch {} return; }
+        player.play(); // source auto-loads; play() is safe to call immediately
         playerRef.current = player;
       } catch {}
     })();
@@ -754,7 +760,7 @@ function StatusMusicPlayer({ url, active }) {
       cancelled = true;
       if (playerRef.current) { try { playerRef.current.remove(); } catch {} playerRef.current = null; }
     };
-  }, [url, active]);
+  }, [url, active, startMs]);
   return null;
 }
 
@@ -1734,7 +1740,7 @@ export default function StoryViewer({
       {/* Music playback for music statuses — plays while this item is shown and
           the viewer isn't paused; skipped for video (video carries its own
           audio). Renders nothing visually. */}
-      <StatusMusicPlayer url={isVideo ? null : (cur?.music_preview_url || null)} active={!paused} />
+      <StatusMusicPlayer url={isVideo ? null : (cur?.music_preview_url || null)} active={!paused} startMs={Number(cur?.music_start_ms) || 0} />
       <Animated.View
         style={{
           flex: 1, backgroundColor: '#000',

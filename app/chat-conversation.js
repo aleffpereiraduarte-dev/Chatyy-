@@ -14180,8 +14180,15 @@ export default function ChatConversationScreen() {
       if (r?.success && r.data) {
         const msg = r.data.message || r.data;
         // [#1188 fix] Preserve sender_email on the video-note swap.
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false, sender_email: msg.sender_email || m.sender_email || currentEmail } : m));
-        try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, msg, tempId, getMemberEmails()); } catch {}
+        // [A.2 2026-05-29] The backend normalizes the upload to type='video'
+        // (MIME/extension inferred), which would flip this round note into a
+        // rectangular ChatMediaViewer bubble after send. Force the type back
+        // to 'video_note' on the optimistic→synced swap so it stays circular
+        // (RoundVideoViewer). We also stamp the relayed payload so receivers
+        // render it round too.
+        const noteMsg = { ...msg, type: 'video_note' };
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...noteMsg, _pending: false, sender_email: noteMsg.sender_email || m.sender_email || currentEmail } : m));
+        try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, noteMsg, tempId, getMemberEmails()); } catch {}
       } else {
         // Mark optimistic bubble as failed; user can long-press → retry.
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m));

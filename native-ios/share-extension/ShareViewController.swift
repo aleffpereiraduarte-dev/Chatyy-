@@ -166,6 +166,24 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
     /// Stable reference to the pending-send card so the Cancel button
     /// can tear it down without hideSending() racing the dismissal.
     private var pendingCancelButton: UIButton?
+    /// Soft timeout: at this point the iCloud download is taking long
+    /// enough that we (a) surface an explicit "iCloud demorando" hint +
+    /// Cancelar affordance and (b) try a downsampled-image fallback so
+    /// the user can still send a usable picture even if the full asset
+    /// never finishes streaming. The hard cap (`contentLoadTimeoutSec`)
+    /// then errors out cleanly if even the fallback can't produce media.
+    private let contentLoadSoftTimeoutSec: TimeInterval = 10
+    private var softTimeoutFired = false
+    /// Retained image NSItemProviders so the soft-timeout fallback can
+    /// request a system-rendered preview (`loadPreviewImage`) WITHOUT
+    /// waiting on the stalled full-resolution `loadFileRepresentation`
+    /// download. We only keep image providers — video/file fallbacks
+    /// aren't safe to downsample.
+    private var imageAttachments: [NSItemProvider] = []
+    /// Distinct failure reasons so the user gets an actionable pt-BR
+    /// message instead of one generic catch-all. See `errorMessage(for:)`.
+    private enum LoadFailReason { case timeout, network, unavailable }
+    private var lastFailReason: LoadFailReason = .unavailable
 
     // MARK: Lifecycle
 
@@ -194,11 +212,20 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         extractSharedContent { [weak self] in
             DispatchQueue.main.async { self?.onContentLoaded() }
         }
-        // Hard timeout so iCloud failures don't hang the UI forever.
+        // Dual timeout. SOFT (~10s): download is dragging — surface an
+        // explicit "iCloud demorando" hint + Cancelar affordance and try
+        // a downsampled-image fallback so the user can still send.
+        DispatchQueue.main.asyncAfter(deadline: .now() + contentLoadSoftTimeoutSec) { [weak self] in
+            guard let self = self else { return }
+            if !self.contentLoaded && !self.contentLoadFailed {
+                self.onContentLoadSoftTimeout()
+            }
+        }
+        // HARD (~20s): iCloud failures don't hang the UI forever.
         DispatchQueue.main.asyncAfter(deadline: .now() + contentLoadTimeoutSec) { [weak self] in
             guard let self = self else { return }
             if !self.contentLoaded {
-                self.onContentLoadTimedOut()
+                self.onContentLoadTimedOut(reason: .timeout)
             }
         }
     }
@@ -338,8 +365,15 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
             }
             trackLoadProgress(p)
         } else if attachment.hasItemConformingToTypeIdentifier(imageType) {
+            // Retain the provider so the soft-timeout fallback can request
+            // a system preview if the full download stalls (see
+            // attemptDownsampledFallback / onContentLoadSoftTimeout).
+            DispatchQueue.main.async { [weak self] in self?.imageAttachments.append(attachment) }
             let p = attachment.loadFileRepresentation(forTypeIdentifier: imageType) { [weak self] url, err in
-                if let err = err { ShareDiag.recordError("image loadFileRepresentation: \(err.localizedDescription)") }
+                if let err = err {
+                    ShareDiag.recordError("image loadFileRepresentation: \(err.localizedDescription)")
+                    self?.noteLoadError(err)
+                }
                 self?.consumeImageFileURL(url); done()
             }
             trackLoadProgress(p)
@@ -1050,10 +1084,22 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         progressObservations.forEach { $0.invalidate() }
         progressObservations.removeAll()
         // If extraction completed but yielded nothing (rare — usually
-        // an unsupported UTI), flag as failure so user gets a clear
-        // error instead of a permanently disabled Send button.
+        // an unsupported UTI or a fast-failing iCloud asset), try the
+        // downsampled-image fallback ONCE before declaring failure: a
+        // shared photo whose full download failed can often still yield
+        // a usable system preview. attemptDownsampledFallback() re-enters
+        // onContentLoaded() if it succeeds.
         if payloads.isEmpty {
             contentLoaded = false
+            if !softTimeoutFired && !imageAttachments.isEmpty {
+                softTimeoutFired = true   // don't double-attempt from the soft timer
+                attemptDownsampledFallback()
+                // Keep the loading state up; the hard timeout (or a
+                // successful fallback re-entry) resolves it.
+                refreshPreviewBlock()
+                updateSendBar()
+                return
+            }
             contentLoadFailed = true
         }
         refreshPreviewBlock()
@@ -1064,16 +1110,74 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         } else if pendingSendAfterLoad && contentLoadFailed {
             pendingSendAfterLoad = false
             hideSending()
-            showError("Não consegui ler o conteúdo. Abre Fotos, deixa o vídeo/foto baixar do iCloud, e compartilha de novo.")
+            showError(errorMessage(for: lastFailReason))
+        }
+    }
+
+    /// SOFT timeout (~10s): the iCloud download is dragging. Surface an
+    /// explicit "iCloud demorando" hint + Cancelar affordance, and try a
+    /// downsampled-image fallback so the user can still send a usable
+    /// picture even if the full-resolution asset never finishes
+    /// streaming. Does NOT fail the load — the hard timeout handles that.
+    private func onContentLoadSoftTimeout() {
+        if contentLoaded || contentLoadFailed || softTimeoutFired { return }
+        softTimeoutFired = true
+        ShareDiag.recordWarn("soft timeout (\(Int(contentLoadSoftTimeoutSec))s) — surfacing hint + attempting fallback")
+        // Inline preview copy: tell the user it's slow and that they can
+        // back out via the top-bar Cancelar.
+        if previewLabel.textColor != .systemRed {
+            previewLabel.text = "iCloud demorando — abre Fotos e deixa baixar (ou Cancelar acima)"
+        }
+        // If the user already tapped Enviar, make sure the overlay shows
+        // the hint + an escape route. showSending(cancellable:) already
+        // mounts a Cancelar button on the pending path; just refresh copy.
+        if pendingSendAfterLoad {
+            progressLabel?.text = "iCloud demorando — tentando uma versão menor…"
+        }
+        attemptDownsampledFallback()
+    }
+
+    /// Ask the retained image providers for a system-rendered preview
+    /// (`loadPreviewImage`) — this typically resolves from local caches
+    /// without waiting on the stalled full-resolution iCloud download.
+    /// If we get a UIImage, persist it to the App Group as a JPEG and
+    /// complete the load with that usable (if lower-res) image. ~1024pt
+    /// target via the preview thumbnail option.
+    private func attemptDownsampledFallback() {
+        guard payloads.isEmpty, !imageAttachments.isEmpty else { return }
+        let opts: [AnyHashable: Any] = [
+            NSItemProviderPreferredImageSizeKey: NSValue(cgSize: CGSize(width: 1024, height: 1024))
+        ]
+        let provider = imageAttachments[0]
+        provider.loadPreviewImage(options: opts) { [weak self] item, _ in
+            guard let self = self else { return }
+            guard let img = item as? UIImage else { return }
+            DispatchQueue.main.async {
+                // Race guard: full download may have landed meanwhile.
+                if self.contentLoaded || self.contentLoadFailed || !self.payloads.isEmpty { return }
+                guard let jpg = img.jpegData(compressionQuality: 0.85),
+                      let dest = self.writeBytesToAppGroup(data: jpg, ext: "jpg") else { return }
+                var p = SharedPayload()
+                p.kind = .image
+                p.image = img
+                p.fileURL = dest
+                p.fileMime = "image/jpeg"
+                p.fileName = dest.lastPathComponent
+                self.appendPayload(p)
+                ShareDiag.recordInfo("fallback preview image used: \(dest.lastPathComponent) (\(jpg.count) bytes)")
+                // Treat as a successful (degraded) load so the send can fire.
+                self.onContentLoaded()
+            }
         }
     }
 
     /// Hard timeout fallback — extraction is still running after
-    /// `contentLoadTimeoutSec`. Surface the iCloud message and let the
-    /// user cancel.
-    private func onContentLoadTimedOut() {
+    /// `contentLoadTimeoutSec` and no fallback image landed. Surface a
+    /// distinct iCloud message and let the user cancel.
+    private func onContentLoadTimedOut(reason: LoadFailReason) {
         if contentLoaded || contentLoadFailed { return }
         contentLoadFailed = true
+        lastFailReason = reason
         // Cancel still-in-flight iCloud requests so the system can
         // release the underlying CKAssetRequest network connections.
         for p in loadProgresses { p.cancel() }
@@ -1084,7 +1188,37 @@ final class ShareViewController: UIViewController, UISearchBarDelegate {
         if pendingSendAfterLoad {
             pendingSendAfterLoad = false
             hideSending()
-            showError("Demorou muito pra baixar do iCloud. Abre Fotos, deixa o item baixar, e compartilha de novo.")
+            showError(errorMessage(for: reason))
+        }
+    }
+
+    /// Record a per-attachment load error so we can pick the most
+    /// specific pt-BR message at failure time. NSURLErrorDomain network
+    /// codes → "Sem internet"; anything else stays "unavailable".
+    private func noteLoadError(_ err: Error) {
+        let ns = err as NSError
+        if ns.domain == NSURLErrorDomain {
+            switch ns.code {
+            case NSURLErrorNotConnectedToInternet,
+                 NSURLErrorNetworkConnectionLost,
+                 NSURLErrorTimedOut,
+                 NSURLErrorDataNotAllowed,
+                 NSURLErrorCannotConnectToHost:
+                lastFailReason = .network
+            default:
+                lastFailReason = .unavailable
+            }
+        } else {
+            lastFailReason = .unavailable
+        }
+    }
+
+    /// Distinct, actionable pt-BR copy per failure reason.
+    private func errorMessage(for reason: LoadFailReason) -> String {
+        switch reason {
+        case .timeout:     return "iCloud demorando — abre Fotos e deixa baixar"
+        case .network:     return "Sem internet"
+        case .unavailable: return "Imagem não disponível"
         }
     }
 
