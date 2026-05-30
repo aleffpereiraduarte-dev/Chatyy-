@@ -22007,7 +22007,25 @@ export default function ChatConversationScreen() {
           {renderContent()}
           {msg.type !== 'sticker' && msg.type !== 'gif' && !(msg.type === 'image' && !(msg.content && msg.content !== msg.file_name)) && msg.type !== 'video' && (
             <View style={styles.msgMeta}>
-              {disappearingTimer > 0 ? <IconClock size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} style={{ marginRight: 2 }} /> : null}
+              {(() => {
+                // Disappearing clock indicator — show ONLY on messages that
+                // actually vanish: those sent at/after the timer was enabled
+                // (WhatsApp semantics). The pre-timer history stays forever, so
+                // it must NOT carry the clock. Previously this showed the clock
+                // on EVERY bubble whenever disappearingTimer>0, which (a) lied
+                // about old messages and (b) flickered on/off as disappearingTimer
+                // loaded async from chat_info — exactly the "indicator sometimes
+                // present, sometimes not" QA #37 reported. Gate on set_at: while
+                // set_at is unknown (still loading) show nothing (safe), and a
+                // just-sent optimistic row with no parseable time is treated as
+                // new → disappears → clock.
+                if (!(disappearingTimer > 0)) return null;
+                const s = disappearingSetAt ? Date.parse(disappearingSetAt) : NaN;
+                if (!Number.isFinite(s)) return null;
+                const t = Date.parse(msg.created_at);
+                const willVanish = !Number.isFinite(t) || t >= s;
+                return willVanish ? <IconClock size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} style={{ marginRight: 2 }} /> : null;
+              })()}
               {/* WAVE 46 (2026-05-21) removed the inline star to keep the bubble
                   clean — but QA 2026-05-29 showed users had no in-bubble signal
                   that "Favoritar" worked, so a star tap felt like a no-op. Bring
