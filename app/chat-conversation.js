@@ -7698,6 +7698,13 @@ export default function ChatConversationScreen() {
   const draftTimerRef = useRef(null);
   const draftSavedRef = useRef('');
   const remoteDraftAppliedRef = useRef(0); // ts of last remote draft we applied
+  // ts of the user's last local keystroke in the composer. The remote-draft
+  // WS handler MUST NOT overwrite the input while the user is actively typing —
+  // doing so makes the caret jump and characters "alagar" (flood/duplicate).
+  // WhatsApp only ever syncs drafts to your OWN idle devices, never clobbers
+  // a field you're typing in. We treat any keystroke within the last 6s as
+  // "actively typing" and ignore inbound draft pushes during that window.
+  const lastKeystrokeRef = useRef(0);
   // Race fix: the autosave can fire RIGHT before send (chatDraftSet("oi") in
   // flight), then send clears the draft and sets '' on server. Server
   // broadcasts both drafts to this same device over WS. The "oi" echo can
@@ -7817,6 +7824,12 @@ export default function ChatConversationScreen() {
         const now = Date.now();
         if (text && text === lastSentTextRef.current && (now - lastSentAtRef.current) < 3000) return;
         if (now - remoteDraftAppliedRef.current < 500) return;
+        // NEVER clobber the input while the user is actively typing — this is
+        // the "trava e alaga" bug: an inbound draft echo (own autosave or
+        // another device) calls setInputText() mid-keystroke, the caret jumps
+        // to the end and characters appear to flood/duplicate. If the user
+        // typed within the last 6s, drop the remote draft entirely.
+        if (now - lastKeystrokeRef.current < 6000) return;
         remoteDraftAppliedRef.current = now;
         setInputText(text);
         draftSavedRef.current = text;
@@ -24602,9 +24615,15 @@ export default function ChatConversationScreen() {
             the strip immediately. */}
         {(() => {
           if (stickerSuggestionsHidden) return null;
+          // PERF (trava): getStickerSuggestions needs ≥4 chars to match anyway,
+          // so skip the require()+keyword scan on every short keystroke. This
+          // runs inline in render on EVERY letter — gating it cheap-first keeps
+          // fast typing smooth on long threads.
+          const _trimmed = inputText.trim();
+          if (_trimmed.length < 4) return null;
           const { getStickerSuggestions } = require('../components/StickerPicker');
           const suggestions = getStickerSuggestions ? getStickerSuggestions(inputText) : [];
-          if (suggestions.length === 0 || !inputText.trim()) return null;
+          if (suggestions.length === 0) return null;
           return (
             <View style={{ flexDirection: 'row', alignItems: 'center', maxHeight: 36, paddingLeft: 6, paddingRight: 4, borderTopWidth: 1, borderTopColor: colors.border }}>
               <ScrollView
@@ -24819,6 +24838,7 @@ export default function ChatConversationScreen() {
               autoCapitalize={autocorrectOn ? 'sentences' : 'none'}
               value={inputText}
               onChangeText={(text) => {
+                lastKeystrokeRef.current = Date.now();
                 setInputText(text);
                 // Custom animated emoji (Telegram Premium-style): when the
                 // input contains a `:handle:` token and we haven't hydrated
