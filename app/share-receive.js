@@ -43,7 +43,12 @@ export default function ShareReceiveScreen() {
     setLoadError(false);
     try {
       const r = await api.chatConversations();
-      const list = r?.data?.conversations || r?.data?.chats || r?.conversations || [];
+      // chat_list returns the bare array under `data`; the WS relay wraps it
+      // as { data: { conversations } }. apiList() normalizes every transport
+      // shape — reading r.data.conversations directly (the old code) always
+      // missed the bare-array PHP/Rust path, so the list came back empty and
+      // the user only ever saw "Nenhuma conversa ainda".
+      const list = api.apiList(r, 'conversations', 'chats');
       list.sort((a, b) => new Date(b.last_message_at || 0) - new Date(a.last_message_at || 0));
       setConversations(list);
     } catch {
