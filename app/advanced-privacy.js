@@ -21,7 +21,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
-import { IconArrowLeft, IconShield, IconGlobe, IconAlertTriangle } from '../components/Icons';
+import {
+  IconArrowLeft, IconGlobe, IconAlertTriangle,
+  IconMapPin, IconMonitor, IconKey, IconSmartphone,
+} from '../components/Icons';
 import * as proxyCfg from '../services/proxyConfig';
 import * as screenGate from '../services/screenCaptureGate';
 import * as vpnDetect from '../services/vpnDetect';
@@ -98,7 +101,7 @@ export default function AdvancedPrivacyScreen() {
         </Text>
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: Spacing.md, paddingBottom: 32, gap: Spacing.md }}>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
 
         {/* VPN suggestion (auto-hidden if user already on VPN) */}
         {!vpnActive && (
@@ -118,10 +121,11 @@ export default function AdvancedPrivacyScreen() {
           </View>
         )}
 
-        {/* Discoverable toggle */}
-        <Section title={t('privacy.discoverable') || 'Permitir que outros me encontrem pelo número'} colors={colors}>
+        {/* Visibilidade */}
+        <Section title={t('privacy.sectionVisibility') || 'Visibilidade'} colors={colors}>
           <Row
             colors={colors}
+            icon={IconMapPin}
             label={t('privacy.discoverableLabel') || 'Encontrar pelo número'}
             desc={t('privacy.discoverableDesc') || 'Quando desativado, ninguém te encontra pelo telefone ao sincronizar contatos. Você ainda pode iniciar conversas com qualquer pessoa.'}
             value={discoverable}
@@ -129,10 +133,11 @@ export default function AdvancedPrivacyScreen() {
           />
         </Section>
 
-        {/* Screen capture block */}
-        <Section title={t('privacy.screenBlock') || 'Bloquear capturas de tela'} colors={colors}>
+        {/* Proteção de tela */}
+        <Section title={t('privacy.sectionScreen') || 'Proteção de tela'} colors={colors}>
           <Row
             colors={colors}
+            icon={IconMonitor}
             label={t('privacy.screenBlockLabel') || 'Bloquear capturas de tela no app'}
             desc={t('privacy.screenBlockDesc') || 'No Android, miniaturas em "Recentes" ficam pretas. No iOS, gravações de tela são pausadas. Não impede foto-do-celular.'}
             value={screenBlock}
@@ -141,10 +146,11 @@ export default function AdvancedPrivacyScreen() {
           />
         </Section>
 
-        {/* Proxy / Tor */}
-        <Section title={t('privacy.proxyTor') || 'Proxy / Tor'} colors={colors}>
+        {/* Rede — Proxy / Tor */}
+        <Section title={t('privacy.sectionNetwork') || 'Rede'} colors={colors}>
           <Row
             colors={colors}
+            icon={IconGlobe}
             label={t('privacy.proxyEnable') || 'Conexão via proxy'}
             desc={t('privacy.proxyDesc') || 'Rota tudo via SOCKS5. Avançado — só ative se souber o que está fazendo.'}
             value={proxy.enabled}
@@ -152,16 +158,17 @@ export default function AdvancedPrivacyScreen() {
             disabled={Platform.OS === 'web' || proxy.useTor}
           />
           {proxy.enabled && !proxy.useTor && (
-            <View style={{ gap: 8, marginTop: 8 }}>
+            <View style={styles.fieldGroup}>
               <Field label={t('privacy.proxyHost') || 'Host'} value={proxy.host} onChange={(v) => saveProxy({ host: v })} colors={colors} />
               <Field label={t('privacy.proxyPort') || 'Porta'} value={String(proxy.port || '')} onChange={(v) => saveProxy({ port: v })} colors={colors} keyboardType="number-pad" />
               <Field label={t('privacy.proxyUser') || 'Usuário (opcional)'} value={proxy.username} onChange={(v) => saveProxy({ username: v })} colors={colors} />
               <Field label={t('privacy.proxyPass') || 'Senha (opcional)'} value={proxy.password} onChange={(v) => saveProxy({ password: v })} colors={colors} secureTextEntry />
             </View>
           )}
-          <View style={{ height: 1, backgroundColor: colors.borderLight, marginVertical: Spacing.sm }} />
+          <View style={[styles.rowDivider, { backgroundColor: colors.borderLight }]} />
           <Row
             colors={colors}
+            icon={IconKey}
             label={t('privacy.useTor') || 'Usar Tor'}
             desc={t('privacy.useTorDesc') || 'Rota tudo por uma instância local do Tor. Pode deixar o app mais lento. Tem precedência sobre o proxy manual.'}
             value={proxy.useTor}
@@ -170,12 +177,16 @@ export default function AdvancedPrivacyScreen() {
           />
         </Section>
 
-        {/* Migrar conta — surfaced for visibility */}
-        <Section title={t('privacy.migrateAccount') || 'Migrar conta'} colors={colors}>
+        {/* Conta */}
+        <Section title={t('privacy.sectionAccount') || 'Conta'} colors={colors}>
           <TouchableOpacity
-            style={[styles.linkRow, { borderBottomColor: colors.borderLight }]}
+            style={styles.linkRow}
+            activeOpacity={0.6}
             onPress={() => router.push('/linked-devices')}
           >
+            <View style={[styles.rowIcon, { backgroundColor: colors.primaryLight }]}>
+              <IconSmartphone size={18} color={colors.primary} />
+            </View>
             <View style={{ flex: 1 }}>
               <Text style={[styles.rowLabel, { color: colors.text }]}>
                 {t('privacy.migrateLabel') || 'Migrar conta para novo telefone'}
@@ -184,7 +195,7 @@ export default function AdvancedPrivacyScreen() {
                 {t('privacy.migrateDesc') || 'Use o QR de pareamento pra transferir sessões e chaves de criptografia.'}
               </Text>
             </View>
-            <Text style={{ color: colors.textTertiary, fontSize: 20 }}>›</Text>
+            <Text style={{ color: colors.textTertiary, fontSize: 22, marginLeft: 4 }}>›</Text>
           </TouchableOpacity>
         </Section>
 
@@ -195,19 +206,25 @@ export default function AdvancedPrivacyScreen() {
 
 function Section({ title, colors, children }) {
   return (
-    <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-      <View style={styles.sectionHeader}>
-        <IconShield size={18} color={colors.primary} />
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>{title}</Text>
+    <View style={styles.sectionWrap}>
+      <Text style={[styles.sectionTitle, { color: colors.textTertiary }]}>
+        {(title || '').toUpperCase()}
+      </Text>
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
+        {children}
       </View>
-      {children}
     </View>
   );
 }
 
-function Row({ colors, label, desc, value, onChange, disabled }) {
+function Row({ colors, icon: Icon, label, desc, value, onChange, disabled }) {
   return (
     <View style={[styles.row, { opacity: disabled ? 0.5 : 1 }]}>
+      {Icon ? (
+        <View style={[styles.rowIcon, { backgroundColor: colors.primaryLight }]}>
+          <Icon size={18} color={colors.primary} />
+        </View>
+      ) : null}
       <View style={{ flex: 1 }}>
         <Text style={[styles.rowLabel, { color: colors.text }]}>{label}</Text>
         {desc ? <Text style={[styles.rowDesc, { color: colors.textTertiary }]}>{desc}</Text> : null}
@@ -245,16 +262,35 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   title: { fontSize: FontSize.lg, fontWeight: '700' },
-  section: { borderRadius: BorderRadius.lg, borderWidth: 1, padding: Spacing.md, gap: 4 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: Spacing.xs },
-  sectionTitle: { fontSize: FontSize.md, fontWeight: '700' },
-  row: { flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.sm, gap: 12 },
-  linkRow: {
-    flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+
+  scrollContent: { padding: Spacing.lg, paddingBottom: 40, gap: Spacing.xl },
+
+  sectionWrap: { gap: Spacing.sm },
+  sectionTitle: {
+    fontSize: FontSize.xs, fontWeight: '700',
+    letterSpacing: 0.8, marginLeft: Spacing.xs,
   },
-  rowLabel: { fontSize: FontSize.md, fontWeight: '600' },
-  rowDesc: { fontSize: FontSize.sm, marginTop: 2 },
+  card: {
+    borderRadius: BorderRadius.xl, borderWidth: StyleSheet.hairlineWidth,
+    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.xs,
+  },
+
+  row: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: Spacing.md, gap: Spacing.md,
+  },
+  rowIcon: {
+    width: 36, height: 36, borderRadius: BorderRadius.md,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  rowDivider: { height: StyleSheet.hairlineWidth, marginLeft: 36 + Spacing.md },
+  linkRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: Spacing.md, gap: Spacing.md,
+  },
+  rowLabel: { fontSize: FontSize.lg, fontWeight: '600' },
+  rowDesc: { fontSize: FontSize.sm, marginTop: 3, lineHeight: 17 },
+  fieldGroup: { gap: Spacing.sm, marginBottom: Spacing.md, marginLeft: 36 + Spacing.md },
   fieldLabel: { fontSize: FontSize.sm, fontWeight: '600' },
   input: {
     borderWidth: 1, borderRadius: BorderRadius.md, paddingHorizontal: 12, paddingVertical: 10,

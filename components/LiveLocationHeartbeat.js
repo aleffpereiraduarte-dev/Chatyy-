@@ -6,14 +6,14 @@
 // or inside the chat where the share was opened. Anywhere else (chat list,
 // inbox, settings, photos) → no fresh GPS pushes → receivers see stale.
 //
-// This component is mounted at the root layout and runs a 5-minute
-// foreground heartbeat AS LONG AS:
+// This component is mounted at the root layout and runs a Find-My-style
+// heartbeat (30s foreground / 60s background) AS LONG AS:
 //   1. The device flag `live_location_active=1` is set (persisted in
 //      AsyncStorage when the user starts a live share, cleared on stop).
-//   2. The app is in foreground (AppState === 'active').
+//   2. Foreground or background — cadence switches on AppState so pins
+//      stay fresh while watched and stay battery-reasonable while not.
 // AppState transitions to 'active' fire an immediate tick so resuming
-// the app from background instantly refreshes the pin instead of waiting
-// for the next 5-min tick.
+// the app from background instantly refreshes the pin.
 //
 // Posts go to the pure-global endpoint chat_friend_location_share_update
 // (added in the snap-map ping wave) which mirrors into
@@ -21,9 +21,9 @@
 // their friends' pins move in (near) real-time even if the friend is
 // browsing chats elsewhere in the app.
 //
-// Battery: 5min interval with Balanced accuracy is ~the same drag as a
-// background WhatsApp connection. Pauses entirely on background so the
-// OS doesn't bill battery to us when no one's watching the screen.
+// Battery: 30/60s interval with Balanced accuracy + a 15s overlap guard.
+// In background the OS will usually suspend our JS interval anyway; the
+// OS-managed updates in reconcileBackground keep the share alive there.
 //
 // FULLY DEFENSIVE: every module load, GPS call, and HTTP post is wrapped
 // in try/catch so a missing module or denied permission downgrades to
@@ -32,10 +32,17 @@
 import { useEffect, useRef } from 'react';
 import { Platform, AppState } from 'react-native';
 
-const HEARTBEAT_MS = 5 * 60 * 1000; // 5 minutes — WhatsApp-style cadence
+// Find-My-style cadence: tight enough that friends' pins never look stale.
+// Foreground = 30s (you're watching, friends are watching you), background
+// = 60s (OS may suspend us anyway, but while we're alive keep it fresh).
+// The previous 5-min cadence made pins look "1 day ago" on long sessions.
+const HEARTBEAT_FG_MS = 30 * 1000; // 30s while app is in foreground
+const HEARTBEAT_BG_MS = 60 * 1000; // 60s while app is backgrounded
+const MIN_POST_GAP_MS = 15 * 1000; // safety floor against overlapping posts
 
 export default function LiveLocationHeartbeat() {
   const intervalRef  = useRef(null);
+  const intervalMsRef = useRef(0);
   const appStateRef  = useRef(AppState.currentState);
   const lastPostRef  = useRef(0);
 
@@ -89,9 +96,8 @@ export default function LiveLocationHeartbeat() {
       try {
         if (stopped) return;
         await reconcileBackground();
-        if (appStateRef.current !== 'active') return;
         const now = Date.now();
-        if (now - lastPostRef.current < 30_000) return; // safety floor
+        if (now - lastPostRef.current < MIN_POST_GAP_MS) return; // overlap guard
         const enabled = await isActiveShareEnabled();
         if (!enabled) return;
 
@@ -122,29 +128,34 @@ export default function LiveLocationHeartbeat() {
       } catch { /* swallow */ }
     }
 
-    function startInterval() {
-      if (intervalRef.current) return;
-      intervalRef.current = setInterval(() => { tick().catch(() => {}); }, HEARTBEAT_MS);
-    }
     function stopInterval() {
       if (intervalRef.current) {
         clearInterval(intervalRef.current);
         intervalRef.current = null;
+        intervalMsRef.current = 0;
       }
     }
+    // (Re)start the loop at the cadence for the current AppState. Guards
+    // against overlapping timers: if an interval at the desired period is
+    // already running, it's a no-op; otherwise the old one is cleared first.
+    function startInterval() {
+      const desired = appStateRef.current === 'active' ? HEARTBEAT_FG_MS : HEARTBEAT_BG_MS;
+      if (intervalRef.current && intervalMsRef.current === desired) return;
+      stopInterval();
+      intervalMsRef.current = desired;
+      intervalRef.current = setInterval(() => { tick().catch(() => {}); }, desired);
+    }
 
-    // AppState: fire an immediate tick on transition to active (so
-    // returning from background refreshes the pin in <1s, not in 5min).
+    // AppState: switch cadence on transition and fire an immediate tick on
+    // resume so returning from background refreshes the pin in <1s.
     const sub = AppState.addEventListener('change', (next) => {
-      const prev = appStateRef.current;
       appStateRef.current = next;
+      // Re-arm the interval at the cadence matching the new state (foreground
+      // = 30s, background = 60s). We keep ticking in background while alive;
+      // the OS-managed task in reconcileBackground handles true suspension.
+      startInterval();
       if (next === 'active') {
-        startInterval();
         tick().catch(() => {});
-      } else if (prev === 'active') {
-        // App went to background — stop the loop. OS would suspend us
-        // anyway; clearing is just polite.
-        stopInterval();
       }
     });
 
