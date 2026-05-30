@@ -488,6 +488,33 @@ export function AuthProvider({ children }) {
       const e = (email || '').toString().toLowerCase();
       const { Intents } = require('../modules/expo-native-toolkit');
       Intents.setShareExtensionAuth(tok, e, baseUrl);
+      // [2026-05-30] Also mirror a recent-conversations snapshot to the App
+      // Group HERE, not only on ChatListTab mount. The founder saw "Nenhuma
+      // conversa ainda" in the iOS share sheet because the snapshot is only
+      // written when the chat list loads — opening the share sheet before ever
+      // visiting the chat list this install left it empty. SmartCache exposes a
+      // synchronous getter, so we can re-push the same top-30 snapshot on every
+      // logged-in state (login / hydrate / refetch). Best-effort, silent.
+      try {
+        const sc = require('../services/smartChatCache');
+        const convs = sc?.getCachedConversationsSync?.();
+        if (Array.isArray(convs) && convs.length) {
+          const sorted = [...convs].sort((a, b) =>
+            new Date(b.last_message_at || b.updated_at || 0) -
+            new Date(a.last_message_at || a.updated_at || 0)
+          );
+          const snapshot = sorted.slice(0, 30).map(c => ({
+            id: String(c.id),
+            name: c.name || c.display_name || c.other_email || '',
+            email: (c.other_email || c.email || '').toLowerCase(),
+            avatarUrl: c.avatar_url || (c.other_email
+              ? (api.getAvatarUrlForEmail?.(c.other_email) || '') : ''),
+            type: c.type || (c.is_group ? 'group' : 'direct'),
+            lastMessageAt: c.last_message_at || c.updated_at || '',
+          }));
+          Intents.setShareExtensionConversations(snapshot);
+        }
+      } catch {}
     } catch {}
   }, []);
 
