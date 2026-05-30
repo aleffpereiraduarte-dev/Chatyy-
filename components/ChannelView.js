@@ -276,8 +276,8 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
         isRefresh || !info ? api.channelInfo(channel.id) : Promise.resolve(null),
       ]);
 
-      if (feedRes?.data?.success) {
-        const fetched = feedRes.data.data?.posts || [];
+      if (api.apiOk(feedRes)) {
+        const fetched = api.apiList(feedRes, 'posts', 'items');
         if (isRefresh) {
           setPosts(fetched);
           offsetRef.current = fetched.length;
@@ -287,8 +287,8 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
         }
         setHasMore(fetched.length === PAGE);
       }
-      if (infoRes?.data?.success) {
-        setInfo(infoRes.data.data || null);
+      if (api.apiOk(infoRes)) {
+        setInfo(api.apiPayload(infoRes) || null);
       }
     } catch (e) {
       // silently ignore network errors
@@ -329,7 +329,7 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
       }
       // Refresh info
       const res = await api.channelInfo(channel.id);
-      if (res?.data?.success) setInfo(res.data.data || null);
+      if (api.apiOk(res)) setInfo(api.apiPayload(res) || null);
     } catch {}
   }, [channel.id, info]);
 
@@ -339,12 +339,12 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
     setPosting(true);
     try {
       const res = await api.channelPost(channel.id, newPost.trim());
-      if (res?.data?.success) {
+      if (api.apiOk(res)) {
         setNewPost('');
         offsetRef.current = 0;
         loadPosts(true);
       } else {
-        Alert.alert(t('common.error') || 'Erro', res?.data?.message || (t('channel.postFailed') || 'Não foi possível publicar'));
+        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('channel.postFailed') || 'Não foi possível publicar'));
       }
     } catch {
       Alert.alert(t('common.error') || 'Erro', t('channel.postFailed') || 'Não foi possível publicar');

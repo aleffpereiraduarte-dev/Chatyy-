@@ -1046,6 +1046,35 @@ export function swrInvalidate(action, params) {
   _swrCache.delete(_inflightKey(action, params));
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Response-shape normalizers.
+// apiCall() returns the PARSED BODY: { success, data, message }. Several older
+// call sites (Channels/Communities tabs) were written assuming the raw shape
+// { data: { success, data } } and read res.data.success / res.data.data — one
+// level too deep. That silently turned every success into a false failure
+// ("Não foi possível criar o canal" even though the channel WAS created) and
+// left lists empty. These helpers tolerate BOTH shapes so the mismatch can
+// never resurface, regardless of which layer a wrapper returns.
+export function apiOk(r) { return !!(r && (r.success ?? r.data?.success)); }
+export function apiMsg(r) { return (r && (r.message ?? r.data?.message)) || ''; }
+export function apiPayload(r) {
+  if (!r) return null;
+  const d = r.data;
+  // Wrong/raw shape: d itself is the body { success, data, ... } → unwrap once.
+  if (d && typeof d === 'object' && !Array.isArray(d) && ('success' in d)) return d.data;
+  return d; // correct shape: d is already the payload
+}
+// Pull an array payload whether it's bare (chat_list) or nested under a key
+// (community_list → { communities }, feed → { posts }, etc.).
+export function apiList(r, ...keys) {
+  const p = apiPayload(r);
+  if (Array.isArray(p)) return p;
+  if (p && typeof p === 'object') {
+    for (const k of keys) if (Array.isArray(p[k])) return p[k];
+  }
+  return [];
+}
+
 export async function apiCall(action, params = {}, method = 'GET', opts = {}) {
   if (method === 'GET') {
     const key = _inflightKey(action, params);

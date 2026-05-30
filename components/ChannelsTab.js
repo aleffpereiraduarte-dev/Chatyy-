@@ -131,7 +131,7 @@ function FollowingList({ colors, isDark, t, onOpenChannel }) {
   const load = useCallback(async () => {
     try {
       const res = await api.channelMyChannels();
-      if (res.data?.success) setChannels(res.data.data?.channels || []);
+      if (api.apiOk(res)) setChannels(api.apiList(res, 'channels', 'conversations'));
     } catch {} finally { setLoading(false); setRefreshing(false); }
   }, []);
 
@@ -206,7 +206,7 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
   const load = useCallback(async (cat, q) => {
     try {
       const res = await api.channelDiscover(cat === 'all' ? '' : cat, q);
-      if (res.data?.success) setChannels(res.data.data?.channels || []);
+      if (api.apiOk(res)) setChannels(api.apiList(res, 'channels', 'conversations', 'items'));
     } catch {} finally { setLoading(false); setRefreshing(false); }
   }, []);
 
@@ -404,8 +404,8 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
         api.channelFeed(channel.id),
         api.channelInfo(channel.id),
       ]);
-      if (feedRes.data?.success) setPosts(feedRes.data.data?.posts || []);
-      if (infoRes.data?.success) setInfo(infoRes.data.data || null);
+      if (api.apiOk(feedRes)) setPosts(api.apiList(feedRes, 'posts', 'items'));
+      if (api.apiOk(infoRes)) setInfo(api.apiPayload(infoRes) || null);
     } catch {} finally { setLoading(false); setRefreshing(false); }
   }, [channel.id]);
 
@@ -418,7 +418,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
     setPosting(true);
     try {
       const res = await api.channelPost(channel.id, newPost.trim());
-      if (res.data?.success) {
+      if (api.apiOk(res)) {
         setNewPost('');
         loadPosts();
       }
@@ -567,14 +567,14 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
     setCreating(true);
     try {
       const res = await api.channelCreate(name.trim(), description.trim(), category, true);
-      if (res.data?.success) {
-        onCreated(res.data.data);
+      if (api.apiOk(res)) {
+        onCreated(api.apiPayload(res));
         setName('');
         setDescription('');
         setCategory('general');
         onClose();
       } else {
-        Alert.alert('Erro', res.data?.message || 'Não foi possível criar o canal');
+        Alert.alert('Erro', api.apiMsg(res) || 'Não foi possível criar o canal');
       }
     } catch {} finally { setCreating(false); }
   }, [name, description, category, creating, onClose, onCreated]);

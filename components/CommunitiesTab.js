@@ -71,8 +71,8 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
   const loadCommunities = useCallback(async () => {
     try {
       const res = await api.communityList();
-      if (res?.data?.success && Array.isArray(res.data.data)) {
-        setCommunities(res.data.data);
+      if (api.apiOk(res)) {
+        setCommunities(api.apiList(res, 'communities'));
       }
     } catch {} finally {
       setLoading(false);
@@ -101,8 +101,8 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
       const res = await api.communityInfo(id);
       // Only apply if this is still the latest expand request (race guard)
       if (seq !== expandSeqRef.current) return;
-      if (res?.data?.success) {
-        setExpandedData(res.data.data);
+      if (api.apiOk(res)) {
+        setExpandedData(api.apiPayload(res));
       }
     } catch {} finally {
       if (seq === expandSeqRef.current) setLoadingInfo(false);
@@ -114,13 +114,13 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
     setCreating(true);
     try {
       const res = await api.communityCreate(createName.trim(), createDesc.trim());
-      if (res?.data?.success) {
+      if (api.apiOk(res)) {
         setShowCreate(false);
         setCreateName('');
         setCreateDesc('');
         loadCommunities();
       } else {
-        Alert.alert(t('common.error') || 'Erro', res?.data?.message || (t('community.createFailed') || 'Não foi possível criar a comunidade'));
+        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('community.createFailed') || 'Não foi possível criar a comunidade'));
       }
     } catch {
       Alert.alert(t('common.error') || 'Erro', t('community.createFailed') || 'Não foi possível criar a comunidade');
@@ -134,13 +134,13 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
     setAnnouncing(true);
     try {
       const res = await api.communityAnnouncement(announceCommunity.id, announceText.trim());
-      if (res?.data?.success) {
-        const count = res.data.data?.sent_to || 0;
+      if (api.apiOk(res)) {
+        const count = api.apiPayload(res)?.sent_to || 0;
         Alert.alert(t('community.announcement'), (t('community.sentTo') || 'Sent to {count} groups').replace('{count}', count));
         setAnnounceCommunity(null);
         setAnnounceText('');
       } else {
-        Alert.alert(t('common.error') || 'Erro', res?.data?.message || (t('common.failed') || 'Falhou'));
+        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('common.failed') || 'Falhou'));
       }
     } catch {
       Alert.alert(t('common.error') || 'Erro', t('community.announceFailed') || 'Não foi possível enviar o aviso');
@@ -152,7 +152,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
   const handleAddGroup = useCallback(async (communityId, conversationId) => {
     try {
       const res = await api.communityAddGroup(communityId, conversationId);
-      if (res?.data?.success) {
+      if (api.apiOk(res)) {
         setAddGroupCommunity(null);
         // Refresh expanded info
         if (expandedId === communityId) {
@@ -161,7 +161,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         }
         loadCommunities();
       } else {
-        Alert.alert(t('common.error') || 'Erro', res?.data?.message || (t('common.failed') || 'Falhou'));
+        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('common.failed') || 'Falhou'));
       }
     } catch {
       Alert.alert(t('common.error') || 'Erro', t('community.addGroupFailed') || 'Não foi possível adicionar o grupo');
@@ -171,7 +171,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
   const handleRemoveGroup = useCallback(async (communityId, conversationId) => {
     try {
       const res = await api.communityRemoveGroup(communityId, conversationId);
-      if (res?.data?.success) {
+      if (api.apiOk(res)) {
         if (expandedId === communityId) {
           toggleExpand(null);
           setTimeout(() => toggleExpand(communityId), 100);
@@ -186,8 +186,9 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
     setLoadingGroups(true);
     try {
       const res = await api.chatConversations();
-      if (res?.data?.success && Array.isArray(res.data.data)) {
-        const groups = res.data.data.filter(c => c.type === 'group' || c.type === 'channel');
+      if (api.apiOk(res)) {
+        const groups = api.apiList(res, 'conversations', 'items')
+          .filter(c => c.type === 'group' || c.type === 'channel');
         setUserGroups(groups);
       }
     } catch {} finally {
