@@ -1734,6 +1734,7 @@ export default {
   'chat.audioCall': 'Chamada de voz',
   'chat.photo': 'Foto',
   'chat.video': 'Vídeo',
+  'chat.sharedInChat': 'Compartilhado nesta conversa',
   'chat.video.offlineUnavailable': 'Vídeo não disponível offline',
   'chat.audio': 'Áudio',
   'chat.transcribe': 'Transcrever',
@@ -8260,6 +8261,7 @@ export default {
   // section of settings ("Idioma e moeda"). Conversion rates fetched from
   // chat_currency_rates and applied at render time only.
   'settings.currencyLabel': 'Moeda',
+  'settings.currencyDesc': 'Usada para exibir valores no app.',
   'settings.currencyAuto': 'Auto',
   'settings.currency.BRL': 'Real brasileiro',
   'settings.currency.USD': 'Dólar americano',

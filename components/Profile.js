@@ -2721,7 +2721,9 @@ export default function Profile({
       // doesn't collide with IconFilm (used by Reels).
       { k: 'lives', label: t?.('profile.lives') || 'Lives', count: lives.length, icon: IconPlay },
       !actions.is_self && { k: 'media', label: t?.('profile.media') || 'Mídia', count: sharedMedia.length, icon: IconTag },
-      !actions.is_self && { k: 'chat',  label: t?.('profile.chat') || 'Conversas', count: commonChats.length },
+      // "Conversas" tab removed — it duplicated the "Mensagem" action button
+      // (both opened a chat with this user). Groups in common still surface via
+      // the "Grupos em comum" section above.
       !actions.is_self && emailPreview.length > 0 && { k: 'email', label: t?.('profile.email') || 'Email', count: emailPreview.length },
     ].filter(Boolean);
 
@@ -2865,22 +2867,6 @@ export default function Profile({
         return (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
             {sharedMedia.map(m => <GridItem key={m.id} item={m} size={gridSize} onPress={() => handleOpenPost(m, 'media')} />)}
-          </View>
-        );
-      }
-      if (activeTab === 'chat') {
-        return (
-          <View>
-            {commonChats.map(c => (
-              <TouchableOpacity key={c.id}
-                style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors?.border }}
-                onPress={() => router?.push(`/chat-conversation?id=${c.id}`)}
-              >
-                <AvatarCircle name={c.name} size={42} />
-                <Text style={{ flex: 1, fontSize: 15, color: colors?.text, fontWeight: '500' }}>{c.name}</Text>
-                <IconChevronRight size={18} color={colors?.textTertiary} />
-              </TouchableOpacity>
-            ))}
           </View>
         );
       }

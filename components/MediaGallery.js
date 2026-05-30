@@ -10,13 +10,17 @@ import ChatMediaViewer from './ChatMediaViewer';
 
 const TABS = ['image', 'video', 'audio', 'file'];
 
-// Accent palette — one hue per tab so the segmented control, empty states,
-// list icons and the active-pill all read as a coherent set.
+// Chatyy brand purple. The whole screen reads as ONE coherent purple set —
+// the active-pill, empty-state circle, list icons and accents are all the
+// brand color. Per-type is still distinguishable via the icon (Image/Film/
+// Music/FileText), not via clashing hues.
+const BRAND = '#7C3AED';
+const BRAND_SOFT = 'rgba(124,58,237,0.12)';
 const TAB_THEME = {
-  image: { color: '#EC4899', soft: 'rgba(236,72,153,0.12)', Icon: IconImage },
-  video: { color: '#F59E0B', soft: 'rgba(245,158,11,0.12)', Icon: IconFilm },
-  audio: { color: '#8B5CF6', soft: 'rgba(139,92,246,0.12)', Icon: IconMusic },
-  file:  { color: '#3B82F6', soft: 'rgba(59,130,246,0.12)', Icon: IconFileText },
+  image: { color: BRAND, soft: BRAND_SOFT, Icon: IconImage },
+  video: { color: BRAND, soft: BRAND_SOFT, Icon: IconFilm },
+  audio: { color: BRAND, soft: BRAND_SOFT, Icon: IconMusic },
+  file:  { color: BRAND, soft: BRAND_SOFT, Icon: IconFileText },
 };
 
 function formatSize(bytes) {
@@ -60,8 +64,9 @@ function EmptyState({ type, colors }) {
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 40 }}>
       <View style={{
-        width: 88, height: 88, borderRadius: 44, backgroundColor: soft,
+        width: 92, height: 92, borderRadius: 46, backgroundColor: soft,
         alignItems: 'center', justifyContent: 'center', marginBottom: 18,
+        borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(124,58,237,0.22)',
       }}>
         <Icon size={38} color={color} />
       </View>
@@ -294,6 +299,11 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
                     borderRadius: 11,
                     alignItems: 'center',
                     backgroundColor: active ? th.color : 'transparent',
+                    ...(active ? {
+                      shadowColor: BRAND, shadowOpacity: 0.25,
+                      shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
+                      elevation: 2,
+                    } : null),
                   }}
                   activeOpacity={0.75}
                 >

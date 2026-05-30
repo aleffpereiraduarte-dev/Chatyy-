@@ -1741,6 +1741,7 @@ export default {
   'chat.audioCall': 'Llamada de voz',
   'chat.photo': 'Foto',
   'chat.video': 'Video',
+  'chat.sharedInChat': 'Compartido en este chat',
   'chat.video.offlineUnavailable': 'Video no disponible sin conexión',
   'chat.audio': 'Audio',
   'chat.transcribe': 'Transcribir',
@@ -8183,6 +8184,7 @@ export default {
   'audio.miniPlayer.title': 'Reproduciendo ahora',
   // Currency picker — issue #1355.
   'settings.currencyLabel': 'Moneda',
+  'settings.currencyDesc': 'Usada para mostrar importes en la app.',
   'settings.currencyAuto': 'Auto',
   'settings.currency.BRL': 'Real brasileño',
   'settings.currency.USD': 'Dólar estadounidense',

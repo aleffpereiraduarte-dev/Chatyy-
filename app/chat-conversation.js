@@ -756,6 +756,32 @@ function AnimatedCheckStatus({ status, color, pending = false }) {
 //
 // Reuses the same _readStatus enum (1 = sent, 1.5 = delivered, 2 = read)
 // already wired through the rest of the bubble pipeline.
+//
+// ─── Video-note detection (WhatsApp PTV / round video) ───────────────────
+// A round video note should ALWAYS render circular, but the backend
+// chat_upload arm does NOT keep type='video_note' (its $allowedTypes list is
+// image/video/audio/file/gif/sticker — `video_note` falls through to MIME
+// detection and lands as plain 'video'). See backend chat.php ~line 6791.
+// Result: the SENDER sees it round (client forces type post-send) and an
+// ONLINE receiver sees it round (WS relay forwards type='video_note'), but on
+// cold-open / history hydrate the DB returns type='video' → rectangular card.
+//
+// Until the backend allow-lists 'video_note', we recover the intent client-
+// side: the VideoNoteRecorder always names the file `video_note_<ts>.mp4`
+// (see components/chat/VideoNoteRecorder.js), and that original filename
+// survives into chat_messages.file_name AND into the stored file_url path
+// (`/data/chat-files/<conv>/<time>_<hex>_video_note_<ts>.mp4`). So a `video`
+// row whose name/url carries the `video_note` marker is a round note.
+// Regular landscape videos never match this pattern, so they stay rectangular.
+function isVideoNoteMessage(msg) {
+  if (!msg) return false;
+  if (msg.type === 'video_note') return true;
+  // Only reclassify video-ish rows — never touch images/audio/files.
+  if (msg.type !== 'video' && msg.type !== 'short_video') return false;
+  const name = typeof msg.file_name === 'string' ? msg.file_name : '';
+  const url = typeof msg.file_url === 'string' ? msg.file_url : '';
+  return /video_note_/i.test(name) || /video_note_/i.test(url);
+}
 function MediaStatusFooter({ msg, isOwn, variant }) {
   if (!msg) return null;
   const isSticker = variant === 'sticker';
@@ -18066,7 +18092,13 @@ export default function ChatConversationScreen() {
         );
       }
 
-      switch (msg.type) {
+      // Round video notes (WhatsApp PTV): a 'video' row may actually be a
+      // video note that lost its type at the backend chat_upload arm. Detect
+      // it from the file_name/url marker and route to the circular render
+      // (case 'video_note') instead of the rectangular video card. See
+      // isVideoNoteMessage() for the why. Regular videos are untouched.
+      const _effectiveMsgType = isVideoNoteMessage(msg) ? 'video_note' : msg.type;
+      switch (_effectiveMsgType) {
         case 'image': {
           const imgUploading = !!msg._uploading;
           const imgProgress = msg._uploadPct || 0;
@@ -19892,12 +19924,23 @@ export default function ChatConversationScreen() {
         }
 
         case 'video_note': {
-          // Round short video (iMessage/Telegram/WhatsApp style). Always 240×240
-          // circular crop, autoplay muted loop on mount. Tap expands to the
-          // RoundVideoViewer modal (320×320 circular, unmuted, never rect).
+          // Round short video (iMessage/Telegram/WhatsApp PTV style). Always
+          // 240×240 circular crop, autoplay muted loop on mount. Tap expands to
+          // the RoundVideoViewer modal (circular, unmuted, never rect). NOTE:
+          // this branch is also reached for plain 'video' rows that we detected
+          // as round notes via isVideoNoteMessage() (file lost its type at the
+          // backend chat_upload arm) — so it must read only generic fields.
           const noteUrl = resolveMediaUri(msg.file_url || msg.content);
           if (!noteUrl) return null;
           const VideoNote = require('../components/VideoNotePlayer').default;
+          // Duration may arrive as ms (recorder: Date.now() delta) or seconds
+          // (synced rows). Treat values ≥ 1000 as ms. Cap label to mm:ss.
+          const _rawDur = Number(msg.duration) || 0;
+          const _durSec = _rawDur >= 1000 ? Math.round(_rawDur / 1000) : Math.round(_rawDur);
+          const _durStr = _durSec > 0
+            ? `${Math.floor(_durSec / 60)}:${String(_durSec % 60).padStart(2, '0')}`
+            : '';
+          const VN_SIZE = 240;
           return (
             <TouchableOpacity
               activeOpacity={0.95}
@@ -19908,9 +19951,59 @@ export default function ChatConversationScreen() {
               }}
               onLongPress={() => { if (selectionMode) toggleSelection(msg.id); else handleLongPress(msg); }}
               delayLongPress={350}
-              style={{ width: 240, height: 240, borderRadius: 120, overflow: 'hidden', backgroundColor: '#000' }}
+              style={{ width: VN_SIZE, height: VN_SIZE, alignItems: 'center', justifyContent: 'center' }}
             >
-              <VideoNote uri={noteUrl} />
+              {/* Subtle ring around the circle (WhatsApp PTV look) */}
+              <View
+                style={{
+                  width: VN_SIZE,
+                  height: VN_SIZE,
+                  borderRadius: VN_SIZE / 2,
+                  overflow: 'hidden',
+                  backgroundColor: '#000',
+                  borderWidth: 2,
+                  borderColor: isOwn ? 'rgba(37,211,102,0.55)' : 'rgba(255,255,255,0.35)',
+                }}
+              >
+                <VideoNote uri={noteUrl} />
+                {/* Soft play affordance — hints that tap expands to full view */}
+                <View
+                  pointerEvents="none"
+                  style={{
+                    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+                    alignItems: 'center', justifyContent: 'center',
+                  }}
+                >
+                  <View
+                    style={{
+                      width: 48, height: 48, borderRadius: 24,
+                      backgroundColor: 'rgba(0,0,0,0.35)',
+                      alignItems: 'center', justifyContent: 'center',
+                    }}
+                  >
+                    <IconPlay size={22} color="#fff" />
+                  </View>
+                </View>
+                {/* Duration pill (bottom-left of the circle, like a voice note) */}
+                {!!_durStr && (
+                  <View
+                    pointerEvents="none"
+                    style={{
+                      position: 'absolute', left: 12, bottom: 12,
+                      flexDirection: 'row', alignItems: 'center',
+                      backgroundColor: 'rgba(0,0,0,0.55)',
+                      borderRadius: 11, paddingHorizontal: 8, paddingVertical: 3,
+                    }}
+                  >
+                    <IconVideoNote size={12} color="#fff" />
+                    <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600', marginLeft: 4 }}>{_durStr}</Text>
+                  </View>
+                )}
+                {/* Time + delivery checks, bottom-right over the circle (WhatsApp
+                    parity). MediaStatusFooter is itself absolute (bottom:6,
+                    right:8) — anchored to this circular container. */}
+                <MediaStatusFooter msg={msg} isOwn={isOwn} />
+              </View>
             </TouchableOpacity>
           );
         }
