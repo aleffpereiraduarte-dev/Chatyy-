@@ -1263,7 +1263,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       } else if (statusType === 'video' && item.content) {
         const vidUrl = (item.content || '').split('\n')[0];
         const fullUrl = vidUrl.startsWith('/') ? BASE_URL + vidUrl : vidUrl;
-        await chatSend(conv.id, statusLabel, 'video', null, null, fullUrl);
+        // [WA-parity 2026-05-31] Preserve the caption on video forward — the
+        // image branch above already carries it, but video dropped everything
+        // after the URL (sent only the label). WhatsApp forwards media + caption.
+        const vcaption = (item.content || '').includes('\n') ? (item.content || '').split('\n').slice(1).join('\n') : '';
+        const vmsg = vcaption ? `${statusLabel}\n${vcaption}` : statusLabel;
+        await chatSend(conv.id, vmsg, 'video', null, null, fullUrl);
       } else {
         const statusPreview = (item.content || '').substring(0, 200);
         await chatSend(conv.id, `${statusLabel}\n\n"${statusPreview}"\n\n- ${viewerOwnerName}`, 'text');
