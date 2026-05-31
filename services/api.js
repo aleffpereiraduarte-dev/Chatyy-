@@ -180,12 +180,22 @@ export function getMediaUrl(fileUrl) {
   if (fileUrl.startsWith('http')) {
     try {
       const u = new URL(fileUrl);
-      // [2026-05-30] Rewrite the dead R2 CDN host → working origin. Old messages
-      // already stored absolute https://media.chatyy.com.br/data/... URLs that
-      // 404 (unbound R2). chatyy.com.br serves the same physical file 200 and is
-      // still Cloudflare-edge-cached. Do this for ALL paths on that host.
+      // [2026-05-31] media.chatyy.com.br is BACK to serving R2 objects (verified:
+      // /chat/*.mp4 → 200 video/mp4, /status/*.mp4 → 200). So the host split now
+      // matters and a blanket rewrite-to-origin BREAKS R2-native media:
+      //  • `/data/*`  → physical files on the ORIGIN disk. R2 lacks these keys, so
+      //    media.* 404s them → rewrite to chatyy.com.br (origin serves 200).
+      //  • everything else (`/chat/`, `/status/`, `/reels/`, `/stickers/`, …) is
+      //    R2-NATIVE — media.* serves it 200, but the ORIGIN has no such path and
+      //    returns the SPA index.html shell (HTTP 200, ~1KB text/html). A video/
+      //    image decoder handed that HTML can't open it → "o vídeo não carrega/
+      //    não abre". So KEEP those on media.*. (Root cause of the received-video
+      //    bug, 2026-05-31.)
       if (u.hostname === 'media.chatyy.com.br') {
-        return 'https://chatyy.com.br' + u.pathname + (u.search || '');
+        if (u.pathname.startsWith('/data/')) {
+          return 'https://chatyy.com.br' + u.pathname + (u.search || '');
+        }
+        return fileUrl; // R2-native path — media.chatyy.com.br serves it directly
       }
       if (u.hostname === 'chatyy.com.br' || u.hostname === 'www.chatyy.com.br' || u.hostname === 'mail.onemundo.com.br') {
         const p = u.pathname;
