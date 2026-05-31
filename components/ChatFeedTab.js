@@ -373,6 +373,11 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   // issue was a 5xx / network drop.
   const [feedError, setFeedError] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
+  // [Bug-hunt P2 2026-05-30] Repost wiring. FeedPost.handleRepost calls
+  // onPostUpdated(post, { repostOf, originalPost }) expecting the container to
+  // open the composer preloaded. ChatFeedTab was passing a NO-OP, so Repostar
+  // silently did nothing. Hold the repost target and feed it to CreatePostModal.
+  const [repostTarget, setRepostTarget] = useState(null);
   const [commentsPost, setCommentsPost] = useState(null);
   const [activeLives, setActiveLives] = useState([]);
   // [#1161, 2026-05-18] Per-host end-stamp so an in-flight loadLives poll
@@ -727,6 +732,15 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
     setPage(nextPage);
     loadPosts(nextPage);
   }, [loadingMore, hasMore, page, loadPosts]);
+
+  // Repost intent from FeedPost.handleRepost: open the composer preloaded with
+  // the original post quoted. Second arg carries { repostOf, originalPost }.
+  const handleRepostIntent = useCallback((post, meta) => {
+    if (meta && meta.repostOf) {
+      setRepostTarget({ repostOf: meta.repostOf, originalPost: meta.originalPost || post });
+      setCreateVisible(true);
+    }
+  }, []);
 
   const handlePostCreated = useCallback((newPost) => {
     if (newPost) {
@@ -1155,7 +1169,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
         t={t}
         user={user}
         onOpenComments={handleOpenComments}
-        onPostUpdated={() => {}}
+        onPostUpdated={handleRepostIntent}
         onDeletePost={handleDeletePost}
         onPressUser={handlePressUser}
         onHidePost={handleDeletePost}
@@ -1539,8 +1553,10 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
         isDark={isDark}
         t={t}
         user={user}
-        onClose={() => setCreateVisible(false)}
-        onPostCreated={handlePostCreated}
+        repostOf={repostTarget?.repostOf || null}
+        originalPost={repostTarget?.originalPost || null}
+        onClose={() => { setCreateVisible(false); setRepostTarget(null); }}
+        onPostCreated={(p) => { setRepostTarget(null); handlePostCreated(p); }}
       />
 
       {/* Comments modal */}
