@@ -208,8 +208,9 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
               },
             ]}
           />
-          {/* Colored icon background pill */}
-          <View style={[s.folderIconWrap, isActive && { backgroundColor: folderBgColor, borderRadius: 8, width: 28, height: 28, marginRight: 12 }]}>
+          {/* Colored icon background pill — keep dimensions stable on activate so
+              the label doesn't jump; only the tinted fill fades in. [beauty2 2026-05-31] */}
+          <View style={[s.folderIconWrap, isActive && { backgroundColor: folderBgColor }]}>
             <FolderIcon size={18} color={isActive ? folderColor : folderColor + '99'} />
           </View>
           <Text style={[
@@ -484,15 +485,16 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
                 onPress={() => onNavigate?.(item.route)}
               />
             ))}
+            {/* [beauty2 2026-05-31] align with QuickAccessItem rows (shared folderItem/iconWrap) */}
             <TouchableOpacity
               onPress={() => setShowMoreQuick(v => !v)}
-              style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 16, paddingVertical: 10 }}
+              style={[s.folderItem, Platform.OS === 'web' && s.folderTransition]}
               activeOpacity={0.6}
             >
-              <View style={{ width: 28, height: 28, borderRadius: 8, alignItems: 'center', justifyContent: 'center' }}>
-                <IconPlus size={16} color={colors.textSecondary} />
+              <View style={s.folderIconWrap}>
+                <IconPlus size={17} color={colors.textSecondary} />
               </View>
-              <Text style={{ fontSize: 14, color: colors.textSecondary, fontWeight: '500' }}>
+              <Text style={[s.folderLabel, { color: colors.textSecondary, fontWeight: '500' }]}>
                 {showMoreQuick ? (t('sidebar.less') || 'Menos') : (t('sidebar.more') || 'Mais')}
               </Text>
             </TouchableOpacity>
@@ -893,6 +895,7 @@ export default memo(Sidebar, (prev, next) => {
 const s = StyleSheet.create({
   sidebar: { flex: 1 },
   sidebarContent: { paddingHorizontal: Spacing.sm, paddingTop: Spacing.md, paddingBottom: Spacing.xxl },
+  // [beauty2 2026-05-31] softer brand-tinted shadow + a touch more breathing room
   composeBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     borderRadius: 28, paddingVertical: 15, paddingHorizontal: 24,
@@ -901,7 +904,7 @@ const s = StyleSheet.create({
       web: {
         transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
         cursor: 'pointer',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+        boxShadow: '0 4px 14px rgba(124,58,237,0.28)',
         backgroundColor: '#7C3AED',
       },
       default: {},
@@ -960,9 +963,11 @@ const s = StyleSheet.create({
   },
   quickBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   // Labels section
-  divider: { borderTopWidth: 1, marginVertical: Spacing.md, marginHorizontal: Spacing.lg, opacity: 0.5 },
+  // [beauty2 2026-05-31] lighter hairline divider, calmer rhythm
+  divider: { borderTopWidth: 1, marginVertical: Spacing.md, marginHorizontal: Spacing.lg, opacity: 0.7 },
+  // [beauty2 2026-05-31] crisper, more premium uppercase header
   sectionLabel: {
-    fontSize: 10, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.2,
+    fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8,
     paddingHorizontal: Spacing.lg, marginBottom: Spacing.sm, marginTop: 2,
   },
   labelItem: {
@@ -1000,17 +1005,19 @@ const s = StyleSheet.create({
   newFolderBtn: { padding: 6 },
   customFolderRow: { flexDirection: 'row', alignItems: 'center' },
   deleteFolderBtn: { padding: 6, marginRight: Spacing.sm },
-  emptyTrashBtn: { paddingLeft: 56, paddingVertical: 4, paddingBottom: 6 },
-  emptyTrashText: { fontSize: FontSize.xs, fontWeight: '600' },
+  // [beauty2 2026-05-31] align under the folder label (16 padding + 30 icon + 14 gap = 60)
+  emptyTrashBtn: { paddingLeft: 60, paddingVertical: 4, paddingBottom: 8 },
+  emptyTrashText: { fontSize: FontSize.xs, fontWeight: '600', letterSpacing: 0.1 },
   // Collapsed sidebar styles
   collapsedContent: { alignItems: 'center', paddingTop: Spacing.md, paddingBottom: Spacing.xxl, paddingHorizontal: 4 },
+  // [beauty2 2026-05-31] brand-tinted shadow matches expanded compose CTA
   collapsedComposeBtn: {
-    width: 44, height: 44, borderRadius: 14,
+    width: 44, height: 44, borderRadius: 15,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: Spacing.md,
     ...(Platform.OS === 'web' ? {
       cursor: 'pointer',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.12)',
+      boxShadow: '0 4px 12px rgba(124,58,237,0.28)',
       backgroundColor: '#7C3AED',
       transition: 'transform 0.15s ease, box-shadow 0.15s ease',
     } : {}),
@@ -1054,14 +1061,15 @@ const s = StyleSheet.create({
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s ease' } : {}),
   },
   // User pill footer (avatar + name + status dot, tappable to profile)
+  // [beauty2 2026-05-31] roomier pill + larger radius for a softer footer
   userPill: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 10,
-    paddingVertical: 8,
+    paddingVertical: 9,
     marginHorizontal: 8,
     marginBottom: 4,
-    borderRadius: 14,
+    borderRadius: 16,
     ...(Platform.OS === 'web' ? { transition: 'background-color 0.18s ease' } : {}),
   },
   userPillBody: {
@@ -1081,8 +1089,8 @@ const s = StyleSheet.create({
     borderRadius: 6,
     borderWidth: 2,
   },
-  userPillName: { fontSize: 13, fontWeight: '700', letterSpacing: -0.1 },
-  userPillEmail: { fontSize: 11, fontWeight: '500', marginTop: 1 },
+  userPillName: { fontSize: 13.5, fontWeight: '700', letterSpacing: -0.15 },
+  userPillEmail: { fontSize: 11, fontWeight: '500', marginTop: 2, letterSpacing: -0.05 },
   userPillLogout: {
     width: 32,
     height: 32,

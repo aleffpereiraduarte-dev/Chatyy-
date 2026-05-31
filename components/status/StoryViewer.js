@@ -1686,19 +1686,23 @@ export default function StoryViewer({
       // devices with >24dp status bars. Use insets.top + 8 with a small floor
       // so the progress segments always clear the status bar.
       position: 'absolute', top: Math.max(insets?.top || 0, Platform.OS === 'android' ? 12 : 44) + 6, left: 0, right: 0,
-      flexDirection: 'row', gap: 5, paddingHorizontal: 10, zIndex: 5,
+      flexDirection: 'row', gap: 4, paddingHorizontal: 10, zIndex: 5,
       opacity: pausedAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0.4] }),
     }}>
       {stories.map((_, i) => (
+        // [beauty2 2026-05-31] Slightly fuller track (3.5→3.5) with a tad more
+        // contrast on the pending state + a hairline drop-shadow so the segments
+        // stay legible over bright/white media instead of dissolving into it.
         <View key={i} style={{
-          // Pending segments: white @ 28% opacity (Instagram spec). Completed
+          // Pending segments: white @ 30% opacity (Instagram spec). Completed
           // segments paint a solid gradient on top via the `i < safeIdx` branch
           // below, so the user reads three distinct states cleanly: pending
-          // (28%), active (animating fill), completed (100% solid gradient).
-          // Rounded caps (radius=3 ≈ half the 5px track gap) so segments read
-          // as discrete capsules instead of a chopped bar.
-          flex: 1, height: 3.5, backgroundColor: 'rgba(255,255,255,0.28)',
-          borderRadius: 3, overflow: 'hidden',
+          // (30%), active (animating fill), completed (100% solid gradient).
+          // Fully-rounded caps so segments read as discrete capsules instead
+          // of a chopped bar.
+          flex: 1, height: 3.5, backgroundColor: 'rgba(255,255,255,0.32)',
+          borderRadius: 4, overflow: 'hidden',
+          shadowColor: '#000', shadowOpacity: 0.18, shadowRadius: 2, shadowOffset: { width: 0, height: 1 },
         }}>
           {i < safeIdx && (
             // Completed segment — purple→pink gradient matches the active fill
@@ -1831,9 +1835,13 @@ export default function StoryViewer({
             // the avatar's outer halo doesn't get clipped.
             flex: 1, minWidth: 0, flexShrink: 1,
             flexDirection: 'row', alignItems: 'center', gap: 10,
-            backgroundColor: 'rgba(0,0,0,0.42)',
-            borderRadius: 22, paddingLeft: 4, paddingRight: 12, paddingVertical: 4,
-            borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+            // [beauty2 2026-05-31] Deeper, softer backdrop pill + a faint drop
+            // shadow so the metadata floats cleanly over any media (bright skies
+            // included) instead of reading as a flat patch.
+            backgroundColor: 'rgba(0,0,0,0.46)',
+            borderRadius: 22, paddingLeft: 4, paddingRight: 13, paddingVertical: 4,
+            borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
+            shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 6, shadowOffset: { width: 0, height: 2 },
           }}>
             {ownerEmail ? (
               // White ring + soft glow around the owner avatar — gives the
@@ -1851,11 +1859,20 @@ export default function StoryViewer({
               </View>
             ) : null}
             <View style={{ flex: 1, minWidth: 0 }}>
-              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }} numberOfLines={1}>
+              {/* [beauty2 2026-05-31] Tighter letter-spacing + subtle text shadow
+                  on the name for extra legibility; time gets a softer tone and
+                  a hair more breathing room below the name. */}
+              <Text
+                style={{
+                  color: '#fff', fontWeight: '700', fontSize: 14, letterSpacing: 0.1,
+                  textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2,
+                }}
+                numberOfLines={1}
+              >
                 {ownerName}
               </Text>
               {cur?.created_at ? (
-                <Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 11, marginTop: 1 }}>
+                <Text style={{ color: 'rgba(255,255,255,0.72)', fontSize: 11, fontWeight: '500', marginTop: 2 }}>
                   {formatRelTime(cur.created_at, t)}
                 </Text>
               ) : null}
@@ -2037,14 +2054,16 @@ export default function StoryViewer({
         {caption && (isImage || isVideo) ? (
           <View
             pointerEvents="none"
-            style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 220, zIndex: 3 }}
+            style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 240, zIndex: 3 }}
           >
-            {/* Four-stop ramp (vs the old three) for a smoother, deeper fade —
-                keeps captions + bottom chrome legible over bright/busy media. */}
-            <View style={{ flex: 1.2, backgroundColor: 'rgba(0,0,0,0.0)' }} />
-            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.12)' }} />
-            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.30)' }} />
-            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.52)' }} />
+            {/* [beauty2 2026-05-31] Five-stop ramp (vs four) for an even smoother,
+                deeper fade — keeps captions + bottom chrome legible over
+                bright/busy media without a visible banding seam. */}
+            <View style={{ flex: 1.4, backgroundColor: 'rgba(0,0,0,0.0)' }} />
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.08)' }} />
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.20)' }} />
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.36)' }} />
+            <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.56)' }} />
           </View>
         ) : null}
 
@@ -2054,9 +2073,13 @@ export default function StoryViewer({
             position: 'absolute',
             bottom: isSelf ? 78 : 110,
             alignSelf: 'center', maxWidth: '92%',
-            backgroundColor: 'rgba(0,0,0,0.45)',
-            borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10,
-            borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+            // [beauty2 2026-05-31] Softer rounded glass surface for the caption
+            // with a hair more padding + a faint shadow lift so it reads as a
+            // floating card over the media instead of a flat overlay box.
+            backgroundColor: 'rgba(0,0,0,0.46)',
+            borderRadius: 16, paddingHorizontal: 16, paddingVertical: 11,
+            borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
+            shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
             zIndex: 6,
             opacity: uiOpacity,
           }}>
@@ -2628,13 +2651,15 @@ export default function StoryViewer({
                   catches up. */}
               <View style={{
                 flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-                paddingHorizontal: 14, paddingVertical: 6, marginHorizontal: 8,
-                // Cohesive translucent reaction bar (IG parity) — groups the
-                // quick emojis into one floating surface instead of loose
-                // glyphs over the media.
-                backgroundColor: 'rgba(0,0,0,0.30)',
-                borderRadius: 26,
-                borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+                paddingHorizontal: 12, paddingVertical: 7, marginHorizontal: 6,
+                // [beauty2 2026-05-31] Cohesive translucent reaction bar (IG
+                // parity) — slightly darker glass + softer border + a subtle
+                // drop shadow so the floating pill reads as one elevated
+                // surface above any media.
+                backgroundColor: 'rgba(0,0,0,0.34)',
+                borderRadius: 28,
+                borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
+                shadowColor: '#000', shadowOpacity: 0.22, shadowRadius: 8, shadowOffset: { width: 0, height: 3 },
               }}>
                 {['❤️','🔥','😂','😮','😢','👏','👍'].map(emoji => {
                   const pulsing = emojiPulse === emoji;
@@ -2732,6 +2757,7 @@ export default function StoryViewer({
                     translateY: replyEnter.interpolate({ inputRange: [0, 1], outputRange: [0, -4] }),
                   }],
                 }}>
+                  {/* [beauty2 2026-05-31] */}
                   <IconMessageSquare size={16} color="rgba(255,255,255,0.7)" />
                   <TextInput
                     value={replyText}

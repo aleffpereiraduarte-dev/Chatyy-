@@ -5084,23 +5084,25 @@ function SettingsScreenInner() {
 const s = StyleSheet.create({
   container: { flex: 1 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  // Header
+  // Header — [beauty2 2026-05-31] hairline divider + tighter vertical rhythm
+  // so the title sits closer to iOS large-title settings density.
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
-    borderBottomWidth: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
     ...Platform.select({
       web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
       default: {},
     }),
   },
-  backBtn: { padding: Spacing.sm, marginRight: Spacing.sm, borderRadius: 12 },
-  headerTitle: { flex: 1, fontSize: FontSize.xxl, fontWeight: '700', letterSpacing: -0.3 },
+  backBtn: { padding: Spacing.sm, marginRight: Spacing.xs, borderRadius: 12, marginLeft: -Spacing.xs },
+  headerTitle: { flex: 1, fontSize: FontSize.xxl, fontWeight: '800', letterSpacing: -0.5 },
   saveBtn: {
-    borderRadius: 24, paddingVertical: Spacing.sm + 2, paddingHorizontal: Spacing.xl,
+    borderRadius: 22, paddingVertical: Spacing.sm + 2, paddingHorizontal: Spacing.lg + 2,
     ...Platform.select({
       web: { background: 'linear-gradient(135deg, #7C3AED 0%, #A855F7 100%)', boxShadow: '0 4px 12px rgba(124,58,237,0.3)' },
-      default: {},
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 8 },
+      android: { elevation: 2 },
     }),
   },
   saveBtnDisabled: { opacity: 0.6 },
@@ -5110,15 +5112,18 @@ const s = StyleSheet.create({
   // de confirmação não ser cortado quando aparece. User reportou: "embaixo
   // zona perigosa quebra fica tudo cortando".
   scroll: { padding: Spacing.lg, paddingBottom: 80 },
-  // Section
+  // Section — [beauty2 2026-05-31] slightly calmer corner radius + a touch
+  // more inner breathing room (paddingVertical) so grouped rows read like
+  // iOS inset-grouped cards; horizontal padding kept tight for label reach.
   section: {
-    borderRadius: 22, padding: Spacing.xl, marginBottom: Spacing.lg + 2,
+    borderRadius: 20, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg + 2,
+    marginBottom: Spacing.lg,
     ...Platform.select({
       web: {
         transition: 'box-shadow 0.2s ease',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.04), 0 4px 16px rgba(0,0,0,0.04)',
+        boxShadow: '0 1px 2px rgba(0,0,0,0.03), 0 6px 20px rgba(0,0,0,0.035)',
       },
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.04, shadowRadius: 12 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 14 },
       android: { elevation: 1 },
     }),
   },
@@ -5126,31 +5131,38 @@ const s = StyleSheet.create({
     alignItems: 'center', paddingVertical: Spacing.xxl,
   },
   profileEmail: {
-    fontSize: FontSize.lg, marginTop: Spacing.md, marginBottom: Spacing.sm, fontWeight: '500',
+    fontSize: FontSize.lg, marginTop: Spacing.md + 2, marginBottom: Spacing.md,
+    fontWeight: '600', letterSpacing: -0.3,
   },
+  // [beauty2 2026-05-31] pill button gets a hairline border + brand-tinted
+  // feel so it reads as a calm secondary action under the avatar.
   changePhotoBtn: {
-    marginTop: Spacing.sm, borderWidth: 1.5, borderRadius: 24,
-    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.sm + 2,
+    marginTop: Spacing.xs, borderWidth: 1.5, borderRadius: 22,
+    paddingHorizontal: Spacing.xl, paddingVertical: Spacing.sm + 1,
   },
   changePhotoBtnText: {
-    fontSize: FontSize.md, fontWeight: '700',
+    fontSize: FontSize.md, fontWeight: '700', letterSpacing: -0.1,
   },
   // Section title — kept big and bold (20px) so users still see it as the
   // card heading, but added a thin uppercase eyebrow style via `sectionEyebrow`
   // below for sections that opt-in. Letter-spacing tightened to -0.4 (was
   // -0.5) so it doesn't look squashed at this size.
-  sectionTitle: { fontSize: 20, fontWeight: '800', marginBottom: Spacing.lg, letterSpacing: -0.4 },
+  // [beauty2 2026-05-31] dialed the card heading down to 18px/700 — closer to
+  // iOS Settings group-header weight; calmer, less shouty than 20/800.
+  sectionTitle: { fontSize: 18, fontWeight: '700', marginBottom: Spacing.md + 2, letterSpacing: -0.35 },
   // Eyebrow label — small uppercase brand-color tag rendered above a section
   // title for screens that want extra navigability (iOS Settings pattern).
   // Currently only used internally; rows opt in via <Text style={[s.sectionEyebrow, { color: colors.primary }]}/>.
   sectionEyebrow: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4, opacity: 0.85 },
-  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.lg },
+  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md + 2 },
   // Setting row — adds a soft hover state on web so each row reads as
   // "tappable" without an explicit border. Spacing bumped slightly for
   // a more relaxed iOS-Settings density.
+  // [beauty2 2026-05-31] hairline dividers (was 1px solid) for a crisper,
+  // lighter iOS-Settings separator; comfortable ~14px vertical density.
   settingRow: {
     flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8,
-    paddingVertical: Spacing.md + 6, borderBottomWidth: 1,
+    paddingVertical: Spacing.md + 5, borderBottomWidth: StyleSheet.hairlineWidth,
     ...Platform.select({
       web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
       default: {},
@@ -5158,22 +5170,24 @@ const s = StyleSheet.create({
   },
   settingRowColumn: {
     flexDirection: 'column', alignItems: 'flex-start',
-    paddingVertical: Spacing.md + 4, borderBottomWidth: 1,
+    paddingVertical: Spacing.md + 4, borderBottomWidth: StyleSheet.hairlineWidth,
   },
   settingInfo: { flex: 1, minWidth: 0 },
-  settingLabel: { fontSize: 15.5, fontWeight: '600', letterSpacing: -0.15 },
-  settingDesc: { fontSize: 13, marginTop: 3, opacity: 0.7, lineHeight: 18 },
+  settingLabel: { fontSize: 15.5, fontWeight: '600', letterSpacing: -0.2 },
+  settingDesc: { fontSize: 13, marginTop: 3, opacity: 0.72, lineHeight: 18, letterSpacing: -0.05 },
   // Per page
-  perPageBtns: { flexDirection: 'row', gap: Spacing.sm, flexShrink: 0 },
+  // [beauty2 2026-05-31] segmented-pill selectors — slightly rounder + tighter
+  // gap so the row of options reads as one cohesive iOS segmented control.
+  perPageBtns: { flexDirection: 'row', gap: 6, flexShrink: 0 },
   perPageBtn: {
-    borderWidth: 1.5, borderRadius: 12,
+    borderWidth: 1.5, borderRadius: 11,
     paddingHorizontal: Spacing.md, paddingVertical: 8,
     ...Platform.select({
       web: { transition: 'all 0.15s ease', cursor: 'pointer' },
       default: {},
     }),
   },
-  perPageText: { fontSize: FontSize.base, fontWeight: '600' },
+  perPageText: { fontSize: FontSize.base, fontWeight: '600', letterSpacing: -0.1 },
   // Signature
   sigCard: { borderWidth: 1, borderRadius: 14, padding: Spacing.md, marginBottom: Spacing.sm },
   sigHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -5189,13 +5203,13 @@ const s = StyleSheet.create({
     minHeight: 100, ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
   // AI Features
-  aiFeatures: { marginTop: Spacing.md },
+  aiFeatures: { marginTop: Spacing.md, gap: 2 },
   aiFeatureRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: Spacing.sm,
+    paddingVertical: Spacing.sm + 1,
   },
-  aiFeatureIconWrap: { marginRight: Spacing.md, width: 24, alignItems: 'center' },
-  aiFeatureText: { fontSize: FontSize.base },
+  aiFeatureIconWrap: { marginRight: Spacing.md, width: 26, alignItems: 'center' },
+  aiFeatureText: { fontSize: FontSize.base, fontWeight: '500', letterSpacing: -0.1 },
   // Toggle switch
   toggleTrack: {
     width: 48, height: 26, borderRadius: 13,
@@ -5208,7 +5222,12 @@ const s = StyleSheet.create({
   toggleThumb: {
     width: 22, height: 22, borderRadius: 11,
     backgroundColor: '#fff',
-    ...(Platform.OS === 'web' ? { boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'all 0.2s ease' } : {}),
+    // [beauty2 2026-05-31] softer, more iOS-like thumb shadow on native too.
+    ...Platform.select({
+      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.2)', transition: 'all 0.2s ease' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.18, shadowRadius: 2.5 },
+      android: { elevation: 2 },
+    }),
   },
   toggleThumbActive: { alignSelf: 'flex-end' },
   // Delete account

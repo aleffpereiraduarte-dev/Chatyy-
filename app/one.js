@@ -3853,9 +3853,10 @@ const st = StyleSheet.create({
     paddingTop: 6,
   },
   headerCleanTitle: {
-    fontSize: 16, fontWeight: '600',
+    // [beauty2 2026-05-31] a touch larger/heavier so "One" anchors the bar.
+    fontSize: 17, fontWeight: '700',
     fontFamily: Platform.OS === 'ios' ? 'Inter' : undefined,
-    letterSpacing: -0.2,
+    letterSpacing: -0.3,
   },
   modelPill: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
@@ -3869,27 +3870,32 @@ const st = StyleSheet.create({
 
   // ─── ChatGPT-style messages ───
   // User: subtle gray pill, right-aligned, no avatar
+  // [beauty2 2026-05-31] tightened vertical rhythm + flattened the bottom-right
+  // corner so the user pill reads as an outgoing chat bubble, not a flat card.
   userRow: {
-    width: '100%', alignItems: 'flex-end', marginVertical: 6,
+    width: '100%', alignItems: 'flex-end', marginVertical: 5,
     ...(isWide ? { maxWidth: CONTENT_MAX, alignSelf: 'center' } : {}),
   },
   userPill: {
-    maxWidth: '85%',
-    paddingHorizontal: 14, paddingVertical: 10,
-    borderRadius: 18,
+    maxWidth: '82%',
+    paddingHorizontal: 15, paddingVertical: 10,
+    borderRadius: 20,
+    borderBottomRightRadius: 7,
   },
   userText: {
     fontSize: 15, lineHeight: 22, letterSpacing: -0.1,
   },
 
   // AI: no bubble, plain text, header chip above
+  // [beauty2 2026-05-31] a touch more breathing room above/below each AI turn so
+  // answers feel composed on the canvas (ChatGPT/Claude spacing).
   aiRow: {
-    width: '100%', alignItems: 'flex-start', marginVertical: 10,
+    width: '100%', alignItems: 'flex-start', marginVertical: 12,
     paddingHorizontal: 4,
     ...(isWide ? { maxWidth: CONTENT_MAX, alignSelf: 'center' } : {}),
   },
   aiHeaderRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6,
+    flexDirection: 'row', alignItems: 'center', gap: 7, marginBottom: 7,
   },
   aiHeaderAvatar: {
     width: 18, height: 18, borderRadius: 9,
@@ -3897,14 +3903,16 @@ const st = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
   },
   aiHeaderLabel: {
-    fontSize: 12, fontWeight: '600', letterSpacing: -0.1,
+    // [beauty2 2026-05-31] slightly wider tracking reads as a calm brand label.
+    fontSize: 12, fontWeight: '600', letterSpacing: 0.1,
   },
-  aiBody: { gap: 2 },
+  aiBody: { gap: 3 },
   aiActionsRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 16,
-    marginTop: 8,
+    // [beauty2 2026-05-31] a hair more space + breathing room above the tool row.
+    flexDirection: 'row', alignItems: 'center', gap: 18,
+    marginTop: 10,
   },
-  aiActionBtn: { padding: 4 },
+  aiActionBtn: { padding: 5, borderRadius: 8 },
 
   // ─── Clean input bar ───
   inputAreaClean: {
@@ -3913,9 +3921,16 @@ const st = StyleSheet.create({
   inputWrapperClean: {},
   inputBoxClean: {
     flexDirection: 'row', alignItems: 'flex-end',
-    borderRadius: 24, borderWidth: StyleSheet.hairlineWidth,
+    borderRadius: 26, borderWidth: StyleSheet.hairlineWidth,
     paddingLeft: 4, paddingRight: 4, paddingVertical: 4,
-    minHeight: 48,
+    minHeight: 50,
+    // [beauty2 2026-05-31] soft lift so the composer floats above the canvas
+    // (ChatGPT/Claude composer), instead of sitting flush as a flat bar.
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.07, shadowRadius: 8 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 2px 10px rgba(0,0,0,0.07)', transition: 'box-shadow 200ms ease' },
+    }),
   },
   inputLeftIcons: {
     flexDirection: 'row', alignItems: 'center',
@@ -3953,14 +3968,21 @@ const st = StyleSheet.create({
     }),
   },
   // Suggested-prompt chip — empty-state horizontal scroll list.
+  // [beauty2 2026-05-31] rounder pill + a touch more padding + soft lift so the
+  // discovery chips read as tappable cards, not flat outlines.
   promptChip: {
-    paddingHorizontal: 14, paddingVertical: 10,
-    borderRadius: 18, borderWidth: 1,
-    marginRight: 8,
-    minWidth: 120, maxWidth: 220,
+    paddingHorizontal: 15, paddingVertical: 11,
+    borderRadius: 16, borderWidth: 1,
+    marginRight: 9,
+    minWidth: 124, maxWidth: 224,
+    ...Platform.select({
+      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 4 },
+      android: { elevation: 1 },
+      web: { boxShadow: `0 1px 5px ${ACCENT}14`, transition: 'transform 140ms ease' },
+    }),
   },
-  promptChipLabel: { fontSize: 13, fontWeight: '600', letterSpacing: -0.1 },
-  promptChipSub: { fontSize: 11, fontWeight: '400', marginTop: 1 },
+  promptChipLabel: { fontSize: 13.5, fontWeight: '600', letterSpacing: -0.1 },
+  promptChipSub: { fontSize: 11.5, fontWeight: '400', marginTop: 2 },
 
   // ─── Bottom sheets (model picker + context menu) ───
   sheetDim: {
@@ -4101,20 +4123,29 @@ const st = StyleSheet.create({
   msgText: { fontSize: 15, lineHeight: 22 },
 
   // Tool chips
-  toolChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 6 },
+  // [beauty2 2026-05-31] pill-rounded + a hair more padding so the "working…"
+  // status chips read consistently with the rest of the AI surface.
+  toolChipsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 7 },
   toolChip: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999,
     borderWidth: 1,
   },
-  toolChipText: { fontSize: 11, fontWeight: '500' },
+  toolChipText: { fontSize: 11, fontWeight: '500', letterSpacing: 0.1 },
 
   // WhatsApp opt-in button
+  // [beauty2 2026-05-31] rounder pill + subtle brand glow so the inline CTA
+  // matches the premium send button language.
   waOptInBtn: {
-    paddingVertical: 10, paddingHorizontal: 18, borderRadius: 10,
+    paddingVertical: 11, paddingHorizontal: 20, borderRadius: 14,
     alignSelf: 'flex-start',
+    ...Platform.select({
+      ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 7 },
+      android: { elevation: 3 },
+      web: { boxShadow: `0 3px 10px ${ACCENT}44`, cursor: 'pointer' },
+    }),
   },
-  waOptInBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  waOptInBtnText: { color: '#fff', fontSize: 14, fontWeight: '700', letterSpacing: 0.1 },
 
   // Code blocks
   codeBlockWrap: {
@@ -4148,19 +4179,22 @@ const st = StyleSheet.create({
   bulletText: { flex: 1, fontSize: 15, lineHeight: 22 },
 
   // Empty state — minimal ChatGPT-style
-  emptyOuter: { flexGrow: 1, justifyContent: 'center', paddingVertical: 24 },
-  emptyCenter: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, marginBottom: 24 },
+  // [beauty2 2026-05-31] more generous breathing room on the welcome canvas so
+  // the mascot + greeting feel centered and unhurried.
+  emptyOuter: { flexGrow: 1, justifyContent: 'center', paddingVertical: 28 },
+  emptyCenter: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, marginBottom: 28 },
   emptyLogoCircle: {
     width: 56, height: 56, borderRadius: 28,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 14,
   },
   emptyGreeting: {
-    fontSize: 22, fontWeight: '600', textAlign: 'center', marginBottom: 4,
-    letterSpacing: -0.3,
+    fontSize: 23, fontWeight: '700', textAlign: 'center', marginBottom: 5,
+    letterSpacing: -0.4,
   },
   emptySubtitle: {
-    fontSize: 14, fontWeight: '400', textAlign: 'center', marginBottom: 8,
+    fontSize: 14.5, fontWeight: '400', textAlign: 'center', marginBottom: 8,
+    lineHeight: 20,
   },
 
   // Prompt suggestion grid (2×2)

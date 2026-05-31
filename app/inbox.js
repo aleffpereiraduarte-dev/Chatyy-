@@ -1506,9 +1506,12 @@ function InboxScreenInner() {
                 else { setShowSavedSearches(true); }
               }}
               style={{
-                width: 40, height: 40, borderRadius: 12, marginLeft: 8,
+                // [beauty2 2026-05-31] Circular launcher matched to search-bar
+                // height with a faint brand-tinted ring for a more finished look.
+                width: 40, height: 40, borderRadius: 20, marginLeft: 8,
                 alignItems: 'center', justifyContent: 'center',
                 backgroundColor: colors.primaryLight,
+                borderWidth: StyleSheet.hairlineWidth, borderColor: colors.primary + '22',
                 position: 'relative',
               }}
               hitSlop={8}
@@ -2302,22 +2305,28 @@ const s = StyleSheet.create({
     backdropFilter: 'blur(28px) saturate(200%)',
     WebkitBackdropFilter: 'blur(28px) saturate(200%)',
   } : {},
-  menuBtn: { padding: Spacing.sm, marginRight: Spacing.xs, borderRadius: 12 },
+  menuBtn: { padding: Spacing.sm, marginRight: Spacing.xs, borderRadius: 14 },
   logoWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', marginRight: Spacing.md },
-  wsDot: { position: 'absolute', bottom: -1, right: 4, width: 8, height: 8, borderRadius: 4, borderWidth: 1.5 },
-  searchBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm, borderBottomWidth: 1 },
-  searchBannerText: { flex: 1, fontSize: FontSize.sm },
-  searchBannerClear: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: BorderRadius.sm },
-  searchBannerClearText: { fontSize: FontSize.xs, fontWeight: '600' },
-  logoText: { fontSize: 22, fontWeight: '800', letterSpacing: -0.6 },
-  greetingText: { fontSize: 17, fontWeight: '800', letterSpacing: -0.3 },
-  unreadHint: { fontSize: FontSize.xs, marginTop: 1, letterSpacing: 0.1 },
+  // [beauty2 2026-05-31] Slightly larger, crisper connection pip so the
+  // status color reads clearly against the white mail icon.
+  wsDot: { position: 'absolute', bottom: -1, right: 4, width: 9, height: 9, borderRadius: 4.5, borderWidth: 2 },
+  searchBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: Spacing.lg, paddingVertical: Spacing.sm + 1, borderBottomWidth: StyleSheet.hairlineWidth },
+  searchBannerText: { flex: 1, fontSize: FontSize.sm, letterSpacing: 0.1 },
+  // [beauty2 2026-05-31] Pill-shaped clear chip with a touch more padding.
+  searchBannerClear: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 5, borderRadius: BorderRadius.full || 999 },
+  searchBannerClearText: { fontSize: FontSize.xs, fontWeight: '700', letterSpacing: 0.2 },
+  // [beauty2 2026-05-31] Tighter optical tracking on the brand wordmark + a
+  // hair more line-height room under the greeting so the unread hint breathes.
+  logoText: { fontSize: 22, fontWeight: '800', letterSpacing: -0.7 },
+  greetingText: { fontSize: 17, fontWeight: '800', letterSpacing: -0.4 },
+  unreadHint: { fontSize: FontSize.xs, marginTop: 2, letterSpacing: 0.2, fontWeight: '600' },
   searchRow: {
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: Spacing.md,
-    paddingVertical: 6,
-    borderBottomWidth: 1,
+    paddingTop: 8,
+    paddingBottom: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth, // [beauty2 2026-05-31] hairline divider — softer Gmail/Spark feel
   },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   headerIconBtn: {
@@ -2347,8 +2356,8 @@ const s = StyleSheet.create({
     alignItems: 'center', paddingVertical: 20, paddingHorizontal: Spacing.xl,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  dropName: { fontSize: 18, fontWeight: '700', letterSpacing: -0.3 },
-  dropEmail: { fontSize: FontSize.sm, marginTop: 3, opacity: 0.65 },
+  dropName: { fontSize: 18, fontWeight: '700', letterSpacing: -0.4 },
+  dropEmail: { fontSize: FontSize.sm, marginTop: 3, opacity: 0.65, letterSpacing: 0.1 },
   manageBtn: {
     marginTop: 12, paddingHorizontal: 20, paddingVertical: 8,
     borderRadius: 20, borderWidth: 1,
@@ -2359,8 +2368,8 @@ const s = StyleSheet.create({
     paddingHorizontal: 16, paddingVertical: 12,
     ...Platform.select({ web: { cursor: 'pointer', transition: 'background-color 0.15s ease' }, default: {} }),
   },
-  accountName: { fontSize: FontSize.base, fontWeight: '600' },
-  accountEmail: { fontSize: FontSize.sm, marginTop: 1 },
+  accountName: { fontSize: FontSize.base, fontWeight: '600', letterSpacing: -0.2 },
+  accountEmail: { fontSize: FontSize.sm, marginTop: 2, opacity: 0.85 },
   addAccountIcon: {
     width: 40, height: 40, borderRadius: 20,
     alignItems: 'center', justifyContent: 'center',
@@ -2370,11 +2379,11 @@ const s = StyleSheet.create({
     paddingVertical: 12, paddingHorizontal: 8,
   },
   dropActionBtn: {
-    alignItems: 'center', justifyContent: 'center', paddingVertical: 8, paddingHorizontal: 12,
-    borderRadius: 12,
-    ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
+    alignItems: 'center', justifyContent: 'center', paddingVertical: 10, paddingHorizontal: 12,
+    borderRadius: 14,
+    ...Platform.select({ web: { cursor: 'pointer', transition: 'background-color 0.15s ease' }, default: {} }),
   },
-  dropActionLabel: { fontSize: 11, fontWeight: '500', marginTop: 4 },
+  dropActionLabel: { fontSize: 11, fontWeight: '600', marginTop: 5, letterSpacing: 0.1 },
   logoutBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     paddingVertical: 14, gap: 8,
@@ -2427,8 +2436,8 @@ const s = StyleSheet.create({
     width: 100, height: 100, borderRadius: 50,
     justifyContent: 'center', alignItems: 'center',
   },
-  noSelectionTitle: { fontSize: 22, fontWeight: '700', letterSpacing: -0.4 },
-  noSelectionSub: { fontSize: FontSize.base, marginTop: Spacing.sm, textAlign: 'center', maxWidth: 300, lineHeight: 22, opacity: 0.7 },
+  noSelectionTitle: { fontSize: 22, fontWeight: '700', letterSpacing: -0.5 },
+  noSelectionSub: { fontSize: FontSize.base, marginTop: Spacing.sm, textAlign: 'center', maxWidth: 300, lineHeight: 23, opacity: 0.7 },
   loader: { marginTop: 60 },
   fab: {
     position: 'absolute', right: 20, alignItems: 'center', justifyContent: 'center',
@@ -2464,10 +2473,10 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 10,
     paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1,
   },
-  moveTitle: { flex: 1, fontSize: 16, fontWeight: '700' },
+  moveTitle: { flex: 1, fontSize: 16, fontWeight: '700', letterSpacing: -0.2 },
   moveRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
     paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth,
   },
-  moveFolderName: { fontSize: 15, fontWeight: '500' },
+  moveFolderName: { fontSize: 15, fontWeight: '500', letterSpacing: 0.1 },
 });

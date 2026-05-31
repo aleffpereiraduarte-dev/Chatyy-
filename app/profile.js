@@ -30,8 +30,9 @@ export default function ProfileLegacyRedirect() {
   }, [user, loading, router]);
 
   return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors?.background }}>
-      <ActivityIndicator color="#7C3AED" />
+    // [beauty2 2026-05-31] redirect loader: larger brand-purple spinner, theme bg
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors?.background, padding: 24 }}>
+      <ActivityIndicator size="large" color="#7C3AED" />
     </View>
   );
 }
