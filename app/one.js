@@ -2688,6 +2688,28 @@ export default function OneScreen() {
             streamFailed = true;
             typewriterDone = true;
             if (typewriterRaf != null) { try { cancelAnimationFrame(typewriterRaf); } catch {} typewriterRaf = null; }
+            // [Bug-hunt P2 2026-05-30] SSE→fallback dup guard. If the stream
+            // already delivered real text, the server has (almost certainly)
+            // already processed AND persisted this assistant turn. Re-sending
+            // the same prompt via sendMessageFallback would make the server
+            // process it a SECOND time → a duplicate reply shows up the next
+            // time the conversation loads. So when we have partial content,
+            // FINALIZE what we received instead of re-sending. Only fall back
+            // to a fresh request when nothing was streamed (true early error).
+            if (streamedText && streamedText.trim().length > 0) {
+              renderedText = streamedText;
+              const { text: cleanText, followups: parsedFollowups } = extractFollowups(streamedText);
+              if (parsedFollowups.length > 0) setLastFollowups(parsedFollowups);
+              setMessages(prev => prev.map(m =>
+                m.id === aiMsgId
+                  ? { ...m, content: cleanText, actions: streamActions, _streaming: false, _toolPending: false, _toolName: null }
+                  : m
+              ));
+              setLoading(false);
+              loadConversations(false);
+              handleAIResponse(cleanText, streamActions, aiMsgId);
+              return;
+            }
             setMessages(prev => prev.filter(m => m.id !== aiMsgId));
             sendMessageFallback(effectiveMsg, currentImage, aiMsgId).finally(() => {
               setLoading(false);
