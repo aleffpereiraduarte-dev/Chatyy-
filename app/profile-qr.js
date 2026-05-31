@@ -47,6 +47,18 @@ function buildPayload(email, name) {
   return `chatyy://add-contact?${params.toString()}`;
 }
 
+// [WA-parity 2026-05-31] Canonical PUBLIC web URL for a profile so the link
+// works outside the app (browser, other messengers). Prefers an @handle; falls
+// back to the email local-part. The web route /u/<id> resolves it server-side
+// (deep-links into the app on devices that have it). We don't invent a backend
+// endpoint here — just emit the canonical universal URL.
+function buildProfileWebUrl(user) {
+  const handle = String(user?.handle || user?.username || '').replace(/^@/, '').trim();
+  const email = String(user?.email || '').trim();
+  const slug = handle || (email.includes('@') ? email.split('@')[0] : email);
+  return `https://chatyy.com.br/u/${encodeURIComponent(slug || 'me')}`;
+}
+
 function QrArtwork({ payload, size = 240, color = '#111', backgroundColor = '#fff', logoUri = '' }) {
   // Real QR via react-native-qrcode-svg. Embeds the avatar as a center logo
   // so the QR doubles as a profile card (WhatsApp / Telegram parity).
@@ -85,11 +97,25 @@ export default function ProfileQRScreen() {
   const [permission, requestPermission] = _useCamPerm();
 
   const payload = buildPayload(user?.email || '', user?.name || '');
+  // [WA-parity 2026-05-31] public web URL for share-link CTA (works outside app).
+  const profileWebUrl = buildProfileWebUrl(user);
 
   const handleShare = async () => {
     try {
       await Share.share({
         message: `${t('profile.qrSharePrefix') || 'Adicione-me no Chatyy:'} ${payload}`,
+      });
+    } catch (e) { /* dismissed */ }
+  };
+
+  // [WA-parity 2026-05-31] Share a PUBLIC https link to the profile (WhatsApp
+  // "share your link" parity). Uses the native Share sheet so it lands in any
+  // app/browser, not just the in-app QR scanner.
+  const handleShareLink = async () => {
+    try {
+      await Share.share({
+        message: `${t('profile.qrLinkSharePrefix') || 'Veja meu perfil no Chatyy:'} ${profileWebUrl}`,
+        url: profileWebUrl, // iOS surfaces this as a rich link
       });
     } catch (e) { /* dismissed */ }
   };
@@ -176,6 +202,15 @@ export default function ProfileQRScreen() {
               <IconShare size={18} color="#fff" />
               <Text style={s.ctaText}>{t('profile.shareQr') || 'Compartilhar QR'}</Text>
             </TouchableOpacity>
+
+            {/* [WA-parity 2026-05-31] Share a public https profile link */}
+            <TouchableOpacity
+              onPress={handleShareLink}
+              style={[s.cta, s.ctaSecondary, { borderColor: '#7C3AED', marginTop: 12 }]}
+            >
+              <IconShare size={18} color="#7C3AED" />
+              <Text style={[s.ctaText, { color: '#7C3AED' }]}>{t('profile.shareLink') || 'Compartilhar link'}</Text>
+            </TouchableOpacity>
           </>
         ) : (
           <View style={{ flex: 1, alignItems: 'center', paddingTop: 12 }}>
@@ -229,6 +264,7 @@ const s = StyleSheet.create({
   email: { fontSize: 13, marginTop: 2 },
   hint: { fontSize: 13, textAlign: 'center', marginTop: 12, paddingHorizontal: 24 },
   cta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, borderRadius: BorderRadius.lg, marginTop: 20, alignSelf: 'stretch' },
+  ctaSecondary: { backgroundColor: 'transparent', borderWidth: 1.5 }, // [WA-parity 2026-05-31]
   ctaText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   scanBox: { width: 280, height: 280, borderRadius: 18, overflow: 'hidden', backgroundColor: '#000' },
   scanFrame: { ...StyleSheet.absoluteFillObject, borderRadius: 18, borderWidth: 2, borderColor: '#fff', margin: 30 },

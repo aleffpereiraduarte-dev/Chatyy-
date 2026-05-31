@@ -30,6 +30,13 @@ export default function SyncBar() {
   const connectingTimeout = useRef(null);
   const syncStallTimer = useRef(null);
   const mountedRef = useIsMounted();
+  // [WA-parity 2026-05-31] Track the DEVICE's own internet reachability,
+  // separate from the WS/server state. This lets us be honest like WhatsApp:
+  //   • device offline        → "Aguardando rede" / "Sem internet"
+  //   • device online, WS down → "Conectando…" (server unreachable, keep trying)
+  // Without this we'd conflate a flaky local radio with a server outage and
+  // show the wrong copy (e.g. "Conectando…" forever while in airplane mode).
+  const deviceOnlineRef = useRef(true);
 
   // Dot pulse for connecting/offline
   useEffect(() => {
@@ -92,7 +99,11 @@ export default function SyncBar() {
         const grace = Platform.OS === 'web' ? 5000 : 3000;
         graceTimer.current = setTimeout(() => {
           if (mountedRef.current && !mailWs?.authenticated) {
-            show('connecting');
+            // [WA-parity 2026-05-31] Honest copy: only say "Conectando…" when
+            // the device actually has internet and it's the server we can't
+            // reach. If the device itself is offline, surface "Sem internet"
+            // instead so we don't blame the server for a local radio drop.
+            show(deviceOnlineRef.current ? 'connecting' : 'offline');
           }
         }, grace);
       }
@@ -168,13 +179,23 @@ export default function SyncBar() {
     mailWs?.on?.('sync_progress', handleSync);
     mailWs?.on?.('chat_bootstrap_progress', handleBootstrap);
 
-    // Network offline detection
+    // [WA-parity 2026-05-31] Network reachability detection. We keep
+    // deviceOnlineRef in sync so handleConnection can pick honest copy, and
+    // we drive the bar directly on transitions:
+    //   device → offline : "Sem internet" (sync.offline)
+    //   device → online  : if WS already authed, hide; else "Conectando…"
+    //                       (server now reachable — we're retrying the WS).
     let netUnsub;
     if (Platform.OS === 'web') {
-      const onOff = () => show('offline');
-      const onOn = () => { if (mailWs?.authenticated) hide(); else show('connecting'); };
+      const onOff = () => { deviceOnlineRef.current = false; show('offline'); };
+      const onOn = () => {
+        deviceOnlineRef.current = true;
+        if (mailWs?.authenticated) hide();
+        else show('connecting');
+      };
       window.addEventListener('offline', onOff);
       window.addEventListener('online', onOn);
+      deviceOnlineRef.current = !!navigator.onLine;
       if (!navigator.onLine) show('offline');
       netUnsub = () => {
         window.removeEventListener('offline', onOff);
@@ -183,9 +204,15 @@ export default function SyncBar() {
     } else {
       try {
         const NetInfo = require('@react-native-community/netinfo').default;
-        netUnsub = NetInfo.addEventListener(s => {
-          if (!s.isConnected) show('offline');
+        netUnsub = NetInfo.addEventListener(st => {
+          // isInternetReachable can be null (unknown) right after connecting —
+          // treat null as "assume reachable" to avoid a false offline flash,
+          // but a hard false (connected to wifi w/ no internet) IS offline.
+          const online = !!st.isConnected && st.isInternetReachable !== false;
+          deviceOnlineRef.current = online;
+          if (!online) show('offline');
           else if (mailWs?.authenticated) hide();
+          else show('connecting');
         });
       } catch {}
     }

@@ -21,7 +21,7 @@ import {
   IconDownload, IconUpload, IconRefresh, IconSmartphone,
   IconChevronDown, IconChevronUp, IconStar, IconEdit, IconFileText,
   IconBuilding, IconBriefcase, IconCake, IconMapPin, IconGlobe,
-  IconMessageSquare, IconVideo,
+  IconMessageSquare, IconVideo, IconSend,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import SwipeAction from '../components/SwipeAction';
@@ -328,6 +328,16 @@ function ContactsScreenInner() {
   // Debounced local search
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const searchDebounceRef = useRef(null);
+
+  // [WA-parity 2026-05-31] Share-contact (send a contact card to a chat).
+  // shareContactCard holds the {name,phone,email} card being shared; when
+  // set, a lightweight conversation picker modal opens so the user can pick
+  // which chat receives the contact message (chatSend type 'contact').
+  const [shareContactCard, setShareContactCard] = useState(null);
+  const [shareConvList, setShareConvList] = useState([]);
+  const [shareConvLoading, setShareConvLoading] = useState(false);
+  const [shareConvSearch, setShareConvSearch] = useState('');
+  const [shareSendingId, setShareSendingId] = useState(null);
 
   const TABS = [
     { key: 'my', label: t('contacts.tabMy') },
@@ -758,6 +768,8 @@ function ContactsScreenInner() {
     const goVideo = () => router.push(`/chat-conversation?email=${encodeURIComponent(email)}&startCall=video`);
     const goEmail = () => router.push(`/compose?to=${encodeURIComponent(email)}`);
     const goEdit = () => handleEditContact(c);
+    // [WA-parity 2026-05-31] Share this contact's card to a conversation.
+    const goShare = () => openShareContact(c);
 
     if (Platform.OS === 'web') {
       // Browser has no native action sheet — push straight to profile so
@@ -773,12 +785,72 @@ function ContactsScreenInner() {
         { text: t('profile.call') || 'Ligar', onPress: goCall },
         { text: t('profile.video') || 'Vídeo', onPress: goVideo },
         { text: t('profile.email') || 'Email', onPress: goEmail },
+        // [WA-parity 2026-05-31] "Compartilhar contato" — sends a contact card.
+        { text: t('contacts.shareContact') || 'Compartilhar contato', onPress: goShare },
         { text: t('contacts.editContact') || 'Editar', onPress: goEdit },
         { text: t('common.cancel') || 'Cancel', style: 'cancel' },
       ],
       { cancelable: true }
     );
   }, [router, handleEditContact, t]);
+
+  // [WA-parity 2026-05-31] Build a contact card payload from any contact-ish
+  // object (my contact, device contact, family user) and open the chat picker.
+  // The card shape ({name,phone,email}) matches chat-conversation's contact
+  // renderer + sendContact, so the receiver sees a real contact bubble.
+  const openShareContact = useCallback((c) => {
+    const name = (c?.name || c?.display_name || '').toString().trim();
+    const email = (c?.email || c?.emails?.[0]?.email || '').toString().trim();
+    const phone = (c?.phone || c?.phoneNumbers?.[0]?.number || '').toString().trim();
+    if (!name && !email && !phone) {
+      const warn = t('chatConv.contactNeedsField') || 'Contato sem dados para compartilhar';
+      if (Platform.OS === 'web') { try { window.alert(warn); } catch {} }
+      else Alert.alert(t('common.error') || 'Erro', warn);
+      return;
+    }
+    const card = { name: name || phone || email, phone, email };
+    setShareContactCard(card);
+    setShareConvSearch('');
+    setShareConvList([]);
+    setShareConvLoading(true);
+    (async () => {
+      try {
+        const r = await api.chatConversations();
+        const list = api.apiList(r, 'conversations', 'chats');
+        list.sort((a, b) => new Date(b.last_message_at || 0) - new Date(a.last_message_at || 0));
+        setShareConvList(list);
+      } catch {
+        setShareConvList([]);
+      } finally {
+        setShareConvLoading(false);
+      }
+    })();
+  }, [t]);
+
+  // [WA-parity 2026-05-31] Send the held contact card to the picked chat as a
+  // type:'contact' message, then navigate into that conversation (WhatsApp
+  // flow). Idempotent: guarded by shareSendingId so a double-tap can't
+  // double-send.
+  const handleSendContactToConv = useCallback(async (conv) => {
+    if (!conv?.id || !shareContactCard || shareSendingId) return;
+    setShareSendingId(conv.id);
+    try {
+      const content = JSON.stringify(shareContactCard);
+      const clientMessageId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+      const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const r = await api.chatSend(conv.id, content, 'contact', null, null, null, tempId, clientMessageId);
+      if (!r?.success) throw new Error(r?.message || 'send_failed');
+      setShareContactCard(null);
+      router.push({ pathname: '/chat-conversation', params: { id: String(conv.id), name: conv.name || conv.display_name || conv.other_email || '' } });
+    } catch (e) {
+      const msg = t('chatConv.contactSendError') || 'Não foi possível enviar o contato';
+      if (Platform.OS === 'web') { try { window.alert(msg); } catch {} }
+      else Alert.alert(t('common.error') || 'Erro', msg);
+      if (__DEV__) console.warn('[contacts.handleSendContactToConv]', e?.message);
+    } finally {
+      setShareSendingId(null);
+    }
+  }, [shareContactCard, shareSendingId, router, t]);
 
   const handleSave = async () => {
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1594,6 +1666,83 @@ function ContactsScreenInner() {
                 {saving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={s.saveBtnText}>{t('contacts.save')}</Text>}
               </TouchableOpacity>
             </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* [WA-parity 2026-05-31] Share-contact: pick a conversation to send the
+          contact card to. Self-contained picker (no extra screen needed). */}
+      <Modal visible={!!shareContactCard} animationType="slide" transparent onRequestClose={() => setShareContactCard(null)}>
+        <TouchableOpacity style={s.overlay} onPress={() => setShareContactCard(null)} activeOpacity={1}>
+          <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface, maxHeight: '80%' }]}>
+            <View style={[s.modalHeader, { borderBottomColor: colors.borderLight }]}>
+              <Text style={[s.modalTitle, { color: colors.text }]}>
+                {t('contacts.shareContactTo') || 'Enviar contato para'}
+              </Text>
+              <TouchableOpacity onPress={() => setShareContactCard(null)}>
+                <IconX size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            {!!shareContactCard && (
+              <View style={[s.contactRow, { borderBottomColor: colors.borderLight }]}>
+                <View style={[s.avatar, { backgroundColor: getAvatarColor(shareContactCard.name) }]}>
+                  <Text style={s.avatarText}>{(shareContactCard.name?.[0] || '?').toUpperCase()}</Text>
+                </View>
+                <View style={s.contactInfo}>
+                  <Text numberOfLines={1} style={[s.contactName, { color: colors.text }]}>{shareContactCard.name}</Text>
+                  {!!shareContactCard.email && <Text numberOfLines={1} style={[s.contactEmail, { color: colors.textSecondary }]}>{shareContactCard.email}</Text>}
+                  {!!shareContactCard.phone && <Text numberOfLines={1} style={[s.contactPhone, { color: colors.textTertiary }]}>{shareContactCard.phone}</Text>}
+                </View>
+              </View>
+            )}
+            <View style={[s.searchRow, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
+              <IconSearch size={16} color={colors.textTertiary} />
+              <TextInput
+                style={[s.searchInput, { color: colors.text }]}
+                value={shareConvSearch}
+                onChangeText={setShareConvSearch}
+                placeholder={t('contacts.searchFamily') || 'Buscar conversa'}
+                placeholderTextColor={colors.textTertiary}
+              />
+            </View>
+            {shareConvLoading ? (
+              <View style={{ paddingVertical: Spacing.lg, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color={colors.primary} />
+              </View>
+            ) : (
+              <FlatList
+                data={(shareConvSearch.trim()
+                  ? shareConvList.filter(cv => (cv.name || cv.display_name || cv.other_email || '').toLowerCase().includes(shareConvSearch.trim().toLowerCase()))
+                  : shareConvList)}
+                keyExtractor={(item, index) => String(item.id || index)}
+                style={{ maxHeight: 380 }}
+                ListEmptyComponent={
+                  <View style={{ paddingVertical: Spacing.lg, alignItems: 'center' }}>
+                    <Text style={[s.emptyHint, { color: colors.textTertiary }]}>{t('chat.noConversations') || 'Nenhuma conversa'}</Text>
+                  </View>
+                }
+                renderItem={({ item: cv }) => {
+                  const cName = cv.name || cv.display_name || cv.other_email || '';
+                  const busy = shareSendingId === cv.id;
+                  return (
+                    <TouchableOpacity
+                      style={[s.contactRow, { borderBottomColor: colors.borderLight, opacity: busy ? 0.5 : 1 }]}
+                      onPress={() => handleSendContactToConv(cv)}
+                      disabled={!!shareSendingId}
+                      activeOpacity={0.6}
+                    >
+                      <AvatarCircle name={cName} email={cv.other_email} size={40} style={{ marginRight: Spacing.md }} />
+                      <View style={s.contactInfo}>
+                        <Text numberOfLines={1} style={[s.contactName, { color: colors.text }]}>{cName}</Text>
+                      </View>
+                      {busy
+                        ? <ActivityIndicator size="small" color={colors.primary} />
+                        : <IconSend size={18} color={colors.primary} />}
+                    </TouchableOpacity>
+                  );
+                }}
+              />
+            )}
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
