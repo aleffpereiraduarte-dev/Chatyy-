@@ -63,6 +63,11 @@ export function registerBackgroundLocationTask() {
         if (AsyncStorage) {
           const flag = await AsyncStorage.getItem('live_location_active').catch(() => null);
           if (flag !== '1' && flag !== 'true') return;
+          // Ghost/invisible mode (snap-map `snap_map_ghost_mode`='1'): MUST
+          // suppress background location POSTs, else the user stays trackable
+          // after enabling "invisível" — privacy breach. Bug-hunt P1 (2026-05-30).
+          const ghost = await AsyncStorage.getItem('snap_map_ghost_mode').catch(() => null);
+          if (ghost === '1' || ghost === 'true') return;
         }
 
         // Post the newest fix (data.locations[] is ordered oldest→newest).

@@ -827,7 +827,11 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   const authorDisplay = post.author_name || post.author_email?.split('@')[0] || '?';
   const cardBg = isDark ? colors.surface : '#ffffff';
   const needsTruncation = post.caption && post.caption.length > CAPTION_TRUNCATE;
-  const commentCount = Number(post.comment_count) || 0;
+  // Tolerate all backend shapes: feed_list emits comments_count/comments,
+  // local optimistic patch uses comment_count. Reading only comment_count
+  // made the count read 0 on fresh loads → "Ver todos os N comentários"
+  // never appeared. Bug-hunt P2 (2026-05-30).
+  const commentCount = Number(post.comments_count ?? post.comments ?? post.comment_count) || 0;
 
   // If the viewer hid this post, render a small collapsed banner with an
   // "Undo" affordance instead of yanking it out of the layout. Avoids the

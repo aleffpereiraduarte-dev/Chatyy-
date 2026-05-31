@@ -124,6 +124,14 @@ async function loadModules() {
             try {
               const now = Date.now();
               if (now - (globalThis.__chatyyLastLocPing || 0) < 60000) return;
+              // Ghost/invisible mode: never answer location wake-pings while
+              // "invisível" is on (snap_map_ghost_mode='1'), else the user
+              // stays trackable despite it. Bug-hunt P1 (2026-05-30).
+              try {
+                const AS = require('@react-native-async-storage/async-storage').default;
+                const ghost = await AS.getItem('snap_map_ghost_mode').catch(() => null);
+                if (ghost === '1' || ghost === 'true') return;
+              } catch {}
               globalThis.__chatyyLastLocPing = now;
               const Location = await import('expo-location');
               const fg = await Location.getForegroundPermissionsAsync?.().catch(() => null);

@@ -231,13 +231,49 @@ export default function SpotlightScreen() {
 
   const viewConfig = useRef({ itemVisiblePercentThreshold: 75 }).current;
 
+  // Record a view for the currently-active reel, once per id per session.
+  // Spotlight never called feedView so view_count was dead for the
+  // TikTok-style feed. Bug-hunt P3 (2026-05-30).
+  const viewedRef = useRef(new Set());
+  useEffect(() => {
+    const p = posts[activeIdx];
+    if (!p?.id) return;
+    if (viewedRef.current.has(p.id)) return;
+    viewedRef.current.add(p.id);
+    try { api.feedView?.(p.id)?.catch?.(() => {}); } catch {}
+  }, [activeIdx, posts]);
+
   const handleLike = useCallback(async (post) => {
+    const wasLiked = !!post.liked_by_me;
+    // optimistic
     setPosts(prev => prev.map(p => p.id === post.id ? {
       ...p,
       liked_by_me: !p.liked_by_me,
-      likes_count: (p.likes_count || 0) + (p.liked_by_me ? -1 : 1),
+      likes_count: Math.max(0, (p.likes_count || 0) + (p.liked_by_me ? -1 : 1)),
     } : p));
-    try { await api.feedLike?.(post.id); } catch {}
+    try {
+      const r = await api.feedLike?.(post.id);
+      // Reconcile with the authoritative server count/state instead of
+      // discarding it — prevents permanently-wrong/double counts on
+      // divergence. Bug-hunt P3 (2026-05-30).
+      const d = r?.data || r;
+      if (d && (d.likes_count != null || d.liked_by_me != null)) {
+        setPosts(prev => prev.map(p => p.id === post.id ? {
+          ...p,
+          ...(d.liked_by_me != null ? { liked_by_me: !!d.liked_by_me } : {}),
+          ...(d.likes_count != null ? { likes_count: Number(d.likes_count) || 0 } : {}),
+        } : p));
+      } else if (r && r.success === false) {
+        throw new Error('like failed');
+      }
+    } catch {
+      // roll back the optimistic toggle
+      setPosts(prev => prev.map(p => p.id === post.id ? {
+        ...p,
+        liked_by_me: wasLiked,
+        likes_count: Math.max(0, (p.likes_count || 0) + (wasLiked ? 1 : -1)),
+      } : p));
+    }
   }, []);
 
   const handleBookmark = useCallback(async (post) => {
