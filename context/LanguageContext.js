@@ -177,7 +177,13 @@ export function LanguageProvider({ children }) {
   }, [_persistLanguage]);
 
   const t = useCallback((key, params) => {
-    let str = translations[language]?.[key] ?? translations[DEFAULT_LANGUAGE]?.[key] ?? key;
+    // Fallback chain: active language → English (universal) → pt-BR → raw key.
+    // English MUST precede pt-BR so a key missing in en/es doesn't leak
+    // Portuguese to non-Portuguese users. Bug-hunt P3 (2026-05-30).
+    let str = translations[language]?.[key]
+      ?? translations['en']?.[key]
+      ?? translations[DEFAULT_LANGUAGE]?.[key]
+      ?? key;
     // For arrays (like time.days), return as-is
     if (Array.isArray(str)) return str;
     // Interpolate {param} placeholders.
