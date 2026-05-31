@@ -188,8 +188,23 @@ export default function ChatMedia({
     // Android during the brief sync-index miss window for fresh chats.
     // spinner only shows when there is literally no other layer painted.
     return (
-      <View style={[{ backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center' }, style]}>
-        <ActivityIndicator size="small" color="rgba(255,255,255,0.85)" />
+      // [beauty 2026-05-31] Loading state: a soft rounded "tile" that hugs
+      // the bubble geometry instead of a bare square. The spinner sits in a
+      // faintly tinted disc so it reads as a deliberate placeholder rather
+      // than an empty hole while the photo downloads.
+      <View style={[{ backgroundColor: 'transparent', alignItems: 'center', justifyContent: 'center', borderRadius: 14, overflow: 'hidden' }, style]}>
+        <View
+          style={{
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'rgba(0,0,0,0.18)',
+          }}
+        >
+          <ActivityIndicator size="small" color="rgba(255,255,255,0.92)" />
+        </View>
       </View>
     );
   }
@@ -200,14 +215,18 @@ export default function ChatMedia({
       <TouchableOpacity
         onPress={isDeleted ? undefined : handleRetry}
         disabled={isDeleted || redownloading}
-        style={[{ backgroundColor: placeholderColor, alignItems: 'center', justifyContent: 'center', padding: 12 }, style]}
+        activeOpacity={0.7}
+        // [beauty 2026-05-31] Failure chip: rounded to match the bubble
+        // geometry (no hard square corners) with generous breathing room so
+        // the retry copy sits centered and legible instead of cramped.
+        style={[{ backgroundColor: placeholderColor, alignItems: 'center', justifyContent: 'center', paddingVertical: 16, paddingHorizontal: 14, borderRadius: 14, overflow: 'hidden' }, style]}
         accessibilityLabel={isDeleted ? 'Mensagem apagada' : 'Baixar de novo'}
         accessibilityRole="button"
       >
         {redownloading ? (
           <ActivityIndicator size="small" color="#999" />
         ) : (
-          <Text style={{ fontSize: 11, color: 'rgba(0,0,0,0.55)', fontWeight: '600', textAlign: 'center' }}>
+          <Text style={{ fontSize: 12, lineHeight: 17, color: 'rgba(0,0,0,0.55)', fontWeight: '600', textAlign: 'center', letterSpacing: 0.1 }}>
             {isDeleted
               ? 'Mensagem apagada'
               : (messageId

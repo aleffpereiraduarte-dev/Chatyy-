@@ -29588,9 +29588,13 @@ const styles = StyleSheet.create({
     width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center',
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 0.15s ease, transform 0.15s ease' } : {}),
   },
-  headerInfo: { flex: 1, marginHorizontal: 6 },
-  headerTitle: { fontSize: 16.5, fontWeight: '800', letterSpacing: -0.3 },
-  headerSubtitle: { fontSize: 12, marginTop: 2, opacity: 0.9, fontWeight: '500', letterSpacing: 0.1 },
+  // [beauty 2026-05-31] marginHorizontal 6→8 gives the name a hair more
+  // breathing room from the avatar + action icons so it reads centered.
+  headerInfo: { flex: 1, marginHorizontal: 8 },
+  // [beauty 2026-05-31] Tighter tracking (-0.3→-0.35) at 800 weight reads as a
+  // confident, condensed name (matches iMessage/WhatsApp header typography).
+  headerTitle: { fontSize: 16.5, fontWeight: '800', letterSpacing: -0.35 },
+  headerSubtitle: { fontSize: 12, marginTop: 2.5, opacity: 0.9, fontWeight: '500', letterSpacing: 0.1 },
   disappearingBanner: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     paddingVertical: 8, paddingHorizontal: 14, gap: 6,
@@ -29604,7 +29608,10 @@ const styles = StyleSheet.create({
   },
   dateSeparator: {
     alignItems: 'center',
-    marginVertical: 14,
+    // [beauty 2026-05-31] 14→16 so the pill floats with clear air above/below
+    // the surrounding bubbles — reads as a deliberate day-divider, not crowding
+    // the last/next message.
+    marginVertical: 16,
   },
   dateText: {
     // Pill geometry tuned for the lavender brand wash: a touch more letter
@@ -29612,8 +29619,11 @@ const styles = StyleSheet.create({
     // deliberate divider, fully-pill radius, and a softer shadow (the violet
     // tint already carries the visual weight, so the heavy drop shadow was
     // over-egging it).
-    fontSize: 11.5, fontWeight: '700', letterSpacing: 0.4,
-    paddingHorizontal: 14, paddingVertical: 6,
+    // [beauty 2026-05-31] Slightly wider tracking (0.4→0.5) + a touch more
+    // horizontal padding (14→15) so short labels ("Hoje"/"Ontem") sit centered
+    // and read as an intentional pill, not a tight tag.
+    fontSize: 11.5, fontWeight: '700', letterSpacing: 0.5,
+    paddingHorizontal: 15, paddingVertical: 6,
     borderRadius: 999, overflow: 'hidden',
     ...Platform.select({
       ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 6 },
@@ -29664,8 +29674,10 @@ const styles = StyleSheet.create({
   msgRowGroupEnd: { marginBottom: 10 },
   msgRowOwn: { alignSelf: 'flex-end', marginRight: 10 },
   msgRowOther: { alignSelf: 'flex-start', marginLeft: 10 },
-  msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 6, marginLeft: 4 },
-  msgSender: { fontSize: 13, fontWeight: '700', letterSpacing: -0.15 },
+  // [beauty 2026-05-31] marginBottom 6→5 + tiny marginTop so the group-sender
+  // label hugs its bubble a touch tighter (clearer "who said this" grouping).
+  msgSenderRow: { flexDirection: 'row', alignItems: 'center', marginTop: 1, marginBottom: 5, marginLeft: 4 },
+  msgSender: { fontSize: 13, fontWeight: '700', letterSpacing: -0.2 },
   replyIndicator: {
     // WAVE 70 (2026-05-21): WhatsApp-grade polish — wider purple accent
     // bar (3px), larger breathing padding (10x8), and a marginBottom of 8
@@ -29740,8 +29752,13 @@ const styles = StyleSheet.create({
     borderBottomLeftRadius: 6, borderBottomRightRadius: 20,
     borderWidth: 0, borderColor: 'transparent',
   },
-  bubbleDeleted: { opacity: 0.55, paddingHorizontal: 12, paddingVertical: 8 },
-  msgText: { fontSize: 15.5, lineHeight: 20.5, letterSpacing: -0.08 },
+  // [beauty 2026-05-31] Match the live bubble's horizontal padding (13) so a
+  // deleted-message bubble lines up exactly with its neighbours instead of
+  // sitting 1px narrower.
+  bubbleDeleted: { opacity: 0.55, paddingHorizontal: 13, paddingVertical: 8 },
+  // [beauty 2026-05-31] lineHeight 20.5→21 — a hair more leading so multi-line
+  // message bodies breathe and don't pack tight against the meta row below.
+  msgText: { fontSize: 15.5, lineHeight: 21, letterSpacing: -0.08 },
   // Time + tick row. Always one line inside the bubble. Minimum width is
   // enforced by bubble.minWidth so the row never wraps and the V never
   // "falls behind" the bubble when the bubble is narrow.
@@ -29760,7 +29777,9 @@ const styles = StyleSheet.create({
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
   },
-  reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 5 },
+  // [beauty 2026-05-31] marginTop 5→6 so the reaction shelf sits clearly below
+  // the bubble's bottom edge instead of kissing it.
+  reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 6 },
   reactionsRowOwn: { justifyContent: 'flex-end' },
   // Why (vidiante): chips bumped 16→17 radius + tighter chunkier padding so
   // they read as proper sticker-pills, not text labels. Added cursor +

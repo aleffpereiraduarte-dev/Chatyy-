@@ -6055,7 +6055,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   ), [loading, isDark, colors, t, router]);
 
   const ItemSeparatorComponent = useCallback(() => (
-    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)', marginLeft: 84, marginRight: 18 }]} />
+    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', marginLeft: 79, marginRight: 16 }]} />
   ), [isDark]);
 
   return (
@@ -7417,12 +7417,17 @@ const s = StyleSheet.create({
     letterSpacing: 1.5,
     textTransform: 'uppercase',
   },
+  // [beauty 2026-05-31] Row breathes a touch more: a hair more horizontal
+  // padding so avatar↔edge and badge↔edge feel balanced, slightly taller min
+  // so single-line rows don't feel cramped against multi-line ones. Vertical
+  // padding eased to 13 — the rowTop/rowBottom margins already carry the
+  // internal rhythm, so this keeps the row from feeling stacked-tight.
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    minHeight: 78,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    minHeight: 80,
     ...(Platform.OS === 'web' ? {
       transition: 'background-color 0.18s ease, box-shadow 0.18s ease',
       cursor: 'pointer',
@@ -7430,7 +7435,7 @@ const s = StyleSheet.create({
   },
   avatarWrap: {
     position: 'relative',
-    marginRight: 14,
+    marginRight: 13,
     // Subtle lift under the avatar so it reads as a layered token, iMessage-
     // style. Soft + tight so it never looks like a heavy drop shadow.
     ...Platform.select({
@@ -7440,15 +7445,18 @@ const s = StyleSheet.create({
       default: {},
     }),
   },
+  // [beauty 2026-05-31] Online dot tucked tight to the avatar's lower-right with
+  // a clean 2px ring in the row background colour — reads as a crisp presence
+  // pip, WhatsApp-style, never a floating blob.
   onlineDot: {
     position: 'absolute',
-    bottom: 1,
-    right: 1,
+    bottom: 1.5,
+    right: 1.5,
     width: 13,
     height: 13,
     borderRadius: 6.5,
     backgroundColor: '#22c55e',
-    borderWidth: 2.5,
+    borderWidth: 2,
     zIndex: 5,
     overflow: 'visible',
   },
@@ -7478,42 +7486,53 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 5,
   },
+  // [beauty 2026-05-31] Name reads crisper at 16 with a slightly tighter
+  // tracking; read rows sit at semibold so the unread→bold step is a real,
+  // legible contrast jump (iMessage-style) rather than a subtle weight nudge.
   rowName: {
-    fontSize: 16.5,
+    fontSize: 16,
     fontWeight: '600',
     flex: 1,
-    letterSpacing: -0.3,
+    letterSpacing: -0.25,
   },
-  rowNameUnread: { fontWeight: '700', letterSpacing: -0.35 },
+  rowNameUnread: { fontWeight: '700', letterSpacing: -0.3 },
   // Timestamp sits flush-right, tabular-ish so the right column stays aligned
   // across rows regardless of "agora" vs "14:32" vs "Ontem".
-  rowTime: { fontSize: 12, letterSpacing: -0.1, fontWeight: '500', fontVariant: ['tabular-nums'] },
+  // [beauty 2026-05-31] Timestamp flush-right, tabular so the right column stays
+  // pixel-aligned across "agora" / "14:32" / "Ontem".
+  rowTime: { fontSize: 12.5, letterSpacing: -0.1, fontWeight: '500', fontVariant: ['tabular-nums'] },
   rowBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginTop: 3,
+    marginTop: 2,
   },
+  // [beauty 2026-05-31] Preview kept discreet at 14 with a calm 19 line-height
+  // so it reads as the quiet secondary line under the name — never competing
+  // with it for weight.
   rowPreview: {
-    fontSize: 14.5,
+    fontSize: 14,
     flex: 1,
     marginRight: 10,
-    lineHeight: 20,
+    lineHeight: 19,
     letterSpacing: -0.1,
   },
   // Unread badge — brand-purple pill (was WhatsApp green). Crisp squircle pill
   // with a soft brand glow so a fresh count reads as the colored attention dot.
   // minWidth === height keeps single-digit counts a perfect circle; multi-digit
   // grows into a clean pill.
+  // [beauty 2026-05-31] Unread pill nudged to 22 so a single-digit count sits as
+  // a clean perfect circle (minWidth === height) and the number reads centered;
+  // multi-digit grows into a tidy capsule.
   unreadBadge: {
-    minWidth: 21,
-    height: 21,
+    minWidth: 22,
+    height: 22,
     borderRadius: 999,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 6.5,
+    paddingHorizontal: 7,
     backgroundColor: '#7C3AED',
   },
   unreadBadgeShadow: {
@@ -7526,9 +7545,12 @@ const s = StyleSheet.create({
   },
   unreadText: {
     color: '#fff',
-    fontSize: 11.5,
+    fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.1,
+    fontVariant: ['tabular-nums'],
+    includeFontPadding: false,
+    textAlign: 'center',
   },
   separator: {
     height: StyleSheet.hairlineWidth,
