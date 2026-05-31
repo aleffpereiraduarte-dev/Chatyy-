@@ -29,15 +29,16 @@ const INTRO_FLAGS = [
 ];
 
 // Showcase screens for the App Store iPad set (max 10 slots). Order = sell order.
+// Self-contained feature screens that render full regardless of demo-account
+// content (chat is the only content-dependent one, and apitest has a seeded
+// thread). Avoids the empty feed / blurry reels / location-off map problem.
 const SHOTS = [
-  { p: '/chat',                              n: 'messaging',   settle: 2500 },
-  { p: '/chat-conversation?id=849',          n: 'conversation', settle: 3000 },
-  { p: '/status',                            n: 'stories',     settle: 2500 },
-  { p: '/feed',                              n: 'feed',        settle: 3000 },
-  { p: '/spotlight',                         n: 'reels',       settle: 3000 },
-  { p: '/one',                               n: 'ai',          settle: 2500 },
-  { p: '/meetings',                          n: 'calls',       settle: 2000 },
-  { p: '/snap-map',                          n: 'map',         settle: 3000 },
+  { p: '/chat',                              n: '1-messaging',    settle: 2500 },
+  { p: '/chat-conversation?id=872',          n: '2-conversation', settle: 3000 },
+  { p: '/one',                               n: '3-ai',           settle: 2500 },
+  { p: '/profile',                           n: '4-profile',      settle: 2800 },
+  { p: '/wallet',                            n: '5-wallet',       settle: 2500 },
+  { p: '/photos',                            n: '6-photos',       settle: 2800 },
 ];
 
 function api(action, body) {
