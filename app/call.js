@@ -1431,7 +1431,15 @@ function CallScreenInner() {
         // cold-start (token fetch + LK SFU handshake on first call post-install
         // ≈ 1500-3500 ms). The old 15-poll (1.5 s) ceiling only ran when
         // wantsAdoptNative was false; unified to 40 for all paths.
-        const maxPolls = 40; // was: wantsAdoptNative ? 40 : 15
+        // [2026-06-01 CONNECT-SPEED] On iOS the outgoing call is JS-ONLY
+        // (presentOutgoingCallVC is dead-coded — "hybrid mode, skipping native
+        // VC"), so the native CallViewController Room NEVER exists for the
+        // caller → adoptNativeRoom returns null all 40 polls = 4s of pure
+        // dead-wait BEFORE token-fetch+connect even start = "demora muito
+        // conectar". Cap the iOS caller at 3 polls (300ms safety) and connect.
+        // Callee (post-CallKit answer) + Android caller (native preconnect)
+        // keep the full 4s cold-start budget — they really do adopt.
+        const maxPolls = (Platform.OS === 'ios' && isCaller && !wantsAdoptNative) ? 3 : 40;
         for (let i = 0; i < maxPolls; i++) {
           polls = i + 1;
           snap = await ExpoCallKit.adoptNativeRoom?.(callId);
@@ -1611,12 +1619,22 @@ function CallScreenInner() {
     // When no iceServers are present (token fetch failed to mint TURN creds) we
     // still set relay policy — LK will gather TURN candidates from the SFU
     // signaling path which always carries the Chatyy coturn endpoint.
+    // [2026-06-01 CONNECT-SPEED] DROPPED relay-first here. WAVE 115 forced
+    // `iceTransportPolicy:'relay'` on this JS path, but the native surfaces
+    // (CallViewController.swift / NativeCallRoom.swift / Android CallActivity.kt)
+    // had ALREADY abandoned relay-first (2026-05-26, [[call_connect_and_store_delivery]])
+    // because the embedded TURN TLS leg (turns:5349) is dead and forcing relay
+    // made every client DISCARD the working direct SFU candidates (public IP +
+    // UDP 50000-50100 / TCP 7881 open) and stall multiple seconds on a broken
+    // TURN allocation before Connected. The JS caller path (iOS outgoing is
+    // JS-only) never got the update → "demora muito conectar". Use 'all': try
+    // host/srflx/direct first (200-500ms on open SFU), TURN (coturn 3478 UDP) is
+    // still gathered as fallback so locked-down NATs still connect. Matches the
+    // 3 native surfaces — symmetric ICE across all clients.
     if (Array.isArray(iceServers) && iceServers.length > 0) {
-      roomOpts.rtcConfig = { iceServers, iceTransportPolicy: 'relay' };
+      roomOpts.rtcConfig = { iceServers, iceTransportPolicy: 'all' };
     } else {
-      // No explicit TURN creds from backend yet — still force relay so LK's
-      // built-in coturn (turn.chatyy.com.br, wired in livekit.yaml) is used.
-      roomOpts.rtcConfig = { iceTransportPolicy: 'relay' };
+      roomOpts.rtcConfig = { iceTransportPolicy: 'all' };
     }
     let r;
     try {
