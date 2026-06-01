@@ -42,13 +42,19 @@ function loadExpoVideo() {
 // voice messages / ViewOnceMessage (expo-audio AudioModule.setAudioMode).
 function enablePlaybackAudioSession() {
   try {
-    const { AudioModule } = require('expo-audio');
-    AudioModule?.setAudioMode?.({ playsInSilentMode: true });
-    return;
+    // expo-audio exposes setAudioModeAsync (NOT setAudioMode — that method does
+    // not exist; the old call was a silent no-op). Use the top-level export the
+    // rest of the app uses (app/one.js, components/FeedComments.js).
+    const expoAudio = require('expo-audio');
+    const fn = expoAudio?.setAudioModeAsync || expoAudio?.AudioModule?.setAudioModeAsync;
+    const r = fn?.({ playsInSilentMode: true });
+    if (r?.catch) r.catch(() => {});
+    if (fn) return;
   } catch {}
   try {
     const { Audio } = require('expo-av');
-    Audio?.setAudioModeAsync?.({ playsInSilentModeIOS: true });
+    const r = Audio?.setAudioModeAsync?.({ playsInSilentModeIOS: true });
+    if (r?.catch) r.catch(() => {});
   } catch {}
 }
 

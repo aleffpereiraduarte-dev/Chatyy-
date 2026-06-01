@@ -28903,8 +28903,9 @@ export default function ChatConversationScreen() {
       />
 
       {/* Group Invite QR Modal — WhatsApp-style: shows the invite link as a
-          scannable QR for in-person joins. Renders via api.qrserver.com (the
-          same generator login.js uses) so we don't ship a new native dep. */}
+          scannable QR for in-person joins. Renders LOCALLY via InviteQRCode
+          (react-native-qrcode-svg); api.qrserver.com is only the no-svg
+          fallback (e.g. web SSR). */}
       <Modal
         visible={showInviteQr}
         transparent
