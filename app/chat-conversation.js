@@ -6494,6 +6494,28 @@ function MessageEffectOverlay({ effect }) {
 // MAIN SCREEN
 // ============================================================
 
+// [instant-send 2026-06-01] Module-level network-state cache. The send path
+// used to `await NetInfo.fetch()` on EVERY send just to pick a timeout budget.
+// On Android that probe routinely blocks 1-4s, so the "sent" (✓) status flipped
+// 1-4s AFTER the message had actually reached the server (~0.4s) — the founder's
+// "demora uns 4 segundos pra realmente enviar". We keep the last-known network
+// type/generation in this cache (fed by the existing NetInfo listener below) and
+// read it SYNCHRONOUSLY in the hot path. No await = ✓ flips the instant the HTTP
+// returns, WhatsApp-style.
+const _netStateCache = { type: null, cellularGeneration: null };
+function _sendTimeoutFromCache() {
+  try {
+    if (_netStateCache.type === 'cellular') {
+      const gen = _netStateCache.cellularGeneration;
+      if (gen === '2g') return 35000;
+      if (gen === '3g') return 25000;
+      return 20000; // 4g/5g
+    }
+    if (_netStateCache.type === 'wifi') return 15000;
+  } catch {}
+  return 15000; // sane default when type is unknown (web / pre-first-event)
+}
+
 export default function ChatConversationScreen() {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
@@ -7429,6 +7451,23 @@ export default function ChatConversationScreen() {
   const [chatLeakWarning, setChatLeakWarning] = useState(null);
   const [chatToneWarning, setChatToneWarning] = useState(null);
   const chatSendBypassGuards = useRef(false);
+  // [instant-send 2026-06-01] Cache the sealed-sender privacy flag in a ref,
+  // loaded once on mount + refreshed on focus. The send path used to
+  // `await import('@react-native-async-storage/async-storage')` + getItem on
+  // EVERY send (before api.chatSend even fired), adding latency to the actual
+  // dispatch. Reading a ref is synchronous.
+  const sealedSenderRef = useRef(false);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        const ss = await AsyncStorage.getItem('chatyy_sealed_sender');
+        if (alive) sealedSenderRef.current = (ss === 'true');
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
   const [audioTranscription, setAudioTranscription] = useState(null);
 
   // Auto-fetch AI quick replies when last incoming message changes.
@@ -11978,8 +12017,12 @@ export default function ChatConversationScreen() {
           // "unknown but probably ok" so we don't flash the banner on launch.
           const reachable = state?.isInternetReachable;
           setNetReachable(state?.isConnected !== false && reachable !== false);
+          // [instant-send] Keep the module-level cache fresh so the send path
+          // never has to await NetInfo.fetch() to pick a timeout budget.
+          try { _netStateCache.type = state?.type ?? null; _netStateCache.cellularGeneration = state?.details?.cellularGeneration ?? null; } catch {}
         });
         NetInfo.fetch?.().then(state => {
+          try { _netStateCache.type = state?.type ?? null; _netStateCache.cellularGeneration = state?.details?.cellularGeneration ?? null; } catch {}
           if (!mountedRef.current) return;
           const reachable = state?.isInternetReachable;
           setNetReachable(state?.isConnected !== false && reachable !== false);
@@ -12654,14 +12697,10 @@ export default function ChatConversationScreen() {
       // Sealed-sender (Signal-mode metadata hiding) — when the user has the
       // privacy toggle on, every send goes out with `sealed=true` so the
       // server scrubs sender_email/sender_name from the row recipients see.
-      // Async-loaded in-place to avoid ballooning the component scope; cheap
-      // because AsyncStorage hits are local and the chatSend path is already
-      // async. Failure to read defaults to OFF (safe).
-      try {
-        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-        const ss = await AsyncStorage.getItem('chatyy_sealed_sender');
-        if (ss === 'true') _sendOpts.sealed = true;
-      } catch {}
+      // [instant-send 2026-06-01] Read the cached ref (loaded on mount) instead
+      // of awaiting a dynamic import + AsyncStorage on every send — that await
+      // sat BEFORE api.chatSend fired and slowed the actual dispatch.
+      if (sealedSenderRef.current) _sendOpts.sealed = true;
       const _stagedEffectForThisSend = stagedEffect; // capture for optimistic bubble + receipt overlay
       // Effect is one-shot: clear it the moment we hand off the send. If the
       // user long-presses again to set another effect before the request
@@ -12701,27 +12740,12 @@ export default function ChatConversationScreen() {
           return res;
         });
       // Adaptive send timeout. WhatsApp pattern: short on wifi, generous on
-      // weak cellular. NetInfo gives effectiveType/downlink — pick a budget
-      // that fits real-world latency. Falls back to 12s when info is missing.
-      let _sendTimeoutMs = 12000;
-      try {
-        if (Platform.OS !== 'web') {
-          const NetInfo = require('@react-native-community/netinfo').default;
-          const state = await NetInfo.fetch();
-          if (state?.type === 'cellular') {
-            const gen = state.details?.cellularGeneration; // '2g'|'3g'|'4g'|'5g'
-            if (gen === '2g') _sendTimeoutMs = 35000;
-            else if (gen === '3g') _sendTimeoutMs = 25000;
-            else _sendTimeoutMs = 20000; // 4g/5g — was 14s, Android jitter
-                                          // through Cloudflare proxy was
-                                          // tripping this on perfectly
-                                          // sound connections and queueing
-                                          // already-sent messages forever.
-          } else if (state?.type === 'wifi') {
-            _sendTimeoutMs = 15000;       // was 10s, same reason
-          }
-        }
-      } catch {}
+      // weak cellular. [instant-send 2026-06-01] Read the cached network type
+      // SYNCHRONOUSLY — NEVER `await NetInfo.fetch()` here. That probe blocked
+      // 1-4s on Android, delaying the ✓ status flip long after the message had
+      // already reached the server. The cache is kept fresh by the NetInfo
+      // listener; worst case (unknown type) it returns a sane 15s default.
+      const _sendTimeoutMs = (Platform.OS === 'web') ? 12000 : _sendTimeoutFromCache();
       const timeoutPromise = new Promise((_, reject) => setTimeout(() => { timeoutFlag.tripped = true; reject(new Error('timeout')); }, _sendTimeoutMs));
       const r = await Promise.race([sendPromise, timeoutPromise]);
       if (r.success && r.data?.id) {
