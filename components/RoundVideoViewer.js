@@ -35,6 +35,23 @@ function loadExpoVideo() {
   return _expoVideo;
 }
 
+// [2026-06-01] Round videos had no way to hear audio: the player never put the
+// iOS audio session into playback mode, so unmuting did nothing when the
+// hardware silent switch was on (the #1 reason "não dá pra ativar áudio").
+// Force playsInSilentMode the moment the user unmutes — same pattern used by
+// voice messages / ViewOnceMessage (expo-audio AudioModule.setAudioMode).
+function enablePlaybackAudioSession() {
+  try {
+    const { AudioModule } = require('expo-audio');
+    AudioModule?.setAudioMode?.({ playsInSilentMode: true });
+    return;
+  } catch {}
+  try {
+    const { Audio } = require('expo-av');
+    Audio?.setAudioModeAsync?.({ playsInSilentModeIOS: true });
+  } catch {}
+}
+
 // ── Inner player (extracted so hooks stay unconditional) ──────────────────
 function CircularPlayer({ uri, paused, muted, onReady }) {
   const ev = loadExpoVideo();
@@ -58,10 +75,17 @@ function CircularPlayer({ uri, paused, muted, onReady }) {
     } catch {}
   });
 
-  // Sync muted state
+  // Sync muted state. On unmute, also force volume up and put the audio
+  // session into playback mode so sound actually comes out (iOS silent switch).
   useEffect(() => {
     if (!player) return;
-    try { player.muted = muted; } catch {}
+    try {
+      player.muted = muted;
+      if (!muted) {
+        enablePlaybackAudioSession();
+        try { player.volume = 1; } catch {}
+      }
+    } catch {}
   }, [muted, player]);
 
   // Sync play/pause state
@@ -116,7 +140,12 @@ export default function RoundVideoViewer({ visible, uri, onClose }) {
   }, []);
 
   const handleToggleMute = useCallback(() => {
-    setMuted(m => !m);
+    setMuted(m => {
+      // Prime the audio session synchronously on the user gesture that unmutes,
+      // so the very first unmute produces sound (iOS needs this before play).
+      if (m) enablePlaybackAudioSession();
+      return !m;
+    });
   }, []);
 
   if (!visible || !uri) return null;
