@@ -578,7 +578,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           {!!quoted && (
             <View style={{ marginTop: Spacing.md }}>
               <TouchableOpacity
-                style={[s.quotedToggle, { backgroundColor: colors.surfaceVariant }]}
+                style={[s.quotedToggle, { backgroundColor: colors.primary + '12' }]}
                 onPress={() => {
                   LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                   setShowQuoted(!showQuoted);
@@ -715,7 +715,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         {!!quoted && (
           <View style={{ marginTop: Spacing.md }}>
             <TouchableOpacity
-              style={[s.quotedToggle, { backgroundColor: colors.surfaceVariant }]}
+              style={[s.quotedToggle, { backgroundColor: colors.primary + '12' }]}
               onPress={() => {
                 LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
                 setShowQuoted(!showQuoted);
@@ -931,7 +931,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           return <LabelChip key={lblKey + i} label={label} />;
         })}
         <TouchableOpacity
-          style={[s.addLabelBtn, { backgroundColor: colors.surfaceVariant }]}
+          style={[s.addLabelBtn, { backgroundColor: colors.primary + '12' }]}
           onPress={() => setShowLabelPicker(true)}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityLabel={t('reader.addLabel') || 'Add label'}
@@ -1060,7 +1060,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             </Text>
             {Platform.OS === 'web' && email.attachments.length > 1 && (
               <TouchableOpacity
-                style={[s.downloadAllBtn, { backgroundColor: colors.surfaceVariant }]}
+                style={[s.downloadAllBtn, { backgroundColor: colors.primary + '12' }]}
                 onPress={() => {
                   email.attachments.forEach((a, i) => {
                     const url = getAttachmentUrl(email.uid, folder || 'INBOX', a.part || (i + 1));
@@ -1191,7 +1191,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                 )}
                 <TouchableOpacity
                   onPress={() => { haptic.light(); onForward?.(); }}
-                  style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.surfaceVariant, alignItems: 'center', justifyContent: 'center' }}
+                  style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors.primary + '12', alignItems: 'center', justifyContent: 'center' }}
                   accessibilityLabel={t('reader.forward')}
                 >
                   <IconForward size={17} color={colors.textSecondary} />
@@ -1261,7 +1261,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                   )}
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[s.inlineReplySecBtn, { backgroundColor: colors.surfaceVariant }]}
+                  style={[s.inlineReplySecBtn, { backgroundColor: colors.primary + '12' }]}
                   accessibilityLabel={t('reader.expand')}
                   accessibilityRole="button"
                   onPress={() => {
@@ -1284,7 +1284,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                   <Text style={[s.inlineReplySecBtnText, { color: colors.textSecondary }]}>{t('reader.expand')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[s.inlineReplySecBtn, { backgroundColor: colors.surfaceVariant }]}
+                  style={[s.inlineReplySecBtn, { backgroundColor: colors.primary + '12' }]}
                   accessibilityLabel={t('reader.discard')}
                   accessibilityRole="button"
                   onPress={() => {
@@ -1325,7 +1325,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           </TouchableOpacity>
         )}
         <TouchableOpacity
-          style={[s.actionBtn, { backgroundColor: colors.surfaceVariant, borderColor: 'transparent' }]}
+          style={[s.actionBtn, { backgroundColor: colors.primary + '12', borderColor: 'transparent' }]}
           onPress={() => { haptic.light(); onForward?.(); }}
           accessibilityLabel={t('reader.forward')}
           accessibilityRole="button"
@@ -1343,7 +1343,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           <Text style={[s.actionText, { color: '#f59e0b' }]}>{t('reader.spam')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.actionBtn, { backgroundColor: showTranslation ? colors.primary + '18' : colors.surfaceVariant, borderColor: showTranslation ? colors.primary + '30' : 'transparent' }]}
+          style={[s.actionBtn, { backgroundColor: showTranslation ? colors.primary + '18' : colors.primary + '12', borderColor: showTranslation ? colors.primary + '30' : 'transparent' }]}
           onPress={async () => {
             if (showTranslation) {
               setShowTranslation(false);
@@ -1407,7 +1407,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         {/* Print works on both web (window.print via popup) and native
             (expo-print → AirPrint on iOS, print spooler on Android). */}
         <TouchableOpacity
-          style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
+          style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
           onPress={handlePrint}
           accessibilityLabel={t('reader.print')}
           accessibilityRole="button"
@@ -1420,7 +1420,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             action (Gmail puts it under the kebab menu; same effect). */}
         {onForwardAsAttachment && (
           <TouchableOpacity
-            style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
+            style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
             onPress={() => onForwardAsAttachment(email)}
             accessibilityLabel={t('reader.forwardAsAttachment') || 'Encaminhar como anexo'}
             accessibilityRole="button"
@@ -1435,7 +1435,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             the email so /tasks can deep-link back here. */}
         {onAddAsTask && (
           <TouchableOpacity
-            style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
+            style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
             onPress={() => onAddAsTask(email)}
             accessibilityLabel={t('reader.addAsTask') || 'Adicionar como tarefa'}
             accessibilityRole="button"
@@ -1448,7 +1448,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         )}
         {onMarkUnread && (
           <TouchableOpacity
-            style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
+            style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
             onPress={() => { onMarkUnread(email); onClose?.(); }}
             accessibilityLabel={t('contextMenu.markUnread')}
             accessibilityRole="button"
@@ -1458,7 +1458,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           </TouchableOpacity>
         )}
         <TouchableOpacity
-          style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
+          style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
           onPress={async () => {
             const r = await blockSender(email.from);
             if (r.success) setBlocked(true);
@@ -1472,7 +1472,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
+          style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
           onPress={async () => {
             const r = await muteThread(email.uid, folder || 'INBOX');
             if (r.success) setMuted(true);
@@ -1486,7 +1486,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
+          style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
           onPress={() => {
             const url = getExportUrl(email.uid, folder || 'INBOX');
             if (Platform.OS === 'web') {
@@ -1505,7 +1505,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           <Text style={[s.secBtnText, { color: colors.textSecondary }]}>{t('reader.export')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.secBtn, { backgroundColor: colors.surfaceVariant }]}
+          style={[s.secBtn, { backgroundColor: colors.primary + '12' }]}
           onPress={() => {
             const title = encodeURIComponent(email.subject || '');
             router.push(`/calendar?newEvent=true&title=${title}`);

@@ -504,12 +504,12 @@ export default function ComposeModal({ params, onClose }) {
                   {(!showCc || !showBcc) && (
                     <View style={cm.ccBtns}>
                       {!showCc && (
-                        <TouchableOpacity onPress={() => setShowCc(true)} style={[cm.ccToggle, { backgroundColor: colors.surfaceVariant }]}>
+                        <TouchableOpacity onPress={() => setShowCc(true)} style={[cm.ccToggle, { backgroundColor: colors.primary + '12' }]}>
                           <Text style={[cm.ccToggleText, { color: colors.textSecondary }]}>Cc</Text>
                         </TouchableOpacity>
                       )}
                       {!showBcc && (
-                        <TouchableOpacity onPress={() => setShowBcc(true)} style={[cm.ccToggle, { backgroundColor: colors.surfaceVariant }]}>
+                        <TouchableOpacity onPress={() => setShowBcc(true)} style={[cm.ccToggle, { backgroundColor: colors.primary + '12' }]}>
                           <Text style={[cm.ccToggleText, { color: colors.textSecondary }]}>Bcc</Text>
                         </TouchableOpacity>
                       )}
@@ -594,7 +594,7 @@ export default function ComposeModal({ params, onClose }) {
               {/* Bottom toolbar — fixed inside modal */}
               <View style={[cm.toolbar, { borderTopColor: colors.borderLight, backgroundColor: colors.surface }]}>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={cm.toolbarInner}>
-                  <TouchableOpacity style={[cm.iconToolBtn, { backgroundColor: colors.surfaceVariant }]}>
+                  <TouchableOpacity style={[cm.iconToolBtn, { backgroundColor: colors.primary + '12' }]}>
                     <IconPaperclip size={16} color={colors.textSecondary} />
                   </TouchableOpacity>
                   <TouchableOpacity

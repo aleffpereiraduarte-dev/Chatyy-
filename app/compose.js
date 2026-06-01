@@ -1534,7 +1534,7 @@ export default function ComposeScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           onPress={handleImprove}
-          style={[s.toolBtn, { backgroundColor: improving ? colors.primaryLight : colors.surfaceVariant }]}
+          style={[s.toolBtn, { backgroundColor: improving ? colors.primaryLight : colors.primary + '12' }]}
           disabled={improving}
           accessibilityLabel={t('compose.improveText')}
           accessibilityRole="button"
@@ -1579,7 +1579,7 @@ export default function ComposeScreen() {
                 }
               } catch {}
             }}
-            style={[s.toolBtn, { backgroundColor: colors.surfaceVariant }]}
+            style={[s.toolBtn, { backgroundColor: colors.primary + '12' }]}
             accessibilityLabel={t('compose.meet') || 'Meet'}
             accessibilityRole="button"
           >
@@ -1590,7 +1590,7 @@ export default function ComposeScreen() {
         {/* Read-receipt opt-in (Confirmar leitura) */}
         <TouchableOpacity
           onPress={() => persistTrackOpens(!trackOpens)}
-          style={[s.toolBtn, { backgroundColor: trackOpens ? colors.primaryLight : colors.surfaceVariant }]}
+          style={[s.toolBtn, { backgroundColor: trackOpens ? colors.primaryLight : colors.primary + '12' }]}
           accessibilityLabel={t('compose.trackOpens')}
           accessibilityRole="button"
           accessibilityState={{ checked: trackOpens }}
@@ -1605,7 +1605,7 @@ export default function ComposeScreen() {
         {/* Confidential mode toggle */}
         <TouchableOpacity
           onPress={() => setConfidentialModal(true)}
-          style={[s.toolBtn, { backgroundColor: confidential ? colors.primaryLight : colors.surfaceVariant }]}
+          style={[s.toolBtn, { backgroundColor: confidential ? colors.primaryLight : colors.primary + '12' }]}
           accessibilityLabel={t('compose.confidential') || 'Modo confidencial'}
           accessibilityRole="button"
           accessibilityState={{ checked: confidential }}
@@ -1619,7 +1619,7 @@ export default function ComposeScreen() {
         {/* PGP encryption toggle (round-6 gap-closer) */}
         <TouchableOpacity
           onPress={() => setPgpEncrypt(v => !v)}
-          style={[s.toolBtn, { backgroundColor: pgpEncrypt ? colors.primaryLight : colors.surfaceVariant }]}
+          style={[s.toolBtn, { backgroundColor: pgpEncrypt ? colors.primaryLight : colors.primary + '12' }]}
           accessibilityLabel={t('compose.pgpEncrypt') || 'Criptografar com PGP'}
           accessibilityRole="button"
           accessibilityState={{ checked: pgpEncrypt }}
@@ -1644,7 +1644,7 @@ export default function ComposeScreen() {
                 }).catch(() => {});
               }
             }}
-            style={[s.toolBtn, { backgroundColor: sendAndArchive ? colors.primaryLight : colors.surfaceVariant }]}
+            style={[s.toolBtn, { backgroundColor: sendAndArchive ? colors.primaryLight : colors.primary + '12' }]}
             accessibilityLabel={t('compose.sendAndArchive') || 'Enviar e arquivar'}
             accessibilityRole="button"
             accessibilityState={{ checked: sendAndArchive }}
@@ -1821,7 +1821,7 @@ export default function ComposeScreen() {
                   )}
                   <TouchableOpacity
                     onPress={() => setShowQuote(!showQuote)}
-                    style={[s.showMoreBtn, { backgroundColor: colors.surfaceVariant }]}
+                    style={[s.showMoreBtn, { backgroundColor: colors.primary + '12' }]}
                     activeOpacity={0.7}
                   >
                     <Text style={[s.showMoreText, { color: colors.textSecondary }]}>
@@ -2097,7 +2097,7 @@ export default function ComposeScreen() {
               <View style={[s.quoteSection, { borderTopColor: colors.borderLight }]}>
                 <TouchableOpacity
                   onPress={() => setShowQuote(!showQuote)}
-                  style={[s.showMoreBtn, { backgroundColor: colors.surfaceVariant, alignSelf: 'flex-start', marginLeft: Spacing.xl, marginVertical: Spacing.sm }]}
+                  style={[s.showMoreBtn, { backgroundColor: colors.primary + '12', alignSelf: 'flex-start', marginLeft: Spacing.xl, marginVertical: Spacing.sm }]}
                   activeOpacity={0.7}
                 >
                   <Text style={[s.showMoreText, { color: colors.textSecondary }]}>
