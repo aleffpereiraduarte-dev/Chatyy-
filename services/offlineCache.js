@@ -525,7 +525,14 @@ export async function replayOfflineQueue(api) {
               ws?.relayChatMessage?.(action.conversation_id, serverMsg, action.temp_id, []);
             } catch {}
           } else {
-            throw new Error('audio_upload_failed');
+            // Classify hard failures (too large / bad mime / 4xx) so the replay
+            // queue DROPS them instead of retrying forever (parity with the
+            // chat_voice_upload + chat_file_upload cases).
+            const m = String(r?.message || r?.error || '');
+            const isHard = /too large|size|mime|rejected|blocked|forbidden|\b413\b|\b415\b|\b403\b/i.test(m);
+            const err = new Error(m || 'audio_upload_failed');
+            if (isHard) err.isHardError = true;
+            throw err;
           }
           break;
         }

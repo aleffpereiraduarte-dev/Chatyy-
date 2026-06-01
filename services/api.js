@@ -3612,7 +3612,13 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
       // double-check delivered indicator via chat_message_receipts.
       try { await _localUpdateMessage(localTempId, { pending_state: 'sent' }); } catch {}
     } else {
-      const serverRow = result.message || result.data?.message || (
+      // apiCall returns the response BODY {success,data,message} at top level,
+      // and chat_send puts the message ROW at result.data with key `id` (not
+      // message_id, not data.message). The old shape-guesses all missed → the
+      // optimistic SQLite row never finalized (kept tmp id + 'pending' forever,
+      // risking a dup on next pull). Prefer the real row shape first.
+      const serverRow = (result.data && result.data.id) ? result.data : (
+        result.message || result.data?.message || (
         (result.message_id || result.data?.message_id) ? {
           id: result.message_id || result.data?.message_id,
           conversation_id: conversationId,
@@ -3623,7 +3629,7 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
           client_message_id: stableCMI,
           created_at: result.created_at || new Date().toISOString(),
         } : null
-      );
+      ));
       if (serverRow) await _localFinalizeSend(localTempId, serverRow);
     }
   } else if (result && result.success === false) {
@@ -6610,7 +6616,10 @@ export async function fileUploadDirect(file, folderId = null, onProgress = null)
     }
     return { success: true, data: { file_id: init.data.file_id, url: init.data.upload_url } };
   } catch (e) {
-    // Fallback to legacy
+    // Log so the direct-to-R2 path doesn't silently disable itself (a presign
+    // 403 / auth failure used to vanish here). Fall back to the slower legacy
+    // server upload only for network-class errors; surface real auth/4xx.
+    try { console.warn('[fileUploadDirect] R2 path failed, falling back to legacy:', e?.message || e); } catch {}
     return fileUpload(file, folderId);
   }
 }
