@@ -3494,9 +3494,6 @@ export default function OneScreen() {
           <Text style={[st.emptyGreeting, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>
             {t('one.emptyTitle') || 'How can I help?'}
           </Text>
-          <Text style={[st.emptySubtitle, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>
-            {t('one.emptyHint') || 'How can I help today?'}
-          </Text>
         </View>
 
         {/* Horizontal scroll prompt chips — brand outline + press scale 0.96.
@@ -3507,7 +3504,7 @@ export default function OneScreen() {
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 4 }}
+          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 4, flexGrow: 1, justifyContent: 'center' }}
           keyboardShouldPersistTaps="handled"
         >
           {sugCards.map((item) => (
@@ -3655,7 +3652,7 @@ export default function OneScreen() {
           )}
 
           <View style={[st.inputBoxClean, {
-            backgroundColor: isDark ? '#2A2A2A' : '#F4F4F5',
+            backgroundColor: isDark ? '#2A2A2A' : '#FAFAFB',
             borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
           }]}>
             {/* Left: plus (attach) + mic */}

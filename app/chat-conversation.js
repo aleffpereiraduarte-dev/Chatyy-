@@ -22093,11 +22093,9 @@ export default function ChatConversationScreen() {
                   </View>
                 );
               })()}
-              {!!msg.edited_at && !isDeleted && (
-                <Text style={{ fontSize: 11, fontStyle: 'italic', color: isOwn ? ownMetaColor : colors.textTertiary, marginRight: 4, opacity: 0.85 }}>
-                  {t('chatConv.edited') || 'editada'}
-                </Text>
-              )}
+              {/* [edited indicator] single source — the tappable "(editada Nx)"
+                  label above (line ~22054) is the only one. A second plain
+                  "editada" here rendered the tag TWICE on every edited message. */}
               <Text numberOfLines={1} style={[styles.msgTime, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
                 {formatTime(msg.created_at)}
               </Text>

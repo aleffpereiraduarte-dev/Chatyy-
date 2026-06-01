@@ -1905,7 +1905,7 @@ function SettingsScreenInner() {
                       paddingHorizontal: 14, paddingVertical: 9,
                       borderRadius: 12, borderWidth: selected ? 1.5 : 1,
                       borderColor: selected ? colors.primary : colors.borderLight,
-                      backgroundColor: selected ? colors.primary + '14' : colors.surfaceVariant || 'transparent',
+                      backgroundColor: selected ? colors.primary + '14' : 'transparent',
                     }}
                     onPress={() => setUserCurrency(code)}
                     accessibilityRole="button"

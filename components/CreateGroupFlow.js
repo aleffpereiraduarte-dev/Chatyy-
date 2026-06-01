@@ -489,12 +489,12 @@ const sty = StyleSheet.create({
   },
   stepDot: {
     width: 10, height: 10, borderRadius: 5,
-    backgroundColor: '#ccc',
+    backgroundColor: 'rgba(120,120,128,0.22)',
   },
   stepDotActive: { backgroundColor: ACCENT },
   stepLine: {
     width: 40, height: 2,
-    backgroundColor: '#ccc',
+    backgroundColor: 'rgba(120,120,128,0.22)',
     overflow: 'hidden',
   },
   stepLineActive: { backgroundColor: ACCENT },
