@@ -1526,6 +1526,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         self.session.localVideoTrack = pub?.track as? LocalVideoTrack
                     }
                     print("[CallVC] camera first-publish — callId=\(self.callId)")
+                    // [2026-06-01 VIDEO PARITY] Tell the peer we just switched to
+                    // video so THEY enable their camera too → both see each other
+                    // (WhatsApp audio→video upgrade). JS (/call.js case
+                    // 'video_request') + Android (CallActivity.kt:1999) both
+                    // already handle this frame.
+                    self.sendVideoRequest(action: "request")
                 } // else: disable requested but never published — no-op
             } catch {
                 print("[CallVC] setCamera(\(enabled)) failed: \(error)")
@@ -1551,6 +1557,20 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             object: nil,
             userInfo: ["enabled": enabled]
         )
+    }
+
+    /// [2026-06-01 VIDEO PARITY] Native twin of JS `sendData({type:'video_request',...})`
+    /// and Android `requestVideoUpgrade()`. Publishes the audio→video handshake
+    /// frame over the LiveKit data channel (reliable) so the peer enables its
+    /// camera too. Reuses the same `publish(data:)` API as sendReaction().
+    private func sendVideoRequest(action: String) {
+        guard let r = self.room else { return }
+        let payload = "{\"type\":\"video_request\",\"action\":\"\(action)\"}"
+        guard let data = payload.data(using: .utf8) else { return }
+        Task {
+            do { try await r.localParticipant.publish(data: data) }
+            catch { print("[CallVC] sendVideoRequest(\(action)) failed: \(error)") }
+        }
     }
 
     /// [#1358] Show / hide the camera-flip control (tag 9006). Only meaningful
@@ -3883,6 +3903,32 @@ extension CallViewController: RoomDelegate {
               forTopic topic: String,
               encryptionType: EncryptionType) {
         guard let str = String(data: data, encoding: .utf8) else { return }
+        // [2026-06-01 VIDEO PARITY] Handle the `video_request` handshake the JS
+        // (/call.js) and Android (CallActivity.kt) sides already speak. ROOT
+        // CAUSE of "quando muda pra vídeo o outro vê mas quem ligou não vê": iOS
+        // had ZERO video_request handling, so when the peer (or the JS caller)
+        // turned on their camera and sent {type:video_request,action:request},
+        // iOS ignored it → never enabled ITS camera → the requester never got a
+        // remote video track to render → one-way video. We auto-accept (both
+        // sides already consented to the live call) so a 1:1 audio→video switch
+        // makes BOTH cameras turn on, exactly like WhatsApp.
+        if str.hasPrefix("{"), let jd = str.data(using: .utf8),
+           let obj = (try? JSONSerialization.jsonObject(with: jd)) as? [String: Any],
+           (obj["type"] as? String) == "video_request" {
+            let action = (obj["action"] as? String) ?? ""
+            if action == "request" {
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self else { return }
+                    if !self.session.camEnabled {
+                        self.session.camEnabled = true
+                        self.applyCamEnabled(true)
+                        // ACK so the requester's "waiting for video" UI clears.
+                        self.sendVideoRequest(action: "accepted")
+                    }
+                }
+            }
+            return
+        }
         guard str.hasPrefix("R:") else { return }
         let emoji = String(str.dropFirst(2))
         let reaction = CallFloatingReaction(

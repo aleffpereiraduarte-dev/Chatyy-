@@ -2530,9 +2530,18 @@ class CallActivity : ComponentActivity() {
   private fun handleVideoRequestData(action: String) {
     when (action) {
       "request" -> {
-        // Peer wants to turn the audio call into video — surface the prompt.
-        Log.d(TAG, "video_request:request — showing accept prompt")
-        state.pendingVideoRequest = true
+        // [2026-06-01 VIDEO PARITY] Peer switched to video → auto-accept so BOTH
+        // cameras turn on and each side sees the other (WhatsApp audio→video).
+        // Previously this only set pendingVideoRequest=true (a prompt the user
+        // had to tap), so if they never tapped, the requester saw nothing back =
+        // the "quem ligou não vê" one-way-video report. Both already consented
+        // to the live call; auto-publish + ACK. iOS (CallViewController
+        // didReceiveData) now does the same.
+        Log.d(TAG, "video_request:request — auto-accepting (publish our camera + ACK)")
+        state.pendingVideoRequest = false
+        if (!state.isVideo || !state.isCameraOn) {
+          respondVideoRequest(true)
+        }
       }
       "accepted" -> {
         // We had asked; the peer agreed. Publish our camera + enter video mode.
