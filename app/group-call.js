@@ -49,8 +49,9 @@ try { Clipboard = require('expo-clipboard'); } catch {}
 
 // Brand purple — keep in sync with theme/Colors.brand.
 const BRAND_PURPLE = '#7C3AED';
-// Active-speaker ring — bright amber so it pops on dark group call bg.
-const SPEAKER_RING = '#fbbf24';
+// Active-speaker ring — calm emerald green (Meet/WhatsApp style). Clear
+// active indication without the gaudy amber flash.
+const SPEAKER_RING = '#34d399';
 // Recording red badge color — matches CallKit native recording chip.
 const REC_RED = '#DC2626';
 // 6 emoji presets — order is intentional (👍 first because positive ack
@@ -165,6 +166,9 @@ export default function GroupCallScreen() {
   // Active-speaker tile pulse driver — shared across all tiles, each one
   // multiplies its halo opacity by the same value so the pulse is in sync.
   const speakerPulse = useRef(new Animated.Value(0)).current;
+  // Connecting skeleton shimmer — gentle opacity breathe so the avatar
+  // placeholders read as "loading" rather than a static empty grid.
+  const skeletonPulse = useRef(new Animated.Value(0)).current;
 
   // Compute my role — derived from `role` carried on the participant entry
   // (LiveKit metadata mirrored from chat_call_roles) with a fallback for
@@ -331,6 +335,19 @@ export default function GroupCallScreen() {
     loop.start();
     return () => loop.stop();
   }, [speakerPulse]);
+
+  // ─── Connecting skeleton shimmer ───
+  // Lightweight opacity breathe (native driver) shared by every skeleton
+  // tile so the connecting grid feels alive without per-tile loops.
+  useEffect(() => {
+    if (token) return; // only while the placeholder grid is up
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(skeletonPulse, { toValue: 1, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      Animated.timing(skeletonPulse, { toValue: 0, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+    ]));
+    loop.start();
+    return () => loop.stop();
+  }, [token, skeletonPulse]);
 
   // origin extrai só o host:port — antes mantinha o path do BASE_URL e
   // gerava URLs tipo `/api/livekit-room.html` que não existem.
@@ -533,6 +550,10 @@ export default function GroupCallScreen() {
     const mode = pickGridCols(participants.length);
     // Halo opacity shared across modes.
     const haloOpacity = speakerPulse.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.85] });
+    // Connecting-skeleton shimmer — gentle opacity breathe over the avatar
+    // placeholders while we don't yet have the live LiveKit feed.
+    const connecting = !token;
+    const shimmerOpacity = skeletonPulse.interpolate({ inputRange: [0, 1], outputRange: [0.04, 0.16] });
 
     const renderTile = (p, size, opts = {}) => {
       const isSpeaking = activeSpeakerEmail && p.email === activeSpeakerEmail;
@@ -557,6 +578,15 @@ export default function GroupCallScreen() {
               ]} />
             )}
             <AvatarCircle email={p.email} name={p.name} size={size - 8} />
+            {connecting && (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.skeletonShimmer,
+                  { borderRadius: size / 2, opacity: shimmerOpacity },
+                ]}
+              />
+            )}
             {isSilenced && (
               <View style={styles.silencedBadge}>
                 <Svg width={12} height={12} viewBox="0 0 24 24" fill="none">
@@ -620,7 +650,7 @@ export default function GroupCallScreen() {
         </View>
       </View>
     );
-  }, [participants, activeSpeakerEmail, displayedSpeaker, speakerPulse, pinnedEmail, silencedEmails, myEmail]);
+  }, [participants, activeSpeakerEmail, displayedSpeaker, speakerPulse, skeletonPulse, token, pinnedEmail, silencedEmails, myEmail]);
 
   // Floating reaction layer — sits above the WebView. Each reaction
   // animates upward + fades out.
@@ -671,7 +701,10 @@ export default function GroupCallScreen() {
   // eye. We render it for EVERYONE in the room (legal consent rule).
   const RecordingBanner = recording ? (
     <View style={styles.recBanner}>
-      <Animated.View style={[styles.recDot, { opacity: recPulse }]} />
+      <Animated.View style={[styles.recPill, { opacity: recPulse }]}>
+        <View style={styles.recDot} />
+        <Text style={styles.recPillText}>REC</Text>
+      </Animated.View>
       <Text style={styles.recBannerText}>{t('call.group.recordedBadge') || 'Being recorded'}</Text>
     </View>
   ) : null;
@@ -1014,41 +1047,51 @@ const styles = StyleSheet.create({
   avatarShell: {
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 2,
-    borderColor: 'transparent',
+    borderColor: 'rgba(255,255,255,0.06)',
   },
-  // Active-speaker ring — bright yellow 2px (matches WhatsApp / FaceTime
-  // affordance). Only active on the participant LiveKit reports as
-  // currently speaking.
+  // Active-speaker ring — calm 3px emerald green (Meet/WhatsApp affordance).
+  // Clear active indication with a soft matching glow, no flashing.
   avatarShellSpeaking: {
+    borderWidth: 3,
     borderColor: SPEAKER_RING,
     shadowColor: SPEAKER_RING,
-    shadowOpacity: 0.45,
-    shadowRadius: 10,
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
     shadowOffset: { width: 0, height: 0 },
     elevation: 6,
   },
-  // Pinned tile gets a purple ring instead of yellow — communicates
-  // "manually held in foreground" vs "currently speaking".
+  // Pinned tile gets a purple ring — communicates "manually held in
+  // foreground" vs the green "currently speaking".
   avatarShellPinned: {
     borderColor: BRAND_PURPLE,
   },
-  // Speaker pulse halo — a thin purple ring just outside the avatar that
+  // Speaker pulse halo — a thin green ring just outside the avatar that
   // breathes with the shared animation driver.
   speakerHalo: {
     position: 'absolute',
     borderWidth: 2,
-    borderColor: BRAND_PURPLE,
+    borderColor: SPEAKER_RING,
     backgroundColor: 'transparent',
   },
+  // Connecting skeleton shimmer — soft white wash over placeholder avatars.
+  skeletonShimmer: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    right: 4,
+    bottom: 4,
+    backgroundColor: '#fff',
+  },
   gridName: {
-    color: 'rgba(255,255,255,0.85)',
+    color: 'rgba(255,255,255,0.9)',
     fontSize: 13,
     fontWeight: '600',
     marginTop: 8,
     maxWidth: 140,
     textAlign: 'center',
+    letterSpacing: -0.1,
   },
   // [gap E3] Silenced-for-me badge — sits bottom-right of avatar to flag
   // "you've muted them locally" so the user doesn't think they're silent.
@@ -1175,8 +1218,20 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(220,38,38,0.4)',
   },
-  recDot: { width: 9, height: 9, borderRadius: 4.5, backgroundColor: REC_RED },
-  recBannerText: { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
+  // REC pill — small red rounded badge with a dot + "REC" label. The whole
+  // pill gently pulses (recPulse) so it reads as actively recording.
+  recPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: REC_RED,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  recDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: '#fff' },
+  recPillText: { color: '#fff', fontSize: 11, fontWeight: '800', letterSpacing: 0.8 },
+  recBannerText: { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.2 },
 
   // Raised-hand banner — small chip below the header.
   handsBanner: {

@@ -282,14 +282,16 @@ function PulsingOnlineDot({ colors, isDark }) {
     <Animated.View style={[s.onlineDot, {
       borderColor: isDark ? '#0B141A' : colors.background,
       transform: [{ scale: innerScale }],
+      // [beauty 2026-05-31] Single soft halo instead of a stacked double-glow —
+      // a crisp 2px-ringed presence pip with a calm green aura, never a neon blob.
       ...(Platform.OS === 'web'
-        ? { boxShadow: '0 0 8px rgba(34,197,94,0.7), 0 0 14px rgba(34,197,94,0.4)' }
+        ? { boxShadow: '0 0 6px rgba(34,197,94,0.5)' }
         : {
             shadowColor: '#22c55e',
             shadowOffset: { width: 0, height: 0 },
-            shadowOpacity: 0.85,
-            shadowRadius: 5,
-            elevation: 4,
+            shadowOpacity: 0.55,
+            shadowRadius: 3.5,
+            elevation: 3,
           }),
     }]}>
       <Animated.View
@@ -705,7 +707,10 @@ const ConversationRow = React.memo(function ConversationRow({
   // base. The unread tint is intentionally lighter than the press-state so a
   // hover/press still reads as a distinct layer on top of it.
   const rowBg = hovered
-    ? (isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.025)')
+    // [beauty 2026-05-31] Web hover is a very light BRAND tint (hovered is only
+    // ever set on web via onMouseEnter — mobile never flips it), so the cursor
+    // leaves a subtle purple wash instead of a flat grey. Tasteful, low alpha.
+    ? (isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.05)')
     : (unread && !isMuted)
       ? (isDark ? 'rgba(124,58,237,0.07)' : 'rgba(124,58,237,0.045)')
       : isPinned
@@ -936,10 +941,13 @@ const ConversationRow = React.memo(function ConversationRow({
                     style={[
                       s.rowPreview,
                       {
+                        // Unread preview reads a notch darker + a hair heavier so
+                        // the whole row (name + preview) leans forward as "unread",
+                        // while read rows stay quiet secondary text. WhatsApp/iMessage.
                         color: unread
-                          ? (isDark ? '#e0e0e0' : '#333')
+                          ? (isDark ? '#e8e8ea' : '#262626')
                           : (isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)'),
-                        fontWeight: unread ? '500' : '400',
+                        fontWeight: unread ? '600' : '400',
                       },
                     ]}
                     numberOfLines={1}
@@ -7493,11 +7501,14 @@ const s = StyleSheet.create({
   // legible contrast jump (iMessage-style) rather than a subtle weight nudge.
   rowName: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '500',
     flex: 1,
     letterSpacing: -0.25,
   },
-  rowNameUnread: { fontWeight: '700', letterSpacing: -0.3 },
+  // [beauty 2026-05-31] Unread jumps to 800 so the read(500)→unread(800) step is
+  // an unmistakable iMessage/WhatsApp-style contrast — a glance reads which rows
+  // are waiting on you, no squinting.
+  rowNameUnread: { fontWeight: '800', letterSpacing: -0.3 },
   // Timestamp sits flush-right, tabular-ish so the right column stays aligned
   // across rows regardless of "agora" vs "14:32" vs "Ontem".
   // [beauty 2026-05-31] Timestamp flush-right, tabular so the right column stays
@@ -7535,11 +7546,14 @@ const s = StyleSheet.create({
     paddingHorizontal: 7,
     backgroundColor: '#7C3AED',
   },
+  // [beauty 2026-05-31] One soft, tasteful shadow — no glow stack. Calmed from a
+  // heavier purple bloom (0.38 / 0 2px 7px 0.4) to a single gentle lift so the
+  // pill reads as a clean colored count, not a glowing blob.
   unreadBadgeShadow: {
     ...Platform.select({
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.38, shadowRadius: 5 },
-      android: { elevation: 3 },
-      web: { boxShadow: '0 2px 7px rgba(124,58,237,0.4)' },
+      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.22, shadowRadius: 3 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 1px 4px rgba(124,58,237,0.28)' },
       default: {},
     }),
   },

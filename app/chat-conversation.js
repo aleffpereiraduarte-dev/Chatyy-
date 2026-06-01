@@ -135,6 +135,12 @@ let _videoSendPipeline = null;
 try { _videoSendPipeline = require('../services/videoSendPipeline'); } catch {}
 let AISummarizeModal = null; try { AISummarizeModal = require('../components/chat/AISummarizeModal').default; } catch {}
 let SmartRepliesBar = null; try { SmartRepliesBar = require('../components/chat/SmartRepliesBar').default; } catch {}
+// [2026-05-31] Group invite QR — render the QR LOCALLY with react-native-qrcode-svg
+// (same lazy-require used in profile-qr.js / WalletReceiveSheet.js). The old modal
+// fetched the QR image from the external api.qrserver.com endpoint, so on any device
+// that couldn't reach that host the box stayed blank/spinning forever ("QR não
+// funciona"). Local rendering is instant, offline, and has no 3rd-party dependency.
+let InviteQRCode = null; try { InviteQRCode = require('react-native-qrcode-svg').default; } catch {}
 // 2026-05-18: in-chat short videos (Reels-style 9:16 auto-loop). Lazy require
 // so the bubble + recorder modules don't get parsed when the feature flag is
 // off (kept off for non-rollout users via isShortVideoInChatEnabled()).
@@ -28922,7 +28928,11 @@ export default function ChatConversationScreen() {
             <View style={{ width: 240, height: 240, backgroundColor: '#fff', borderRadius: 14, padding: 10, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.borderLight || '#e5e7eb' }}>
               {inviteLinkLoading || !inviteLink ? (
                 <ActivityIndicator size="large" color={colors.primary} />
+              ) : InviteQRCode ? (
+                // Local QR (instant, offline, no external dependency).
+                <InviteQRCode value={inviteLink} size={220} backgroundColor="#fff" color="#111" />
               ) : (
+                // Fallback for environments without react-native-svg (web SSR).
                 <Image
                   source={{ uri: `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(inviteLink)}&size=220x220&format=png&margin=4` }}
                   style={{ width: 220, height: 220 }}

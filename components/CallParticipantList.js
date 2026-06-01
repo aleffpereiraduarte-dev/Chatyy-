@@ -265,8 +265,9 @@ export default function CallParticipantList({
                   <View key={p.email} style={[styles.row, speaking && styles.rowSpeaking]}>
                     <View style={styles.avatarWrap}>
                       <View style={[styles.avatarHalo, speaking && styles.avatarHaloSpeaking]}>
-                        <AvatarCircle email={p.email} name={p.name} size={40} />
+                        <AvatarCircle email={p.email} name={p.name} size={44} />
                       </View>
+                      {speaking && <View style={styles.speakingDot} />}
                       {hand && <View style={styles.handDot}><IconHand size={10} /></View>}
                     </View>
 
@@ -284,24 +285,24 @@ export default function CallParticipantList({
                       </View>
                       <View style={styles.statusLine}>
                         {muted ? (
-                          <View style={styles.statusChip}>
-                            <IconMic size={11} color={MUTED_COLOR} off />
-                            <Text style={[styles.statusText, { color: MUTED_COLOR }]}>{t('call.group.muted') || 'Muted'}</Text>
+                          <View style={[styles.statusChip, styles.statusChipMuted]}>
+                            <IconMic size={11} color={DANGER} off />
+                            <Text style={[styles.statusText, { color: DANGER }]}>{t('call.group.muted') || 'Muted'}</Text>
                           </View>
                         ) : speaking ? (
-                          <View style={[styles.statusChip, { backgroundColor: 'rgba(16,185,129,0.15)' }]}>
-                            <IconMic size={11} color={SUCCESS} />
+                          <View style={[styles.statusChip, styles.statusChipSpeaking]}>
+                            <View style={styles.speakingChipDot} />
                             <Text style={[styles.statusText, { color: SUCCESS }]}>{t('call.group.speaking') || 'Speaking'}</Text>
                           </View>
                         ) : null}
                         {video && (
-                          <View style={styles.statusChip}>
-                            <IconVideo size={11} color="#A78BFA" />
-                            <Text style={[styles.statusText, { color: '#A78BFA' }]}>{t('call.group.videoOn') || 'Video'}</Text>
+                          <View style={[styles.statusChip, styles.statusChipVideo]}>
+                            <IconVideo size={11} color="#60A5FA" />
+                            <Text style={[styles.statusText, { color: '#60A5FA' }]}>{t('call.group.videoOn') || 'Video'}</Text>
                           </View>
                         )}
                         {isPinned && (
-                          <View style={[styles.statusChip, { backgroundColor: 'rgba(124,58,237,0.18)' }]}>
+                          <View style={[styles.statusChip, styles.statusChipPinned]}>
                             <IconPin size={10} color={BRAND_PURPLE} filled />
                             <Text style={[styles.statusText, { color: BRAND_PURPLE }]}>{t('call.group.pin') || 'Pinned'}</Text>
                           </View>
@@ -440,15 +441,15 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 10,
+    paddingVertical: 12,
     paddingHorizontal: 12,
-    borderRadius: 12,
+    borderRadius: 16,
     marginBottom: 4,
   },
   rowSpeaking: {
-    backgroundColor: 'rgba(16,185,129,0.06)',
+    backgroundColor: 'rgba(16,185,129,0.08)',
   },
-  avatarWrap: { width: 48, height: 48, marginRight: 12, position: 'relative' },
+  avatarWrap: { width: 48, height: 48, marginRight: 14, position: 'relative' },
   avatarHalo: {
     width: 48,
     height: 48,
@@ -459,7 +460,20 @@ const styles = StyleSheet.create({
     borderColor: 'transparent',
   },
   avatarHaloSpeaking: {
+    borderWidth: 2.5,
     borderColor: SUCCESS,
+  },
+  // Small green "live mic" dot pinned to the avatar while speaking.
+  speakingDot: {
+    position: 'absolute',
+    bottom: -1,
+    right: -1,
+    width: 13,
+    height: 13,
+    borderRadius: 7,
+    backgroundColor: SUCCESS,
+    borderWidth: 2,
+    borderColor: '#111827',
   },
   handDot: {
     position: 'absolute',
@@ -473,25 +487,34 @@ const styles = StyleSheet.create({
   },
   rowMain: { flex: 1, justifyContent: 'center' },
   rowNameLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  rowName: { color: '#fff', fontSize: 15, fontWeight: '600', maxWidth: '70%' },
+  rowName: { color: '#fff', fontSize: 15.5, fontWeight: '600', maxWidth: '70%', letterSpacing: -0.2 },
   youSuffix: { color: '#9CA3AF', fontWeight: '400' },
   roleBadge: {
-    paddingHorizontal: 6,
+    paddingHorizontal: 7,
     paddingVertical: 2,
-    borderRadius: 6,
+    borderRadius: 7,
     borderWidth: 1,
   },
   roleBadgeText: { fontSize: 10, fontWeight: '700', letterSpacing: 0.4 },
-  statusLine: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3, flexWrap: 'wrap' },
+  statusLine: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 5, flexWrap: 'wrap' },
   statusChip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
     backgroundColor: 'rgba(255,255,255,0.06)',
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 7,
   },
+  // Muted = red mic-off pill.
+  statusChipMuted: { backgroundColor: 'rgba(239,68,68,0.14)' },
+  // Speaking = green pill with a live dot.
+  statusChipSpeaking: { backgroundColor: 'rgba(16,185,129,0.16)' },
+  speakingChipDot: { width: 7, height: 7, borderRadius: 3.5, backgroundColor: SUCCESS },
+  // Video on = blue cam pill.
+  statusChipVideo: { backgroundColor: 'rgba(96,165,250,0.14)' },
+  // Pinned = brand purple pill.
+  statusChipPinned: { backgroundColor: 'rgba(124,58,237,0.18)' },
   statusText: { fontSize: 11, fontWeight: '600' },
   rowActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   iconBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },

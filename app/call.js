@@ -3147,8 +3147,8 @@ function CallScreenInner() {
     if (peerConnected) return;
     const pulse = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 1.08, duration: 1000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 1000, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1.045, duration: 1300, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 1300, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
       ])
     );
     pulse.start();
@@ -4574,7 +4574,7 @@ function CallScreenInner() {
                   ]}
                 />
               )}
-              <Animated.View style={{ transform: [{ scale: peerConnected ? 1 : pulseAnim }] }}>
+              <Animated.View style={[styles.centerAvatarRing, { transform: [{ scale: peerConnected ? 1 : pulseAnim }] }]}>
                 <AvatarCircle name={callerName} email={_safePeerEmail} size={150} />
                 {(() => {
                   if (!isGroupCall) return null;
@@ -4855,10 +4855,11 @@ function CallScreenInner() {
                 <View style={[styles.controlBtnCircle, backgroundMode !== 'off' && styles.controlBtnCircleActive]}>
                   <Svg width={22} height={22} viewBox="0 0 24 24" fill="none">
                     {/* Stylized "blur circles" — represents the SelfieSegmenter
-                        background-blur effect without using emoji. */}
-                    <SvgCircleHand cx="8" cy="12" r="3" stroke="#fff" strokeWidth={1.6} />
-                    <SvgCircleHand cx="14" cy="9" r="2" stroke="#fff" strokeWidth={1.4} opacity={0.7} />
-                    <SvgCircleHand cx="16" cy="15" r="2.5" stroke="#fff" strokeWidth={1.4} opacity={0.7} />
+                        background-blur effect without using emoji. Icon inverts
+                        to dark when active (WhatsApp near-white fill pattern). */}
+                    <SvgCircleHand cx="8" cy="12" r="3" stroke={backgroundMode !== 'off' ? '#16151c' : '#fff'} strokeWidth={1.6} />
+                    <SvgCircleHand cx="14" cy="9" r="2" stroke={backgroundMode !== 'off' ? '#16151c' : '#fff'} strokeWidth={1.4} opacity={0.7} />
+                    <SvgCircleHand cx="16" cy="15" r="2.5" stroke={backgroundMode !== 'off' ? '#16151c' : '#fff'} strokeWidth={1.4} opacity={0.7} />
                   </Svg>
                 </View>
                 <Text style={styles.controlLabel} numberOfLines={1}>
@@ -4884,7 +4885,7 @@ function CallScreenInner() {
               accessibilityLabel={t('call.screenShare') || 'Tela'}
             >
               <View style={[styles.controlBtnCircle, screenSharing && styles.controlBtnCircleScreenShare]}>
-                <IconScreenShare size={22} color="#fff" />
+                <IconScreenShare size={22} color={screenSharing ? '#16151c' : '#fff'} />
               </View>
               <Text style={styles.controlLabel} numberOfLines={1}>{t('call.screenShare') || 'Tela'}</Text>
             </TouchableOpacity>
@@ -4920,7 +4921,7 @@ function CallScreenInner() {
                 accessibilityRole="button"
               >
                 <View style={[styles.controlBtnCircle, showMoreSheet && styles.controlBtnCircleActive]}>
-                  <IconMoreHorizontal size={22} color="#fff" />
+                  <IconMoreHorizontal size={22} color={showMoreSheet ? '#16151c' : '#fff'} />
                 </View>
                 <Text style={styles.controlLabel} numberOfLines={1}>{t('call.more') || 'Mais'}</Text>
               </TouchableOpacity>
@@ -4971,7 +4972,7 @@ function CallScreenInner() {
               accessibilityRole="button"
             >
               <View style={[styles.primaryBtnCircle, audioMuted && styles.primaryBtnCircleActive]}>
-                {audioMuted ? <IconMicOff size={26} color="#fff" /> : <IconMic size={26} color="#fff" />}
+                {audioMuted ? <IconMicOff size={26} color="#16151c" /> : <IconMic size={26} color="#fff" />}
               </View>
               <Text style={styles.primaryBtnLabel} numberOfLines={1}>{audioMuted ? (t('call.unmute') || 'Som') : (t('call.mute') || 'Mudo')}</Text>
             </TouchableOpacity>
@@ -4984,7 +4985,7 @@ function CallScreenInner() {
               accessibilityRole="button"
             >
               <View style={[styles.primaryBtnCircle, videoEnabled && styles.primaryBtnCircleActive]}>
-                {videoEnabled ? <IconVideo size={26} color="#fff" /> : <IconVideoOff size={26} color="#fff" />}
+                {videoEnabled ? <IconVideo size={26} color="#16151c" /> : <IconVideoOff size={26} color="#fff" />}
               </View>
               <Text style={styles.primaryBtnLabel} numberOfLines={1}>{t('call.video') || 'Vídeo'}</Text>
             </TouchableOpacity>
@@ -5027,7 +5028,7 @@ function CallScreenInner() {
               accessibilityRole="button"
             >
               <View style={[styles.primaryBtnCircle, speakerOn && styles.primaryBtnCircleActive]}>
-                <IconVolume2 size={26} color="#fff" />
+                <IconVolume2 size={26} color={speakerOn ? '#16151c' : '#fff'} />
               </View>
               <Text style={styles.primaryBtnLabel} numberOfLines={1}>{t('call.speaker') || 'Som'}</Text>
             </TouchableOpacity>
@@ -5463,8 +5464,8 @@ const styles = StyleSheet.create({
   encryptionText: { color: 'rgba(255,255,255,0.6)', fontSize: 10, fontWeight: '600' },
   centerArea: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 180 },
   pulseRing: { position: 'absolute', borderRadius: 999, borderWidth: 1 },
-  pulseRingOuter: { width: 200, height: 200, borderColor: 'rgba(255,255,255,0.08)' },
-  pulseRingInner: { width: 170, height: 170, borderColor: 'rgba(255,255,255,0.12)' },
+  pulseRingOuter: { width: 196, height: 196, borderColor: 'rgba(255,255,255,0.06)' },
+  pulseRingInner: { width: 168, height: 168, borderColor: 'rgba(255,255,255,0.10)' },
   // Outgoing "calling" rings — bright white expanding rings (WhatsApp style).
   callingPulseRing: {
     position: 'absolute',
@@ -5599,8 +5600,14 @@ const styles = StyleSheet.create({
   micPermBtnSecondaryText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   micPermBtnGhost: { backgroundColor: 'transparent' },
   micPermBtnGhostText: { color: 'rgba(255,255,255,0.55)', fontSize: 14, fontWeight: '600' },
-  centerName: { color: '#fff', fontSize: 29, fontWeight: '700', marginTop: 24, textAlign: 'center', letterSpacing: -0.5 },
-  centerStatus: { color: 'rgba(255,255,255,0.62)', fontSize: 15, marginTop: 7, fontWeight: '500', letterSpacing: 0.2, fontVariant: ['tabular-nums'] },
+  // Soft, subtle ring hugging the audio-call avatar (premium FaceTime feel).
+  centerAvatarRing: {
+    borderRadius: 999, padding: 6,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  centerName: { color: '#fff', fontSize: 30, fontWeight: '700', marginTop: 28, textAlign: 'center', letterSpacing: -0.5 },
+  centerStatus: { color: 'rgba(255,255,255,0.58)', fontSize: 14.5, marginTop: 8, fontWeight: '500', letterSpacing: 0.2, fontVariant: ['tabular-nums'] },
   endedHint: { color: 'rgba(255,255,255,0.4)', fontSize: 13, marginTop: 12 },
   reconnectContainer: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', gap: 12, marginTop: 26, paddingHorizontal: 16 },
   reconnectBtn: {
@@ -5617,31 +5624,31 @@ const styles = StyleSheet.create({
   reconnectEndBtnText: { color: '#fff', fontSize: 15.5, fontWeight: '700', letterSpacing: -0.2 },
   controlsBar: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    zIndex: 20, alignItems: 'center', paddingTop: 22, paddingHorizontal: 24,
-    backgroundColor: 'rgba(10,8,20,0.62)',
+    zIndex: 20, alignItems: 'center', paddingTop: 24, paddingHorizontal: 24,
+    backgroundColor: 'rgba(8,7,14,0.72)',
     borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    borderTopWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.08)',
-    ...Platform.select({ web: { backdropFilter: 'blur(24px) saturate(180%)', WebkitBackdropFilter: 'blur(24px) saturate(180%)' }, default: {} }),
+    borderTopWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.07)',
+    ...Platform.select({ web: { backdropFilter: 'blur(28px) saturate(180%)', WebkitBackdropFilter: 'blur(28px) saturate(180%)' }, default: {} }),
   },
   controlsRowTop: {
     flexDirection: 'row', justifyContent: 'center',
     flexWrap: 'wrap', rowGap: 14, columnGap: 18, marginBottom: 20,
   },
-  controlBtn: { alignItems: 'center', gap: 7, width: 60 },
+  controlBtn: { alignItems: 'center', gap: 8, width: 64 },
   controlBtnCircle: {
-    width: 52, height: 52, borderRadius: 26,
+    width: 56, height: 56, borderRadius: 28,
     backgroundColor: 'rgba(255,255,255,0.16)',
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.10)',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.08)',
   },
-  controlBtnCircleActive: { backgroundColor: 'rgba(124,58,237,0.55)', borderColor: 'rgba(167,139,250,0.6)' },
-  controlBtnCircleScreenShare: { backgroundColor: '#7C3AED', borderColor: 'rgba(167,139,250,0.7)' },
-  controlLabel: { color: 'rgba(255,255,255,0.72)', fontSize: 11, fontWeight: '600', textAlign: 'center', letterSpacing: -0.1 },
+  controlBtnCircleActive: { backgroundColor: 'rgba(255,255,255,0.94)', borderColor: 'rgba(255,255,255,0.6)' },
+  controlBtnCircleScreenShare: { backgroundColor: 'rgba(255,255,255,0.94)', borderColor: 'rgba(255,255,255,0.6)' },
+  controlLabel: { color: '#fff', fontSize: 11, fontWeight: '600', textAlign: 'center', letterSpacing: -0.1 },
   localVideoContainer: {
     position: 'absolute', right: 16, top: 16,
-    width: 110, height: 156, borderRadius: 20, overflow: 'hidden', zIndex: 30,
-    elevation: 14, borderWidth: 2, borderColor: 'rgba(167,139,250,0.5)',
-    shadowColor: '#000', shadowOpacity: 0.5, shadowRadius: 18, shadowOffset: { width: 0, height: 8 },
+    width: 108, height: 150, borderRadius: 18, overflow: 'hidden', zIndex: 30,
+    elevation: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
+    shadowColor: '#000', shadowOpacity: 0.45, shadowRadius: 16, shadowOffset: { width: 0, height: 8 },
   },
   localVideo: { flex: 1 },
   pipFlipBtn: {
@@ -5783,7 +5790,7 @@ const styles = StyleSheet.create({
     ...Platform.select({ web: { backdropFilter: 'blur(8px)' }, default: {} }),
   },
   pipBtn: { width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
-  centerNameAudio: { fontSize: 33, fontWeight: '800', letterSpacing: -0.8, marginTop: 28 },
+  centerNameAudio: { fontSize: 34, fontWeight: '700', letterSpacing: -0.7, marginTop: 32 },
   videoVignette: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
   videoVignetteTop: { position: 'absolute', top: 0, left: 0, right: 0, height: 90, backgroundColor: 'rgba(0,0,0,0.45)' },
   videoVignetteBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 220, backgroundColor: 'rgba(0,0,0,0.55)' },
@@ -5795,19 +5802,19 @@ const styles = StyleSheet.create({
   },
   primaryBtn: { alignItems: 'center', justifyContent: 'flex-start', flex: 1, gap: 7, paddingTop: 4 },
   primaryBtnCircle: {
-    width: 58, height: 58, borderRadius: 29,
+    width: 56, height: 56, borderRadius: 28,
     backgroundColor: 'rgba(255,255,255,0.16)',
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.10)',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.08)',
   },
-  primaryBtnCircleActive: { backgroundColor: 'rgba(124,58,237,0.6)', borderColor: 'rgba(167,139,250,0.65)' },
-  primaryBtnLabel: { color: 'rgba(255,255,255,0.88)', fontSize: 11.5, fontWeight: '600', textAlign: 'center', letterSpacing: -0.1 },
+  primaryBtnCircleActive: { backgroundColor: 'rgba(255,255,255,0.94)', borderColor: 'rgba(255,255,255,0.6)' },
+  primaryBtnLabel: { color: '#fff', fontSize: 11.5, fontWeight: '600', textAlign: 'center', letterSpacing: -0.1 },
   primaryHangupBtn: {
     width: 66, height: 66, borderRadius: 33,
-    backgroundColor: '#ef4444',
+    backgroundColor: '#FF3B30',
     alignItems: 'center', justifyContent: 'center',
     marginTop: 4,
-    shadowColor: '#ef4444', shadowOpacity: 0.5, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 10,
+    shadowColor: '#FF3B30', shadowOpacity: 0.5, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 10,
   },
   quickReactionsRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
