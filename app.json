@@ -2,7 +2,7 @@
   "expo": {
     "name": "Chatyy",
     "slug": "webmail-app",
-    "version": "3.0.2",
+    "version": "4.0.0",
     "platforms": [
       "ios",
       "android",
