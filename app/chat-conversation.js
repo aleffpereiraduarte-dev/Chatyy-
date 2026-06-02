@@ -12628,6 +12628,28 @@ export default function ChatConversationScreen() {
       _reportChatDebug('ws-relay-err', { error: String(e?.message || e) });
     }
 
+    // [instant-send 2026-06-02] WhatsApp-grade ✓: the message has now left the
+    // phone via the WS relay (reaches the peer in ~100ms). Flip the bubble to
+    // "sent" OPTIMISTICALLY *right here* instead of waiting for the HTTP
+    // chat_send round-trip — which costs ~1.3s on the origin and 2-4s on weak
+    // cellular (Cloudflare proxy + PHP-FPM). That HTTP wait was the entire
+    // "barulho toca mas demora pra mensagem ir" delay: the "Enviando..." label
+    // (driven by the outbox 'sending' state) stayed up the whole 1.3-4s.
+    // Durability is NOT sacrificed: the HTTP api.chatSend STILL fires below; on
+    // success it reconciles the server id (idempotent re-markSent), and on
+    // failure the catch calls messageOutbox.markFailed — whose UPDATE is
+    // unconditional, so it overrides this optimistic 'sent' back to 'queued'
+    // and the sendWorker retries until the row truly persists in PG. So the ✓
+    // shows instantly; if the network genuinely drops, it flips to retry —
+    // exactly WhatsApp's behaviour.
+    if (OUTBOX_V2_ONLY) {
+      try { messageOutbox.markSent(msgId).catch(() => {}); } catch {}
+    } else {
+      // Web (legacy path): SendStatusText reads msg._queued/_pending, so clear
+      // them on the optimistic bubble to drop the "Enviando..." label.
+      setMessages(prev => prev.map(m => (m.id === tempId ? { ...m, _pending: false, _queued: false } : m)));
+    }
+
     // Message effects: detect special text/emoji and trigger animation
     const lowerText = text.toLowerCase();
     if (lowerText.includes('congrats') || lowerText.includes('parabens') || lowerText.includes('felicidades') || text.includes('\uD83C\uDF89')) {
