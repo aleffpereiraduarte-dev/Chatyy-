@@ -3363,14 +3363,18 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   // server echo, so they collapse to one row eventually.
   const localTempId = tempId || ('tmp_' + stableCMI);
 
-  // ── 1. WRITE TO LOCAL SQLITE FIRST (Stage 1 invariant) ────────────────
-  // The local row is now the source of truth. Server is a delivery target.
-  // Failures here are logged but never block the POST; absolute worst case
-  // is the optimistic row is missing from cache but the server has it.
-  // [#1188 fix 2026-05-19] Pass senderEmail so SQLite row has correct
-  // owner — without this, cold-start cache read shows the user's own
-  // messages as incoming (sender_email NULL !== currentEmail).
-  await _localOptimisticSend({
+  // ── 1. WRITE TO LOCAL SQLITE (Stage 1 invariant) ──────────────────────
+  // The local row is the source of truth. Server is a delivery target.
+  // [instant-send 2026-06-02] Do NOT `await` this before firing the HTTP.
+  // The SQLite write (10-40ms, more under contention with the outbox writes
+  // the caller already kicked off) used to sit BEFORE the POST, delaying the
+  // network round-trip on every send. The result isn't needed to build the
+  // payload, and `_localFinalizeSend` below only runs AFTER the (slower) HTTP
+  // resolves — by then this write has long completed. We keep a handle and
+  // await it right before finalize so the temp row provably exists when we
+  // swap temp→server id.
+  // [#1188 fix 2026-05-19] Pass senderEmail so SQLite row has correct owner.
+  const _localWritePromise = _localOptimisticSend({
     tempId: localTempId,
     conversationId,
     content,
@@ -3379,7 +3383,7 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
     fileUrl,
     clientMessageId: stableCMI,
     senderEmail: _tokenMeta.email || null,
-  });
+  }).catch(() => {});
 
   const payload = {
     conversation_id: conversationId,
@@ -3604,6 +3608,11 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   }
 
   // ── 3. Finalize SQLite — swap temp id → server id, flip pending_state ──
+  // [instant-send 2026-06-02] The local optimistic write was kicked off
+  // non-blocking above. Await it here so the temp row provably exists before
+  // we swap temp→server id (the HTTP we just awaited is slower than the
+  // SQLite write, so this almost always resolves instantly).
+  try { await _localWritePromise; } catch {}
   if (result && (result.success || result.message_id || result.data?.message_id)) {
     if (result.envelope_mode) {
       // Stage 5 envelope mode — there is no server message_id, but the
