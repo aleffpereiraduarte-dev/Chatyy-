@@ -127,7 +127,16 @@ dependencies {
   // that directory). Without the model, ImageSegmenter.createFromOptions()
   // throws at first frame and BackgroundProcessor falls back to a full-frame
   // blur — UI still works in degraded mode.
-  implementation 'com.google.mediapipe:tasks-vision:0.10.14'
+  // [2026-06-02 Play 16KB page-size unblock] BUMPED 0.10.14 → 0.10.32.
+  // tasks-vision 0.10.14 shipped libmediapipe_tasks_vision_jni.so with 4KB
+  // (0x1000) ELF LOAD alignment — the ONLY non-16KB lib in our AAB — which
+  // made Google Play reject EVERY production update ("o app precisa aceitar
+  // páginas de 16 KB", policy enforced 2025-10-31). 0.10.26+ ship the .so
+  // 16KB-aligned (0x4000); 0.10.32 is the latest version whose AAR still
+  // bundles the native libs (0.10.33+ moved them to a separate artifact).
+  // Verified all 4 ABIs in 0.10.32 are 0x4000-aligned. ImageSegmenter API
+  // unchanged; selfie_segmenter.tflite is forward-compatible.
+  implementation 'com.google.mediapipe:tasks-vision:0.10.32'
 
   // [2026-05-17 Stage #994] Jetpack Compose stack for CallActivity /
   // GroupCallActivity Compose UI rewrite. BOM 2024.09.03 pins the
