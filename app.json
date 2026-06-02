@@ -29,7 +29,7 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": false,
+      "supportsTablet": true,
       "bundleIdentifier": "com.onemundo.mail",
       "googleServicesFile": "./GoogleService-Info.plist",
       "privacyManifests": {
