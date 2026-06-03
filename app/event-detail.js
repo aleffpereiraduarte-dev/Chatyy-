@@ -17,6 +17,7 @@ import {
   IconEdit, IconTrash, IconMapPin, IconRepeat, IconUsers, IconSmartphone,
   IconPlus, IconBell,
 } from '../components/Icons';
+import { DateTimePickerModal } from '../components/ScheduleModals';
 
 // Human-readable recurrence label — never surface the raw RRULE
 // (e.g. "FREQ=MONTHLY;BYMONTHDAY=15") to the user.
@@ -125,6 +126,15 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
     else if (clean.length === 2 && (text || '').length > (current || '').length) clean = clean + ':';
     if (clean.length > 5) clean = clean.slice(0, 5);
     setter(clean);
+  };
+  // Scrollable date/time picker (replaces manual typing — Apple UX flag).
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showEndPicker, setShowEndPicker] = useState(false);
+  const combineDT = (dStr, tStr) => {
+    const base = dStr || dateToDateStr(new Date());
+    const tt = allDay ? '00:00' : (tStr || '09:00');
+    const d = new Date(`${base}T${tt}:00`);
+    return isNaN(d.getTime()) ? new Date() : d;
   };
   const [selectedColor, setSelectedColor] = useState('#4285F4');
   const [recurrence, setRecurrence] = useState('');
@@ -299,28 +309,22 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
         <View style={styles.editDateTimeRow}>
           <View style={{ flex: 1 }}>
             <Text style={[styles.editLabel, { color: colors.textSecondary }]}>{t('eventDetail.startDate')}</Text>
-            <TextInput
-              style={[styles.editInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={colors.textTertiary}
-              value={startDate}
-              onChangeText={(txt) => formatDateInput(txt, setStartDate)}
-              keyboardType="numeric"
-              maxLength={10}
-            />
+            <TouchableOpacity
+              style={[styles.editInput, { borderColor: colors.border, backgroundColor: colors.surface, justifyContent: 'center' }]}
+              onPress={() => setShowStartPicker(true)}
+            >
+              <Text style={{ color: startDate ? colors.text : colors.textTertiary, fontSize: 15 }}>{startDate || 'YYYY-MM-DD'}</Text>
+            </TouchableOpacity>
           </View>
           {!allDay && (
             <View style={{ flex: 1 }}>
               <Text style={[styles.editLabel, { color: colors.textSecondary }]}>{t('eventDetail.startTime')}</Text>
-              <TextInput
-                style={[styles.editInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
-                placeholder="HH:MM"
-                placeholderTextColor={colors.textTertiary}
-                value={startTime}
-                onChangeText={(txt) => formatTimeInput(txt, startTime, setStartTime)}
-                keyboardType="numeric"
-                maxLength={5}
-              />
+              <TouchableOpacity
+                style={[styles.editInput, { borderColor: colors.border, backgroundColor: colors.surface, justifyContent: 'center' }]}
+                onPress={() => setShowStartPicker(true)}
+              >
+                <Text style={{ color: startTime ? colors.text : colors.textTertiary, fontSize: 15 }}>{startTime || 'HH:MM'}</Text>
+              </TouchableOpacity>
             </View>
           )}
         </View>
@@ -331,32 +335,45 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
         <View style={styles.editDateTimeRow}>
           <View style={{ flex: 1 }}>
             <Text style={[styles.editLabel, { color: colors.textSecondary }]}>{t('eventDetail.endDate')}</Text>
-            <TextInput
-              style={[styles.editInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
-              placeholder="YYYY-MM-DD"
-              placeholderTextColor={colors.textTertiary}
-              value={endDate}
-              onChangeText={(txt) => formatDateInput(txt, setEndDate)}
-              keyboardType="numeric"
-              maxLength={10}
-            />
+            <TouchableOpacity
+              style={[styles.editInput, { borderColor: colors.border, backgroundColor: colors.surface, justifyContent: 'center' }]}
+              onPress={() => setShowEndPicker(true)}
+            >
+              <Text style={{ color: endDate ? colors.text : colors.textTertiary, fontSize: 15 }}>{endDate || 'YYYY-MM-DD'}</Text>
+            </TouchableOpacity>
           </View>
           {!allDay && (
             <View style={{ flex: 1 }}>
               <Text style={[styles.editLabel, { color: colors.textSecondary }]}>{t('eventDetail.endTime')}</Text>
-              <TextInput
-                style={[styles.editInput, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
-                placeholder="HH:MM"
-                placeholderTextColor={colors.textTertiary}
-                value={endTime}
-                onChangeText={(txt) => formatTimeInput(txt, endTime, setEndTime)}
-                keyboardType="numeric"
-                maxLength={5}
-              />
+              <TouchableOpacity
+                style={[styles.editInput, { borderColor: colors.border, backgroundColor: colors.surface, justifyContent: 'center' }]}
+                onPress={() => setShowEndPicker(true)}
+              >
+                <Text style={{ color: endTime ? colors.text : colors.textTertiary, fontSize: 15 }}>{endTime || 'HH:MM'}</Text>
+              </TouchableOpacity>
             </View>
           )}
         </View>
       </View>
+
+      <DateTimePickerModal
+        visible={showStartPicker}
+        onClose={() => setShowStartPicker(false)}
+        initial={combineDT(startDate, startTime)}
+        onConfirm={(d) => { setStartDate(dateToDateStr(d)); if (!allDay) setStartTime(dateToTimeStr(d)); }}
+        colors={colors}
+        t={t}
+        title={t('eventDetail.startDate')}
+      />
+      <DateTimePickerModal
+        visible={showEndPicker}
+        onClose={() => setShowEndPicker(false)}
+        initial={combineDT(endDate, endTime)}
+        onConfirm={(d) => { setEndDate(dateToDateStr(d)); if (!allDay) setEndTime(dateToTimeStr(d)); }}
+        colors={colors}
+        t={t}
+        title={t('eventDetail.endDate')}
+      />
 
       {/* Description */}
       <View style={styles.editSection}>

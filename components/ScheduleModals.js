@@ -18,14 +18,15 @@ function pad2(n) { return n < 10 ? '0' + n : '' + n; }
 
 function buildDays(t) {
   const out = [];
+  const loc = (t && t('_locale')) || undefined; // follow APP language, not device
   const base = new Date(); base.setHours(0, 0, 0, 0);
   for (let i = 0; i < 90; i++) {
     const d = new Date(base.getTime() + i * 86400000);
     let label;
-    if (i === 0) label = t('chat.today') || 'Hoje';
-    else if (i === 1) label = t('chat.tomorrow') || 'Amanhã';
+    if (i === 0) label = (t && t('chat.today')) || 'Hoje';
+    else if (i === 1) label = (t && t('chat.tomorrow')) || 'Amanhã';
     else {
-      try { label = d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }); }
+      try { label = d.toLocaleDateString(loc, { weekday: 'short', day: 'numeric', month: 'short' }); }
       catch { label = `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`; }
     }
     out.push({ date: d, label });
@@ -88,10 +89,16 @@ function Wheel({ data, index, onIndex, colors, width }) {
   );
 }
 
-function WheelDateTimePicker({ colors, t, onChange }) {
+export function WheelDateTimePicker({ colors, t, onChange, initial }) {
   const days = useRef(buildDays(t)).current;
-  const start = new Date(Date.now() + 60 * 60000); // default: +1h
-  const [di, setDi] = useState(0);
+  const start = initial instanceof Date && !isNaN(initial) ? initial : new Date(Date.now() + 60 * 60000); // default: +1h
+  // find the day index matching `start` (0-89), else 0
+  const startDi = (() => {
+    const sm = new Date(start); sm.setHours(0, 0, 0, 0);
+    const i = Math.round((sm.getTime() - days[0].date.getTime()) / 86400000);
+    return i >= 0 && i < days.length ? i : 0;
+  })();
+  const [di, setDi] = useState(startDi);
   const [hi, setHi] = useState(start.getHours());
   const [mi, setMi] = useState(start.getMinutes());
   const hours = useRef(Array.from({ length: 24 }, (_, i) => pad2(i))).current;
@@ -130,6 +137,45 @@ export function ScheduleToast({ visible, message, colors }) {
       <IconClock size={14} color={colors.primary} />
       <Text style={{ fontSize: 13, color: colors.text }}>{message}</Text>
     </View>
+  );
+}
+
+/**
+ * Reusable date/time picker modal — tap a field, pick via scrollable wheels.
+ * Used by the calendar (meeting-create, event-detail) to replace manual
+ * "YYYY-MM-DD HH:MM" typing. Returns a Date via onConfirm.
+ */
+export function DateTimePickerModal({ visible, onClose, initial, onConfirm, colors, t, title, minDate }) {
+  const [picked, setPicked] = React.useState(null);
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      <Pressable style={modalStyles.overlay} onPress={onClose}>
+        <Pressable style={[modalStyles.sheet, { backgroundColor: colors.surface, padding: 20, minWidth: 320 }, Shadow.lg]} onPress={() => {}}>
+          {!!title && (
+            <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 12, textAlign: 'center' }}>{title}</Text>
+          )}
+          {visible && <WheelDateTimePicker colors={colors} t={t} initial={initial} onChange={setPicked} />}
+          <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'flex-end' }}>
+            <TouchableOpacity onPress={onClose} style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 }}>
+              <Text style={{ color: colors.textSecondary }}>{t('common.cancel')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => {
+                const dt = picked || (initial instanceof Date ? initial : null);
+                if (dt && !isNaN(dt.getTime())) {
+                  if (minDate && dt < minDate) { onConfirm(new Date(minDate)); }
+                  else onConfirm(dt);
+                }
+                onClose();
+              }}
+              style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, backgroundColor: colors.primary }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.ok') || t('common.confirm') || 'OK'}</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Pressable>
+    </Modal>
   );
 }
 

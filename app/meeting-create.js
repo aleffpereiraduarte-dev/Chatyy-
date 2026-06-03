@@ -15,6 +15,7 @@ import {
   IconArrowLeft, IconX, IconPlus, IconClock, IconCalendar,
   IconVideo, IconCopy, IconCheck, IconChevronDown, IconChevronUp,
 } from '../components/Icons';
+import { DateTimePickerModal } from '../components/ScheduleModals';
 
 let DateTimePicker = null;
 if (Platform.OS !== 'web') {
@@ -318,24 +319,23 @@ export default function MeetingCreateScreen() {
               style={{ fontSize: 15, padding: 10, border: `1px solid ${colors.border}`, borderRadius: 8, background: colors.surface, color: colors.text, width: '100%', outline: 'none' }}
             />
           </View>
-        ) : DateTimePicker ? (
+        ) : (
           <>
             <TouchableOpacity style={s.dateBtn} onPress={() => setShowDatePicker(true)}>
               <IconCalendar size={18} color={colors.textSecondary} />
               <Text style={s.dateBtnText}>{formatDateTime(scheduledDate)}</Text>
             </TouchableOpacity>
-            {showDatePicker && (
-              <DateTimePicker value={scheduledDate} mode="datetime" display="default" onChange={handleDateChange} minimumDate={new Date()} />
-            )}
+            <DateTimePickerModal
+              visible={showDatePicker}
+              onClose={() => setShowDatePicker(false)}
+              initial={scheduledDate}
+              minDate={new Date()}
+              onConfirm={(d) => setScheduledDate(d)}
+              colors={colors}
+              t={t}
+              title={t('meetingCreate.dateTimeLabel')}
+            />
           </>
-        ) : (
-          <TextInput
-            style={[s.input, errors.date && s.inputError]}
-            value={formatDateTime(scheduledDate)}
-            onChangeText={(txt) => { const d = new Date(txt.replace(' ', 'T')); if (!isNaN(d)) setScheduledDate(d); }}
-            placeholder="YYYY-MM-DD HH:MM"
-            placeholderTextColor={colors.textSecondary}
-          />
         )}
         {errors.date && <Text style={s.errorText}>{errors.date}</Text>}
 
