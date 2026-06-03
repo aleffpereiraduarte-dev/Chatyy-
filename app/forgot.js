@@ -262,10 +262,13 @@ export default function ForgotPassword() {
           <TextInput
             style={[s.textInput, { color: colors.text }]}
             value={username}
-            onChangeText={(t) => {
-              // Allow full email input (strip @domain if typed)
-              const clean = t.replace(`@${domain}`, '').replace(/@.*$/, '');
-              setUsername(clean);
+            onChangeText={(val) => {
+              // Accept a FULL email of ANY domain, or a bare username — never
+              // strip what the user typed. (Apple review 2.1a, 2026-06-03: the
+              // old regex deleted everything after "@", so reviewers literally
+              // could not type a non-chatyy email like apitest@onemundo.com.br.)
+              setUsername((val || '').replace(/\s+/g, ''));
+              if (error) setError('');
             }}
             placeholder="nome@chatyy.com.br"
             placeholderTextColor={colors.textTertiary}
