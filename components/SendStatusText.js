@@ -73,6 +73,15 @@ export default function SendStatusText({ msg, color, fontSize = 10, onRetry, sty
     return null;
   }
 
+  // [WhatsApp instant ✓ 2026-06-03] Once the bubble is visually "sent" (the
+  // clock→✓ flip fired the instant the WS relay left the device), suppress the
+  // "Enviando..." text even though the outbox is still confirming HTTP
+  // persistence in the background. The ✓ icon already says "sent" — showing
+  // "Enviando..." next to it would contradict. Failures still surface below.
+  if (msg && msg._pending === false && !msg._failed && state !== 'failed' && state !== 'failed_legacy') {
+    return null;
+  }
+
   // Translate. We use existing chat.* keys when available and fall back to
   // sensible PT-BR defaults so a missing key doesn't show a literal id.
   let label = '';

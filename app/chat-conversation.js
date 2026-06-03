@@ -6662,6 +6662,12 @@ export default function ChatConversationScreen() {
       _recvIdSet.current = new Set(arr.slice(arr.length - 500));
     }
   }, []);
+  // [WhatsApp instant ✓ 2026-06-03] Buffer of SERVER message ids that arrived
+  // via `chat_delivered` but matched no bubble yet — because the instant-✓ flip
+  // shows the bubble with its TEMP id until the HTTP swaps in the server id.
+  // The HTTP-return swap drains this so a delivered receipt that raced ahead of
+  // our own HTTP response isn't lost (the exact hole that forced the pt3 revert).
+  const deliveredIdBufferRef = useRef(new Set());
   const liveLocIntervalRef = useRef(null);
   const liveLocTimeoutRef = useRef(null);
   // Active live-location message id so unmount can tell the server to stop
@@ -11110,6 +11116,14 @@ export default function ChatConversationScreen() {
         if (String(data?.conversation_id) !== String(conversationId)) return;
         const mid = data?.message_id;
         if (!mid) return;
+        // [WhatsApp instant ✓ 2026-06-03] Remember this delivered server id so
+        // that if it arrived BEFORE our own HTTP swapped temp→server id on the
+        // just-sent bubble (instant-✓ window), the swap can still apply ✓✓.
+        // Bounded so a long-lived thread can't leak.
+        try {
+          const buf = deliveredIdBufferRef.current;
+          if (buf) { buf.add(mid); if (buf.size > 600) { buf.clear(); buf.add(mid); } }
+        } catch {}
         // [2026-05-21] Also stamp delivered_at so the cold-load enrichment
         // path (line ~16291: `item.delivered_at` → status 1.5) picks it up
         // on next render. Without this, _delivered flag worked in-thread
@@ -12629,20 +12643,37 @@ export default function ChatConversationScreen() {
         _optimistic: true,
         _pending: false,
       }, tempId, memberList);
+      // [WhatsApp instant ✓ 2026-06-03] The frame just left the device over a
+      // healthy, authenticated socket → for the user this IS "sent" (igual
+      // WhatsApp: 1 tracinho assim que sai). Flip the clock → single ✓ NOW
+      // instead of waiting ~1.3s for the HTTP. We ONLY do this when wsOk — if
+      // the socket is down the relay merely queued the frame, so we keep the
+      // clock until the HTTP confirms.
+      //
+      // CRITICAL — why this is safe where pt3 was NOT:
+      //   1. We touch ONLY the bubble's visual flags (_pending/_queued). We do
+      //      NOT mark the outbox 'sent'. The outbox + HTTP remain the single
+      //      source of truth for PERSISTENCE (the relay reaches online peers
+      //      but the HTTP is what writes the PG row for history/offline peers).
+      //      So a failed HTTP still retries and the message is never lost.
+      //   2. The HTTP still runs below and swaps temp→server id silently (the
+      //      bubble already shows ✓, so no visible change) — that server id is
+      //      what ✓✓ delivered/read receipts match on.
+      //   3. pt3 broke ✓✓ because a `chat_delivered`/read receipt keyed by the
+      //      SERVER id could arrive in the temp-id window and be dropped. Fixed:
+      //      `chat_delivered` now buffers its id (deliveredIdBufferRef) and the
+      //      HTTP swap re-applies it; read receipts self-heal via readReceipts
+      //      state which is re-evaluated against the server id on every render.
+      if (wsOk) {
+        setMessages(prev => prev.map(m =>
+          (m.id === tempId || m._client_id === msgId)
+            ? { ...m, _pending: false, _queued: false }
+            : m
+        ));
+      }
     } catch (e) {
       _reportChatDebug('ws-relay-err', { error: String(e?.message || e) });
     }
-
-    // [instant-send 2026-06-02 — REVERTED pt3] We briefly flipped the bubble to
-    // 'sent' optimistically right after the WS relay to kill the "Enviando..."
-    // wait. That BROKE the ✓✓ (delivered/read) ticks: marking 'sent' before the
-    // HTTP returns the server id meant the row had no server id, so the
-    // delivered/read receipts (which arrive keyed by the server message id)
-    // couldn't match the bubble → VV never appeared. Reverted — the bubble now
-    // keeps the normal markSending→(HTTP)→markSent flow so the server id is set
-    // before receipts arrive and the ✓→✓✓→read progression works again. The
-    // perceived send delay is the ~1.3s HTTP; that needs a WS-based send (server
-    // id over the socket) to fix without breaking receipts — bigger change.
 
     // Message effects: detect special text/emoji and trigger animation
     const lowerText = text.toLowerCase();
@@ -12778,9 +12809,21 @@ export default function ChatConversationScreen() {
         // [#1182 bubble-flip] Preserve _client_id so msgKeyExtractor returns
         // a stable FlatList key across the optimistic→server swap. Without
         // this the row unmounts/remounts and the send animation "flips".
+        // [WhatsApp instant ✓ 2026-06-03] If a `chat_delivered` for this server
+        // id already arrived during the instant-✓ window (bubble still had its
+        // temp id), graft ✓✓ on now so the receipt isn't lost.
+        const _alreadyDelivered = (() => {
+          try { return serverMsg.id != null && deliveredIdBufferRef.current?.has(serverMsg.id); } catch { return false; }
+        })();
         setMessages(prev => prev.map(m => {
           if (m.id !== tempId) return m;
-          return { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail, _client_id: m._client_id || msgId };
+          const swapped = { ...serverMsg, sender_email: serverMsg.sender_email || m.sender_email || currentEmail, _client_id: m._client_id || msgId };
+          if (_alreadyDelivered && swapped.status !== 'read') {
+            swapped.status = 'delivered';
+            swapped._delivered = true;
+            swapped.delivered_at = swapped.delivered_at || new Date().toISOString();
+          }
+          return swapped;
         }));
         // Remove from pending storage now that it's confirmed
         removePendingMessage(conversationId, tempId).catch(() => {});
