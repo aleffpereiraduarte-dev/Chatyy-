@@ -1957,14 +1957,30 @@ export async function checkAuth() {
 // re-probe after a cooldown. Call sites use `_isRustDead()` instead of the
 // old `_rustDead` boolean.
 const _RUST_DEAD_COOLDOWN_MS = 60 * 1000; // re-probe Rust ~1min after a 401
+// [2026-06-03] Exponential backoff on REPEATED 401s. A single 401 can be a
+// blip (60s re-probe is fine), but consecutive 401s mean the BEARER itself is
+// invalid/expired — that won't heal until re-login, and the 60s re-probe was
+// producing endless inbox+folders 401 bursts in the founder's console. Each
+// consecutive failure doubles the cooldown up to 15min; any success or a
+// token change (_resetRustHealth) clears the streak.
 let _rustDeadAt = 0;
-function _markRustDead() { _rustDeadAt = Date.now(); }
-function _isRustDead() {
-  return _rustDeadAt > 0 && (Date.now() - _rustDeadAt) < _RUST_DEAD_COOLDOWN_MS;
+let _rust401Streak = 0;
+function _markRustDead() {
+  _rustDeadAt = Date.now();
+  _rust401Streak = Math.min(_rust401Streak + 1, 5);
 }
+function _isRustDead() {
+  if (_rustDeadAt <= 0) return false;
+  const cooldown = Math.min(
+    _RUST_DEAD_COOLDOWN_MS * Math.pow(2, Math.max(0, _rust401Streak - 1)),
+    15 * 60 * 1000,
+  );
+  return (Date.now() - _rustDeadAt) < cooldown;
+}
+function _markRustHealthy() { _rustDeadAt = 0; _rust401Streak = 0; }
 // Public reset hook — called by login() when the bearer changes so a fresh
 // token gets a fair shot at Rust again.
-export function _resetRustHealth() { _rustDeadAt = 0; }
+export function _resetRustHealth() { _rustDeadAt = 0; _rust401Streak = 0; }
 
 export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search = '', category = '', label = '', filter = '') {
   // Rust-first for everything except label/category (Rust 501 → PHP fallback).
@@ -1990,6 +2006,7 @@ export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search 
           // fall through to PHP for a second opinion before trusting the
           // "no emails" answer.
           if (j?.success) {
+            _markRustHealthy(); // clear the 401-streak backoff
             const list = j?.data?.emails || [];
             const total = j?.data?.total ?? list.length;
             const suspiciouslyEmpty = list.length === 0 && total === 0 && page === 1 && !search && !filter;
@@ -2064,6 +2081,7 @@ export async function getFolders() {
         // PHP in that case (same-origin session cookie works where the Rust
         // bearer path silently auth-failed).
         if (j && j.success && j.data && Array.isArray(j.data.folders) && j.data.folders.length > 0) {
+          _markRustHealthy(); // clear the 401-streak backoff
           return { success: true, data: { folders: j.data.folders } };
         }
       }

@@ -12,13 +12,20 @@ import { Platform } from 'react-native';
 // Project-specific config. Mirror of GoogleService-Info.plist /
 // google-services.json — these values are safe to ship to the client
 // (they're public per Google).
+// [webpush-fix 2026-06-03] Config REAL do web app Firebase, puxada via
+// firebase.googleapis.com/v1beta1/projects/onemundo-52ca6/webApps/.../config.
+// A versão anterior usava uma apiKey que NÃO existe no projeto + um appId
+// FAKE ('...web:0') → Installations retornava 400 "API key not valid" e o
+// web push nunca registrava. Validado: POST /v1/installations com esta key
+// + appId → 200.
 const FIREBASE_CONFIG = {
-  apiKey: 'AIzaSyCp1k_ZJaUVD3O8htDoJxL59wEVk2vXEy0',
+  apiKey: 'AIzaSyC5943EdhMUcoDX4cX15UBnsO1Xihuf_sE',
   authDomain: 'onemundo-52ca6.firebaseapp.com',
   projectId: 'onemundo-52ca6',
-  storageBucket: 'onemundo-52ca6.appspot.com',
+  storageBucket: 'onemundo-52ca6.firebasestorage.app',
   messagingSenderId: '782929446226',
-  appId: '1:782929446226:web:0', // overridden if a web appId is configured
+  appId: '1:782929446226:web:90a36e056b392a6294268b',
+  measurementId: 'G-TCHEBQZD73',
 };
 
 // VAPID public key (server-side private key lives in /etc/onemundo-firebase-sa.json
