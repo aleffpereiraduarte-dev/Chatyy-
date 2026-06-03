@@ -12233,6 +12233,11 @@ export default function ChatConversationScreen() {
     }
   };
   const _handleSendInner = async () => {
+    // [send-latency 2026-06-03] Stopwatch from button-tap → server ✓ ack so we
+    // can MEASURE the real "demora pra enviar" breakdown on a real device
+    // (server-local curl is 0.1-0.4s; the wall-clock the user feels is the
+    // cellular HTTP round-trip + any client-side waits). Reported at markSent.
+    const _sendStartedAt = Date.now();
     _reportChatDebug('handleSend-start', { len: inputText?.length || 0, hasReply: !!replyTo, conversationId });
     const text = compressText(inputText.trim());
     // Whitespace-only guard: even after trim, weird unicode whitespace
@@ -12784,6 +12789,9 @@ export default function ChatConversationScreen() {
           // it so SendStatusText flips "Enviando..." → "✓" via subscribe.
           try { messageOutbox.markSent(msgId, serverMsg.id || null).catch(() => {}); } catch {}
         }
+        // [send-latency 2026-06-03] Tap→ack wall-clock. Lets us see if the
+        // user's "5s" is HTTP round-trip (network) vs client-side stalls.
+        try { _reportChatDebug('send-ack-timing', { ms: Date.now() - _sendStartedAt, convId: conversationId, e2e: !!e2eEnabled }); } catch {}
         // Delete the synthetic-id row from native cache, then add the real
         // server message. AWAIT both before reload so the native view sees
         // the swap atomically (no missing-message gap).

@@ -868,12 +868,23 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
   // Skip the wait for login itself so it doesn't deadlock.
   const SKIP_HYDRATE = (action === 'login' || action === 'check_username' || action === 'signup');
   if (!SKIP_HYDRATE) {
-    try {
-      await Promise.race([
-        _tokenReadyPromise,
-        new Promise(r => setTimeout(r, 2000)), // max 2s wait — don't hang forever
-      ]);
-    } catch {}
+    // [send-latency 2026-06-03] Only PAY the token-ready wait when we don't
+    // already have a bearer in memory. The race below resolves instantly once
+    // module init finishes (~few hundred ms after app start), BUT on the first
+    // send after a cold start / push-wake / AppState resume the promise can
+    // still be pending while `authToken` is ALREADY populated — costing up to
+    // 2s per send for nothing. That 2s landed squarely on the first chat_send,
+    // which is exactly the "demora uns 5 segundos antes de enviar" report
+    // (2s token wait + the real ~1-3s cellular HTTP round-trip). When the token
+    // is in memory we KNOW we can sign the request, so skip the wait entirely.
+    if (!authToken) {
+      try {
+        await Promise.race([
+          _tokenReadyPromise,
+          new Promise(r => setTimeout(r, 2000)), // max 2s wait — don't hang forever
+        ]);
+      } catch {}
+    }
     // [#1167 2026-05-18] Defensive re-hydrate on EVERY authed request.
     // Root cause of "do nada para de mandar mensagem":
     // The in-memory `authToken` can drift to empty even though storage
