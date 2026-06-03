@@ -98,6 +98,27 @@ function _onIncomingChatMessage(payload) {
   const extracted = _extractMessage(payload);
   if (!extracted) return;
   _persistMessage(extracted.convId, extracted.msg);
+  // [receipt-sync 2026-06-03] WhatsApp parity: ack delivery the moment the
+  // message reaches this DEVICE — even when the user is sitting on the chat
+  // list, the feed, or any other screen. Before this, the ack only fired from
+  // the open conversation (chat-conversation.js) or from a push arrival
+  // (pushNotifications.js), so a recipient browsing elsewhere in the app left
+  // the sender stuck on single-✓ until the thread was opened. The backend is
+  // idempotent (ON CONFLICT keeps the first stamp), so double-acking from the
+  // in-thread handler is a harmless no-op, and chatDeliveryAckBatched
+  // coalesces rapid arrivals into one HTTP call per conversation.
+  _safe(() => {
+    const msg = extracted.msg;
+    const mid = Number(msg.id);
+    if (!mid || Number.isNaN(mid) || mid <= 0) return;
+    const me = (require('./websocket').default?.email || '').toLowerCase();
+    const sender = String(msg.sender_email || msg.sender || '').toLowerCase();
+    if (!me || !sender || sender === me) return; // never ack own outbound echoes
+    const api = require('./api');
+    if (typeof api.chatDeliveryAckBatched === 'function') {
+      api.chatDeliveryAckBatched(extracted.convId, [mid]);
+    }
+  });
 }
 
 function _onReaction(data) {

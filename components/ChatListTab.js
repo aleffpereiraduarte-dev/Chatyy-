@@ -3342,6 +3342,15 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 ...nextArch[ai],
                 last_message: {
                   ...(nextArch[ai].last_message || {}),
+                  // [receipt-sync 2026-06-03] Carry the NEW message's id and
+                  // reset the receipt stamps — spreading the old last_message
+                  // kept the PREVIOUS message's read_at/delivered_at, so a
+                  // fresh message was born showing ✓✓ roxo in the list while
+                  // the thread correctly showed ✓. Same fix in all 4
+                  // last_message constructions below.
+                  id: data.id ?? data.message_id ?? null,
+                  read_at: data.read_at || null,
+                  delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
                   type: data.type || 'text',
                   sender_email: data.sender_email || data.sender,
@@ -3375,6 +3384,9 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 archived: 0,
                 last_message: {
                   ...(unarchivedConv.last_message || {}),
+                  id: data.id ?? data.message_id ?? null,
+                  read_at: data.read_at || null,
+                  delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
                   type: data.type || 'text',
                   sender_email: data.sender_email || data.sender,
@@ -3408,6 +3420,9 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 avatar: data.conversation_avatar || '',
                 other_email: data.conversation_type === 'group' ? null : (senderLc !== meLc ? data.sender_email : null),
                 last_message: {
+                  id: data.id ?? data.message_id ?? null,
+                  read_at: data.read_at || null,
+                  delivered_at: data.delivered_at || null,
                   content: data.content || data.message,
                   type: data.type || 'text',
                   sender_email: data.sender_email || data.sender,
@@ -3428,6 +3443,9 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               ...prev[idx],
               last_message: {
                 ...(prev[idx].last_message || {}),
+                id: data.id ?? data.message_id ?? null,
+                read_at: data.read_at || null,
+                delivered_at: data.delivered_at || null,
                 content: data.content || data.message,
                 type: data.type || 'text',
                 sender_email: data.sender_email || data.sender,
@@ -3551,8 +3569,16 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               next.unread_count = 0;
             } else if (c.last_message && c.last_message.sender_email
                        && c.last_message.sender_email.toLowerCase() === meLower
-                       && !c.last_message.read_at) {
-              next.last_message = { ...c.last_message, read_at: new Date().toISOString() };
+                       && !c.last_message.read_at
+                       // [receipt-sync 2026-06-03] Watermark guard: chat_read
+                       // carries last_read_id — only paint the ✓✓ roxo on the
+                       // row when the read actually COVERS the previewed (last)
+                       // message. Without this, a peer reading OLDER messages
+                       // turned the list purple while the bubble inside
+                       // correctly stayed gray — list/thread desync.
+                       && (!data?.last_read_id || !Number(c.last_message.id)
+                           || Number(data.last_read_id) >= Number(c.last_message.id))) {
+              next.last_message = { ...c.last_message, read_at: new Date().toISOString(), delivered_at: c.last_message.delivered_at || new Date().toISOString() };
             }
             return next;
           });
@@ -3569,13 +3595,89 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             if (i !== idx) return c;
             if (c.last_message && c.last_message.sender_email
                 && c.last_message.sender_email.toLowerCase() === meLower
-                && !c.last_message.delivered_at) {
+                && !c.last_message.delivered_at
+                // [receipt-sync 2026-06-03] Same watermark idea as chat_read:
+                // a delivered receipt for an OLDER message must not flip the
+                // newest preview to ✓✓. Delivery is monotonic, so any acked
+                // id >= the previewed id covers it.
+                && (!data?.message_id || !Number(c.last_message.id)
+                    || Number(data.message_id) >= Number(c.last_message.id))) {
               return { ...c, last_message: { ...c.last_message, delivered_at: new Date().toISOString() } };
             }
             return c;
           });
         });
       }));
+
+      // [receipt-sync 2026-06-03] The C++ hub ALSO emits WS-native fast-path
+      // receipt events straight from the peer's socket frame:
+      //   message_delivered — batch {conversation_id, message_ids[]}
+      //   message_read      — {conversation_id, read_by|email, last_read_id}
+      // They land seconds BEFORE the PHP-broadcast chat_delivered/chat_read
+      // (and are the ONLY signal when the PHP broadcast times out). The
+      // conversation screen has listened to both since 2026-05-13, but the
+      // list never did — so the ticks inside the thread flipped instantly
+      // while the list row lagged/stayed stale. This was the core of the
+      // "recebeu/leu não tá 100% sincronizado com a chat list" report.
+      unsubs.push(mailWs.on('message_delivered', (data) => {
+        const meLower = (user?.email || '').toLowerCase();
+        const ids = Array.isArray(data?.message_ids)
+          ? data.message_ids.map(Number).filter(n => !Number.isNaN(n)) : [];
+        if (!data?.conversation_id || ids.length === 0) return;
+        const maxId = Math.max(...ids);
+        setConversations(prev => {
+          const idx = prev.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
+          if (idx === -1) return prev;
+          return prev.map((c, i) => {
+            if (i !== idx) return c;
+            const lm = c.last_message;
+            if (lm && lm.sender_email && lm.sender_email.toLowerCase() === meLower
+                && !lm.delivered_at
+                && (!Number(lm.id) || maxId >= Number(lm.id))) {
+              return { ...c, last_message: { ...lm, delivered_at: new Date().toISOString() } };
+            }
+            return c;
+          });
+        });
+      }));
+      unsubs.push(mailWs.on('message_read', (data) => {
+        const meLower = (user?.email || '').toLowerCase();
+        const readerLower = (data?.read_by || data?.email || '').toLowerCase();
+        if (!data?.conversation_id) return;
+        const readUpTo = Number(data?.last_read_id) || 0;
+        setConversations(prev => {
+          const idx = prev.findIndex(c => c.id == data.conversation_id || c.conversation_id == data.conversation_id);
+          if (idx === -1) return prev;
+          return prev.map((c, i) => {
+            if (i !== idx) return c;
+            const next = { ...c };
+            if (readerLower && readerLower === meLower) {
+              // Me reading on ANOTHER device — zero the badge here too.
+              next.unread_count = 0;
+            } else if (readerLower && c.last_message && c.last_message.sender_email
+                       && c.last_message.sender_email.toLowerCase() === meLower
+                       && !c.last_message.read_at
+                       && (!readUpTo || !Number(c.last_message.id)
+                           || readUpTo >= Number(c.last_message.id))) {
+              next.last_message = {
+                ...c.last_message,
+                read_at: new Date().toISOString(),
+                delivered_at: c.last_message.delivered_at || new Date().toISOString(),
+              };
+            }
+            return next;
+          });
+        });
+      }));
+
+      // [receipt-sync 2026-06-03] Local outbound echo: chat-conversation emits
+      // `chat_local_outbound` the instant a send leaves the composer (the hub
+      // does NOT echo the relay back to the sender's own socket), so the list
+      // preview + ordering update immediately instead of waiting for a server
+      // round-trip or the next manual refetch. Payload shape mirrors
+      // chat_message; the existing isSelf guard inside onIncomingForList keeps
+      // unread at 0 and skips the receive sound.
+      unsubs.push(mailWs.on('chat_local_outbound', onIncomingForList));
 
       // Reconnect catchup — messages that arrived while WS was down never
       // hit the chat_message listener above, so the list would stay frozen

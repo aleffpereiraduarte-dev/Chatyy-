@@ -7476,43 +7476,10 @@ export default function ChatConversationScreen() {
   }, []);
   const [audioTranscription, setAudioTranscription] = useState(null);
 
-  // Auto-fetch AI quick replies when last incoming message changes.
-  // Sends LAST 10 messages so AI understands the conversation context, not just the last msg.
-  useEffect(() => {
-    const _myEmail = user?.email || '';
-    if (!messages || messages.length === 0) return;
-    const last = messages[messages.length - 1];
-    if (!last || last.sender_email === _myEmail) {
-      if (aiQuickReplies.length > 0) setAiQuickReplies([]);
-      return;
-    }
-    if (lastQuickReplyMsgId.current === last.id) return;
-    // Skip if last is a non-text message (image/audio/etc) or super short
-    if (last.type && last.type !== 'text') return;
-    if (!last.content || last.content.length < 2) return;
-    lastQuickReplyMsgId.current = last.id;
-    let cancelled = false;
-    (async () => {
-      try {
-        // Build context: last 10 text messages, mark which are "EU" vs "OUTRO"
-        const recent = messages
-          .slice(-10)
-          .filter(m => m && (!m.type || m.type === 'text') && m.content && !m._failed && !m._pending && !m.deleted_at)
-          .map(m => ({
-            sender: m.sender_email === _myEmail ? 'EU' : (m.sender_name || m.sender_email?.split('@')[0] || 'OUTRO'),
-            text: String(m.content).slice(0, 300),
-          }));
-        if (recent.length === 0) return;
-        const r = await api.aiQuickReplies(recent, 'EU');
-        // Drop result if unmounted or if a newer message arrived (staleness)
-        if (cancelled || !mountedRef.current) return;
-        if (r?.success && Array.isArray(r.data?.replies)) {
-          setAiQuickReplies(r.data.replies.slice(0, 3));
-        }
-      } catch {}
-    })();
-    return () => { cancelled = true; };
-  }, [messages.length, user]);
+  // [2026-06-03] Auto-fetch de AI quick replies DESLIGADO — o sistema de
+  // sugestão de mensagem foi removido a pedido do founder (ficava "carregando"
+  // e nunca mostrava nada). O state aiQuickReplies permanece declarado (vazio)
+  // pra não quebrar referências residuais, mas nada o popula nem o renderiza.
 
   // [effect-replay 2026-05-25] The <MessageScreenEffect> overlay is mounted at
   // the very bottom of the render tree, so when a WS/TCP message lands during
@@ -12674,6 +12641,27 @@ export default function ChatConversationScreen() {
     } catch (e) {
       _reportChatDebug('ws-relay-err', { error: String(e?.message || e) });
     }
+
+    // [receipt-sync 2026-06-03] Tell the chat LIST about this outbound NOW.
+    // The hub does NOT echo the relay back to the sender's own socket, so the
+    // list's last_message/order only updated on the next refetch — backing out
+    // right after sending showed a stale preview ("não sincroniza com a chat
+    // list"). `chat_local_outbound` is a dedicated local-only event (never hits
+    // the wire) that ChatListTab feeds into the same handler as chat_message:
+    // its isSelf guard keeps unread at 0 and skips the receive sound, and the
+    // fresh-last_message reset clears the previous message's ✓✓ stamps.
+    try {
+      mailWs._emit?.('chat_local_outbound', {
+        conversation_id: conversationId,
+        id: tempId,
+        sender_email: currentEmail,
+        sender_name: user?.name || currentEmail,
+        content: text,
+        type: optimisticMsg?.type || 'text',
+        created_at: optimisticMsg?.created_at || new Date().toISOString(),
+        _local: true,
+      });
+    } catch {}
 
     // Message effects: detect special text/emoji and trigger animation
     const lowerText = text.toLowerCase();
@@ -24599,103 +24587,11 @@ export default function ChatConversationScreen() {
           </View>
         ) : (
         <>
-        {/* Chat 2026 — OpenAI-direct Smart Replies chip bar. Renders ONLY
-            when:
-              - composer is empty (no in-progress draft)
-              - not replying / editing / recording
-              - last incoming message is text + within 5min (the existing
-                smartReplySuggestions memo already enforces that window)
-            Tap inserts into the composer (does NOT auto-send), letting
-            the user tweak before hitting Send.
-            The older string-keyword block below is the fallback that
-            renders inline when the AI hasn't responded yet — both render
-            at most one at a time because the memo gates both. */}
-        {!inputText && !replyTo && !editingMsg && !isRecording && smartReplySuggestions && SmartRepliesBar ? (
-          <SmartRepliesBar
-            conversationId={conversationId}
-            lastIncomingId={smartReplySuggestions.id}
-            onPick={(text) => {
-              try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-              setInputText(text);
-              setTimeout(() => inputRef.current?.focus?.(), 80);
-            }}
-            colors={colors}
-            t={t}
-          />
-        ) : null}
-        {/* Smart quick reply suggestions */}
-        {(() => {
-          if (inputText || replyTo || editingMsg || isRecording) return null;
-          if (!smartReplySuggestions) return null;
-          // Prefer AI-generated suggestions (Groq) when disponíveis. Fallback
-          // pra keyword matching antigo se o AI ainda não respondeu.
-          const content = smartReplySuggestions.content;
-          let suggestions = [];
-          if (aiQuickReplies && aiQuickReplies.length > 0) {
-            suggestions = [...aiQuickReplies];
-          } else if (content.includes('?') || content.includes('né') || content.includes('certo') || content.includes('right')) {
-            suggestions = [t('quickReply.yes'), t('quickReply.no'), t('quickReply.maybe'), t('quickReply.sure')];
-          } else if (content.includes('bom dia') || content.includes('boa tarde') || content.includes('boa noite') || content.includes('good morning') || content.includes('buenos')) {
-            suggestions = [t('quickReply.goodMorning'), t('quickReply.howAreYou'), t('quickReply.hi')];
-          } else if (content.includes('obrigad') || content.includes('valeu') || content.includes('thanks') || content.includes('gracias')) {
-            suggestions = [t('quickReply.youreWelcome'), t('quickReply.atYourService'), '👍'];
-          } else if (content.includes('kkk') || content.includes('haha') || content.includes('😂') || content.includes('lol') || content.includes('jaja')) {
-            suggestions = [t('quickReply.haha'), t('quickReply.awesome'), '🤣'];
-          } else if (content.includes('vamos') || content.includes('bora') || content.includes('partiu') || content.includes('let\'s go')) {
-            suggestions = [t('quickReply.letsGo'), t('quickReply.imIn'), t('quickReply.notNow')];
-          } else {
-            suggestions = ['👍', '😊', 'Ok!', t('chatConv.aiReply') || '✨ IA'];
-          }
-          return (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: 44, borderTopWidth: 0 }} contentContainerStyle={{ paddingHorizontal: 12, paddingVertical: 6, gap: 8 }}>
-              {suggestions.map((s, i) => (
-                <TouchableOpacity
-                  key={i}
-                  onPress={async () => {
-                    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-                    if (s === (t('chatConv.aiReply') || '✨ IA')) {
-                      // Actually call the AI endpoint and populate the
-                      // first suggestion. Previously this just cleared
-                      // the input and focused it — a dead button.
-                      try {
-                        const recent = (messagesRef.current || messages || []).slice(-6).map(m => ({
-                          sender: (m.sender_email || '').toLowerCase() === (currentEmail || '').toLowerCase() ? 'me' : 'them',
-                          content: typeof m.content === 'string' ? m.content.slice(0, 300) : '',
-                        })).filter(m => m.content);
-                        setInputText(t('chatConv.aiThinking') || 'Pensando...');
-                        const r = await api.aiQuickReplies(recent, 'EU');
-                        const replies = Array.isArray(r?.data?.replies) ? r.data.replies : (Array.isArray(r?.data) ? r.data : []);
-                        const pick = (replies[0] || '').trim();
-                        if (pick) {
-                          setInputText(pick);
-                          setTimeout(() => inputRef.current?.focus(), 80);
-                        } else {
-                          setInputText('');
-                          safeAlert(t('common.error') || 'Erro', t('chatConv.aiReplyFailed') || 'Não consegui gerar uma resposta agora.');
-                        }
-                      } catch {
-                        setInputText('');
-                      }
-                      return;
-                    }
-                    setInputText(s);
-                    setTimeout(() => handleSend(), 100);
-                  }}
-                  activeOpacity={0.7}
-                  style={{
-                    backgroundColor: isDark ? '#111111' : '#fff',
-                    borderRadius: 18,
-                    paddingHorizontal: 14,
-                    paddingVertical: 7,
-                    borderWidth: 0,
-                  }}
-                >
-                  <Text style={{ fontSize: 13, color: colors.text, fontWeight: '500' }}>{s}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          );
-        })()}
+        {/* [2026-06-03] Sugestões de mensagem REMOVIDAS a pedido do founder:
+            o SmartRepliesBar (OpenAI) ficava em "carregando" e nunca mostrava
+            nada, e o bloco de keyword quick-replies dependia do mesmo fluxo.
+            O strip de stickers (baseado em digitação, funciona offline)
+            permanece logo abaixo. */}
 
         {/* Sticker suggestions — compact strip, dismissable.
             Shows up to 4 matches once the keyword is typed (min 4 chars,
@@ -24745,38 +24641,8 @@ export default function ChatConversationScreen() {
           );
         })()}
 
-        {/* AI Quick Replies (3 chip buttons above input) */}
-        {aiQuickReplies.length > 0 && inputText.trim().length === 0 && !replyTo && !editingMsg && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={{ maxHeight: 44 }}
-            contentContainerStyle={{ paddingHorizontal: 12, gap: 8, alignItems: 'center' }}
-          >
-            {aiQuickReplies.map((reply, i) => (
-              <TouchableOpacity
-                key={i}
-                onPress={() => {
-                  setInputText(reply);
-                  setAiQuickReplies([]);
-                }}
-                style={{
-                  backgroundColor: isDark ? '#1f2937' : '#fff',
-                  borderWidth: 1,
-                  borderColor: colors.border || '#e5e7eb',
-                  paddingHorizontal: 14,
-                  paddingVertical: 8,
-                  borderRadius: 18,
-                }}
-              >
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <IconSparkles size={13} color={colors.text} />
-                  <Text style={{ color: colors.text, fontSize: 13 }}>{reply}</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        )}
+        {/* [2026-06-03] AI Quick Replies chips removidos junto com o resto do
+            sistema de sugestão de mensagem (ver comentário acima). */}
 
         {/* Peer block banner — surfaces blocked_by_peer / i_blocked_peer fields
             returned by chat_messages. When peer blocked us we just disable the
