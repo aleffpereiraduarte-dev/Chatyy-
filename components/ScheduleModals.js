@@ -1,10 +1,119 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, Pressable, TextInput,
   ScrollView, StyleSheet, Platform,
 } from 'react-native';
 import { Shadow } from '../constants/theme';
 import { IconClock, IconX, IconTrash } from './Icons';
+
+/**
+ * Scrollable wheel picker for date/time — replaces manual "YYYY-MM-DD HH:MM"
+ * typing (bad UX, Apple-flagged). Pure RN ScrollView wheels (Day/Hour/Minute),
+ * no native dependency, works on iOS/Android/web. WhatsApp/iMessage-style.
+ */
+const WHEEL_ITEM_H = 44;
+const WHEEL_VISIBLE = 5; // odd → center row is the selection
+
+function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+
+function buildDays(t) {
+  const out = [];
+  const base = new Date(); base.setHours(0, 0, 0, 0);
+  for (let i = 0; i < 90; i++) {
+    const d = new Date(base.getTime() + i * 86400000);
+    let label;
+    if (i === 0) label = t('chat.today') || 'Hoje';
+    else if (i === 1) label = t('chat.tomorrow') || 'Amanhã';
+    else {
+      try { label = d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }); }
+      catch { label = `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`; }
+    }
+    out.push({ date: d, label });
+  }
+  return out;
+}
+
+function Wheel({ data, index, onIndex, colors, width }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const id = setTimeout(() => {
+      try { ref.current?.scrollTo({ y: index * WHEEL_ITEM_H, animated: false }); } catch {}
+    }, 0);
+    return () => clearTimeout(id);
+  }, []); // initial sync to default index
+  const pad = ((WHEEL_VISIBLE - 1) / 2) * WHEEL_ITEM_H;
+  const onEnd = (e) => {
+    const y = e.nativeEvent.contentOffset.y;
+    let i = Math.round(y / WHEEL_ITEM_H);
+    if (i < 0) i = 0; if (i > data.length - 1) i = data.length - 1;
+    if (i !== index) onIndex(i);
+  };
+  return (
+    <View style={{ width, height: WHEEL_ITEM_H * WHEEL_VISIBLE }}>
+      <ScrollView
+        ref={ref}
+        showsVerticalScrollIndicator={false}
+        snapToInterval={WHEEL_ITEM_H}
+        decelerationRate="fast"
+        contentContainerStyle={{ paddingVertical: pad }}
+        onMomentumScrollEnd={onEnd}
+        onScrollEndDrag={onEnd}
+        nestedScrollEnabled
+      >
+        {data.map((item, i) => {
+          const sel = i === index;
+          return (
+            <View key={i} style={{ height: WHEEL_ITEM_H, alignItems: 'center', justifyContent: 'center' }}>
+              <Text
+                numberOfLines={1}
+                style={{
+                  fontSize: sel ? 20 : 17,
+                  fontWeight: sel ? '700' : '400',
+                  color: sel ? colors.text : colors.textTertiary,
+                  opacity: sel ? 1 : 0.55,
+                }}
+              >
+                {typeof item === 'string' ? item : item.label}
+              </Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+      <View pointerEvents="none" style={{
+        position: 'absolute', left: 0, right: 0, top: pad, height: WHEEL_ITEM_H,
+        borderTopWidth: StyleSheet.hairlineWidth, borderBottomWidth: StyleSheet.hairlineWidth,
+        borderColor: colors.border,
+      }} />
+    </View>
+  );
+}
+
+function WheelDateTimePicker({ colors, t, onChange }) {
+  const days = useRef(buildDays(t)).current;
+  const start = new Date(Date.now() + 60 * 60000); // default: +1h
+  const [di, setDi] = useState(0);
+  const [hi, setHi] = useState(start.getHours());
+  const [mi, setMi] = useState(start.getMinutes());
+  const hours = useRef(Array.from({ length: 24 }, (_, i) => pad2(i))).current;
+  const mins = useRef(Array.from({ length: 60 }, (_, i) => pad2(i))).current;
+
+  useEffect(() => {
+    const d = new Date(days[di].date);
+    d.setHours(hi, mi, 0, 0);
+    onChange(d);
+  }, [di, hi, mi]);
+
+  return (
+    <View style={{ marginBottom: 16 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'center', alignItems: 'center' }}>
+        <Wheel data={days} index={di} onIndex={setDi} colors={colors} width={150} />
+        <Wheel data={hours} index={hi} onIndex={setHi} colors={colors} width={56} />
+        <Text style={{ fontSize: 20, fontWeight: '700', color: colors.text, marginHorizontal: 2 }}>:</Text>
+        <Wheel data={mins} index={mi} onIndex={setMi} colors={colors} width={56} />
+      </View>
+    </View>
+  );
+}
 
 /**
  * Schedule Toast - shows confirmation after scheduling
@@ -28,6 +137,7 @@ export function ScheduleToast({ visible, message, colors }) {
  * Custom Schedule Picker Modal - datetime input for custom scheduling
  */
 export function CustomScheduleModal({ visible, onClose, customDate, setCustomDate, onSchedule, colors, t }) {
+  const [pickedDate, setPickedDate] = useState(null);
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={modalStyles.overlay} onPress={onClose}>
@@ -49,17 +159,7 @@ export function CustomScheduleModal({ visible, onClose, customDate, setCustomDat
               min={new Date().toISOString().slice(0, 16)}
             />
           ) : (
-            <TextInput
-              value={customDate}
-              onChangeText={setCustomDate}
-              placeholder="YYYY-MM-DD HH:MM"
-              placeholderTextColor={colors.textTertiary}
-              style={{
-                padding: 10, fontSize: 16, borderRadius: 8,
-                borderWidth: 1, borderColor: colors.border,
-                backgroundColor: colors.background, color: colors.text, marginBottom: 16,
-              }}
-            />
+            <WheelDateTimePicker colors={colors} t={t} onChange={setPickedDate} />
           )}
           <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'flex-end' }}>
             <TouchableOpacity onPress={onClose} style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 }}>
@@ -67,11 +167,13 @@ export function CustomScheduleModal({ visible, onClose, customDate, setCustomDat
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => {
-                if (customDate) {
-                  const dt = new Date(customDate);
-                  if (!isNaN(dt.getTime()) && dt > new Date()) {
-                    onSchedule(dt.toISOString());
-                  }
+                // Native uses the wheel picker (pickedDate); web uses the
+                // datetime-local string (customDate).
+                const dt = Platform.OS === 'web'
+                  ? (customDate ? new Date(customDate) : null)
+                  : pickedDate;
+                if (dt && !isNaN(dt.getTime()) && dt > new Date()) {
+                  onSchedule(dt.toISOString());
                 }
               }}
               style={{ paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8, backgroundColor: colors.primary }}
