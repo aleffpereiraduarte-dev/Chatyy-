@@ -11121,7 +11121,14 @@ export default function ChatConversationScreen() {
         if (String(data?.conversation_id) !== String(conversationId)) return;
         const peerEmail = data?.read_by || data?.email;
         if (!peerEmail || peerEmail === currentEmail) return;
-        const newId = data?.last_read_id || (Array.isArray(data?.message_ids) ? Math.max(...data.message_ids.filter(n => typeof n === 'number')) : 0);
+        // [receipt-sync media 2026-06-04] Coerce to Number — ids that ride a
+        // relay/cache hop can arrive as strings, and a string watermark made
+        // both this flip AND the maxReadId render fallback silently no-op.
+        let newId = Number(data?.last_read_id) || 0;
+        if (!newId && Array.isArray(data?.message_ids) && data.message_ids.length) {
+          const nums = data.message_ids.map(Number).filter(n => Number.isFinite(n) && n > 0);
+          if (nums.length) newId = Math.max(...nums);
+        }
         if (!newId) return;
         setReadReceipts(prev => {
           const existing = prev.find(rr => rr.email === peerEmail);
@@ -11133,7 +11140,7 @@ export default function ChatConversationScreen() {
         });
         const isGroup = conversationType === 'group';
         setMessages(prev => prev.map(m =>
-          m.sender_email === currentEmail && typeof m.id === 'number' && m.id <= newId
+          m.sender_email === currentEmail && Number.isFinite(Number(m.id)) && Number(m.id) > 0 && Number(m.id) <= newId
             ? (isGroup
                 ? (!m._delivered ? { ...m, _delivered: true } : m)
                 : (!m._read ? { ...m, status: 'read', _read: true, _delivered: true } : m))
@@ -11151,7 +11158,7 @@ export default function ChatConversationScreen() {
         if (data?._local) return;
         if (String(data?.conversation_id) === String(conversationId) && data?.email !== currentEmail) {
           setReadReceipts(prev => {
-            const newId = data.last_read_id || 0;
+            const newId = Number(data.last_read_id) || 0;
             const existing = prev.find(rr => rr.email === data.email);
             if (existing) {
               if ((existing.last_read_id || 0) >= newId) return prev; // no-op → keep ref stable
@@ -11167,10 +11174,10 @@ export default function ChatConversationScreen() {
           // _delivered on groups; _read will correctly settle on the next
           // chat_messages refetch where backend computes member-count.
           if (data?.last_read_id) {
-            const readUpTo = data.last_read_id;
+            const readUpTo = Number(data.last_read_id) || 0;
             const isGroup = conversationType === 'group';
             setMessages(prev => prev.map(m =>
-              m.sender_email === currentEmail && typeof m.id === 'number' && m.id <= readUpTo
+              m.sender_email === currentEmail && readUpTo > 0 && Number.isFinite(Number(m.id)) && Number(m.id) > 0 && Number(m.id) <= readUpTo
                 ? (isGroup
                     ? (!m._delivered ? { ...m, _delivered: true } : m)
                     : (!m._read ? { ...m, status: 'read', _read: true, _delivered: true } : m))
@@ -11661,7 +11668,7 @@ export default function ChatConversationScreen() {
         if (String(data?.conversation_id) !== String(conversationId)) return;
         if (data?.email !== currentEmail) {
           setReadReceipts(prev => {
-            const newId = data.last_read_id || 0;
+            const newId = Number(data.last_read_id) || 0;
             const existing = prev.find(rr => rr.email === data.email);
             if (existing) {
               if ((existing.last_read_id || 0) >= newId) return prev;
@@ -13640,6 +13647,24 @@ export default function ChatConversationScreen() {
       is_view_once: forceViewOnce ? 1 : 0,
     };
     setMessages(prev => [...prev, optimisticMsg]);
+    // [receipt-sync media 2026-06-04] Echo the outbound MEDIA to the chat
+    // list (text already does this in _handleSendInner via the same event).
+    // Without it the list row kept the PREVIOUS message as preview, so the
+    // founder's "mandei foto e o recibo não atualiza live" — the photo never
+    // became last_message and its ✓/✓✓ never reached the list until refetch.
+    try {
+      const mailWsList = require('../services/websocket').default;
+      mailWsList._emit?.('chat_local_outbound', {
+        conversation_id: conversationId,
+        id: tempId,
+        sender_email: user?.email,
+        sender_name: user?.name || user?.email || '',
+        content: caption || '',
+        type: fileType,
+        created_at: optimisticMsg.created_at,
+        _local: true,
+      });
+    } catch {}
     // [SEND-01, 2026-05-19] Persist optimistic media to local SQLite BEFORE
     // upload kicks off so it survives app kill / network loss. Mirrors the
     // text-send durability pattern. `_localUri` lets the bubble re-render
@@ -13918,8 +13943,48 @@ export default function ChatConversationScreen() {
         // [#1188 fix] Preserve sender_email — server response for media
         // uploads can return null sender_email in envelope/sealed mode and
         // would flip the bubble from outgoing to incoming on the swap.
-        setMessages(prev => prev.map(m => String(m.id) === String(tempId) ? { ...msg, _pending: false, _batch_id: batchId || m._batch_id || null, sender_email: msg.sender_email || m.sender_email || currentEmail } : m));
+        // [receipt-sync media 2026-06-04] If a chat_delivered for this server
+        // id raced in while the bubble still carried its temp id (peer with
+        // the thread open acks within ms of the PHP broadcast, often BEFORE
+        // our own HTTP response lands), graft ✓✓ on now — mirror of the
+        // text-send finalize at _handleSendInner. Read (✓✓ roxo) recovers by
+        // itself via the readReceipts maxReadId render fallback once the
+        // numeric server id is on the row.
+        const _alreadyDeliveredM = (() => {
+          try { return msg.id != null && deliveredIdBufferRef.current?.has(msg.id); } catch { return false; }
+        })();
+        setMessages(prev => prev.map(m => {
+          if (String(m.id) !== String(tempId)) return m;
+          // Preserve _client_id so msgKeyExtractor keeps a stable FlatList key
+          // across the optimistic→server swap (same as the text path #1182).
+          const swapped = { ...msg, _pending: false, _batch_id: batchId || m._batch_id || null, sender_email: msg.sender_email || m.sender_email || currentEmail, _client_id: m._client_id || msgId };
+          if (_alreadyDeliveredM && swapped.status !== 'read') {
+            swapped.status = 'delivered';
+            swapped._delivered = true;
+            swapped.delivered_at = swapped.delivered_at || new Date().toISOString();
+          }
+          return swapped;
+        }));
         setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+        // [receipt-sync media 2026-06-04] Re-echo to the chat list with the
+        // REAL numeric server id. The list's chat_read/message_read watermark
+        // guards compare against Number(last_message.id) — with the tempId
+        // echo only, the row could never flip ✓✓ live for a fresh photo.
+        try {
+          const mailWsList = require('../services/websocket').default;
+          mailWsList._emit?.('chat_local_outbound', {
+            conversation_id: conversationId,
+            id: msg.id,
+            sender_email: msg.sender_email || currentEmail,
+            sender_name: user?.name || currentEmail,
+            content: caption || '',
+            type: msg.type || fileType,
+            created_at: msg.created_at || new Date().toISOString(),
+            read_at: msg.read_at || null,
+            delivered_at: msg.delivered_at || (_alreadyDeliveredM ? new Date().toISOString() : null),
+            _local: true,
+          });
+        } catch {}
         requestAnimationFrame(() => flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }));
         // Persist to local cache so the sender's other sessions (and this
         // device after restart) have the media available offline — WhatsApp
@@ -17075,8 +17140,11 @@ export default function ChatConversationScreen() {
     if (!readReceipts || readReceipts.length === 0) return -1;
     let max = -1;
     for (let i = 0; i < readReceipts.length; i++) {
-      const v = readReceipts[i]?.last_read_id;
-      if (typeof v === 'number' && v > max) max = v;
+      // [receipt-sync media 2026-06-04] Number() coercion — a string
+      // last_read_id (relay/cache hop) used to kill this fallback entirely,
+      // which is what kept fresh media bubbles stuck at ✓ until reload.
+      const v = Number(readReceipts[i]?.last_read_id);
+      if (Number.isFinite(v) && v > max) max = v;
     }
     return max;
   }, [readReceipts]);
