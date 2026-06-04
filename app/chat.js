@@ -734,7 +734,10 @@ function ChatHub() {
     }
     if (activeTab === 'status') {
       return (
-        <TouchableOpacity onPress={() => {}} activeOpacity={0.6}
+        // [2026-06-04] era onPress={() => {}} — botão de câmera morto (caçada
+        // R2). Reusa o fluxo do strip "+ status": requestNewStatus() flipa
+        // autoNewStatus e o ChatStatusTab abre o composer canônico.
+        <TouchableOpacity onPress={requestNewStatus} activeOpacity={0.6}
           style={[styles.headerIconBtn, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
           <IconCameraHeader size={18} color={headerIconColor} />
         </TouchableOpacity>

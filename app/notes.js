@@ -1133,16 +1133,25 @@ export default function NotesScreen() {
     try {
       await api.notesUpdate(note.id, { is_pinned: note.is_pinned ? 0 : 1 });
       loadNotes(false);
-    } catch (e) {}
-  }, [loadNotes]);
+    } catch (e) {
+      // [2026-06-04] cacada R2: falhava em silencio — user re-tocava achando
+      // que o botao quebrou.
+      const m = String(e?.message || e);
+      if (Platform.OS === 'web') { try { window.alert(m); } catch {} } else Alert.alert(t('common.error') || 'Erro', m);
+    }
+  }, [loadNotes, t]);
 
   // Toggle archive
   const toggleArchive = useCallback(async (note) => {
     try {
       await api.notesUpdate(note.id, { is_archived: note.is_archived ? 0 : 1 });
       loadNotes(false);
-    } catch (e) {}
-  }, [loadNotes]);
+    } catch (e) {
+      // [2026-06-04] cacada R2: falhava em silencio.
+      const m = String(e?.message || e);
+      if (Platform.OS === 'web') { try { window.alert(m); } catch {} } else Alert.alert(t('common.error') || 'Erro', m);
+    }
+  }, [loadNotes, t]);
 
   // Change color
   const changeColor = useCallback(async (note, color) => {

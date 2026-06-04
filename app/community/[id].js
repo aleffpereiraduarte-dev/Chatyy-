@@ -369,16 +369,11 @@ export default function CommunityScreen() {
             </TouchableOpacity>
           ) : (
             <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-              {isAdmin && (
-                <TouchableOpacity
-                  onPress={() => router.push(`/community/edit?id=${community.id}`)}
-                  style={[sty.secondaryBtn, { borderColor: colors.primary }]}
-                >
-                  <Text style={[sty.secondaryBtnText, { color: colors.primary }]}>
-                    {t('community.edit') || 'Editar'}
-                  </Text>
-                </TouchableOpacity>
-              )}
+              {/* [2026-06-04] Botão "Editar" ESCONDIDO (caçada R2): navegava
+                  pra /community/edit que NÃO EXISTE (app/community/ só tem
+                  [id].js, create.js, discover.js) → admin caía em tela de
+                  rota não encontrada. Reativar quando criar a tela de edição
+                  (reusar o form do create.js em modo edit). */}
               {!isOwner && (
                 <TouchableOpacity onPress={onLeave} style={[sty.secondaryBtn, { borderColor: '#e74c3c' }]}>
                   <Text style={[sty.secondaryBtnText, { color: '#e74c3c' }]}>

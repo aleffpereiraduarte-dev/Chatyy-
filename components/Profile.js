@@ -900,7 +900,10 @@ class ProfileStatusCameraBoundary extends React.Component {
   static getDerivedStateFromError() { return { crashed: true }; }
   componentDidCatch(err) {
     try { console.warn('[Profile/StatusCamera] crashed', err?.message || err); } catch {}
-    try { require('./services/crashReporter')?.reportCrash?.({ type: 'render_error', context: 'profile_status_camera', message: err?.message, stack: err?.stack }); } catch {}
+    // [2026-06-04] era './services/...' — caminho errado (Profile mora em
+    // components/), o require lançava e o catch engolia: crash nunca chegava
+    // na telemetria (caçada R2).
+    try { require('../services/crashReporter')?.reportCrash?.({ type: 'render_error', context: 'profile_status_camera', message: err?.message, stack: err?.stack }); } catch {}
     try { this.props.onCrash?.(); } catch {}
   }
   render() { return this.state.crashed ? null : this.props.children; }

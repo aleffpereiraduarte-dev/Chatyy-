@@ -2863,7 +2863,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const handleBulkPin = useCallback(async () => {
     const ids = [...selectedIds];
     for (const id of ids) {
-      try { await api.chatPin(id); } catch {}
+      // [2026-06-04] usava api.chatPin(id) — esse action fixa MENSAGEM (exige
+      // message_id) → 400 silencioso e o bulk-pin nunca fixava nada (caçada
+      // R2). Fixar CONVERSA é chat_pin_conversation (igual handlePinConversation).
+      try { await api.apiCall('chat_pin_conversation', { conversation_id: id }, 'POST'); } catch {}
     }
     loadConversations(false);
     exitSelectionMode();

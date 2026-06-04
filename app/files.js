@@ -464,11 +464,31 @@ function getStorageFillColor(percent) {
 }
 
 function StorageBar({ storageInfo, colors, t, isDark }) {
+  // [2026-06-04] HOOKS PRIMEIRO, early-return DEPOIS. O `if (!storageInfo)
+  // return null` ficava ANTES do useRef/useEffect: 1º render (storageInfo
+  // null) = 0 hooks; quando o backend respondia, mesmo fiber re-renderizava
+  // com 2 hooks → "Rendered more hooks than during the previous render" e a
+  // tela Arquivos inteira caía no ErrorBoundary (caçada R2, mesmo padrão dos
+  // crashes do Feed #1105 e do grupo #1343).
+  const percent = Math.min(storageInfo?.percentage || 0, 100);
+  const driveUsed = storageInfo?.drive_used || 0;
+  const emailUsed = storageInfo?.email_used || 0;
+  const quota = storageInfo?.quota || storageInfo?.plan_quota || 15 * 1024 * 1024 * 1024;
+
+  // Animated fill
+  const fillAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!storageInfo) return; // ainda carregando — anima só quando houver dado
+    Animated.timing(fillAnim, {
+      toValue: 1,
+      duration: 800,
+      delay: 300,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [percent, storageInfo ? 1 : 0]);
+
   if (!storageInfo) return null;
-  const percent = Math.min(storageInfo.percentage || 0, 100);
-  const driveUsed = storageInfo.drive_used || 0;
-  const emailUsed = storageInfo.email_used || 0;
-  const quota = storageInfo.quota || storageInfo.plan_quota || 15 * 1024 * 1024 * 1024;
 
   // Clamp tiny non-zero usage to a visible minimum so the bar still shows
   // a sliver when the user has only a few KB. Without this, 86 KB / 20 GB
@@ -478,18 +498,6 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
   const _rawEmail = quota > 0 ? Math.min((emailUsed / quota) * 100, 100) : 0;
   const drivePct = driveUsed > 0 && _rawDrive < 1 ? 1 : _rawDrive;
   const emailPct = emailUsed > 0 && _rawEmail < 1 ? Math.min(1, 100 - drivePct) : Math.min(_rawEmail, 100 - drivePct);
-
-  // Animated fill
-  const fillAnim = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    Animated.timing(fillAnim, {
-      toValue: 1,
-      duration: 800,
-      delay: 300,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: false,
-    }).start();
-  }, [percent]);
 
   const driveWidth = fillAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', `${drivePct}%`] });
   const emailWidth = fillAnim.interpolate({ inputRange: [0, 1], outputRange: ['0%', `${emailPct}%`] });

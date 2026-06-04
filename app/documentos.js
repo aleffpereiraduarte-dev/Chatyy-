@@ -214,8 +214,15 @@ function DocumentosScreenInner() {
           }
         }
         fetchDocs();
+      } else {
+        // [2026-06-04] cacada R2: criar falhava em silencio.
+        const m = res?.message || (t('common.error') || 'Erro');
+        if (Platform.OS === 'web') window.alert(m); else Alert.alert(t('common.error') || 'Erro', m);
       }
-    } catch {}
+    } catch (e) {
+      const m = String(e?.message || e);
+      if (Platform.OS === 'web') window.alert(m); else Alert.alert(t('common.error') || 'Erro', m);
+    }
   }, [currentFolder, fetchDocs, t]);
 
   const handleTrash = useCallback(async (doc) => {
@@ -224,7 +231,11 @@ function DocumentosScreenInner() {
       try {
         await docsTrash(doc.doc_id);
         fetchDocs();
-      } catch {}
+      } catch (e) {
+        // [2026-06-04] cacada R2: lixeira falhava em silencio.
+        const m = String(e?.message || e);
+        if (Platform.OS === 'web') window.alert(m); else Alert.alert(t('common.error') || 'Erro', m);
+      }
     };
     if (Platform.OS === 'web') {
       if (window.confirm(t('docs.confirmDelete'))) doIt();
@@ -242,20 +253,35 @@ function DocumentosScreenInner() {
 
   const handleRename = useCallback(async () => {
     if (!renameDoc || !renameText.trim()) return;
+    // [2026-06-04] cacada R2: modal fechava como se tivesse salvo mesmo em
+    // falha (offline/500) — agora so fecha no sucesso; em erro mantem aberto
+    // e avisa.
     try {
-      await docsRename(renameDoc.doc_id, renameText.trim());
+      const r = await docsRename(renameDoc.doc_id, renameText.trim());
+      if (r && r.success === false) {
+        const m = r.message || (t('common.error') || 'Erro');
+        if (Platform.OS === 'web') window.alert(m); else Alert.alert(t('common.error') || 'Erro', m);
+        return;
+      }
       fetchDocs();
-    } catch {}
-    setRenameDoc(null);
-    setRenameText('');
-  }, [renameDoc, renameText, fetchDocs]);
+      setRenameDoc(null);
+      setRenameText('');
+    } catch (e) {
+      const m = String(e?.message || e);
+      if (Platform.OS === 'web') window.alert(m); else Alert.alert(t('common.error') || 'Erro', m);
+    }
+  }, [renameDoc, renameText, fetchDocs, t]);
 
   const handleDuplicate = useCallback(async (doc) => {
     setContextDoc(null);
     try {
       await docsDuplicate(doc.doc_id);
       fetchDocs();
-    } catch {}
+    } catch (e) {
+      // [2026-06-04] cacada R2: duplicar falhava em silencio.
+      const m = String(e?.message || e);
+      if (Platform.OS === 'web') window.alert(m); else Alert.alert(t('common.error') || 'Erro', m);
+    }
   }, [fetchDocs]);
 
   const handleShare = useCallback((doc) => {

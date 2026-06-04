@@ -149,10 +149,15 @@ export default function MeetingDetailScreen() {
 
   const handleCancel = async () => {
     const doCancel = async () => {
+      // [2026-06-04] cacada R2: cancelar falhava em silencio (confirmava e
+      // nada acontecia). Espelha o padrao do RSVP acima.
       try {
         const r = await api.meetCancel(meeting.room_id || id);
         if (r.success) router.back();
-      } catch {}
+        else Alert.alert(t('common.error') || 'Error', r.message || (t('meetingDetail.cancelError') || 'Não foi possível cancelar a reunião'));
+      } catch (e) {
+        Alert.alert(t('common.error') || 'Error', String(e?.message || e));
+      }
     };
     const ok = Platform.OS === 'web'
       ? (typeof window !== 'undefined' && window.confirm(t('meetingDetail.cancelConfirm')))
