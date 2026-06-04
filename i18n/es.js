@@ -2890,6 +2890,11 @@ export default {
   'files.tabAll': 'Todos',
   'files.tabRecent': 'Recientes',
   'files.tabStarred': 'Favoritos',
+  // [2026-06-04] Salvas/Favoritas unificadas + share do perfil (QA: raw keys)
+  'saved.unifiedTitle': 'Guardadas y favoritas',
+  'saved.tabSaved': 'Guardadas',
+  'saved.tabStarred': 'Favoritas',
+  'profile.shareLink': 'Compartir enlace',
   'files.tabTrash': 'Papelera',
   'files.folder': 'Carpeta',
   'files.home': 'Inicio',

@@ -2539,6 +2539,33 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
     } catch { return toLocalDateTimeInput(reminderDate); }
   }, [reminderDate]);
   const reminderIsPast = !!(reminderDate && reminderDate.getTime() < Date.now());
+  // [TDZ fix 2026-06-04] updateAndSave PRECISA vir antes de setReminder: o
+  // deps array `[updateAndSave]` é avaliado NO RENDER (não no click), então
+  // com a declaração lá embaixo o modal do editor crashava no mount com
+  // "Cannot access 'dt' before initialization" (QA: Quick note → ErrorBoundary).
+  const updateAndSave = useCallback((field, value) => {
+    if (field === 'title') { titleRef.current = value; setTitle(value); }
+    else if (field === 'content') { contentRef.current = value; setContent(value); }
+    else if (field === 'color') {
+      colorRef.current = value;
+      setSelectedColor(value);
+      // Animate color transition
+      colorAnim.setValue(0);
+      Animated.timing(colorAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
+    }
+    else if (field === 'pinned') { pinnedRef.current = value; setIsPinned(value); }
+    else if (field === 'sticky') { stickyRef.current = value; setIsSticky(value); }
+    else if (field === 'notebook') { notebookRef.current = value; setSelectedNotebookId(value); }
+    else if (field === 'tags') { if (tagsRef) tagsRef.current = value; setTags(value); }
+    else if (field === 'reminder') { if (reminderRef) reminderRef.current = value; setReminderAt(value); }
+    setSavingPulse(true);
+    onAutoSave();
+    // Mock save latency feedback ~600ms
+    setTimeout(() => {
+      setSavingPulse(false);
+      setSavedAgo(Date.now());
+    }, 600);
+  }, [onAutoSave]);
   const setReminder = useCallback((d) => {
     updateAndSave('reminder', d ? toLocalIso(d) : null);
   }, [updateAndSave]);
@@ -2563,30 +2590,6 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
       setAndroidReminderMode('date');
     }
   }, [androidReminderMode, reminderDate, setReminder]);
-
-  const updateAndSave = useCallback((field, value) => {
-    if (field === 'title') { titleRef.current = value; setTitle(value); }
-    else if (field === 'content') { contentRef.current = value; setContent(value); }
-    else if (field === 'color') {
-      colorRef.current = value;
-      setSelectedColor(value);
-      // Animate color transition
-      colorAnim.setValue(0);
-      Animated.timing(colorAnim, { toValue: 1, duration: 300, useNativeDriver: true }).start();
-    }
-    else if (field === 'pinned') { pinnedRef.current = value; setIsPinned(value); }
-    else if (field === 'sticky') { stickyRef.current = value; setIsSticky(value); }
-    else if (field === 'notebook') { notebookRef.current = value; setSelectedNotebookId(value); }
-    else if (field === 'tags') { if (tagsRef) tagsRef.current = value; setTags(value); }
-    else if (field === 'reminder') { if (reminderRef) reminderRef.current = value; setReminderAt(value); }
-    setSavingPulse(true);
-    onAutoSave();
-    // Mock save latency feedback ~600ms
-    setTimeout(() => {
-      setSavingPulse(false);
-      setSavedAgo(Date.now());
-    }, 600);
-  }, [onAutoSave]);
 
   // ---- Slash menu options ----
   const slashOptions = useMemo(() => ([
