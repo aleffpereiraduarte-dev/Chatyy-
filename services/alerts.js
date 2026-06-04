@@ -25,16 +25,12 @@ export function safeAlert(title, message, buttons) {
     } catch {}
     return;
   }
-  // Web — try Alert.alert (RN-web), fall back to window.confirm/alert.
-  try {
-    if (buttons && buttons.length) {
-      Alert.alert(title || '', message || '', buttons);
-      return;
-    }
-    Alert.alert(title || '', message || '');
-    return;
-  } catch {}
-
+  // [2026-06-04 caçada R3 P2] No RN-web, Alert.alert é um NO-OP puro
+  // (class Alert { static alert() {} }) que NUNCA lança E NÃO renderiza nada.
+  // O código antigo tentava Alert.alert primeiro e dava `return` → confirmações
+  // destrutivas (Esvaziar Lixeira, Excluir permanente Drive, deletar fotos,
+  // deletar backup) NÃO disparavam nada no navegador. Vai DIRETO pro
+  // window.confirm/alert no web.
   if (typeof window !== 'undefined') {
     const text = (title ? title + (message ? '\n\n' + message : '') : message) || '';
     if (!buttons || buttons.length <= 1) {

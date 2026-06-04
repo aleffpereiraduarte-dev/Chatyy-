@@ -260,16 +260,11 @@ export default function ReadScreen() {
     const title = t('read.confirmDeleteTitle');
     const msg = t('read.confirmDeleteMsg');
     if (Platform.OS === 'web') {
-      // Web: use Alert.alert which renders as modal in this codebase. Fallback
-      // to window.confirm if Alert isn't available.
-      try {
-        Alert.alert(title, msg, [
-          { text: t('common.cancel'), style: 'cancel' },
-          { text: t('reader.delete'), style: 'destructive', onPress: doDelete },
-        ]);
-      } catch {
-        if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`)) doDelete();
-      }
+      // [2026-06-04 caçada R3 P1] No RN-web, Alert.alert é um NO-OP que NUNCA
+      // lança → o try "sucedia" sem renderizar nada e o catch (window.confirm)
+      // ficava inalcançável → Excluir e-mail era ação MORTA no navegador. Vai
+      // direto pro window.confirm.
+      if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`)) doDelete();
     } else {
       Alert.alert(title, msg, [
         { text: t('common.cancel'), style: 'cancel' },
