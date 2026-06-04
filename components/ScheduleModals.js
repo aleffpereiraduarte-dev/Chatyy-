@@ -187,7 +187,11 @@ export function CustomScheduleModal({ visible, onClose, customDate, setCustomDat
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={modalStyles.overlay} onPress={onClose}>
-        <View style={[modalStyles.sheet, { backgroundColor: colors.surface, padding: 20, minWidth: 300 }, Shadow.lg]}>
+        {/* [2026-06-04] Pressable no-op (era View): toque simples na roleta de
+            data borbulhava até o overlay e FECHAVA o modal antes do usuário
+            conseguir escolher (print do founder). Mesmo padrão do
+            DateTimePickerModal acima. */}
+        <Pressable onPress={() => {}} style={[modalStyles.sheet, { backgroundColor: colors.surface, padding: 20, minWidth: 300 }, Shadow.lg]}>
           <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 12 }}>
             {t('chat.scheduleCustom')}
           </Text>
@@ -227,7 +231,7 @@ export function CustomScheduleModal({ visible, onClose, customDate, setCustomDat
               <Text style={{ color: '#fff', fontWeight: '600' }}>{t('chat.schedule')}</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </Pressable>
       </Pressable>
     </Modal>
   );
@@ -240,7 +244,8 @@ export function ScheduledMessagesModal({ visible, onClose, messages, onCancel, c
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={modalStyles.overlay} onPress={onClose}>
-        <View style={[modalStyles.sheet, { backgroundColor: colors.surface, maxHeight: '70%', minWidth: 320, padding: 0 }, Shadow.lg]}>
+        {/* [2026-06-04] Pressable no-op (era View) — mesmo fix do CustomScheduleModal */}
+        <Pressable onPress={() => {}} style={[modalStyles.sheet, { backgroundColor: colors.surface, maxHeight: '70%', minWidth: 320, padding: 0 }, Shadow.lg]}>
           <View style={{
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
             padding: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
@@ -287,7 +292,7 @@ export function ScheduledMessagesModal({ visible, onClose, messages, onCancel, c
               </View>
             ))}
           </ScrollView>
-        </View>
+        </Pressable>
       </Pressable>
     </Modal>
   );
