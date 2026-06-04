@@ -64,7 +64,18 @@ function Wheel({ data, index, onIndex, colors, width }) {
         {data.map((item, i) => {
           const sel = i === index;
           return (
-            <View key={i} style={{ height: WHEEL_ITEM_H, alignItems: 'center', justifyContent: 'center' }}>
+            // [2026-06-04] Linha virou Pressable: TOCAR num valor seleciona
+            // (rola até ele + onIndex), igual UIDatePicker. Antes só arrastar
+            // funcionava — o founder tocava no número e nada acontecia (e na
+            // versão anterior o toque ainda fechava o modal).
+            <Pressable
+              key={i}
+              onPress={() => {
+                try { ref.current?.scrollTo({ y: i * WHEEL_ITEM_H, animated: true }); } catch {}
+                if (i !== index) onIndex(i);
+              }}
+              style={{ height: WHEEL_ITEM_H, alignItems: 'center', justifyContent: 'center' }}
+            >
               <Text
                 numberOfLines={1}
                 style={{
@@ -76,7 +87,7 @@ function Wheel({ data, index, onIndex, colors, width }) {
               >
                 {typeof item === 'string' ? item : item.label}
               </Text>
-            </View>
+            </Pressable>
           );
         })}
       </ScrollView>
