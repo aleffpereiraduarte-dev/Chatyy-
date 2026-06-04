@@ -13215,8 +13215,14 @@ export default function ChatConversationScreen() {
   const loadScheduledMessages = async () => {
     try {
       const r = await api.chatScheduledList();
-      if (r.success && r.data?.scheduled_messages) {
-        setScheduledMessages(r.data.scheduled_messages.filter(m => m.conversation_id === conversationId));
+      // [2026-06-04] Backend (chat_scheduled_list) retorna `data.items` — o
+      // código lia `data.scheduled_messages` (não existe) → a lista de
+      // "Mensagens agendadas" SEMPRE vinha vazia (founder agendou e não viu
+      // nada). Bônus: o filtro comparava number === string (conversation_id
+      // do backend é int, o da rota é string) → String() nos dois lados.
+      const list = r?.data?.items || r?.data?.scheduled_messages || [];
+      if (r.success) {
+        setScheduledMessages(list.filter(m => String(m.conversation_id) === String(conversationId)));
       }
     } catch {}
   };

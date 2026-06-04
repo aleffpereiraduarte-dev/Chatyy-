@@ -5252,7 +5252,9 @@ export async function chatScheduledList() {
 }
 
 export async function chatScheduleCancel(scheduledId) {
-  return apiCall('chat_schedule_cancel', { scheduled_id: scheduledId }, 'POST');
+  // [2026-06-04] backend espera `id` (testado live: scheduled_id → "id required");
+  // manda os dois por compat
+  return apiCall('chat_schedule_cancel', { id: scheduledId, scheduled_id: scheduledId }, 'POST');
 }
 
 // @ChatyyAI inline mention — fires after the user's message is persisted.
