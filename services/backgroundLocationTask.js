@@ -97,6 +97,13 @@ export function registerBackgroundLocationTask() {
 // or by the app boot if the flag was persisted from a prior session.
 export async function startBackgroundLocationUpdates() {
   if (Platform.OS === 'web') return false;
+  // [Play compliance 2026-06-04] Android: ACCESS_BACKGROUND_LOCATION foi
+  // REMOVIDA do manifest (Google tirou o app da loja por falta de prominent
+  // disclosure + vídeo de declaração). requestBackgroundPermissionsAsync sem
+  // a permissão no manifest rejeita/craseia silenciosamente em alguns OEMs —
+  // curto-circuito explícito: live location no Android segue só em foreground
+  // (LiveLocationHeartbeat). iOS continua com Always (aprovado pela Apple).
+  if (Platform.OS === 'android') return false;
   try {
     registerBackgroundLocationTask();
     const Location = require('expo-location');

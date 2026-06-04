@@ -36,11 +36,15 @@ export async function ensureContactsConsent(t) {
   if (saved === 'denied')  { _consentMemory = 'denied';  return false; }
   return await new Promise((resolve) => {
     const _t = typeof t === 'function' ? t : () => '';
+    // [Play compliance 2026-06-04] Texto no template EXATO exigido pelo
+    // Google ("[Este app] coleta/transmite [tipo de dados] para ativar
+    // [recurso], [contexto]") — a versão anterior era equivalente mas não
+    // seguia o template e o app foi removido da Play Store por isso.
     const title = _t('contactsConsent.title') || 'Encontrar amigos no Chatyy';
     const body =
       _t('contactsConsent.body') ||
-      'Pra te mostrar quais amigos já estão no Chatyy, vamos enviar os números e emails dos seus contatos pro nosso servidor de forma criptografada (hash SHA-256). Os contatos não ficam armazenados depois da consulta e nunca são compartilhados com ninguém. Você pode revogar a qualquer momento em Configurações.';
-    const cta = _t('contactsConsent.continue') || 'Continuar';
+      'O Chatyy coleta e transmite os números de telefone e endereços de email da sua lista de contatos para o servidor chatyy.com.br para ativar o recurso "Encontrar amigos" — mostrar quais dos seus contatos já usam o Chatyy e avisar quando um deles entrar — sempre que você sincroniza seus contatos nesta tela. Os números são enviados como hash criptográfico (SHA-256), não ficam armazenados após a consulta e nunca são compartilhados com terceiros. Você pode revogar este consentimento a qualquer momento em Configurações → Privacidade.';
+    const cta = _t('contactsConsent.continue') || 'Aceitar e continuar';
     const cancel = _t('common.notNow') || 'Agora não';
     let settled = false;
     const settle = (state, value) => {

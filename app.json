@@ -117,7 +117,6 @@
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_BACKGROUND_LOCATION",
         "android.permission.FOREGROUND_SERVICE_LOCATION",
         "android.permission.READ_CONTACTS",
         "android.permission.WRITE_CONTACTS",

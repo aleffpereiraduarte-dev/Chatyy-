@@ -1207,7 +1207,15 @@ function AppInit({ onNotification, setOtaToast }) {
           }
           if (!shouldRun) return;
           _syncing = true;
-          const { syncContacts } = await import('../services/contactSync');
+          const { syncContacts, getContactsConsentState } = await import('../services/contactSync');
+          // [Play compliance 2026-06-04] O auto-sync de boot só roda se o
+          // usuário JÁ deu consentimento explícito dentro do fluxo de contatos
+          // (chat-new / tela Contatos). Antes, syncContacts() podia disparar o
+          // diálogo de consentimento ~1.5s após abrir o app — fora de contexto,
+          // o que o Google reprova (a prominent disclosure tem que aparecer no
+          // uso normal do RECURSO, não num popup de cold-start).
+          const _consent = await getContactsConsentState();
+          if (_consent !== 'granted') { _syncing = false; return; }
           // `forceRefresh=true` bypasses the 1h in-memory cache so the server
           // sees a fresh hash batch — that's what wakes up "X entrou no Chatyy"
           // push notifications on the contact's side (chat_phone_registry hit).

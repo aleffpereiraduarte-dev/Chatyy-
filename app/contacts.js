@@ -487,7 +487,17 @@ function ContactsScreenInner() {
       }
 
       // Check which contacts are registered on Chatyy
+      // [Play compliance 2026-06-04] Esse upload de emails+telefones da lista
+      // de contatos era o ÚNICO caminho SEM a declaração em destaque — exata
+      // violação que removeu o app da Play Store ("uploading contact list to
+      // chatyy.com.br without prominent disclosure"). Agora exige o mesmo
+      // consentimento explícito do fluxo de descoberta (ensureContactsConsent,
+      // persistido). Sem consentimento: a lista local continua visível, só o
+      // matching "quem tem Chatyy" fica desligado.
       try {
+        const { ensureContactsConsent } = require('../services/contactSync');
+        const consented = await ensureContactsConsent(t);
+        if (!consented) throw new Error('consent_denied');
         const emails = allContacts
           .map(dc => dc.emails?.[0]?.email)
           .filter(Boolean)
