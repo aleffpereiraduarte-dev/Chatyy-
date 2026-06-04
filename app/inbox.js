@@ -50,6 +50,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as api from '../services/api';
 import Onboarding, { ONBOARDING_KEY } from '../components/Onboarding';
 import CompleteProfileModal, { isProfileComplete, COMPLETE_PROFILE_SKIP_KEY } from '../components/CompleteProfileModal';
+import { canNavigateNow } from '../services/navGuard';
 
 const MUTED_UIDS_KEY = '@onemundo_muted_uids';
 
@@ -808,6 +809,11 @@ function InboxScreenInner() {
       toggleSelect(email.uid);
       return;
     }
+    // [2026-06-04] Trava anti-empilhamento: tocar vários e-mails rápido abria
+    // várias telas de leitura uma atrás da outra. canNavigateNow() deixa só a
+    // 1ª passar dentro da janela curta. Fica DEPOIS do selectMode (selecionar
+    // vários é intencional).
+    if (!canNavigateNow()) return;
     // Drafts: open in compose mode
     if (currentFolder === 'Drafts' || currentFolder === '.Drafts') {
       router.push(`/compose?draft_uid=${email.uid}&subject=${encodeURIComponent(email.subject || '')}&to=${encodeURIComponent(email.to || '')}`);

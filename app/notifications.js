@@ -1,4 +1,5 @@
 import ErrorBoundary from '../components/ErrorBoundary';
+import { canNavigateNow } from '../services/navGuard';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, StyleSheet,
@@ -607,6 +608,10 @@ function NotificationsScreenInner() {
       try { data = JSON.parse(data || '{}'); } catch { data = {}; }
     }
 
+    // [2026-06-04] Trava anti-empilhamento: tocar várias notificações rápido
+    // abria várias telas uma atrás da outra. O markRead acima já rodou; só a
+    // navegação é gateada.
+    if (!canNavigateNow()) return;
     switch (notif.type) {
       case 'email':
         router.push({ pathname: '/read', params: { uid: data.uid, folder: data.folder || 'INBOX' } });

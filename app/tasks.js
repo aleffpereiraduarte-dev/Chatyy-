@@ -12,6 +12,7 @@ import {
   ActivityIndicator, FlatList, Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { canNavigateNow } from '../services/navGuard';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { Spacing, BorderRadius, FontSize } from '../constants/theme';
@@ -84,6 +85,7 @@ export default function TasksScreen() {
 
   const openEmail = useCallback((task) => {
     if (task.email_uid && task.email_folder) {
+      if (!canNavigateNow()) return; // [2026-06-04] anti-empilhamento de telas
       router.push({
         pathname: '/read',
         params: { uid: String(task.email_uid), folder: task.email_folder },
