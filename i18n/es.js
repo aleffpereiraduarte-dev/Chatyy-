@@ -4215,6 +4215,9 @@ export default {
 
   // Scheduled messages
   'chat.schedule': 'Programar mensaje',
+  // [2026-06-04] picker de agendar mensagem mostrava chaves cruas (print do founder)
+  'chat.today': 'Hoy',
+  'chat.tomorrow': 'Mañana',
   'chat.scheduleToday': 'Hoy a las {time}',
   'chat.scheduleTomorrow': 'Ma\u00f1ana a las {time}',
   'chat.scheduleCustom': 'Elegir fecha y hora',

@@ -153,7 +153,7 @@ NODE_ENV=production npx expo export --platform web
 # Gera a pasta dist/
 
 # 2. Deploy pra producao (servidor 69.62.103.131)
-rsync -avz --delete --exclude='api/' --exclude='meet/' --exclude='data/' --exclude='docs/' --exclude='suporte/' --exclude='upload-prints.html' --exclude='privacy.html' /root/webmail-app/dist/ root@69.62.103.131:/var/www/mail/
+rsync -avz --delete --exclude='api/' --exclude='meet/' --exclude='data/' --exclude='docs/' --exclude='suporte/' --exclude='upload-prints.html' --exclude='privacy.html' --exclude='delete-account.html' /root/webmail-app/dist/ root@69.62.103.131:/var/www/mail/
 
 # 3. Se mudou backend PHP tambem:
 scp /var/www/mail/api/email.php root@69.62.103.131:/var/www/mail/api/email.php
@@ -356,7 +356,7 @@ e garanta que está limpo. Nunca dispare build com working tree suja.
 ### Mudanca so em JS/assets (mais comum):
 1. Faz as mudancas no codigo
 2. `NODE_ENV=production npx expo export --platform web` (build web)
-3. `rsync -avz --delete --exclude='api/' --exclude='meet/' --exclude='data/' --exclude='docs/' --exclude='suporte/' dist/ root@69.62.103.131:/var/www/mail/` (deploy web)
+3. `rsync -avz --delete --exclude='api/' --exclude='meet/' --exclude='data/' --exclude='docs/' --exclude='suporte/' --exclude='delete-account.html' dist/ root@69.62.103.131:/var/www/mail/` (deploy web)
 4. `npx eas-cli update --branch production --environment production --message "descricao" --non-interactive` (OTA mobile)
 
 ### Mudanca nativa (novo pacote, plugin, permissao, firebase config):
