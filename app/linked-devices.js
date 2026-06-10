@@ -42,16 +42,21 @@ function parseUserAgent(ua) {
   return { device, os, browser, ip };
 }
 
-function relativeTime(ts) {
+// i18n-aware relative time. `ts` is a Unix timestamp in SECONDS. Falls back
+// to PT-BR when no `t` is supplied. Uses the proven files.time*Ago keys (they
+// already carry the {n} placeholder and exist across locales) instead of the
+// shared formatRelativeTime() — that helper has a latent "{n}" leak when called
+// without params, and it expects epoch-ms not seconds.
+function relativeTime(ts, t) {
   try {
     const d = new Date(ts * 1000);
     if (isNaN(d.getTime())) return '';
     const now = Date.now();
     const diff = Math.floor((now - d.getTime()) / 1000);
-    if (diff < 60) return 'ativo agora';
-    if (diff < 3600) return `${Math.floor(diff/60)} min`;
-    if (diff < 86400) return `${Math.floor(diff/3600)}h atrás`;
-    if (diff < 604800) return `${Math.floor(diff/86400)}d atrás`;
+    if (diff < 60) return t?.('devices.activeNow') || 'ativo agora';
+    if (diff < 3600) return t?.('files.timeMinAgo', { n: Math.floor(diff/60) }) || `${Math.floor(diff/60)} min`;
+    if (diff < 86400) return t?.('files.timeHrAgo', { n: Math.floor(diff/3600) }) || `${Math.floor(diff/3600)}h`;
+    if (diff < 604800) return t?.('files.timeDaysAgo', { n: Math.floor(diff/86400) }) || `${Math.floor(diff/86400)}d`;
     return d.toLocaleDateString();
   } catch { return ''; }
 }
@@ -233,7 +238,7 @@ export default function LinkedDevicesScreen() {
     const deviceLabel = parsed.device || item.device_name || (t('devices.unknownDevice') || 'Dispositivo desconhecido');
     const browserLabel = parsed.browser || item.app_name || '—';
     const ipLabel = item.ip || parsed.ip || '—';
-    const lastActiveLabel = relativeTime(item.last_active || item.last_seen || item.created_at) || '—';
+    const lastActiveLabel = relativeTime(item.last_active || item.last_seen || item.created_at, t) || '—';
 
     return (
       <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
@@ -328,6 +333,8 @@ export default function LinkedDevicesScreen() {
             data={sessions}
             keyExtractor={(s, i) => String(s.id || s.token_hash || i)}
             renderItem={renderSession}
+            style={styles.list}
+            contentContainerStyle={styles.listContent}
             ListEmptyComponent={
               <View style={styles.emptyWrap}>
                 <View style={[styles.emptyIconBox, { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)' }]}>
@@ -343,7 +350,7 @@ export default function LinkedDevicesScreen() {
             }
           />
           {hasOther && (
-            <TouchableOpacity onPress={revokeAll} style={styles.revokeAllBtn}>
+            <TouchableOpacity onPress={revokeAll} style={[styles.revokeAllBtn, { marginBottom: 16 + insets.bottom }]}>
               <Text style={styles.revokeAllText}>
                 {t('devices.signOutAll') || 'Sign out all other devices'}
               </Text>
@@ -407,6 +414,13 @@ const styles = StyleSheet.create({
   heroTitle: { fontSize: 17, fontWeight: '700', textAlign: 'center' },
   heroSub: { fontSize: 13, textAlign: 'center', lineHeight: 18 },
   loading: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  // flex:1 bounds the list to the space between the CTA row and the sticky
+  // "Sign out all" footer so it scrolls internally — without it the list
+  // rendered at full content height and its tail drew UNDER the footer
+  // button (last row clipped). paddingBottom keeps the final row clear of
+  // the footer even mid-scroll.
+  list: { flex: 1 },
+  listContent: { paddingBottom: 8 },
   row: { flexDirection: 'row', padding: 16, gap: 12, alignItems: 'center', borderBottomWidth: StyleSheet.hairlineWidth },
   iconBox: { width: 44, height: 44, borderRadius: 10, alignItems: 'center', justifyContent: 'center', flexShrink: 0 },
   rowBody: { flex: 1, minWidth: 0 },

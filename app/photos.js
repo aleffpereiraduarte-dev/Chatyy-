@@ -34,6 +34,7 @@ import {
 } from '../components/Icons';
 import PhotoEditor from '../components/PhotoEditor';
 import BrandFab from '../components/BrandFab';
+import ScreenEmptyState from '../components/ScreenEmptyState';
 import { generateBatch } from '../services/thumbnailCache';
 import Svg, { Path, Circle as SvgCircle, Line, Polyline, Rect } from 'react-native-svg';
 
@@ -3200,46 +3201,21 @@ export default function PhotosScreen() {
 
     if (filteredPhotos.length === 0 && !showFavorites) {
       return (
-        <View style={s.emptyState}>
-          <View style={s.emptyIllustration}>
-            {/* SVG illustration: 3 grey rectangles fanned out + camera icon centered */}
-            <Svg width={160} height={120} viewBox="0 0 160 120">
-              {/* Back-left rectangle (rotated -10deg) */}
-              <Rect
-                x="18" y="28" width="56" height="68" rx="8"
-                fill={isDark ? '#334155' : '#E5E7EB'}
-                opacity="0.7"
-                transform="rotate(-10 46 62)"
-              />
-              {/* Back-right rectangle (rotated +10deg) */}
-              <Rect
-                x="86" y="28" width="56" height="68" rx="8"
-                fill={isDark ? '#334155' : '#E5E7EB'}
-                opacity="0.7"
-                transform="rotate(10 114 62)"
-              />
-              {/* Front rectangle */}
-              <Rect
-                x="52" y="22" width="56" height="74" rx="10"
-                fill={isDark ? '#475569' : '#D1D5DB'}
-              />
-            </Svg>
-            <View style={s.emptyIconCenter} pointerEvents="none">
-              <IconImage size={36} color={isDark ? '#cbd5e1' : '#6B7280'} />
-            </View>
-          </View>
-          <Text style={[s.emptyTitle, { color: colors.text }]}>{t('photos.noPhotos')}</Text>
-          <Text style={[s.emptySubtitle, { color: colors.textSecondary }]}>{t('photos.noPhotosDesc')}</Text>
-          {Platform.OS !== 'web' && (
-            <TouchableOpacity
-              onPress={() => { /* could trigger photo picker */ }}
-              style={[s.emptyUploadBtn, { backgroundColor: colors.primary }]}
-            >
-              <IconCloudUpload size={18} color="#fff" />
-              <Text style={s.emptyUploadBtnText}>{t('photos.uploadFirst') || 'Upload photos'}</Text>
-            </TouchableOpacity>
-          )}
-        </View>
+        <ScreenEmptyState
+          kind="photos"
+          title={t('photos.noPhotos')}
+          subtitle={t('photos.noPhotosDesc')}
+          cta={Platform.OS !== 'web' ? {
+            label: t('photos.empty.cta') || 'Ativar backup',
+            icon: 'upload',
+            onPress: () => toggleBackup(true),
+          } : undefined}
+          tips={[
+            { icon: 'upload', label: t('photos.empty.tip.autoBackup') || 'O backup automático mantém suas fotos seguras na nuvem' },
+            { icon: 'calendar', label: t('photos.empty.tip.byDate') || 'Suas fotos ficam organizadas por data, como uma linha do tempo' },
+            { icon: 'sparkles', label: t('photos.empty.tip.freeSpace') || 'Libere espaço no celular sem perder nenhuma memória' },
+          ]}
+        />
       );
     }
 

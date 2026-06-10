@@ -48,7 +48,9 @@ export default function AIPhishingBanner({ email, colors, autoCheck = false }) {
 
   if (checking) return null; // silent check — only appear if risk found
 
-  if (!result?.is_suspicious) return null;
+  // [2026-06-05] Banner aparecia em quase todo e-mail com "Nível de risco: 30/100"
+  // — a IA marca is_suspicious com score baixo. Score < 60 não é suspeito.
+  if (!result?.is_suspicious || (result.score ?? 0) < 60) return null;
 
   const isHigh = result.score >= 80;
   const bgColor = isHigh ? '#fef2f2' : '#fffbeb';

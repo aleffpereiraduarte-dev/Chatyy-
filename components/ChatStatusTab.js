@@ -3437,7 +3437,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                 <AnimatedStatusText
                   animKey={currentViewerItem?.id || 0}
                   text={currentViewerItem?.content || ''}
-                  bgColor={currentViewerItem?.bgColor || currentViewerItem?.background || '#6D28D9'}
+                  bgColor={currentViewerItem?.bgColor || currentViewerItem?.background || currentViewerItem?.bg_color || '#6D28D9'}
                   fontStyle={currentViewerItem?.font_style || currentViewerItem?.meta?.font_style || 'normal'}
                   animation={currentViewerItem?.text_animation || currentViewerItem?.meta?.text_animation || 'none'}
                 />

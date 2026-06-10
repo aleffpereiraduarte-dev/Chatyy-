@@ -654,6 +654,29 @@ function ChatHub() {
     }
   }, [searchOpen, searchAnim]);
 
+  // [2026-06-09 sweep] Web keyboard shortcuts (WhatsApp Web parity):
+  // Ctrl/Cmd+K opens + focuses conversation search (the TextInput autoFocuses
+  // on open); Esc closes it. Listener skips when another modal-ish element
+  // owns focus is not needed — Ctrl+K is a deliberate chord, and Esc only
+  // acts while the search bar is open.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const onKeyDown = (e) => {
+      try {
+        if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'k' || e.key === 'K')) {
+          e.preventDefault();
+          if (!searchOpen) toggleSearch();
+          return;
+        }
+        if (e.key === 'Escape' && searchOpen) {
+          toggleSearch();
+        }
+      } catch {}
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [searchOpen, toggleSearch]);
+
   // When profile screen routes user here with `new=1`, ChatStatusTab picks
   // that up and opens the creator immediately. Reset on first consume so a
   // refresh/re-render doesn't re-open the composer.

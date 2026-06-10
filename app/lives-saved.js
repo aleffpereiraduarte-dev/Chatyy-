@@ -25,6 +25,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconPlay, IconDownload, IconTrash, IconShare, IconStar } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import ScreenEmptyState from '../components/ScreenEmptyState';
 
 // Format seconds → "M:SS" / "H:MM:SS" for the duration chip in each row.
 function formatDuration(sec) {
@@ -312,39 +313,26 @@ export default function LivesSavedScreen() {
           ))}
         </View>
       ) : empty ? (
-        // [Wave 44] Empty state — actionable hint about WHY it might be empty
-        // (the host's last live is still processing, or they never went live).
-        // Plus a "Atualizar" button so users without pull-to-refresh muscle
-        // memory have an obvious retry. Resolves the "aonde tá salvando?"
-        // confusion: now the screen explicitly tells them.
-        <View style={styles.empty}>
-          <View style={[styles.emptyIcon, { backgroundColor: isDark ? '#222' : '#f1ecff' }]}>
-            <IconStar size={36} color="#7C3AED" />
-          </View>
-          <Text style={[styles.emptyTitle, { color: colors.text }]}>
-            {t('liveReplay.emptyTitle') || 'Nenhuma live salva'}
-          </Text>
-          <Text style={[styles.emptyHint, { color: colors.textMuted || '#888' }]}>
-            {t('liveReplay.empty') || 'Lives que você apresentou e replays que salvar vão aparecer aqui.'}
-          </Text>
-          <Text style={[styles.emptyHint, { color: colors.textMuted || '#888', marginTop: 8, fontSize: 12 }]}>
-            {t('liveReplay.emptyProcessing') || 'Se você acabou de encerrar uma live, o replay pode levar 1-2 minutos para aparecer.'}
-          </Text>
-          <TouchableOpacity
-            onPress={() => load(true)}
-            style={{
-              marginTop: 18, paddingHorizontal: 20, paddingVertical: 10,
-              borderRadius: 22, backgroundColor: '#7C3AED',
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={t('liveReplay.refresh') || 'Atualizar'}
-          >
-            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>
-              {t('liveReplay.refresh') || 'Atualizar'}
-            </Text>
-          </TouchableOpacity>
-          {!!error && <Text style={styles.err}>{error}</Text>}
-        </View>
+        // [Wave 44 → premium] Canonical empty state. CTA reuses the screen's
+        // real refresh action (load(true)) so users who just ended a live and
+        // are waiting on CF processing have an obvious retry; tips explain WHY
+        // it might be empty and how replays work. Resolves "aonde tá salvando?".
+        <ScreenEmptyState
+          kind="lives"
+          title={t('liveReplay.emptyTitle') || 'Nenhuma live salva'}
+          subtitle={t('liveReplay.empty') || 'Lives que você apresentou e replays que salvar vão aparecer aqui.'}
+          cta={{
+            label: t('liveReplay.refresh') || 'Atualizar',
+            icon: 'bell',
+            onPress: () => load(true),
+          }}
+          tips={[
+            { icon: 'star', label: t('liveReplay.tipAutoSave') || 'Suas lives são salvas automaticamente como replays.' },
+            { icon: 'upload', label: t('liveReplay.tipShare') || 'Compartilhe um replay no seu perfil em um toque.' },
+            { icon: 'play', label: t('liveReplay.tipRewatch') || 'Reassista quando quiser, quantas vezes quiser.' },
+            { icon: 'sparkles', label: t('liveReplay.emptyProcessing') || 'Acabou de encerrar uma live? O replay pode levar 1-2 minutos para aparecer.' },
+          ]}
+        />
       ) : (
         <FlatList
           data={recordings}

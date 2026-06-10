@@ -10,6 +10,7 @@ import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { IconArrowLeft, IconPlus, IconTrash, IconRefresh, IconCopy, IconLink, IconCheckCircle } from '../components/Icons';
 import EmptyStateCard from '../components/EmptyStateCard';
+import ScreenEmptyState from '../components/ScreenEmptyState';
 import { ListSkeleton } from '../components/SkeletonLoader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -276,12 +277,16 @@ export default function BotsScreen() {
         contentContainerStyle={{ padding: 12, flexGrow: 1 }}
         ListEmptyComponent={
           !loading ? (
-            <EmptyStateCard
-              illustration={<BotsEmptyIllustration tint="#7C3AED" />}
-              title={t?.('bots.emptyTitle') || 'Nenhum bot ainda'}
-              subtitle={t?.('bots.empty') || 'Crie um bot para automatizar mensagens, executar slash-commands e integrar serviços.'}
-              ctaLabel={t?.('bots.create') || 'Criar bot'}
-              onPress={() => setCreateOpen(true)}
+            <ScreenEmptyState
+              kind="bots"
+              title={t?.('bots.empty.title') || 'Nenhum bot ainda'}
+              subtitle={t?.('bots.empty.sub') || 'Crie um bot para automatizar respostas, rodar slash-commands e conectar seus serviços.'}
+              cta={{ label: t?.('bots.create') || 'Criar bot', icon: 'plus', onPress: () => setCreateOpen(true) }}
+              tips={[
+                { icon: 'sparkles', label: t?.('bots.tip.automate') || 'Automatize respostas e comandos /start, /help' },
+                { icon: 'link', label: t?.('bots.tip.webhook') || 'Conecte um webhook HTTPS ao seu fluxo' },
+                { icon: 'star', label: t?.('bots.tip.try') || 'Experimente o @ChatyyAI como ponto de partida' },
+              ]}
             />
           ) : null
         }

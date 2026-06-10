@@ -25,6 +25,7 @@ import {
 import FileViewer from '../components/FileViewer';
 import { ListSkeleton } from '../components/SkeletonLoader';
 import EmptyStateCard from '../components/EmptyStateCard';
+import ScreenEmptyState from '../components/ScreenEmptyState';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Path, Circle as SvgCircle, Rect as SvgRect } from 'react-native-svg';
 
 const TABS = ['all', 'recent', 'starred', 'trash'];
@@ -713,7 +714,18 @@ function FilesEmptyIllustration({ tone = '#7C3AED' }) {
   );
 }
 
-function FilesEmptyState({ tab, isDark, colors, t, onUpload }) {
+function FilesEmptyState({ tab, isDark, colors, t, onUpload, onNewFolder, searchMode }) {
+  // Empty SEARCH state — no upload CTA, just a "nothing matched" message.
+  if (searchMode) {
+    return (
+      <ScreenEmptyState
+        kind="search"
+        title={t('files.emptySearch') || 'Nada encontrado'}
+        subtitle={t('files.emptySearchDesc') || 'Tente outro termo ou verifique a ortografia.'}
+      />
+    );
+  }
+
   const emptyMap = {
     all: { title: t('files.emptyAll'), sub: t('files.emptyAllDesc') },
     recent: { title: t('files.emptyRecent'), sub: t('files.emptyRecentDesc') },
@@ -721,19 +733,21 @@ function FilesEmptyState({ tab, isDark, colors, t, onUpload }) {
     trash: { title: t('files.emptyTrash'), sub: t('files.emptyTrashDesc') },
   };
   const empty = emptyMap[tab] || emptyMap.all;
-  // Trash gets the icon glyph (different mood); other tabs get the brand
-  // purple folder illustration so the upload affordance feels invitational.
-  const useIllustration = tab !== 'trash';
+  const isTrash = tab === 'trash';
 
+  // Trash gets the trash glyph + no CTA/tips. Other tabs get the canonical
+  // premium empty state with a real Upload CTA + onboarding tips.
   return (
-    <EmptyStateCard
-      Icon={tab === 'trash' ? IconTrash : undefined}
-      illustration={useIllustration ? <FilesEmptyIllustration tone="#7C3AED" /> : undefined}
+    <ScreenEmptyState
+      kind={isTrash ? 'tasks' : 'files'}
       title={empty.title}
       subtitle={empty.sub}
-      ctaLabel={tab !== 'trash' ? t('files.upload') : undefined}
-      onPress={tab !== 'trash' ? onUpload : undefined}
-      tone="primary"
+      cta={isTrash ? undefined : { label: t('files.upload'), icon: 'upload', onPress: onUpload }}
+      tips={isTrash ? undefined : [
+        { icon: 'upload', label: t('files.tipUpload') || 'Envie arquivos do seu dispositivo' },
+        { icon: 'plus', label: t('files.tipFolder') || 'Crie uma pasta para organizar', onPress: onNewFolder },
+        { icon: 'link', label: t('files.tipLink') || 'Compartilhe por link com senha e validade' },
+      ]}
     />
   );
 }
@@ -2242,7 +2256,7 @@ function FilesScreenInner() {
 
   const renderEmpty = () => {
     if (loading) return null;
-    return <FilesEmptyState tab={tab} isDark={isDark} colors={colors} t={t} onUpload={handleUpload} />;
+    return <FilesEmptyState tab={tab} isDark={isDark} colors={colors} t={t} onUpload={handleUpload} onNewFolder={() => setNewFolderModal(true)} searchMode={searchMode} />;
   };
 
   // ---- HEADER TITLE ----

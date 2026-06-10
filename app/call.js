@@ -98,6 +98,18 @@ function ensureLiveKitRegistered() {
   }
 }
 
+// LiveKit's selectAudioOutput accepts DIFFERENT identifiers per platform.
+// iOS (AVAudioSession limitation) ONLY accepts 'default' | 'force_speaker' —
+// passing 'earpiece'/'speaker' there throws/no-ops, so the route never changes
+// (this was a root cause of "ligação conecta mas não escuto a pessoa": the
+// downlink never got a valid output route). Android accepts the rich set
+// 'speaker'/'earpiece'/'bluetooth'/'headset'. This maps our logical route name
+// to the right per-platform deviceId.
+function lkOutputId(route) {
+  if (Platform.OS === 'ios') return route === 'speaker' ? 'force_speaker' : 'default';
+  return route; // Android passes through unchanged
+}
+
 // Lazy haptic — not all platforms have it; we want a tap on noise/hand toggles
 let _hapticTap = () => {};
 try {
@@ -1315,8 +1327,37 @@ function CallScreenInner() {
     const skipLKAudioSession = Platform.OS === 'ios' && !isCaller;
     if (Platform.OS !== 'web' && LK_AudioSession && !skipLKAudioSession) {
       try {
-        // The RN AudioSession instance manages playAndRecord / voiceChat
-        // category automatically. We just call startAudioSession.
+        // [no-remote-audio fix 2026-06-09] app/_layout.js boots LiveKit with
+        // registerGlobals({autoConfigureAudioSession:false}), which DISABLES the
+        // SDK's automatic AVAudioSession setup — and we don't mount the SDK's
+        // useIOSAudioManagement hook either. So NOTHING ever gave the session a
+        // playback-capable category: the call connected but the caller heard NO
+        // remote audio ("conecta mas não escuto a pessoa"), because the downlink
+        // had no valid output route. Configure the session the SAME way the SDK's
+        // own hook does, BEFORE activating it (must be set prior to connect).
+        try {
+          const lkrn = require('@livekit/react-native');
+          if (Platform.OS === 'ios' && typeof LK_AudioSession.setAppleAudioConfiguration === 'function'
+              && typeof lkrn.getDefaultAppleAudioConfigurationForMode === 'function') {
+            // 'localAndRemote' → playAndRecord; preferSpeaker → videoChat (speaker)
+            // for video, voiceChat (earpiece) for audio. This is what fixes the
+            // silent downlink.
+            const cfg = lkrn.getDefaultAppleAudioConfigurationForMode('localAndRemote', !!isVideoCall);
+            await LK_AudioSession.setAppleAudioConfiguration(cfg);
+          } else if (Platform.OS === 'android' && typeof LK_AudioSession.configureAudio === 'function'
+                     && lkrn.AndroidAudioTypePresets) {
+            // Ensure MODE_IN_COMMUNICATION + voice-call stream before any track
+            // subscribes, so remote audio lands on a live route from the start.
+            await LK_AudioSession.configureAudio({
+              android: {
+                preferredOutputList: [isVideoCall ? 'speaker' : 'earpiece'],
+                audioTypeOptions: lkrn.AndroidAudioTypePresets.communication,
+              },
+            });
+          }
+        } catch (eCfg) {
+          console.warn('[Call] audio configure err:', eCfg?.message);
+        }
         await LK_AudioSession.startAudioSession();
         // [bug 2026-05-15 #978-1 ios-speaker-stuck-after-lockscreen-answer]
         // When the user answers via the iOS lock-screen CallKit native UI,
@@ -1327,7 +1368,7 @@ function CallScreenInner() {
         // which is also explicitly set so the route is deterministic.
         try {
           const initialRoute = isVideoCall ? 'speaker' : 'earpiece';
-          await LK_AudioSession.selectAudioOutput?.(initialRoute);
+          await LK_AudioSession.selectAudioOutput?.(lkOutputId(initialRoute));
         } catch (eRoute) {
           console.warn('[Call] initial selectAudioOutput err:', eRoute?.message);
         }
@@ -1357,7 +1398,7 @@ function CallScreenInner() {
         const reEarpiece = () => {
           if (speakerToggledRef.current) return;
           try { require('../services/callkeep').setSpeakerEnabled?.(false); } catch {}
-          try { LK_AudioSession?.selectAudioOutput?.('earpiece'); } catch {}
+          try { LK_AudioSession?.selectAudioOutput?.(lkOutputId('earpiece')); } catch {}
         };
         setTimeout(reEarpiece, 700);
         setTimeout(reEarpiece, 1800);
@@ -3703,9 +3744,9 @@ function CallScreenInner() {
     if (Platform.OS !== 'web' && LK_AudioSession) {
       try {
         if (newSpeakerOn) {
-          await LK_AudioSession.selectAudioOutput?.('speaker');
+          await LK_AudioSession.selectAudioOutput?.(lkOutputId('speaker'));
         } else {
-          await LK_AudioSession.selectAudioOutput?.('earpiece');
+          await LK_AudioSession.selectAudioOutput?.(lkOutputId('earpiece'));
         }
       } catch (e) {
         console.warn('[Call] LK selectAudioOutput err:', e?.message);
@@ -3761,7 +3802,7 @@ function CallScreenInner() {
     setSpeakerOn(route === 'speaker');
     if (Platform.OS !== 'web' && LK_AudioSession) {
       try {
-        await LK_AudioSession.selectAudioOutput?.(route);
+        await LK_AudioSession.selectAudioOutput?.(lkOutputId(route));
       } catch (e) {
         console.warn('[Call] LK selectAudioOutput route err:', e?.message);
       }

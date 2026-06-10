@@ -22,8 +22,28 @@ const BASE = process.env.QA_BASE || 'https://chatyy.com.br';
 const EMAIL = process.env.QA_EMAIL || 'demo@chatyy.com.br';
 const PWD = process.env.QA_PWD || 'ChatyyDemo2026';
 const REPORT_TO_CONV = process.env.QA_CONV || '849';   // demo↔duarte → report lands in duarte's Chatyy
+// [2026-06-08] chat-conversation screenshot must NOT open REPORT_TO_CONV: the
+// robot dumps its own reports there every 30 min, so the vision model kept
+// re-flagging its own bubble text ("blank page", "raw i18n", "overlapping")
+// as UI bugs — a recursive false positive. Screenshot a CLEAN conversation
+// instead (demo's Saved Messages, conv 851, seeded with benign notes). It has
+// real bubbles to exercise thread rendering but zero report text.
+const SCREENSHOT_CONV = process.env.QA_SHOT_CONV || '851';
 const AI = process.env.QA_AI !== '0';                  // AI eval on by default
 const MAX_CLICKS = parseInt(process.env.QA_CLICKS || '10', 10); // interactive elements per screen (bounded for 60-screen sweep)
+
+// [2026-06-06] Raw-i18n false positives: t() falls back active→en→pt-BR→raw,
+// so a key that EXISTS in en.js or pt-BR.js can never render raw — when the
+// DOM scan finds one it's chat-message DATA (e.g. this robot's own past
+// reports in the conversation), not UI. Only keys missing from BOTH catalogs
+// can be a real raw-key bug.
+const I18N_CATALOG = (() => {
+  try {
+    return fs.readFileSync(path.join(__dirname, '../i18n/en.js'), 'utf8') +
+           fs.readFileSync(path.join(__dirname, '../i18n/pt-BR.js'), 'utf8');
+  } catch { return ''; }
+})();
+const keyExistsInCatalog = k => I18N_CATALOG.includes(`'${k}'`) || I18N_CATALOG.includes(`"${k}"`);
 
 // Every meaningful web screen (Expo Router routes under app/). Dynamic routes
 // get a sample param so they render. Diagnostic/recorder/param-only screens
@@ -31,7 +51,7 @@ const MAX_CLICKS = parseInt(process.env.QA_CLICKS || '10', 10); // interactive e
 const ROUTES = [
   // ── Core messaging ──
   { p: '/chat', n: 'chat-list' },
-  { p: `/chat-conversation?id=${REPORT_TO_CONV}`, n: 'chat-conversation', settle: 2500 },
+  { p: `/chat-conversation?id=${SCREENSHOT_CONV}`, n: 'chat-conversation', settle: 2500 },
   { p: '/chat-new', n: 'chat-new' },
   { p: '/saved-messages', n: 'saved-messages' },
   { p: '/starred-messages', n: 'starred-messages' },
@@ -39,7 +59,7 @@ const ROUTES = [
   { p: '/contacts', n: 'contacts' },
   { p: '/close-friends', n: 'close-friends' },
   // ── Status / Feed / Reels / Discovery ──
-  { p: '/status', n: 'status' },
+  // [2026-06-05] /status NÃO é rota (Status vive dentro do /chat) — dava 'Unmatched Route' toda rodada
   { p: '/feed', n: 'feed' },
   { p: '/reels-drafts', n: 'reels-drafts' },
   { p: '/spotlight', n: 'spotlight' },
@@ -71,11 +91,8 @@ const ROUTES = [
   { p: '/calendar', n: 'calendar' },
   { p: '/tasks', n: 'tasks' },
   // ── Money / Premium ──
-  { p: '/wallet', n: 'wallet' },
-  { p: '/diamond-shop', n: 'diamond-shop' },
-  { p: '/plans', n: 'plans' },
+  // [2026-06-05] monetization-pause: wallet/diamond-shop/plans/creator-earnings têm Redirect /chat (WALLET_ENABLED off) — robô só via a chat list e flagava falso. Re-add quando a flag religar.
   { p: '/marketplace', n: 'marketplace' },
-  { p: '/creator-earnings', n: 'creator-earnings' },
   // ── Profile / Account ──
   { p: '/profile', n: 'profile' },
   { p: '/profile-insights', n: 'profile-insights' },
@@ -129,7 +146,7 @@ function aiEval(pngPath, name) {
     const payload = JSON.stringify({
       model: 'gpt-4o-mini', max_tokens: 150,
       messages: [{ role: 'user', content: [
-        { type: 'text', text: `Screen "${name}" of a WhatsApp-style app (Chatyy). VISUAL BUGS only: overlapping/cut-off elements, a giant solid color block, blank area where content should be, raw keys like "chatConv.foo", an error message, broken layout. Reply JSON {"ok":true} if fine, or {"ok":false,"issue":"<short>"}. Don't flag normal empty states.` },
+        { type: 'text', text: `Screen "${name}" of a WhatsApp-style app (Chatyy). Report ONLY clearly broken UI a human would call a bug: elements overlapping/covering each other, text cut mid-word by a container, raw i18n keys like "chatConv.foo", a totally blank white/black page with no UI at all, or a crash/stack-trace screen. NOT bugs (reply ok:true): empty states ("No files", "Sem mensagens", illustration + call-to-action), whitespace below short lists, loading skeletons, sparse screens on a fresh test account. IGNORE user-generated content: text inside chat bubbles/message previews is DATA, not UI - never flag its wording, spelling, line-wrapping, or that it mentions errors, i18n keys, or bug reports (a QA bot posts its own reports into chats - those bubbles often LIST things like "raw i18n: x.yZ" or "overlapping"; that is message text, NOT this screen's UI). Raw i18n keys only count when they appear as a screen title, button, tab, or label OUTSIDE message bubbles. When in doubt, reply ok:true. Reply JSON {"ok":true} or {"ok":false,"issue":"<short>"}.` },
         { type: 'image_url', image_url: { url: `data:image/png;base64,${b64}` } } ] }],
     });
     const req = https.request('https://api.openai.com/v1/chat/completions', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, 'Content-Length': Buffer.byteLength(payload) }, timeout: 30000 },
@@ -242,7 +259,9 @@ async function scan(page) {
     if (dom.errBoundary) issues.push('ErrorBoundary rendered');
     if (dom.textLen < 8) issues.push(`blank screen`);
     if (dom.giant) issues.push(`giant block ${dom.giant}`);
-    if (dom.rawKeys.length) issues.push(`raw i18n: ${dom.rawKeys.join(', ')}`);
+    // keys present in the catalog can't render raw (fallback chain) → it's message content, skip
+    const missingKeys = dom.rawKeys.filter(k => !keyExistsInCatalog(k));
+    if (missingKeys.length) issues.push(`raw i18n: ${missingKeys.join(', ')}`);
     // generic console 403 noise is now captured as http4 with URLs; only report console errors that aren't plain resource 403s
     const realConsole = consoleErr.filter(e => !/Failed to load resource.*403/.test(e));
     if (realConsole.length) issues.push(`${realConsole.length} console err: ${realConsole[0]}`);

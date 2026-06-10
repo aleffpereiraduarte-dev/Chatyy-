@@ -25,7 +25,7 @@ import {
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import SwipeAction from '../components/SwipeAction';
-import EmptyStateCard from '../components/EmptyStateCard';
+import ScreenEmptyState from '../components/ScreenEmptyState';
 
 // Try to import expo-contacts (available on native, unavailable on web)
 let Contacts = null;
@@ -255,26 +255,29 @@ const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav, onO
 });
 
 // ---- Polished Empty State for Contacts ----
-function ContactsEmptyState({ colors, isDark, t, searching, onAdd }) {
+function ContactsEmptyState({ colors, isDark, t, searching, onAdd, onClearSearch, onSync, onDiscover, onFindFriends }) {
   if (searching) {
     return (
-      <EmptyStateCard
-        Icon={IconSearch}
-        title={t('contacts.noContactsFound') || t('contacts.noContacts')}
-        subtitle={t('contacts.tryDifferentSearch')}
-        tone="neutral"
+      <ScreenEmptyState
+        kind="search"
+        title={t('contacts.emptyState.searchTitle') || t('contacts.noContactsFound') || t('contacts.noContacts')}
+        subtitle={t('contacts.emptyState.searchSubtitle') || t('contacts.tryDifferentSearch')}
+        secondary={onClearSearch ? { label: t('contacts.emptyState.clearSearch') || 'Limpar busca', onPress: onClearSearch } : undefined}
       />
     );
   }
 
   return (
-    <EmptyStateCard
-      Icon={IconUsers}
-      title={t('contacts.noContacts')}
-      subtitle={t('contacts.emptyDesc')}
-      ctaLabel={t('contacts.addContact')}
-      onPress={onAdd}
-      tone="primary"
+    <ScreenEmptyState
+      kind="contacts"
+      title={t('contacts.emptyState.title') || t('contacts.noContacts')}
+      subtitle={t('contacts.emptyState.subtitle') || t('contacts.emptyDesc')}
+      cta={{ label: t('contacts.emptyState.cta') || t('contacts.addContact'), icon: 'plus', onPress: onAdd }}
+      tips={[
+        { icon: 'upload', label: t('contacts.emptyState.tipSync') || 'Sincronize os contatos do seu telefone', onPress: onSync },
+        { icon: 'sparkles', label: t('contacts.emptyState.tipDiscover') || 'Descubra contatos dos seus e-mails enviados', onPress: onDiscover },
+        { icon: 'users', label: t('contacts.emptyState.tipFriends') || 'Encontre amigos que já estão no Chatyy', onPress: onFindFriends },
+      ]}
     />
   );
 }
@@ -1488,6 +1491,10 @@ function ContactsScreenInner() {
               t={t}
               searching={!!debouncedSearch}
               onAdd={() => setShowAdd(true)}
+              onClearSearch={() => setSearch('')}
+              onSync={() => setActiveTab('device')}
+              onDiscover={handleDiscover}
+              onFindFriends={() => setActiveTab('family')}
             />
           }
           contentContainerStyle={s.list}

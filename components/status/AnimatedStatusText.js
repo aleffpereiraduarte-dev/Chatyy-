@@ -15,6 +15,35 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect } from 'react-native-svg';
+
+// [2026-06-10 tela-branca fix] The composer persists gradient presets as a
+// `gradient:<id>` token in bg_color. This component used to pass that token
+// straight into `backgroundColor`, which is an INVALID color — the card lost
+// its background and every white-on-color element (text, progress bars,
+// header) dissolved into a fully white/blank screen when viewing someone's
+// text status from the status tab. Mirror of StoryViewer's preset map (kept
+// inline to avoid a circular dep with ChatStatusTab).
+const _TEXT_BG_GRADIENTS = {
+  purple_pink: ['#8B5CF6', '#EC4899'],
+  blue_cyan:   ['#2563EB', '#06B6D4'],
+  orange_red:  ['#F97316', '#EF4444'],
+  green_teal:  ['#10B981', '#14B8A6'],
+  sunset:      ['#FACC15', '#F97316', '#EF4444'],
+  aurora:      ['#06B6D4', '#8B5CF6', '#EC4899'],
+};
+function _resolveGradient(bgColor) {
+  if (!bgColor || typeof bgColor !== 'string' || !bgColor.startsWith('gradient:')) return null;
+  const id = bgColor.slice('gradient:'.length);
+  const colors = _TEXT_BG_GRADIENTS[id];
+  return colors ? { id, colors } : null;
+}
+// Any other non-paintable string (unknown token, empty, etc.) must never
+// reach backgroundColor raw — fall back to the brand purple.
+function _safeSolid(bgColor) {
+  if (typeof bgColor === 'string' && /^(#|rgb|hsl)/i.test(bgColor.trim())) return bgColor;
+  return '#6D28D9';
+}
 
 const TEXT_BASE = {
   color: '#fff',
@@ -91,8 +120,26 @@ export default function AnimatedStatusText({
   const display = animation === 'typewriter' ? text.slice(0, typedLen) : text;
   const caret = animation === 'typewriter' && typedLen < text.length ? '▌' : '';
 
+  const grad = _resolveGradient(bgColor);
   return (
-    <View style={[styles.card, { backgroundColor: bgColor }]}>
+    <View style={[styles.card, { backgroundColor: grad ? grad.colors[grad.colors.length - 1] : _safeSolid(bgColor) }]}>
+      {grad ? (
+        <Svg
+          pointerEvents="none"
+          style={StyleSheet.absoluteFill}
+          preserveAspectRatio="none"
+          viewBox="0 0 1 1"
+        >
+          <Defs>
+            <SvgLinearGradient id={`astGrad_${grad.id}`} x1="0" y1="0" x2="1" y2="1">
+              {grad.colors.map((c, i) => (
+                <Stop key={i} offset={`${Math.round((i / (grad.colors.length - 1)) * 100)}%`} stopColor={c} stopOpacity="1" />
+              ))}
+            </SvgLinearGradient>
+          </Defs>
+          <SvgRect x="0" y="0" width="1" height="1" fill={`url(#astGrad_${grad.id})`} />
+        </Svg>
+      ) : null}
       <Animated.Text
         style={[
           TEXT_BASE,

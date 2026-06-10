@@ -19,6 +19,25 @@ function extractEmail(fromField) {
   return m ? m[1].trim() : String(fromField).trim();
 }
 
+// [2026-06-05] No mobile o ThreadView NÃO tinha caminho de HTML (só web via
+// DOMPurify) → e-mails SÓ-HTML (ex.: marketing/Transfeera) caíam em
+// `body_text || body` = vazio → "(sem conteúdo)" no app, mesmo funcionando no
+// web. Este fallback converte o body_html em texto legível pra exibir no
+// celular. Tira <style>/<script>, vira blocos em quebra de linha, decodifica
+// entidades comuns e colapsa espaços.
+function htmlToText(html) {
+  if (!html) return '';
+  let x = String(html);
+  x = x.replace(/<(style|script|head)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
+  x = x.replace(/<br\s*\/?>/gi, '\n');
+  x = x.replace(/<\/(p|div|tr|h[1-6]|li)>/gi, '\n');
+  x = x.replace(/<[^>]+>/g, '');
+  x = x.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<')
+       .replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'")
+       .replace(/&[a-z#0-9]+;/gi, ' ');
+  return x.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return '';
   try {
@@ -54,7 +73,7 @@ function MessageItem({ message, isLast, colors, t, onReply, onReplyAll, onForwar
     }
     return (
       <Text style={[s.bodyText, { color: colors.text }]}>
-        {message.body_text || message.body || t('reader.noContent')}
+        {message.body_text || message.body || htmlToText(message.body_html) || t('reader.noContent')}
       </Text>
     );
   };
@@ -83,7 +102,7 @@ function MessageItem({ message, isLast, colors, t, onReply, onReplyAll, onForwar
           </View>
           {!expanded && (
             <Text style={[s.snippet, { color: colors.textTertiary }]} numberOfLines={1}>
-              {message.body_text || message.body || t('reader.noContent')}
+              {message.body_text || message.body || htmlToText(message.body_html) || t('reader.noContent')}
             </Text>
           )}
           {expanded && message.to && (

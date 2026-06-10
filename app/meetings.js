@@ -17,6 +17,7 @@ import { getCached, setCache } from '../services/cache';
 import { syncMeetingReminders } from '../services/meetingReminders';
 import { ListSkeleton } from '../components/SkeletonLoader';
 import AvatarCircle from '../components/AvatarCircle';
+import ScreenEmptyState from '../components/ScreenEmptyState';
 import {
   IconVideo, IconPlus, IconCalendar, IconClock, IconUsers,
   IconArrowLeft, IconCheck, IconLink,
@@ -547,34 +548,21 @@ function MeetingsScreenInner() {
 
   const renderEmpty = () => {
     if (loading) return null;
-    const emptyKey = tab === 'past' ? 'meetings.emptyPast' : 'meetings.emptyUpcoming';
+    const isPast = tab === 'past';
     return (
-      <View style={styles.emptyContainer}>
-        <View style={[styles.emptyIconWrap, { backgroundColor: ACCENT + '15' }]}>
-          <IconCalendar size={56} color={ACCENT} />
-          <View style={[styles.emptyCheckBadge, { backgroundColor: ACCENT, borderColor: colors.background }]}>
-            <IconCheck size={14} color="#fff" strokeWidth={3} />
-          </View>
-        </View>
-        <Text style={[styles.emptyTitle, { color: colors.text }]}>
-          {tab === 'past' ? t('meetings.empty') : (t?.('_locale')?.startsWith('pt') ? 'Nenhuma reunião' : t('meetings.empty'))}
-        </Text>
-        <Text style={[styles.emptySubtitle, { color: colors.textSecondary }]}>
-          {t(emptyKey)}
-        </Text>
-        {tab !== 'past' && (
-          <TouchableOpacity
-            style={[styles.emptyCta, { backgroundColor: ACCENT }]}
-            onPress={() => router.push('/meeting-create')}
-            activeOpacity={0.85}
-            accessibilityLabel={t('meetings.scheduleCta')}
-            accessibilityRole="button"
-          >
-            <IconCalendar size={16} color="#fff" />
-            <Text style={styles.emptyCtaText}>{t('meetings.scheduleCta')}</Text>
-          </TouchableOpacity>
-        )}
-      </View>
+      <ScreenEmptyState
+        kind="meetings"
+        accent={ACCENT}
+        title={t('meetings.empty')}
+        subtitle={isPast ? t('meetings.emptyPast') : t('meetings.emptyUpcoming')}
+        cta={isPast ? null : { label: t('meetings.scheduleCta'), icon: 'calendar', onPress: () => router.push('/meeting-create') }}
+        secondary={isPast ? null : { label: t('meetings.join'), onPress: () => router.push('/meeting-create') }}
+        tips={isPast ? null : [
+          { icon: 'play', label: t('meetings.tipInstant') },
+          { icon: 'calendar', label: t('meetings.tipSchedule') },
+          { icon: 'link', label: t('meetings.tipInvite') },
+        ]}
+      />
     );
   };
 

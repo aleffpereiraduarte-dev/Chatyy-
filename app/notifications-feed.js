@@ -10,6 +10,7 @@ import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { swr, getCachedSync, userScopedKey } from '../services/cache';
 import AvatarCircle from '../components/AvatarCircle';
+import ScreenEmptyState from '../components/ScreenEmptyState';
 
 // [WAVE 100] Module-scope live store — paints instant on re-mount.
 const _liveStore = new Map();
@@ -256,24 +257,16 @@ export default function NotificationsFeedScreen() {
           <ActivityIndicator size="large" color={ACCENT} />
         </View>
       ) : items.length === 0 ? (
-        <View style={styles.empty}>
-          {/* Empty state: SVG bell on a soft purple disc instead of the
-              🔔 emoji — sharp at every density, dark-mode contrast safe,
-              and matches the brand accent. */}
-          <View style={{
-            width: 72, height: 72, borderRadius: 36, marginBottom: 14,
-            backgroundColor: 'rgba(124,58,237,0.12)',
-            alignItems: 'center', justifyContent: 'center',
-          }}>
-            <IconBell size={32} color={ACCENT} />
-          </View>
-          <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text, marginBottom: 4 }}>
-            {t('notifications.empty') || 'Sem notificações ainda'}
-          </Text>
-          <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center' }}>
-            {t('notifications.emptyHint') || 'Curtidas, comentários e novos seguidores aparecem aqui.'}
-          </Text>
-        </View>
+        <ScreenEmptyState
+          kind="notifications"
+          title={t('notifications.empty') || 'Sem notificações ainda'}
+          subtitle={t('notifications.emptyHint') || 'Curtidas, comentários e novos seguidores aparecem aqui.'}
+          tips={[
+            { icon: 'star', label: t('notifications.emptyTipLikes') || 'Curtidas e comentários nos seus posts' },
+            { icon: 'users', label: t('notifications.emptyTipFollows') || 'Quando alguém começa a seguir você' },
+            { icon: 'bell', label: t('notifications.emptyTipMentions') || 'Menções, respostas e lembretes' },
+          ]}
+        />
       ) : (
         <FlatList
           data={items}

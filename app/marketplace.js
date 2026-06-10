@@ -15,6 +15,7 @@ import * as api from '../services/api';
 import { formatMoneyActive } from '../services/currencyService';
 import { useCurrency } from '../context/CurrencyContext';
 import AvatarCircle from '../components/AvatarCircle';
+import ScreenEmptyState from '../components/ScreenEmptyState';
 import {
   IconArrowLeft, IconSearch, IconPlus, IconX, IconCamera, IconHeart,
   IconMapPin, IconChevronRight, IconChevronLeft, IconEdit, IconTrash,
@@ -864,32 +865,19 @@ function BrowseTab({ savedIds, onToggleSave, onSelectListing }) {
           <ActivityIndicator color={colors.primary} />
         </View>
       ) : listings.length === 0 ? (
-        <View style={s.emptyState}>
-          <View style={[s.emptyIconChip, { backgroundColor: colors.primaryLight }]}>
-            {errored ? (
-              <IconTag size={40} color={colors.primary} />
-            ) : (
-              <IconSearch size={40} color={colors.primary} />
-            )}
-          </View>
-          <Text style={[s.emptyStateText, { color: colors.textSecondary }]}>
-            {errored
-              ? (t('marketplace.loadError') || t('marketplace.errGeneric') || 'Não foi possível carregar os anúncios.')
-              : t('marketplace.noResults')}
-          </Text>
-          {errored ? (
-            <TouchableOpacity
-              onPress={() => { setRefreshing(true); load(); }}
-              style={[s.emptyRetryBtn, { borderColor: colors.primary }]}
-              accessibilityRole="button"
-              accessibilityLabel={t('common.retry') || 'Tentar novamente'}
-            >
-              <Text style={{ color: colors.primary, fontWeight: '700', fontSize: 14 }}>
-                {t('common.retry') || 'Tentar novamente'}
-              </Text>
-            </TouchableOpacity>
-          ) : null}
-        </View>
+        <ScreenEmptyState
+          kind={errored ? 'search' : 'marketplace'}
+          title={errored ? (t('marketplace.loadError') || 'Não foi possível carregar') : t('marketplace.emptyTitle')}
+          subtitle={errored ? (t('marketplace.errGeneric') || 'Verifique sua conexão e tente novamente.') : t('marketplace.emptySub')}
+          cta={errored
+            ? { label: t('common.retry') || 'Tentar novamente', icon: 'search', onPress: () => { setRefreshing(true); load(); } }
+            : { label: t('marketplace.sell'), icon: 'plus', onPress: () => setCreateVisible(true) }}
+          tips={errored ? null : [
+            { icon: 'plus', label: t('marketplace.tipSell') },
+            { icon: 'search', label: t('marketplace.tipBrowse') },
+            { icon: 'star', label: t('marketplace.tipSafe') },
+          ]}
+        />
       ) : (
         <FlatList
           data={listings}

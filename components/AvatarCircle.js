@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, memo } from 'react';
 import { View, Text, StyleSheet, Platform, TouchableOpacity } from 'react-native';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import { getAvatarUrlForEmail } from '../services/api';
 import ChatyyOneAvatar from './ChatyyOneAvatar';
 // Disk-persistent avatar cache (documentDirectory/avatar-saved). Survives
@@ -181,6 +182,55 @@ function hashColor(name) {
   return `hsl(${hue}, 55%, 55%)`;
 }
 
+// ── Premium gradient palette for initials avatars ───────────────────
+// Curated diagonal gradient pairs (light→dark) — all WCAG-safe behind
+// white initials. Brand-leaning (more violets/blues/teals) so a wall of
+// initials reads as ONE Chatyy identity instead of random hues. Replaces
+// the flat `hashColor()` fill that made avatars look generic/repeated.
+const AVATAR_GRADIENTS = [
+  ['#A78BFA', '#7C3AED'], // brand violet
+  ['#818CF8', '#4F46E5'], // indigo
+  ['#60A5FA', '#2563EB'], // blue
+  ['#38BDF8', '#0284C7'], // sky
+  ['#2DD4BF', '#0D9488'], // teal
+  ['#34D399', '#059669'], // emerald
+  ['#FBBF24', '#D97706'], // amber
+  ['#FB923C', '#EA580C'], // orange
+  ['#F472B6', '#DB2777'], // pink
+  ['#FB7185', '#E11D48'], // rose
+  ['#C084FC', '#9333EA'], // purple
+  ['#22D3EE', '#0891B2'], // cyan
+];
+function hashInt(s) {
+  let h = 0;
+  const str = s || '';
+  for (let i = 0; i < str.length; i++) h = str.charCodeAt(i) + ((h << 5) - h);
+  return Math.abs(h);
+}
+function gradientFor(seed) {
+  const [c1, c2] = AVATAR_GRADIENTS[hashInt(seed) % AVATAR_GRADIENTS.length];
+  // id keyed by the colors → identical pairs dedup into one <Defs> (important
+  // on web where SVG ids are document-global), distinct pairs never collide.
+  return { c1, c2, gid: `avg${c1.slice(1)}${c2.slice(1)}` };
+}
+// Absolutely-filled diagonal gradient that sits BEHIND the white initials
+// inside the already-circular, overflow:hidden avatar container.
+function GradientBg({ c1, c2, gid, size, w, h }) {
+  const W = typeof w === 'number' ? w : size;
+  const H = typeof h === 'number' ? h : size;
+  return (
+    <Svg width={W} height={H} style={StyleSheet.absoluteFill} pointerEvents="none">
+      <Defs>
+        <SvgLinearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
+          <Stop offset="0" stopColor={c1} />
+          <Stop offset="1" stopColor={c2} />
+        </SvgLinearGradient>
+      </Defs>
+      <Rect x="0" y="0" width={W} height={H} fill={`url(#${gid})`} />
+    </Svg>
+  );
+}
+
 // ── Group collage tile ──────────────────────────────────────────
 // A single tile of a 2×2 (or 1+2) collage. Renders the member's avatar
 // when available, otherwise falls back to their initials on a colored
@@ -239,7 +289,8 @@ function _CollageTile({ member, size, width, height }) {
     }
   }
   const initials = getInitials(memberName, memberEmail);
-  const bg = hashColor((memberName || memberEmail || '').toLowerCase());
+  const grad = gradientFor((memberName || memberEmail || '').toLowerCase());
+  const bg = grad.c2; // solid fallback behind the gradient layer
   // Allow non-square tiles (WhatsApp 1+2 layout has a full-height left tile).
   // Default to square when only `size` is passed.
   const w = typeof width === 'number' ? width : size;
@@ -248,8 +299,9 @@ function _CollageTile({ member, size, width, height }) {
   // does the circular clipping for the whole collage.
   return (
     <View style={{ width: w, height: h, backgroundColor: bg, alignItems: 'center', justifyContent: 'center' }}>
+      <GradientBg c1={grad.c1} c2={grad.c2} gid={grad.gid} size={Math.max(w, h)} w={w} h={h} />
       <Text
-        style={{ color: '#fff', fontWeight: '600', fontSize: Math.max(8, Math.min(w, h) * 0.4), position: 'absolute' }}
+        style={{ color: '#fff', fontWeight: '700', fontSize: Math.max(8, Math.min(w, h) * 0.4), position: 'absolute' }}
         allowFontScaling={false}
       >
         {initials}
@@ -493,7 +545,8 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   // at all when only `style`/parent identity changed.
   const initials = getInitials(name, email);
   const _colorSeed = (displayName || email || '').toLowerCase();
-  const bgColor = hashColor(_colorSeed);
+  const _grad = gradientFor(_colorSeed);
+  const bgColor = _grad.c2; // solid fallback behind the premium gradient layer
   const accessLabel = displayName ? `Avatar of ${displayName}` : 'User avatar';
 
   const ImageComponent = ExpoImage || RNImage;
@@ -508,6 +561,10 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
       accessibilityLabel={accessLabel}
       accessibilityRole="image"
     >
+      {/* Premium diagonal gradient sits behind the initials. Replaces the
+          flat hashColor fill so initials avatars read as sophisticated +
+          on-brand instead of generic. */}
+      <GradientBg c1={_grad.c1} c2={_grad.c2} gid={_grad.gid} size={size} />
       {/* Initials are always rendered so they remain visible if the avatar
           URL returns 404, an empty/transparent placeholder, or hasn't loaded
           yet. A real avatar image (when it loads successfully) is absolutely
@@ -600,7 +657,8 @@ const styles = StyleSheet.create({
   },
   initials: {
     color: '#fff',
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
 });
 

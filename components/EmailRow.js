@@ -10,6 +10,24 @@ import { fadeIn, scalePop, starSpin } from '../utils/animations';
 import AvatarCircle from './AvatarCircle';
 import { LABEL_COLORS } from './LabelPicker';
 
+// [2026-06-05] Limpa CSS/HTML que vaza no preview da lista (ex.: `@import`,
+// `<style>{...}</style>`, regras `.cls{...}`). Acontece quando o backend que
+// gerou o snippet (API Rust OU PHP de marketing-emails) não removeu o bloco
+// <style>. Catch-all no render: cobre TODAS as fontes de preview.
+function cleanPreview(s) {
+  if (!s) return '';
+  let x = String(s);
+  // remove blocos <style>/<script>/<head> inteiros (com ou sem fechamento)
+  x = x.replace(/<(style|script|head)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
+  x = x.replace(/<(style|script|head)\b[^>]*>[\s\S]*$/gi, ' ');
+  // @import / at-rules + blocos CSS `seletor { ... }`
+  x = x.replace(/@(import|media|font-face|charset|supports|keyframes)[^;{]*[;{][\s\S]*?(}|;)/gi, ' ');
+  x = x.replace(/[^{}<>]{0,80}\{[^{}]*\}/g, ' ');
+  // tags soltas + entidades + espaços
+  x = x.replace(/<[^>]+>/g, ' ').replace(/&[a-z#0-9]+;/gi, ' ');
+  return x.replace(/\s+/g, ' ').trim();
+}
+
 // Module-level guard so the hint flashes at most once per app session even
 // before AsyncStorage finishes hydrating. Pairs with persistent flag below.
 const SWIPE_HINT_KEY = 'emailRow_swipeHintShown_v1';
@@ -420,7 +438,7 @@ function EmailRow({
         {/* Line 3: Preview (separate line — easier to skim 10 emails at a glance) */}
         {dc.showPreview && email.preview ? (
           <Text numberOfLines={1} style={[s.preview, { color: colors.textTertiary, marginTop: 2 }]}>
-            {searchQuery ? highlightText(email.preview, searchQuery) : email.preview}
+            {searchQuery ? highlightText(cleanPreview(email.preview), searchQuery) : cleanPreview(email.preview)}
           </Text>
         ) : null}
 
@@ -481,7 +499,7 @@ function EmailRow({
                   </Text>
                   {!!m.preview && (
                     <Text numberOfLines={1} style={{ fontSize: 12, color: colors.textTertiary, marginTop: 1 }}>
-                      {m.preview}
+                      {cleanPreview(m.preview)}
                     </Text>
                   )}
                 </View>

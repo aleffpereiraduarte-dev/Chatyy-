@@ -7920,6 +7920,34 @@ export default function ChatConversationScreen() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
+
+  // [2026-06-09 sweep] WhatsApp Web parity: Ctrl+V with an image/video on the
+  // clipboard (screenshot, copied photo) opens the media preview + caption
+  // flow — same UX as picking from the gallery. Only fires when the clipboard
+  // actually carries FILES; plain-text paste stays with the focused TextInput.
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const onPaste = (e) => {
+      try {
+        const files = Array.from(e.clipboardData?.files || [])
+          .filter(f => /^(image|video)\//.test(f.type || ''));
+        if (!files.length) return;
+        e.preventDefault();
+        const wrapped = files.map(f => {
+          const uri = URL.createObjectURL(f);
+          try { webBlobUrlsRef.current.add(uri); } catch {}
+          const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+          return { uri, blob: f, name: f.name || `colado_${Date.now()}.${ext}`, type: f.type, size: f.size || 0 };
+        });
+        setMediaPreview(prev => prev?.visible
+          ? { visible: true, files: [...(prev.files || []), ...wrapped] }
+          : { visible: true, files: wrapped });
+      } catch {}
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, []);
+
   const [messageInfo, setMessageInfo] = useState(null); // { id, delivered: [], read: [] }
   const [showAttachMenu, setShowAttachMenu] = useState(false);
   // Desktop-web webcam capture overlay (getUserMedia photo + video)

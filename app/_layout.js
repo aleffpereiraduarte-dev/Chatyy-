@@ -158,6 +158,34 @@ if (Platform.OS === 'web' && _RNAnimated && !_RNAnimated.__WEB_PATCHED) {
   _RNAnimated.decay = (v, cfg) => origDecay(v, forceJs(cfg));
   _RNAnimated.__WEB_PATCHED = true;
 }
+
+// [2026-06-09 sweep] RN-web's Alert.alert is a pure no-op (`static alert() {}`):
+// it never throws and renders nothing, so every confirmation dialog built on it
+// (~480 call sites) silently did nothing in the browser — deletes, blocks,
+// leave-group, clear-chat all dead on web. services/alerts.js#safeAlert fixed
+// the 5 files that import it; this global patch covers the rest in one place.
+// Web-only: native Alert.alert is untouched. Same button mapping as safeAlert
+// (style:'cancel' → Cancel side of window.confirm; first non-cancel onPress
+// runs on OK; ≤1 button → window.alert).
+if (Platform.OS === 'web' && Alert && !Alert.__CHATYY_WEB_PATCHED) {
+  Alert.alert = function (title, message, buttons) {
+    if (typeof window === 'undefined') return;
+    const text = (title ? String(title) + (message ? '\n\n' + String(message) : '') : String(message || '')) || '';
+    if (!buttons || !Array.isArray(buttons) || buttons.length <= 1) {
+      try { window.alert(text); } catch {}
+      const onlyBtn = Array.isArray(buttons) ? buttons[0] : null;
+      if (onlyBtn?.onPress) try { onlyBtn.onPress(); } catch {}
+      return;
+    }
+    let ok = true;
+    try { ok = window.confirm(text); } catch {}
+    const cancel = buttons.find(b => b?.style === 'cancel');
+    const proceed = buttons.find(b => b?.style !== 'cancel');
+    const target = ok ? proceed : cancel;
+    if (target?.onPress) try { target.onPress(); } catch {}
+  };
+  Alert.__CHATYY_WEB_PATCHED = true;
+}
 let GestureHandlerRootView;
 if (Platform.OS !== 'web') {
   try { GestureHandlerRootView = require('react-native-gesture-handler').GestureHandlerRootView; } catch {}

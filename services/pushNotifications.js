@@ -1251,6 +1251,26 @@ export async function setupNotificationListeners() {
     }
   } catch {}
 
+  // [2026-06-09 sweep] FCM/APNs token ROTATION listener. The OS can rotate the
+  // push token at any time (app restore, GMS update, APNs re-issue); before
+  // this, a rotation was only picked up by the next ensurePushTokenFresh —
+  // throttled to 6h — leaving the user push-deaf for up to 6 hours. The
+  // listener fires on rotation; if the new token differs from the last one we
+  // registered, re-register immediately (bypasses the throttle entirely).
+  try {
+    if (Platform.OS !== 'web' && typeof Notifications.addPushTokenListener === 'function') {
+      Notifications.addPushTokenListener((devToken) => {
+        try {
+          const raw = devToken?.data || devToken;
+          if (!raw || typeof raw !== 'string') return;
+          if (Platform.OS === 'android' && pushNotificationsState.deviceToken === raw) return;
+          _diagPush('token_rotated', 'len=' + raw.length);
+          ensurePushTokenFresh({ force: true }).catch(() => {});
+        } catch {}
+      });
+    }
+  } catch (e) { _diagPush('token_rotation_listener_fail', e?.message || String(e)); }
+
   const receivedSub = Notifications.addNotificationReceivedListener((notification) => {
     // When a push arrives in foreground, emit event so chat can refresh instantly
     const data = notification.request?.content?.data;

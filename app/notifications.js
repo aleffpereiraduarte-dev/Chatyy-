@@ -16,6 +16,7 @@ import {
   IconUser, IconMessageSquare, IconMail, IconFilm,
 } from '../components/Icons';
 import EmptyStateCard from '../components/EmptyStateCard';
+import ScreenEmptyState from '../components/ScreenEmptyState';
 import * as api from '../services/api';
 import { swr, getCachedSync, setCache, userScopedKey } from '../services/cache';
 
@@ -361,23 +362,23 @@ function TabBar({ activeTab, onChange, colors, t, unreadCounts = {} }) {
   );
 }
 
-// ─── Empty state — Instagram "Você está em dia ✓" ─────────────────────────────
-function EmptyState({ colors, isDark, t }) {
+// ─── Empty state — premium canonical ScreenEmptyState ─────────────────────────
+function EmptyState({ colors, isDark, t, onOpenSettings }) {
   return (
-    <View style={styles.empty}>
-      <View style={[styles.emptyIconCircle, { backgroundColor: 'rgba(124,58,237,0.10)' }]}>
-        {/* Inline SVG-ish: bell with a check mark — using existing Icons */}
-        <View style={{ alignItems: 'center', justifyContent: 'center' }}>
-          <IconCheck size={44} color={BRAND} />
-        </View>
-      </View>
-      <Text style={[styles.emptyTitle, { color: colors.text }]}>
-        {t('notifications.allCaughtUp') || 'Você está em dia'}
-      </Text>
-      <Text style={[styles.emptyDesc, { color: colors.textSecondary }]}>
-        {t('notifications.allCaughtUpDesc') || 'Quando rolar algo novo, aparece aqui.'}
-      </Text>
-    </View>
+    <ScreenEmptyState
+      kind="notifications"
+      title={t('notifications.allCaughtUp') || 'Você está em dia'}
+      subtitle={t('notifications.allCaughtUpDesc') || 'Quando rolar algo novo, aparece aqui.'}
+      secondary={onOpenSettings ? {
+        label: t('notifications.emptyManage') || 'Gerenciar notificações',
+        onPress: onOpenSettings,
+      } : undefined}
+      tips={[
+        { icon: 'star', label: t('notifications.emptyTipLikes') || 'Curtidas e comentários nos seus posts' },
+        { icon: 'users', label: t('notifications.emptyTipFollows') || 'Quando alguém começa a seguir você' },
+        { icon: 'bell', label: t('notifications.emptyTipMentions') || 'Menções, respostas e lembretes' },
+      ]}
+    />
   );
 }
 
@@ -747,7 +748,7 @@ function NotificationsScreenInner() {
         }
         ListEmptyComponent={
           !loading ? (
-            <EmptyState colors={colors} isDark={isDark} t={t} tab={activeTab} />
+            <EmptyState colors={colors} isDark={isDark} t={t} tab={activeTab} onOpenSettings={() => router.push('/settings')} />
           ) : null
         }
         contentContainerStyle={notifications.length === 0 ? styles.listEmpty : styles.listContent}

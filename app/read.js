@@ -209,24 +209,28 @@ export default function ReadScreen() {
     if (replyEmail?.smartReply) {
       url += `&smart_reply=${encodeURIComponent(replyEmail.smartReply)}`;
     }
-    router.push(url);
+    // [2026-06-05] router.REPLACE, não push: `read` e `compose` são ambos
+    // presentation:'modal'. Com push, abrir Responder empilhava o modal de
+    // compose POR CIMA do modal de leitura ("um módulo em cima do outro").
+    // replace troca o de leitura pelo de compose — voltar cai na inbox.
+    router.replace(url);
   };
 
   const handleReplyAll = (emailData) => {
     const replyEmail = emailData || email;
     const allRecipients = [replyEmail?.to, replyEmail?.cc].filter(Boolean).join(',');
     let url = `/compose?reply_uid=${uid}&reply_all=1&folder=${encodeURIComponent(folder)}&to=${encodeURIComponent(replyEmail?.from || '')}&cc=${encodeURIComponent(allRecipients)}&subject=${encodeURIComponent('Re: ' + (replyEmail?.subject || ''))}`;
-    router.push(url);
+    router.replace(url);
   };
 
   const handleForward = () => {
-    router.push(`/compose?forward_uid=${uid}&folder=${encodeURIComponent(folder)}&subject=${encodeURIComponent('Fwd: ' + (email?.subject || ''))}`);
+    router.replace(`/compose?forward_uid=${uid}&folder=${encodeURIComponent(folder)}&subject=${encodeURIComponent('Fwd: ' + (email?.subject || ''))}`);
   };
 
   // Forward as attachment (round-6 gap-closer): drops the original .eml
   // into compose as a real attachment via the attach_eml_uid hint.
   const handleForwardAsAttachment = () => {
-    router.push(
+    router.replace(
       `/compose?attach_eml_uid=${uid}` +
       `&attach_eml_folder=${encodeURIComponent(folder)}` +
       `&subject=${encodeURIComponent('Fwd: ' + (email?.subject || ''))}`,
@@ -428,7 +432,7 @@ export default function ReadScreen() {
             subject: subj,
             smart_reply: followupSuggestion.suggested_message || '',
           });
-          router.push('/compose?' + params.toString());
+          router.replace('/compose?' + params.toString());
         }}
         style={{ backgroundColor: '#f59e0b', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
         accessibilityLabel={t('read.followupSend') || 'Enviar follow-up'}

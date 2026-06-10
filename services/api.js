@@ -2036,6 +2036,18 @@ export async function getMessage(uid, folder = 'INBOX') {
       if (j && j.success && j.data) {
         // Map Rust response → legacy PHP shape used by EmailReader/read.js
         const d = j.data;
+        // [2026-06-05] FALLBACK ROBUSTO: se a API Rust responde 200 mas devolve
+        // o CORPO VAZIO (html '' E text ''), NÃO confiar nela — alguns e-mails
+        // (multipart/related, MIME aninhado, mensagens grandes) a Rust não
+        // consegue extrair e devolveria a tela EM BRANCO. Cai pro PHP `message`,
+        // que parseia o .eml cru via lib MIME madura e sempre traz o corpo.
+        // Só aceita o atalho Rust quando há de fato algum corpo OU anexos.
+        const _rustHtml = (d.html || '').trim();
+        const _rustText = (d.text || '').trim();
+        const _rustHasAtt = Array.isArray(d.attachments) && d.attachments.length > 0;
+        if (!_rustHtml && !_rustText && !_rustHasAtt) {
+          return apiCall('message', { uid, folder });
+        }
         return {
           success: true,
           data: {
@@ -2049,6 +2061,10 @@ export async function getMessage(uid, folder = 'INBOX') {
             date: d.date,
             date_ts: d.date_ts,
             body_html: d.html || '',
+            // [2026-06-05] EmailReader lê `body_text` (não `body_plain`). Sem
+            // este alias, e-mail SÓ-TEXTO (sem HTML) abria EM BRANCO no app
+            // quando vinha pela API Rust. Mantém body_plain por compat.
+            body_text: d.text || '',
             body_plain: d.text || '',
             attachments: (d.attachments || []).map(a => ({
               filename: a.filename, mime: a.mime, size: a.size,
