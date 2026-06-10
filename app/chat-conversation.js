@@ -3,7 +3,7 @@ import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Image, InteractionManager,
   ActivityIndicator, TextInput, Platform, Keyboard, Dimensions,
   Alert, Modal, Pressable, Linking, Animated, Easing, ScrollView, PanResponder, Share, BackHandler,
-  KeyboardAvoidingView, AppState, Vibration, ActionSheetIOS,
+  KeyboardAvoidingView, AppState, Vibration, ActionSheetIOS, useWindowDimensions,
 } from 'react-native';
 // FlashList reverted to FlatList
 // Native UICollectionView chat view (iOS only) — WhatsApp-style instant render.
@@ -6516,7 +6516,14 @@ function _sendTimeoutFromCache() {
   return 15000; // sane default when type is unknown (web / pre-first-event)
 }
 
-export default function ChatConversationScreen() {
+// [2026-06-10 desktop 2-col] The conversation screen body. On phone-sized
+// viewports (and always on native) this renders alone, exactly as before.
+// The desktop-web split wrapper below mounts it as the RIGHT pane next to a
+// live ChatListTab — WhatsApp Web layout — without touching any of the
+// conversation logic or the file-based routing (URL is still
+// /chat-conversation?id=N; the list pane just replaces instead of pushing
+// so the stack doesn't pile up one screen per conversation click).
+function ChatConversationInner() {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const { t, language } = useLanguage();
@@ -30075,3 +30082,65 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth,
   },
 });
+
+// ─── [2026-06-10] Desktop web 2-column layout (WhatsApp Web parity) ─────────
+// On web viewports ≥1024px the conversation renders next to a live chat list,
+// so users read/answer without bouncing between routes. Anything narrower
+// (and all native) gets the unchanged single-pane screen. The list pane gets
+// a router whose push() into another conversation becomes replace() — without
+// it every click in the left pane would stack one more screen (each carrying
+// its own embedded list) onto the navigator.
+const _ChatListTabLazy = React.lazy(() => import('../components/ChatListTab'));
+const SPLIT_MIN_WIDTH = 1024;
+const SPLIT_LIST_WIDTH = 400;
+
+export default function ChatConversationScreen() {
+  const { width: _winW } = useWindowDimensions();
+  const { colors, isDark } = useTheme();
+  const { user } = useAuth();
+  const { t } = useLanguage();
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  // replace-instead-of-push only for conversation→conversation hops; every
+  // other destination (profile, status, settings) keeps normal stack behavior.
+  const listRouter = useMemo(() => ({
+    ...router,
+    push: (href, opts) => {
+      try {
+        const target = typeof href === 'string' ? href : href?.pathname || '';
+        if (String(target).startsWith('/chat-conversation')) return router.replace(href, opts);
+      } catch {}
+      return router.push(href, opts);
+    },
+  }), [router]);
+
+  const isSplit = Platform.OS === 'web' && _winW >= SPLIT_MIN_WIDTH;
+  if (!isSplit) return <ChatConversationInner />;
+  return (
+    <View style={{ flex: 1, flexDirection: 'row', backgroundColor: colors.background }}>
+      <View
+        style={{
+          width: SPLIT_LIST_WIDTH, maxWidth: '36%', minWidth: 300,
+          borderRightWidth: 1,
+          borderRightColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)',
+        }}
+      >
+        <React.Suspense fallback={null}>
+          <_ChatListTabLazy
+            colors={colors}
+            isDark={isDark}
+            t={t}
+            user={user}
+            router={listRouter}
+            tabActive="chats"
+          />
+        </React.Suspense>
+      </View>
+      {/* key forces a clean remount when replace() lands on a new id — the
+          inner screen assumes its conversationId is fixed for its lifetime. */}
+      <View style={{ flex: 1, minWidth: 0 }} key={`split-${params.id || ''}`}>
+        <ChatConversationInner />
+      </View>
+    </View>
+  );
+}
