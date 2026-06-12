@@ -28,6 +28,7 @@ import {
   IconForward, IconFileText, IconUsers,
   IconClock, IconImage, IconStar, IconMapPin, IconSearch,
   IconSmartphone, IconMonitor, IconShield, IconBarChart, IconGiftBox,
+  IconEyeOff, IconArchive,
 } from './Icons';
 import * as api from '../services/api';
 import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
@@ -982,8 +983,14 @@ function PrivacyScreen({ colors, t }) {
     const OPTS = options || ['everyone', 'contacts', 'nobody'];
     const labels = {
       everyone: t?.('profile.privacyEveryone') || 'Qualquer um',
+      all:      t?.('profile.privacyEveryone') || 'Qualquer um',
       contacts: t?.('profile.privacyContactsOnly') || 'Só meus contatos',
       nobody:   t?.('profile.privacyNobody') || 'Ninguém',
+      // [online/invisible 2026-06-10] last-seen/online 'nobody' surfaces as
+      // "invisible mode" so users understand they also appear offline.
+      invisible: t?.('settings.privacyInvisible') || 'Modo invisível',
+      close_friends: t?.('settings.privacyCloseFriends') || 'Amigos próximos',
+      except:        t?.('settings.privacyStatusExcept') || 'Ocultar status de…',
     };
     const cur = settings[field] || OPTS[0];
     return (
@@ -997,7 +1004,10 @@ function PrivacyScreen({ colors, t }) {
         </View>
         <View style={{ flex: 1 }}>
           <Text style={{ color: colors?.text, fontSize: 15, fontWeight: '500' }}>{label}</Text>
-          <Text style={{ color: colors?.textTertiary, fontSize: 12, marginTop: 2 }}>{labels[cur] || cur}</Text>
+          <Text style={{ color: colors?.textTertiary, fontSize: 12, marginTop: 2 }}>
+            {/* online + nobody reads as "invisible" so the subtitle is clear. */}
+            {(field === 'online' && cur === 'nobody') ? labels.invisible : (labels[cur] || cur)}
+          </Text>
         </View>
         <IconChevronRight size={18} color={colors?.textTertiary} />
       </TouchableOpacity>
@@ -1016,6 +1026,14 @@ function PrivacyScreen({ colors, t }) {
           label={t?.('privacy.lastSeen') || 'Visto por último e online'}
           field="last_seen"
         />
+        {/* Online / invisible mode — backend column `online`. 'nobody' here
+            = invisible (appear offline). Distinct from last_seen above. */}
+        <PrivacyRow
+          Icon={IconEyeOff}
+          label={t?.('settings.privacyOnline') || 'Online'}
+          field="online"
+          options={['everyone', 'contacts', 'nobody']}
+        />
         <PrivacyRow
           Icon={IconPhone}
           label={t?.('privacy.phoneNumber') || 'Quem pode ver meu número de telefone'}
@@ -1031,10 +1049,13 @@ function PrivacyScreen({ colors, t }) {
           label={t?.('privacy.about') || 'Recado (about)'}
           field="about"
         />
+        {/* Status visibility — now includes "Amigos próximos" (close_friends);
+            curate the list from Settings → Privacidade → Amigos próximos. */}
         <PrivacyRow
           Icon={IconStar}
           label={t?.('privacy.status') || 'Quem vê meu status'}
           field="story_privacy"
+          options={['all', 'contacts', 'close_friends', 'nobody']}
         />
       </Section>
       <Section title={t?.('privacy.conversations') || 'Conversas'} colors={colors}>
@@ -1044,6 +1065,17 @@ function PrivacyScreen({ colors, t }) {
           description={t?.('privacy.readReceiptsDesc') || 'Mostrar V azul quando ler as mensagens'}
           value={!!settings.read_receipts}
           onChange={(v) => update({ read_receipts: v })}
+          colors={colors}
+        />
+        {/* [keep_archived 2026-06-10] WhatsApp default: archived chats stay
+            archived even when a new message arrives. Default TRUE; flip OFF
+            to un-archive on new messages. */}
+        <ToggleRow
+          icon={IconArchive}
+          label={t?.('settings.privacyKeepArchived') || 'Manter conversas arquivadas'}
+          description={t?.('settings.privacyKeepArchivedDesc') || 'Conversas arquivadas continuam arquivadas mesmo com mensagens novas.'}
+          value={settings.keep_archived !== false}
+          onChange={(v) => update({ keep_archived: !!v })}
           colors={colors}
         />
         {/* Strip EXIF (GPS/camera/date) from photos before send. Default ON

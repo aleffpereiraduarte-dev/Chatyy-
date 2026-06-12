@@ -857,6 +857,17 @@ function SettingsScreenInner() {
   const [chatPrivacy, setChatPrivacy] = useState({
     last_seen: 'everyone',
     profile_photo: 'everyone',
+    // [keep_archived 2026-06-10] WhatsApp default: an archived chat stays
+    // archived even when a new message arrives. Toggle OFF to un-archive on
+    // new messages. Server-stored on chat_user_privacy.keep_archived.
+    keep_archived: true,
+    // [online/invisible 2026-06-10] last-seen/online visibility. 'nobody'
+    // = invisible mode (appear offline). Distinct backend column from
+    // last_seen so the two can diverge.
+    online: 'everyone',
+    // [status_except 2026-06-10] global "hide my status from these people"
+    // list (array of lowercase emails). Managed via the picker screen.
+    status_except: [],
     // Privacy-safe default: read receipts stay OFF until the server value
     // loads. Defaulting to `true` pre-sync would briefly leak read state on
     // a slow/failed chatPrivacyGet. The real value hydrates below.
@@ -884,6 +895,11 @@ function SettingsScreenInner() {
             ...prev,
             last_seen:     r.data.last_seen     || 'everyone',
             profile_photo: r.data.profile_photo || 'everyone',
+            // keep_archived defaults TRUE (WhatsApp parity) — only flip OFF
+            // when the server explicitly returns false.
+            keep_archived: r.data.keep_archived !== undefined ? !!r.data.keep_archived : true,
+            online:        r.data.online        || 'everyone',
+            status_except: Array.isArray(r.data.status_except) ? r.data.status_except : [],
             read_receipts: r.data.read_receipts !== undefined ? !!r.data.read_receipts : false,
             // Backend exposes story_privacy for "Status" and group_add for
             // "Grupos". Defaults reflect the chat_privacy_set valid set.
@@ -3117,7 +3133,28 @@ function SettingsScreenInner() {
             />
           </View>
 
-          {/* Status — backend column is `story_privacy`. */}
+          {/* Online / last-seen visibility — backend column `online`. The
+              'nobody' option = invisible mode (appear offline). Distinct from
+              `last_seen` above so the two can diverge. */}
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+            onPress={() => setPrivacyPickerOpen('online')}
+            activeOpacity={0.7}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyOnline')}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {chatPrivacy.online === 'everyone' ? t('settings.privacyEveryone')
+                  : chatPrivacy.online === 'contacts' ? t('settings.privacyContacts')
+                  : t('settings.privacyInvisible')}
+              </Text>
+            </View>
+            <IconChevronRight size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+
+          {/* Status — backend column is `story_privacy`. Now also supports
+              'close_friends' (link to manage list below) and 'except' (the
+              "hide from…" picker below). */}
           <TouchableOpacity
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={() => setPrivacyPickerOpen('story_privacy')}
@@ -3126,13 +3163,70 @@ function SettingsScreenInner() {
             <View style={s.settingInfo}>
               <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyStatus')}</Text>
               <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
-                {chatPrivacy.story_privacy === 'everyone' ? t('settings.privacyEveryone')
+                {chatPrivacy.story_privacy === 'all' || chatPrivacy.story_privacy === 'everyone' ? t('settings.privacyEveryone')
                   : chatPrivacy.story_privacy === 'contacts' ? t('settings.privacyContacts')
+                  : chatPrivacy.story_privacy === 'close_friends' ? t('settings.privacyCloseFriends')
+                  : chatPrivacy.story_privacy === 'except' ? t('settings.privacyStatusExcept')
                   : t('settings.privacyNobody')}
               </Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
           </TouchableOpacity>
+
+          {/* Manage close-friends list — reuses the canonical close-friends
+              screen (app/close-friends.js, chat_close_friends table). Only
+              relevant when story_privacy is 'close_friends', but always shown
+              so the user can curate the list ahead of time. */}
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+            onPress={() => { try { router.push('/close-friends'); } catch {} }}
+            activeOpacity={0.7}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyCloseFriends')}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.privacyCloseFriendsDesc')}
+              </Text>
+            </View>
+            <IconChevronRight size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+
+          {/* Hide status from… — global status_except list (array of emails),
+              persisted via chat_privacy_set { status_except }. Opens the
+              contact-picker screen which reuses the close-friends layout. */}
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+            onPress={() => { try { router.push('/status-except'); } catch {} }}
+            activeOpacity={0.7}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyStatusExcept')}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {(chatPrivacy.status_except?.length || 0) > 0
+                  ? (t('settings.privacyStatusExceptCount') || '{n} ocultos').replace('{n}', chatPrivacy.status_except.length)
+                  : t('settings.privacyStatusExceptDesc')}
+              </Text>
+            </View>
+            <IconChevronRight size={20} color={colors.textTertiary} />
+          </TouchableOpacity>
+
+          {/* Keep archived chats archived — WhatsApp parity. ON (default) =
+              archived chats stay archived even when a new message arrives.
+              Boolean Switch persisted via chat_privacy_set { keep_archived }. */}
+          <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyKeepArchived')}</Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.privacyKeepArchivedDesc')}
+              </Text>
+            </View>
+            <Switch
+              value={chatPrivacy.keep_archived !== false}
+              onValueChange={(v) => saveChatPrivacy({ keep_archived: !!v })}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={chatPrivacy.keep_archived !== false ? colors.primary : '#fff'}
+            />
+          </View>
 
           {/* Groups — backend column is `group_add` (who can add this user
               to a group). */}
@@ -4242,22 +4336,48 @@ function SettingsScreenInner() {
             <Text style={{ color: colors.text, fontWeight: '700', fontSize: 17, marginBottom: 12 }}>
               {privacyPickerOpen === 'last_seen'     ? t('settings.privacyLastSeen')
                : privacyPickerOpen === 'profile_photo' ? t('settings.privacyProfilePhoto')
+               : privacyPickerOpen === 'online'        ? t('settings.privacyOnline')
                : privacyPickerOpen === 'story_privacy' ? t('settings.privacyStatus')
                : privacyPickerOpen === 'group_add'     ? t('settings.privacyGroups')
                : ''}
             </Text>
-            {[
-              { value: 'everyone', label: t('settings.privacyEveryone') },
-              { value: 'contacts', label: t('settings.privacyContacts') },
-              { value: 'nobody',   label: t('settings.privacyNobody') },
-            ].map((opt) => {
+            {(
+              // Per-field option sets. `online` swaps the third option to
+              // "invisible" (writes 'nobody'). `story_privacy` adds close
+              // friends + the "hide from…" (except) options. Everything else
+              // uses the classic everyone/contacts/nobody trio.
+              privacyPickerOpen === 'online' ? [
+                { value: 'everyone', label: t('settings.privacyEveryone') },
+                { value: 'contacts', label: t('settings.privacyContacts') },
+                { value: 'nobody',   label: t('settings.privacyInvisible') },
+              ] : privacyPickerOpen === 'story_privacy' ? [
+                { value: 'all',           label: t('settings.privacyEveryone') },
+                { value: 'contacts',      label: t('settings.privacyContacts') },
+                { value: 'close_friends', label: t('settings.privacyCloseFriends') },
+                { value: 'except',        label: t('settings.privacyStatusExcept') },
+              ] : [
+                { value: 'everyone', label: t('settings.privacyEveryone') },
+                { value: 'contacts', label: t('settings.privacyContacts') },
+                { value: 'nobody',   label: t('settings.privacyNobody') },
+              ]
+            ).map((opt) => {
+              // story_privacy 'all' and legacy 'everyone' are equivalent —
+              // treat both as the same selected state for the checkmark.
               const currentVal = privacyPickerOpen ? chatPrivacy[privacyPickerOpen] : '';
-              const active = currentVal === opt.value;
+              const active = currentVal === opt.value
+                || (privacyPickerOpen === 'story_privacy' && opt.value === 'all' && currentVal === 'everyone');
               return (
                 <TouchableOpacity
                   key={opt.value}
                   onPress={() => {
                     if (privacyPickerOpen) saveChatPrivacy({ [privacyPickerOpen]: opt.value });
+                    // 'close_friends' / 'except' need a follow-up list to be
+                    // meaningful — route the user straight to the manager.
+                    if (privacyPickerOpen === 'story_privacy' && opt.value === 'close_friends') {
+                      try { router.push('/close-friends'); } catch {}
+                    } else if (privacyPickerOpen === 'story_privacy' && opt.value === 'except') {
+                      try { router.push('/status-except'); } catch {}
+                    }
                     setPrivacyPickerOpen(null);
                   }}
                   style={{
