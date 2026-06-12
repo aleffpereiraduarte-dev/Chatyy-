@@ -3859,6 +3859,15 @@ export async function callStatus(callId, status, duration = 0) {
   }, 'POST');
 }
 
+// Keeps chat_call_state.last_heartbeat_at fresh while in a call so the
+// multi-device handoff cron can re-ring other devices if this one dies.
+export async function chatCallHeartbeat(callId, deviceId = '') {
+  return apiCall('chat_call_heartbeat', {
+    call_id: callId,
+    device_id: deviceId,
+  }, 'POST');
+}
+
 // Post-call quality rating (1-5 stars) shipped from the end-of-call screen.
 // Backend stores anonymized rating + ttfc/duration/quality flags for QoS
 // analytics. Optional `meta` carries TTFC (ms), final connection_quality

@@ -2671,7 +2671,9 @@ function CallScreenInner() {
     if (dur > 3) {
       try {
         const apiMod = require('../services/api');
-        apiMod.callStatus?.(callId, 'completed', dur).catch(() => {});
+        // Backend terminal status is 'ended' — 'completed' was rejected (400)
+        // and the .catch swallowed it, so history never got status/duration.
+        apiMod.callStatus?.(callId, 'ended', dur).catch(() => {});
       } catch {}
     }
 
@@ -3256,6 +3258,28 @@ function CallScreenInner() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [peerConnected]);
 
+  // ───── Server heartbeat (multi-device handoff) ─────
+  // Stamps chat_call_state.last_heartbeat_at every 5s while connected. The
+  // handoff cron re-rings the user's OTHER devices when this goes stale >8s
+  // (it never ends the call), so a dead client hands the ring off
+  // WhatsApp-style. Fire-and-forget; failures are irrelevant to the call.
+  useEffect(() => {
+    if (!peerConnected || !callId) return;
+    let devId = '';
+    try {
+      devId = globalThis.__chatyyCallDevId || (globalThis.__chatyyCallDevId = 'dev-' + Math.random().toString(36).slice(2, 10));
+    } catch {}
+    const beat = () => {
+      try {
+        const apiMod = require('../services/api');
+        apiMod.chatCallHeartbeat?.(callId, devId).catch(() => {});
+      } catch {}
+    };
+    beat();
+    const hb = setInterval(beat, 5000);
+    return () => clearInterval(hb);
+  }, [peerConnected, callId]);
+
   // ───── Mute-reminder poll ─────
   // While the local mic is muted, poll LiveKit's localParticipant.audioLevel
   // every 250ms. If the user crosses the speech threshold (and we haven't
@@ -3544,6 +3568,12 @@ function CallScreenInner() {
       videoEnabledRef.current = false;
       setLocalVideoTrack(null);
       sendData({ type: 'video_toggle', enabled: false });
+      // Back to earpiece when the call drops to audio-only (unless the user
+      // had speaker on in an audio call to begin with — isVideoCall covers
+      // the upgrade path only).
+      if (Platform.OS !== 'web' && !isVideoCall) {
+        try { await LK_AudioSession?.selectAudioOutput?.(lkOutputId('earpiece')); } catch {}
+      }
       resetControlsTimer();
       return;
     }
@@ -3625,6 +3655,10 @@ function CallScreenInner() {
       const camPub = r.localParticipant.getTrackPublication(Track.Source.Camera);
       if (camPub?.videoTrack) setLocalVideoTrack(camPub.videoTrack);
       sendData({ type: 'video_toggle', enabled: true });
+      // WhatsApp behavior: turning video on routes audio to the speaker.
+      if (Platform.OS !== 'web') {
+        try { await LK_AudioSession?.selectAudioOutput?.(lkOutputId('speaker')); } catch {}
+      }
       // [2026-05-18 video-quality-push] Enable low-light auto-brightness on
       // the AVCaptureDevice (iOS) / CameraX exposure (Android). No-op on
       // older devices that lack manual exposure — applyLowLightAssist returns
