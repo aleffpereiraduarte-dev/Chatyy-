@@ -51,8 +51,21 @@ const pushNotificationsState = {
 // Uses raw fetch — bypasses apiCall/auth so it fires even pre-login. Tries
 // to grab the bearer if available, otherwise sends as anon (backend accepts
 // both for the push_diag endpoint). OTA-safe (no native deps).
+// [2026-06-12 STORM FIX] Global throttle: diagnostics must NEVER be able to
+// flood the API (incident: token-rotation recursion × unthrottled _diagPush
+// = ~700 req/s from one phone, saturating its uplink + the API). Cap at 20
+// posts/min per session + drop identical step repeats within 5s.
+let _diagWindowStart = 0;
+let _diagWindowCount = 0;
+const _diagLastByStep = Object.create(null);
 async function _diagPush(step, info) {
   try {
+    const _now = Date.now();
+    if (_now - _diagWindowStart > 60 * 1000) { _diagWindowStart = _now; _diagWindowCount = 0; }
+    if (_diagWindowCount >= 20) return;
+    if (_diagLastByStep[step] && _now - _diagLastByStep[step] < 5000) return;
+    _diagLastByStep[step] = _now;
+    _diagWindowCount++;
     // Try to attach bearer if available, otherwise send anon
     let bearer = '';
     try {
@@ -953,6 +966,16 @@ const _flushedTokensInSession = new Set();
 // insertion order). Worst case of an evicted key is one redundant re-POST,
 // which the backend dedups idempotently.
 const _FLUSHED_TOKENS_MAX = 64;
+// [2026-06-12 STORM FIX] token-rotation listener state (see listener below).
+let _tokenRotationSub = null;
+let _lastRotatedToken = null;
+let _lastRotationHandledAt = 0;
+// In-flight + interval guard for sendTokenToBackend: the rotation recursion
+// fired it hundreds of times per second. One attempt at a time, and the same
+// token is not re-POSTed more than once per 30s (success or fail — the
+// pending queue covers retries on real failures).
+let _sendTokenInFlight = false;
+const _lastTokenSendAt = Object.create(null);
 function _markFlushed(key) {
   if (!key) return;
   if (_flushedTokensInSession.has(key)) return;
@@ -997,8 +1020,22 @@ async function _getActiveEmailSafe() {
 }
 
 export async function sendTokenToBackend(pushToken) {
-  _diagPush('send_start', pushToken ? ('len=' + String(pushToken).length) : 'no token');
   if (!pushToken) return;
+  // [2026-06-12 STORM FIX] hard re-entry + frequency guard.
+  const _nowSend = Date.now();
+  if (_sendTokenInFlight) return;
+  if (_lastTokenSendAt[pushToken] && _nowSend - _lastTokenSendAt[pushToken] < 30 * 1000) return;
+  _sendTokenInFlight = true;
+  _lastTokenSendAt[pushToken] = _nowSend;
+  try {
+    return await _sendTokenToBackendInner(pushToken);
+  } finally {
+    _sendTokenInFlight = false;
+  }
+}
+
+async function _sendTokenToBackendInner(pushToken) {
+  _diagPush('send_start', pushToken ? ('len=' + String(pushToken).length) : 'no token');
   const email = await _getActiveEmailSafe();
   try {
     const { apiCall } = require('./api');
@@ -1257,13 +1294,27 @@ export async function setupNotificationListeners() {
   // throttled to 6h — leaving the user push-deaf for up to 6 hours. The
   // listener fires on rotation; if the new token differs from the last one we
   // registered, re-register immediately (bypasses the throttle entirely).
+  // 🚨 [2026-06-12 STORM FIX] The original listener had a dedup guard ONLY
+  // for Android. On iOS, ensurePushTokenFresh → registerForPushNotifications
+  // re-emits this same listener event → infinite recursion at CPU speed
+  // (~700 req/s of register_push_token + push_diag flooding the API and the
+  // phone's own uplink — degraded calls app-wide). Guards now:
+  //   1. dedup by token value on BOTH platforms (_lastRotatedToken)
+  //   2. 60s cooldown between handled rotations regardless of value
+  //   3. subscription captured so cleanup can remove it (was leaked before —
+  //      stacked listeners on re-setup multiplied the storm)
   try {
     if (Platform.OS !== 'web' && typeof Notifications.addPushTokenListener === 'function') {
-      Notifications.addPushTokenListener((devToken) => {
+      _tokenRotationSub = Notifications.addPushTokenListener((devToken) => {
         try {
           const raw = devToken?.data || devToken;
           if (!raw || typeof raw !== 'string') return;
+          if (_lastRotatedToken === raw) return;
           if (Platform.OS === 'android' && pushNotificationsState.deviceToken === raw) return;
+          const now = Date.now();
+          if (now - _lastRotationHandledAt < 60 * 1000) return;
+          _lastRotationHandledAt = now;
+          _lastRotatedToken = raw;
           _diagPush('token_rotated', 'len=' + raw.length);
           ensurePushTokenFresh({ force: true }).catch(() => {});
         } catch {}
@@ -1554,6 +1605,7 @@ export async function setupNotificationListeners() {
     responseSub?.remove?.();
     try { _flushAppStateSub?.remove?.(); } catch {}
     try { _flushWsConnUnsub?.(); } catch {}
+    try { _tokenRotationSub?.remove?.(); _tokenRotationSub = null; } catch {}
   };
 }
 

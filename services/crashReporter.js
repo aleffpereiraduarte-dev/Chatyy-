@@ -73,8 +73,22 @@ function _appVersion() {
   } catch { return '?'; }
 }
 
+// [2026-06-12 STORM FIX] Global cap: the reporter must never be able to
+// flood the API if an error fires in a tight loop (each error = up to 9
+// posts with chunked stacks). 30 posts/min per session + identical-step
+// dedup within 5s; excess is silently dropped (it's diagnostics).
+let _postWindowStart = 0;
+let _postWindowCount = 0;
+const _postLastByStep = Object.create(null);
 async function _post(step, info) {
   try {
+    const _now = Date.now();
+    if (_now - _postWindowStart > 60 * 1000) { _postWindowStart = _now; _postWindowCount = 0; }
+    if (_postWindowCount >= 30) return;
+    const _stepKey = String(step || '');
+    if (_postLastByStep[_stepKey] && _now - _postLastByStep[_stepKey] < 5000) return;
+    _postLastByStep[_stepKey] = _now;
+    _postWindowCount++;
     const anon = await _ensureAnonId();
     const body = JSON.stringify({
       step: String(step || 'unknown').slice(0, 60).replace(/[^a-zA-Z0-9_]/g, '_'),
