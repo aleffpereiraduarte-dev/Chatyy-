@@ -36,6 +36,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import { IconSmile } from '../components/Icons';
 import CallParticipantList from '../components/CallParticipantList';
 import HostControlsSheet from '../components/HostControlsSheet';
+import AddToCallSheet from '../components/AddToCallSheet';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 
@@ -112,6 +113,10 @@ export default function GroupCallScreen() {
   // Sheets
   const [showParticipants, setShowParticipants] = useState(false);
   const [showHostControls, setShowHostControls] = useState(false);
+  // In-call "add participant" sheet — rings selected contacts INTO the running
+  // call via chat_call_add WITHOUT leaving the call screen (WhatsApp-style).
+  const [showAddSheet, setShowAddSheet] = useState(false);
+  const [addingMembers, setAddingMembers] = useState(false);
   // Reactions — floating bursts above the grid; queue trimmed to last 12.
   const [reactions, setReactions] = useState([]); // [{ id, emoji, x, anim }]
   const [showReactionBar, setShowReactionBar] = useState(false);
@@ -560,17 +565,56 @@ export default function GroupCallScreen() {
     }
   }, [conversation_id, roomName, room]);
 
-  // Compose the "Add person" CTA used by both the floating pill and the
-  // participant sheet header. Routes back to chat-conversation with the
-  // addMember intent so we reuse the existing picker.
+  // "Add person" CTA used by both the floating pill and the participant
+  // sheet header. WhatsApp-style: open an in-call bottom sheet that rings
+  // selected contacts INTO this running call — we never navigate away.
   const openAddPerson = useCallback(() => {
+    setShowAddSheet(true);
+  }, []);
+
+  // Emails already in the call (lowercased) — fed to the sheet so those
+  // contacts render disabled / non-selectable.
+  const inCallEmails = useMemo(
+    () => (participants || []).map((p) => (p.email || '').toLowerCase()).filter(Boolean),
+    [participants]
+  );
+
+  // Ring the chosen contacts into the ALREADY-RUNNING call via chat_call_add.
+  // Backend pre-mints a per-recipient LiveKit token for room == call_id, so
+  // they join THIS call. The rung users surface via the LiveKit participants
+  // feed — nothing optimistic to do here on success.
+  const handleAddToCall = useCallback(async (emails) => {
+    const callId = roomName || room || '';
+    const list = (Array.isArray(emails) ? emails : []).slice(0, 16);
+    if (!callId || list.length === 0) return;
+    setAddingMembers(true);
     try {
-      router.push({
-        pathname: '/chat-conversation',
-        params: { conversation_id: String(conversation_id || ''), addMember: '1', call_id: roomName || room || '' },
-      });
-    } catch {}
-  }, [router, conversation_id, roomName, room]);
+      // apiCall resolves with the response BODY ({ success, data, message })
+      // even on HTTP errors (it never throws on non-2xx), so branch on the
+      // body shape. The catch only guards unexpected runtime errors.
+      const r = await api.chatCallAdd(callId, list, conversation_id, video === '1');
+      const ok = r && (r.success !== false);
+      if (ok) {
+        setShowAddSheet(false);
+        return;
+      }
+      const msg = String(r?.message || '');
+      const rateLimited = /rate|429|too many|limit|muita/i.test(msg);
+      Alert.alert(
+        t('call.addParticipant') || 'Adicionar',
+        rateLimited
+          ? (t('call.addRateLimited') || 'Muitas tentativas. Tente novamente em instantes.')
+          : (t('call.addFailed') || 'Não foi possível adicionar agora. Tente novamente.'),
+      );
+    } catch (e) {
+      Alert.alert(
+        t('call.addParticipant') || 'Adicionar',
+        t('call.addFailed') || 'Não foi possível adicionar agora. Tente novamente.',
+      );
+    } finally {
+      setAddingMembers(false);
+    }
+  }, [roomName, room, conversation_id, video, t]);
 
   // ─── Render bits ───
 
@@ -860,6 +904,15 @@ export default function GroupCallScreen() {
         onMakeCoHost={handleMakeCoHost}
         onPin={handlePin}
         onAddPerson={openAddPerson}
+      />
+      <AddToCallSheet
+        visible={showAddSheet}
+        onClose={() => setShowAddSheet(false)}
+        onAdd={handleAddToCall}
+        existingEmails={inCallEmails}
+        isDark
+        t={t}
+        loading={addingMembers}
       />
       <HostControlsSheet
         visible={showHostControls}

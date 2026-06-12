@@ -6219,6 +6219,20 @@ export async function chatCallVideoRequest(conversationId, callId, targetEmail) 
   }, 'POST');
 }
 
+// Ring ARBITRARY users INTO an already-running call by call_id. Backend
+// (`chat_call_add`) pre-mints a per-recipient LiveKit token for the existing
+// room (room name == call_id) so they join THIS call. emails MUST be an array
+// (lowercased), capped at 16/request server-side. Block-checked + rate-limited
+// (10/min, shared with call_invite). Returns { call_id, invited:[...], count }.
+export async function chatCallAdd(callId, emails, conversationId, video) {
+  return apiCall('chat_call_add', {
+    call_id: callId,
+    emails: Array.isArray(emails) ? emails : [emails].filter(Boolean),
+    conversation_id: conversationId,
+    video: !!video,
+  }, 'POST');
+}
+
 // Decline-with-message: post-CallKit / IncomingCallActivity quick-reply.
 // Backend fans the standard WS `call_end` event AND drops a chat message
 // into the DM from the declining user so the caller sees "Te ligo já" /

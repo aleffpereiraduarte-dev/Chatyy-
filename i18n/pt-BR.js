@@ -1328,6 +1328,10 @@ export default {
   'call.addParticipantTitle': 'Adicionar à chamada',
   'call.addParticipantEmpty': 'Nenhum contato disponível para adicionar.',
   'call.addParticipantLoading': 'Carregando contatos...',
+  'call.searchContacts': 'Buscar contatos',
+  'call.noContacts': 'Nenhum contato',
+  'call.addRateLimited': 'Muitas tentativas. Tente novamente em instantes.',
+  'call.addFailed': 'Não foi possível adicionar agora. Tente novamente.',
   'call.peerMuted': '{name} está no mudo',
   // [decline-with-message, 2026-05-17]
   'call.declineWithMessage': 'Recusar com mensagem',

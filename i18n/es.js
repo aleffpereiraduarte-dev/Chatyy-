@@ -1348,6 +1348,10 @@ export default {
   'call.addParticipantTitle': 'Añadir a la llamada',
   'call.addParticipantEmpty': 'No hay contactos disponibles para añadir.',
   'call.addParticipantLoading': 'Cargando contactos...',
+  'call.searchContacts': 'Buscar contactos',
+  'call.noContacts': 'Sin contactos',
+  'call.addRateLimited': 'Demasiados intentos. Inténtalo de nuevo en un momento.',
+  'call.addFailed': 'No se pudo añadir ahora. Inténtalo de nuevo.',
   'call.peerMuted': '{name} está silenciado',
   // [decline-with-message, 2026-05-17]
   'call.declineWithMessage': 'Rechazar con mensaje',
