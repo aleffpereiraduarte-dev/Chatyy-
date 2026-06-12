@@ -22,16 +22,19 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { TouchableOpacity, Text, View, ActivityIndicator, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import { IconPhone, IconVideo } from './Icons';
 
-const POLL_MS = 25000;
+const POLL_MS = 20000;
 
-export default function OngoingCallChip({ conversationId }) {
+// `refreshKey` — optional. The host screen bumps it when a call_card
+// message lands in the conversation (a call just started or ended) so the
+// banner re-probes immediately instead of waiting for the next poll tick.
+export default function OngoingCallChip({ conversationId, refreshKey }) {
   const router = useRouter();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
@@ -58,7 +61,11 @@ export default function OngoingCallChip({ conversationId }) {
     }
   }, [conversationId]);
 
-  useEffect(() => {
+  // Poll ONLY while the host screen is focused — useFocusEffect stops the
+  // interval when chat-conversation blurs (e.g. user navigated into the
+  // call itself or backed out to the list) and re-probes instantly on
+  // return, so coming back from /group-call hides the banner right away.
+  useFocusEffect(useCallback(() => {
     aliveRef.current = true;
     probe();
     pollTimerRef.current = setInterval(probe, POLL_MS);
@@ -69,7 +76,13 @@ export default function OngoingCallChip({ conversationId }) {
         pollTimerRef.current = null;
       }
     };
-  }, [probe]);
+  }, [probe]));
+
+  // call_card landed in the thread → a call just started/ended here.
+  // Re-probe immediately instead of waiting up to POLL_MS.
+  useEffect(() => {
+    if (refreshKey) probe();
+  }, [refreshKey, probe]);
 
   // Visibility gate. We hide when:
   //   - state not yet loaded OR endpoint failed
@@ -106,6 +119,14 @@ export default function OngoingCallChip({ conversationId }) {
           ...(preToken ? { __t: preToken } : {}),
         },
       });
+      // Optimistically count myself as a participant so the banner hides
+      // the moment we navigate (meIsIn gate) — the focus re-probe on
+      // return confirms the real state.
+      if (me) {
+        setState(prev => (prev && typeof prev === 'object')
+          ? { ...prev, participants: [...participants, me] }
+          : prev);
+      }
     } finally {
       if (aliveRef.current) setJoining(false);
     }
@@ -114,9 +135,11 @@ export default function OngoingCallChip({ conversationId }) {
   const isVideo = !!state?.video;
   const greenBg = isDark ? '#0E6B3A' : '#10b981';
   const otherCount = participants.length;
-  const label = otherCount > 0
-    ? (t('chatConv.ongoingCallJoinN') || 'Entrar na chamada • {n}').replace('{n}', String(otherCount))
-    : (t('chatConv.ongoingCallJoin') || 'Entrar na chamada');
+  // WhatsApp-style combined label ("Chamada em andamento · Toque para
+  // entrar"); falls back to the older join-chip strings if the new key
+  // hasn't shipped to a locale yet.
+  const label = (t('chatConv.ongoingCallBanner') || t('chatConv.ongoingCallJoin') || 'Chamada em andamento · Toque para entrar')
+    + (otherCount > 0 ? ` · ${otherCount}` : '');
 
   return (
     <TouchableOpacity
@@ -140,19 +163,22 @@ export default function OngoingCallChip({ conversationId }) {
 }
 
 const styles = StyleSheet.create({
+  // Slim full-width banner pinned under the header (WhatsApp-style green
+  // "ongoing call" strip) — was a small left-aligned chip before the
+  // 2026-06-12 group-call banner round.
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 14,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
     gap: 6,
-    alignSelf: 'flex-start',
+    alignSelf: 'stretch',
   },
   chipText: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
-    maxWidth: 180,
   },
 });

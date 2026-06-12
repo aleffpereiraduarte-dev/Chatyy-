@@ -118,6 +118,7 @@ export default function CallParticipantList({
   myRole = ROLE.GUEST,
   pinnedEmail = '',
   onMute,           // (email) => void
+  onAskVideo,       // (email) => void — "Pedir vídeo" WS request
   onRemove,         // (email) => void
   onMakeCoHost,     // (email) => void
   onPin,            // (email, pinned: bool) => void
@@ -188,6 +189,11 @@ export default function CallParticipantList({
     setActionFor(null);
     onMute?.(p.email);
   }, [onMute]);
+
+  const handleAskVideo = useCallback((p) => {
+    setActionFor(null);
+    onAskVideo?.(p.email);
+  }, [onAskVideo]);
 
   const handleMakeCoHost = useCallback((p) => {
     setActionFor(null);
@@ -339,6 +345,15 @@ export default function CallParticipantList({
                           <TouchableOpacity style={styles.actionItem} onPress={() => handleMute(p)}>
                             <IconMic size={14} color="#fff" off />
                             <Text style={styles.actionText}>{t('call.mute') || 'Mute'}</Text>
+                          </TouchableOpacity>
+                        )}
+                        {/* "Pedir vídeo" — only offered while the target's
+                            camera is off; sends a call_video_request WS
+                            signal that the target confirms before enabling. */}
+                        {!video && onAskVideo && (
+                          <TouchableOpacity style={styles.actionItem} onPress={() => handleAskVideo(p)}>
+                            <IconVideo size={14} color="#fff" />
+                            <Text style={styles.actionText}>{t('call.group.askVideo') || 'Pedir vídeo'}</Text>
                           </TouchableOpacity>
                         )}
                         {role < ROLE.COHOST && (

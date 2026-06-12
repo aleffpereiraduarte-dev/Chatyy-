@@ -6209,6 +6209,16 @@ export async function chatCallMuteParticipant(conversationId, callId, targetEmai
   }, 'POST');
 }
 
+// Ask a specific group-call participant to turn their camera on. Relays via
+// the same server path as mute (chat_call_video_request → _broadcastToOwnDevices).
+export async function chatCallVideoRequest(conversationId, callId, targetEmail) {
+  return apiCall('chat_call_video_request', {
+    conversation_id: conversationId,
+    call_id: callId,
+    target_email: targetEmail,
+  }, 'POST');
+}
+
 // Decline-with-message: post-CallKit / IncomingCallActivity quick-reply.
 // Backend fans the standard WS `call_end` event AND drops a chat message
 // into the DM from the declining user so the caller sees "Te ligo já" /

@@ -7413,6 +7413,27 @@ function ChatConversationInner() {
   // Keep the sync ref in sync with messages state (runs every render).
   _messagesCountRef.current = messages?.length || 0;
 
+  // [ongoing group call banner 2026-06-12] Cheap key that bumps whenever a
+  // call_card message is present near either end of the list (new call
+  // started / ended → fresh call_card lands). OngoingCallChip re-probes
+  // chat_call_state_active when this changes, so the banner reacts to a
+  // call starting without waiting for its 20s poll tick. Bounded window
+  // scan keeps this O(1) per messages update even on huge threads.
+  const callCardRefreshKey = useMemo(() => {
+    try {
+      const list = Array.isArray(messages) ? messages : [];
+      const win = list.length > 30 ? list.slice(0, 15).concat(list.slice(-15)) : list;
+      let key = 0;
+      for (const m of win) {
+        if (m && m.type === 'call_card') {
+          const n = Number(m.id) || 0;
+          if (n > key) key = n;
+        }
+      }
+      return key;
+    } catch { return 0; }
+  }, [messages]);
+
   // Map of remote URL → local cached path (native only)
   const [cachedUris, setCachedUris] = useState({});
   // Skip the loader if we already painted from the native cache
@@ -23042,14 +23063,19 @@ function ChatConversationInner() {
       {/* WhatsApp-style sync/connecting bar */}
       <SyncBar />
 
-      {/* [gap E2 2026-05-20] "Entrar na chamada" header chip. Renders only
-          when chat_call_state_active says a group call is live in this
+      {/* [gap E2 2026-05-20 / banner 2026-06-12] "Chamada em andamento"
+          banner pinned under the header. Renders only when
+          chat_call_state_active says a group call is live in this
           conversation AND the current user isn't a participant yet. The
-          component owns its own polling + visibility gate so we can drop
-          it here without extra plumbing. */}
-      {conversationId ? (
+          component owns its own focus-gated polling + visibility gate so
+          we can drop it here without extra plumbing. GROUP-only: tapping
+          joins via /group-call (LiveKit SFU) which is wrong for 1:1
+          calls, so direct conversations never mount it.
+          callCardRefreshKey forces an immediate re-probe when a
+          call_card message lands in the thread. */}
+      {conversationId && conversationType === 'group' ? (
         <View style={{ paddingHorizontal: 12, paddingTop: 6 }}>
-          <OngoingCallChip conversationId={conversationId} />
+          <OngoingCallChip conversationId={conversationId} refreshKey={callCardRefreshKey} />
         </View>
       ) : null}
 

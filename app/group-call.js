@@ -280,6 +280,29 @@ export default function GroupCallScreen() {
       _postToWebView({ type: 'force_mute' });
     }) || (() => {}));
 
+    // call_video_request — someone asked ME to turn my camera on ("Pedir
+    // vídeo"). Unlike force_mute we NEVER flip the camera silently —
+    // confirm first, then post `video_on` into the WebView (same message
+    // the bottom-bar camera button uses; livekit-room.html maps it to
+    // setCameraEnabled(true)).
+    unsubs.push(mailWs.on?.('call_video_request', (data) => {
+      if (!data || data.call_id !== (roomName || room)) return;
+      const target = String(data.target_email || '').toLowerCase();
+      if (!target || target !== myEmail) return;
+      const who = data.from_name || String(data.from_email || data.by_email || '').split('@')[0];
+      Alert.alert(
+        t('call.group.videoRequestTitle') || 'Pedido de vídeo',
+        (t('call.group.videoRequestBody') || '{name} pediu para você ligar a câmera.').replace('{name}', who || ''),
+        [
+          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+          {
+            text: t('call.group.videoRequestAccept') || 'Ligar câmera',
+            onPress: () => _postToWebView({ type: 'video_on' }),
+          },
+        ]
+      );
+    }) || (() => {}));
+
     // call_force_end — host removed me. Bail out cleanly.
     unsubs.push(mailWs.on?.('call_force_end', (data) => {
       if (!data || data.call_id !== (roomName || room)) return;
@@ -307,7 +330,7 @@ export default function GroupCallScreen() {
     }) || (() => {}));
 
     return () => { unsubs.forEach(fn => { try { fn?.(); } catch {} }); };
-  }, [roomName, room, router, t]);
+  }, [roomName, room, router, t, myEmail]);
 
   // ─── Recording badge pulse ───
   useEffect(() => {
@@ -425,6 +448,19 @@ export default function GroupCallScreen() {
       await api.chatCallMuteParticipant(Number(conversation_id) || 0, roomName || room, targetEmail);
     } catch (e) { if (__DEV__) console.warn('[GroupCall.mute]', e?.message); }
   }, [conversation_id, roomName, room]);
+
+  // "Pedir vídeo" — ask a participant to turn their camera on. Routes through
+  // chat.php chat_call_video_request → _broadcastToOwnDevices, the SAME
+  // proven server-relay path as mute. A pure client→hub→client WS send would
+  // be silently dropped (the C++ hub only relays a whitelist of call_* types),
+  // so the backend action is what actually delivers. The receiver confirms via
+  // Alert and posts `video_on` into its WebView.
+  const handleAskVideo = useCallback((targetEmail) => {
+    if (!targetEmail) return;
+    try {
+      api.chatCallVideoRequest?.(Number(conversation_id) || 0, roomName || room, String(targetEmail).toLowerCase()).catch(() => {});
+    } catch {}
+  }, [roomName, room, conversation_id]);
 
   const handleRemoveParticipant = useCallback(async (targetEmail) => {
     if (!targetEmail) return;
@@ -819,6 +855,7 @@ export default function GroupCallScreen() {
         myRole={myRole}
         pinnedEmail={pinnedEmail}
         onMute={handleMuteParticipant}
+        onAskVideo={handleAskVideo}
         onRemove={handleRemoveParticipant}
         onMakeCoHost={handleMakeCoHost}
         onPin={handlePin}
