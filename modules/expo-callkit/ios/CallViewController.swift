@@ -236,6 +236,18 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // muted-by-iOS even though our LK track says it's enabled.
     private var avInterruptionObserver: NSObjectProtocol?
 
+    // [2026-06-12 outgoing-mic-silence fix] Listen for CallKit's
+    // provider:didActivate (re-posted by both provider delegates as
+    // ExpoCallKitAudioSessionActivated). On OUTGOING calls the LK mic track
+    // frequently gets captured BEFORE CallKit activates the AVAudioSession
+    // (Room.connect + setMicrophone race ahead of didActivate) — a track
+    // captured from an inactive session produces pure silence and never
+    // self-heals ("quando EU ligo ela não me escuta"). The incoming path
+    // never hits this because the VC presents after CXAnswer fulfils and the
+    // system activates the session before the publish lands. Cleared in
+    // deinit.
+    private var audioActivatedObserver: NSObjectProtocol?
+
     // [2026-05-22 #1349 fix] Caller-side ringback teardown.
     //
     // Listens for `CallKitCallAnsweredRemote`, posted by CallSignalWs when
@@ -328,6 +340,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
         // [Wave WhatsApp parity, 2026-05-20 gap B5 iOS] AVAudioSession recovery.
         installAVInterruptionObserver()
+
+        // [2026-06-12 outgoing-mic-silence fix] Outgoing-only: re-publish the
+        // mic (and retry a swallowed camera first-publish) the moment CallKit
+        // activates the audio session — see audioActivatedObserver docs.
+        if isOutgoing {
+            installAudioActivatedObserver()
+        }
 
         // [2026-05-22 #1349 fix] Caller-side ringback teardown — wire the
         // CallSignalWs receiver-loop notification so this VC stops the
@@ -2175,6 +2194,78 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
+    /// [2026-06-12 outgoing-mic-silence fix] Re-publish the mic (and retry a
+    /// silently-failed camera first-publish) the moment CallKit activates the
+    /// AVAudioSession. Mirrors the post-interruption recovery above: going
+    /// back through setMicrophone forces LiveKit to tear down the dead
+    /// capturer and re-create it against the now-active CallKit-owned
+    /// session. Ordering is race-proof:
+    ///   - didActivate BEFORE Room.connect resolves → setMicrophone throws
+    ///     (room not connected), harmless; the normal post-connect publish
+    ///     then captures from an already-active session (the good ordering).
+    ///   - didActivate AFTER the publish → this republish replaces the
+    ///     silent track (the bug being fixed).
+    /// Installed for OUTGOING calls only (viewDidLoad gate) — incoming
+    /// publishes post-answer when the session is already active.
+    private func installAudioActivatedObserver() {
+        guard audioActivatedObserver == nil else { return }
+        audioActivatedObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("ExpoCallKitAudioSessionActivated"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self, let r = self.room else { return }
+            let desired = self.session.micEnabled
+            print("[CallVC] audio session activated — re-applying mic(\(desired)) — callId=\(self.callId)")
+            nativeCallDiag("outgoing_mic_republish_didactivate", self.callId, "desired=\(desired)")
+            Task { [weak self] in
+                guard let self = self else { return }
+                do {
+                    let micPub = try await r.localParticipant.setMicrophone(
+                        enabled: desired,
+                        captureOptions: Self.defaultAudioCaptureOptions()
+                    )
+                    if let track = micPub?.track as? LocalAudioTrack {
+                        await MainActor.run { self.localAudioTrackRef = track }
+                    }
+                    print("[CallVC] didActivate mic republish(\(desired)) ok — callId=\(self.callId)")
+                } catch {
+                    // Pre-connect activation lands here (room not connected
+                    // yet) — benign, the post-connect publish takes over.
+                    print("[CallVC] didActivate mic republish failed (benign if pre-connect): \(error)")
+                    nativeCallDiag("outgoing_mic_republish_failed", self.callId, "\(error)")
+                }
+                // [#1358 outgoing video] The viewDidLoad camera publish uses
+                // `try?` and can fail silently when capture starts before the
+                // session/devices are ready. If we still have no local track
+                // for a video call, retry once now that the session is live —
+                // restores the caller's self-preview AND the callee's view of
+                // the caller.
+                if self.hasVideo, self.session.localVideoTrack == nil {
+                    do {
+                        let pub = try await r.localParticipant.setCamera(
+                            enabled: true,
+                            captureOptions: Self.defaultCameraCaptureOptions(position: self.currentCameraPosition),
+                            publishOptions: Self.defaultVideoPublishOptions()
+                        )
+                        if let track = pub?.track as? LocalVideoTrack {
+                            await MainActor.run {
+                                self.session.camEnabled = true
+                                self.session.localVideoTrack = track
+                                self.applyLocalVideoTrack(track)
+                            }
+                            print("[CallVC] didActivate camera retry-publish ok — callId=\(self.callId)")
+                            nativeCallDiag("outgoing_cam_republish_didactivate", self.callId)
+                        }
+                    } catch {
+                        print("[CallVC] didActivate camera retry-publish failed: \(error)")
+                        nativeCallDiag("outgoing_cam_republish_failed", self.callId, "\(error)")
+                    }
+                }
+            }
+        }
+    }
+
     /// [2026-05-22 #1349 fix] Caller-side ringback teardown observer.
     /// Posted by CallSignalWs.handleIncomingCallAcceptedLocked when the
     /// callee's `call_accepted` frame arrives on the WS receiver loop.
@@ -2618,6 +2709,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if let obs = dtmfObserver { NotificationCenter.default.removeObserver(obs); dtmfObserver = nil }
         if let obs = systemMuteObserver { NotificationCenter.default.removeObserver(obs); systemMuteObserver = nil }
         if let obs = avInterruptionObserver { NotificationCenter.default.removeObserver(obs); avInterruptionObserver = nil }
+        if let obs = audioActivatedObserver { NotificationCenter.default.removeObserver(obs); audioActivatedObserver = nil }
         // [2026-05-22 #1349 fix] Caller-side ringback teardown observer.
         if let obs = remoteAnsweredObserver { NotificationCenter.default.removeObserver(obs); remoteAnsweredObserver = nil }
         if #available(iOS 15.0, *), let pip = pipController, pip.isPictureInPictureActive {

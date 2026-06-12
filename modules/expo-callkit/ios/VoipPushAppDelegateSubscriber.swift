@@ -1083,6 +1083,14 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         VoipPushAppDelegateSubscriber.setRTCAudioEnabled(true)
         let route = audioSession.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
         nativeCallDiag("voipstub_didactivate", "-", "route=\(route) hasVideo=\(AudioRouter.shared.hasVideo)")
+        // [2026-06-12 outgoing-mic-silence fix] Mirror of the module
+        // delegate's post — whichever CXProvider owns the call, a live
+        // CallViewController gets the activation signal and can re-publish
+        // a mic track that was captured before the session went active.
+        NotificationCenter.default.post(
+            name: Notification.Name("ExpoCallKitAudioSessionActivated"),
+            object: nil
+        )
     }
 
     public func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {

@@ -1050,6 +1050,30 @@ public class ExpoCallKitModule: Module {
       // novamente no futuro com CallView simplificado.
       NSLog("[ExpoCallKit WAVE 152] skipping CallWindowManager.showCallUI — CallKit owns UI to prevent SwiftUI layout crash. callId=\(immediateParams.callId)")
 
+      // [WAVE 117A RESTORE 2026-06-12 — "demora muito pra começar a ligar"]
+      // Present the native CallViewController IMMEDIATELY (optimistic UI —
+      // "Chamando…") instead of waiting on the CXStartCallAction transaction
+      // + delegate round-trip + token plumbing. WhatsApp shows the call
+      // screen the instant the user taps and does the network work in the
+      // background. The WAVE 152 SwiftUI-crash rationale above no longer
+      // applies: CallViewController has been pure UIKit since WAVE 173 and
+      // the INCOMING path has presented it without issue since the
+      // 2026-05-24 hybrid-v2 revert (see presentNativeCallVC). When JS
+      // pre-minted the LK token (chat_call_invite_v2, the standard WAVE 119
+      // path) the VC connects to LiveKit on its own in viewDidLoad. When the
+      // token is missing we keep the old behaviour: the CXStartCallAction
+      // delegate fetches the token and presents (presentOutgoingCallVC →
+      // CallViewController.present dedupes by callId, so the delegate-path
+      // present becomes a no-op when this one already attached).
+      if let immUrl = lkUrl, let immToken = lkToken, !immUrl.isEmpty, !immToken.isEmpty {
+        nativeCallDiag("outgoing_immediate_present", callId, "video=\(isVideo)")
+        DispatchQueue.main.async {
+          ProviderDelegate.presentOutgoingCallVC(params: immediateParams, lkUrl: immUrl, lkToken: immToken)
+        }
+      } else {
+        nativeCallDiag("outgoing_present_deferred_no_token", callId)
+      }
+
       // [2026-05-21] Donate an INStartCallIntent so iOS records this outgoing
       // call in Siri / Recents / "Suggestions" surfaces. Without donation
       // the system can't surface a "Call <name>" shortcut and the call won't
@@ -1206,6 +1230,13 @@ public class ExpoCallKitModule: Module {
                 self.pendingOutgoingCalls.removeValue(forKey: uuid)
               }
               ExpoCallKitModule._shared_setUUID(nil, forCallId: callId)
+              // [WAVE 117A RESTORE 2026-06-12] The optimistic immediate
+              // present above may already have a CallViewController on
+              // screen — tear it down so a failed CXStartCallAction doesn't
+              // strand the user on a dead "Chamando…" surface.
+              DispatchQueue.main.async {
+                ProviderDelegate.dismissActiveCallSurfaces(reason: "start_tx_failed", forCallId: callId)
+              }
               finishOnce { continuation.resume(throwing: error) }
             } else {
               print("[ExpoCallKit] startOutgoingCall: transaction queued for callId=\(callId)")
@@ -2738,16 +2769,54 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // kills the WhatsApp-style rich UI. Kill the gate entirely so the
     // native CallView ALWAYS presents on outgoing — no escape hatch.
     NSLog("[CallTrace][PRESENT-1] presentOutgoingCallVC ENTRY callId=\(params.callId) hasUrl=\(lkUrl != nil) hasToken=\(lkToken != nil) thread=\(Thread.isMainThread ? "main" : "bg")")
-    // [2026-05-24 hybrid v2] JS /call.js owns the in-call UI for outgoing too.
-    // CXStartCallAction still triggers (CallKit needs it for system call UI,
-    // Recents, audio routing), but we suppress the native CallViewController
-    // presentation. JS chat-conversation.js fires router.push('/call?...')
-    // after voipNative.startOutgoingCall returns; /call.js adopts the LK
-    // Room via adoptNativeRoom (NativeCallRoom owns the actual connection,
-    // pre-connected by JS or NativeCallTokenFetcher). Mirror of the gate
-    // in presentNativeCallVC for incoming calls.
-    NSLog("[ExpoCallKit] presentOutgoingCallVC: hybrid mode — skipping native VC; JS /call.js owns UI for \(params.callId)")
-    return
+    // [WAVE 117A RESTORE 2026-06-12 — hybrid-v2 stub REVERTED for outgoing]
+    // The 2026-05-24 "hybrid v2" experiment suppressed the native
+    // CallViewController here and expected JS /call.js to own the outgoing
+    // in-call UI by adopting a pre-connected NativeCallRoom. But NOTHING on
+    // the outgoing path ever pre-connected that Room (preconnectRoom only
+    // fires from the VoIP-push receive path), so the caller side ran on the
+    // JS LiveKit stack with no CallKit-coordinated session — root cause of
+    // the caller-side trifecta: mic captured before/outside the
+    // CallKit-activated AVAudioSession (callee never hears the caller), no
+    // native camera publish / self-preview on outgoing video, and a long
+    // blank wait after tapping "Ligar". The INCOMING twin of this stub was
+    // reverted the same day (see presentNativeCallVC "hybrid v2 REVERTED")
+    // and has worked since — this restores the exact same pattern for
+    // outgoing. CallViewController.present dedupes by callId, so the
+    // immediate present from startOutgoingCall and this delegate-path call
+    // can both fire safely.
+    let callId = params.callId
+    nativeCallDiag("outgoing_presentVC_entry", callId, "video=\(params.isVideo) hasToken=\(!(lkToken ?? "").isEmpty)")
+    guard ExpoCallKitModule.isCallStillActive(callId: callId) else {
+      NSLog("[ExpoCallKit] presentOutgoingCallVC: call \(callId) already ended — skipping stale present")
+      nativeCallDiag("outgoing_presentVC_stale_abort", callId)
+      return
+    }
+    let presentBlock: (UIViewController) -> Void = { root in
+      // Re-check under retry — the call may have been cancelled / failed
+      // while we waited for the app to become active.
+      guard ExpoCallKitModule.isCallStillActive(callId: callId) else {
+        NSLog("[ExpoCallKit] presentOutgoingCallVC(retry): call \(callId) ended during wait — abort")
+        nativeCallDiag("outgoing_presentVC_ended_during_wait", callId)
+        return
+      }
+      nativeCallDiag("outgoing_callvc_present_called", callId)
+      CallViewController.present(
+        from: root,
+        callId: callId,
+        callerName: params.calleeName,
+        callerEmail: params.calleeEmail,
+        hasVideo: params.isVideo,
+        lkUrl: lkUrl,
+        lkToken: lkToken,
+        isOutgoing: true,
+        conversationId: params.conversationId
+      )
+    }
+    // Outgoing calls start with the app foreground-active (user just tapped
+    // "Ligar"), so presentWhenActive presents single-frame; the gate only
+    // matters for edge paths (Siri / Recents dial while transitioning).
+    presentWhenActive(reason: "presentOutgoingCallVC:\(callId)", block: presentBlock)
   }
 
   // [WAVE 146 2026-05-22] Final present helper — guaranteed main-thread,
@@ -3048,6 +3117,16 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
     // mas só funciona no viva voz". Reads the resulting output port.
     let route = audioSession.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
     nativeCallDiag("audio_didactivate", "-", "route=\(route) hasVideo=\(AudioRouter.shared.hasVideo)")
+    // [2026-06-12 outgoing-mic-silence fix] Broadcast the activation so a
+    // live CallViewController can re-publish a mic track that was captured
+    // BEFORE CallKit activated the session (outgoing race — the LK capturer
+    // comes up against an inactive AVAudioSession, produces pure silence,
+    // and never self-heals). Observer lives in
+    // CallViewController.installAudioActivatedObserver (outgoing-only).
+    NotificationCenter.default.post(
+      name: Notification.Name("ExpoCallKitAudioSessionActivated"),
+      object: nil
+    )
     // [bug 2026-05-14 uplink-mic-silent] When user accepts via native CallKit
     // UI, AVAudioSession.didActivate fires BEFORE JS creates the
     // RTCPeerConnection (cold-start path: onCallAnswered → router.push → JS
