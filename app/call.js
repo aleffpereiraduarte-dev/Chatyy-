@@ -1034,6 +1034,16 @@ function CallScreenInner() {
             try { _callDiagAppend('warn', 'setCameraEnabled(true) failed on foreground resume', { call_id: callId, msg: String(e?.message || e).slice(0, 200) }); } catch {}
           }
         }
+        // [2026-06-12 mute fix] The OS can suspend the mic track while the
+        // app is backgrounded; nothing re-asserted it on resume, so calls
+        // came back silently mute. Re-assert to the user's mute choice.
+        (async () => {
+          try {
+            await r.localParticipant.setMicrophoneEnabled(!audioMutedRef.current);
+          } catch (e) {
+            try { _callDiagAppend('warn', 'mic re-assert failed on foreground resume', { call_id: callId, msg: String(e?.message || e).slice(0, 200) }); } catch {}
+          }
+        })();
       }
     });
     return () => sub.remove();
@@ -1922,6 +1932,17 @@ function CallScreenInner() {
           } catch {}
         });
       } catch {}
+      // [2026-06-12 mute fix] After an SFU reconnect the mic publication can
+      // come back in a dead state — the other side suddenly hears nothing
+      // ("do nada a ligação fica mudo"). Re-assert the mic to the user's
+      // current mute choice; setMicrophoneEnabled is idempotent when healthy.
+      (async () => {
+        try {
+          await r.localParticipant.setMicrophoneEnabled(!audioMutedRef.current);
+        } catch (e) {
+          try { _callDiagAppend('warn', 'post-reconnect mic republish failed', { call_id: callId, msg: String(e?.message || e).slice(0, 200) }); } catch {}
+        }
+      })();
     });
 
     r.on(RoomEvent.Disconnected, (reason) => {
