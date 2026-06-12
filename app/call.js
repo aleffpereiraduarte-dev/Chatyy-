@@ -62,7 +62,7 @@ async function requestAndroidCameraPermission() {
   }
 }
 import { IconSmile, IconSparkles } from '../components/Icons';
-import Svg, { Path as SvgPath, Circle as SvgCircleHand, Line as SvgLine } from 'react-native-svg';
+import Svg, { Path as SvgPath, Circle as SvgCircleHand, Line as SvgLine, Defs as SvgDefs, LinearGradient as SvgLinearGradient, RadialGradient as SvgRadialGradient, Stop as SvgStop, Rect as SvgRect } from 'react-native-svg';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // LiveKit. livekit-client is the pure-JS SDK (Room / RoomEvent / Track /
@@ -4281,6 +4281,34 @@ function CallScreenInner() {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
 
+      {/* Decorative gradient backdrop — deep brand-tinted vertical fade with a
+          soft purple radial glow centered behind the avatar. Absolute-fill,
+          lowest zIndex, pointerEvents none so it never intercepts touches.
+          Hidden once remote video covers the screen. */}
+      {!showRemoteVideo && (
+        <Svg
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, { zIndex: 0 }]}
+          width="100%"
+          height="100%"
+        >
+          <SvgDefs>
+            <SvgLinearGradient id="callBackdropV" x1="0" y1="0" x2="0" y2="1">
+              <SvgStop offset="0" stopColor="#1a1430" stopOpacity="1" />
+              <SvgStop offset="0.45" stopColor="#100d1c" stopOpacity="1" />
+              <SvgStop offset="1" stopColor="#050509" stopOpacity="1" />
+            </SvgLinearGradient>
+            <SvgRadialGradient id="callBackdropGlow" cx="50%" cy="34%" r="62%">
+              <SvgStop offset="0" stopColor="#7C3AED" stopOpacity="0.20" />
+              <SvgStop offset="0.55" stopColor="#7C3AED" stopOpacity="0.05" />
+              <SvgStop offset="1" stopColor="#7C3AED" stopOpacity="0" />
+            </SvgRadialGradient>
+          </SvgDefs>
+          <SvgRect x="0" y="0" width="100%" height="100%" fill="url(#callBackdropV)" />
+          <SvgRect x="0" y="0" width="100%" height="100%" fill="url(#callBackdropGlow)" />
+        </Svg>
+      )}
+
       {/* Remote video — full screen (native). Web uses VideoView too.
           [2026-05-18 video-quality-push] Wrapped in an Animated.View with
           a two-finger pinch responder for 1:1 zoom-on-remote. The transform
@@ -4342,7 +4370,7 @@ function CallScreenInner() {
 
       <TouchableOpacity activeOpacity={1} onPress={handleScreenTap} style={StyleSheet.absoluteFill}>
         <View style={[styles.audioOverlay, {
-          backgroundColor: showRemoteVideo ? 'transparent' : (isVideoCall ? '#064e3b' : '#1a1a2e'),
+          backgroundColor: showRemoteVideo ? 'transparent' : (isVideoCall ? 'rgba(6,78,59,0.55)' : 'transparent'),
         }]}>
           {/* Status strip */}
           {peerConnected && !ended && (
@@ -5538,33 +5566,35 @@ function CallingPulseRings({ size = 168 }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
+  container: { flex: 1, backgroundColor: '#050509' },
   audioOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 5 },
   topBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, zIndex: 10 },
   backBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    width: 42, height: 42, borderRadius: 21,
+    backgroundColor: 'rgba(255,255,255,0.10)',
     alignItems: 'center', justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.10)',
   },
   topInfo: { flex: 1, marginLeft: 12 },
-  topName: { color: '#fff', fontSize: 18, fontWeight: '700', letterSpacing: -0.3 },
-  topStatus: { color: 'rgba(255,255,255,0.72)', fontSize: 13, marginTop: 1, fontWeight: '500', fontVariant: ['tabular-nums'] },
+  topName: { color: '#fff', fontSize: 21, fontWeight: '700', letterSpacing: -0.4 },
+  topStatus: { color: 'rgba(255,255,255,0.7)', fontSize: 13.5, marginTop: 2, fontWeight: '500', letterSpacing: 0.1, fontVariant: ['tabular-nums'] },
   encryptionBadge: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 12, paddingHorizontal: 8, paddingVertical: 4, gap: 3,
+    backgroundColor: 'rgba(255,255,255,0.07)',
+    borderRadius: 13, paddingHorizontal: 9, paddingVertical: 5, gap: 3,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.08)',
   },
-  encryptionText: { color: 'rgba(255,255,255,0.6)', fontSize: 10, fontWeight: '600' },
+  encryptionText: { color: 'rgba(255,255,255,0.62)', fontSize: 10, fontWeight: '600', letterSpacing: 0.3 },
   centerArea: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 180 },
   pulseRing: { position: 'absolute', borderRadius: 999, borderWidth: 1 },
-  pulseRingOuter: { width: 196, height: 196, borderColor: 'rgba(255,255,255,0.06)' },
-  pulseRingInner: { width: 168, height: 168, borderColor: 'rgba(255,255,255,0.10)' },
-  // Outgoing "calling" rings — bright white expanding rings (WhatsApp style).
+  pulseRingOuter: { width: 212, height: 212, borderColor: 'rgba(196,181,253,0.10)' },
+  pulseRingInner: { width: 182, height: 182, borderColor: 'rgba(221,214,254,0.16)' },
+  // Outgoing "calling" rings — soft brand-tinted white expanding rings.
   callingPulseRing: {
     position: 'absolute',
     borderRadius: 999,
     borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.55)',
+    borderColor: 'rgba(221,214,254,0.5)',
   },
   // 1:1 active-speaker green halo.
   speakingRing: {
@@ -5695,12 +5725,13 @@ const styles = StyleSheet.create({
   micPermBtnGhostText: { color: 'rgba(255,255,255,0.55)', fontSize: 14, fontWeight: '600' },
   // Soft, subtle ring hugging the audio-call avatar (premium FaceTime feel).
   centerAvatarRing: {
-    borderRadius: 999, padding: 6,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
-    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 999, padding: 7,
+    borderWidth: 1, borderColor: 'rgba(196,181,253,0.18)',
+    backgroundColor: 'rgba(124,58,237,0.06)',
+    shadowColor: '#7C3AED', shadowOpacity: 0.4, shadowRadius: 34, shadowOffset: { width: 0, height: 0 }, elevation: 12,
   },
-  centerName: { color: '#fff', fontSize: 30, fontWeight: '700', marginTop: 28, textAlign: 'center', letterSpacing: -0.5 },
-  centerStatus: { color: 'rgba(255,255,255,0.58)', fontSize: 14.5, marginTop: 8, fontWeight: '500', letterSpacing: 0.2, fontVariant: ['tabular-nums'] },
+  centerName: { color: '#fff', fontSize: 31, fontWeight: '700', marginTop: 30, textAlign: 'center', letterSpacing: -0.6 },
+  centerStatus: { color: 'rgba(255,255,255,0.62)', fontSize: 14.5, marginTop: 9, fontWeight: '500', letterSpacing: 0.2, fontVariant: ['tabular-nums'] },
   endedHint: { color: 'rgba(255,255,255,0.4)', fontSize: 13, marginTop: 12 },
   reconnectContainer: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', gap: 12, marginTop: 26, paddingHorizontal: 16 },
   reconnectBtn: {
@@ -5717,25 +5748,26 @@ const styles = StyleSheet.create({
   reconnectEndBtnText: { color: '#fff', fontSize: 15.5, fontWeight: '700', letterSpacing: -0.2 },
   controlsBar: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    zIndex: 20, alignItems: 'center', paddingTop: 24, paddingHorizontal: 24,
-    backgroundColor: 'rgba(8,7,14,0.72)',
-    borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    borderTopWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.07)',
-    ...Platform.select({ web: { backdropFilter: 'blur(28px) saturate(180%)', WebkitBackdropFilter: 'blur(28px) saturate(180%)' }, default: {} }),
+    zIndex: 20, alignItems: 'center', paddingTop: 26, paddingHorizontal: 24,
+    backgroundColor: 'rgba(20,18,30,0.58)',
+    borderTopLeftRadius: 30, borderTopRightRadius: 30,
+    borderTopWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.08)',
+    shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 24, shadowOffset: { width: 0, height: -8 }, elevation: 18,
+    ...Platform.select({ web: { backdropFilter: 'blur(30px) saturate(180%)', WebkitBackdropFilter: 'blur(30px) saturate(180%)' }, default: {} }),
   },
   controlsRowTop: {
     flexDirection: 'row', justifyContent: 'center',
-    flexWrap: 'wrap', rowGap: 14, columnGap: 18, marginBottom: 20,
+    flexWrap: 'wrap', rowGap: 16, columnGap: 20, marginBottom: 22,
   },
-  controlBtn: { alignItems: 'center', gap: 8, width: 64 },
+  controlBtn: { alignItems: 'center', gap: 8, width: 66 },
   controlBtnCircle: {
-    width: 56, height: 56, borderRadius: 28,
-    backgroundColor: 'rgba(255,255,255,0.16)',
+    width: 58, height: 58, borderRadius: 29,
+    backgroundColor: 'rgba(255,255,255,0.12)',
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.08)',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.06)',
   },
-  controlBtnCircleActive: { backgroundColor: 'rgba(255,255,255,0.94)', borderColor: 'rgba(255,255,255,0.6)' },
-  controlBtnCircleScreenShare: { backgroundColor: 'rgba(255,255,255,0.94)', borderColor: 'rgba(255,255,255,0.6)' },
+  controlBtnCircleActive: { backgroundColor: 'rgba(255,255,255,0.96)', borderColor: 'rgba(255,255,255,0.7)' },
+  controlBtnCircleScreenShare: { backgroundColor: 'rgba(255,255,255,0.96)', borderColor: 'rgba(255,255,255,0.7)' },
   controlLabel: { color: '#fff', fontSize: 11, fontWeight: '600', textAlign: 'center', letterSpacing: -0.1 },
   localVideoContainer: {
     position: 'absolute', right: 16, top: 16,
@@ -5893,21 +5925,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 4, marginBottom: 4, gap: 6,
   },
-  primaryBtn: { alignItems: 'center', justifyContent: 'flex-start', flex: 1, gap: 7, paddingTop: 4 },
+  primaryBtn: { alignItems: 'center', justifyContent: 'flex-start', flex: 1, gap: 8, paddingTop: 4 },
   primaryBtnCircle: {
-    width: 56, height: 56, borderRadius: 28,
-    backgroundColor: 'rgba(255,255,255,0.16)',
+    width: 58, height: 58, borderRadius: 29,
+    backgroundColor: 'rgba(255,255,255,0.12)',
     alignItems: 'center', justifyContent: 'center',
-    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.08)',
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.06)',
   },
-  primaryBtnCircleActive: { backgroundColor: 'rgba(255,255,255,0.94)', borderColor: 'rgba(255,255,255,0.6)' },
-  primaryBtnLabel: { color: '#fff', fontSize: 11.5, fontWeight: '600', textAlign: 'center', letterSpacing: -0.1 },
+  primaryBtnCircleActive: { backgroundColor: 'rgba(255,255,255,0.96)', borderColor: 'rgba(255,255,255,0.7)' },
+  primaryBtnLabel: { color: 'rgba(255,255,255,0.92)', fontSize: 11.5, fontWeight: '600', textAlign: 'center', letterSpacing: -0.1 },
   primaryHangupBtn: {
     width: 66, height: 66, borderRadius: 33,
     backgroundColor: '#FF3B30',
     alignItems: 'center', justifyContent: 'center',
     marginTop: 4,
-    shadowColor: '#FF3B30', shadowOpacity: 0.5, shadowRadius: 16, shadowOffset: { width: 0, height: 6 }, elevation: 10,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.12)',
+    shadowColor: '#FF3B30', shadowOpacity: 0.55, shadowRadius: 22, shadowOffset: { width: 0, height: 8 }, elevation: 14,
   },
   quickReactionsRow: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
