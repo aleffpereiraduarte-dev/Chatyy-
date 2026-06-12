@@ -26,7 +26,7 @@ import * as api from '../services/api';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import {
-  IconArrowLeft, IconUsers, IconVideo, IconBell, IconPlay,
+  IconArrowLeft, IconUsers, IconVideo, IconPlay,
   IconGiftBox, IconHeart, IconSparkles, IconMusic,
   IconMessageCircle, IconMapPin, IconSearch,
 } from '../components/Icons';
@@ -807,22 +807,24 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
         </TouchableOpacity>
       </View>
 
-      {/* 3. Próximas lives agendadas */}
-      <View style={styles.section}>
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, { color: colors.text }]}>
-            {t('live.upcomingScheduled') || 'Próximas lives agendadas'}
-          </Text>
+      {/* 3. Próximas lives agendadas — only when loading or there is real data */}
+      {(scheduled === null || scheduled.length > 0) && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={[styles.sectionTitle, { color: colors.text }]}>
+              {t('live.upcomingScheduled') || 'Próximas lives agendadas'}
+            </Text>
+          </View>
+          <ScheduledList
+            items={scheduled === null ? SCHEDULED_SKELETON : scheduled}
+            skeleton={scheduled === null}
+            colors={colors}
+            cardBg={cardBg}
+            subText={subText}
+            t={t}
+          />
         </View>
-        <ScheduledList
-          items={(scheduled === null || scheduled.length === 0) ? MOCK_SCHEDULED : scheduled}
-          skeleton={scheduled === null}
-          colors={colors}
-          cardBg={cardBg}
-          subText={subText}
-          t={t}
-        />
-      </View>
+      )}
 
       {/* 4. Replays populares */}
       <View style={styles.section}>
@@ -932,16 +934,6 @@ function ScheduledList({ items, skeleton, colors, cardBg, subText, t }) {
               {it.scheduled_label || it.starts_at_label || it.time_label || (t('live.timeSoon') || 'Em breve')}
             </Text>
           </View>
-          <TouchableOpacity
-            activeOpacity={0.85}
-            style={[styles.notifyBtn, { flexShrink: 0 }]}
-            disabled={!!skeleton}
-            accessibilityRole="button"
-            accessibilityLabel={t('live.notifyMe') || 'Avisar'}
-          >
-            <IconBell size={13} color="#fff" />
-            <Text style={styles.notifyBtnText}>{t('live.notifyMe') || 'Avisar'}</Text>
-          </TouchableOpacity>
         </View>
       ))}
     </View>
@@ -1018,13 +1010,14 @@ function WhyBullet({ icon, text, color }) {
   );
 }
 
-// Mock data used as placeholder skeletons when backend endpoints are
-// missing or return empty. Names are intentionally generic to avoid
-// implying real users are scheduled.
-const MOCK_SCHEDULED = [
-  { id: 'mock-s1', name: 'criador favorito', scheduled_label: 'Em 2h' },
-  { id: 'mock-s2', name: 'sua comunidade',   scheduled_label: 'Hoje, 21:00' },
-  { id: 'mock-s3', name: 'novo talento',     scheduled_label: 'Amanhã' },
+// Neutral skeleton rows shown ONLY while the scheduled-lives request is in
+// flight (scheduled === null). Rendered dimmed (skeleton opacity 0.4) with no
+// real names, so users never see fabricated "upcoming lives". When the request
+// resolves to an empty list the whole section is hidden instead.
+const SCHEDULED_SKELETON = [
+  { id: 'sk-s1', name: '' },
+  { id: 'sk-s2', name: '' },
+  { id: 'sk-s3', name: '' },
 ];
 
 const MOCK_REPLAYS = [
@@ -1336,12 +1329,6 @@ const styles = StyleSheet.create({
   scheduledName: { fontSize: 13, fontWeight: '700' },
   scheduledNamePlain: { fontSize: 12, fontWeight: '500', marginTop: 1 },
   scheduledTime: { fontSize: 11, marginTop: 2 },
-  notifyBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999,
-    backgroundColor: BRAND_PURPLE,
-  },
-  notifyBtnText: { color: '#fff', fontSize: 11, fontWeight: '800' },
 
   replayCard: {
     width: 140, borderRadius: 12, overflow: 'hidden',

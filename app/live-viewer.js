@@ -445,6 +445,18 @@ export default function LiveViewerScreen() {
   const liveSessionInfoSeenRef = useRef(false);
   // [WAVE 110] LiveKit viewer room ref — non-null when connected via LK SFU.
   const lkViewerRoomRef = useRef(null);
+  // [2026-06-12 LK hard-disconnect reconnect] When the LK SDK exhausts its
+  // own internal reconnect retries it fires a hard `Disconnected` and hands
+  // the dead Room back to us. The WebRTC/HLS fallbacks have explicit retry
+  // timers (reconnectTimerRef / hlsRetryTimerRef); the LK path had none, so a
+  // viewer just dropped back to "Conectando…" until the stuck-timer gave up.
+  // These refs drive an app-level re-join with 1s/2s/4s backoff (cap 3).
+  // lkReconnectingRef guards against overlapping Disconnected events spawning
+  // parallel reconnects; lkReconnectTimerRef is the pending backoff timer (so
+  // we can clear it on unmount / live-ended); lkReconnectAttemptRef counts.
+  const lkReconnectingRef = useRef(false);
+  const lkReconnectTimerRef = useRef(null);
+  const lkReconnectAttemptRef = useRef(0);
   // Tracks remote LK video/audio tracks so the render tree can show them.
   const [lkTracks, setLkTracks] = useState([]); // [{track, participant}]
   // Full-screen container ref — used by react-native-view-shot to snap the
@@ -707,6 +719,13 @@ export default function LiveViewerScreen() {
   // count was incrementing host-side while viewer was getting bounced out.
   useEffect(() => {
     liveEndedRef.current = liveEnded;
+    // [2026-06-12] When the live truly ends, abandon any in-flight LK re-join:
+    // cancel the pending backoff timer and release the guard so we don't keep
+    // looping connect attempts against a dead session.
+    if (liveEnded) {
+      if (lkReconnectTimerRef.current) { clearTimeout(lkReconnectTimerRef.current); lkReconnectTimerRef.current = null; }
+      lkReconnectingRef.current = false;
+    }
   }, [liveEnded]);
 
   // [WAVE 111 2026-05-21] Pre-join ended detection.
@@ -1090,7 +1109,7 @@ export default function LiveViewerScreen() {
               _rm.on(_lk2.RoomEvent.TrackPublished, _ct);
               _rm.on(_lk2.RoomEvent.TrackSubscribed, _ct);
               _rm.on(_lk2.RoomEvent.TrackUnsubscribed, _ct);
-              _rm.on(_lk2.RoomEvent.Disconnected, () => { lkViewerRoomRef.current = null; setLkTracks([]); setConnected(false); });
+              _rm.on(_lk2.RoomEvent.Disconnected, () => { lkViewerRoomRef.current = null; setLkTracks([]); setConnected(false); if (!liveEndedRef.current) scheduleLkRejoinRef.current?.(); });
               console.log('[LIVE-TRACE] viewer Room.connect start (REST) — ' + (_lu || 'wss://livekit.chatyy.com.br'));
               await _rm.connect(_lu || 'wss://livekit.chatyy.com.br', _lt);
               console.log('[LIVE-TRACE] viewer Room.connect resolved (REST) — room=' + _lr);
@@ -1213,6 +1232,126 @@ export default function LiveViewerScreen() {
     } catch {}
     finally { setSearchingNewerSession(false); }
   }, [displayHostEmail, paramSessionId, router, t]);
+
+  // [2026-06-12 LK hard-disconnect reconnect] Canonical LK viewer connect
+  // routine — mints a fresh subscribe-only token via api.liveJoinLk (the exact
+  // same call the WS `live_session_info` handler uses) and connects a new LK
+  // Room with the same _collectTracks gating. Returns 'ended' when the join
+  // endpoint reports the session is over (410 / "Live ended") so the caller
+  // can stop retrying, 'ok' on a successful connect, or 'fail' otherwise.
+  // Extracted so the hard-Disconnected re-join path can reuse the SAME flow
+  // instead of just dropping back to "Conectando…" forever.
+  const connectLkViewer = useCallback(async () => {
+    if (liveEndedRef.current) return 'ended';
+    const _lk = loadLiveKit();
+    if (!_lk?.Room) throw new Error('LK SDK not available');
+    let _joinRes = null;
+    try {
+      _joinRes = await api.liveJoinLk(paramSessionId);
+      if (_joinRes?.status === 410) return 'ended';
+    } catch (_je) {
+      const _jeMsg = String(_je?.message || '');
+      if (_jeMsg.includes('410') || _jeMsg.includes('Live ended')) return 'ended';
+      throw _je;
+    }
+    if (!_joinRes || !_joinRes.success || !_joinRes?.data?.lk_token) {
+      throw new Error('live_join_lk failed: ' + (_joinRes?.message || 'no token'));
+    }
+    const { lk_url: _lkUrl, lk_token: _lkToken } = _joinRes.data;
+    const _room = new _lk.Room({ adaptiveStream: true, dynacast: false });
+    // Tear down any prior dead Room ref before swapping in the new one.
+    if (lkViewerRoomRef.current && lkViewerRoomRef.current !== _room) {
+      try { lkViewerRoomRef.current.disconnect(); } catch {}
+    }
+    lkViewerRoomRef.current = _room;
+    let _hasVideoTrack = false;
+    const _collectTracks = () => {
+      const _tracks = [];
+      let _hasVideo = false;
+      _room.remoteParticipants.forEach((p) => {
+        p.trackPublications.forEach((pub) => {
+          if (pub.track) {
+            _tracks.push({ track: pub.track, participant: p, kind: pub.kind });
+            if (pub.kind === 'video' || pub.track.kind === 'video') _hasVideo = true;
+          }
+        });
+      });
+      setLkTracks([..._tracks]);
+      if (_hasVideo && !_hasVideoTrack) {
+        _hasVideoTrack = true;
+        setConnected(true);
+      } else if (!_hasVideo && _hasVideoTrack) {
+        _hasVideoTrack = false;
+        setConnected(false);
+      }
+    };
+    _room.on(_lk.RoomEvent.TrackPublished, _collectTracks);
+    _room.on(_lk.RoomEvent.TrackSubscribed, _collectTracks);
+    _room.on(_lk.RoomEvent.TrackUnsubscribed, _collectTracks);
+    _room.on(_lk.RoomEvent.ParticipantConnected, _collectTracks);
+    _room.on(_lk.RoomEvent.ParticipantDisconnected, _collectTracks);
+    _room.on(_lk.RoomEvent.Disconnected, () => {
+      lkViewerRoomRef.current = null;
+      setLkTracks([]);
+      setConnected(false);
+      scheduleLkRejoin();
+    });
+    await _room.connect(_lkUrl || 'wss://livekit.chatyy.com.br', _lkToken);
+    _collectTracks();
+    return 'ok';
+  }, [paramSessionId]);
+
+  // [2026-06-12 LK hard-disconnect reconnect] Schedule an app-level LK re-join
+  // with 1s/2s/4s backoff (cap 3 attempts). Mirrors reconnectTimerRef /
+  // hlsRetryTimerRef: a single pending timer we can clear on unmount / ended.
+  // lkReconnectingRef guards against overlapping Disconnected events spawning
+  // parallel reconnect chains. On a confirmed-ended join we flip liveEnded and
+  // stop; after the cap we give up and let the stuck-timer/ended path take over.
+  const scheduleLkRejoin = useCallback(() => {
+    if (liveEndedRef.current) return;
+    if (lkReconnectingRef.current) return; // already reconnecting — don't pile on
+    if (lkReconnectAttemptRef.current >= 3) return; // cap reached — give up
+    lkReconnectingRef.current = true;
+    const attempt = lkReconnectAttemptRef.current;
+    const delay = [1000, 2000, 4000][attempt] || 4000;
+    setConnected(false);
+    console.log('[LIVE-TRACE] LK hard-disconnect — scheduling re-join attempt ' + (attempt + 1) + ' in ' + delay + 'ms');
+    if (lkReconnectTimerRef.current) clearTimeout(lkReconnectTimerRef.current);
+    lkReconnectTimerRef.current = setTimeout(async () => {
+      lkReconnectTimerRef.current = null;
+      lkReconnectAttemptRef.current += 1;
+      if (liveEndedRef.current) { lkReconnectingRef.current = false; return; }
+      try {
+        const res = await connectLkViewer();
+        if (res === 'ended') {
+          console.log('[LIVE-TRACE] LK re-join reports live ended — routing to ended state');
+          liveEndedRef.current = true;
+          setLiveEnded(true);
+          lkReconnectingRef.current = false;
+          return;
+        }
+        if (res === 'ok') {
+          console.log('[LIVE-TRACE] LK re-join succeeded — clearing reconnect state');
+          lkReconnectAttemptRef.current = 0; // reset for any future drop
+          lkReconnectingRef.current = false;
+          return;
+        }
+        // res === 'fail' or anything else — clear guard so the next backoff fires.
+        lkReconnectingRef.current = false;
+        scheduleLkRejoin();
+      } catch (e) {
+        console.warn('[LIVE-TRACE] LK re-join attempt failed:', e?.message);
+        lkReconnectingRef.current = false;
+        scheduleLkRejoin();
+      }
+    }, delay);
+  }, [connectLkViewer]);
+
+  // Keep the latest scheduler in a ref so the inline LK Disconnected handlers
+  // (wired before this callback is in scope) can invoke it without a stale
+  // closure. Mirrors how showToastRef threads a callback into deep handlers.
+  const scheduleLkRejoinRef = useRef(null);
+  useEffect(() => { scheduleLkRejoinRef.current = scheduleLkRejoin; }, [scheduleLkRejoin]);
 
   // Connect to signaling and WebRTC
   useEffect(() => {
@@ -1389,10 +1528,18 @@ export default function LiveViewerScreen() {
                   lkViewerRoomRef.current = null;
                   setLkTracks([]);
                   setConnected(false);
+                  // [2026-06-12] Hard LK disconnect (SDK retries exhausted).
+                  // Don't just sit on "Conectando…" — schedule an app-level
+                  // re-join with backoff (unless the live actually ended).
+                  if (!liveEndedRef.current) scheduleLkRejoinRef.current?.();
                 });
                 console.log('[LIVE-TRACE] viewer Room.connect start — ' + (_lkUrl || 'wss://livekit.chatyy.com.br'));
                 await _room.connect(_lkUrl || 'wss://livekit.chatyy.com.br', _lkToken);
                 console.log('[LIVE-TRACE] viewer Room.connect resolved — room=' + _lkRoom);
+                // [2026-06-12] Fresh WS-path connect — reset the LK re-join
+                // backoff counter so a later hard-drop gets its full 3 attempts.
+                lkReconnectAttemptRef.current = 0;
+                lkReconnectingRef.current = false;
                 // Don't blindly setConnected(true) here — _collectTracks
                 // does it once a video track arrives. Run _collectTracks
                 // once to handle the case where tracks were already attached
@@ -1890,6 +2037,9 @@ export default function LiveViewerScreen() {
       }
       if (endTimerRef.current) clearTimeout(endTimerRef.current);
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      // [2026-06-12] Clear any pending LK re-join backoff + release its guard.
+      if (lkReconnectTimerRef.current) { clearTimeout(lkReconnectTimerRef.current); lkReconnectTimerRef.current = null; }
+      lkReconnectingRef.current = false;
       if (hlsRetryTimerRef.current) { clearTimeout(hlsRetryTimerRef.current); hlsRetryTimerRef.current = null; }
       if (joinRetryTimerRef.current) { clearInterval(joinRetryTimerRef.current); joinRetryTimerRef.current = null; }
       if (joinResetTimerRef.current) { clearTimeout(joinResetTimerRef.current); joinResetTimerRef.current = null; }

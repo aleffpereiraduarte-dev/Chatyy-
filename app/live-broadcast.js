@@ -58,7 +58,7 @@ if (Platform.OS === 'web') {
 // cold-start path for the broadcast screen pays no cost if LK never kicks in.
 // livekit-client + @livekit/react-native are already in the bundle (call.js
 // drags them in), so the require resolves synchronously off Metro's cache.
-let _LK_Room, _LK_RoomEvent, _LK_VideoView, _LK_createLocalVideoTrack, _LK_createLocalAudioTrack;
+let _LK_Room, _LK_RoomEvent, _LK_VideoView, _LK_createLocalVideoTrack, _LK_createLocalAudioTrack, _LK_Track;
 function _loadLkBroadcast() {
   if (_LK_Room) return true;
   try {
@@ -67,6 +67,7 @@ function _loadLkBroadcast() {
     _LK_RoomEvent = lkc.RoomEvent;
     _LK_createLocalVideoTrack = lkc.createLocalVideoTrack;
     _LK_createLocalAudioTrack = lkc.createLocalAudioTrack;
+    _LK_Track = lkc.Track;
     try {
       const lkrn = require('@livekit/react-native');
       _LK_VideoView = lkrn.VideoView || lkrn.VideoRenderer;
@@ -2194,20 +2195,52 @@ export default function LiveBroadcastScreen() {
 
   // Toggle audio
   const handleToggleMute = useCallback(() => {
+    // nextMuted is the muted state AFTER this tap. enabled = NOT muted.
+    const nextMuted = !audioMuted;
+    // Legacy P2P fallback path — mutate the getUserMedia audio tracks so any
+    // raw RTCPeerConnection senders go silent.
     if (localStreamRef.current) {
       const audioTracks = localStreamRef.current.getAudioTracks();
-      audioTracks.forEach(track => { track.enabled = audioMuted; });
-      setAudioMuted(!audioMuted);
+      audioTracks.forEach(track => { track.enabled = !nextMuted; });
     }
+    // [WAVE 110] LiveKit SFU path — the canonical pipeline. Without this the
+    // legacy track mutation is a no-op for viewers (they subscribe to the LK
+    // publication, not the raw getUserMedia track). Drive the localParticipant
+    // mic so the published audio track actually mutes.
+    if (lkRoomRef.current && lkRoomRef.current.localParticipant) {
+      (async () => {
+        try {
+          await lkRoomRef.current.localParticipant.setMicrophoneEnabled(!nextMuted);
+        } catch (e) {
+          console.warn('[Live-LK] setMicrophoneEnabled failed:', e?.message);
+        }
+      })();
+    }
+    setAudioMuted(nextMuted);
   }, [audioMuted]);
 
   // Toggle video
   const handleToggleVideo = useCallback(() => {
+    // nextVideoOff is the video-off state AFTER this tap. enabled = NOT off.
+    const nextVideoOff = !videoOff;
+    const nextVideoEnabled = !nextVideoOff;
+    // Legacy P2P fallback path.
     if (localStreamRef.current) {
       const videoTracks = localStreamRef.current.getVideoTracks();
-      videoTracks.forEach(track => { track.enabled = videoOff; });
-      setVideoOff(!videoOff);
+      videoTracks.forEach(track => { track.enabled = nextVideoEnabled; });
     }
+    // [WAVE 110] LiveKit SFU path — drive the localParticipant camera so the
+    // published video track actually stops/starts for viewers.
+    if (lkRoomRef.current && lkRoomRef.current.localParticipant) {
+      (async () => {
+        try {
+          await lkRoomRef.current.localParticipant.setCameraEnabled(nextVideoEnabled);
+        } catch (e) {
+          console.warn('[Live-LK] setCameraEnabled failed:', e?.message);
+        }
+      })();
+    }
+    setVideoOff(nextVideoOff);
   }, [videoOff]);
 
   // Flip camera
@@ -2236,6 +2269,41 @@ export default function LiveBroadcastScreen() {
 
     const prevFacing = facingRef.current;
     const newFacing = prevFacing === 'user' ? 'environment' : 'user';
+
+    // [WAVE 110] LiveKit SFU path — the canonical pipeline. The legacy
+    // `_switchCamera`/getUserMedia flip below only touches the raw
+    // getUserMedia track + RTCPeerConnection senders, which the LK viewers
+    // never subscribe to → host flips but viewers keep the front camera.
+    // Drive the published LK camera track here so the SFU forwards the new
+    // facing to viewers. PREFER restartTrack with the opposite facingMode;
+    // fall back to a camera disable/enable cycle if the SDK build lacks it.
+    if (lkRoomRef.current && lkRoomRef.current.localParticipant) {
+      const lp = lkRoomRef.current.localParticipant;
+      try {
+        const camPub = (_LK_Track && typeof lp.getTrackPublication === 'function')
+          ? lp.getTrackPublication(_LK_Track.Source.Camera)
+          : null;
+        const camTrack = camPub?.videoTrack || null;
+        if (camTrack && typeof camTrack.restartTrack === 'function') {
+          await camTrack.restartTrack({ facingMode: newFacing });
+        } else {
+          // Fallback: cycle the camera off/on. setCameraEnabled re-acquires
+          // the device; combined with facingRef the next publish picks the
+          // new side on platforms that honor it.
+          await lp.setCameraEnabled(false);
+          await lp.setCameraEnabled(true);
+        }
+        facingRef.current = newFacing;
+        setMirrorOn(newFacing === 'user');
+        setVideoEpoch(e => e + 1);
+        flipInFlightRef.current = false;
+        return; // LK handled the flip — done.
+      } catch (errLk) {
+        console.warn('[Live-LK] flip via LK failed, fallback to legacy:', errLk?.message);
+        // Fall through to the legacy getUserMedia / _switchCamera path so the
+        // host preview still flips even if the LK restart path failed.
+      }
+    }
 
     try {
       // Native fast-path: `_switchCamera` toggles the existing track's
@@ -3153,7 +3221,11 @@ export default function LiveBroadcastScreen() {
     // conflict with getUserMedia), so what the host sees == what viewers
     // see. Falls through to NativeRTCView if LK SDK isn't loaded or the
     // track hasn't been published yet (pre-stream warmup).
-    if (Platform.OS !== 'web' && _LK_VideoView && lkLocalVideoTrack) {
+    // [WAVE 110] Honor camera-off in LK mode. When the host taps camera-off we
+    // call setCameraEnabled(false), which disables the published track; the
+    // _LK_VideoView would otherwise hold the last (frozen) frame. Skip the LK
+    // preview when videoOff so we fall through to the avatar/placeholder.
+    if (Platform.OS !== 'web' && _LK_VideoView && lkLocalVideoTrack && !videoOff) {
       if (!isFocused) {
         return (
           <View
@@ -3178,7 +3250,11 @@ export default function LiveBroadcastScreen() {
         </View>
       );
     }
-    if (NativeRTCView && localStreamUrl) {
+    // [WAVE 110] In LK mode, when the host turned the camera off, don't fall
+    // back to the raw getUserMedia preview (a separate, still-running feed that
+    // LK's setCameraEnabled(false) doesn't touch) — that would show a live
+    // self-view while viewers see no video. Fall through to the avatar.
+    if (NativeRTCView && localStreamUrl && !(lkLocalVideoTrack && videoOff)) {
       // Round 66 (2026-05-18) — collapsable={false} on the wrapper so RN
       // doesn't flatten this view out (which on Android re-parents the
       // underlying SurfaceView and exposes a black square = mancha preta).
