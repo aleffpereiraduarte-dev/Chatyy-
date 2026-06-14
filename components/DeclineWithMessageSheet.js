@@ -107,7 +107,7 @@ export default function DeclineWithMessageSheet() {
   return (
     <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.overlay} onPress={onClose}>
-        <KeyboardAvoidingView behavior="padding" style={{ width: '100%' }}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ width: '100%' }}>
           <Pressable onPress={(e) => e.stopPropagation?.()} style={[styles.sheet, { backgroundColor: isDark ? '#1F2937' : '#fff' }]}>
             <View style={styles.handle} />
             <Text style={[styles.title, { color: colors.text }]}>

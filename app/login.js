@@ -1650,12 +1650,23 @@ export default function LoginScreen() {
                         alignItems: 'center', justifyContent: 'center',
                         overflow: 'hidden',
                         ...(Platform.OS === 'web' ? {
-                          boxShadow: '0 14px 36px rgba(124,58,237,0.45), inset 0 1px 0 rgba(255,255,255,0.20)',
+                          // Degradê diagonal → esfera com profundidade (WhatsApp-grade).
+                          backgroundImage: 'linear-gradient(145deg, #8B5CF6 0%, #7C3AED 48%, #5B21B6 100%)',
+                          boxShadow: '0 16px 40px rgba(124,58,237,0.48), inset 0 1px 0 rgba(255,255,255,0.28)',
                         } : Platform.select({
                           ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.45, shadowRadius: 16 },
                           android: { elevation: 10 },
                         })),
                       }}>
+                        {/* Specular highlight — brilho suave no topo dá o look
+                            de esfera "vidro" premium (igual ícone WhatsApp).
+                            Cross-platform: View translúcida arredondada. */}
+                        <View pointerEvents="none" style={{
+                          position: 'absolute', top: -22, left: -10,
+                          width: 80, height: 56, borderRadius: 40,
+                          backgroundColor: 'rgba(255,255,255,0.22)',
+                          transform: [{ rotate: '-18deg' }],
+                        }} />
                         {/* Chat bubble icon — on-brand Chatyy mark, cleaner
                             than the phone receiver which printed weird at
                             small sizes. White outline + 3 dots inside,
@@ -1946,6 +1957,16 @@ export default function LoginScreen() {
                                   width: '100%', alignSelf: 'stretch',
                                   alignItems: 'center', justifyContent: 'center',
                                   marginTop: 8,
+                                  // Botão habilitado ganha degradê + sombra de marca
+                                  // (presença premium WhatsApp-grade). Desabilitado
+                                  // fica cinza chapado de propósito (não "quase pronto").
+                                  ...(!_disabled ? (Platform.OS === 'web' ? {
+                                    backgroundImage: 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)',
+                                    boxShadow: '0 8px 22px rgba(124,58,237,0.34), 0 2px 6px rgba(124,58,237,0.18)',
+                                  } : Platform.select({
+                                    ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
+                                    android: { elevation: 6 },
+                                  })) : {}),
                                 }]}
                                 onPress={handlePhoneSendOtp}
                                 disabled={_disabled}

@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { scaleSize, moderateScale } from '../utils/responsive';
 
 export const Colors = {
   // Primary — Cosmic Purple
@@ -360,27 +361,32 @@ export const DarkColors = {
   authGridColor: 'rgba(167, 139, 250, 0.04)',
 };
 
+// Espaçamento — escala PARCIAL (moderateScale) com a tela. Em celular pequeno
+// encolhe um pouco pra caber mais conteúdo; não some de vez (factor 0.5).
 export const Spacing = {
-  xs: 4,
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 20,
-  xxl: 24,
-  xxxl: 32,
+  xs: moderateScale(4),
+  sm: moderateScale(8),
+  md: moderateScale(12),
+  lg: moderateScale(16),
+  xl: moderateScale(20),
+  xxl: moderateScale(24),
+  xxxl: moderateScale(32),
 };
 
+// Tipografia — escala COM a tela (scaleSize, clamp [0.85,1.15] em utils).
+// Celular menor → fontes proporcionalmente menores (cabem sem cortar/quebrar);
+// celular grande/tablet → um tiquinho maiores. Web fica em 1 (sem mudança).
 export const FontSize = {
-  xs: 11,
-  sm: 12,
-  md: 13,
-  base: 14,
-  lg: 15,
-  xl: 16,
-  xxl: 18,
-  title: 20,
-  heading: 24,
-  hero: 32,
+  xs: scaleSize(11),
+  sm: scaleSize(12),
+  md: scaleSize(13),
+  base: scaleSize(14),
+  lg: scaleSize(15),
+  xl: scaleSize(16),
+  xxl: scaleSize(18),
+  title: scaleSize(20),
+  heading: scaleSize(24),
+  hero: scaleSize(32),
 };
 
 export const FontFamily = {

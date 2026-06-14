@@ -234,7 +234,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView
-        behavior="padding"
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.5)' }}
       >
         <Pressable style={{ flex: 1 }} onPress={onClose} />
