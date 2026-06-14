@@ -135,6 +135,10 @@ export default function SignupPhone() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [resendCountdown, setResendCountdown] = useState(0);
+  // Canal pelo qual o último código saiu ('whatsapp' | 'sms' | 'voice').
+  // WhatsApp é o primário (barato). Mostra "Enviamos pro seu WhatsApp" e libera
+  // o botão "Enviar por SMS" só depois do timer de 60s sem chegar.
+  const [sentVia, setSentVia] = useState('whatsapp');
   // Registration-lock (anti-SIM-swap) PIN state. lockRequired flips true when
   // server returns requires_lock=true after a successful OTP verify; the OTP
   // step then renders an extra PIN input below the OTP boxes. lockPin holds
@@ -410,6 +414,11 @@ export default function SignupPhone() {
       if (!mountedRef.current) return;
       if (r?.success) {
         setResendCountdown(60);
+        // Detecta o canal real pra mostrar a mensagem certa. WhatsApp tem
+        // prioridade (mais barato); SMS só quando foi force_sms ou fallback.
+        if (channel === 'voice') setSentVia('voice');
+        else if (r?.data?.whatsapp_sent) setSentVia('whatsapp');
+        else if (r?.data?.sms_sent) setSentVia('sms');
         if (step !== 'otp') goStep('otp');
         setCode('');
       } else {
@@ -1085,6 +1094,14 @@ export default function SignupPhone() {
                     importantForAutofill="yes"
                   />
                 </Pressable>
+                {/* Confirmação WhatsApp-first: avisa por qual canal o código saiu. */}
+                <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', marginTop: 10, lineHeight: 18 }}>
+                  {sentVia === 'sms'
+                    ? (t('signupPhone.sentSms') || 'Enviamos um código por SMS 📱')
+                    : sentVia === 'voice'
+                    ? (t('signupPhone.sentVoice') || 'Vamos te ligar e ler o código 📞')
+                    : (t('signupPhone.sentWhatsApp') || 'Enviamos um código pro seu WhatsApp 📲')}
+                </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
                   <Text style={{ fontSize: 12, color: colors.textTertiary }}>
                     {resendCountdown > 0
@@ -1140,6 +1157,26 @@ export default function SignupPhone() {
                   </View>
                 )}
 
+                {/* Após 60s sem o código chegar no WhatsApp, oferece SMS como
+                    reserva (channel=force_sms → backend manda SÓ SMS). Some quando
+                    o último envio já foi por SMS. WhatsApp-first = economia. */}
+                {resendCountdown === 0 && sentVia !== 'sms' && (
+                  <TouchableOpacity
+                    onPress={() => sendOtp('force_sms')}
+                    disabled={busy}
+                    style={{
+                      marginTop: 16, paddingVertical: 12, paddingHorizontal: 14,
+                      flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      borderRadius: 12, borderWidth: 1.5, borderColor: isDark ? '#2a2d31' : '#e5e7eb',
+                      backgroundColor: 'transparent',
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }}>
+                      {t('signupPhone.sendBySms') || 'Não recebi? Enviar por SMS'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
                 {/* Voice fallback (WhatsApp/Telegram parity): após o timer expirar,
                     deixa o user pedir uma chamada onde a Polly Camila lê o
                     código em PT-BR. Para quando o SMS não chega ou caixa lotada. */}
