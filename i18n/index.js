@@ -1,132 +1,111 @@
+// i18n — carregamento de idioma sob demanda (lazy locale loading).
+//
+// [2026-06-13 PERF] ANTES: os 63 idiomas (~26MB) eram TODOS importados de forma
+// estática aqui → iam pro entrypoint web (bundle de 44MB cru / 8MB brotli) →
+// o navegador tinha que parsear+executar 26MB de traduções no 1º load, mesmo o
+// usuário usando 1 idioma só. Em celular de entrada isso travava 10-30s.
+//
+// AGORA: só pt-BR/en/es carregam na entrada (cobrem ~99% dos usuários + a cadeia
+// de fallback en→pt-BR do t(), então NUNCA vaza chave crua). Os outros 60 viram
+// chunks separados via import() dinâmico, baixados só quando o idioma é
+// escolhido/detectado. O LanguageContext chama loadLocale() e re-renderiza.
 import ptBR from './pt-BR';
 import en from './en';
 import es from './es';
-import ja from './ja';
-import fr from './fr';
-import de from './de';
-import it from './it';
-import zhCN from './zh-CN';
-import ko from './ko';
-import ar from './ar';
-import ru from './ru';
-import hi from './hi';
-import ptPT from './pt-PT';
-import tr from './tr';
-import nl from './nl';
-import pl from './pl';
-import sv from './sv';
-import nb from './nb';
-import da from './da';
-import fi from './fi';
-import cs from './cs';
-import ro from './ro';
-import hu from './hu';
-import el from './el';
-import uk from './uk';
-import th from './th';
-import vi from './vi';
-import id from './id';
-import ms from './ms';
-import fil from './fil';
-import he from './he';
-import fa from './fa';
-import bn from './bn';
-import sw from './sw';
-import ur from './ur';
-import ta from './ta';
-import te from './te';
-import mr from './mr';
-import gu from './gu';
-import kn from './kn';
-import ml from './ml';
-import pa from './pa';
-import my from './my';
-import km from './km';
-import am from './am';
-import ne from './ne';
-import si from './si';
-import ka from './ka';
-import hy from './hy';
-import az from './az';
-import kk from './kk';
-import uz from './uz';
-import mn from './mn';
-import lo from './lo';
-import hr from './hr';
-import sk from './sk';
-import bg from './bg';
-import sr from './sr';
-import sl from './sl';
-import lt from './lt';
-import lv from './lv';
-import et from './et';
-import ca from './ca';
 
+// Idiomas carregados na entrada (disponíveis sincronamente p/ o t()).
 export const translations = {
   'pt-BR': ptBR,
   'en': en,
   'es': es,
-  'ja': ja,
-  'fr': fr,
-  'de': de,
-  'it': it,
-  'zh-CN': zhCN,
-  'ko': ko,
-  'ar': ar,
-  'ru': ru,
-  'hi': hi,
-  'pt-PT': ptPT,
-  'tr': tr,
-  'nl': nl,
-  'pl': pl,
-  'sv': sv,
-  'nb': nb,
-  'da': da,
-  'fi': fi,
-  'cs': cs,
-  'ro': ro,
-  'hu': hu,
-  'el': el,
-  'uk': uk,
-  'th': th,
-  'vi': vi,
-  'id': id,
-  'ms': ms,
-  'fil': fil,
-  'he': he,
-  'fa': fa,
-  'bn': bn,
-  'sw': sw,
-  'ur': ur,
-  'ta': ta,
-  'te': te,
-  'mr': mr,
-  'gu': gu,
-  'kn': kn,
-  'ml': ml,
-  'pa': pa,
-  'my': my,
-  'km': km,
-  'am': am,
-  'ne': ne,
-  'si': si,
-  'ka': ka,
-  'hy': hy,
-  'az': az,
-  'kk': kk,
-  'uz': uz,
-  'mn': mn,
-  'lo': lo,
-  'hr': hr,
-  'sk': sk,
-  'bg': bg,
-  'sr': sr,
-  'sl': sl,
-  'lt': lt,
-  'lv': lv,
-  'et': et,
-  'ca': ca,
 };
+
+// Loaders dinâmicos — cada import() vira um chunk próprio no bundle, baixado
+// só na primeira vez que o idioma é usado.
+const lazyLoaders = {
+  'ja': () => import('./ja'),
+  'fr': () => import('./fr'),
+  'de': () => import('./de'),
+  'it': () => import('./it'),
+  'zh-CN': () => import('./zh-CN'),
+  'ko': () => import('./ko'),
+  'ar': () => import('./ar'),
+  'ru': () => import('./ru'),
+  'hi': () => import('./hi'),
+  'pt-PT': () => import('./pt-PT'),
+  'tr': () => import('./tr'),
+  'nl': () => import('./nl'),
+  'pl': () => import('./pl'),
+  'sv': () => import('./sv'),
+  'nb': () => import('./nb'),
+  'da': () => import('./da'),
+  'fi': () => import('./fi'),
+  'cs': () => import('./cs'),
+  'ro': () => import('./ro'),
+  'hu': () => import('./hu'),
+  'el': () => import('./el'),
+  'uk': () => import('./uk'),
+  'th': () => import('./th'),
+  'vi': () => import('./vi'),
+  'id': () => import('./id'),
+  'ms': () => import('./ms'),
+  'fil': () => import('./fil'),
+  'he': () => import('./he'),
+  'fa': () => import('./fa'),
+  'bn': () => import('./bn'),
+  'sw': () => import('./sw'),
+  'ur': () => import('./ur'),
+  'ta': () => import('./ta'),
+  'te': () => import('./te'),
+  'mr': () => import('./mr'),
+  'gu': () => import('./gu'),
+  'kn': () => import('./kn'),
+  'ml': () => import('./ml'),
+  'pa': () => import('./pa'),
+  'my': () => import('./my'),
+  'km': () => import('./km'),
+  'am': () => import('./am'),
+  'ne': () => import('./ne'),
+  'si': () => import('./si'),
+  'ka': () => import('./ka'),
+  'hy': () => import('./hy'),
+  'az': () => import('./az'),
+  'kk': () => import('./kk'),
+  'uz': () => import('./uz'),
+  'mn': () => import('./mn'),
+  'lo': () => import('./lo'),
+  'hr': () => import('./hr'),
+  'sk': () => import('./sk'),
+  'bg': () => import('./bg'),
+  'sr': () => import('./sr'),
+  'sl': () => import('./sl'),
+  'lt': () => import('./lt'),
+  'lv': () => import('./lv'),
+  'et': () => import('./et'),
+  'ca': () => import('./ca'),
+};
+
+// Carrega um idioma sob demanda e injeta em `translations` (idempotente).
+// Retorna true quando o idioma fica disponível (já estava ou acabou de carregar),
+// false se o código não existe ou o import falhou. NÃO lança.
+export async function loadLocale(code) {
+  if (!code) return false;
+  if (translations[code]) return true;
+  const loader = lazyLoaders[code];
+  if (!loader) return false;
+  try {
+    const mod = await loader();
+    translations[code] = (mod && mod.default) ? mod.default : mod;
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+// True se o código é um idioma suportado (mesmo que ainda não carregado).
+export function isLocaleSupported(code) {
+  return !!code && (!!translations[code] || !!lazyLoaders[code]);
+}
 
 export const LANGUAGES = [
   { code: 'pt-BR', label: 'Português (Brasil)', flag: '🇧🇷' },

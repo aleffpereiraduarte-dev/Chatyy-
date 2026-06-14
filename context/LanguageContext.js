@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Platform, NativeModules } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { translations, DEFAULT_LANGUAGE } from '../i18n';
+import { translations, DEFAULT_LANGUAGE, loadLocale, isLocaleSupported } from '../i18n';
 import { setUserLanguage as apiSetUserLanguage } from '../services/api';
 
 const LanguageContext = createContext(null);
@@ -41,8 +41,9 @@ const LOCALE_MAP = {
 
 function resolveLocale(tag) {
   if (!tag) return null;
-  // Exact match (pt-BR, en, etc.)
-  if (translations[tag]) return tag;
+  // Exact match (pt-BR, en, etc.) — checa idiomas suportados (mesmo os lazy
+  // ainda não carregados), não só os que já estão em `translations`.
+  if (isLocaleSupported(tag)) return tag;
   // Case-insensitive exact match
   const lower = tag.toLowerCase();
   if (LOCALE_MAP[lower]) return LOCALE_MAP[lower];
@@ -92,6 +93,21 @@ function detectLanguage() {
 
 export function LanguageProvider({ children }) {
   const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
+  // Bumped quando um idioma lazy termina de carregar → força o t() a recomputar
+  // (e os consumidores a re-renderizarem) com as traduções recém-injetadas.
+  const [loadedTick, setLoadedTick] = useState(0);
+
+  // Carrega o idioma ativo sob demanda. pt-BR/en/es já estão na entrada; os
+  // outros 60 são importados aqui (chunk próprio) na 1ª vez que viram ativos.
+  // Enquanto não carrega, o t() cai no fallback en→pt-BR (nunca chave crua).
+  useEffect(() => {
+    if (!language || translations[language]) return; // já disponível
+    let alive = true;
+    loadLocale(language).then((ok) => {
+      if (alive && ok) setLoadedTick((n) => n + 1);
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [language]);
 
   // Propagate the selected language to the API layer so every backend call
   // carries an X-User-Language header. AI prompts read this to respond in
@@ -117,7 +133,7 @@ export function LanguageProvider({ children }) {
         } catch {}
       }
 
-      if (manualChoice && translations[manualChoice]) {
+      if (manualChoice && isLocaleSupported(manualChoice)) {
         // User explicitly chose this language — respect it
         setLanguage(manualChoice);
       } else {
@@ -143,7 +159,7 @@ export function LanguageProvider({ children }) {
   }, []);
 
   const changeLanguage = useCallback((code) => {
-    if (!translations[code]) return;
+    if (!isLocaleSupported(code)) return;
     setLanguage(code);
     _persistLanguage(code);
     if (!_suppressBroadcast.current) _broadcastLanguage(code);
@@ -162,7 +178,7 @@ export function LanguageProvider({ children }) {
           if (!frame || frame.origin === LANG_DEVICE_ID) return;
           if (frame.key !== 'language' && frame.key !== 'locale') return;
           const code = frame.value;
-          if (!code || !translations[code]) return;
+          if (!isLocaleSupported(code)) return;
           _suppressBroadcast.current = true;
           try {
             setLanguage(code);
@@ -195,7 +211,7 @@ export function LanguageProvider({ children }) {
       });
     }
     return str;
-  }, [language]);
+  }, [language, loadedTick]);
 
   // Memoize context value — `t` is already stable (useCallback on language),
   // so this only creates a new object when language actually changes.
