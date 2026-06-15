@@ -1,5 +1,6 @@
-import { useState, useCallback } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform } from 'react-native';
+import { useState, useCallback, useEffect } from 'react';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, ActivityIndicator } from 'react-native';
+import { getMessage } from '../services/api';
 // DOMPurify is web-only — lazy load to avoid crash on native
 let DOMPurify = null;
 if (Platform.OS === 'web') {
@@ -57,23 +58,58 @@ function formatDate(dateStr) {
 
 function MessageItem({ message, isLast, colors, t, onReply, onReplyAll, onForward }) {
   const [expanded, setExpanded] = useState(isLast);
-  const senderEmail = extractEmail(message.from);
+  const [fetched, setFetched] = useState(null);
+  const [loadingBody, setLoadingBody] = useState(false);
+
+  // [2026-06-15] O backend `get_thread` monta cada mensagem da thread SÓ com
+  // imap_fetch_overview (cabeçalhos: from/to/subject/date) — NUNCA traz o corpo.
+  // Por isso toda mensagem de uma thread de 2+ mostrava "(sem conteúdo)", mesmo
+  // o e-mail abrindo normal quando aberto sozinho (read.js busca o corpo via
+  // getMessage). Fix estilo Gmail: ao expandir a mensagem pela 1ª vez, busca o
+  // corpo completo via getMessage(uid, folder) e mescla. Lazy = não pesa o
+  // servidor buscando N corpos de uma vez.
+  const hasBody = !!(message.body_html || message.body_text || message.body);
+  useEffect(() => {
+    if (!expanded || hasBody || fetched || loadingBody || !message.uid) return;
+    let cancelled = false;
+    setLoadingBody(true);
+    Promise.resolve(getMessage(message.uid, message.folder || 'INBOX'))
+      .then((r) => { if (!cancelled && r && r.success && r.data) setFetched(r.data); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoadingBody(false); });
+    return () => { cancelled = true; };
+  }, [expanded, hasBody, fetched, loadingBody, message.uid, message.folder]);
+
+  const m = fetched ? { ...message, ...fetched } : message;
+  const mHasBody = !!(m.body_html || m.body_text || m.body);
+  const senderEmail = extractEmail(m.from);
 
   const renderBody = () => {
-    if (message.body_html && Platform.OS === 'web' && DOMPurify?.sanitize) {
+    if (m.body_html && Platform.OS === 'web' && DOMPurify?.sanitize) {
       return (
         <div
           style={{
             padding: 0, fontSize: 14, lineHeight: 1.7, color: colors.text,
             wordBreak: 'break-word', fontFamily: 'system-ui, -apple-system, sans-serif',
           }}
-          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(message.body_html) }}
+          dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(m.body_html) }}
         />
+      );
+    }
+    // Sem corpo ainda + buscando → spinner em vez de "(sem conteúdo)".
+    if (!mHasBody && loadingBody) {
+      return (
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6 }}>
+          <ActivityIndicator size="small" color={colors.textTertiary} />
+          <Text style={[s.bodyText, { color: colors.textTertiary, marginLeft: 8 }]}>
+            {t('common.loading') || 'Carregando…'}
+          </Text>
+        </View>
       );
     }
     return (
       <Text style={[s.bodyText, { color: colors.text }]}>
-        {message.body_text || message.body || htmlToText(message.body_html) || t('reader.noContent')}
+        {m.body_text || m.body || htmlToText(m.body_html) || t('reader.noContent')}
       </Text>
     );
   };
@@ -86,7 +122,7 @@ function MessageItem({ message, isLast, colors, t, onReply, onReplyAll, onForwar
         activeOpacity={0.7}
       >
         <AvatarCircle
-          name={message.from_name || message.from}
+          name={m.from_name || m.from}
           email={senderEmail}
           size={36}
           style={s.avatar}
@@ -94,20 +130,20 @@ function MessageItem({ message, isLast, colors, t, onReply, onReplyAll, onForwar
         <View style={s.headerInfo}>
           <View style={s.headerTopRow}>
             <Text style={[s.senderName, { color: colors.text }]} numberOfLines={1}>
-              {message.from_name || message.from}
+              {m.from_name || m.from}
             </Text>
             <Text style={[s.dateText, { color: colors.textTertiary }]}>
-              {formatDate(message.date)}
+              {formatDate(m.date)}
             </Text>
           </View>
           {!expanded && (
             <Text style={[s.snippet, { color: colors.textTertiary }]} numberOfLines={1}>
-              {message.body_text || message.body || htmlToText(message.body_html) || t('reader.noContent')}
+              {m.body_text || m.body || htmlToText(m.body_html) || (m.preview || m.snippet || '')}
             </Text>
           )}
-          {expanded && message.to && (
+          {expanded && m.to && (
             <Text style={[s.toLine, { color: colors.textTertiary }]} numberOfLines={1}>
-              {t('reader.to')} {message.to}
+              {t('reader.to')} {m.to}
             </Text>
           )}
         </View>
@@ -121,15 +157,15 @@ function MessageItem({ message, isLast, colors, t, onReply, onReplyAll, onForwar
           {renderBody()}
           {/* Per-message reply actions */}
           <View style={s.msgActions}>
-            <TouchableOpacity style={[s.msgActionBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => onReply?.(message)}>
+            <TouchableOpacity style={[s.msgActionBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => onReply?.(m)}>
               <IconReply size={14} color={colors.primary} style={{ marginRight: 4 }} />
               <Text style={[s.msgActionText, { color: colors.primary }]}>{t('reader.reply')}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[s.msgActionBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => onReplyAll?.(message)}>
+            <TouchableOpacity style={[s.msgActionBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => onReplyAll?.(m)}>
               <IconReplyAll size={14} color={colors.textSecondary} style={{ marginRight: 4 }} />
               <Text style={[s.msgActionText, { color: colors.textSecondary }]}>{t('reader.replyAll')}</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[s.msgActionBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => onForward?.(message)}>
+            <TouchableOpacity style={[s.msgActionBtn, { backgroundColor: colors.surfaceVariant }]} onPress={() => onForward?.(m)}>
               <IconForward size={14} color={colors.textSecondary} style={{ marginRight: 4 }} />
               <Text style={[s.msgActionText, { color: colors.textSecondary }]}>{t('reader.forward')}</Text>
             </TouchableOpacity>

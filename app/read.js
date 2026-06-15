@@ -155,17 +155,23 @@ export default function ReadScreen() {
         // thread payloads carry only per-message bodies without the root
         // subject/sender, leaving the thread header blank. Backfill from the
         // loaded message (msgResult.data) so the header is never empty.
-        const rootSubject = msgResult?.data?.subject;
-        const rootFrom = msgResult?.data?.from;
-        const normalized = threadResult.data.map((m, i) =>
-          i === 0
-            ? {
-                ...m,
-                subject: m?.subject || rootSubject || '',
-                from: m?.from || rootFrom || '',
-              }
-            : m
-        );
+        const opened = msgResult?.data;
+        const rootSubject = opened?.subject;
+        const rootFrom = opened?.from;
+        const normalized = threadResult.data.map((m, i) => {
+          let mm = i === 0
+            ? { ...m, subject: m?.subject || rootSubject || '', from: m?.from || rootFrom || '' }
+            : m;
+          // [2026-06-15] get_thread só traz cabeçalhos (sem corpo) → ThreadView
+          // mostrava "(sem conteúdo)". A mensagem que o usuário ABRIU já teve o
+          // corpo buscado aqui (msgResult.data) — mescla nela pra renderizar na
+          // hora, sem re-fetch. As outras mensagens da thread o ThreadView busca
+          // lazy ao expandir.
+          if (opened && Number(mm.uid) === Number(uid) && !(mm.body_html || mm.body_text || mm.body)) {
+            mm = { ...mm, body_html: opened.body_html, body_text: opened.body_text, body: opened.body, attachments: opened.attachments };
+          }
+          return mm;
+        });
         setThread(normalized);
       } else {
         setThread(null);
