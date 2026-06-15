@@ -11,6 +11,41 @@ const MAX_EMAILS_PER_FOLDER = 200;
 const MAX_CACHED_MESSAGES = 200; // Email messages (not chat — chat uses chatCache.js)
 const QUEUE_KEY = CACHE_PREFIX + 'offline_queue';
 
+// [2026-06-14] FIX "(sem conteúdo)" PERSISTENTE no iOS — causa raiz achada por
+// 4 agentes: builds VELHOS (<10/06, antes do fallback Rust-vazio→PHP) gravavam
+// CORPO VAZIO no cache de mensagem. Depois, mesmo com o app novo, o leitor caía
+// nesse cache envenenado e mostrava "(sem conteúdo)" pra SEMPRE (MMKV sobrevive
+// a updates, TTL longo, sem invalidação). Web não tinha o bug (não usa esse cache).
+//
+// Defesa em 3 camadas (tudo JS → entrega por OTA + embutido no build):
+//  1. NUNCA servir uma entrada de cache sem corpo (vira cache-miss → rebusca).
+//  2. NUNCA gravar uma entrada sem corpo (não re-envenena).
+//  3. Purga ÚNICA de todo o cache de mensagem no 1º boot do bundle novo, pra
+//     limpar entradas já envenenadas de imediato (não esperar lazy).
+function _msgHasBody(m) {
+  if (!m || typeof m !== 'object') return false;
+  const d = m.data && typeof m.data === 'object' ? m.data : m; // tolera {data:{}} ou shape plano
+  const html = String(d.body_html || d.html || '').trim();
+  const text = String(d.body_text || d.body_plain || d.body || d.text || '').trim();
+  const att = Array.isArray(d.attachments) && d.attachments.length > 0;
+  return !!(html || text || att);
+}
+
+// Purga única — roda no load do módulo. Limpa TODAS as entradas msg_* (inclui
+// msg_index) quando a versão do cache muda, eliminando o envenenamento legado.
+(function _purgePoisonedMsgCacheOnce() {
+  try {
+    const VER_KEY = CACHE_PREFIX + 'msgcache_ver';
+    const CUR = '2'; // bump aqui sempre que precisar forçar nova limpeza
+    if (getString(VER_KEY) === CUR) return;
+    const keys = getAllKeys() || [];
+    for (const k of keys) {
+      if (typeof k === 'string' && k.indexOf(CACHE_PREFIX + 'msg_') === 0) remove(k);
+    }
+    setString(VER_KEY, CUR);
+  } catch {}
+})();
+
 // ─── Email List Cache ───
 
 export async function saveEmailsToCache(folder, emails) {
@@ -123,6 +158,15 @@ export async function getNotesFromCache() {
 export async function saveMessageToCache(uid, message) {
   const indexKey = CACHE_PREFIX + 'msg_index';
   const msgKey = CACHE_PREFIX + 'msg_' + uid;
+  // NÃO cachear corpo vazio — senão envenena e mostra "(sem conteúdo)" pra sempre.
+  // Se já existir uma entrada (possivelmente envenenada), remove.
+  if (!_msgHasBody(message)) {
+    remove(msgKey);
+    let idx = getJSON(indexKey) || [];
+    const filtered = idx.filter(u => u !== uid);
+    if (filtered.length !== idx.length) setJSON(indexKey, filtered);
+    return;
+  }
   setJSON(msgKey, message);
 
   // Maintain LRU index
@@ -136,7 +180,14 @@ export async function saveMessageToCache(uid, message) {
 }
 
 export async function getMessageFromCache(uid) {
-  return getJSON(CACHE_PREFIX + 'msg_' + uid);
+  const m = getJSON(CACHE_PREFIX + 'msg_' + uid);
+  // Entrada SEM corpo é lixo (envenenamento legado) → trata como cache-miss e
+  // remove, pra forçar rebusca do servidor (que sempre traz o corpo via PHP).
+  if (!_msgHasBody(m)) {
+    if (m) remove(CACHE_PREFIX + 'msg_' + uid);
+    return null;
+  }
+  return m;
 }
 
 // ─── Calendar Cache ───
