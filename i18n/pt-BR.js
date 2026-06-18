@@ -561,6 +561,7 @@ export default {
   'login.phoneVerify': 'Verificar',
   'login.phoneResend': 'Reenviar código',
   'login.phoneResendIn': 'Reenviar em',
+  'login.phoneCallMe': 'Receber código por chamada',
   'login.phoneChangeNumber': 'Trocar número',
   'login.phoneInvalid': 'Número de telefone inválido',
   'login.phoneOtpInvalid': 'Código inválido. Tente novamente.',

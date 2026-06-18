@@ -1127,7 +1127,7 @@ export default function LoginScreen() {
     return COUNTRY_CODES.filter(c => c.name.toLowerCase().includes(q) || c.code.includes(q) || c.label.toLowerCase().includes(q));
   }, [countrySearch]);
 
-  const handlePhoneSendOtp = async () => {
+  const handlePhoneSendOtp = async (channel = 'sms') => {
     safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
     const cleaned = phoneNumber.replace(/[^0-9]/g, '');
     if (cleaned.length < 8) { setError(t('login.phoneInvalid')); shake(); return; }
@@ -1146,14 +1146,21 @@ export default function LoginScreen() {
       // exists-aware "Já tem conta" / "Vamos criar" copy still surfaces
       // via the debounced phoneAccountState helper text underneath the
       // input, so the user has the affordance without a forced redirect.
-      // Firebase Phone Auth first (Google sends the SMS — best BR deliverability).
-      // Reset any prior attempt's state, then try Firebase; fall back to the
-      // backend OTP endpoint (Vonage) if Firebase is unavailable or errors.
+      // onPress handlers pass the synthetic event as the first arg — coerce
+      // anything that isn't a known channel string back to 'sms'. The voice
+      // channel asks Vonage to PLACE A CALL that reads the code aloud (PT-BR
+      // Polly), so it must skip Firebase and go straight to the backend OTP.
+      const ch = (channel === 'voice' || channel === 'force_sms') ? channel : 'sms';
+      // Firebase Phone Auth first for SMS (Google sends it — best BR
+      // deliverability). Reset any prior attempt's state, then try Firebase;
+      // fall back to the backend OTP endpoint (Vonage) if Firebase is
+      // unavailable or errors. Voice never uses Firebase (no voice channel
+      // there) — it always goes to the backend so Vonage rings the number.
       fbConfirmRef.current = null;
       fbIdTokenRef.current = null;
       phoneViaFirebaseRef.current = false;
       let r;
-      if (firebasePhoneAvailable()) {
+      if (ch === 'sms' && firebasePhoneAvailable()) {
         const fb = await fbSendCode(fullPhone);
         if (fb.ok) {
           phoneViaFirebaseRef.current = true;
@@ -1161,7 +1168,7 @@ export default function LoginScreen() {
           r = { success: true };
         }
       }
-      if (!r) r = await api.verifySend(fullPhone);
+      if (!r) r = await api.verifySend(fullPhone, ch);
       if (!mountedRef.current) return;
       if (r.success) {
         setPhoneStep('otp');
@@ -2232,11 +2239,35 @@ export default function LoginScreen() {
                                 {t('login.phoneResendIn')} {phoneResendTimer}s
                               </Text>
                             ) : (
-                              <TouchableOpacity onPress={handlePhoneSendOtp} disabled={phoneSending} activeOpacity={0.6}>
+                              <TouchableOpacity onPress={() => handlePhoneSendOtp('sms')} disabled={phoneSending} activeOpacity={0.6}>
                                 <Text style={[s.linkText, { color: colors.primary }]}>{t('login.phoneResend')}</Text>
                               </TouchableOpacity>
                             )}
                           </View>
+
+                          {/* Fallback por ligação (paridade WhatsApp/Telegram): quando
+                              o SMS não chega, o user pede uma CHAMADA onde a voz pt-BR
+                              da Vonage lê o código em voz alta. Vai sempre pelo backend
+                              (Vonage), nunca pelo Firebase — só aparece depois que o
+                              cronômetro de reenvio zera, pra não competir com o SMS. */}
+                          {phoneResendTimer === 0 && !phoneRequiresLock && (
+                            <TouchableOpacity
+                              onPress={() => handlePhoneSendOtp('voice')}
+                              disabled={phoneSending}
+                              activeOpacity={0.7}
+                              style={{
+                                marginTop: 16, paddingVertical: 12, paddingHorizontal: 14,
+                                flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+                                borderRadius: 12, borderWidth: 1.5, borderColor: colors.primary,
+                                backgroundColor: isDark ? `${colors.primary}14` : `${colors.primary}0d`,
+                              }}
+                            >
+                              <IconPhone size={16} color={colors.primary} />
+                              <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '700' }}>
+                                {t('login.phoneCallMe') || 'Receber código por chamada'}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
                         </>
                       )}
                     </View>
