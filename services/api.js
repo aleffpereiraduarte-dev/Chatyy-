@@ -2255,6 +2255,20 @@ export async function usernameSignup({ username, name, password, domain = 'chaty
   return apiCall('username_signup', { username, name, password, domain }, 'POST');
 }
 
+// Firebase Phone Auth exchange (2026-06-18). The app verifies the phone with
+// Firebase (Google sends the SMS — best deliverability in Brazil), then hands
+// the resulting Firebase ID token here. Backend (`phone_login_firebase`)
+// validates the Google-signed JWT and returns the SAME shapes as
+// phoneLoginVerify: { token, email } (existing account → log in), or
+// { exists:false, verify_token, phone } (new account → continue to signup), or
+// { requires_lock:true } (registration-lock PIN gate). `pin` is sent on the
+// re-call when the account has a registration lock.
+export async function phoneLoginFirebase(idToken, pin = '') {
+  const params = { id_token: idToken };
+  if (pin) params.pin = pin;
+  return apiCall('phone_login_firebase', params, 'POST');
+}
+
 // Variant of phoneLoginVerify that also passes a registration-lock PIN.
 // Backend returns { requires_lock: true } on the first verify if the account
 // has a PIN configured; client re-calls with the PIN to complete the login.

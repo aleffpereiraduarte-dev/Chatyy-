@@ -23,6 +23,7 @@ import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
 import RestoreHistoryPrompt from '../components/RestoreHistoryPrompt';
 import { LANGUAGES } from '../i18n';
 import * as api from '../services/api';
+import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../services/firebasePhone';
 import { getDeviceId as getE2eDeviceId, getDevicePublicKey as getE2eDevicePublicKey } from '../services/e2e';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
@@ -319,6 +320,16 @@ export default function LoginScreen() {
   const [phoneAccountState, setPhoneAccountState] = useState({ status: 'idle', phone: '' });
   const phoneOtpRefs = useRef([]);
   const phoneResendRef = useRef(null);
+  // Firebase Phone Auth (2026-06-18): when available (native), the OTP is sent
+  // by Google/Firebase and confirmed client-side. fbConfirmRef holds the
+  // confirmation between send→verify; fbIdTokenRef holds the ID token after
+  // confirm so the registration-lock PIN re-call can reuse it (the SMS code is
+  // one-time and already consumed). phoneViaFirebaseRef flags which path this
+  // attempt used so verify routes correctly. Falls back to backend OTP on any
+  // failure — see handlePhoneSendOtp / handlePhoneVerifyOtp.
+  const fbConfirmRef = useRef(null);
+  const fbIdTokenRef = useRef(null);
+  const phoneViaFirebaseRef = useRef(false);
   const [qrToken, setQrToken] = useState(null);
   const [qrCountdown, setQrCountdown] = useState(60);
   const [qrStatus, setQrStatus] = useState('idle'); // idle, loading, pending, confirmed, expired
@@ -1135,7 +1146,22 @@ export default function LoginScreen() {
       // exists-aware "Já tem conta" / "Vamos criar" copy still surfaces
       // via the debounced phoneAccountState helper text underneath the
       // input, so the user has the affordance without a forced redirect.
-      const r = await api.verifySend(fullPhone);
+      // Firebase Phone Auth first (Google sends the SMS — best BR deliverability).
+      // Reset any prior attempt's state, then try Firebase; fall back to the
+      // backend OTP endpoint (Vonage) if Firebase is unavailable or errors.
+      fbConfirmRef.current = null;
+      fbIdTokenRef.current = null;
+      phoneViaFirebaseRef.current = false;
+      let r;
+      if (firebasePhoneAvailable()) {
+        const fb = await fbSendCode(fullPhone);
+        if (fb.ok) {
+          phoneViaFirebaseRef.current = true;
+          fbConfirmRef.current = fb.confirmation;
+          r = { success: true };
+        }
+      }
+      if (!r) r = await api.verifySend(fullPhone);
       if (!mountedRef.current) return;
       if (r.success) {
         setPhoneStep('otp');
@@ -1190,7 +1216,30 @@ export default function LoginScreen() {
       // requires_lock=true and we surface the PIN input. Pass the PIN
       // back when the user enters it.
       const _pin = phoneRequiresLock ? phoneLockPin : '';
-      const r = await api.phoneLoginVerifyWithPin(fullPhone, code, _pin);
+      let r;
+      if (phoneViaFirebaseRef.current) {
+        // Firebase path: confirm the typed code once → ID token; on the PIN
+        // re-call reuse the stored token (the SMS code is already consumed).
+        if (!fbIdTokenRef.current) {
+          const c = await fbConfirm(fbConfirmRef.current, code);
+          if (!mountedRef.current) return;
+          if (!c.ok) {
+            // Mistyped/expired code is a normal recoverable error; anything
+            // else means Firebase itself failed — surface as wrong code so the
+            // user can resend (which re-runs send and may fall back to backend).
+            setError(t('login.phoneOtpInvalid'));
+            shake();
+            setPhoneOtp(['', '', '', '', '', '']);
+            setTimeout(() => { try { phoneOtpRefs.current?.[0]?.focus?.(); } catch {} }, 0);
+            setPhoneVerifying(false);
+            return;
+          }
+          fbIdTokenRef.current = c.idToken;
+        }
+        r = await api.phoneLoginFirebase(fbIdTokenRef.current, _pin);
+      } else {
+        r = await api.phoneLoginVerifyWithPin(fullPhone, code, _pin);
+      }
       if (!mountedRef.current) return;
       // Account has registration lock — show PIN input and stop here.
       if (r.success && r.data?.requires_lock) {
@@ -1208,6 +1257,8 @@ export default function LoginScreen() {
         return;
       }
       if (r.success && r.data?.token) {
+        // The Chatyy bearer is now the real session — drop the Firebase one.
+        if (phoneViaFirebaseRef.current) { fbSignOut(); }
         safeHaptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
         await loginWithToken(r.data.token, r.data.email);
         setLoginSuccess(true);

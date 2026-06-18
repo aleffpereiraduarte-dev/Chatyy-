@@ -26,6 +26,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
+import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../services/firebasePhone';
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
 import useIsMounted from '../hooks/useIsMounted';
 import { COUNTRIES, formatPhone } from '../constants/countries';
@@ -269,6 +270,11 @@ export default function SignupPhone() {
   }, [step]);
   // Guard against setState after unmount (user can swipe back mid-API-call).
   const mountedRef = useIsMounted();
+  // Firebase Phone Auth (2026-06-18) — same pattern as login.js. See
+  // services/firebasePhone.js. Falls back to backend OTP on any failure.
+  const fbConfirmRef = useRef(null);
+  const fbIdTokenRef = useRef(null);
+  const phoneViaFirebaseRef = useRef(false);
 
   // Build E.164 from country dial + digits (PhoneInput holds digits only).
   const fullPhone = useMemo(() => {
@@ -409,8 +415,22 @@ export default function SignupPhone() {
           }
         } catch { /* fall through — assume new */ }
       }
-      // 2. Send the actual OTP.
-      const r = await api.verifySend(fullPhone, channel);
+      // 2. Send the actual OTP. Firebase (Google SMS) only for the SMS channel —
+      // WhatsApp/voice channels stay on the backend. Falls back to backend SMS
+      // if Firebase is unavailable or errors.
+      fbConfirmRef.current = null;
+      fbIdTokenRef.current = null;
+      phoneViaFirebaseRef.current = false;
+      let r;
+      if ((channel === 'sms' || !channel) && firebasePhoneAvailable()) {
+        const fb = await fbSendCode(fullPhone);
+        if (fb.ok) {
+          phoneViaFirebaseRef.current = true;
+          fbConfirmRef.current = fb.confirmation;
+          r = { success: true, data: { sms_sent: true } };
+        }
+      }
+      if (!r) r = await api.verifySend(fullPhone, channel);
       if (!mountedRef.current) return;
       if (r?.success) {
         setResendCountdown(60);
@@ -442,7 +462,26 @@ export default function SignupPhone() {
       // If account has registration_lock, server returns requires_lock=true
       // and we need to surface the PIN gate before re-calling with PIN.
       const _pin = lockRequired ? lockPin : '';
-      const r = await api.phoneLoginVerifyWithPin(fullPhone, code, _pin);
+      let r;
+      if (phoneViaFirebaseRef.current) {
+        // Firebase path: confirm the code once → ID token; reuse it for the
+        // PIN re-call (the SMS code is one-time, already consumed).
+        if (!fbIdTokenRef.current) {
+          const c = await fbConfirm(fbConfirmRef.current, code);
+          if (!mountedRef.current) return;
+          if (!c.ok) {
+            setError(t('signupPhone.otpInvalid') || 'Código incorreto');
+            setCode('');
+            triggerOtpError();
+            setBusy(false);
+            return;
+          }
+          fbIdTokenRef.current = c.idToken;
+        }
+        r = await api.phoneLoginFirebase(fbIdTokenRef.current, _pin);
+      } else {
+        r = await api.phoneLoginVerifyWithPin(fullPhone, code, _pin);
+      }
       if (!mountedRef.current) return;
       // Account locked — show PIN gate and stop.
       if (r?.success && r.data?.requires_lock) {
@@ -459,6 +498,7 @@ export default function SignupPhone() {
         return;
       }
       if (r?.success && r.data?.token) {
+        if (phoneViaFirebaseRef.current) { fbSignOut(); }
         // Existing account — log in, then probe iCloud / Drive for an
         // existing backup tied to this phone (reinstall scenario). On
         // any probe error or web platform we just navigate immediately.

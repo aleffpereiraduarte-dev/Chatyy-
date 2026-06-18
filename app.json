@@ -94,7 +94,8 @@
             "CFBundleURLSchemes": [
               "mailto",
               "com.onemundo.mail",
-              "onemundomail"
+              "onemundomail",
+              "app-1-782929446226-ios-df5f2fafec4aa86794268b"
             ],
             "CFBundleURLName": "com.onemundo.mail.mailto"
           }
@@ -322,7 +323,10 @@
             "minSdkVersion": 26
           }
         }
-      ]
+      ],
+      "@react-native-firebase/app",
+      "@react-native-firebase/auth",
+      "./plugins/with-rnfirebase-static"
     ],
     "extra": {
       "router": {
