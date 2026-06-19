@@ -18,6 +18,14 @@
 
 import { Platform } from 'react-native';
 
+// [2026-06-19] KILL-SWITCH: Firebase Phone Auth DESLIGADO a pedido do founder
+// ("firebase não tava funcionando, usar só o Twilio"). Com isto em true,
+// firebasePhoneAvailable() retorna false → login.js + signup-phone.js caem
+// SEMPRE pro backend OTP (Twilio Verify p/ SMS + Vonage p/ voz), inclusive nos
+// builds 567+ que têm o módulo nativo linkado. Pra reativar: voltar pra false.
+// Mudança só de JS → chega por OTA (não precisa rebuild nativo).
+const FIREBASE_PHONE_DISABLED = true;
+
 let _authMod = null;       // namespaced auth() function
 let _resolved = false;     // have we tried to require it yet?
 
@@ -37,6 +45,7 @@ function getAuth() {
 
 // Is the native Firebase Auth module linked AND a default app initialized?
 export function firebasePhoneAvailable() {
+  if (FIREBASE_PHONE_DISABLED) return false;
   const auth = getAuth();
   if (!auth) return false;
   try {
@@ -50,6 +59,7 @@ export function firebasePhoneAvailable() {
 // Send the verification SMS. Returns { ok, confirmation } or { ok:false, error }.
 // `confirmation` MUST be held by the caller and passed back to fbConfirm().
 export async function fbSendCode(e164Phone) {
+  if (FIREBASE_PHONE_DISABLED) return { ok: false, error: 'unavailable' };
   const auth = getAuth();
   if (!auth) return { ok: false, error: 'unavailable' };
   try {
