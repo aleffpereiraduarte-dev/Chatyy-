@@ -136,10 +136,9 @@ export default function SignupPhone() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [resendCountdown, setResendCountdown] = useState(0);
-  // Canal pelo qual o último código saiu ('whatsapp' | 'sms' | 'voice').
-  // WhatsApp é o primário (barato). Mostra "Enviamos pro seu WhatsApp" e libera
-  // o botão "Enviar por SMS" só depois do timer de 60s sem chegar.
-  const [sentVia, setSentVia] = useState('whatsapp');
+  // Canal pelo qual o último código saiu ('sms' | 'voice'). [2026-06-19] WhatsApp
+  // REMOVIDO do cadastro a pedido do founder — só SMS (Twilio) + ligação (Vonage).
+  const [sentVia, setSentVia] = useState('sms');
   // Registration-lock (anti-SIM-swap) PIN state. lockRequired flips true when
   // server returns requires_lock=true after a successful OTP verify; the OTP
   // step then renders an extra PIN input below the OTP boxes. lockPin holds
@@ -434,11 +433,9 @@ export default function SignupPhone() {
       if (!mountedRef.current) return;
       if (r?.success) {
         setResendCountdown(60);
-        // Detecta o canal real pra mostrar a mensagem certa. WhatsApp tem
-        // prioridade (mais barato); SMS só quando foi force_sms ou fallback.
+        // [2026-06-19] Só SMS ou voz no cadastro (WhatsApp removido).
         if (channel === 'voice') setSentVia('voice');
-        else if (r?.data?.whatsapp_sent) setSentVia('whatsapp');
-        else if (r?.data?.sms_sent) setSentVia('sms');
+        else setSentVia('sms');
         if (step !== 'otp') goStep('otp');
         setCode('');
       } else {
@@ -1000,7 +997,7 @@ export default function SignupPhone() {
                   );
                 })()}
                 <Text style={[styles.hint, { color: colors.textTertiary }]}>
-                  {t('signupPhone.hintPhone') || 'Vamos enviar um código por SMS e WhatsApp'}
+                  {t('signupPhone.hintPhone') || 'Vamos enviar um código por SMS'}
                 </Text>
                 {/* "Entrar com email" escape hatch — for legacy / pre-2026
                     accounts that signed up before phone-first, the user can
@@ -1134,13 +1131,11 @@ export default function SignupPhone() {
                     importantForAutofill="yes"
                   />
                 </Pressable>
-                {/* Confirmação WhatsApp-first: avisa por qual canal o código saiu. */}
+                {/* Confirmação: avisa por qual canal o código saiu (SMS ou ligação). */}
                 <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', marginTop: 10, lineHeight: 18 }}>
-                  {sentVia === 'sms'
-                    ? (t('signupPhone.sentSms') || 'Enviamos um código por SMS 📱')
-                    : sentVia === 'voice'
+                  {sentVia === 'voice'
                     ? (t('signupPhone.sentVoice') || 'Vamos te ligar e ler o código 📞')
-                    : (t('signupPhone.sentWhatsApp') || 'Enviamos um código pro seu WhatsApp 📲')}
+                    : (t('signupPhone.sentSms') || 'Enviamos um código por SMS 📱')}
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
                   <Text style={{ fontSize: 12, color: colors.textTertiary }}>
@@ -1197,9 +1192,9 @@ export default function SignupPhone() {
                   </View>
                 )}
 
-                {/* Após 60s sem o código chegar no WhatsApp, oferece SMS como
-                    reserva (channel=force_sms → backend manda SÓ SMS). Some quando
-                    o último envio já foi por SMS. WhatsApp-first = economia. */}
+                {/* Se o user pediu o código por LIGAÇÃO, oferece voltar pro SMS
+                    (channel=force_sms → backend manda SÓ SMS). Some quando o
+                    último envio já foi por SMS. [2026-06-19] WhatsApp removido. */}
                 {resendCountdown === 0 && sentVia !== 'sms' && (
                   <TouchableOpacity
                     onPress={() => sendOtp('force_sms')}
