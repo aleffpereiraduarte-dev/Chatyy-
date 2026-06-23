@@ -16,6 +16,11 @@ let _sip = null;
 try { _sip = require('../services/sipCall'); } catch {}
 const startSipCall = _sip?.startSipCall || (async () => ({ success: false }));
 const hangupSipCall = _sip?.hangupSipCall || (() => {});
+// PSTN dialer (ligar pra qualquer número) via LiveKit + Vonage — substitui Telnyx.
+let _pstn = null;
+try { _pstn = require('../services/pstnCall'); } catch {}
+const startPstnCall = _pstn?.startPstnCall || (async () => {});
+const hangupPstnCall = _pstn?.hangupPstnCall || (() => {});
 const muteSipCall = _sip?.muteSipCall || (() => {});
 const sipSendDTMF = _sip?.sendDTMF || (() => {});
 
@@ -2275,6 +2280,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
   const handleHangup = useCallback(() => {
     // Always try SIP hangup first (works for both web and native via the unified sipCall service)
     try { hangupSipCall(); } catch {}
+    try { hangupPstnCall(); } catch {}
     if (Platform.OS === 'web') {
       try { hangupTwilioCall(); } catch {}
     } else if (nativeWebViewRef.current?.current) {
@@ -2367,64 +2373,40 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
 
     try {
       if (callMode === 'internet') {
-        // SIP mode: direct WebRTC via Telnyx (call via internet)
+        // PSTN dialer via LiveKit + Vonage (substitui Telnyx, conta suspensa).
+        // Backend (pstn_dial) cria sala LK + manda a Vonage LIGAR pro número e
+        // conectar o áudio no livekit-sip; o app entra na MESMA sala (2-vias).
         setActiveCall({ number: phoneNum, contactName: resolvedName, state: 'connecting', duration: 0 });
         setCallResult({ success: true, message: t?.('calls.connecting') || 'Connecting...' });
         // Show green bar globally via CallContext
-        ctxStartCall({ contactName: resolvedName || phoneNum, contactEmail: '', isVideo: false, isCaller: true, callType: 'sip' });
+        ctxStartCall({ contactName: resolvedName || phoneNum, contactEmail: phoneNum, isVideo: false, isCaller: true, callType: 'pstn' });
 
-        // ─── Native audio routing + proximity sensor (SAME AS CHATYY P2P) ───
-        // Activate the audio session for voice chat (earpiece by default, NOT
-        // speaker) and turn on proximity monitoring so iOS blanks the screen
-        // when the user holds the phone to their ear. Matching the WhatsApp
-        // / native Phone app behavior.
+        // Proximity sensor → tela apaga no ouvido. NÃO chamamos
+        // ExpoAudioSession.activateForCall: o LiveKit (pstnCall.js) é dono do
+        // AVAudioSession agora — disputar a sessão causaria o mudo.
         try {
           const ExpoAudioSession = require('../modules/expo-audio-session').default;
-          ExpoAudioSession?.activateForCall?.(false);
           ExpoAudioSession?.enableProximitySensor?.(true);
         } catch {}
-
-        // 2026-05-09: Twilio account suspended → todos clients vão direto pro
-        // Telnyx Verto SIP (sipCall.js funciona web + iOS + Android). Mantém
-        // useTwilio=false sempre. Removido o try-Twilio-first do web.
-        let useTwilio = false;
-        let credRes = await voipSipCredentials();
-        if (!credRes?.success) {
-          setCallResult({ success: false, message: credRes?.message || (t?.('calls.credentialsFailed') || 'Failed to get credentials') });
-          setActiveCall(null); ctxEndCall(); setCalling(false);
+        const _proximityOff = () => {
           try {
             const ExpoAudioSession = require('../modules/expo-audio-session').default;
             ExpoAudioSession?.enableProximitySensor?.(false);
-            ExpoAudioSession?.deactivate?.().catch?.(() => {});
           } catch {}
-          return;
-        }
-        // Pass TURN credentials if available (Telnyx path)
-        if (!useTwilio && credRes.data?.turn) {
-          const { setTurnCredentials } = require('../services/sipCall');
-          setTurnCredentials(credRes.data.turn);
-        }
-        const _startCall = useTwilio
-          ? require('../services/twilioCall').startTwilioCall
-          : startSipCall;
+        };
+
         // Track call timing so we can persist duration to history on end.
         const _callStartTs = Date.now();
         let _callConnectedAt = 0;
         let _callDuration = 0;
-        const _persistCallHistory = (status) => {
-          // status: 'completed' | 'missed' | 'failed' | 'cancelled'
-          // We persist Twilio (phone) calls to history so the "Telefone" tab
-          // is no longer empty. The phone number is used as the contactEmail
-          // (it's the unique identifier for non-Chatyy calls). Backend stores
-          // it as-is and the UI distinguishes by `phoneCall: 1` flag.
+        const _persistCallHistory = () => {
           try {
-            // Backend requires non-empty callId — generate a stable one
-            // tied to start timestamp + phone so retries dedup via the
-            // ON CONFLICT DO NOTHING.
-            const _callId = `twilio_${_callStartTs}_${phoneNum.replace(/[^0-9]/g,'')}`;
+            // Backend requires non-empty callId — stable one tied to start ts +
+            // phone so retries dedup via ON CONFLICT DO NOTHING.
+            const _callId = `pstn_${_callStartTs}_${phoneNum.replace(/[^0-9]/g,'')}`;
             callHistoryAdd({
-              contactEmail: phoneNum,           // phone number as identifier
-              contactName: resolvedName || phoneNum, // device-book name when known, else raw number
+              contactEmail: phoneNum,                 // phone number as identifier
+              contactName: resolvedName || phoneNum,  // device-book name when known
               callId: _callId,
               type: 'outgoing',
               video: 0,
@@ -2435,8 +2417,8 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             }).catch(() => {});
           } catch {}
         };
-        await _startCall(credRes.data, phoneNum, (state) => {
-          if (state === 'registered' || state === 'ringing') {
+        await startPstnCall(phoneNum, resolvedName, (state) => {
+          if (state === 'ringing') {
             setActiveCall(prev => prev ? { ...prev, state: 'ringing' } : null);
             setCallResult({ success: true, message: t?.('calls.ringing') || 'Ringing...' });
           } else if (state === 'connected') {
@@ -2444,30 +2426,17 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             setActiveCall(prev => prev ? { ...prev, state: 'connected' } : null);
             setCallResult({ success: true, message: t?.('calls.callStarted') || 'Call started!' });
           } else if (state === 'ended') {
-            // Persist to history before clearing state.
-            const status = _callConnectedAt > 0 ? 'completed' : 'cancelled';
-            _persistCallHistory(status);
+            _persistCallHistory();
             setActiveCall(null); setCallResult(null); ctxEndCall();
-            // Tear down audio session + proximity sensor on every path that
-            // ends the call — was the "desliga mas não desliga" bug.
-            try {
-              const ExpoAudioSession = require('../modules/expo-audio-session').default;
-              ExpoAudioSession?.enableProximitySensor?.(false);
-              ExpoAudioSession?.deactivate?.().catch?.(() => {});
-            } catch {}
+            _proximityOff();
           } else if (state === 'tick') {
             _callDuration = (_callDuration || 0) + 1;
             setActiveCall(prev => prev ? { ...prev, duration: (prev.duration || 0) + 1 } : null);
           } else if (state?.startsWith?.('error:')) {
-            // Record the failed call so the user sees it in history.
-            _persistCallHistory('failed');
+            _persistCallHistory();
             setActiveCall(null); ctxEndCall();
             setCallResult({ success: false, message: state.replace('error:', '') });
-            try {
-              const ExpoAudioSession = require('../modules/expo-audio-session').default;
-              ExpoAudioSession?.enableProximitySensor?.(false);
-              ExpoAudioSession?.deactivate?.().catch?.(() => {});
-            } catch {}
+            _proximityOff();
           }
         });
       } else {
