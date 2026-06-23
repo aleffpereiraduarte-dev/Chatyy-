@@ -18,6 +18,8 @@ import { View, Text, TouchableOpacity, StyleSheet, Animated, Platform, StatusBar
 import { useRouter, usePathname } from 'expo-router';
 import { IconPhone, IconPhoneOff, IconVideo } from './Icons';
 import { useCurrentCall } from '../services/call-state-reader';
+import { useLanguage } from '../context/LanguageContext';
+import AvatarCircle from './AvatarCircle';
 
 // Safe area top padding (no hook import to avoid circular dep). On Android,
 // devices with punch-hole/notch report 36-48px via StatusBar.currentHeight —
@@ -83,6 +85,7 @@ export default function CallStatusBar() {
   const isInCall = fromNative ? true : ctxState.isInCall;
   const endCall = ctxState.endCall; // JS-side cleanup still goes through CallContext
 
+  const { t } = useLanguage();
   const [duration, setDuration] = useState(0);
   const router = useRouter();
   const pathname = usePathname();
@@ -220,6 +223,7 @@ export default function CallStatusBar() {
               like a static banner. */}
           <PulseDot />
           {callData?.isVideo ? <IconVideo size={14} color="#fff" /> : <IconPhone size={14} color="#fff" />}
+          <AvatarCircle email={callData?.contactEmail} name={contactName} size={24} />
           <Text style={styles.name} numberOfLines={1}>{contactName}</Text>
           <Text style={styles.timer}>{timeStr}</Text>
         </View>
@@ -230,7 +234,7 @@ export default function CallStatusBar() {
           hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
         >
           <IconPhoneOff size={14} color="#fff" />
-          <Text style={styles.hangUpText}>Desligar</Text>
+          <Text style={styles.hangUpText}>{t('call.hangUp') || 'Desligar'}</Text>
         </TouchableOpacity>
       </TouchableOpacity>
     </Animated.View>

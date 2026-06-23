@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Vibration, Dimensions, Modal, FlatList, TextInput, Switch, AppState } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Dimensions, Modal, FlatList, TextInput, Switch, AppState } from 'react-native';
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import BrandFab from './BrandFab';
@@ -11,6 +11,8 @@ import { getCached, setCache } from '../services/cache';
 import { useCall } from '../context/CallContext';
 import { useLanguage } from '../context/LanguageContext';
 import { ensureContactIndex, lookupName as lookupDeviceContactName } from '../services/deviceContactLookup';
+import { CallListSkeleton } from './SkeletonLoader';
+import { haptic } from '../constants/theme';
 // SIP call — dynamic import to prevent crash if native WebRTC module fails
 let _sip = null;
 try { _sip = require('../services/sipCall'); } catch {}
@@ -72,7 +74,7 @@ function playDTMFTone(digit) {
 function playDTMFNative(digit) {
   // Always vibrate on native
   if (Platform.OS !== 'web') {
-    try { Vibration.vibrate(10); } catch {}
+    try { haptic.light(); } catch {}
   }
   // Web Audio API works on all platforms (including React Native via JSC/Hermes)
   playDTMFTone(digit);
@@ -770,7 +772,7 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
             s.callBackBtn,
             { backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7' },
           ]}
-          onPress={() => onCallBack?.(item)}
+          onPress={() => { haptic.medium(); onCallBack?.(item); }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityLabel={t?.('calls.callBack') || 'Call back'}
           accessibilityRole="button"
@@ -874,38 +876,6 @@ function CallEmptyIllustration({ isDark }) {
 // ============================================================
 // LOADING SKELETON
 // ============================================================
-function LoadingSkeleton({ isDark }) {
-  const shimmer = useRef(new Animated.Value(0)).current;
-  useEffect(() => {
-    const anim = Animated.loop(
-      Animated.sequence([
-        Animated.timing(shimmer, { toValue: 1, duration: 800, useNativeDriver: false }),
-        Animated.timing(shimmer, { toValue: 0, duration: 800, useNativeDriver: false }),
-      ])
-    );
-    anim.start();
-    return () => anim.stop();
-  }, [shimmer]);
-
-  const opacity = shimmer.interpolate({ inputRange: [0, 1], outputRange: [0.3, 0.7] });
-  const bg = isDark ? '#2c2c2e' : '#e5e7eb';
-
-  return (
-    <View style={{ paddingTop: 8 }}>
-      {[0, 1, 2, 3, 4].map((i) => (
-        <Animated.View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, gap: 12, opacity }}>
-          <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: bg }} />
-          <View style={{ flex: 1, gap: 6 }}>
-            <View style={{ height: 16, borderRadius: 4, backgroundColor: bg, width: '50%' }} />
-            <View style={{ height: 12, borderRadius: 4, backgroundColor: bg, width: '35%' }} />
-          </View>
-          <View style={{ width: 60, height: 12, borderRadius: 4, backgroundColor: bg }} />
-        </Animated.View>
-      ))}
-    </View>
-  );
-}
-
 // ============================================================
 // PLAN STATUS BADGE
 // ============================================================
@@ -1174,7 +1144,7 @@ function DTMFKeypad({ visible, onClose, onDigit, isDark, t }) {
                 }}
                 onPress={() => {
                   if (Platform.OS !== 'web') {
-                    try { Vibration.vibrate(8); } catch {}
+                    try { haptic.light(); } catch {}
                   }
                   onDigit(k.digit);
                 }}
@@ -3559,7 +3529,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         showsVerticalScrollIndicator={false}
       >
         {isLoading ? (
-          <LoadingSkeleton isDark={isDark} />
+          <CallListSkeleton count={6} />
         ) : filteredHistory.length === 0 ? (
           <View style={s.emptyState}>
             <CallEmptyIllustration isDark={isDark} />

@@ -300,15 +300,25 @@ export function NoteGridSkeleton({ count = 6, columns = 2 }) {
 
 // Chat bubble skeleton (WhatsApp style — alternating left/right bubbles with shimmer)
 export function ChatBubbleSkeleton({ count = 8 }) {
+  const { colors } = useTheme();
   const widths = [0.65, 0.45, 0.7, 0.35, 0.55, 0.4, 0.6, 0.5];
   return (
     <View style={{ paddingHorizontal: 16, paddingTop: 20, paddingBottom: 8, gap: 12 }}>
       {Array.from({ length: count }).map((_, i) => {
         const isRight = i % 2 === 1;
         const w = widths[i % widths.length];
+        // Tint the wrapper with the same own/other bubble colors the real
+        // chat uses, so the skeleton reads as bubbles instead of floating
+        // lines on a blank canvas.
+        const bubbleBg = isRight
+          ? (colors.chatBubbleOwn || '#EDE9FE')
+          : (colors.chatBubbleOther || '#FFFFFF');
+        const bubbleBorder = isRight
+          ? (colors.chatBubbleOwnBorder || 'rgba(124,58,237,0.08)')
+          : (colors.chatBubbleOtherBorder || 'rgba(0,0,0,0.04)');
         return (
           <View key={i} style={{ alignSelf: isRight ? 'flex-end' : 'flex-start', width: `${w * 70}%`, maxWidth: 280 }}>
-            <View style={{ borderRadius: 16, padding: 14, overflow: 'hidden' }}>
+            <View style={{ borderRadius: 16, padding: 14, overflow: 'hidden', backgroundColor: bubbleBg, borderWidth: 1, borderColor: bubbleBorder }}>
               <Shimmer style={{ height: 12, borderRadius: 6, width: '100%', marginBottom: 6 }} delay={i * 60} />
               <Shimmer style={{ height: 12, borderRadius: 6, width: `${50 + Math.random() * 30}%` }} delay={i * 60 + 25} />
               {w > 0.5 && <Shimmer style={{ height: 12, borderRadius: 6, width: '40%', marginTop: 6 }} delay={i * 60 + 50} />}

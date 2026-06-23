@@ -14,6 +14,7 @@ import { emailToDisplayName, BASE_URL } from '../services/api';
 import { cacheConversations, getCachedConversations, prewarmConversationsCache, prefetchConversation } from '../services/chatCache';
 import { prefetchAvatarsForList } from '../services/avatarCache';
 import { userScopedKey } from '../services/cache';
+import { RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import { getCachedMessagesSync } from '../services/smartChatCache';
 import mqttService from '../services/mqtt';
 
@@ -48,6 +49,9 @@ import StoryRingAvatar from './status/StoryRingAvatar';
 import StoryViewer from './status/StoryViewer';
 import LiveBar from './LiveBar';
 import { useLanguage } from '../context/LanguageContext';
+import ScreenEmptyState from './ScreenEmptyState';
+import { ChatListSkeleton } from './SkeletonLoader';
+import { haptic } from '../constants/theme';
 
 let NativeSwipeable = null;
 if (Platform.OS !== 'web') {
@@ -3770,7 +3774,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             // the OS radio takes 1-2s to renegotiate before the WS can
             // even attempt to handshake.
             const sinceForeground = Date.now() - lastForegroundTs;
-            const suppressMs = sinceForeground < 3000 ? 15000 : 12000;
+            // Shared grace so the banner appears at the same cadence as the
+            // chat conversation screen. Keep a little extra slack right after
+            // returning from background (radio renegotiation takes 1-2s).
+            const suppressMs = sinceForeground < 3000 ? (RECONNECT_BANNER_GRACE_MS + 6000) : RECONNECT_BANNER_GRACE_MS;
             bannerTimer = setTimeout(() => {
               if (!wasConnected && !mailWs.isConnected) {
                 wsDownBannerOpacity.setValue(1);
@@ -4020,12 +4027,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     if (last && last.id === conv.id && (now - last.at) < 800) return;
     _navLockRef.current = { id: conv.id, at: now };
     // Haptic click on row-open — WhatsApp pattern, confirms the tap took.
-    try {
-      if (Platform.OS !== 'web') {
-        const Haptics = require('expo-haptics');
-        Haptics.selectionAsync().catch(() => {});
-      }
-    } catch {}
+    haptic.select();
 
     const meLc = (user?.email || '').toLowerCase();
     // Prefer server-computed peer (never returns the caller themselves).
@@ -5164,7 +5166,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // the built-in filters (all/unread/groups/…) ignore long-press.
   const handleDeleteFolderChip = useCallback((folder) => {
     if (!folder?.id) return;
-    try { const Haptics = require('expo-haptics'); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+    haptic.medium();
     safeAlert(
       t('chat.deleteListTitle') || 'Excluir lista',
       (t('chat.deleteListMsg') || 'Tem certeza que deseja excluir a lista') + ` "${folder.name}"?`,
@@ -5178,7 +5180,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             setChatFolders(prev => prev.filter(x => x.id !== folder.id));
             setFilter(prev => (prev === `folder_${folder.id}` ? 'all' : prev));
             try { await api.chatFoldersDelete(folder.id); } catch {}
-            try { const Haptics = require('expo-haptics'); Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
+            haptic.success();
           },
         },
       ]
@@ -6141,32 +6143,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   }, [searchQuery, messageHits, searchingMessages, isDark, colors, router, wsDownBanner, t, hasDraftSection, draftConversations.length, draftsSectionOpen]);
 
   const ListEmptyComponent = useMemo(() => loading ? null : (
-    <View style={s.emptyContainer}>
-      <EmptyBubbles isDark={isDark} />
-      <View style={{ marginTop: 24 }}>
-        {isWeb ? (
-          <Text style={[s.emptyTitle, {
-            backgroundImage: `linear-gradient(135deg, ${ACCENT} 0%, #A78BFA 50%, ${ACCENT2} 100%)`,
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            backgroundClip: 'text',
-          }]}>{t('chat.empty') || 'Comece uma conversa'}</Text>
-        ) : (
-          <Text style={[s.emptyTitle, { color: colors.text }]}>{t('chat.empty') || 'Comece uma conversa'}</Text>
-        )}
-      </View>
-      <Text style={[s.emptySubtitle, { color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)' }]}>{t('chat.emptyDesc')}</Text>
-      <TouchableOpacity
-        style={[s.emptyAction, isWeb && {
-          background: `linear-gradient(135deg, ${ACCENT} 0%, #A78BFA 100%)`,
-        }]}
-        onPress={() => router.push('/chat-new')}
-        activeOpacity={0.8}
-      >
-        <Text style={s.emptyActionText}>{t('chat.newConversation') || 'Iniciar conversa'}</Text>
-      </TouchableOpacity>
-    </View>
-  ), [loading, isDark, colors, t, router]);
+    <ScreenEmptyState
+      kind="chat"
+      title={t('chat.empty') || 'Comece uma conversa'}
+      subtitle={t('chat.emptyDesc')}
+      cta={{ label: t('chat.newConversation') || 'Iniciar conversa', icon: 'plus', onPress: () => router.push('/chat-new') }}
+    />
+  ), [loading, t, router]);
 
   const ItemSeparatorComponent = useCallback(() => (
     <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', marginLeft: 79, marginRight: 16 }]} />
@@ -6315,7 +6298,9 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 }
               } catch {}
             }
-            return [0, 1, 2, 3, 4, 5, 6].map(i => <SkeletonRow key={i} isDark={isDark} index={i} />);
+            // Android/web: shared shimmer skeleton (the local SkeletonRow had
+            // no shimmer animation off-iOS, so it just sat there as flat bars).
+            return <ChatListSkeleton count={7} />;
           })()}
         </View>
       ) : (

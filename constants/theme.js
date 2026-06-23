@@ -677,3 +677,10 @@ export const AnimTiming = {
   standard: 'cubic-bezier(0.4, 0.0, 0.2, 1)',
   overshoot: 'cubic-bezier(0.34, 1.56, 0.64, 1)',
 };
+
+// Grace period (ms) before the "Reconectando…" banner is shown after a WS
+// disconnect. Shared across the chat conversation screen and the chat list so
+// the banner appears/disappears at the same cadence everywhere — previously
+// chat-conversation used 5000ms and ChatListTab used 12000-15000ms, which made
+// the banner flicker on one screen but not the other during the same blip.
+export const RECONNECT_BANNER_GRACE_MS = 9000;

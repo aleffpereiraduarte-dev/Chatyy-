@@ -742,7 +742,7 @@ function CallScreenInner() {
   const reconnectMicroFade = useRef(new Animated.Value(0)).current;
 
   // Draggable PiP
-  const pipPosition = useRef(new Animated.ValueXY({ x: SCREEN_W - 126, y: 80 })).current;
+  const pipPosition = useRef(new Animated.ValueXY({ x: SCREEN_W - 124, y: insets.top + 16 })).current;
   const pipPanResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
@@ -751,11 +751,16 @@ function CallScreenInner() {
       onPanResponderMove: Animated.event([null, { dx: pipPosition.x, dy: pipPosition.y }], { useNativeDriver: false }),
       onPanResponderRelease: (_, g) => {
         pipPosition.flattenOffset();
+        // [polish] Tap (not drag) → swap which video fills the screen vs PiP.
+        if (Math.abs(g.dx) < 5 && Math.abs(g.dy) < 5) {
+          setPipSwapped((s) => !s);
+          return;
+        }
         // Apply velocity decay (FaceTime-style fling) before snapping.
         const projX = g.moveX + (g.vx || 0) * 0.15 * SCREEN_W;
         const projY = g.moveY + (g.vy || 0) * 0.15 * SCREEN_H;
-        const snapX = projX > SCREEN_W / 2 ? SCREEN_W - 126 : 16;
-        const snapY = Math.max(60, Math.min(projY - 80, SCREEN_H - 340));
+        const snapX = projX > SCREEN_W / 2 ? SCREEN_W - 124 : 16;
+        const snapY = Math.max(insets.top + 16, Math.min(projY - 80, SCREEN_H - 340));
         Animated.spring(pipPosition, { toValue: { x: snapX, y: snapY }, friction: 7, tension: 100, useNativeDriver: false }).start();
       },
     })
@@ -769,6 +774,8 @@ function CallScreenInner() {
   // PanResponder.onMoveShouldSet only fires when two fingers register a delta
   // > 8px to avoid hijacking the regular tap-to-toggle-controls gesture.
   const remoteZoomScale = useRef(new Animated.Value(1)).current;
+  // [polish] Soft cross-fade when remote video appears (avatar → video).
+  const remoteVideoFadeAnim = useRef(new Animated.Value(0)).current;
   const remoteZoomBaseRef = useRef(1);
   const remoteZoomCurrentRef = useRef(1);
   const remotePinchResponder = useRef(
@@ -809,6 +816,25 @@ function CallScreenInner() {
       },
     })
   ).current;
+
+  // [polish] Tap-to-swap which video fills the screen vs the PiP (FaceTime-
+  // style). Pure render swap of which existing track goes to which existing
+  // VideoView — never touches publish/subscribe.
+  const [pipSwapped, setPipSwapped] = useState(false);
+
+  // [polish] Soft cross-fade when the remote video first appears (and reset
+  // when it goes away, so a camera-off→on cycle fades back in). Opacity only,
+  // native driver — never touches the media path.
+  useEffect(() => {
+    const remoteShown = !!(isVideoCall && peerConnected && peerVideoEnabled && remoteVideoTrack);
+    if (remoteShown) {
+      Animated.timing(remoteVideoFadeAnim, {
+        toValue: 1, duration: 250, useNativeDriver: true,
+      }).start();
+    } else {
+      remoteVideoFadeAnim.setValue(0);
+    }
+  }, [isVideoCall, peerConnected, peerVideoEnabled, remoteVideoTrack, remoteVideoFadeAnim]);
 
   // ───── Refs ─────
   const roomRef = useRef(null);
@@ -3372,6 +3398,7 @@ function CallScreenInner() {
 
   // ───── Toggles ─────
   const handleToggleMute = useCallback(async () => {
+    _hapticTap('medium');
     const r = roomRef.current;
     const newMuted = !audioMutedRef.current;
     // [bug 2026-05-18 web-mic-permission] If the user un-mutes mid-call on
@@ -3557,6 +3584,7 @@ function CallScreenInner() {
   }, [isGroupCall, handRaised, user, sendData, resetControlsTimer]);
 
   const handleToggleVideo = useCallback(async () => {
+    _hapticTap('light');
     const r = roomRef.current;
     // [2026-05-25] Adopted-native-room path. Same root cause as the mute
     // toggle: after a CallKit answer the JS Room is null (native owns the
@@ -3791,6 +3819,7 @@ function CallScreenInner() {
   }, [screenSharing, sendData, resetControlsTimer, t]);
 
   const handleToggleSpeaker = useCallback(async () => {
+    _hapticTap('light');
     const newSpeakerOn = !speakerOn;
     speakerToggledRef.current = true;
     setSpeakerOn(newSpeakerOn);
@@ -4254,6 +4283,15 @@ function CallScreenInner() {
   else if (peerScreenSharing) statusText = formatDuration(callDuration);
   else if (peerConnected) statusText = formatDuration(callDuration);
 
+  // [polish] Animated ellipsis only during genuine "waiting" phases — never on
+  // ended / failed / error / connected states.
+  const waitingPhase = !ended && !connectionFailed && !errorMsg && !peerConnected && (
+    peerRinging ||
+    (showReconnectBanner) ||
+    connectPhase === 'slow' || connectPhase === 'establishing' || connectPhase === 'connecting' ||
+    (isCaller)
+  );
+
   // ───── Signal bars ─────
   // Tapping the bars opens the audio diagnostics modal — same path as
   // More → Diagnóstico, just discoverable from the status strip.
@@ -4297,6 +4335,18 @@ function CallScreenInner() {
   const remoteVideoAvailable = !!remoteVideoTrack && (Platform.OS === 'web' || !!LK_VideoView);
   const showRemoteVideo = isVideoCall && peerConnected && peerVideoEnabled && remoteVideoAvailable;
   const showLocalVideo = videoEnabled && !!localVideoTrack && (Platform.OS === 'web' || !!LK_VideoView);
+
+  // [polish] Tap-to-swap. The swap only takes effect when BOTH a remote AND a
+  // local track are live (otherwise nothing to swap into the PiP). Pure render
+  // selection of which existing track object goes to which existing VideoView —
+  // publish/subscribe is untouched.
+  const swapActive = pipSwapped && showRemoteVideo && !!localVideoTrack && videoEnabled;
+  // Track + mirror for the FULLSCREEN remote VideoView.
+  const fullVideoTrack = swapActive ? localVideoTrack : remoteVideoTrack;
+  const fullVideoMirror = swapActive ? facingFront : false;
+  // Track + mirror for the PiP VideoView.
+  const pipVideoTrack = swapActive ? remoteVideoTrack : localVideoTrack;
+  const pipVideoMirror = swapActive ? false : facingFront;
 
   return (
     <View style={styles.container}>
@@ -4344,14 +4394,14 @@ function CallScreenInner() {
       {LK_VideoView && remoteVideoTrack && isVideoCall && peerConnected && peerVideoEnabled && (
         <Animated.View
           {...(!isGroupCall ? remotePinchResponder.panHandlers : {})}
-          style={[StyleSheet.absoluteFill, { transform: [{ scale: remoteZoomScale }] }]}
+          style={[StyleSheet.absoluteFill, { opacity: remoteVideoFadeAnim, transform: [{ scale: remoteZoomScale }] }]}
         >
           <LK_VideoView
-            videoTrack={remoteVideoTrack}
+            videoTrack={fullVideoTrack}
             style={StyleSheet.absoluteFill}
             objectFit="cover"
             zOrder={0}
-            mirror={false}
+            mirror={fullVideoMirror}
           />
         </Animated.View>
       )}
@@ -4670,6 +4720,27 @@ function CallScreenInner() {
             </View>
           )}
 
+          {/* [polish] Peer camera-off banner. In a video call, when the peer
+              turns OFF their camera the remote hard-cuts to the avatar with no
+              explanation — this small label says why. Suppressed while the peer
+              is on hold (the hold overlay covers that case). */}
+          {isVideoCall && peerConnected && !peerVideoEnabled && !peerOnHold && !ended && (
+            <View style={styles.peerMutedBanner} pointerEvents="none">
+              <IconVideoOff size={15} color="#fff" />
+              <Text style={styles.peerMutedBannerText}>{t('call.peerCameraOff') || 'Câmera desligada'}</Text>
+            </View>
+          )}
+
+          {/* [polish] Video loading placeholder. Peer's camera is ON but the
+              remote track hasn't arrived yet (1-3s). Show "starting video"
+              instead of a frozen avatar. */}
+          {isVideoCall && peerConnected && peerVideoEnabled && !remoteVideoAvailable && !peerOnHold && !ended && (
+            <View style={styles.peerMutedBanner} pointerEvents="none">
+              <ActivityIndicator size="small" color="#fff" />
+              <Text style={styles.peerMutedBannerText}>{t('call.video.connecting') || 'Iniciando vídeo…'}</Text>
+            </View>
+          )}
+
           {/* Center avatar (audio-only / pre-connect) */}
           {!showRemoteVideo && (
             <View style={[styles.centerArea, { paddingTop: insets.top, paddingBottom: insets.bottom + 180 }]}>
@@ -4762,7 +4833,10 @@ function CallScreenInner() {
                   </View>
                 )}
               </View>
-              <Text style={[styles.centerStatus, connectionFailed && { color: '#ef4444' }]}>{statusText}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={[styles.centerStatus, connectionFailed && { color: '#ef4444' }]}>{statusText}</Text>
+                {waitingPhase && <AnimatedEllipsis color="rgba(255,255,255,0.85)" size={16} />}
+              </View>
               {ended && (
                 <Text style={styles.endedHint}>{t('call.ended') || 'Chamada encerrada'}</Text>
               )}
@@ -4863,17 +4937,16 @@ function CallScreenInner() {
           style={[
             styles.localVideoContainer,
             {
-              top: insets.top + 16,
               transform: pipPosition.getTranslateTransform(),
               opacity: flipCameraFadeAnim,
             },
           ]}
         >
           <LK_VideoView
-            videoTrack={localVideoTrack}
+            videoTrack={pipVideoTrack}
             style={styles.localVideo}
             objectFit="cover"
-            mirror={facingFront}
+            mirror={pipVideoMirror}
             zOrder={1}
           />
           <TouchableOpacity style={styles.pipFlipBtn} onPress={handleFlipCamera} activeOpacity={0.7}>
@@ -5586,6 +5659,34 @@ function CallingPulseRings({ size = 168 }) {
   );
 }
 
+// [polish] Animated three-dot ellipsis for wait states ("Chamando…",
+// "Conectando…", "Reconectando…"). Self-contained, native-driver opacity loop.
+// Renders next to the status text; the caller decides when to show it.
+function AnimatedEllipsis({ color = '#fff', size = 15 }) {
+  const dots = [useRef(new Animated.Value(0.2)).current, useRef(new Animated.Value(0.2)).current, useRef(new Animated.Value(0.2)).current];
+  useEffect(() => {
+    const mk = (val, delay) => Animated.loop(
+      Animated.sequence([
+        Animated.delay(delay),
+        Animated.timing(val, { toValue: 1, duration: 350, useNativeDriver: true }),
+        Animated.timing(val, { toValue: 0.2, duration: 350, useNativeDriver: true }),
+        Animated.delay(450 - delay),
+      ])
+    );
+    const loops = dots.map((d, i) => mk(d, i * 200));
+    loops.forEach(l => l.start());
+    return () => loops.forEach(l => l.stop());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', marginLeft: 2 }} pointerEvents="none">
+      {dots.map((d, i) => (
+        <Animated.Text key={i} style={{ color, fontSize: size, fontWeight: '600', opacity: d, marginLeft: i === 0 ? 0 : 1 }}>·</Animated.Text>
+      ))}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#050509' },
   audioOverlay: { ...StyleSheet.absoluteFillObject, zIndex: 5 },
@@ -5791,7 +5892,7 @@ const styles = StyleSheet.create({
   controlBtnCircleScreenShare: { backgroundColor: 'rgba(255,255,255,0.96)', borderColor: 'rgba(255,255,255,0.7)' },
   controlLabel: { color: '#fff', fontSize: 11, fontWeight: '600', textAlign: 'center', letterSpacing: -0.1 },
   localVideoContainer: {
-    position: 'absolute', right: 16, top: 16,
+    position: 'absolute', left: 0, top: 0,
     width: 108, height: 150, borderRadius: 18, overflow: 'hidden', zIndex: 30,
     elevation: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
     shadowColor: '#000', shadowOpacity: 0.45, shadowRadius: 16, shadowOffset: { width: 0, height: 8 },

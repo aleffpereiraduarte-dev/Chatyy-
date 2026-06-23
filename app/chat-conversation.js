@@ -30,7 +30,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useConfirm } from '../components/ConfirmModal';
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, Shadow, RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
 import * as e2eService from '../services/e2e';
@@ -522,14 +522,16 @@ function MessageSendAnim({ children, animate, fromOther }) {
   const opacity = useRef(new Animated.Value((animate || fromOther) ? 0 : 1)).current;
   // Peer bubble starts smaller (0.7) so the spring "pop" is visible —
   // 0.85 was too subtle to read as a real iMessage entrance.
-  const scale = useRef(new Animated.Value(animate ? 0.35 : (fromOther ? 0.7 : 1))).current;
+  const scale = useRef(new Animated.Value(animate ? 0.88 : (fromOther ? 0.7 : 1))).current;
   useEffect(() => {
     if (animate) {
-      // iMessage bounce: snappy spring, some overshoot, anchored near send button.
+      // Own-send entrance: subtle settle (no heavy overshoot). Initial scale
+      // 0.88 + friction 10 settles in ~200ms with no bounce — reads as crisp,
+      // not slow. Keep the opacity fade.
       Animated.parallel([
-        Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 140, friction: 7 }),
-        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 7 }),
-        Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 130, friction: 7 }),
+        Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 140, friction: 9 }),
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 140, friction: 9 }),
+        Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 130, friction: 10 }),
         Animated.timing(opacity, { toValue: 1, duration: 110, useNativeDriver: true }),
       ]).start();
     } else if (fromOther) {
@@ -554,6 +556,30 @@ function MessageSendAnim({ children, animate, fromOther }) {
       {children}
     </Animated.View>
   );
+}
+
+// ============================================================
+// REACTION CHIP POP — spring entrance for newly-added reaction chips
+// ============================================================
+// Wraps a single reaction chip and springs it scale 0.5→1 the FIRST time that
+// (message, emoji) pair is seen. A module-level Set guards against re-popping:
+// FlatList recycling / re-renders unmount & remount the chip, but because we
+// record the popKey the second mount renders at scale 1 with no animation.
+// Only genuinely new reactions pop. Cheap: one Animated.Value + one spring.
+const _reactionPoppedKeys = new Set();
+function ReactionChipPop({ popKey, children }) {
+  const alreadyPopped = _reactionPoppedKeys.has(popKey);
+  const scale = useRef(new Animated.Value(alreadyPopped ? 1 : 0.5)).current;
+  useEffect(() => {
+    if (alreadyPopped) return;
+    _reactionPoppedKeys.add(popKey);
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 220, friction: 9 }).start();
+    // Bound the guard set so it can't grow without limit on long-lived sessions.
+    if (_reactionPoppedKeys.size > 2000) _reactionPoppedKeys.clear();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (alreadyPopped) return children;
+  return <Animated.View style={{ transform: [{ scale }] }}>{children}</Animated.View>;
 }
 
 // ============================================================
@@ -3145,8 +3171,13 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messageId, playing]);
 
-  const tintColor = isOwn ? '#fff' : '#7C3AED';
-  const tintDim = isOwn ? 'rgba(255,255,255,0.35)' : 'rgba(124,58,237,0.25)';
+  // On LIGHT theme the own bubble is light lavender, so white controls
+  // vanish. Use dark purple for own controls on light theme; keep white on
+  // dark. Received bubble colors unchanged.
+  const ownCtrl = isDarkMode ? '#fff' : '#5B21B6';
+  const ownCtrlSoft = isDarkMode ? 'rgba(255,255,255,0.85)' : 'rgba(91,33,182,0.85)';
+  const tintColor = isOwn ? ownCtrl : '#7C3AED';
+  const tintDim = isOwn ? (isDarkMode ? 'rgba(255,255,255,0.35)' : 'rgba(91,33,182,0.30)') : 'rgba(124,58,237,0.25)';
   const playedBarIdx = Math.floor(progress * waveformBars.length);
   const displayTime = playing ? currentTime : (duration || 0);
 
@@ -3165,12 +3196,12 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
           accessibilityLabel={t('chatConv.skipBack15') || 'Voltar 15 segundos'}
           accessibilityRole="button"
         >
-          <IconRotateCcw size={16} color={isOwn ? 'rgba(255,255,255,0.85)' : '#7C3AED'} />
-          <Text style={[audioStyles.skipLabel, { color: isOwn ? 'rgba(255,255,255,0.85)' : '#7C3AED' }]}>15</Text>
+          <IconRotateCcw size={16} color={isOwn ? ownCtrlSoft : '#7C3AED'} />
+          <Text style={[audioStyles.skipLabel, { color: isOwn ? ownCtrlSoft : '#7C3AED' }]}>15</Text>
         </TouchableOpacity>
       )}
       <View style={{ position: 'relative' }}>
-        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? 'rgba(255,255,255,0.25)' : '#7C3AED' }]} accessibilityLabel={caching ? (t('common.downloading') || 'Baixando') : playing ? (t('common.pause') || 'Pausar') : (t('common.play') || 'Reproduzir')} accessibilityRole="button">
+        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.25)' : '#5B21B6') : '#7C3AED' }]} accessibilityLabel={caching ? (t('common.downloading') || 'Baixando') : playing ? (t('common.pause') || 'Pausar') : (t('common.play') || 'Reproduzir')} accessibilityRole="button">
           {caching ? (
             <ActivityIndicator size={18} color="#fff" />
           ) : playing ? (
@@ -3192,8 +3223,8 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
           accessibilityLabel={t('chatConv.skipForward15') || 'Avançar 15 segundos'}
           accessibilityRole="button"
         >
-          <IconRotateCw size={16} color={isOwn ? 'rgba(255,255,255,0.85)' : '#7C3AED'} />
-          <Text style={[audioStyles.skipLabel, { color: isOwn ? 'rgba(255,255,255,0.85)' : '#7C3AED' }]}>15</Text>
+          <IconRotateCw size={16} color={isOwn ? ownCtrlSoft : '#7C3AED'} />
+          <Text style={[audioStyles.skipLabel, { color: isOwn ? ownCtrlSoft : '#7C3AED' }]}>15</Text>
         </TouchableOpacity>
       )}
       <View style={audioStyles.trackWrap}>
@@ -3289,9 +3320,9 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
             onPress={cycleSpeed}
             accessibilityLabel={`${t ? (t('chatConv.playbackSpeed') || 'Playback speed') : 'Playback speed'} ${speed}x`}
             accessibilityRole="button"
-            style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : 'rgba(124,58,237,0.15)' }}
+            style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.15)' : 'rgba(91,33,182,0.12)') : 'rgba(124,58,237,0.15)' }}
           >
-            <Text style={{ fontSize: 10, fontWeight: '800', color: isOwn ? 'rgba(255,255,255,0.8)' : '#7C3AED' }}>{speed}x</Text>
+            <Text style={{ fontSize: 10, fontWeight: '800', color: isOwn ? ownCtrlSoft : '#7C3AED' }}>{speed}x</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -8101,6 +8132,10 @@ function ChatConversationInner() {
   const pendingReadMsgIdRef = useRef(null); // Track pending read receipt msgId for flush-on-unmount
   const lastReadAckRef = useRef(0); // Highest message id we've already acked as read — skip re-acking same id
   const [presence, setPresence] = useState(null); // { status, last_seen }
+  // Wall-clock of the last time we received a fresh presence update. Used to
+  // gate the "online" label so we never falsely claim a peer is available when
+  // the data is stale (no presence push for >35s).
+  const presenceUpdatedAtRef = useRef(0);
   const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [mediaViewer, setMediaViewer] = useState({ visible: false, fileUrl: '', fileName: '', fileSize: 0, type: '', blurhash: null, placeholderUri: null, thumbUri: null });
   // Round video note viewer — stays circular (WhatsApp parity, never rect fullscreen).
@@ -9089,6 +9124,7 @@ function ChatConversationInner() {
         }
       }
       if (p) {
+        presenceUpdatedAtRef.current = Date.now();
         setPresence({ status: p.status, last_seen: p.last_seen });
       }
     });
@@ -11391,6 +11427,7 @@ function ChatConversationInner() {
           // than what's in params, which used to silently drop presence updates.
           const partnerEmail = (params.email || '').toLowerCase();
           if ((data.email || '').toLowerCase() === partnerEmail) {
+            presenceUpdatedAtRef.current = Date.now();
             setPresence(prev => ({
               status: data.status || prev?.status,
               last_seen: data.last_seen || prev?.last_seen,
@@ -11529,7 +11566,7 @@ function ChatConversationInner() {
                 setWsConnected(false);
               }
               wsDisconnectTimerRef.current = null;
-            }, 5000);
+            }, RECONNECT_BANNER_GRACE_MS);
           }
         }
       });
@@ -16970,7 +17007,12 @@ function ChatConversationInner() {
       return t('chat.typing') || 'digitando...';
     }
     if (presence) {
-      if (presence.status === 'online') {
+      // Only claim "online" when (a) our own socket is up — otherwise we can't
+      // be receiving live presence and showing green would be a lie — and (b)
+      // the presence data is fresh (<35s old). Stale/disconnected → fall back
+      // to the last-seen text without mutating the presence state itself.
+      const presenceFresh = (Date.now() - presenceUpdatedAtRef.current) < 35000;
+      if (presence.status === 'online' && wsConnected && presenceFresh) {
         return t('chatConv.online') || 'online';
       }
       if (presence.last_seen) {
@@ -16982,7 +17024,7 @@ function ChatConversationInner() {
       }
     }
     return '';
-  }, [conversationType, presence, typingUser, typingUsers, typingIsRecording, members, t]);
+  }, [conversationType, presence, typingUser, typingUsers, typingIsRecording, members, t, wsConnected]);
 
   const presenceColor = useMemo(() => {
     if (!presence || conversationType === 'group') return colors.textTertiary;
@@ -19959,9 +20001,11 @@ function ChatConversationInner() {
             ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.18)')
             : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)');
           const dividerColor = isOwn
-            ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.25)')
+            ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(91,33,182,0.18)')
             : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
-          const accent = isOwn ? '#fff' : '#7C3AED';
+          // Own bubble on LIGHT theme is light lavender — a white accent on the
+          // faint white-wash card vanished. Dark purple on light, white on dark.
+          const accent = isOwn ? (isDark ? '#fff' : '#5B21B6') : '#7C3AED';
           const handleStartChat = () => {
             if (ctEmail) {
               try { router.push(`/chat-new?email=${encodeURIComponent(ctEmail)}`); } catch {}
@@ -20397,7 +20441,9 @@ function ChatConversationInner() {
             : isVideo
               ? (t('status.typeVideo') || 'Vídeo')
               : '';
-          const accent = isOwn ? 'rgba(255,255,255,0.85)' : colors.primary;
+          // Own bubble on LIGHT theme: white accent stripe vanished on light
+          // lavender — use a visible purple stripe; keep white on dark.
+          const accent = isOwn ? (isDark ? 'rgba(255,255,255,0.85)' : 'rgba(91,33,182,0.85)') : colors.primary;
           // Status TTL = 24h. WhatsApp pattern: when user taps an expired
           // snapshot, show "Status nao disponivel" toast in vez de navegar
           // pra um profile que vai falhar silenciosamente. Backend agora
@@ -21891,7 +21937,11 @@ function ChatConversationInner() {
               // surface — light stays crisp white with a hairline; dark moves
               // to a slightly lighter slate-purple (#262135) so body text and
               // the meta row keep strong contrast against the wallpaper.
-              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#262135' : '#FFFFFF'), ...(isDark ? {} : { borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.05)' }) }],
+              // [contrast 2026-06-23] Light received bubble barely separated
+              // from the wallpaper — bump the hairline border opacity
+              // 0.05→0.08 (paired with the shadow bump in styles.bubbleOther)
+              // so it reads as a distinct surface. Dark unchanged.
+              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#262135' : '#FFFFFF'), ...(isDark ? {} : { borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.08)', ...(Platform.OS === 'ios' ? { shadowOpacity: 0.08, shadowRadius: 5 } : {}) }) }],
             // Bubble shape (settings.js `bubble_shape`). Layered AFTER the
             // default bubbleOwn/bubbleOther corner radii so it overrides them,
             // but BEFORE the isFirstInGroup tail override below so the tail
@@ -21985,7 +22035,9 @@ function ChatConversationInner() {
             const heavyWarn = fc >= 10;
             const labelColor = heavyWarn
               ? (colors.error || '#ef4444')
-              : (isOwn ? 'rgba(255,255,255,0.65)' : colors.textTertiary);
+              // Own bubble on LIGHT theme is light lavender — white-65% text
+              // vanished. Use a muted dark purple on light, keep white on dark.
+              : (isOwn ? (isDark ? 'rgba(255,255,255,0.65)' : 'rgba(91,33,182,0.70)') : colors.textTertiary);
             // Resolve display name: forwarded_from_name (server-supplied via
             // metadata) > emailToDisplayName(forwarded_from) > raw email local
             // part. Falls through gracefully if any are missing.
@@ -22542,8 +22594,8 @@ function ChatConversationInner() {
               const meEmailL = (currentEmail || '').toLowerCase();
               const meReacted = users.some(u => (u || '').toLowerCase() === meEmailL);
               return (
+                <ReactionChipPop key={emoji} popKey={`${msg.id}:${emoji}`}>
                 <TouchableOpacity
-                  key={emoji}
                   // WhatsApp UX: tap YOUR OWN reaction → remove it.
                   // Tap a reaction you didn't give → open the reactor list.
                   // Long-press any reaction → open reactor list (fallback so
@@ -22581,6 +22633,7 @@ function ChatConversationInner() {
 
                   <Text style={[styles.reactionCount, { color: colors.text, fontWeight: meReacted ? '700' : '500' }]}>{users.length}</Text>
                 </TouchableOpacity>
+                </ReactionChipPop>
               );
             })}
                   {overflowCount > 0 && (
@@ -22960,7 +23013,7 @@ function ChatConversationInner() {
                 setAvatarLightbox({ name: conversationName, email: friendEmail, uri: null });
               }}
             />
-            {presence?.status === 'online' && conversationType === 'direct' && (
+            {presence?.status === 'online' && wsConnected && conversationType === 'direct' && (
               <PresencePulse isDark={isDark} />
             )}
           </View>
@@ -22977,7 +23030,10 @@ function ChatConversationInner() {
                     Only shown when actually online (not while typing — typing
                     has its own animated dots beside the text). Adds a quick
                     visual scan: dot present = available now. */}
-                {presence?.status === 'online' && !isTyping && (
+                {/* Green pip ONLY when our socket is up (live online). When our
+                    WS is down we can't trust "online" — render a muted gray dot
+                    instead so we never falsely signal availability. */}
+                {presence?.status === 'online' && !isTyping && wsConnected && (
                   <View
                     style={{
                       width: 7, height: 7, borderRadius: 3.5,
@@ -22986,10 +23042,18 @@ function ChatConversationInner() {
                     }}
                   />
                 )}
+                {presence?.status === 'online' && !isTyping && !wsConnected && (
+                  <View
+                    style={{
+                      width: 7, height: 7, borderRadius: 3.5,
+                      backgroundColor: 'rgba(255,255,255,0.45)',
+                    }}
+                  />
+                )}
                 <PresenceTextFade
                   text={presenceText}
                   style={[styles.headerSubtitle, {
-                    color: presence?.status === 'online' && !isTyping ? '#4ade80' : 'rgba(255,255,255,0.7)',
+                    color: presence?.status === 'online' && !isTyping && wsConnected ? '#4ade80' : 'rgba(255,255,255,0.7)',
                     ...(isTyping ? { fontStyle: 'italic' } : {}),
                     flexShrink: 1,
                   }]}
