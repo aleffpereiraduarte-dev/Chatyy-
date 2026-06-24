@@ -2234,23 +2234,28 @@ export default function LoginScreen() {
                             >
                               <Text style={[s.linkText, { color: colors.primary }]}>{t('login.phoneChangeNumber')}</Text>
                             </TouchableOpacity>
-                            {phoneResendTimer > 0 ? (
-                              <Text style={[s.linkText, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>
-                                {t('login.phoneResendIn')} {phoneResendTimer}s
+                            {/* [2026-06-23] Reenviar SEMPRE tocável: o cronômetro é um
+                                setInterval que congela quando o app vai pro background
+                                (o user minimiza pra esperar o SMS), então gatear o botão
+                                pelo timer prendia o user. O cooldown REAL é no servidor
+                                (enforcePhoneOtpSendLimit) — se tocar cedo, ele responde
+                                "aguarde Xs". O contador vira só uma dica entre parênteses. */}
+                            <TouchableOpacity onPress={() => handlePhoneSendOtp('sms')} disabled={phoneSending} activeOpacity={0.6}>
+                              <Text style={[s.linkText, { color: colors.primary }]}>
+                                {t('login.phoneResend')}{phoneResendTimer > 0 ? ` (${phoneResendTimer}s)` : ''}
                               </Text>
-                            ) : (
-                              <TouchableOpacity onPress={() => handlePhoneSendOtp('sms')} disabled={phoneSending} activeOpacity={0.6}>
-                                <Text style={[s.linkText, { color: colors.primary }]}>{t('login.phoneResend')}</Text>
-                              </TouchableOpacity>
-                            )}
+                            </TouchableOpacity>
                           </View>
 
                           {/* Fallback por ligação (paridade WhatsApp/Telegram): quando
                               o SMS não chega, o user pede uma CHAMADA onde a voz pt-BR
                               da Vonage lê o código em voz alta. Vai sempre pelo backend
-                              (Vonage), nunca pelo Firebase — só aparece depois que o
-                              cronômetro de reenvio zera, pra não competir com o SMS. */}
-                          {phoneResendTimer === 0 && !phoneRequiresLock && (
+                              (Vonage), nunca pelo Firebase. [2026-06-23] Aparece IMEDIATO
+                              (não espera o cronômetro): operadoras (T-Mobile US 10DLC +
+                              BR) filtram silenciosamente o SMS A2P de LVN, então o user
+                              precisa do "me ligue" na hora, sem ficar esperando um SMS
+                              que nunca chega. */}
+                          {!phoneRequiresLock && (
                             <TouchableOpacity
                               onPress={() => handlePhoneSendOtp('voice')}
                               disabled={phoneSending}
