@@ -1688,6 +1688,36 @@ class MailWebSocket {
         }
         break;
 
+      // [2026-06-23] The LIVE C++ hub (main.cpp:530 on_resume_message)
+      // signals end of a replay batch with {type:'resume_complete', count}
+      // — NOT 'resume_result'. The client only knew 'resume_result', so
+      // 'resume_complete' fell through to default and `_resumeInFlight`
+      // NEVER reset to false → after the FIRST reconnect of a session the
+      // resume request was gated out (see the `if (!this._resumeInFlight)`
+      // guard before `_send({type:'resume'})`) and catch-up of missed
+      // events silently died until cold start. The replayed events were
+      // already dispatched through the normal handlers (each carries its
+      // event_id, advancing _lastEventId), so here we just clear the flag.
+      case 'resume_complete':
+        this._resumeInFlight = false;
+        try {
+          const _rcCount = (typeof msg.count === 'number') ? msg.count : 0;
+          this._emit('resume_result', {
+            count: _rcCount,
+            has_more: false,
+            last_event_id: this._lastEventId,
+          });
+          // Belt-and-suspenders: if we were actually behind (replayed > 0),
+          // the hub may have capped the replay batch. Nudge the existing
+          // idempotent HTTP catch-up (chat screens wire `foreground` →
+          // chat_sync, last_seq-filtered so a duplicate is a no-op) so no
+          // gap survives a large backlog. Cheap; skipped when count===0.
+          if (_rcCount > 0 && !this.destroyed) {
+            this._emit('foreground', { ts: Date.now(), source: 'resume_complete' });
+          }
+        } catch {}
+        break;
+
       // Server says "you're too far behind — drop your local state and
       // do a full sync via HTTP." We emit `resume_full_sync` so chat
       // screens can trigger their existing catch-up paths (chat list +
