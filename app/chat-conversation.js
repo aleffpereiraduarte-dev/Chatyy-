@@ -2220,7 +2220,7 @@ function bumpEmojiUsage(emoji) {
 // iMessage-style reaction button: staggered spring-in on mount, press-down
 // squish + release pop on tap. Each button manages its own Animated.Value so
 // they don't collide with other active reactions on the screen.
-function ReactionButton({ emoji, onPress, index, isPlus, colors, isDark }) {
+function ReactionButton({ emoji, onPress, index, isPlus, colors, isDark, isActive }) {
   const scale = useRef(new Animated.Value(0)).current;
   const pressScale = useRef(new Animated.Value(1)).current;
   useEffect(() => {
@@ -2239,6 +2239,9 @@ function ReactionButton({ emoji, onPress, index, isPlus, colors, isDark }) {
     return () => clearTimeout(t);
   }, []);
   const handlePressIn = () => {
+    // Tactile click on touch-DOWN (not on release) so each emoji feels
+    // physical the instant the finger lands — iMessage-grade. Gated off web.
+    try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
     Animated.spring(pressScale, { toValue: 0.82, tension: 400, friction: 10, useNativeDriver: true }).start();
   };
   const handlePressOut = () => {
@@ -2257,7 +2260,12 @@ function ReactionButton({ emoji, onPress, index, isPlus, colors, isDark }) {
         width: isPlus ? 40 : 48,
         height: isPlus ? 40 : 48,
         borderRadius: isPlus ? 20 : 24,
-        backgroundColor: isPlus ? (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)') : 'transparent',
+        // Highlight the emoji the user has ALREADY reacted with (translucent
+        // accent chip) so they can see their current pick and understand that
+        // tapping it again removes the reaction. WhatsApp/iMessage parity.
+        backgroundColor: isActive
+          ? ((colors?.primary || '#7C3AED') + '22')
+          : (isPlus ? (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)') : 'transparent'),
         justifyContent: 'center',
         alignItems: 'center',
       }}
@@ -2397,6 +2405,101 @@ function TypingDotsFade({ visible, color }) {
   return (
     <Animated.View style={{ opacity }}>
       <TypingDots color={color} />
+    </Animated.View>
+  );
+}
+
+// Header subtitle presence pip — the small dot next to "online"/"visto por
+// último". Two upgrades over the old static <View>:
+//   1. When ONLINE it PULSES — a green halo scales 1→2.6 behind the dot, the
+//      same living cue the avatar's PresencePulse and the chat-list dot use,
+//      so the header matches the rest of the app.
+//   2. It stays MOUNTED across the online↔offline transition and cross-fades
+//      colour/opacity (green ↔ muted grey) instead of popping in/out — mirrors
+//      the TypingDotsFade fade pattern so the whole presence line settles
+//      together. `online` here means "live online" (peer online AND our socket
+//      up); anything else renders the muted grey dot. While typing the pip is
+//      faded out (typing has its own animated dots beside the text).
+function HeaderPresencePip({ online, dimmedOnline, hidden }) {
+  const ringScale = useRef(new Animated.Value(1)).current;
+  const ringOpacity = useRef(new Animated.Value(0)).current;
+  // Cross-fade target colour for the solid dot (green when live, grey when
+  // socket down). Driven via a 0→1 progress value so we can interpolate.
+  const colorProg = useRef(new Animated.Value(online ? 1 : 0)).current;
+  const wrapOpacity = useRef(new Animated.Value(hidden ? 0 : 1)).current;
+
+  // Fade the whole pip in/out (typing hides it) without unmounting.
+  useEffect(() => {
+    Animated.timing(wrapOpacity, {
+      toValue: hidden ? 0 : 1,
+      duration: hidden ? 180 : 200,
+      useNativeDriver: Platform.OS !== 'web',
+    }).start();
+  }, [hidden, wrapOpacity]);
+
+  // Smoothly transition the dot colour on the online↔offline (grey) flip.
+  useEffect(() => {
+    Animated.timing(colorProg, {
+      toValue: online ? 1 : 0,
+      duration: 260,
+      // colour interpolation can't use the native driver.
+      useNativeDriver: false,
+    }).start();
+  }, [online, colorProg]);
+
+  // Pulse the halo only while live-online (and not hidden). Loop scales the
+  // ring 1→2.6 + fades it out, like the list/avatar dots. Native driver.
+  useEffect(() => {
+    let loop;
+    const active = online && !hidden;
+    if (active) {
+      ringScale.setValue(1);
+      ringOpacity.setValue(0.45);
+      loop = Animated.loop(
+        Animated.parallel([
+          Animated.sequence([
+            Animated.timing(ringScale, { toValue: 2.6, duration: 1800, easing: Easing.out(Easing.quad), useNativeDriver: Platform.OS !== 'web' }),
+            Animated.timing(ringScale, { toValue: 1, duration: 0, useNativeDriver: Platform.OS !== 'web' }),
+          ]),
+          Animated.sequence([
+            Animated.timing(ringOpacity, { toValue: 0, duration: 1800, useNativeDriver: Platform.OS !== 'web' }),
+            Animated.timing(ringOpacity, { toValue: 0.45, duration: 0, useNativeDriver: Platform.OS !== 'web' }),
+          ]),
+        ])
+      );
+      loop.start();
+    } else {
+      ringOpacity.setValue(0);
+    }
+    return () => { try { loop?.stop?.(); } catch {} };
+  }, [online, hidden, ringScale, ringOpacity]);
+
+  const dotColor = colorProg.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['rgba(255,255,255,0.45)', dimmedOnline ? 'rgba(255,255,255,0.45)' : '#4ade80'],
+  });
+
+  return (
+    <Animated.View style={{ width: 7, height: 7, alignItems: 'center', justifyContent: 'center', opacity: wrapOpacity }}>
+      {/* Pulsing halo (only visible while live-online) */}
+      <Animated.View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          width: 7, height: 7, borderRadius: 3.5,
+          backgroundColor: '#4ade80',
+          opacity: ringOpacity,
+          transform: [{ scale: ringScale }],
+        }}
+      />
+      {/* Solid dot — colour cross-fades green↔grey on the presence flip */}
+      <Animated.View
+        style={{
+          width: 7, height: 7, borderRadius: 3.5,
+          backgroundColor: dotColor,
+          ...(Platform.OS === 'web' && online && !dimmedOnline ? { boxShadow: '0 0 6px rgba(74, 222, 128, 0.6)' } : {}),
+        }}
+      />
     </Animated.View>
   );
 }
@@ -2671,12 +2774,16 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
   }, [waveform, url]);
 
   const cycleSpeed = useCallback(() => {
-    // Granular speed wheel — extended range for accessibility:
-    // 0.5x for users who need slower playback (older listeners),
-    // 3x for power-users skipping intros. Common rates first.
-    const SPEEDS = [1, 1.25, 1.5, 1.75, 2, 2.5, 3, 0.5, 0.75];
+    // Monotonic ascending speed wheel — WhatsApp/Telegram parity. The prior
+    // array jumped 3x → 0.5x → 0.75x mid-cycle, which read as a bug ("why did
+    // it suddenly go slow-mo?"). Wrapping a strictly-ascending list is the
+    // predictable mental model users expect from the 1x/1.5x/2x toggle.
+    const SPEEDS = [1, 1.5, 2];
     const idx = SPEEDS.indexOf(speed);
     const next = SPEEDS[(idx + 1) % SPEEDS.length] ?? 1;
+    // Light selection tick on each speed change so the toggle feels tactile
+    // (iMessage/WhatsApp parity). Gated off web where Haptics is a no-op.
+    try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
     setSpeed(next);
     _persistVoiceRate(next);
     if (soundRef.current) {
@@ -3232,23 +3339,36 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
           // Seek handler — map touch X within the waveform to a playback
           // position. Works on web (HTMLAudioElement.currentTime) and native
           // (expo-audio AudioPlayer.seekTo).
-          const onSeek = async (evt, layoutWidth) => {
+          const _ratioFrom = (evt, layoutWidth) => {
             const x = evt?.nativeEvent?.locationX ?? 0;
-            if (!layoutWidth || layoutWidth <= 0) return;
-            const ratio = Math.max(0, Math.min(1, x / layoutWidth));
+            if (!layoutWidth || layoutWidth <= 0) return null;
+            return Math.max(0, Math.min(1, x / layoutWidth));
+          };
+          // While dragging we ONLY repaint the bars + time label (cheap, local
+          // state) and never touch the player — calling seekTo on every move
+          // event flooded expo-audio with seeks and made scrubbing stutter.
+          const onScrubMove = (evt, layoutWidth) => {
+            const ratio = _ratioFrom(evt, layoutWidth);
+            if (ratio == null) return;
+            setProgress(ratio);
+            setCurrentTime((duration || 0) * ratio);
+          };
+          // The real seek happens ONCE, on release, at the final position.
+          const onScrubRelease = async (evt, layoutWidth) => {
+            const ratio = _ratioFrom(evt, layoutWidth);
+            if (ratio == null) return;
             const snd = soundRef.current;
-            if (!snd) { setProgress(ratio); return; }
+            setProgress(ratio);
+            if (!snd) { return; }
             try {
               if (Platform.OS === 'web') {
                 const dur = snd.duration;
                 if (dur && isFinite(dur)) snd.currentTime = dur * ratio;
-                setProgress(ratio);
                 setCurrentTime((dur || 0) * ratio);
               } else {
                 const dur = (duration || 0);
                 if (typeof snd.seekTo === 'function') await snd.seekTo(dur * ratio);
                 else if ('currentTime' in snd) snd.currentTime = dur * ratio;
-                setProgress(ratio);
                 setCurrentTime(dur * ratio);
               }
             } catch {}
@@ -3259,9 +3379,29 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
               style={audioStyles.waveformRow}
               onLayout={(e) => { wfWidth = e.nativeEvent.layout.width; }}
               onStartShouldSetResponder={() => true}
-              onResponderGrant={(e) => onSeek(e, wfWidth)}
-              onResponderMove={(e) => onSeek(e, wfWidth)}
+              onResponderGrant={(e) => onScrubMove(e, wfWidth)}
+              onResponderMove={(e) => onScrubMove(e, wfWidth)}
+              onResponderRelease={(e) => onScrubRelease(e, wfWidth)}
             >
+              {/* Scrubber thumb — small dot tracking the playhead so the user
+                  has a clear grab handle while dragging (WhatsApp parity). */}
+              <View
+                pointerEvents="none"
+                style={{
+                  position: 'absolute',
+                  top: '50%', marginTop: -4,
+                  left: `${Math.max(0, Math.min(1, progress)) * 100}%`,
+                  marginLeft: -4,
+                  width: 8, height: 8, borderRadius: 4,
+                  backgroundColor: tintColor,
+                  ...Platform.select({
+                    ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.25, shadowRadius: 2 },
+                    web: { boxShadow: '0 1px 3px rgba(0,0,0,0.25)' },
+                    default: { elevation: 2 },
+                  }),
+                  zIndex: 2,
+                }}
+              />
               {waveformBars.map((height, i) => {
                 const played = i < playedBarIdx;
                 // Distance to playhead — bar at the playhead pulses fully,
@@ -4863,11 +5003,14 @@ function VideoThumbImage({ url, thumbnailUrl, posterUrl, videoThumb, imageVarian
   const [idx, setIdx] = React.useState(0);
   if (idx >= candidates.length) return null;
   return (
-    <Image
+    <ExpoImage
       key={candidates[idx]}
       source={{ uri: candidates[idx] }}
       style={style}
-      resizeMode="cover"
+      contentFit="cover"
+      // Cross-dissolve the poster in like photos do ("focuses in") instead of
+      // the hard pop a plain <Image> gave. 220ms matches the photo bubble feel.
+      transition={{ duration: 220, effect: 'cross-dissolve' }}
       onError={() => setIdx(i => i + 1)}
     />
   );
@@ -5382,6 +5525,26 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
       if (intervalRef.current) clearInterval(intervalRef.current);
       if (waveIntervalRef.current) clearInterval(waveIntervalRef.current);
       if (voiceDraftPersistRef.current) { clearInterval(voiceDraftPersistRef.current); voiceDraftPersistRef.current = null; }
+      // Tear down the preview player on unmount so navigating away mid-preview
+      // doesn't leave the AVAudioSession grabbed (Spotify stays paused). Inline
+      // teardown — teardownPreviewPlayer is defined later in the component but
+      // is captured by the time this cleanup runs.
+      if (previewIntervalRef.current) { clearInterval(previewIntervalRef.current); previewIntervalRef.current = null; }
+      const _pp = previewAudioRef.current;
+      if (_pp) {
+        if (Platform.OS === 'web') {
+          try { _pp.pause?.(); } catch {}
+        } else {
+          try { _pp._previewSub?.remove?.(); } catch {}
+          try { _pp.pause?.(); } catch {}
+          try { _pp.remove?.(); } catch {}
+          try {
+            const { setAudioModeAsync } = require('expo-audio');
+            setAudioModeAsync?.({ interruptionMode: 'mixWithOthers', interruptionModeAndroid: 'mixWithOthers' }).catch(() => {});
+          } catch {}
+        }
+        previewAudioRef.current = null;
+      }
       if (Platform.OS === 'web') {
         try {
           const mr = mediaRecorderRef.current;
@@ -5889,10 +6052,9 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
 
   // DELETE preview and exit
   const handleDeletePreview = () => {
-    try {
-      if (Platform.OS === 'web' && previewAudioRef.current) previewAudioRef.current.pause();
-    } catch {}
-    if (previewIntervalRef.current) { clearInterval(previewIntervalRef.current); previewIntervalRef.current = null; }
+    // Fully tear down the native/web preview player + restore mixWithOthers
+    // so the deleted recording stops holding the audio session.
+    teardownPreviewPlayer();
     if (previewData?.uri && Platform.OS === 'web') {
       try { URL.revokeObjectURL(previewData.uri); } catch {}
     }
@@ -5938,6 +6100,31 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
         if (!previewAudioRef.current) {
           const player = AudioModule?.default ? new AudioModule.default.AudioPlayer(previewData.uri) : null;
           previewAudioRef.current = player;
+          // Drive the preview waveform from the player's playback clock —
+          // MIRRORS the message-audio player at ~line 3040. Without this the
+          // native preview played but previewProgress never moved, so the
+          // bars sat frozen and the button stayed stuck on "playing" even
+          // after the clip finished. Reset to Play + zero progress on end.
+          try {
+            if (player && typeof player.addListener === 'function') {
+              const sub = player.addListener('playbackStatusUpdate', (s) => {
+                if (!s) return;
+                const dur = Number(s.duration) || 0;
+                const cur = Number(s.currentTime) || 0;
+                if (s.playing && dur > 0) {
+                  setPreviewProgress(Math.max(0, Math.min(1, cur / dur)));
+                }
+                // Finished on its own → flip back to Play, rewind the bars.
+                if (!s.playing && dur > 0 && cur >= dur - 0.05) {
+                  setPreviewPlaying(false);
+                  setPreviewProgress(0);
+                  try { player.seekTo?.(0); } catch {}
+                }
+              });
+              // Stash the subscription so teardown can remove it (leak fix).
+              player._previewSub = sub;
+            }
+          } catch {}
         }
         const player = previewAudioRef.current;
         if (!player) return;
@@ -5952,8 +6139,37 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
     }
   };
 
+  // Tear down the native preview player + hand the audio session back to the
+  // OS. Without this the AVAudioSession stayed grabbed after the user deleted
+  // a recording, so Spotify/YouTube never resumed ("apaguei o áudio mas a
+  // música não voltou"). MIRRORS the message-audio cleanup at ~2808-2824.
+  const teardownPreviewPlayer = () => {
+    if (previewIntervalRef.current) { clearInterval(previewIntervalRef.current); previewIntervalRef.current = null; }
+    const p = previewAudioRef.current;
+    if (!p) return;
+    if (Platform.OS === 'web') {
+      try { p.pause?.(); } catch {}
+    } else {
+      try { p._previewSub?.remove?.(); } catch {}
+      try { p.pause?.(); } catch {}
+      try { p.remove?.(); } catch {}
+      // Release exclusivity so other apps' audio can resume (mixWithOthers).
+      try {
+        const { setAudioModeAsync } = require('expo-audio');
+        setAudioModeAsync?.({
+          interruptionMode: 'mixWithOthers',
+          interruptionModeAndroid: 'mixWithOthers',
+        }).catch(() => {});
+      } catch {}
+    }
+    previewAudioRef.current = null;
+  };
+
   const handleCancel = async () => {
     if (intervalRef.current) clearInterval(intervalRef.current);
+    // Release the preview player + audio session too (covers cancelling
+    // straight from the preview pill, not just an in-progress recording).
+    teardownPreviewPlayer();
     // Kill any pending pre-upload session — discards the partial file
     // server-side via the GC cron (sessions older than 10 min get cleaned).
     // Future: a dedicated chat_voice_session_abort would clean immediately.
@@ -15286,6 +15502,9 @@ function ChatConversationInner() {
     try {
       await Clipboard.setStringAsync(text);
       if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      // Confirm the copy with the standard toast (was silent before).
+      setScheduleToast(t('common.copied') || 'Copiado');
+      setTimeout(() => setScheduleToast(''), 2000);
     } catch (err) {
       console.warn('Copy error:', err);
     }
@@ -16708,6 +16927,9 @@ function ChatConversationInner() {
       if (Platform.OS !== 'web') {
         try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
       }
+      // Confirm the copy with the standard toast (was silent before).
+      setScheduleToast(t('common.copied') || 'Copiado');
+      setTimeout(() => setScheduleToast(''), 2000);
     } catch {}
   };
 
@@ -20140,13 +20362,17 @@ function ChatConversationInner() {
           // helper renders a small gray timestamp+checks row BELOW the sticker
           // for own messages (WhatsApp/Telegram parity).
           if (msg.file_url || (msg.content && msg.content.startsWith('http'))) {
+            const _stickerUri = msg.file_url || msg.content;
             return (
               <View>
                 <ChatMedia
-                  uri={msg.file_url || msg.content}
+                  uri={_stickerUri}
                   style={{ width: 120, height: 120 }}
                   contentFit="contain"
                   recyclingKey={`sticker-${msg.id}`}
+                  // Fade remote stickers in; instant for cached local files
+                  // (file:// guard mirrors the photo case).
+                  transition={typeof _stickerUri === 'string' && _stickerUri.startsWith('file://') ? 0 : { duration: 200, effect: 'cross-dissolve' }}
                 />
                 <MediaStatusFooter msg={msg} isOwn={isOwn} variant="sticker" />
               </View>
@@ -20294,7 +20520,23 @@ function ChatConversationInner() {
                 style={{ width: 220, height: 180 }}
                 contentFit="cover"
                 recyclingKey={`gif-${msg.id}`}
+                // Cross-dissolve remote GIFs in; skip the fade for already-cached
+                // local files (mirror the photo case's file:// guard) so they
+                // appear instantly with no flash.
+                transition={typeof gifUrl === 'string' && gifUrl.startsWith('file://') ? 0 : { duration: 200, effect: 'cross-dissolve' }}
               />
+              {/* Small "GIF" indicator pill — WhatsApp/Telegram parity so the
+                  bubble reads as an animated GIF, not a still image. */}
+              <View
+                pointerEvents="none"
+                style={{
+                  position: 'absolute', left: 8, bottom: 8,
+                  paddingHorizontal: 6, paddingVertical: 2,
+                  borderRadius: 5, backgroundColor: 'rgba(0,0,0,0.55)',
+                }}
+              >
+                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>GIF</Text>
+              </View>
               <MediaStatusFooter msg={msg} isOwn={isOwn} />
             </View>
           );
@@ -23033,21 +23275,11 @@ function ChatConversationInner() {
                 {/* Green pip ONLY when our socket is up (live online). When our
                     WS is down we can't trust "online" — render a muted gray dot
                     instead so we never falsely signal availability. */}
-                {presence?.status === 'online' && !isTyping && wsConnected && (
-                  <View
-                    style={{
-                      width: 7, height: 7, borderRadius: 3.5,
-                      backgroundColor: '#4ade80',
-                      ...(Platform.OS === 'web' ? { boxShadow: '0 0 6px rgba(74, 222, 128, 0.6)' } : {}),
-                    }}
-                  />
-                )}
-                {presence?.status === 'online' && !isTyping && !wsConnected && (
-                  <View
-                    style={{
-                      width: 7, height: 7, borderRadius: 3.5,
-                      backgroundColor: 'rgba(255,255,255,0.45)',
-                    }}
+                {presence?.status === 'online' && (
+                  <HeaderPresencePip
+                    online={wsConnected}
+                    dimmedOnline={!wsConnected}
+                    hidden={isTyping}
                   />
                 )}
                 <PresenceTextFade
@@ -25859,8 +26091,12 @@ function ChatConversationInner() {
           ctxScaleAnim.setValue(0.78);
           ctxOpacityAnim.setValue(0);
           Animated.parallel([
-            Animated.spring(ctxScaleAnim, { toValue: 1, useNativeDriver: false, tension: 220, friction: 11, restDisplacementThreshold: 0.001 }),
-            Animated.timing(ctxOpacityAnim, { toValue: 1, duration: 120, useNativeDriver: false }),
+            // Native driver — both legs animate ONLY transform (scale) + opacity
+            // (verified at the Animated.View below: transform:[{scale}] + opacity),
+            // so they're native-driver-safe. Off web where the native driver is
+            // unavailable. Jank-free bounce on device.
+            Animated.spring(ctxScaleAnim, { toValue: 1, useNativeDriver: Platform.OS !== 'web', tension: 220, friction: 11, restDisplacementThreshold: 0.001 }),
+            Animated.timing(ctxOpacityAnim, { toValue: 1, duration: 120, useNativeDriver: Platform.OS !== 'web' }),
           ]).start();
         }}
       >
@@ -25963,6 +26199,25 @@ function ChatConversationInner() {
             }]}>
               {(() => {
                 const _qr = getQuickReactions();
+                // Which emoji did the CURRENT user already react with on this
+                // message? Reactions are stored as { emoji, count, users: [email] }
+                // (see handleReact). Find the group whose users include our
+                // email so we can highlight that chip + signal "tap to remove".
+                const _meLc = (currentEmail || '').toLowerCase();
+                const _myReaction = (() => {
+                  try {
+                    const rx = Array.isArray(selectedMsg?.reactions) ? selectedMsg.reactions : [];
+                    for (const g of rx) {
+                      const users = Array.isArray(g?.users)
+                        ? g.users
+                        : (typeof g?.users === 'string' ? g.users.split(',') : []);
+                      if (users.some(u => (u || '').toLowerCase() === _meLc)) {
+                        return g.emoji || g.reaction || '';
+                      }
+                    }
+                  } catch {}
+                  return '';
+                })();
                 return (
                   <>
                     {_qr.map((r, i) => (
@@ -25972,6 +26227,7 @@ function ChatConversationInner() {
                         index={i}
                         colors={colors}
                         isDark={isDark}
+                        isActive={!!_myReaction && _myReaction === r.emoji}
                         onPress={() => { handleReact(selectedMsg?.id, r.emoji); setSelectedMsg(null); }}
                       />
                     ))}

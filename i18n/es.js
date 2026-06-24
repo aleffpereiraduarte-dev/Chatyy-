@@ -1409,6 +1409,8 @@ export default {
   'call.groupCallLeave': 'Salir de la llamada',
   // ─── Group call host controls + participant sheet (2026-05-18) ───
   'call.group.participants': 'Participantes',
+  'call.group.participantsOne': '1 participante',
+  'call.group.you': 'Tú',
   'call.group.muteAll': 'Silenciar a todos',
   'call.group.lockRoom': 'Bloquear sala',
   'call.group.unlockRoom': 'Desbloquear sala',

@@ -358,6 +358,68 @@ function formatActivityStatus(isOnline, lastSeen, t) {
   return null;
 }
 
+// ── Animated send-receipt for the list row ──
+// Ports the lightweight morph from the in-thread AnimatedCheckStatus
+// (app/chat-conversation.js): instead of hard-swapping the gray ✓✓ for a blue
+// ✓✓ when a message goes delivered→read, we crossfade two pre-colored copies
+// (Animated color on SVG needs createAnimatedComponent; stacking + opacity is
+// simpler and still 60fps) and add a small scale pulse on that transition.
+// Keyed by statusType so it ONLY animates on a real status change, never on
+// every render. Native driver throughout. statusType ∈ 'sent'|'delivered'|'read'.
+const _STATUS_RANK = { sent: 0, delivered: 1, read: 2 };
+function ListReceiptIcon({ statusType, isDark }) {
+  const rank = _STATUS_RANK[statusType] ?? 0;
+  // read = blue crossfade target (0 → 1 when reaching 'read'); also drives a
+  // gentle pulse on delivered→read. delivered/sent stay at 0 (gray).
+  const readAnim = useRef(new Animated.Value(rank === 2 ? 1 : 0)).current;
+  const prevRank = useRef(rank);
+  useEffect(() => {
+    if (prevRank.current < 2 && rank === 2) {
+      // delivered → read: crossfade gray → blue + a single soft pulse.
+      Animated.timing(readAnim, { toValue: 1, duration: 280, useNativeDriver: true }).start();
+    } else if (prevRank.current === 2 && rank < 2) {
+      // read → not-read (rare: list refetch correcting state) — snap back gray.
+      readAnim.setValue(0);
+    }
+    prevRank.current = rank;
+  }, [rank]);
+
+  const grayColor = isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)';
+  const sentColor = isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)';
+
+  // Single check (sent) — no crossfade, just the faint single tick.
+  if (rank === 0) {
+    return <IconCheck size={15} color={sentColor} style={{ marginRight: 3 }} />;
+  }
+
+  // Double check — crossfade gray ↔ blue via two stacked, pre-colored layers,
+  // plus a small scale pulse the moment it turns blue.
+  const readOpacity = readAnim;
+  const grayOpacity = readAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
+  const pulseScale = readAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1.18, 1] });
+
+  return (
+    <Animated.View style={{ flexDirection: 'row', marginRight: 3, transform: [{ scale: pulseScale }] }}>
+      <View style={{ marginRight: -8 }}>
+        <Animated.View style={{ opacity: grayOpacity }}>
+          <IconCheck size={15} color={grayColor} />
+        </Animated.View>
+        <Animated.View style={{ position: 'absolute', opacity: readOpacity }}>
+          <IconCheck size={15} strokeWidth={2.6} color="#53BDEB" />
+        </Animated.View>
+      </View>
+      <View>
+        <Animated.View style={{ opacity: grayOpacity }}>
+          <IconCheck size={15} color={grayColor} />
+        </Animated.View>
+        <Animated.View style={{ position: 'absolute', opacity: readOpacity }}>
+          <IconCheck size={15} strokeWidth={2.6} color="#53BDEB" />
+        </Animated.View>
+      </View>
+    </Animated.View>
+  );
+}
+
 const ConversationRow = React.memo(function ConversationRow({
   conversation, colors, onPress, onPressIn, onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail,
   currentEmail, t, language, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
@@ -588,6 +650,44 @@ const ConversationRow = React.memo(function ConversationRow({
     prevMentionsRef.current = cur;
   }, [conversation.unread_mentions]);
 
+  // ── Unread-count pill pop (when unread_count increases) ──
+  // Mirrors the mention badge above: a quick spring scale so a fresh inbound
+  // message gives the pill a satisfying "bump" instead of silently changing
+  // the number. Fires ONLY on increment (count going up) — not on every
+  // render, and not when the count is cleared/decremented (read). Native
+  // driver so it never touches the JS thread.
+  const unreadScale = useRef(new Animated.Value(1)).current;
+  const prevUnreadRef = useRef(conversation.unread_count || 0);
+  useEffect(() => {
+    const cur = conversation.unread_count || 0;
+    const prev = prevUnreadRef.current;
+    if (cur > prev) {
+      unreadScale.setValue(0.8);
+      Animated.sequence([
+        Animated.spring(unreadScale, { toValue: 1.2, tension: 220, friction: 6, useNativeDriver: true }),
+        Animated.spring(unreadScale, { toValue: 1, tension: 180, friction: 8, useNativeDriver: true }),
+      ]).start();
+    }
+    prevUnreadRef.current = cur;
+  }, [conversation.unread_count]);
+
+  // ── Subtitle crossfade on typing ↔ preview swap ──
+  // When the row's subtitle flips between the last-message preview and the
+  // "digitando…" indicator the text used to hard-cut. We re-trigger a short
+  // opacity fade-in on the whole subtitle area ONLY when the typing state
+  // itself toggles, so the swap reads as a smooth transition. Doesn't change
+  // WHAT text is shown — purely cosmetic. Native driver, ~150ms.
+  const isTypingActive = !!typingName;
+  const subtitleFade = useRef(new Animated.Value(1)).current;
+  const prevTypingRef = useRef(isTypingActive);
+  useEffect(() => {
+    if (prevTypingRef.current !== isTypingActive) {
+      subtitleFade.setValue(0);
+      Animated.timing(subtitleFade, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+      prevTypingRef.current = isTypingActive;
+    }
+  }, [isTypingActive]);
+
   // Swipe is mobile-only. On web/desktop the gesture was janky (mouse drag
   // competed with scroll + selection) — user reported "movimentação muito
   // ruim". Web uses long-press / right-click to open the actions menu
@@ -671,27 +771,11 @@ const ConversationRow = React.memo(function ConversationRow({
   // [2026-05-21] User explicit request: "quando ver fica azul" — matches
   // the thread's own AnimatedCheckStatus (#53BDEB). Was Chatyy brand purple
   // (#7C3AED) but the user expects WhatsApp blue.
+  // Now delegates to ListReceiptIcon, which crossfades gray→blue + pulses on
+  // delivered→read instead of hard-swapping the icons (keyed by statusType).
   const renderStatusIcon = () => {
     if (!statusType) return null;
-    if (statusType === 'read') {
-      return (
-        <View style={{ flexDirection: 'row', marginRight: 3 }}>
-          <IconCheck size={15} strokeWidth={2.6} color="#53BDEB" style={{ marginRight: -8 }} />
-          <IconCheck size={15} strokeWidth={2.6} color="#53BDEB" />
-        </View>
-      );
-    }
-    if (statusType === 'delivered') {
-      return (
-        <View style={{ flexDirection: 'row', marginRight: 3 }}>
-          <IconCheck size={15} color={isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'} style={{ marginRight: -8 }} />
-          <IconCheck size={15} color={isDark ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.45)'} />
-        </View>
-      );
-    }
-    return (
-      <IconCheck size={15} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} style={{ marginRight: 3 }} />
-    );
+    return <ListReceiptIcon statusType={statusType} isDark={isDark} />;
   };
 
   // ── Left action opacity (swipe right reveals) ──
@@ -876,6 +960,10 @@ const ConversationRow = React.memo(function ConversationRow({
               </View>
             </View>
             <View style={s.rowBottom}>
+              {/* flex:1 wrapper keeps the row's space-between layout identical
+                  (inner branch views keep their own flex:1/marginRight:10);
+                  opacity is the typing↔preview crossfade (subtitleFade). */}
+              <Animated.View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', opacity: subtitleFade }}>
               {isLocked ? (
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 5, marginRight: 10 }}>
                   <IconLock size={13} color={isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)'} />
@@ -966,6 +1054,7 @@ const ConversationRow = React.memo(function ConversationRow({
                   </Text>
                 </View>
               )}
+              </Animated.View>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 {/* Mute icon stays mounted during the fade-out (muteVisible
                     flips false only after the 200ms timing finishes), so the
@@ -994,7 +1083,7 @@ const ConversationRow = React.memo(function ConversationRow({
                   </Animated.View>
                 )}
                 {unread && (
-                  <View style={[
+                  <Animated.View style={[
                     s.unreadBadge,
                     s.unreadBadgeShadow,
                     // Muted chats get a neutral grey pill with NO purple glow —
@@ -1009,9 +1098,11 @@ const ConversationRow = React.memo(function ConversationRow({
                         default: {},
                       }),
                     },
+                    // Spring-pop only when the unread count goes UP (see unreadScale).
+                    { transform: [{ scale: unreadScale }] },
                   ]}>
                     <Text style={s.unreadText}>{conversation.unread_count > 99 ? '99+' : conversation.unread_count}</Text>
-                  </View>
+                  </Animated.View>
                 )}
               </View>
             </View>

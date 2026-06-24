@@ -29,6 +29,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { View, ActivityIndicator, Text, Platform, StyleSheet, TouchableOpacity, ScrollView, Animated, Easing, Pressable, Alert, Share, Dimensions } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path as SvgPath } from 'react-native-svg';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
@@ -99,6 +100,7 @@ export default function GroupCallScreen() {
   const isCaller = (Array.isArray(params.isCaller) ? params.isCaller[0] : params.isCaller) === '1';
   const hostEmailParam = (Array.isArray(params.host_email) ? params.host_email[0] : params.host_email) || '';
 
+  const insets = useSafeAreaInsets();
   const [token, setToken] = useState(null);
   const [livekitUrl, setLivekitUrl] = useState(null);
   const [roomName, setRoomName] = useState(room || '');
@@ -636,7 +638,7 @@ export default function GroupCallScreen() {
     const shimmerOpacity = skeletonPulse.interpolate({ inputRange: [0, 1], outputRange: [0.04, 0.16] });
 
     const renderTile = (p, size, opts = {}) => {
-      const isSpeaking = activeSpeakerEmail && p.email === activeSpeakerEmail;
+      const isSpeaking = !!activeSpeakerEmail && (p.email || '').toLowerCase() === (activeSpeakerEmail || '').toLowerCase();
       const isSilenced = !!silencedEmails[(p.email || '').toLowerCase()];
       return (
         <Pressable
@@ -677,8 +679,20 @@ export default function GroupCallScreen() {
                 </Svg>
               </View>
             )}
+            {p.muted && (
+              <View style={styles.mutedBadge}>
+                <Svg width={12} height={12} viewBox="0 0 24 24" fill="none">
+                  <SvgPath
+                    d="M23 9l-6 6M17 9l6 6M15 8.94V5a3 3 0 0 0-6 0v6m6 1v3a3 3 0 0 1-6 0v-1m6-3l-9 9"
+                    stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+                  />
+                </Svg>
+              </View>
+            )}
           </View>
-          <Text style={styles.gridName} numberOfLines={1}>{p.name}</Text>
+          <Text style={styles.gridName} numberOfLines={1}>
+            {(p.email || '').toLowerCase() === myEmail ? (t('call.group.you') || 'You') : p.name}
+          </Text>
         </Pressable>
       );
     };
@@ -760,7 +774,7 @@ export default function GroupCallScreen() {
   const HandsBanner = raisedHands.length > 0 ? (
     <TouchableOpacity
       activeOpacity={0.85}
-      style={styles.handsBanner}
+      style={[styles.handsBanner, { top: insets.top + 56 }]}
       onPress={() => setShowParticipants(true)}
     >
       <Svg width={16} height={16} viewBox="0 0 24 24" fill="none">
@@ -780,7 +794,7 @@ export default function GroupCallScreen() {
   // Recording banner — full-width top strip. Pulsing red dot to draw the
   // eye. We render it for EVERYONE in the room (legal consent rule).
   const RecordingBanner = recording ? (
-    <View style={styles.recBanner}>
+    <View style={[styles.recBanner, { paddingTop: insets.top + 6 }]}>
       <Animated.View style={[styles.recPill, { opacity: recPulse }]}>
         <View style={styles.recDot} />
         <Text style={styles.recPillText}>REC</Text>
@@ -792,7 +806,7 @@ export default function GroupCallScreen() {
   // Header — tap on "X participantes" opens the sheet. Top-right has the
   // host gear (host/cohost only) + add-person.
   const Header = (
-    <View pointerEvents="box-none" style={styles.headerWrap}>
+    <View pointerEvents="box-none" style={[styles.headerWrap, { top: insets.top + 8 }]}>
       <View style={styles.headerInner}>
         <TouchableOpacity
           onPress={() => setShowParticipants(true)}
@@ -803,7 +817,9 @@ export default function GroupCallScreen() {
             <SvgPath d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M23 21v-2a4 4 0 0 0-3-3.87M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM16 3.13a4 4 0 0 1 0 7.75" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
           </Svg>
           <Text style={styles.participantPillText}>
-            {participants.length} {t('call.group.participants') || 'participantes'}
+            {participants.length === 1
+              ? (t('call.group.participantsOne') || '1 participante')
+              : `${participants.length} ${t('call.group.participants') || 'participantes'}`}
           </Text>
         </TouchableOpacity>
         <View style={styles.headerRight}>
@@ -1193,6 +1209,22 @@ const styles = StyleSheet.create({
     height: 22,
     borderRadius: 11,
     backgroundColor: '#ef4444',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#000',
+  },
+  // Mic-off badge — gray, bottom-LEFT so it never overlaps the red
+  // host-silenced badge (bottom-right). Reflects the participant's own
+  // mic-mute state (p.muted), independent of host enforcement.
+  mutedBadge: {
+    position: 'absolute',
+    left: 0,
+    bottom: 0,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#6b7280',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
