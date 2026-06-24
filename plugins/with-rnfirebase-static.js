@@ -24,8 +24,31 @@ module.exports = function withRNFirebaseStatic(config) {
       const podfile = path.join(cfg.modRequest.platformProjectRoot, 'Podfile');
       try {
         let contents = fs.readFileSync(podfile, 'utf8');
+        let changed = false;
+        // (1) RNFirebase static-framework global — harmless without use_frameworks,
+        //     kept in case frameworks are ever re-enabled.
         if (!contents.includes('$RNFirebaseAsStaticFramework')) {
           contents = `${LINE}\n${contents}`;
+          changed = true;
+        }
+        // (2) CRITICAL FIX (iOS build broke 2026-06-24): FirebaseAuth is a Swift pod
+        //     that depends on non-modular pods (GoogleUtilities, FirebaseAuthInterop,
+        //     FirebaseAppCheckInterop, RecaptchaInterop). With static libraries (we do
+        //     NOT use use_frameworks! on RN0.83 — it cascades into breaking
+        //     RNScreens/expo-router/vision-camera/LiveKit), Swift can't import them
+        //     unless module maps exist. `use_modular_headers!` emits those maps WITHOUT
+        //     changing linkage (static libs stay static libs → no cascade). This is the
+        //     error's own recommendation and the standard RN-Firebase-without-frameworks fix.
+        if (!contents.includes('use_modular_headers!')) {
+          const platformRe = /(\nplatform :ios[^\n]*\n)/;
+          if (platformRe.test(contents)) {
+            contents = contents.replace(platformRe, `$1use_modular_headers!\n`);
+          } else {
+            contents = `use_modular_headers!\n${contents}`;
+          }
+          changed = true;
+        }
+        if (changed) {
           fs.writeFileSync(podfile, contents);
         }
       } catch (e) {
