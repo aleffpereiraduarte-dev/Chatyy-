@@ -37,6 +37,7 @@ import BrandFab from '../components/BrandFab';
 import ScreenEmptyState from '../components/ScreenEmptyState';
 import { generateBatch } from '../services/thumbnailCache';
 import Svg, { Path, Circle as SvgCircle, Line, Polyline, Rect } from 'react-native-svg';
+import { coverageStyleFor, boraStyleUrl, boraMapHtml } from '../components/BoraMap';
 
 let photoBackup = null;
 try { photoBackup = require('../services/photoBackup'); } catch {}
@@ -130,9 +131,10 @@ function IconMap({ size = 24, color = '#666' }) {
 // ============================================================
 // CONSTANTS
 // ============================================================
-// Tabs include 'map' — surfaces geo-tagged photos on a clustered Google Maps
-// WebView (no extra dep, uses the bundled gmaps embed). 'backup' stays last
-// since users hit it least often during a normal session.
+// Tabs include 'map' — surfaces geo-tagged photos on a clustered BoraUm map
+// (self-hosted OpenStreetMap tiles via MapLibre GL JS in a WebView; no extra
+// dep, no Google billing). 'backup' stays last since users hit it least often
+// during a normal session.
 // Wave 14: 'people' (Pessoas) tab surfaces real face clusters built from
 // on-device FaceNet embeddings (see services/faceEmbeddings.js + backend
 // photos_face_clusters action).
@@ -5345,14 +5347,17 @@ function IconSparkles({ size = 16, color = '#fff' }) {
   );
 }
 
-// PhotosMapTab — Google Maps WebView with clustered pins for geo-tagged
-// photos. Backend (photos_with_gps) buckets points by 2-decimal lat/lon so
-// dense vacation albums collapse into a single ~1km cluster instead of
-// thousands of overlapping pins. Tapping a pin asks the embedded JS bridge
-// to surface the photo id; we then call openViewer on the matching frame.
-// Why WebView + Google Maps embed: react-native-maps would need a native
-// rebuild + Google billing token wiring. The embed is bundled, free, and
-// works on iOS / Android / web with zero extra dep.
+// PhotosMapTab — BoraUm map (self-hosted OpenStreetMap tiles, MapLibre GL JS)
+// in a WebView with clustered pins for geo-tagged photos. Backend
+// (photos_with_gps) buckets points by 2-decimal lat/lon so dense vacation
+// albums collapse into a single ~1km cluster instead of thousands of
+// overlapping pins. Tapping a pin asks the embedded JS bridge to surface the
+// photo id; we then call openViewer on the matching frame.
+// Why WebView + MapLibre: it is 100% OTA — no native dep (we do NOT use
+// @maplibre/maplibre-react-native). MapLibre loads via CDN inside the WebView
+// and reads the BoraUm style.json (same tile server as every other map in the
+// super-app), so there is no Google billing and no per-load cost. Works on
+// iOS / Android / web (iframe) with zero extra dep.
 function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer }) {
   const [loading, setLoading] = React.useState(true);
   const [extracting, setExtracting] = React.useState(false);
@@ -5397,46 +5402,59 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
 
   React.useEffect(() => { loadClusters(); }, [loadClusters]);
 
-  // Build the Google Maps embed HTML. We use the public /maps/embed/v1/view
-  // endpoint when there's nothing to plot (just a centered view), and
-  // /maps/embed/v1/search with a marker list for cluster centroids. The
-  // simplest cross-platform path is to render markers via the JS API; the
-  // free embed endpoint doesn't support clusters natively, so we use the
-  // gmaps JS SDK with a placeholder API key the user can swap later.
+  // Build the BoraUm map HTML (MapLibre GL JS via CDN — no API key, no
+  // per-load billing). The style.json comes from coverageStyleFor(center):
+  // the point's country style (BR/US/PH/PT/CO) or world-cinza as fallback —
+  // same self-hosted tile server as every other map in the super-app.
+  // Each cluster is a maplibregl.Marker built from an HTML element (the same
+  // purple badge as before). Tapping a pin posts the existing pin_tap message
+  // back to RN; the onMessage handler below is unchanged.
   const mapHtml = React.useMemo(() => {
     const center = clusters.length > 0
       ? { lat: clusters[0].lat, lng: clusters[0].lon }
       : { lat: -23.5505, lng: -46.6333 }; // São Paulo fallback
+    const styleUrl = boraStyleUrl(center.lng, center.lat);
+    const startZoom = clusters.length > 0 ? 10 : 5;
     const markersJson = JSON.stringify(clusters.map(c => ({
       lat: c.lat, lng: c.lon, count: c.count, id: c.sample_id,
     })));
-    // Inline HTML — OpenStreetMap via Leaflet (no API key needed, no per-load
-    // billing). Pins clickable; click posts a message back to RN.
+    const bg = isDark ? '#0b0f17' : '#e5e7eb';
     return `<!doctype html><html><head>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<style>html,body,#map{height:100%;margin:0;padding:0;background:${isDark ? '#0b0f17' : '#fff'}}.cluster{background:#7C3AED;color:#fff;border-radius:18px;padding:4px 10px;font:600 13px system-ui;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3)}</style>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
+<link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+<style>html,body,#map{height:100%;margin:0;padding:0;background:${bg}}.cluster{background:#7C3AED;color:#fff;border-radius:18px;padding:4px 10px;font:600 13px system-ui;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3);cursor:pointer;white-space:nowrap}</style>
 </head><body>
 <div id="map"></div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-  const map = L.map('map', { zoomControl: true }).setView([${center.lat}, ${center.lng}], ${clusters.length > 0 ? 10 : 5});
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap', maxZoom: 19
-  }).addTo(map);
-  const markers = ${markersJson};
-  const bounds = [];
-  markers.forEach(m => {
-    const icon = L.divIcon({ html: '<div class="cluster">' + m.count + '</div>', className: '', iconSize: [40, 28] });
-    const pin = L.marker([m.lat, m.lng], { icon }).addTo(map);
-    pin.on('click', () => {
-      if (window.ReactNativeWebView) {
-        window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'pin_tap', id: m.id }));
-      }
-    });
-    bounds.push([m.lat, m.lng]);
+  function postPin(id){
+    var msg = JSON.stringify({ type: 'pin_tap', id: id });
+    if (window.ReactNativeWebView) { window.ReactNativeWebView.postMessage(msg); }
+    else if (window.parent && window.parent !== window) { window.parent.postMessage(msg, '*'); }
+  }
+  var map = new maplibregl.Map({
+    container: 'map',
+    style: ${JSON.stringify(styleUrl)},
+    center: [${center.lng}, ${center.lat}],
+    zoom: ${startZoom},
+    attributionControl: false
   });
-  if (bounds.length > 1) map.fitBounds(bounds, { padding: [40, 40] });
+  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+  var markers = ${markersJson};
+  map.on('load', function(){
+    var bounds = null;
+    markers.forEach(function(m){
+      var el = document.createElement('div');
+      el.className = 'cluster';
+      el.textContent = String(m.count);
+      el.addEventListener('click', function(){ postPin(m.id); });
+      new maplibregl.Marker({ element: el }).setLngLat([m.lng, m.lat]).addTo(map);
+      if (!bounds) { bounds = new maplibregl.LngLatBounds([m.lng, m.lat], [m.lng, m.lat]); }
+      else { bounds.extend([m.lng, m.lat]); }
+    });
+    if (markers.length > 1 && bounds) { map.fitBounds(bounds, { padding: 40, maxZoom: 15, duration: 0 }); }
+  });
 </script>
 </body></html>`;
   }, [clusters, isDark]);
@@ -5499,7 +5517,7 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
     );
   }
   if (!WebView) {
-    // Web fallback — embed via iframe (Leaflet works the same in a plain iframe).
+    // Web fallback — embed via iframe (MapLibre GL JS works the same in a plain iframe).
     return (
       <View style={{ flex: 1, paddingBottom: insets.bottom }}>
         <iframe srcDoc={mapHtml} style={{ width: '100%', height: '100%', border: 0 }} />

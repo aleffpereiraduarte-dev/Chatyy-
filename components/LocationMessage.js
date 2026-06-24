@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, Linking, StyleSheet, Share, Platform, Dimensions, Image as RNImage } from 'react-native';
 import { IconMapPin } from './Icons';
+import { boraStaticMapUrl } from './BoraMap';
 
 // Bubble width — used so Image gets explicit pixel dimensions instead of
 // percentage. RN Image with width:'100%' on a parent that briefly measures
@@ -9,14 +10,9 @@ import { IconMapPin } from './Icons';
 const BUBBLE_WIDTH = Math.min(Dimensions.get('window').width - 80, 280);
 const BUBBLE_HEIGHT = 160;
 
-// Google Maps Static API key (from app.json extra). Falls back to OSM tile if absent.
-let GMAPS_KEY = '';
-try { GMAPS_KEY = require('expo-constants').default?.expoConfig?.extra?.GOOGLE_MAPS_KEY || ''; } catch {}
-
-// Cache-bust query string. Bump this when switching tile providers so any
-// previously-cached failed responses (e.g. 403 from tile.openstreetmap.org)
-// get evicted and re-fetched against the new URL.
-const TILE_CACHE_BUST = 'v20';
+// [2026-06-24] Google Maps REMOVIDO. Mapa do balão vem do nosso tile server
+// self-hosted (BoraUm / OpenStreetMap) via boraStaticMapUrl — zero billing Google,
+// zero chave. O styleId é escolhido por país automaticamente (coverageStyleFor).
 
 /**
  * Location Message Component
@@ -37,7 +33,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
   const [location, setLocation] = useState(null);
   const [tileError, setTileError] = useState(false);
   const [tileLoaded, setTileLoaded] = useState(false);
-  const [tileProvider, setTileProvider] = useState('carto'); // 'carto' | 'osm' | 'failed'
+  const [tileProvider, setTileProvider] = useState('bora'); // 'bora' | 'failed'
 
   useEffect(() => {
     try {
@@ -46,7 +42,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
       // Reset tile state when location changes (new message in same component)
       setTileError(false);
       setTileLoaded(false);
-      setTileProvider('carto');
+      setTileProvider('bora');
     } catch (err) {
       console.warn('LocationMessage parse error:', err);
     }
@@ -67,8 +63,9 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
     if (!location || tileLoaded || tileError || tileProvider === 'failed') return undefined;
     const id = setTimeout(() => {
       if (!tileLoaded && !tileError) {
-        if (tileProvider === 'carto') setTileProvider('osm');
-        else { setTileProvider('failed'); setTileError(true); }
+        // Único provider agora (BoraUm). Se travou, cai direto pro fallback sólido.
+        setTileProvider('failed');
+        setTileError(true);
       }
     }, 4000);
     return () => clearTimeout(id);
@@ -87,19 +84,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
 
   function computeTileUrlForPrefetch() {
     if (location?.latitude == null || location?.longitude == null) return null;
-    const z = 15;
-    const la = Number(location.latitude).toFixed(5);
-    const lo = Number(location.longitude).toFixed(5);
-    if (tileProvider === 'osm') {
-      const lat = Number(location.latitude);
-      const lng = Number(location.longitude);
-      const n = Math.pow(2, z);
-      const x = Math.floor(((lng + 180) / 360) * n);
-      const latRad = (lat * Math.PI) / 180;
-      const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n);
-      return `https://tile.openstreetmap.org/${z}/${x}/${y}.png?v=${TILE_CACHE_BUST}`;
-    }
-    return `https://chatyy.com.br/api/static_map.php?lat=${la}&lng=${lo}&z=${z}&w=${BUBBLE_WIDTH * 2}&h=${BUBBLE_HEIGHT * 2}`;
+    return boraStaticMapUrl(location.latitude, location.longitude, 15, BUBBLE_WIDTH, BUBBLE_HEIGHT);
   }
   const hasCoordsForPrefetch = location?.latitude != null && location?.longitude != null;
 
@@ -149,85 +134,24 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
   const lat = hasCoords ? Number(location.latitude) : null;
   const lng = hasCoords ? Number(location.longitude) : null;
 
-  // [2026-05-21] Switched to Google Static Maps (user mandate: "vamos usar
-  // google maps melhor vamos trocar o sistema pra google"). Cloud Billing now
-  // enabled on the project so the 403 from the prior attempt is gone. Falls
-  // back to the carto/OSM tile chain via static_map.php if the key isn't
-  // injected (e.g., older bundles without GOOGLE_MAPS_KEY in extra).
-  const gmapsUrl = (hasCoords && GMAPS_KEY) ? (() => {
-    const la = lat.toFixed(6);
-    const lo = lng.toFixed(6);
-    const w = Math.min(640, BUBBLE_WIDTH * 2);
-    const h = Math.min(640, BUBBLE_HEIGHT * 2);
-    // Marker uses Chatyy purple (#7C3AED). roadmap @ z=15 matches our
-    // previous CartoCDN preview density. scale=2 → retina sharpness.
-    return `https://maps.googleapis.com/maps/api/staticmap?center=${la},${lo}&zoom=15&size=${w}x${h}&scale=2&maptype=roadmap&markers=color:0x7C3AED|${la},${lo}&key=${GMAPS_KEY}`;
-  })() : null;
-
-  // Tile coords formula (Web Mercator). Verified for São Paulo
-  // lat=-23.55, lng=-46.63 @ z15 → x≈12104, y≈18213 (correct).
-  // Negative coords are handled correctly because (lng + 180) keeps x ≥ 0
-  // and tan(latRad) for negative lat is also negative — the formula is
-  // symmetric across the equator.
-  const computeTile = (latitude, longitude, zoom) => {
-    const n = Math.pow(2, zoom);
-    const x = Math.floor(((longitude + 180) / 360) * n);
-    const latRad = (latitude * Math.PI) / 180;
-    const y = Math.floor(((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * n);
-    return { x, y };
-  };
-
-  // [2026-05-21] Prefer Google Static Maps when GMAPS_KEY is configured
-  // (user request). The previous CartoCDN proxy (static_map.php) remains as
-  // a fallback for the case where the bundle was built before
-  // GOOGLE_MAPS_KEY was added to extra — keeps old installs working.
-  const tileUrl = hasCoords ? (gmapsUrl || (() => {
-    const la = lat.toFixed(5);
-    const lo = lng.toFixed(5);
-    return `https://chatyy.com.br/api/static_map.php?lat=${la}&lng=${lo}&z=15&w=${BUBBLE_WIDTH * 2}&h=${BUBBLE_HEIGHT * 2}`;
-  })()) : null;
+  // [2026-06-24] Google Maps REMOVIDO. O balão usa a Static Image API do nosso
+  // tile server self-hosted (BoraUm / OpenStreetMap). Sem chave, sem billing.
+  // O tileserver NÃO desenha o pin server-side → desenhamos um pin sobreposto
+  // centralizado (a imagem é centrada nas coords, então o centro = a localização).
+  const tileUrl = hasCoords
+    ? boraStaticMapUrl(lat, lng, 15, BUBBLE_WIDTH, BUBBLE_HEIGHT)
+    : null;
 
   const handleTileError = (err) => {
     console.warn('LocationMessage tile failed:', tileUrl, err?.nativeEvent || err);
-    if (tileProvider === 'carto') {
-      setTileProvider('osm');
-    } else if (tileProvider === 'osm') {
-      setTileProvider('failed');
-      setTileError(true);
-    }
+    setTileProvider('failed');
+    setTileError(true);
   };
 
-  // Web: build a 3x2 OSM tile mosaic for a richer, larger map preview.
-  const buildTileGrid = () => {
-    if (!hasCoords) return null;
-    const zoom = 16;
-    const tileSize = 256;
-    const cols = 3, rows = 2;
-    const x = (lng + 180) / 360 * Math.pow(2, zoom);
-    const latRad = lat * Math.PI / 180;
-    const y = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * Math.pow(2, zoom);
-    const tileX = Math.floor(x);
-    const tileY = Math.floor(y);
-    const fracX = x - tileX;
-    const fracY = y - tileY;
-    const tiles = [];
-    for (let dy = -Math.floor(rows/2); dy <= Math.floor(rows/2); dy++) {
-      for (let dx = -Math.floor(cols/2); dx <= Math.floor(cols/2); dx++) {
-        const tx = tileX + dx;
-        const ty = tileY + dy;
-        if (tx < 0 || ty < 0) continue;
-        tiles.push({
-          url: `https://basemaps.cartocdn.com/light_all/${zoom}/${tx}/${ty}.png?v=${TILE_CACHE_BUST}`,
-          left: (dx + Math.floor(cols/2)) * tileSize,
-          top: (dy + Math.floor(rows/2)) * tileSize,
-        });
-      }
-    }
-    const pinLeft = Math.floor(cols/2) * tileSize + fracX * tileSize;
-    const pinTop = Math.floor(rows/2) * tileSize + fracY * tileSize;
-    return { tiles, pinLeft, pinTop, gridW: cols * tileSize, gridH: rows * tileSize };
-  };
-  const grid = (Platform.OS === 'web' && hasCoords) ? buildTileGrid() : null;
+  // [2026-06-24] Web e native agora usam a MESMA imagem estática do BoraUm
+  // (single <Image> + pin sobreposto). O mosaico de tiles (buildTileGrid) foi
+  // aposentado — grid fica null pra cair sempre no caminho da imagem única.
+  const grid = null;
 
   // Tile image renderer — picks expo-image (native) or RN Image (web/fallback).
   // expo-image gets a recyclingKey so when the URL changes (provider fallback,
@@ -312,13 +236,18 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
             }} />
           </View>
         ) : tileUrl ? (
-          /* Native: single CartoCDN/OSM tile as background. Inner View has NO
-             backgroundColor so the tile shows through — the cinza bg used to
-             cover the tile was the visual "gray map" symptom on the user's
-             screen. Solid bg only kicks in via showSolidFallback above. */
+          /* [2026-06-24] Imagem estática única do BoraUm (OSM self-hosted).
+             Inner View sem backgroundColor pra a imagem aparecer (bg cinza era
+             o sintoma do "mapa cinza"). O tileserver NÃO desenha pin, então
+             sobrepomos um pin centralizado — a imagem é centrada nas coords. */
           <View style={[styles.mapContainerInner, { overflow: 'hidden' }]}>
             {renderTileImage(tileUrl, styles.mapTileImage)}
-            {/* Proxy draws pin server-side — no JS overlay needed. */}
+            <View style={styles.pinOverlay} pointerEvents="none">
+              <View style={[styles.pinCircle, { backgroundColor: '#dc2626' }]}>
+                <IconMapPin size={18} color="#fff" />
+              </View>
+              <View style={[styles.pinTail, { borderTopColor: '#dc2626' }]} />
+            </View>
           </View>
         ) : (
           <View style={[styles.mapContainerInner, { backgroundColor: isOwn ? '#7C3AED' : safeColors.primary, justifyContent: 'center', alignItems: 'center' }]}>

@@ -119,6 +119,8 @@ import * as SmartCache from '../services/smartChatCache';
 import useIsMounted from '../hooks/useIsMounted';
 import SyncBar from '../components/SyncBar';
 import ErrorBoundary from '../components/ErrorBoundary';
+// Mapas self-hosted BoraUm (OpenStreetMap/MapLibre) — ZERO Google Maps (billing).
+import { coverageStyleFor, boraStyleUrl, boraMapHtml, boraStaticMapUrl } from '../components/BoraMap';
 // Chat 2026 features (top-3): video notes recorder, AI summarize, smart replies.
 // Lazy-required inside the file when needed to keep the initial parse fast.
 let VideoNoteRecorder = null; try { VideoNoteRecorder = require('../components/chat/VideoNoteRecorder').default; } catch {}
@@ -3693,90 +3695,65 @@ function MapModal({ visible, onClose, lat, lng, label, isLive, liveUntil, isUnli
 
   if (!visible || !Number.isFinite(numLat) || !Number.isFinite(numLng)) return null;
 
-  // API key pra Google Maps JS API (configurada em app.json extra).
-  let _gKey = '';
-  try { _gKey = require('expo-constants').default?.expoConfig?.extra?.GOOGLE_MAPS_KEY || ''; } catch {}
-
-  // HTML único pra native WebView + web iframe. Listen postMessage pra
-  // suportar updatePos via parent → iframe communication on web.
-  const liveBlock = isStillLive ? `
-    var dot = new google.maps.Marker({
-      position: loc, map: _map,
-      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 11, fillColor: '#3b82f6', fillOpacity: 1, strokeColor: '#fff', strokeWeight: 4 }
-    });
-    var pulseCircle = new google.maps.Circle({
-      map: _map, center: loc, radius: 60,
-      fillColor: '#3b82f6', fillOpacity: 0.18,
-      strokeColor: '#3b82f6', strokeOpacity: 0.5, strokeWeight: 1
-    });
-    var _r = 60, _grow = true;
-    setInterval(function(){ _r += _grow ? 6 : -6; if (_r > 220) _grow = false; if (_r < 60) _grow = true; try { pulseCircle.setRadius(_r); } catch (e) {} }, 90);
+  // 2026-06-24: DE-GOOGLE — mapa interativo agora vem do tile server
+  // self-hosted do BoraUm (OpenStreetMap/MapLibre GL JS via CDN). ZERO Google
+  // Maps (sem API key, sem billing). 100% OTA: MapLibre roda dentro do WebView/
+  // iframe que já existe — NÃO é dependência nativa.
+  // style.json escolhido por país via coverageStyleFor(LON, LAT).
+  const _styleUrl = boraStyleUrl(numLng, numLat);
+  // Live-dot pulsante (azul) p/ live location; pin estático (vermelho) p/ fixa.
+  // Contrato preservado: window.updatePos(la, ln) p/ native injectJavaScript +
+  // postMessage {type:'updatePos',lat,lng} p/ web iframe.
+  const _markerBlock = isStillLive ? `
+    var _el = document.createElement('div');
+    _el.style.cssText = 'position:relative;width:22px;height:22px';
+    _el.innerHTML = '<div class="pulse"></div><div class="dot"></div>';
+    var marker = new maplibregl.Marker({ element: _el }).setLngLat([${numLng}, ${numLat}]).addTo(map);
     window.updatePos = function(la, ln) {
-      var p = new google.maps.LatLng(la, ln);
-      try { dot.setPosition(p); pulseCircle.setCenter(p); _map.panTo(p); } catch (e) {}
+      try { marker.setLngLat([ln, la]); map.easeTo({ center: [ln, la] }); } catch (e) {}
     };
   ` : `
-    new google.maps.Marker({ position: loc, map: _map${safeLabel ? `, title: ${JSON.stringify(safeLabel)}` : ''} });
+    var _el = document.createElement('div');
+    _el.style.cssText = 'width:24px;height:24px;border-radius:50% 50% 50% 0;background:#dc2626;border:2px solid #fff;transform:rotate(-45deg);box-shadow:0 1px 4px rgba(0,0,0,.4)';
+    var marker = new maplibregl.Marker({ element: _el, anchor: 'bottom' }).setLngLat([${numLng}, ${numLat}]).addTo(map);
     window.updatePos = function(la, ln) {};
   `;
 
-  const gmapsHtml = _gKey ? `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><style>html,body,#map{margin:0;padding:0;width:100%;height:100%;background:#000}</style></head><body><div id="map"></div><script>
-var _map; var _initLat = ${numLat}, _initLng = ${numLng};
-function initMap() {
-  var loc = { lat: _initLat, lng: _initLng };
-  _map = new google.maps.Map(document.getElementById('map'), {
-    center: loc, zoom: 17, gestureHandling: 'greedy',
-    mapTypeControl: true, streetViewControl: false,
-    fullscreenControl: false, zoomControl: true,
-    clickableIcons: false
+  const html = `<!DOCTYPE html><html><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+<style>
+html,body,#map{margin:0;padding:0;width:100%;height:100%;background:#000}
+.dot{position:absolute;top:0;left:0;width:18px;height:18px;border-radius:50%;background:#3b82f6;border:3px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);margin:2px}
+.pulse{position:absolute;top:0;left:0;width:22px;height:22px;border-radius:50%;background:#3b82f6;opacity:.35;animation:bpulse 1.6s ease-out infinite}
+@keyframes bpulse{0%{transform:scale(1);opacity:.45}100%{transform:scale(3);opacity:0}}
+</style>
+</head><body>
+<div id="map"></div>
+<script>
+  var map = new maplibregl.Map({
+    container: 'map',
+    style: ${JSON.stringify(_styleUrl)},
+    center: [${numLng}, ${numLat}],
+    zoom: 16,
+    attributionControl: false
   });
-  ${liveBlock}
-}
-window.addEventListener('message', function(e) {
-  var d = e && e.data;
-  if (d && d.type === 'updatePos' && typeof d.lat === 'number' && typeof d.lng === 'number') {
-    if (window.updatePos) window.updatePos(d.lat, d.lng);
+  // Marker criado já (não espera 'load') p/ não perder o 1º updatePos do WS.
+  ${_markerBlock}
+  function onMsg(e) {
+    try {
+      var d = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+      if (d && d.type === 'updatePos' && typeof d.lat === 'number' && typeof d.lng === 'number') {
+        if (window.updatePos) window.updatePos(d.lat, d.lng);
+      }
+    } catch (_) {}
   }
-});
-</script><script async defer src="https://maps.googleapis.com/maps/api/js?key=${_gKey}&callback=initMap"></script></body></html>` : null;
-
-  // Fallback Leaflet caso não tenha API key
-  const leafletHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/><style>*{margin:0;padding:0}html,body,#map{width:100%;height:100%;background:#000}</style></head><body><div id="map"></div><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
-var map = L.map('map').setView([${numLat},${numLng}], 17);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,subdomains:'abc'}).addTo(map);
-${isStillLive ? `
-var dot = L.circleMarker([${numLat},${numLng}], {radius:10,fillColor:'#3b82f6',fillOpacity:1,color:'#fff',weight:4}).addTo(map);
-var pulse = L.circleMarker([${numLat},${numLng}], {radius:22,fillColor:'#3b82f6',fillOpacity:0.25,color:'#3b82f6',weight:1}).addTo(map);
-var pSize=22, growing=true;
-setInterval(function(){pSize+=growing?1.2:-1.2; if(pSize>=42)growing=false; if(pSize<=22)growing=true; try{pulse.setRadius(pSize);}catch(e){}}, 70);
-window.updatePos=function(la,ln){try{dot.setLatLng([la,ln]); pulse.setLatLng([la,ln]); map.panTo([la,ln]);}catch(e){}};
-` : `
-L.marker([${numLat},${numLng}]).addTo(map);
-window.updatePos=function(){};
-`}
-window.addEventListener('message', function(e){var d=e&&e.data; if(d&&d.type==='updatePos'){window.updatePos(d.lat,d.lng);}});
-</script></body></html>`;
-
-  // 2026-05-13 (task #834): Maps JS API + Static + Embed v1 all rejected by
-  // the configured key — Static/Embed return HTTP 403 "API not activated" and
-  // the JS loader paints the "This page can't load Google Maps correctly"
-  // overlay at runtime (billing-not-enabled signature). Until GCP billing +
-  // API enablement land, both live AND static use the Leaflet (OSM) path.
-  // The keyless `maps.google.com/maps?...&output=embed` was previously used
-  // for static locations but Google started rendering the
-  // "Google Maps Platform rejected your request" red overlay inside that
-  // iframe (user-visible "Google Maps API error" in the live-location modal).
-  // Leaflet renders OSM tiles directly — no key, no rejection, identical UX.
-  // We keep `gmapsHtml` + `gKeylessEmbed` ready behind a feature flag so
-  // re-enabling billing is a one-line revert.
-  const gKeylessEmbed = `<!DOCTYPE html><html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/><style>html,body{margin:0;padding:0;width:100%;height:100%;background:#000}iframe{border:0;width:100%;height:100%;display:block}</style></head><body><iframe loading="lazy" allowfullscreen referrerpolicy="no-referrer-when-downgrade" src="https://maps.google.com/maps?q=${numLat},${numLng}&z=17&output=embed"></iframe></body></html>`;
-  // [2026-05-22 #1356] GCP billing now stable (snap-map renders Google
-  // Maps fine since WAVE 49). Flipping back to Google Maps inside chat
-  // for visual consistency — user expects one map provider across the
-  // whole app, not "snap-map = Google, chat = OSM". Keeps the leaflet
-  // path alive as a last-resort fallback when _gKey is missing.
-  const USE_GMAPS_JS = true;
-  const html = USE_GMAPS_JS && gmapsHtml ? gmapsHtml : leafletHtml;
+  window.addEventListener('message', onMsg);
+  document.addEventListener('message', onMsg);
+</script>
+</body></html>`;
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -19930,24 +19907,16 @@ function ChatConversationInner() {
             ? (isDark ? '#8696A0' : '#667781')
             : colors.textSecondary;
 
-          // Map thumbnail — Google Static Maps via our server-side proxy.
-          // [#1356 2026-05-26] The in-chat map bubble renders Google Maps
-          // (Static Maps API) for visual consistency with the full viewer
-          // (MapModal → Google Maps JS API) and with snap-map. The proxy
-          // /api/static_map.php hits the Google Static Maps API first
-          // (real Google cartography + native red drop-pin marker), holding
-          // the GOOGLE_MAPS_KEY server-side in /etc/mail-api.env so it never
-          // ships in the JS bundle. If Google ever returns non-200 (key
-          // restricted / billing flap / quota) the SAME endpoint transparently
-          // falls back to a CartoCDN tile composite so the bubble never breaks
-          // — but the happy path is genuine Google. Cached 7d on disk +
-          // Cloudflare edge keyed by lat/lng/zoom/size.
+          // Map thumbnail — tile server self-hosted do BoraUm (OpenStreetMap),
+          // ZERO Google Maps (sem billing). [2026-06-24 DE-GOOGLE]
+          // boraStaticMapUrl(lat, lng, zoom, w, h) resolve o styleId por país
+          // e devolve um PNG estático do tileserver-gl. O servidor NÃO desenha
+          // pin → a imagem é centrada nas coords e o pin vermelho sobreposto
+          // (View absoluto centralizado, abaixo) marca a localização exata.
+          // z=15 = street-level, casando com o zoom inicial do MapModal.
           const hasCoords = (lat != null && lng != null);
-          // Request a retina (scale-2, applied server-side) PNG sized to the
-          // card. z=15 gives a street-level view matching the full Google
-          // viewer's initial zoom.
           const mapStaticUrl = hasCoords
-            ? `https://chatyy.com.br/api/static_map.php?lat=${lat}&lng=${lng}&z=15&w=${Math.round(CARD_W * 2)}&h=${MAP_H * 2}`
+            ? boraStaticMapUrl(lat, lng, 15, CARD_W, MAP_H)
             : null;
 
           return (

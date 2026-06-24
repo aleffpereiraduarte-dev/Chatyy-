@@ -10,28 +10,27 @@
 //   3. Live updates via WS `location_update` + `location_share_revoked`
 //      events; the 30s poll is a fallback for WS reconnects.
 //
-// Rendering: Leaflet + CartoCDN tiles inside a WebView
-// ----------------------------------------------------
-// User feedback 2026-05-18: "amigos no mapa não tá abrindo o google maps".
-// Investigation showed that:
-//   1. The in-chat location bubble (LocationMessage.js + chat-conversation
-//      live-location modal) is NOT actually Google Maps either — it's our
-//      own backend proxy `api/static_map.php` that composes **CartoCDN**
-//      OSM tiles. The user perceives it as Google because the look is
-//      similar, but no Google billing is consumed by chat.
-//   2. The configured GOOGLE_MAPS_KEY (app.json) is bound to a GCP
-//      project where billing is **disabled**. Probed via curl:
-//        Static Maps → 403 "You must enable Billing on the Google
-//                       Cloud Project"
-//        JS API      → 200 OK but renders the diagonal
-//                       "For development purposes only" watermark.
-//      No WebView/referrer trick fixes this — it's a Cloud Console toggle.
+// Rendering: MapLibre GL JS + BoraUm self-hosted OSM tiles inside a WebView
+// --------------------------------------------------------------------------
+// 2026-06-24 DE-GOOGLE: this screen used to inject the Google Maps JS API
+// (billing-gated, paid) with a Leaflet/CartoCDN fallback. We ripped Google out
+// entirely and now render with MapLibre GL JS (loaded via the unpkg CDN inside
+// the WebView) reading a style.json from our OWN tile server, the BoraUm
+// tileserver (OpenStreetMap data): https://boraum.com.br/maptiles/. No Google
+// key, no billing, no third-party tile CDN.
 //
-// So this screen uses Leaflet (no key, no billing) layered over **the same
-// CartoCDN tile source the chat bubble uses**, so the visual language
-// matches across the app. When the user eventually turns billing on we
-// can flip the loader at the bottom of buildMapHtml() to use bootGmaps()
-// — the AvatarOverlay/MeOverlay code paths are kept ready.
+//   - The style is chosen per the map center by coverageStyleFor(lng, lat) in
+//     components/BoraMap.js: inside BR/US/PH/PT/CO → the country style; else
+//     the neutral global 'world-cinza' style. Dark mode forces 'world-cinza'.
+//   - Each friend pin is a DOM avatar (new maplibregl.Marker({element})); the
+//     "you are here" blue dot is a second, non-interactive marker.
+//   - The postMessage protocol (RN ⇄ WebView) is UNCHANGED from the old
+//     renderers — RNbridge/__renderPins/__renderMe/__panTo + map_ready/pin_tap.
+//
+// Why WebView (MapLibre via CDN) and not @maplibre/maplibre-react-native:
+//   The RN MapLibre module is a NATIVE dependency → TestFlight build + Play
+//   re-submit on every change, and risks the use_frameworks landmine. MapLibre
+//   GL JS over a CDN <script> inside the existing WebView is pure OTA.
 //
 // Why WebView and not react-native-maps:
 //   react-native-maps is a NATIVE module → TestFlight build + Play re-submit
@@ -60,16 +59,19 @@ import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
 import { getAvatarUrlForEmail } from '../services/api';
+import { coverageStyleFor, boraStyleUrl, boraMapHtml } from '../components/BoraMap';
 import {
   IconArrowLeft, IconMapPin, IconUser, IconMessageSquare, IconX, IconNavigation,
   IconPhone, IconEyeOff, IconClock, IconRefresh, IconFilter,
 } from '../components/Icons';
 
-// Google Maps JS API key. Read from app.json `extra.GOOGLE_MAPS_KEY` —
-// same source LocationMessage.js and chat-conversation.js use, so all three
-// stay in lockstep when the key rotates.
-let GMAPS_KEY = '';
-try { GMAPS_KEY = require('expo-constants').default?.expoConfig?.extra?.GOOGLE_MAPS_KEY || ''; } catch {}
+// 2026-06-24 DE-GOOGLE: arrancamos o Google Maps (Maps JS API + billing pago)
+// e passamos a usar o tile server self-hosted do BoraUm (OpenStreetMap data,
+// MapLibre GL JS). O style é escolhido por coverageStyleFor(lng, lat) — dentro
+// de BR/US/PH/PT/CO usa o style do país; senão cai no 'world-cinza'. Tudo OTA:
+// MapLibre roda por CDN (unpkg) DENTRO do WebView/iframe que já existe — ZERO
+// dependência nativa (sem @maplibre/maplibre-react-native). Não há mais chave
+// Google nem leitura de app.json extra.GOOGLE_MAPS_KEY neste arquivo.
 
 // mailWs is the singleton WS bridge — re-uses the connection chat-conv
 // holds, so subscribing here is essentially free. The module is
@@ -84,46 +86,43 @@ const { width: SW, height: SH } = Dimensions.get('window');
 
 const DEFAULT_ZOOM = 14;
 
-// Dark-mode Google Maps styles. Same palette WhatsApp uses on the live-
-// location screen — desaturated, low-contrast roads so the friend avatars
-// pop. Light mode uses Google's default styling (passes `styles: []`).
-const DARK_MAP_STYLES = [
-  { elementType: 'geometry', stylers: [{ color: '#1a1a1a' }] },
-  { elementType: 'labels.text.fill', stylers: [{ color: '#8a8a8a' }] },
-  { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1a1a' }] },
-  { featureType: 'administrative', elementType: 'geometry', stylers: [{ visibility: 'off' }] },
-  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2c2c2c' }] },
-  { featureType: 'road', elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-  { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3a3a3a' }] },
-  { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d0d0d' }] },
-];
-
-// Build the HTML document that runs Google Maps JS API + a custom
-// `AvatarOverlay` class. The overlay extends `google.maps.OverlayView` so
-// each pin is a real DOM node (rounded avatar img + name label) anchored
-// to lat/lng — exactly the Snapchat / Find-My-Friends look the spec asks
-// for, which the default Marker icon can't render.
+// Build the HTML document that runs MapLibre GL JS (CDN unpkg) reading the
+// BoraUm self-hosted style.json + a custom DOM avatar marker per friend.
+// Each pin is a real DOM node (rounded avatar img + name label) anchored to
+// lng/lat via `new maplibregl.Marker({element})` — exactly the Snapchat /
+// Find-My-Friends look the spec asks for, which a plain symbol layer can't
+// render. The "you are here" blue dot is a second marker with pointer-events
+// off so taps fall through to the map.
 //
 // Pins/myLocation are passed as JSON literals on first render and patched
 // live via `window.RNbridge(jsonString)` (native injectJavaScript) /
 // `window.postMessage` (web iframe). `pin_tap` events flow back via
 // `window.ReactNativeWebView.postMessage` (native) or `window.parent
-// .postMessage` (web).
-function buildMapHtml({ apiKey, center, zoom, isDark, initialPins, initialMe }) {
-  const stylesJson = isDark ? JSON.stringify(DARK_MAP_STYLES) : '[]';
+// .postMessage` (web). The protocol is byte-identical to the old gmaps/leaflet
+// renderers — only the tile/map engine changed.
+//
+// Dark mode: there are no per-country dark styles on the BoraUm tileserver, so
+// dark mode just uses the global 'world-cinza' style (clean gray base) — the
+// avatar rings + pulses carry the visual language regardless of basemap.
+function buildMapHtml({ center, zoom, isDark, initialPins, initialMe }) {
   const pinsJson = JSON.stringify(initialPins || []);
   const meJson = JSON.stringify(initialMe || null);
-  // If the key is missing OR Google rejects it at runtime, we silently
-  // swap in Leaflet — see `bootLeaflet()` below. Same fallback path the
-  // in-chat live-location modal uses, so styling stays consistent.
+  // Style is picked by the BoraUm coverage helper. coverageStyleFor() takes
+  // (lon, lat) — longitude first. In dark mode we force 'world-cinza' (the
+  // neutral gray global style) so the basemap reads as "dark-ish" everywhere.
+  const styleUrl = isDark
+    ? 'https://boraum.com.br/maptiles/styles/world-cinza/style.json'
+    : boraStyleUrl(center.lng, center.lat);
   return `<!DOCTYPE html><html><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
 <style>
   html,body,#map{margin:0;padding:0;width:100%;height:100%;background:${isDark ? '#0d0d0d' : '#e5e7eb'};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
-  .pin{position:absolute;transform:translate(-50%,-100%);display:flex;flex-direction:column;align-items:center;cursor:pointer;pointer-events:auto;user-select:none;will-change:transform}
+  /* MapLibre positions the marker element via its anchor; the pin itself just
+     lays out its inner avatar + labels in a column (no absolute transform). */
+  .pin{display:flex;flex-direction:column;align-items:center;cursor:pointer;pointer-events:auto;user-select:none}
   /* Gradient ring around the avatar — same look as Snapchat / Find-My.
      Live (fresh) = green gradient, unlimited = purple gradient, stale =
      desaturated gray. We use a two-layer box-shadow trick so the ring has
@@ -147,7 +146,8 @@ function buildMapHtml({ apiKey, center, zoom, isDark, initialPins, initialMe }) 
      Rendered ONLY when ago_label is set so old/missing rows degrade. */
   .pin .ago{margin-top:2px;background:rgba(255,255,255,0.92);color:#111;font-size:9px;font-weight:600;padding:1px 7px;border-radius:9px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pin.stale .ago{background:rgba(239,68,68,0.92);color:#fff}
-  .me{position:absolute;transform:translate(-50%,-50%);pointer-events:none}
+  /* MapLibre centers this marker (anchor:'center'); no absolute transform. */
+  .me{pointer-events:none}
   .me .dot{width:18px;height:18px;border-radius:50%;background:#3B82F6;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);position:relative}
   /* WhatsApp/Google-style breathing pulse around the blue dot. The outer
      ring expands+fades to telegraph "you are here, GPS live". */
@@ -158,18 +158,16 @@ function buildMapHtml({ apiKey, center, zoom, isDark, initialPins, initialMe }) 
 </head><body>
 <div id="map"></div>
 <script>
-var API_KEY = ${JSON.stringify(apiKey || '')};
 var INITIAL_CENTER = ${JSON.stringify(center)};
 var INITIAL_ZOOM = ${zoom};
 var INITIAL_PINS = ${pinsJson};
 var INITIAL_ME = ${meJson};
-var STYLES = ${stylesJson};
-var USE_DARK = ${isDark ? 'true' : 'false'};
+var STYLE_URL = ${JSON.stringify(styleUrl)};
 
 var __map = null;
-var __overlays = {};       // email → AvatarOverlay
-var __meOverlay = null;
-var __backend = null;      // 'gmaps' | 'leaflet'
+var __overlays = {};       // email → maplibregl.Marker (avatar pin)
+var __meMarker = null;     // maplibregl.Marker ("you are here" blue dot)
+var __ready = false;
 
 // Send a message back to the RN host. Native uses ReactNativeWebView,
 // web iframe uses parent postMessage.
@@ -205,287 +203,129 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
 }
 
-// ──────────────────────────── Google Maps backend ────────────────────────
-function bootGmaps() {
-  __backend = 'gmaps';
-  __map = new google.maps.Map(document.getElementById('map'), {
-    center: { lat: INITIAL_CENTER.lat, lng: INITIAL_CENTER.lng },
-    zoom: INITIAL_ZOOM,
-    disableDefaultUI: true,
-    zoomControl: true,
-    gestureHandling: 'greedy',
-    clickableIcons: false,
-    styles: STYLES,
-  });
+// ──────────────────────────── MapLibre GL backend (BoraUm tiles) ───────────
+// The single production renderer for snap-map. style.json is served by the
+// BoraUm self-hosted tileserver (OpenStreetMap data) — no Google, no key, no
+// billing. Each friend is a DOM avatar marker (new maplibregl.Marker with a
+// custom element). The protocol back to RN (map_ready/pin_tap) and the globals
+// the RN side calls (__renderPins/__renderMe/__panTo) are byte-identical to
+// the old gmaps/leaflet renderers, so nothing on the RN side had to change.
 
-  // Custom AvatarOverlay — a real DOM node positioned over the map. We
-  // extend OverlayView (not AdvancedMarkerElement) because the latter
-  // needs Maps JS v3 beta + Map ID provisioning we don't have.
-  function AvatarOverlay(pin) {
-    this.pin = pin;
-    this.div = null;
-    this.setMap(__map);
-  }
-  AvatarOverlay.prototype = new google.maps.OverlayView();
-  AvatarOverlay.prototype.onAdd = function() {
-    var div = document.createElement('div');
-    div.className = 'pin' + (this.pin.is_unlimited ? ' unlimited' : '') + (this.pin.is_stale ? ' stale' : '');
-    div.innerHTML = pinHtml(this.pin);
-    var self = this;
-    div.addEventListener('click', function(){ rnPost({ type: 'pin_tap', email: self.pin.email }); });
-    this.div = div;
-    this.getPanes().floatPane.appendChild(div);
-  };
-  AvatarOverlay.prototype.draw = function() {
-    if (!this.div) return;
-    var proj = this.getProjection();
-    if (!proj) return;
-    var p = proj.fromLatLngToDivPixel(new google.maps.LatLng(this.pin.lat, this.pin.lng));
-    if (!p) return;
-    this.div.style.left = p.x + 'px';
-    this.div.style.top = p.y + 'px';
-  };
-  AvatarOverlay.prototype.onRemove = function() {
-    if (this.div && this.div.parentNode) this.div.parentNode.removeChild(this.div);
-    this.div = null;
-  };
-  AvatarOverlay.prototype.update = function(pin) {
-    // Capture where we currently sit BEFORE swapping in the new pin, so a
-    // live location_update glides the avatar to the new coords rather than
-    // snapping. Visual chrome (ring/stale/badge) updates immediately; only
-    // the position is animated.
-    var fromLat = (this.pin && isFinite(this.pin.lat)) ? this.pin.lat : pin.lat;
-    var fromLng = (this.pin && isFinite(this.pin.lng)) ? this.pin.lng : pin.lng;
-    var toLat = pin.lat, toLng = pin.lng;
-    this.pin = pin;
-    if (this.div) {
-      this.div.className = 'pin' + (pin.is_unlimited ? ' unlimited' : '') + (pin.is_stale ? ' stale' : '');
-      this.div.innerHTML = pinHtml(pin);
-      var self0 = this;
-      this.div.addEventListener('click', function(){ rnPost({ type: 'pin_tap', email: self0.pin.email }); });
-    }
-    if (this.__glideRAF) { cancelAnimationFrame(this.__glideRAF); this.__glideRAF = null; }
-    var dLat = toLat - fromLat, dLng = toLng - fromLng;
-    // First placement or a long jump → no glide.
-    if (!isFinite(fromLat) || !isFinite(fromLng) || Math.abs(dLat) > 0.02 || Math.abs(dLng) > 0.02 || (dLat === 0 && dLng === 0)) {
-      this.draw();
+// Build the DOM element for a friend's avatar pin. We reuse the same pinHtml()
+// inner markup the old renderers used, so the stale ring + ago badge stay
+// consistent. Anchor is the bottom-center of the bubble (the avatar "drops"
+// onto the coordinate, Find-My style).
+function makePinEl(pin) {
+  var el = document.createElement('div');
+  el.className = 'pin' + (pin.is_unlimited ? ' unlimited' : '') + (pin.is_stale ? ' stale' : '');
+  el.innerHTML = pinHtml(pin);
+  return el;
+}
+
+// Smoothly glide a marker from its current lng/lat to a new one over ~700ms
+// instead of teleporting. A real-time WS location_update should look like the
+// friend *walking* to the new spot, not blinking there. We interpolate per
+// animation frame; if a newer update arrives mid-glide we cancel and re-aim
+// from the live position. easeInOutQuad for a natural settle — same curve the
+// old gmaps/leaflet renderers used.
+function glideMarker(marker, toLng, toLat) {
+  try {
+    if (marker.__glideRAF) { cancelAnimationFrame(marker.__glideRAF); marker.__glideRAF = null; }
+    var from = marker.getLngLat();
+    var fLng = from.lng, fLat = from.lat;
+    var dLng = toLng - fLng, dLat = toLat - fLat;
+    // First placement or a long jump (>~2km) → snap, don't animate.
+    if (!isFinite(fLat) || !isFinite(fLng) || Math.abs(dLat) > 0.02 || Math.abs(dLng) > 0.02 || (dLat === 0 && dLng === 0)) {
+      marker.setLngLat([toLng, toLat]);
       return;
     }
-    var self = this, dur = 700;
-    var start = (window.performance && performance.now) ? performance.now() : Date.now();
+    var dur = 700, start = (window.performance && performance.now) ? performance.now() : Date.now();
     function step(now) {
       var t = Math.min(1, ((now || Date.now()) - start) / dur);
       var e = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // easeInOutQuad
-      self.pin.lat = fromLat + dLat * e;
-      self.pin.lng = fromLng + dLng * e;
-      self.draw();
-      if (t < 1) { self.__glideRAF = requestAnimationFrame(step); }
-      else { self.pin.lat = toLat; self.pin.lng = toLng; self.draw(); self.__glideRAF = null; }
+      marker.setLngLat([fLng + dLng * e, fLat + dLat * e]);
+      if (t < 1) { marker.__glideRAF = requestAnimationFrame(step); }
+      else { marker.setLngLat([toLng, toLat]); marker.__glideRAF = null; }
     }
-    self.__glideRAF = requestAnimationFrame(step);
-  };
+    marker.__glideRAF = requestAnimationFrame(step);
+  } catch (e) { try { marker.setLngLat([toLng, toLat]); } catch (e2) {} }
+}
 
-  // Same OverlayView contract for the "you are here" blue dot — pointer-
-  // events:none so taps fall through to the map underneath.
-  function MeOverlay(pos) {
-    this.pos = pos;
-    this.div = null;
-    this.setMap(__map);
-  }
-  MeOverlay.prototype = new google.maps.OverlayView();
-  MeOverlay.prototype.onAdd = function() {
-    var div = document.createElement('div');
-    div.className = 'me';
-    div.innerHTML = '<div class="dot"></div>';
-    this.div = div;
-    this.getPanes().overlayLayer.appendChild(div);
-  };
-  MeOverlay.prototype.draw = function() {
-    if (!this.div) return;
-    var proj = this.getProjection();
-    if (!proj) return;
-    var p = proj.fromLatLngToDivPixel(new google.maps.LatLng(this.pos.lat, this.pos.lng));
-    if (!p) return;
-    this.div.style.left = p.x + 'px';
-    this.div.style.top = p.y + 'px';
-  };
-  MeOverlay.prototype.onRemove = function() {
-    if (this.div && this.div.parentNode) this.div.parentNode.removeChild(this.div);
-    this.div = null;
-  };
-  MeOverlay.prototype.update = function(pos) {
-    this.pos = pos;
-    this.draw();
-  };
-
-  // Surface tiles loaded so the host can dismiss its loading spinner.
-  google.maps.event.addListenerOnce(__map, 'tilesloaded', function(){
-    rnPost({ type: 'map_ready' });
+function bootMap() {
+  __map = new maplibregl.Map({
+    container: 'map',
+    style: STYLE_URL,
+    center: [INITIAL_CENTER.lng, INITIAL_CENTER.lat],
+    zoom: INITIAL_ZOOM,
+    attributionControl: false,
   });
+  // Zoom buttons (top-left, like the old zoomControl:true). No compass —
+  // snap-map never rotates.
+  try { __map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-left'); } catch (e) {}
 
-  // Initial render.
+  // Re-create / update every friend avatar marker. Markers we no longer see
+  // are removed (privacy: a revoked share drops the pin immediately).
   window.__renderPins = function(pins) {
     var seen = {};
     pins.forEach(function(p){
       if (!isFinite(p.lat) || !isFinite(p.lng)) return;
       seen[p.email] = true;
-      if (__overlays[p.email]) __overlays[p.email].update(p);
-      else __overlays[p.email] = new AvatarOverlay(p);
+      var existing = __overlays[p.email];
+      if (existing) {
+        // Update visual chrome (ring/stale/badge + click handler) in place,
+        // then glide to the new coords so a live tick animates.
+        existing.getElement().className = 'pin' + (p.is_unlimited ? ' unlimited' : '') + (p.is_stale ? ' stale' : '');
+        existing.getElement().innerHTML = pinHtml(p);
+        glideMarker(existing, p.lng, p.lat);
+      } else {
+        var el = makePinEl(p);
+        (function(em){
+          el.addEventListener('click', function(){ rnPost({ type: 'pin_tap', email: em }); });
+        })(p.email);
+        var m = new maplibregl.Marker({ element: el, anchor: 'bottom' })
+          .setLngLat([p.lng, p.lat])
+          .addTo(__map);
+        __overlays[p.email] = m;
+      }
     });
     Object.keys(__overlays).forEach(function(em){
-      if (!seen[em]) { __overlays[em].setMap(null); delete __overlays[em]; }
+      if (!seen[em]) { try { __overlays[em].remove(); } catch(_){} delete __overlays[em]; }
     });
   };
+
+  // "You are here" blue dot — a non-interactive centered marker so taps fall
+  // through to the map underneath.
   window.__renderMe = function(me) {
     if (!me || !isFinite(me.lat) || !isFinite(me.lng)) {
-      if (__meOverlay) { __meOverlay.setMap(null); __meOverlay = null; }
+      if (__meMarker) { try { __meMarker.remove(); } catch(_){} __meMarker = null; }
       return;
     }
-    if (__meOverlay) __meOverlay.update(me);
-    else __meOverlay = new MeOverlay(me);
+    if (__meMarker) {
+      __meMarker.setLngLat([me.lng, me.lat]);
+    } else {
+      var el = document.createElement('div');
+      el.className = 'me';
+      el.innerHTML = '<div class="dot"></div>';
+      __meMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
+        .setLngLat([me.lng, me.lat])
+        .addTo(__map);
+    }
   };
+
   window.__panTo = function(lat, lng) {
-    try { __map.panTo({ lat: lat, lng: lng }); } catch (e) {}
+    try { __map.panTo([lng, lat]); } catch (e) {}
   };
 
-  window.__renderPins(INITIAL_PINS);
-  if (INITIAL_ME) window.__renderMe(INITIAL_ME);
-}
-
-// ──────────────────────────── Leaflet (CartoCDN tiles) ─────────────────────
-// This is the production renderer for snap-map.
-//
-// Why not Google Maps:
-//   The configured key (app.json extra.GOOGLE_MAPS_KEY) is bound to a GCP
-//   project where **billing is disabled**. Probed 2026-05-18:
-//     - Static Maps  → HTTP 403 "You must enable Billing on the Google
-//       Cloud Project at https://console.cloud.google.com/project/_/billing/enable"
-//     - Maps JS API  → HTTP 200 but renders the "For development purposes
-//       only" diagonal watermark + a "This page can't load Google Maps
-//       correctly" red overlay at runtime (gm_authFailure signal).
-//   No referrer/restriction fix in code can bypass billing — it's a Cloud
-//   Console toggle. Until billing is turned on we MUST use a non-Google
-//   tile provider.
-//
-// Why CartoCDN 'light_all'/'dark_all' (not raw OSM):
-//   This is the SAME tile source the in-chat location bubble uses (via the
-//   backend 'static_map.php' proxy → CartoCDN). Using it here makes the
-//   snap-map background visually match what users see in chat — which is
-//   what the user asked for ("o google maps tá funcionando no chat"; in
-//   reality chat is CartoCDN, not Google, but the look is the same and
-//   that's what matters).
-//   CartoCDN is free, no key, no billing, CORS-friendly, has light + dark
-//   variants we can theme-switch, and renders {a,b,c,d} subdomains.
-//   Falls back to tile.openstreetmap.org if Carto is blocked.
-function bootLeaflet() {
-  if (__backend) return;  // gmaps won the race — skip
-  __backend = 'leaflet';
-  var css = document.createElement('link');
-  css.rel = 'stylesheet';
-  css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-  document.head.appendChild(css);
-  var js = document.createElement('script');
-  js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-  js.onload = function() {
-    var map = L.map('map', { zoomControl: true, attributionControl: false })
-      .setView([INITIAL_CENTER.lat, INITIAL_CENTER.lng], INITIAL_ZOOM);
-    // Theme-aware Carto tiles. light_all = clean white/gray base used by
-    // static_map.php (the chat bubble preview proxy). dark_all swaps in
-    // the inverted palette so dark-mode users get a coherent look.
-    var tileBase = USE_DARK
-      ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png'
-      : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png';
-    var carto = L.tileLayer(tileBase, {
-      maxZoom: 19,
-      subdomains: 'abcd',
-      // 404 → swap to OSM. Carto rate-limits very aggressively if the
-      // referrer is missing (which the WebView srcDoc case hits); OSM
-      // accepts wider traffic and is the safety net.
-      errorTileUrl: '',
-    }).addTo(map);
-    carto.on('tileerror', function() {
-      try {
-        map.removeLayer(carto);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          maxZoom: 19, subdomains: 'abc',
-        }).addTo(map);
-      } catch (e) {}
-    });
-
-    var lOverlays = {};
-    var lMe = null;
-    // Smoothly glide a Leaflet marker from its current latlng to a new one
-    // over ~700ms instead of teleporting. A real-time WS location_update
-    // should look like the friend *walking* to the new spot, not blinking
-    // there. We linearly interpolate lat/lng per animation frame; if a newer
-    // update arrives mid-glide we cancel and re-aim from the live position.
-    function glideMarker(marker, toLat, toLng) {
-      try {
-        if (marker.__glideRAF) { cancelAnimationFrame(marker.__glideRAF); marker.__glideRAF = null; }
-        var from = marker.getLatLng();
-        var fLat = from.lat, fLng = from.lng;
-        // First placement or a long jump (>~2km) → snap, don't animate.
-        var dLat = toLat - fLat, dLng = toLng - fLng;
-        if (Math.abs(dLat) > 0.02 || Math.abs(dLng) > 0.02) { marker.setLatLng([toLat, toLng]); return; }
-        var dur = 700, start = (window.performance && performance.now) ? performance.now() : Date.now();
-        function step(now) {
-          var t = Math.min(1, ((now || Date.now()) - start) / dur);
-          // easeInOutQuad for a natural settle.
-          var e = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-          marker.setLatLng([fLat + dLat * e, fLng + dLng * e]);
-          if (t < 1) { marker.__glideRAF = requestAnimationFrame(step); }
-          else { marker.__glideRAF = null; }
-        }
-        marker.__glideRAF = requestAnimationFrame(step);
-      } catch (e) { try { marker.setLatLng([toLat, toLng]); } catch (e2) {} }
-    }
-    function makePinIcon(pin) {
-      return L.divIcon({
-        className: '',
-        iconSize: [120, 96],
-        iconAnchor: [60, 96],
-        // Reuse the same pinHtml() helper so the gmaps + leaflet renderers
-        // stay byte-identical for the inner DOM — that's how the stale
-        // ring + ago badge stay consistent across both code paths.
-        html: '<div class="pin' + (pin.is_unlimited ? ' unlimited' : '') + (pin.is_stale ? ' stale' : '') + '">' + pinHtml(pin) + '</div>',
-      });
-    }
-    window.__renderPins = function(pins) {
-      var seen = {};
-      pins.forEach(function(p){
-        if (!isFinite(p.lat) || !isFinite(p.lng)) return;
-        seen[p.email] = true;
-        if (lOverlays[p.email]) {
-          glideMarker(lOverlays[p.email], p.lat, p.lng);
-          lOverlays[p.email].setIcon(makePinIcon(p));
-        } else {
-          var m = L.marker([p.lat, p.lng], { icon: makePinIcon(p) }).addTo(map);
-          (function(em){
-            m.on('click', function(){ rnPost({ type: 'pin_tap', email: em }); });
-          })(p.email);
-          lOverlays[p.email] = m;
-        }
-      });
-      Object.keys(lOverlays).forEach(function(em){
-        if (!seen[em]) { map.removeLayer(lOverlays[em]); delete lOverlays[em]; }
-      });
-    };
-    window.__renderMe = function(me) {
-      if (!me || !isFinite(me.lat) || !isFinite(me.lng)) {
-        if (lMe) { map.removeLayer(lMe); lMe = null; }
-        return;
-      }
-      var icon = L.divIcon({ className: '', iconSize: [18,18], iconAnchor: [9,9], html: '<div class="me"><div class="dot"></div></div>' });
-      if (lMe) { lMe.setLatLng([me.lat, me.lng]); lMe.setIcon(icon); }
-      else lMe = L.marker([me.lat, me.lng], { icon: icon, interactive: false }).addTo(map);
-    };
-    window.__panTo = function(lat, lng) { try { map.panTo([lat, lng]); } catch (e) {} };
-
+  // Surface "tiles drawn" so the host can dismiss its loading spinner + flush
+  // any pins that landed before the map was ready. 'load' fires once the style
+  // + first tiles are in; we also guard with a one-shot flag.
+  __map.on('load', function(){
+    if (__ready) return;
+    __ready = true;
     window.__renderPins(INITIAL_PINS);
     if (INITIAL_ME) window.__renderMe(INITIAL_ME);
     rnPost({ type: 'map_ready' });
-  };
-  document.body.appendChild(js);
+  });
 }
 
 // ──────────────────────────── RN → WebView bridge ────────────────────────
@@ -506,42 +346,15 @@ window.addEventListener('message', function(ev) {
 });
 
 // ──────────────────────────── Loader ─────────────────────────────────────
-// Google Maps JS API path. Billing was enabled 2026-05-18 and verified again
-// 2026-05-22 via direct API probe (Maps JS API + Geocoding both 200 OK).
-// [BUG FIX 2026-05-22] Removed the loading=async query param. When combined
-// with callback=initMap, Google ignores the legacy callback — async mode
-// requires google.maps.importLibrary() instead. Result was: initMap never
-// fired, 6s safety-net timeout hit, bootLeaflet() ran, OSM tiles shown to
-// the user even with billing fully enabled. Without loading=async the
-// classic callback pattern works reliably.
-function initMap() { try { bootGmaps(); } catch (e) { bootLeaflet(); } }
-
-(function loadGoogleMaps() {
-  if (!API_KEY) { bootLeaflet(); return; }
-  var s = document.createElement('script');
-  s.async = true;
-  s.defer = true;
-  s.src = 'https://maps.googleapis.com/maps/api/js?key=' + encodeURIComponent(API_KEY) + '&callback=initMap';
-  s.onerror = function() { bootLeaflet(); };
-  document.head.appendChild(s);
-  // Safety net: if Google never calls initMap within 8s (CDN block,
-  // network flake), fall back to Leaflet so the user isn't stuck on a
-  // blank map.
-  setTimeout(function(){ if (__backend === null) bootLeaflet(); }, 8000);
+// MapLibre GL JS loads from the unpkg CDN <script> in <head>. If that already
+// evaluated by the time this inline script runs, boot immediately; otherwise
+// wait for window load. No external map keys, no billing, no fallbacks needed.
+(function bootWhenReady() {
+  if (typeof maplibregl !== 'undefined') { try { bootMap(); } catch (e) {} return; }
+  window.addEventListener('load', function(){
+    if (typeof maplibregl !== 'undefined') { try { bootMap(); } catch (e) {} }
+  });
 })();
-
-// gm_authFailure is the runtime signal Google fires when the JS API
-// loads but is rejected for billing/quota. Kept defensive in case
-// someone flips the loader on prematurely — we tear down whatever
-// half-rendered gmaps state exists and fall back to Leaflet.
-window.gm_authFailure = function() {
-  Object.keys(__overlays).forEach(function(e){ try { __overlays[e].setMap(null); } catch(_){} });
-  __overlays = {};
-  if (__meOverlay) { try { __meOverlay.setMap(null); } catch(_){} __meOverlay = null; }
-  __map = null; __backend = null;
-  document.getElementById('map').innerHTML = '';
-  bootLeaflet();
-};
 </script>
 </body></html>`;
 }
@@ -1176,10 +989,9 @@ export default function SnapMapScreen() {
 
   // HTML built once per mount. We avoid rebuilding on state change
   // because rebuilding the `source.html` would tear down the WebView
-  // and remount Google Maps from scratch (slow, jittery, loses user
+  // and remount MapLibre from scratch (slow, jittery, loses user
   // pan/zoom). All pin/me updates flow through injectJavaScript.
   const mapHtml = useMemo(() => buildMapHtml({
-    apiKey: GMAPS_KEY,
     center: initialCenter,
     zoom: DEFAULT_ZOOM,
     isDark,
@@ -1448,10 +1260,10 @@ export default function SnapMapScreen() {
         </ScrollView>
       )}
 
-      {/* Map — Google Maps JS inside WebView/iframe. Tap on a pin posts
-          `pin_tap` back to RN which opens the bottom sheet below. Real
-          pan/zoom comes for free; we keep the loading + empty overlays
-          absolutely-positioned on top of the WebView. */}
+      {/* Map — MapLibre GL JS (BoraUm self-hosted OSM tiles) inside the
+          WebView/iframe. Tap on a pin posts `pin_tap` back to RN which opens
+          the bottom sheet below. Real pan/zoom comes for free; we keep the
+          loading + empty overlays absolutely-positioned on top of the WebView. */}
       <View style={{ flex: 1, position: 'relative', backgroundColor: isDark ? '#1a1a1a' : '#e5e7eb' }}>
         {Platform.OS === 'web' ? (
           <iframe

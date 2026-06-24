@@ -10,12 +10,11 @@
 // GPS resolves, then a small preview map + the address, with one explicit
 // "Enviar localização atual" CTA. That's what we mirror here.
 //
-// We don't have `react-native-maps` (would require a native rebuild) so we
-// route through the backend's `static_map.php` endpoint (CartoCDN tiles
-// composed server-side into a single PNG with red pin overlay, 7d edge
-// cache). Original implementation used Google Maps Static API directly,
-// but that returns 403 without an API key — leaving an empty grey box in
-// the share preview. Static-map proxy renders reliably across web + RN.
+// We don't have `react-native-maps` (would require a native rebuild) so the
+// preview is a single <Image> from our self-hosted BoraUm tile server's Static
+// Image API (OpenStreetMap, MapLibre) — see components/BoraMap.js. No Google,
+// no API key, no billing. The tileserver doesn't draw a pin, so we overlay a
+// centered red pin on top (the image is centered on the coords).
 //
 // Props
 // -----
@@ -32,10 +31,11 @@ import {
 } from 'react-native';
 import { IconMapPin, IconX } from './Icons';
 import * as api from '../services/api';
+import { boraStaticMapUrl } from './BoraMap';
 
-// Server-side static map proxy. CartoCDN tiles + red pin overlay, 7d edge
-// cache. No API key needed (server side handles the upstream).
-const STATIC_MAP_PATH = '/api/static_map.php';
+// [2026-06-24] Google Maps REMOVIDO. Preview do mapa vem da Static Image API do
+// nosso tile server self-hosted (BoraUm / OpenStreetMap) — sem chave, sem billing.
+// O tileserver não desenha o pin → desenhamos um pin sobreposto centralizado.
 
 const LIVE_DURATIONS = [
   { key: '15m', label: '15 min', seconds: 15 * 60 },
@@ -228,7 +228,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
   };
 
   const mapUrl = coords
-    ? `${(api?.BASE_URL || 'https://chatyy.com.br')}${STATIC_MAP_PATH}?lat=${coords.latitude}&lng=${coords.longitude}&z=16&w=640&h=320`
+    ? boraStaticMapUrl(coords.latitude, coords.longitude, 16, 320, 160)
     : null;
 
   return (
@@ -348,11 +348,18 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
               {/* Map preview */}
               <View style={{ borderRadius: 14, overflow: 'hidden', backgroundColor: colors.border + '20', marginBottom: 14 }}>
                 {mapUrl ? (
-                  <Image
-                    source={{ uri: mapUrl }}
-                    style={{ width: '100%', height: 180 }}
-                    resizeMode="cover"
-                  />
+                  <View style={{ width: '100%', height: 180, alignItems: 'center', justifyContent: 'center' }}>
+                    <Image
+                      source={{ uri: mapUrl }}
+                      style={{ width: '100%', height: 180, position: 'absolute', top: 0, left: 0 }}
+                      resizeMode="cover"
+                    />
+                    <View style={{ marginTop: -10 }} pointerEvents="none">
+                      <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: '#dc2626', borderWidth: 2, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+                        <IconMapPin size={16} color="#fff" />
+                      </View>
+                    </View>
+                  </View>
                 ) : null}
               </View>
 
@@ -451,11 +458,18 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
             <>
               <View style={{ borderRadius: 14, overflow: 'hidden', backgroundColor: colors.border + '20', marginBottom: 14 }}>
                 {mapUrl ? (
-                  <Image
-                    source={{ uri: mapUrl }}
-                    style={{ width: '100%', height: 160 }}
-                    resizeMode="cover"
-                  />
+                  <View style={{ width: '100%', height: 160, alignItems: 'center', justifyContent: 'center' }}>
+                    <Image
+                      source={{ uri: mapUrl }}
+                      style={{ width: '100%', height: 160, position: 'absolute', top: 0, left: 0 }}
+                      resizeMode="cover"
+                    />
+                    <View style={{ marginTop: -10 }} pointerEvents="none">
+                      <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: '#dc2626', borderWidth: 2, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
+                        <IconMapPin size={16} color="#fff" />
+                      </View>
+                    </View>
+                  </View>
                 ) : null}
               </View>
 
