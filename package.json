@@ -18,8 +18,6 @@
     "@msgpack/msgpack": "^3.0.0",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-native-community/netinfo": "11.5.2",
-    "@react-native-firebase/app": "^24.1.1",
-    "@react-native-firebase/auth": "^24.1.1",
     "@shopify/flash-list": "2.0.2",
     "@shopify/react-native-skia": "2.6.3",
     "@tanstack/react-query": "^5.90.21",

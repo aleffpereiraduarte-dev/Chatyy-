@@ -1,98 +1,33 @@
-// firebasePhone.js — NATIVE (iOS + Android) Firebase Phone Auth wrapper.
+// firebasePhone.js — STUB (2026-06-24): @react-native-firebase REMOVIDO do app.
 //
-// Why this exists (2026-06-18): the app's phone login used to send the OTP via
-// our own backend (Telnyx → Vonage). Carriers in Brazil heavily filter A2P SMS,
-// so codes often never arrive. Google/Firebase has direct carrier routes and is
-// the most reliable SMS deliverer for BR. This module sends the code via
-// Firebase; the app then exchanges the resulting Firebase ID token with our
-// backend (`phone_login_firebase`) which verifies it server-side and issues the
-// normal Chatyy bearer token. The backend never trusts the phone blindly — it
-// validates the Google-signed JWT (see api/firebase-verify.php).
+// O Firebase Phone Auth já estava DESLIGADO (FIREBASE_PHONE_DISABLED) desde
+// 2026-06-19 — login.js / signup-phone.js SEMPRE caem pro backend OTP (Vonage
+// SMS + voz), que funciona. Os pacotes @react-native-firebase/app + /auth
+// quebravam o build iOS (FirebaseAuth é um pod Swift que precisa de
+// use_frameworks! — que cascateia e quebra RN 0.83/Skia/VisionCamera/LiveKit) e
+// NÃO eram usados em produção. Removidos.
 //
-// EVERY function fails soft: if Firebase isn't available or errors, the caller
-// (login.js / signup-phone.js) falls back to the legacy backend OTP path, so a
-// misconfiguration can never lock users out.
+// Este módulo virou um stub puro (sem nenhum import nativo) que reporta
+// "indisponível" — os callers já tratam isso caindo pro backend OTP. As
+// assinaturas exportadas são preservadas pra não quebrar quem importa.
 //
-// Web resolves to firebasePhone.web.js (a stub) so the native SDK is never
-// bundled for the website.
+// Push continua 100%: vai por expo-notifications (FCM no Android via
+// google-services.json / APNs no iOS) — nunca dependeu de @react-native-firebase.
+//
+// Web já resolvia pra firebasePhone.web.js (stub). Agora native == web.
 
-import { Platform } from 'react-native';
-
-// [2026-06-19] KILL-SWITCH: Firebase Phone Auth DESLIGADO a pedido do founder
-// ("firebase não tava funcionando, usar só o Twilio"). Com isto em true,
-// firebasePhoneAvailable() retorna false → login.js + signup-phone.js caem
-// SEMPRE pro backend OTP (Twilio Verify p/ SMS + Vonage p/ voz), inclusive nos
-// builds 567+ que têm o módulo nativo linkado. Pra reativar: voltar pra false.
-// Mudança só de JS → chega por OTA (não precisa rebuild nativo).
-const FIREBASE_PHONE_DISABLED = true;
-
-let _authMod = null;       // namespaced auth() function
-let _resolved = false;     // have we tried to require it yet?
-
-function getAuth() {
-  if (Platform.OS === 'web') return null;
-  if (_resolved) return _authMod;
-  _resolved = true;
-  try {
-    // eslint-disable-next-line global-require
-    const mod = require('@react-native-firebase/auth');
-    _authMod = mod.default || mod;
-  } catch (e) {
-    _authMod = null;
-  }
-  return _authMod;
-}
-
-// Is the native Firebase Auth module linked AND a default app initialized?
 export function firebasePhoneAvailable() {
-  if (FIREBASE_PHONE_DISABLED) return false;
-  const auth = getAuth();
-  if (!auth) return false;
-  try {
-    // Touching auth().app throws if no google-services default app exists.
-    return !!auth().app;
-  } catch (e) {
-    return false;
-  }
+  return false;
 }
 
-// Send the verification SMS. Returns { ok, confirmation } or { ok:false, error }.
-// `confirmation` MUST be held by the caller and passed back to fbConfirm().
-export async function fbSendCode(e164Phone) {
-  if (FIREBASE_PHONE_DISABLED) return { ok: false, error: 'unavailable' };
-  const auth = getAuth();
-  if (!auth) return { ok: false, error: 'unavailable' };
-  try {
-    const confirmation = await auth().signInWithPhoneNumber(String(e164Phone), true);
-    return { ok: true, confirmation };
-  } catch (e) {
-    return { ok: false, error: e?.code || 'send_failed', message: e?.message || '' };
-  }
+export async function fbSendCode() {
+  return { ok: false, error: 'unavailable' };
 }
 
-// Confirm the typed code → returns { ok, idToken } or { ok:false, error }.
-// `wrong_code` means the user mistyped (recoverable, stay on screen); any other
-// error means Firebase itself failed (caller should fall back to backend OTP).
-export async function fbConfirm(confirmation, code) {
-  const auth = getAuth();
-  if (!auth || !confirmation) return { ok: false, error: 'no_confirmation' };
-  try {
-    await confirmation.confirm(String(code));
-    const user = auth().currentUser;
-    if (!user) return { ok: false, error: 'no_user' };
-    const idToken = await user.getIdToken(true);
-    return { ok: true, idToken };
-  } catch (e) {
-    const code = e?.code || '';
-    const wrong = /invalid-verification-code|invalid-code|code-expired|session-expired/i.test(code);
-    return { ok: false, error: wrong ? 'wrong_code' : (code || 'confirm_failed'), message: e?.message || '' };
-  }
+export async function fbConfirm() {
+  return { ok: false, error: 'unavailable' };
 }
 
-// Sign the Firebase user out (housekeeping — we don't keep a Firebase session;
-// the Chatyy bearer token is the real session). Best-effort, never throws.
 export async function fbSignOut() {
-  const auth = getAuth();
-  if (!auth) return;
-  try { if (auth().currentUser) await auth().signOut(); } catch (e) { /* ignore */ }
+  /* no-op — não há sessão Firebase */
 }

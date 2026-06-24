@@ -323,10 +323,7 @@
             "minSdkVersion": 26
           }
         }
-      ],
-      "@react-native-firebase/app",
-      "@react-native-firebase/auth",
-      "./plugins/with-rnfirebase-static"
+      ]
     ],
     "extra": {
       "router": {
