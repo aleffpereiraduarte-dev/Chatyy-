@@ -9755,10 +9755,40 @@ function ChatConversationInner() {
           // Fresh load or refresh — merge with existing, skip if unchanged to prevent flicker
           setMessages(prev => {
             if (prev.length === 0) return newMsgs;
-            // Quick fingerprint: compare IDs to detect if data actually changed
+            // Quick fingerprint: compare IDs to detect if data actually changed.
+            // [receipt-sync cold-load 2026-06-24] The ID set alone is NOT enough:
+            // on a cold open the thread first paints from the SmartCache snapshot
+            // (`_initialCached`), whose own-message rows carry the receipt state
+            // captured AT SEND TIME (usually ✓ / sent). When loadMessages then
+            // pulls fresh rows from chat_messages, the backend now reports
+            // _delivered/_read=true for those same ids — but the ID set is
+            // identical, so the old `prevIds === newIds` short-circuit returned
+            // the STALE cached snapshot and threw the upgrade away. Result: the
+            // chat LIST showed ✓✓ (it reads fresh last_message.read_at/
+            // delivered_at) while the open conversation stayed stuck at ✓.
+            // Fold the receipt signature of OWN messages into the fingerprint so
+            // a sent→delivered→read transition forces a reconcile. We only widen
+            // the fingerprint (never narrow it) — flicker-prevention for truly
+            // unchanged batches is preserved, and the upgrade only fires on real
+            // server-confirmed _delivered/_read/read_at/delivered_at evidence
+            // (no inflation — same fields the enrichment already trusts). Groups
+            // included: _read there is already gated all-members by the backend.
+            const _rcptSig = (arr) => {
+              let s = '';
+              for (let i = 0; i < arr.length; i++) {
+                const m = arr[i];
+                if (!m || typeof m.id !== 'number') continue;
+                // Own-message receipt state only — incoming rows never show ticks.
+                if (m.sender_email !== currentEmail) continue;
+                s += m.id
+                  + ':' + (m._read ? 'r' : (m.read_at ? 'r' : ''))
+                  + (m._delivered ? 'd' : (m.delivered_at ? 'd' : '')) + ',';
+              }
+              return s;
+            };
             const prevIds = prev.filter(m => typeof m.id === 'number').map(m => m.id).join(',');
             const newIds = newMsgs.map(m => m.id).join(',');
-            if (prevIds === newIds) return prev; // Same messages — skip setState (no flicker)
+            if (prevIds === newIds && _rcptSig(prev) === _rcptSig(newMsgs)) return prev; // Same messages AND same receipts — skip setState (no flicker)
             // Merge: keep pending/tmp messages, replace server ones. If we
             // already have a decrypted plaintext locally (sent-by-us or
             // previously-decrypted), prefer it over the server's encrypted
