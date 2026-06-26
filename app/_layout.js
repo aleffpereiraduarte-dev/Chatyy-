@@ -308,6 +308,8 @@ import CallStatusBar from '../components/CallStatusBar';
 const IncomingCallListener = React.lazy(() => import('../components/IncomingCallListener'));
 const LiveLocationPingListener = React.lazy(() => import('../components/LiveLocationPingListener'));
 const LiveLocationHeartbeat = React.lazy(() => import('../components/LiveLocationHeartbeat'));
+// Hidden WebView host that runs Firebase Phone Auth (Google sends the OTP SMS).
+const FirebasePhoneHost = React.lazy(() => import('../components/FirebasePhoneHost'));
 // [decline-with-message iOS, 2026-05-17] CallKit can't carry custom buttons,
 // so we surface a JS sheet right after the system decline action fires.
 // The Android equivalent is inline in IncomingCallActivity.kt.
@@ -1634,6 +1636,9 @@ export default function RootLayout() {
                 </Suspense>
                 <Suspense fallback={null}>
                   <LiveLocationHeartbeat />
+                </Suspense>
+                <Suspense fallback={null}>
+                  <FirebasePhoneHost />
                 </Suspense>
                 <Suspense fallback={null}>
                   <DeclineWithMessageSheet />

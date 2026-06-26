@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Chatyy</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:transparent;font-family:-apple-system,Roboto,system-ui,sans-serif;color:#111;}
+  #recaptcha-container{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:center;}
+  /* Center the reCAPTCHA challenge if Google decides to show one. */
+  .grecaptcha-badge{visibility:hidden!important;}
+</style>
+</head>
+<body>
+  <!-- Invisible reCAPTCHA renders here; if Google forces a challenge it
+       appears centered and the host modal is already on-screen so the user
+       can solve it. -->
+  <div id="recaptcha-container"></div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script>
+  // fbphone.html — self-contained Firebase Phone Auth bridge.
+  //
+  // Runs Google/Firebase phone verification entirely in the browser DOM (where
+  // reCAPTCHA works), so the native app needs NO @react-native-firebase pod
+  // (which broke the iOS Archive) and NO new JS dependency — it just drives
+  // this page through a WebView via postMessage. Hosted on chatyy.com.br, an
+  // authorized domain of the onemundo-52ca6 Firebase project.
+  //
+  // Protocol (strings, JSON):
+  //   app  -> page : {cmd:'send', phone:'+5511...'}            request the SMS
+  //                  {cmd:'confirm', verificationId, code}     verify the code
+  //   page -> app  : {ev:'ready'}                              firebase init OK
+  //                  {ev:'sent', verificationId}               SMS sent
+  //                  {ev:'token', idToken}                     verified -> token
+  //                  {ev:'error', code, message}               failure
+  //
+  // Confirm is STATELESS (verificationId + code is a full credential), so it
+  // works even on a fresh page load — no shared state with the send step.
+  (function () {
+    var cfg = {
+      apiKey: 'AIzaSyC5943EdhMUcoDX4cX15UBnsO1Xihuf_sE',
+      authDomain: 'onemundo-52ca6.firebaseapp.com',
+      projectId: 'onemundo-52ca6',
+      appId: '1:782929446226:web:90a36e056b392a6294268b',
+      messagingSenderId: '782929446226'
+    };
+
+    function post(o) {
+      var s = JSON.stringify(o);
+      try {
+        if (window.ReactNativeWebView && window.ReactNativeWebView.postMessage) {
+          window.ReactNativeWebView.postMessage(s);
+        } else if (window.parent && window.parent !== window) {
+          window.parent.postMessage(s, '*');
+        }
+      } catch (e) {}
+    }
+
+    var auth = null;
+    var verifier = null;
+
+    try {
+      firebase.initializeApp(cfg);
+      auth = firebase.auth();
+      try { auth.useDeviceLanguage(); } catch (e) {}
+      post({ ev: 'ready' });
+    } catch (e) {
+      post({ ev: 'error', code: 'init', message: String((e && e.message) || e) });
+    }
+
+    function freshVerifier() {
+      try { if (verifier) { verifier.clear(); } } catch (e) {}
+      verifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', { size: 'invisible' });
+      return verifier;
+    }
+
+    function doSend(phone) {
+      if (!auth) { post({ ev: 'error', code: 'init', message: 'auth indisponivel' }); return; }
+      var v;
+      try { v = freshVerifier(); }
+      catch (e) { post({ ev: 'error', code: 'recaptcha', message: String((e && e.message) || e) }); return; }
+      auth.signInWithPhoneNumber(String(phone), v)
+        .then(function (cr) {
+          post({ ev: 'sent', verificationId: cr.verificationId });
+        })
+        .catch(function (e) {
+          try { if (verifier) { verifier.clear(); verifier = null; } } catch (_) {}
+          post({ ev: 'error', code: (e && e.code) || 'send_failed', message: String((e && e.message) || e) });
+        });
+    }
+
+    function doConfirm(verificationId, code) {
+      if (!auth) { post({ ev: 'error', code: 'init', message: 'auth indisponivel' }); return; }
+      var cred;
+      try { cred = firebase.auth.PhoneAuthProvider.credential(String(verificationId), String(code)); }
+      catch (e) { post({ ev: 'error', code: 'bad_credential', message: String((e && e.message) || e) }); return; }
+      auth.signInWithCredential(cred)
+        .then(function (uc) { return uc.user.getIdToken(true); })
+        .then(function (tok) {
+          post({ ev: 'token', idToken: tok });
+          try { auth.signOut(); } catch (_) {}
+        })
+        .catch(function (e) {
+          post({ ev: 'error', code: (e && e.code) || 'confirm_failed', message: String((e && e.message) || e) });
+        });
+    }
+
+    function handle(cmd) {
+      if (!cmd || !cmd.cmd) return;
+      if (cmd.cmd === 'send') doSend(cmd.phone);
+      else if (cmd.cmd === 'confirm') doConfirm(cmd.verificationId, cmd.code);
+    }
+
+    function onMsg(ev) {
+      var d;
+      try { d = (typeof ev.data === 'string') ? JSON.parse(ev.data) : ev.data; }
+      catch (e) { return; }
+      handle(d);
+    }
+    // RN WebView delivers webRef.postMessage() as a 'message' event on window;
+    // older Android delivers on document. Listen on both.
+    window.addEventListener('message', onMsg);
+    document.addEventListener('message', onMsg);
+  })();
+  </script>
+</body>
+</html>
