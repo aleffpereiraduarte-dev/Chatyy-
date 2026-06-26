@@ -2247,32 +2247,9 @@ export default function LoginScreen() {
                             </TouchableOpacity>
                           </View>
 
-                          {/* Fallback por ligação (paridade WhatsApp/Telegram): quando
-                              o SMS não chega, o user pede uma CHAMADA onde a voz pt-BR
-                              da Vonage lê o código em voz alta. Vai sempre pelo backend
-                              (Vonage), nunca pelo Firebase. [2026-06-23] Aparece IMEDIATO
-                              (não espera o cronômetro): operadoras (T-Mobile US 10DLC +
-                              BR) filtram silenciosamente o SMS A2P de LVN, então o user
-                              precisa do "me ligue" na hora, sem ficar esperando um SMS
-                              que nunca chega. */}
-                          {!phoneRequiresLock && (
-                            <TouchableOpacity
-                              onPress={() => handlePhoneSendOtp('voice')}
-                              disabled={phoneSending}
-                              activeOpacity={0.7}
-                              style={{
-                                marginTop: 16, paddingVertical: 12, paddingHorizontal: 14,
-                                flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-                                borderRadius: 12, borderWidth: 1.5, borderColor: colors.primary,
-                                backgroundColor: isDark ? `${colors.primary}14` : `${colors.primary}0d`,
-                              }}
-                            >
-                              <IconPhone size={16} color={colors.primary} />
-                              <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '700' }}>
-                                {t('login.phoneCallMe') || 'Receber código por chamada'}
-                              </Text>
-                            </TouchableOpacity>
-                          )}
+                          {/* Fallback por ligação REMOVIDO (2026-06-26): o SMS agora vai
+                              pelo Firebase (Google), que entrega bem no BR — não precisa
+                              mais oferecer "receber por chamada" no login. */}
                         </>
                       )}
                     </View>
