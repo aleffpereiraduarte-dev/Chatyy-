@@ -15,7 +15,7 @@
 // no reCAPTCHA and runs invisibly.
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Platform, View, StyleSheet, ActivityIndicator, Text } from 'react-native';
+import { Platform, View, StyleSheet } from 'react-native';
 
 const PAGE_URL = 'https://chatyy.com.br/fbphone.html';
 
@@ -125,17 +125,16 @@ export default function FirebasePhoneHost() {
   if (!mounted || !WebViewComp) return null;
   const WV = WebViewComp;
 
+  // CRITICAL: during 'send' the WebView is shown FULL-SCREEN and interactive,
+  // with NO native view on top — otherwise a reCAPTCHA challenge (which Google
+  // renders inside the page when traffic looks suspicious, e.g. repeated login
+  // attempts) would be covered and untappable. The page draws its own
+  // "Verificando seu número…" loader, so there's nothing to add here.
   return (
     <View
       pointerEvents={visible ? 'auto' : 'none'}
       style={[StyleSheet.absoluteFill, { zIndex: visible ? 9999 : -1, opacity: visible ? 1 : 0 }]}
     >
-      {visible ? (
-        <View style={styles.overlay}>
-          <ActivityIndicator size="large" color="#fff" />
-          <Text style={styles.overlayText}>Verificando número…</Text>
-        </View>
-      ) : null}
       <WV
         ref={webRef}
         source={{ uri: PAGE_URL }}
@@ -145,23 +144,8 @@ export default function FirebasePhoneHost() {
         domStorageEnabled
         thirdPartyCookiesEnabled
         startInLoadingState={false}
-        style={styles.web}
-        // Keep the WebView itself transparent; the overlay above provides the
-        // "verificando" UI. The reCAPTCHA challenge (rare) renders inside.
-        containerStyle={{ backgroundColor: 'transparent' }}
+        style={{ flex: 1, backgroundColor: visible ? '#0b0b12' : 'transparent' }}
       />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  web: { flex: 1, backgroundColor: 'transparent' },
-  overlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(8,8,12,0.82)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1,
-  },
-  overlayText: { color: '#fff', marginTop: 16, fontSize: 15, fontWeight: '600' },
-});
