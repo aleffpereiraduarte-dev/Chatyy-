@@ -6,7 +6,7 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX, IconLock, IconCheckCircle, IconEye, IconEyeOff } from './Icons';
 import * as api from '../services/api';
 
-export default function ChangePasswordModal({ visible, onClose }) {
+export default function ChangePasswordModal({ visible, onClose, forced = false, onChanged }) {
   const { colors } = useTheme();
   const { t } = useLanguage();
   const [currentPassword, setCurrentPassword] = useState('');
@@ -68,7 +68,12 @@ export default function ChangePasswordModal({ visible, onClose }) {
       }, 'POST');
       if (r.success) {
         setSuccess(true);
-        setTimeout(() => handleClose(), 2000);
+        setTimeout(() => {
+          // Forced first-login change: proceed into the app instead of just
+          // closing back to the login screen.
+          if (forced && onChanged) { reset(); onChanged(); }
+          else handleClose();
+        }, 2000);
       } else {
         setError(r.message || t('changePassword.error'));
       }
@@ -123,14 +128,16 @@ export default function ChangePasswordModal({ visible, onClose }) {
 
   return (
     <Modal visible={visible} animationType="fade" transparent>
-      <TouchableOpacity style={s.overlay} onPress={handleClose} activeOpacity={1}>
+      <TouchableOpacity style={s.overlay} onPress={forced ? undefined : handleClose} activeOpacity={1}>
         <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface }]}>
           <View style={[s.header, { borderBottomColor: colors.borderLight }]}>
             <IconLock size={20} color={colors.primary} style={{ marginRight: Spacing.sm }} />
             <Text style={[s.title, { color: colors.text }]}>{t('changePassword.title')}</Text>
-            <TouchableOpacity onPress={handleClose} style={s.closeBtn}>
-              <IconX size={20} color={colors.textSecondary} />
-            </TouchableOpacity>
+            {!forced && (
+              <TouchableOpacity onPress={handleClose} style={s.closeBtn}>
+                <IconX size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            )}
           </View>
 
           {success ? (

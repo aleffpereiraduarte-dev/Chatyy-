@@ -21,6 +21,7 @@ import { HelpModal, PrivacyModal, TermsModal } from '../components/LoginModals';
 import SignupIntro from '../components/SignupIntro';
 import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
 import RestoreHistoryPrompt from '../components/RestoreHistoryPrompt';
+import ChangePasswordModal from '../components/ChangePasswordModal';
 import { LANGUAGES } from '../i18n';
 import * as api from '../services/api';
 import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../services/firebasePhone';
@@ -52,6 +53,9 @@ export default function LoginScreen() {
   const [showHelp, setShowHelp] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
+  // Forced first-login password change (admin-provisioned mailbox w/ temp pwd).
+  const [forcePwChange, setForcePwChange] = useState(false);
+  const pendingGoRef = useRef(null);
   const { login, completeLoginAfterChallenge, loginWithToken } = useAuth();
   const { colors, isDark, toggle } = useTheme();
   const { t, language, changeLanguage } = useLanguage();
@@ -817,6 +821,15 @@ export default function LoginScreen() {
         // Kids go to chat, adults go to inbox
         safeHaptic(() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success));
         const isKids = r.data?.is_child || isChildAccount();
+        // Admin-provisioned mailbox with a temporary password: force the user
+        // to set a new one before entering the app. Session/token are already
+        // live (login succeeded), so change_password authenticates fine.
+        if (r.data?.must_change_password) {
+          pendingGoRef.current = () => maybePromptRestoreThenGo(isKids, fullEmail);
+          setForcePwChange(true);
+          setLoading(false);
+          return;
+        }
         maybePromptRestoreThenGo(isKids, fullEmail);
       } else {
         // Backend returns "Incorrect email or password" in English + various
@@ -2800,6 +2813,16 @@ export default function LoginScreen() {
         </ScrollView>
       </KeyboardAvoidingView>
 
+      <ChangePasswordModal
+        visible={forcePwChange}
+        forced
+        onChanged={() => {
+          setForcePwChange(false);
+          const go = pendingGoRef.current; pendingGoRef.current = null;
+          if (go) go();
+        }}
+        onClose={() => {}}
+      />
       <HelpModal visible={showHelp} onClose={() => setShowHelp(false)} />
       <PrivacyModal visible={showPrivacy} onClose={() => setShowPrivacy(false)} />
       <TermsModal visible={showTerms} onClose={() => setShowTerms(false)} />
