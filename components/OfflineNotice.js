@@ -48,7 +48,12 @@ export default function OfflineNotice() {
         if (NativeToolkit?.isOnlineSync) {
           setIsOffline(!NativeToolkit.isOnlineSync());
         } else {
-          setIsOffline(!state.isConnected);
+          // [2026-06-28] Align with SyncBar: a radio that's "connected" to wifi
+          // with no internet (isInternetReachable === false) IS offline. null
+          // (unknown, right after connect) is treated as reachable to avoid a
+          // false offline flash.
+          const online = !!state.isConnected && state.isInternetReachable !== false;
+          setIsOffline(!online);
         }
       });
       return () => unsub();

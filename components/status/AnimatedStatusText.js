@@ -16,28 +16,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Platform, StyleSheet, Text, View } from 'react-native';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect } from 'react-native-svg';
-
 // [2026-06-10 tela-branca fix] The composer persists gradient presets as a
-// `gradient:<id>` token in bg_color. This component used to pass that token
-// straight into `backgroundColor`, which is an INVALID color — the card lost
-// its background and every white-on-color element (text, progress bars,
-// header) dissolved into a fully white/blank screen when viewing someone's
-// text status from the status tab. Mirror of StoryViewer's preset map (kept
-// inline to avoid a circular dep with ChatStatusTab).
-const _TEXT_BG_GRADIENTS = {
-  purple_pink: ['#8B5CF6', '#EC4899'],
-  blue_cyan:   ['#2563EB', '#06B6D4'],
-  orange_red:  ['#F97316', '#EF4444'],
-  green_teal:  ['#10B981', '#14B8A6'],
-  sunset:      ['#FACC15', '#F97316', '#EF4444'],
-  aurora:      ['#06B6D4', '#8B5CF6', '#EC4899'],
-};
-function _resolveGradient(bgColor) {
-  if (!bgColor || typeof bgColor !== 'string' || !bgColor.startsWith('gradient:')) return null;
-  const id = bgColor.slice('gradient:'.length);
-  const colors = _TEXT_BG_GRADIENTS[id];
-  return colors ? { id, colors } : null;
-}
+// `gradient:<id>` token in bg_color. Passing that token straight into
+// `backgroundColor` is an INVALID color → the card lost its background and
+// every white-on-color element dissolved into a blank/white screen. Resolve
+// the token to real stops via the shared preset map (single source of truth).
+import { resolveTextGradient as _resolveGradient } from './textGradients';
+
 // Any other non-paintable string (unknown token, empty, etc.) must never
 // reach backgroundColor raw — fall back to the brand purple.
 function _safeSolid(bgColor) {

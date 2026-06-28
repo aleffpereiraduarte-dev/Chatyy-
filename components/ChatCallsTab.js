@@ -1595,151 +1595,10 @@ const activeCallStyles = StyleSheet.create({
 });
 
 // ============================================================
-// TWILIO WEBRTC CALL MANAGER (web: direct SDK, native: WebView)
+// (Twilio WebRTC call manager REMOVED — Twilio/Telnyx accounts cancelled.
+//  PSTN dialing now routes through LiveKit + Vonage via startPstnCall;
+//  the old `@twilio/voice-sdk` dependency and its WebView fallback are gone.)
 // ============================================================
-let _twilioDevice = null;
-let _twilioCall = null;
-
-// Native WebRTC call via hidden WebView with Twilio JS SDK
-let _nativeCallWebView = null;
-let _nativeCallStateCallback = null;
-
-function NativeTwilioCall({ token, toNumber, onStateChange, onRef }) {
-  const webViewRef = useRef(null);
-  const readyRef = useRef(false);
-
-  useEffect(() => {
-    if (onRef) onRef(webViewRef);
-  }, []);
-
-  const html = `<!DOCTYPE html><html><head>
-<script src="https://sdk.twilio.com/js/client/releases/1.14.3/twilio.min.js"></script>
-</head><body><script>
-var device, conn, stateInterval;
-function send(msg) { window.ReactNativeWebView.postMessage(JSON.stringify(msg)); }
-
-try {
-  Twilio.Device.setup('${token}', { edge: 'ashburn', closeProtection: false, enableRingingState: true });
-
-  Twilio.Device.ready(function() {
-    send({state:'ready'});
-    conn = Twilio.Device.connect({ To: '${toNumber}' });
-    conn.on('ringing', function() { send({state:'ringing'}); });
-    conn.on('accept', function() {
-      send({state:'connected'});
-      stateInterval = setInterval(function() { send({state:'tick'}); }, 1000);
-    });
-    conn.on('disconnect', function() {
-      clearInterval(stateInterval);
-      send({state:'ended'});
-    });
-    conn.on('cancel', function() { send({state:'ended'}); });
-    conn.on('error', function(e) { send({state:'error', msg: e.message || 'Unknown'}); });
-  });
-
-  Twilio.Device.error(function(e) {
-    send({state:'error', msg: e.message || 'Device error'});
-  });
-} catch(e) {
-  send({state:'error', msg: e.message || 'Init error'});
-}
-
-function hangup() {
-  if (conn) conn.disconnect();
-  Twilio.Device.disconnectAll();
-  Twilio.Device.destroy();
-}
-</script></body></html>`;
-
-  const WebView = require('react-native-webview').WebView;
-  return (
-    <WebView
-      ref={webViewRef}
-      source={{ html, baseUrl: 'https://chatyy.com.br' }}
-      style={{ width: 1, height: 1, position: 'absolute', top: -100, left: -100, opacity: 0 }}
-      mediaPlaybackRequiresUserAction={false}
-      allowsInlineMediaPlayback={true}
-      javaScriptEnabled={true}
-      originWhitelist={['*']}
-      onMessage={(event) => {
-        try {
-          const msg = JSON.parse(event.nativeEvent.data);
-          if (msg.state === 'error') {
-            console.warn('[NativeTwilio] Error:', msg.msg);
-            onStateChange('error:' + (msg.msg || ''));
-          } else if (msg.state === 'tick') {
-            // duration tick handled by parent
-            onStateChange('tick');
-          } else {
-            onStateChange(msg.state);
-          }
-        } catch {}
-      }}
-    />
-  );
-}
-
-async function startWebRTCCall(toNumber, onStateChange) {
-  try {
-    onStateChange('connecting');
-    // Get token
-    const tokenRes = await voipToken();
-    if (!tokenRes?.success || !tokenRes.data?.token) {
-      throw new Error(tokenRes?.message || 'Failed to get token');
-    }
-    const token = tokenRes.data.token;
-
-    if (Platform.OS === 'web') {
-      // Dynamic import Twilio Voice SDK
-      const { Device } = await import('@twilio/voice-sdk');
-      _twilioDevice = new Device(token, { edge: 'ashburn', closeProtection: true });
-      await _twilioDevice.register();
-
-      // Make the call
-      const params = { To: toNumber };
-      _twilioCall = await _twilioDevice.connect({ params });
-
-      _twilioCall.on('ringing', () => onStateChange('ringing'));
-      _twilioCall.on('accept', () => onStateChange('connected'));
-      _twilioCall.on('disconnect', () => {
-        onStateChange('ended');
-        cleanupTwilioCall();
-      });
-      _twilioCall.on('cancel', () => {
-        onStateChange('ended');
-        cleanupTwilioCall();
-      });
-      _twilioCall.on('error', (err) => {
-        console.warn('[Twilio] Call error:', err.message);
-        onStateChange('ended');
-        cleanupTwilioCall();
-      });
-    } else {
-      // Native: use WebView with Twilio JS SDK
-      // Store token and number for the WebView component to use
-      _nativeCallStateCallback = onStateChange;
-      return { useNativeWebView: true, token, toNumber };
-    }
-  } catch (err) {
-    console.warn('[Twilio WebRTC] Error:', err.message);
-    throw err;
-  }
-}
-
-function hangupTwilioCall() {
-  if (_twilioCall) {
-    try { _twilioCall.disconnect(); } catch {}
-  }
-  cleanupTwilioCall();
-}
-
-function cleanupTwilioCall() {
-  _twilioCall = null;
-  if (_twilioDevice) {
-    try { _twilioDevice.destroy(); } catch {}
-    _twilioDevice = null;
-  }
-}
 
 // ============================================================
 // DIALER MODAL - iPhone Phone app style (pixel-perfect)
@@ -2251,9 +2110,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
     // Always try SIP hangup first (works for both web and native via the unified sipCall service)
     try { hangupSipCall(); } catch {}
     try { hangupPstnCall(); } catch {}
-    if (Platform.OS === 'web') {
-      try { hangupTwilioCall(); } catch {}
-    } else if (nativeWebViewRef.current?.current) {
+    if (nativeWebViewRef.current?.current) {
       try { nativeWebViewRef.current.current.injectJavaScript('hangup(); true;'); } catch {}
     }
     handleCallStateChange('ended');
@@ -2282,11 +2139,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
       const { muteSipCall } = require('../services/sipCall');
       muteSipCall?.(newMuted);
     } catch {}
-    if (Platform.OS === 'web') {
-      if (_twilioCall) {
-        try { _twilioCall.mute(newMuted); } catch (e) { console.warn('[Mute] Error:', e); }
-      }
-    } else if (nativeWebViewRef.current?.current) {
+    if (nativeWebViewRef.current?.current) {
       nativeWebViewRef.current.current.injectJavaScript(`conn.mute(${newMuted}); true;`);
     }
   }, [isMuted]);
@@ -2314,11 +2167,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
 
   // DTMF send handler
   const handleSendDTMF = useCallback((digit) => {
-    if (Platform.OS === 'web') {
-      if (_twilioCall) {
-        try { _twilioCall.sendDigits(digit); } catch (e) { console.warn('[DTMF] Error:', e); }
-      }
-    } else if (nativeWebViewRef.current?.current) {
+    if (nativeWebViewRef.current?.current) {
       nativeWebViewRef.current.current.injectJavaScript(`conn.sendDigits('${digit}'); true;`);
     }
   }, []);
@@ -2813,16 +2662,6 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
           <PlanBadge minutesInfo={minutesInfo} isDark={isDark} t={t} />
         </View>
       </View>
-
-      {/* Native WebView for Twilio calls */}
-      {Platform.OS !== 'web' && activeCall?.nativeToken && activeCall?.nativeTo && (
-        <NativeTwilioCall
-          token={activeCall.nativeToken}
-          toNumber={activeCall.nativeTo}
-          onStateChange={handleCallStateChange}
-          onRef={(ref) => { nativeWebViewRef.current = ref; }}
-        />
-      )}
 
       {/* Active call overlay */}
       <ActiveCallScreen

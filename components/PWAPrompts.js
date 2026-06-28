@@ -95,11 +95,16 @@ export default function PWAPrompts({ colors, isDark, t }) {
           });
         });
       }).catch(() => {});
-      // Reload page automatically after the new SW takes control. The
-      // browser may still buffer one navigation, but on next interaction
-      // we get the fresh bundle.
+      // Reload page automatically after a NEW SW takes control of an
+      // already-controlled page (a real update). On the very first install
+      // there is no prior controller, so controllerchange fires once during
+      // initial activation — reloading there causes a spurious full-page
+      // refresh on the user's first visit. Capture whether a controller
+      // already existed BEFORE the change and only reload if so.
+      const hadController = !!navigator.serviceWorker.controller;
       let _reloading = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (!hadController) return;
         if (_reloading) return;
         _reloading = true;
         try { window.location.reload(); } catch {}

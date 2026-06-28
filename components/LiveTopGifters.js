@@ -57,6 +57,10 @@ export default function LiveTopGifters({
   refreshKey = 0,
   i18n = {},
 }) {
+  // DIAMANTE DESLIGADO — leaderboard de "top gifters" (totais de diamante)
+  // escondido (no-op), já que o envio de presente pago foi desligado.
+  return null;
+  // eslint-disable-next-line no-unreachable
   const [gifters, setGifters] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showModal, setShowModal] = useState(false);

@@ -1049,7 +1049,29 @@ function CallScreenInner() {
   useEffect(() => {
     const sub = AppState.addEventListener('change', (nextState) => {
       const r = roomRef.current;
-      if (!r) return;
+      if (!r) {
+        // [2026-06-28] CallKit-answered calls adopt a native LK Room and leave
+        // roomRef null (native owns the publisher). Without this the local
+        // camera kept streaming while backgrounded and the mic was never
+        // re-asserted on resume — mirror the native bridge fallback the
+        // mute/video toggles already use (modules/expo-callkit).
+        if (Platform.OS !== 'web' && globalThis.__chatyyNativeCallActive === true) {
+          try {
+            const ExpoCallKit = require('../modules/expo-callkit');
+            if (nextState === 'background' || nextState === 'inactive') {
+              ExpoCallKit.lkSetCameraEnabled?.(false);
+            } else if (nextState === 'active') {
+              if (videoEnabledRef.current && !onHold) {
+                ExpoCallKit.lkSetCameraEnabled?.(true);
+              }
+              ExpoCallKit.lkSetMicEnabled?.(!audioMutedRef.current);
+            }
+          } catch (e) {
+            try { _callDiagAppend('warn', 'native AppState cam/mic re-assert failed', { call_id: callId, msg: String(e?.message || e).slice(0, 200) }); } catch {}
+          }
+        }
+        return;
+      }
       if (nextState === 'background' || nextState === 'inactive') {
         try { r.localParticipant.setCameraEnabled(false); } catch (e) {
           try { _callDiagAppend('warn', 'setCameraEnabled(false) failed on background', { call_id: callId, msg: String(e?.message || e).slice(0, 200) }); } catch {}
@@ -2715,14 +2737,22 @@ function CallScreenInner() {
       duration: dur,
     }).catch(() => {});
 
-    if (dur > 3) {
-      try {
-        const apiMod = require('../services/api');
-        // Backend terminal status is 'ended' — 'completed' was rejected (400)
-        // and the .catch swallowed it, so history never got status/duration.
-        apiMod.callStatus?.(callId, 'ended', dur).catch(() => {});
-      } catch {}
-    }
+    // [2026-06-28] ALWAYS persist a terminal status so the backend closes
+    // ended_at — short/cancelled/missed calls used to fall through the old
+    // `if (dur > 3)` gate, never sending a status, leaving the row 'active'
+    // (ghost ongoing call). Backend accepts ended/missed/declined/cancelled.
+    try {
+      const apiMod = require('../services/api');
+      let terminalStatus = 'ended';
+      if (!peerConnected) {
+        // Never connected: the caller giving up = 'cancelled', the callee
+        // hanging up on the ring = 'declined'.
+        terminalStatus = isCaller ? 'cancelled' : 'declined';
+      }
+      // Backend terminal status is 'ended' — 'completed' was rejected (400)
+      // and the .catch swallowed it, so history never got status/duration.
+      apiMod.callStatus?.(callId, terminalStatus, dur).catch(() => {});
+    } catch {}
 
     // Stop recording.
     if (isRecording || recordedChunksRef.current.length > 0) {

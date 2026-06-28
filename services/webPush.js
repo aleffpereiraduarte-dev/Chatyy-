@@ -60,7 +60,7 @@ let _cachedWebToken = null;
 let _status = 'IDLE';
 export function getWebPushStatus() { return _status; }
 
-export async function registerForWebPush() {
+export async function registerForWebPush(interactive = false) {
   if (Platform.OS !== 'web') return null;
   if (typeof window === 'undefined') return null;
   if (_registered || _registering) return null;
@@ -87,6 +87,12 @@ export async function registerForWebPush() {
     if (!('Notification' in window)) { _status = 'UNSUPPORTED'; return null; }
     if (Notification.permission === 'denied') { _status = 'DENIED'; return null; }
     if (Notification.permission !== 'granted') {
+      // Notification.requestPermission() MUST be triggered by a user gesture —
+      // calling it on boot/auto-registration shows an unsolicited browser
+      // prompt (and some browsers now ignore non-gesture requests entirely).
+      // When not interactive we bail with a status the UI can surface via a
+      // toggle; the explicit gesture path is requestWebPushPermission().
+      if (!interactive) { _status = 'PERMISSION_REQUIRED'; return null; }
       const perm = await Notification.requestPermission();
       if (perm !== 'granted') { _status = 'DENIED'; return null; }
     }
@@ -133,6 +139,16 @@ export async function registerForWebPush() {
   } finally {
     _registering = false;
   }
+}
+
+/**
+ * Gesture-path entry point. MUST be called from inside a user-gesture handler
+ * (e.g. a "Enable notifications" toggle/button onPress) so the browser allows
+ * Notification.requestPermission(). Boot/auto-registration must keep calling
+ * registerForWebPush() (non-interactive) which never prompts on its own.
+ */
+export async function requestWebPushPermission() {
+  return registerForWebPush(true);
 }
 
 /**

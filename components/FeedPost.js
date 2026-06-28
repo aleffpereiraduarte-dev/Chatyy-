@@ -112,6 +112,17 @@ function resolveMediaUrl(url) {
   return BASE_URL + (url.startsWith('/') ? '' : '/') + url;
 }
 
+// Shared video detection — used by BOTH the single-media branch and the
+// carousel so a video post never falls through to the image renderer (which
+// showed a black frame when media_type wasn't exactly 'video'). Strips the
+// query string before testing the extension so signed R2/CDN URLs still match.
+function isVideoUrlStr(url) {
+  return typeof url === 'string' && /\.(mp4|mov|webm|avi|m3u8)$/i.test(String(url).split('?')[0]);
+}
+function isVideoMedia(post, url) {
+  return post?.media_type === 'video' || isVideoUrlStr(url);
+}
+
 function parseMediaUrls(raw) {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw;
@@ -134,7 +145,10 @@ function formatLikeCount(count, t) {
 }
 
 // Video player component with play/pause overlay, mute toggle, progress bar
-function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
+// `isActive` (default true) comes from the feed's onViewableItemsChanged — when
+// the post scrolls out of view we pass false so the video pauses (kills the
+// audio leak where an off-screen post kept playing sound).
+function VideoPlayer({ uri, poster, colors, isDark, t, filterName, isActive = true }) {
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const [progress, setProgress] = useState(0);
@@ -166,12 +180,15 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
   // don't fight with the browser's default autoplay heuristic.
   useEffect(() => {
     if (!isWeb || !videoRef.current) return;
-    if (inView) {
+    // Only autoplay when BOTH the IntersectionObserver says we're on screen
+    // AND the feed marks this post as the active (viewable) row. `isActive`
+    // false means the post scrolled out of view → pause so audio doesn't leak.
+    if (inView && isActive !== false) {
       videoRef.current.play?.().catch(() => {});
     } else {
       try { videoRef.current.pause?.(); } catch {}
     }
-  }, [inView, isWeb]);
+  }, [inView, isWeb, isActive]);
 
   const togglePlay = useCallback(() => {
     if (!isWeb || !videoRef.current) return;
@@ -302,6 +319,19 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName }) {
   const handleNativeOpen = useCallback(() => setNativePlaying(true), []);
   const videoUrl = resolveMediaUrl(uri);
 
+  // Pause the inline WebView video the moment this post scrolls out of view.
+  // Without this, tapping play and then scrolling away kept the audio playing
+  // in the background (the feed audio-leak bug). When the post becomes active
+  // again the user can tap to resume.
+  useEffect(() => {
+    if (isWeb) return;
+    if (isActive === false && webViewRef.current) {
+      try {
+        webViewRef.current.injectJavaScript('var v=document.getElementById("v");if(v){v.pause();}true;');
+      } catch {}
+    }
+  }, [isActive, isWeb]);
+
   if (nativePlaying) {
     const WebView = require('react-native-webview').WebView;
     const videoHtml = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain}</style></head><body><video id="v" autoplay playsinline webkit-playsinline loop preload="auto"></video><script>var v=document.getElementById("v");v.src="${videoUrl}";v.muted=false;v.play().catch(function(){v.muted=true;v.play().catch(function(){})});window.addEventListener("message",function(e){try{var d=JSON.parse(e.data);if(d.cmd==="pause")v.pause();if(d.cmd==="play"){v.play().catch(function(){});}if(d.cmd==="mute")v.muted=true;if(d.cmd==="unmute"){v.muted=false;}}catch(ex){}});</script></body></html>`;
@@ -405,7 +435,7 @@ const AnimatedCarouselDot = memo(function AnimatedCarouselDot({ active }) {
   );
 });
 
-function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated, onDeletePost, onPressUser, profileMode, onHidePost }) {
+function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated, onDeletePost, onPressUser, profileMode, onHidePost, isActive = true }) {
   const [liked, setLiked] = useState(!!post.user_liked);
   const [likeCount, setLikeCount] = useState(Number(post.like_count) || 0);
   const [bookmarked, setBookmarked] = useState(!!post.user_bookmarked);
@@ -811,7 +841,11 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
     }
     try {
       const { router } = require('expo-router');
-      router.push(`/feed?repost_of=${post.id}`);
+      // The feed lives as a tab inside /chat — push there with the tab + the
+      // repost target as real params (the old `/feed?repost_of=ID` string both
+      // hit a non-existent route AND dropped the value). ChatFeedTab reads
+      // `repost_of` from the route params and opens the composer pre-filled.
+      router.push({ pathname: '/chat', params: { tab: 'feed', repost_of: String(post.id) } });
     } catch {}
   }, [post, onPostUpdated]);
 
@@ -1147,7 +1181,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
             </View>
           )}
           {mediaUrls.length === 1 ? (
-            post.media_type === 'video' ? (
+            isVideoMedia(post, mediaUrls[0]) ? (
               <VideoPlayer
                 uri={mediaUrls[0]}
                 poster={post.thumbnail_url}
@@ -1155,6 +1189,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                 isDark={isDark}
                 t={t}
                 filterName={post.filter}
+                isActive={isActive}
               />
             ) : (
               isWeb ? (
@@ -1231,7 +1266,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                 snapToInterval={cardWidth}
               >
                 {mediaUrls.map((url, idx) => {
-                  const isVideoUrl = post.media_type === 'video' || (typeof url === 'string' && /\.(mp4|mov|webm|avi)$/i.test(url));
+                  const isVideoUrl = isVideoMedia(post, url);
                   return isVideoUrl ? (
                     <View key={idx} style={[styles.mediaFrame, { width: cardWidth }]}>
                       <VideoPlayer
@@ -1241,6 +1276,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                         isDark={isDark}
                         t={t}
                         filterName={post.filter}
+                        isActive={isActive && idx === activeMediaIndex}
                       />
                     </View>
                   ) : (

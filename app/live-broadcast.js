@@ -369,6 +369,11 @@ export default function LiveBroadcastScreen() {
   // Guest peer ref + per-guest ICE queue for Codex root cause #7.
   const guestPeerRef = useRef(null);
   const guestIceQueueRef = useRef(new Map());
+  // Per-viewer ICE queue (mirrors guestIceQueueRef). Viewer ICE candidates
+  // can arrive before the viewer's answer is set on the host pc, so buffer
+  // them by viewer_id and drain in handleViewerAnswer. Without this the
+  // early candidates were silently dropped → some viewers never connected.
+  const viewerIceQueueRef = useRef(new Map());
 
   // ─── Cloudflare Stream WHIP publisher (2026-05-18) ───
   // When the host enables "Salvar live", we route the broadcast through
@@ -850,6 +855,11 @@ export default function LiveBroadcastScreen() {
           // trigger the center-screen LiveGiftAnimation overlay. Bump the
           // top-gifters refresh key so the leaderboard rolls up in near-
           // real-time (component will refetch /chat_live_top_gifters).
+          // [diamonds OFF] Paid gift economy is disabled — backend returns
+          // 410 on gift endpoints. Drop the event so no gift chip/animation/
+          // leaderboard surfaces (the overlay + leaderboard are already gated
+          // by DIAMONDS_ENABLED at render; this also hides the inline chip).
+          if (!DIAMONDS_ENABLED) break;
           {
             const entry = new Animated.Value(0);
             appendChatMessage({
@@ -1241,6 +1251,14 @@ export default function LiveBroadcastScreen() {
         type: 'answer',
         sdp: msg.sdp,
       }));
+      // Drain any viewer ICE candidates that arrived before the answer was
+      // set (mirrors the guest path). Previously these were dropped, so a
+      // viewer whose candidates raced ahead of its answer never connected.
+      const queued = viewerIceQueueRef.current.get(viewerId) || [];
+      viewerIceQueueRef.current.delete(viewerId);
+      for (const c of queued) {
+        try { await pc.addIceCandidate(new RTC_IceCandidate(c)); } catch {}
+      }
     } catch (err) {
       console.error('Failed to set remote answer:', err);
     }
@@ -1250,6 +1268,15 @@ export default function LiveBroadcastScreen() {
     const viewerId = msg.viewer_id;
     const pc = peersRef.current.get(viewerId);
     if (!pc || !msg.candidate) return;
+
+    // Buffer ICE if the answer isn't applied yet (remoteDescription unset).
+    // Cap at 100 candidates to bound memory if a buggy viewer floods us.
+    if (!pc.remoteDescription) {
+      const q = viewerIceQueueRef.current.get(viewerId) || [];
+      if (q.length < 100) q.push(msg.candidate);
+      viewerIceQueueRef.current.set(viewerId, q);
+      return;
+    }
 
     try {
       await pc.addIceCandidate(new RTC_IceCandidate(msg.candidate));
@@ -1263,6 +1290,7 @@ export default function LiveBroadcastScreen() {
       pc.close();
       peersRef.current.delete(viewerId);
     }
+    try { viewerIceQueueRef.current.delete(viewerId); } catch {}
     // Server `live_viewer_count` is the authoritative source (Codex #4).
   }, []);
 
@@ -1764,13 +1792,34 @@ export default function LiveBroadcastScreen() {
             // Flag local state as not-live so the UI bails out of AO VIVO.
             lkModeRef.current = false;
             lkRoomRef.current = null;
+            // FATAL: connect failed OR zero tracks published. The session is
+            // already ended server-side (liveEndLk above), so we MUST NOT let
+            // the host land in the "AO VIVO" tree with no media (black/mute
+            // screen). Surface the reason to the host (we're still in preStart
+            // here so the `error && preStart` screen renders the Back button)
+            // and bail out of handleStartLive before the countdown flips
+            // preStart → false. The `finally` releases the single-flight gate.
+            try {
+              Alert.alert(
+                t('live.publishFailedTitle') || 'Transmissão não publicada',
+                reason,
+                [{ text: t('common.ok') || 'OK', style: 'default' }],
+              );
+            } catch {}
+            return;
           } else if (!lkVideoOk) {
-            // Partial: audio OK, video failed — show non-fatal warning
-            // but keep the live running (audio-only live still useful).
-            try { setError(t('live.videoPublishFailed') || 'Vídeo não disponível — transmitindo áudio apenas'); } catch {}
+            // Partial: audio OK, video failed — non-fatal warning but the
+            // live keeps running (audio-only is still useful). setError alone
+            // won't be visible once preStart flips false, so also Alert the
+            // host like the CF publish path does.
+            const warn = t('live.videoPublishFailed') || 'Vídeo não disponível — transmitindo áudio apenas';
+            try { setError(warn); } catch {}
+            try { Alert.alert(t('live.publishWarnTitle') || 'Aviso de transmissão', warn, [{ text: t('common.ok') || 'OK', style: 'default' }]); } catch {}
           } else if (!lkAudioOk) {
             // Partial: video OK, audio failed — also non-fatal.
-            try { setError(t('live.audioPublishFailed') || 'Microfone indisponível — transmitindo só vídeo'); } catch {}
+            const warn = t('live.audioPublishFailed') || 'Microfone indisponível — transmitindo só vídeo';
+            try { setError(warn); } catch {}
+            try { Alert.alert(t('live.publishWarnTitle') || 'Aviso de transmissão', warn, [{ text: t('common.ok') || 'OK', style: 'default' }]); } catch {}
           }
         }
 

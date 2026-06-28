@@ -37,6 +37,12 @@ export default function SyncBar() {
   // Without this we'd conflate a flaky local radio with a server outage and
   // show the wrong copy (e.g. "Conectando…" forever while in airplane mode).
   const deviceOnlineRef = useRef(true);
+  // [2026-06-28] handleBootstrap lives inside the deps:[] effect below, so any
+  // `status` it reads is captured at mount (always 'hidden') — the guard
+  // `status === 'hidden'` was therefore ALWAYS true. Track the live value in a
+  // ref kept current by an effect so the guard reflects the real status.
+  const statusRef = useRef('hidden');
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   // Dot pulse for connecting/offline
   useEffect(() => {
@@ -167,7 +173,7 @@ export default function SyncBar() {
       } else if (phase === 'conv') {
         setBootConvDone(convDone || 0);
         setBootConvTotal(convTotal || 0);
-        if ((convTotal || 0) > 0 && status === 'hidden') show('bootstrap');
+        if ((convTotal || 0) > 0 && statusRef.current === 'hidden') show('bootstrap');
       } else if (phase === 'done') {
         setBootConvDone(convDone || 0);
         // Brief "done" frame then slide out

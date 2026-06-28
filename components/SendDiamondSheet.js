@@ -55,6 +55,10 @@ export default function SendDiamondSheet({
   toAvatarUrl,        // optional explicit avatar URL (we fall back to email-derived)
   onSent,             // ({ transferId, amount }) => void — fired after success
 }) {
+  // DIAMANTE DESLIGADO — envio de diamante P2P removido. Backend retorna 410
+  // nesses endpoints; o sheet vira no-op (nunca renderiza / nunca abre).
+  return null;
+  // eslint-disable-next-line no-unreachable
   const { colors, isDark } = useTheme();
   const { t, language } = useLanguage();
   const { format: formatMoney } = useCurrency(language);

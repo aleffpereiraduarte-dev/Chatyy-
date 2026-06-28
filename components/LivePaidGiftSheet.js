@@ -62,6 +62,10 @@ function formatPriceCents(cents) {
 }
 
 export default function LivePaidGiftSheet({ visible, onClose, sessionId, hostEmail }) {
+  // DIAMANTE DESLIGADO — catálogo de presentes pagos + comprar diamantes removido.
+  // Backend retorna 410; o sheet vira no-op (nunca renderiza / nunca abre).
+  return null;
+  // eslint-disable-next-line no-unreachable
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
 

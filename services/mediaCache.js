@@ -146,6 +146,35 @@ function _normalizeForKey(url) {
     return String(url);
   }
 }
+// Stable ~128-bit non-cryptographic key for a string. The previous key used a
+// single 32-bit djb2 hash (`Math.abs(hash).toString(36)`) — only ~31 usable
+// bits, so two distinct media URLs could collide on the SAME cache filename
+// and the cache would happily serve the WRONG media. We fold the string
+// through FOUR independent 32-bit lanes (FNV-1a, djb2, sdbm, golden-ratio
+// mixer), each avalanched, and concatenate them to a 32-char hex string =
+// 128 bits of key space. Kept fully synchronous + dependency-free (no
+// expo-crypto async digest) so urlToKey stays callable inside render closures
+// (getLocalUriSyncJs). NOTE: this changes the filename for every URL, so the
+// first run after this lands re-derives keys — pre-existing files under the
+// old key are simply orphaned and get re-downloaded / LRU-reclaimed once.
+function _hash128(str) {
+  let h1 = 0x811c9dc5;       // FNV-1a offset basis
+  let h2 = 5381;             // djb2
+  let h3 = 0;                // sdbm
+  let h4 = 0x9e3779b9;       // golden-ratio seed
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 0x01000193);
+    h2 = ((h2 << 5) + h2) + c;          // h2*33 + c
+    h3 = c + (h3 << 6) + (h3 << 16) - h3;
+    h4 = Math.imul(h4 ^ c, 0x85ebca6b);
+    h4 ^= h4 >>> 13;
+  }
+  // Final avalanche per lane so trailing-byte differences spread across bits.
+  h1 ^= h1 >>> 15; h2 ^= h2 >>> 13; h3 ^= h3 >>> 7; h4 ^= h4 >>> 16;
+  const u = (x) => (x >>> 0).toString(16).padStart(8, '0');
+  return u(h1) + u(h2) + u(h3) + u(h4);
+}
 function urlToKey(url) {
   // Normalize host BEFORE stripping query/fragment so cross-host aliases
   // (CDN vs origin) hash to the same key. See _normalizeForKey for why.
@@ -155,15 +184,10 @@ function urlToKey(url) {
   // the same local file. Anything that's ACTUALLY a different resource will
   // have a different path component.
   const base = normalized.split('?')[0].split('#')[0];
-  let hash = 0;
-  for (let i = 0; i < base.length; i++) {
-    hash = ((hash << 5) - hash) + base.charCodeAt(i);
-    hash |= 0;
-  }
   const ext = base.match(
     /\.(jpg|jpeg|png|gif|webp|heic|heif|bmp|tiff|mp4|mov|webm|mkv|m4v|3gp|avi|mp3|m4a|ogg|opus|wav|aac|flac|tgs|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|rar|7z|txt|csv|json)$/i
   )?.[1] || 'bin';
-  return Math.abs(hash).toString(36) + '.' + ext;
+  return _hash128(base) + '.' + ext;
 }
 
 // ── Synchronous lookup / index bootstrap ───────────────────────────────
@@ -266,9 +290,17 @@ export async function getCachedUri(url) {
     const localPath = dir + key;
     try {
       const info = await fs.getInfoAsync(localPath);
-      if (info.exists) {
+      // Integrity check: a file that exists but is 0 bytes is a corrupt /
+      // truncated download — serving it gives a permanently-blank bubble.
+      // Only accept non-empty files; evict the empty one so cacheMedia
+      // re-downloads cleanly on the next request.
+      if (info.exists && info.size > 0) {
         registerSyncKey(url, localPath);
         return localPath;
+      }
+      if (info.exists) {
+        try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+        syncIndex.delete(key);
       }
     } catch {}
   }
@@ -1272,12 +1304,22 @@ export async function cacheMedia(url, opts = {}) {
 
   if (_inflightDownloads.has(key)) return _inflightDownloads.get(key);
 
-  // Salvar direto em documentDirectory (getSavedDir) em vez de cacheDirectory.
-  // iOS pode (e faz) despejar o cacheDirectory sempre que o dispositivo fica
-  // com pouco storage, então cada mídia que baixava ficava "carregando" de
-  // novo na próxima abertura. documentDirectory persiste até o user desinstalar
-  // ou limpar manualmente no Settings do app. Mesma estratégia do WhatsApp.
-  const dir = getSavedDir();
+  // [STORAGE CAP FIX] Route the download by Keep-Always status.
+  //
+  // The previous behavior wrote EVERY download to documentDirectory
+  // (getSavedDir) — the permanent dir the LRU sweep deliberately never
+  // touches (see the P0 guard in evictIfNeeded). That meant the configured
+  // cache cap + LRU eviction NEVER applied to ordinary chat media, so the
+  // sandbox grew without bound (multi-GB after a few weeks).
+  //
+  // Now only media owned by a "Manter sempre" (Keep-Always) conversation
+  // lands in the permanent dir; everything else (the transient majority)
+  // goes to the OS-purgeable cache dir so the cap + LRU can actually bound
+  // disk growth. Files already on disk in EITHER dir were resolved by the
+  // lookup loop above, so this only picks the destination for a fresh
+  // download — no existing file is moved or orphaned.
+  const _keepAlways = !!(opts && opts.conversationId != null && isConversationKeepAlways(opts.conversationId));
+  const dir = _keepAlways ? getSavedDir() : getCacheDir();
   const localPath = dir + key;
   // [PRIORITY LANES 2026-05-26] Pick the download lane. Background prefetch —
   // WS auto-download (opts.received), or any caller that explicitly opts into
@@ -1358,11 +1400,28 @@ export async function cacheMedia(url, opts = {}) {
             ]);
           }
           if (download?.status === 200) {
-            registerSyncKey(url, localPath);
-            // Count the downloaded bytes toward the network-usage total
-            // (settings.js getNetStats). Fire-and-forget stat.
-            _countDownloadedBytes(fs, localPath);
-            return localPath;
+            // Integrity guard: a 200 with an empty/truncated body would
+            // otherwise be cached as a "valid" file and served forever as a
+            // blank bubble. Verify the on-disk file is non-zero before
+            // accepting it; a zero-byte (or unstattable) result is dropped and
+            // the retry loop tries again.
+            let okSize = true;
+            try {
+              const st = await fs.getInfoAsync(localPath);
+              okSize = !!(st && st.exists && st.size > 0);
+            } catch { okSize = false; }
+            if (okSize) {
+              registerSyncKey(url, localPath);
+              // Count the downloaded bytes toward the network-usage total
+              // (settings.js getNetStats). Fire-and-forget stat.
+              _countDownloadedBytes(fs, localPath);
+              return localPath;
+            }
+            // Corrupt/empty download — remove the partial and retry.
+            try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
+            resumable = null;
+            lastStatus = 0;
+            continue;
           }
           lastStatus = download?.status || 0;
           try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}

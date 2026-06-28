@@ -41,6 +41,10 @@ function tap(kind = 'light') {
 }
 
 export default function WalletSendSheet({ visible, onClose, balance, onSent }) {
+  // DIAMANTE DESLIGADO — "Enviar saldo" é transferência da carteira de diamante
+  // (wallet_send). Backend retorna 410; o sheet vira no-op (nunca renderiza).
+  return null;
+  // eslint-disable-next-line no-unreachable
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { t, language } = useLanguage();

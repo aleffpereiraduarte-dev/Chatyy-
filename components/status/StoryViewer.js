@@ -27,25 +27,9 @@ import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare, Ico
 import AvatarCircle from '../AvatarCircle';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect } from 'react-native-svg';
-
-// Text-status gradient presets — mirrored from ChatStatusTab.TEXT_BG_GRADIENTS
-// so the viewer can paint the same SVG fill the composer previewed. Kept
-// inline (instead of importing) to avoid a circular dep: ChatStatusTab
-// already pulls StoryViewer indirectly through ChatListTab.
-const _TEXT_BG_GRADIENTS_VIEWER = {
-  purple_pink: ['#8B5CF6', '#EC4899'],
-  blue_cyan:   ['#2563EB', '#06B6D4'],
-  orange_red:  ['#F97316', '#EF4444'],
-  green_teal:  ['#10B981', '#14B8A6'],
-  sunset:      ['#FACC15', '#F97316', '#EF4444'],
-  aurora:      ['#06B6D4', '#8B5CF6', '#EC4899'],
-};
-function _resolveTextGradient(bgColor) {
-  if (!bgColor || typeof bgColor !== 'string' || !bgColor.startsWith('gradient:')) return null;
-  const id = bgColor.slice('gradient:'.length);
-  const colors = _TEXT_BG_GRADIENTS_VIEWER[id];
-  return colors ? { id, colors } : null;
-}
+// Shared text-status gradient presets + resolver — single source of truth so
+// StoryViewer, AnimatedStatusText and ChatStatusTab never drift apart.
+import { resolveTextGradient as _resolveTextGradient } from './textGradients';
 
 const WEB = Platform.OS === 'web';
 const STORY_DURATION_MS = 5000;
@@ -291,7 +275,7 @@ function formatViewedAt(viewedAt) {
 // when expo-video is unavailable. `liveMuted` is the live mute toggle (caller
 // flips it; we push it to the player); `initialMuted`/`loop` seed the player.
 const StatusVideoPlayer = React.memo(function StatusVideoPlayer({
-  mod, uri, loop, initialMuted, liveMuted, poster, onEnd, onError, onReady,
+  mod, uri, loop, initialMuted, liveMuted, poster, paused, onEnd, onError, onReady, onProgress,
 }) {
   const { useVideoPlayer, VideoView } = mod;
   // [WAVE 93 2026-05-21] Seed loop + mute from the CURRENT item's props so each
@@ -301,6 +285,20 @@ const StatusVideoPlayer = React.memo(function StatusVideoPlayer({
     try { p.loop = !!loop; p.muted = !!initialMuted; p.play(); } catch {}
   });
   const endedRef = useRef(false);
+  const readyRef = useRef(false);
+  // Live mirror of `paused` so the 'ended'/max-duration listeners can consult
+  // it WITHOUT re-subscribing on every pause toggle (re-subbing mid-playback
+  // can drop the native 'ended' event). Kept in sync by the pause/play effect.
+  const pausedRef = useRef(!!paused);
+  // Pause/resume the player in lockstep with the viewer. Long-press, typing a
+  // reply (paused = paused||replyFocused), and app-background all flow in via
+  // the `paused` prop; without this the video kept playing under a "paused"
+  // story and auto-advanced mid-reply. expo-video is property/imperative:
+  // pause()/play() are safe to call repeatedly.
+  useEffect(() => {
+    pausedRef.current = !!paused;
+    try { if (paused) player.pause?.(); else player.play?.(); } catch {}
+  }, [player, paused]);
   // Sync mute toggle live — caller flips liveMuted, we push it down.
   useEffect(() => { try { player.muted = !!liveMuted; } catch {} }, [player, liveMuted]);
   // Sync loop flag too — a status carousel can mix boomerang + normal clips,
@@ -313,10 +311,49 @@ const StatusVideoPlayer = React.memo(function StatusVideoPlayer({
       if (s?.error || status === 'error') { onError?.(); }
       // expo-video reports 'readyToPlay' once the first frame is decoded —
       // that's when we hide the spinner.
-      if (status === 'readyToPlay' || status === 'playing') { onReady?.(); }
+      if (status === 'readyToPlay' || status === 'playing') { readyRef.current = true; onReady?.(); }
     });
     return () => { try { sub?.remove?.(); } catch {} };
   }, [player, onError, onReady]);
+
+  // Progress feed — push the playback fraction (currentTime/duration) up so the
+  // active segment's progress bar actually fills DURING a video (it used to sit
+  // at 0% the whole clip because the JS timer is skipped for videos). Prefer the
+  // native 'timeUpdate' event; fall back to a light 250ms poll of currentTime.
+  useEffect(() => {
+    if (loop || !onProgress) return undefined;
+    let poll = null;
+    const push = () => {
+      try {
+        const dur = Number(player.duration);
+        const cur = Number(player.currentTime);
+        if (Number.isFinite(dur) && dur > 0 && Number.isFinite(cur)) {
+          onProgress(Math.max(0, Math.min(1, cur / dur)));
+        }
+      } catch {}
+    };
+    const sub = player.addListener?.('timeUpdate', push);
+    if (!sub) poll = setInterval(push, 250);
+    return () => {
+      try { sub?.remove?.(); } catch {}
+      if (poll) clearInterval(poll);
+    };
+  }, [player, loop, onProgress]);
+
+  // Stuck-video watchdog — if the clip never reaches readyToPlay AND never
+  // ends within ~9s (dead URL, codec stall, dropped events), surface the error
+  // card via onError so the viewer doesn't freeze on a black canvas forever.
+  // Cleared as soon as the first frame decodes. Skipped for looping/boomerang
+  // clips (they intentionally never end). Doesn't fire while paused.
+  useEffect(() => {
+    if (loop) return undefined;
+    const timer = setTimeout(() => {
+      if (!readyRef.current && !endedRef.current && !pausedRef.current) {
+        try { onError?.(); } catch {}
+      }
+    }, 9000);
+    return () => clearTimeout(timer);
+  }, [player, loop, onError]);
   // [PRIMARY AUTO-ADVANCE] expo-video fires 'ended' at end-of-playback for a
   // non-looping clip. The old inline path had NO end listener so native video
   // stories hung forever. Belt-and-suspenders: also arm a max-duration timeout
@@ -324,7 +361,21 @@ const StatusVideoPlayer = React.memo(function StatusVideoPlayer({
   useEffect(() => {
     if (loop) return undefined; // boomerang/looping clips never auto-advance here
     endedRef.current = false;
-    const fire = () => { if (!endedRef.current) { endedRef.current = true; onEnd?.(); } };
+    let retry = null;
+    // Gate advance while paused/typing — if `ended` (or the max-duration
+    // fallback) lands while the story is paused (long-press, reply focused,
+    // backgrounded), DON'T advance. Re-check shortly so it fires the moment the
+    // user resumes instead of swallowing the end entirely.
+    const fire = () => {
+      if (endedRef.current) return;
+      if (pausedRef.current) {
+        if (!retry) retry = setInterval(() => { if (!pausedRef.current) fire(); }, 300);
+        return;
+      }
+      endedRef.current = true;
+      if (retry) { clearInterval(retry); retry = null; }
+      onEnd?.();
+    };
     const sub = player.addListener?.('ended', fire);
     let maxTimer = null;
     const armMaxTimer = () => {
@@ -345,6 +396,7 @@ const StatusVideoPlayer = React.memo(function StatusVideoPlayer({
       try { sub?.remove?.(); } catch {}
       try { subReady?.remove?.(); } catch {}
       if (maxTimer) clearTimeout(maxTimer);
+      if (retry) clearInterval(retry);
     };
   }, [player, loop, onEnd]);
   // Defensive teardown on unmount — reclaim AVPlayer/MediaCodec buffers.
@@ -371,7 +423,7 @@ const StatusVideoPlayer = React.memo(function StatusVideoPlayer({
 const StoryMedia = React.memo(function StoryMedia({
   cur, isText, isVideo, isImage, mediaUrl,
   t, paused, videoMuted, videoError, imageError, imageRetry, imageFade,
-  advance, onVideoError, onVideoReady, setVideoError, setImageError, setImageRetry,
+  advance, onVideoError, onVideoReady, onVideoProgress, setVideoError, setImageError, setImageRetry,
   boomerangRef, boomerangStateRef,
 }) {
     if (isText) {
@@ -511,9 +563,11 @@ const StoryMedia = React.memo(function StoryMedia({
               initialMuted={videoMuted}
               liveMuted={videoMuted}
               poster={PosterOverlay}
+              paused={paused}
               onEnd={advance}
               onError={onVideoError}
               onReady={onVideoReady}
+              onProgress={onVideoProgress}
             />
           );
         }
@@ -1371,6 +1425,13 @@ export default function StoryViewer({
   // fail card; onReady hides the spinner once the first frame decodes.
   const _onVideoError = useCallback(() => { setVideoError(true); setVideoLoading(false); }, []);
   const _onVideoReady = useCallback(() => { setVideoLoading(false); }, []);
+  // Drive the active segment's progress bar from the video's playback position
+  // — the JS timer is skipped for videos, so without this the bar sat at 0%
+  // the whole clip. Stable identity so the memoized StatusVideoPlayer doesn't
+  // re-render on each tick.
+  const _onVideoProgress = useCallback((frac) => {
+    try { progressRef.current.setValue(Math.max(0, Math.min(1, frac))); } catch {}
+  }, []);
 
   // Backward navigation: at item 0, if there's a previous group, jump to it.
   // Otherwise stay put (current behavior). Boundary haptic mirrors `advance`.
@@ -1658,7 +1719,7 @@ export default function StoryViewer({
       isImage={isImage}
       mediaUrl={mediaUrl}
       t={t}
-      paused={paused}
+      paused={paused || replyFocused}
       videoMuted={videoMuted}
       videoError={videoError}
       imageError={imageError}
@@ -1667,6 +1728,7 @@ export default function StoryViewer({
       advance={advance}
       onVideoError={_onVideoError}
       onVideoReady={_onVideoReady}
+      onVideoProgress={_onVideoProgress}
       setVideoError={setVideoError}
       setImageError={setImageError}
       setImageRetry={setImageRetry}

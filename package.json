@@ -21,8 +21,6 @@
     "@shopify/flash-list": "2.0.2",
     "@shopify/react-native-skia": "2.6.3",
     "@tanstack/react-query": "^5.90.21",
-    "@telnyx/webrtc": "^2.25.25",
-    "@twilio/voice-sdk": "^2.18.1",
     "dompurify": "^3.3.2",
     "eventemitter3": "^5.0.4",
     "expo": "^55.0.5",

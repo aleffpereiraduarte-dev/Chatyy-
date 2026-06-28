@@ -921,6 +921,10 @@ function ShareSheet({ visible, reel, t, onClose, onRepost, onCopyLink, onExterna
 // the next reel loads with the same default. TikTok parity: 5 speed options.
 const REELS_SPEED_KEY = '@chatyy:reels_speed_default_v1';
 const REELS_CC_KEY = '@chatyy:reels_cc_enabled_v1';
+// Mute preference — lifted to ReelsViewer (not per-ReelItem) so it persists
+// across swipes and sessions. Bug: mute reset on every swipe because each
+// ReelItem owned its own muted state.
+const REELS_MUTED_KEY = '@chatyy:reels_muted_v1';
 // Locally-persisted "não tenho interesse" hides — kept client-side so the
 // reel stays gone across sessions even if the backend hide signal isn't live.
 const REELS_HIDDEN_KEY = '@chatyy:reels_hidden_ids_v1';
@@ -1112,7 +1116,7 @@ const BoostToast = memo(function BoostToast({ visible }) {
 });
 
 // ── Single Reel Item ──
-const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, onLikeChange, showLiveRing, overlayOpen, router, preload, screenFocused = true }) {
+const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, onLikeChange, showLiveRing, overlayOpen, router, preload, screenFocused = true, muted = false, onToggleMute }) {
   // Safe-area insets so the bottom info block (username/caption/music row)
   // doesn't sit on top of the iOS home indicator or Android gesture pill.
   const insets = useSafeAreaInsets();
@@ -1158,7 +1162,8 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   }, []);
   // Effective rate sent to the video — boost wins.
   const effectiveRate = rateBoost ? 2 : playbackRate;
-  const [muted, setMuted] = useState(false);
+  // Mute is owned by ReelsViewer (props muted + onToggleMute) so the user's
+  // choice persists across swipes + sessions instead of resetting per reel.
   const [liked, setLiked] = useState(!!reel.user_liked);
   const [likeCount, setLikeCount] = useState(Number(reel.like_count) || 0);
   const [bookmarked, setBookmarked] = useState(!!reel.user_bookmarked);
@@ -1433,15 +1438,13 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   }, [isActive]);
 
   const toggleMute = useCallback(() => {
-    setMuted(m => {
-      const newMuted = !m;
-      if (isWeb && videoRef.current) {
-        videoRef.current.muted = newMuted;
-      }
-      return newMuted;
-    });
+    const newMuted = !muted;
+    if (isWeb && videoRef.current) {
+      videoRef.current.muted = newMuted;
+    }
+    onToggleMute?.();
     try { require('expo-haptics').selectionAsync(); } catch {}
-  }, []);
+  }, [muted, onToggleMute]);
 
   const togglePause = useCallback(() => {
     if (isWeb) {
@@ -2332,6 +2335,26 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   // === 'feed' (e feedMode === 'reels' — só renderiza ReelsViewer nesse caso).
   const playGate = isScreenFocused && appActive && parentActive;
 
+  // Mute lives here (not per-ReelItem) so it persists across swipes + sessions.
+  // Bug: mute reset on every swipe because each ReelItem owned its own state.
+  // Hydrated from AsyncStorage on mount; toggle persists the new value.
+  const [muted, setMuted] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const v = await AsyncStorage.getItem(REELS_MUTED_KEY);
+        if (v === '1') setMuted(true);
+      } catch {}
+    })();
+  }, []);
+  const handleToggleMute = useCallback(() => {
+    setMuted(m => {
+      const next = !m;
+      AsyncStorage.setItem(REELS_MUTED_KEY, next ? '1' : '0').catch(() => {});
+      return next;
+    });
+  }, []);
+
   // [#1247 2026-05-20] Quando playGate cai pra false (user troca de aba),
   // restaura AVAudioSession e drena o pool de imediato. Sem isso o native
   // ShortsPlayer fica em playWhenInFocus=false mas a sessão de áudio segue
@@ -2770,9 +2793,11 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         overlayOpen={overlayOpen}
         preload={isPreloadItem}
         screenFocused={playGate}
+        muted={muted}
+        onToggleMute={handleToggleMute}
       />
     );
-  }, [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, handleReelLikeChange, showLiveRing, overlayOpen, playGate]);
+  }, [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, handleReelLikeChange, showLiveRing, overlayOpen, playGate, muted, handleToggleMute]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 

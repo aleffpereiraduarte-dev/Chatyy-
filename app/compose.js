@@ -496,6 +496,7 @@ export default function ComposeScreen() {
   // --- Undo send ---
   const [undoCountdown, setUndoCountdown] = useState(0);
   const undoSendRef = useRef(null);
+  const undoSendIdRef = useRef(null); // server send_id for backend-side cancel
   const undoIntervalRef = useRef(null);
   const undoDelayRef = useRef(5);
 
@@ -873,6 +874,12 @@ export default function ComposeScreen() {
   const cancelUndoSend = useCallback(() => {
     if (undoSendRef.current) clearTimeout(undoSendRef.current);
     if (undoIntervalRef.current) clearInterval(undoIntervalRef.current);
+    // The email is already queued on the server — tell the backend to drop it
+    // by its send_id (real undo, survives tab/screen close). The local timer
+    // above only governs our visual transition to "sent".
+    const sid = undoSendIdRef.current;
+    undoSendIdRef.current = null;
+    if (sid) { try { api.cancelSend?.(sid); } catch {} }
     setUndoCountdown(0);
     setSending(false);
   }, []);
@@ -1092,14 +1099,6 @@ export default function ComposeScreen() {
     const delay = undoDelayRef.current;
     setError('');
     setSending(true);
-    setUndoCountdown(delay);
-
-    const countRef = { value: delay };
-    undoIntervalRef.current = setInterval(() => {
-      countRef.value -= 1;
-      setUndoCountdown(countRef.value);
-      if (countRef.value <= 0) clearInterval(undoIntervalRef.current);
-    }, 1000);
 
     const sendTo = toValueRef.current;
     const sendCc = [...cc];
@@ -1115,9 +1114,26 @@ export default function ComposeScreen() {
     }
     const sendAttachments = [...attachments];
 
-    undoSendRef.current = setTimeout(async () => {
-      clearInterval(undoIntervalRef.current);
-      setUndoCountdown(0);
+    // After a successful send (queued or immediate), transition the UI to
+    // "sent" and pop back. For undo_delay>0 the backend holds the message and
+    // actually transmits it after `delay`s — this only governs our visuals.
+    const finishSendSuccess = async () => {
+      // Send & Archive: when the user has the toggle on for a reply, archive
+      // the original thread. Best-effort, never blocks the success transition.
+      if (sendAndArchive && isReply && params.reply_uid) {
+        try { await archiveEmail(params.reply_uid, params.folder || 'INBOX'); } catch {}
+      }
+      if (draftTimerRef.current) clearInterval(draftTimerRef.current);
+      setSuccess(true);
+      if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      refresh();
+      setTimeout(() => router.back(), 1200);
+    };
+
+    // Fire the send NOW. With undo_delay>0 the backend enqueues for `delay`
+    // seconds and returns a send_id we cancel via cancelSend() — so Undo now
+    // survives the screen unmounting (no longer a purely local setTimeout).
+    (async () => {
       try {
         const toStr = contactsToString(sendTo);
         const ccStr = contactsToString(sendCc);
@@ -1175,29 +1191,41 @@ export default function ComposeScreen() {
             }
           } catch {}
         }
-        const r = await sendEmail(toStr, sendSubject, finalBody, ccStr, bccStr, params.reply_uid || null, params.folder || 'INBOX', sendAttachments, { trackOpens, fromAlias });
-        if (r.success) {
-          // Send & Archive: when the user has the "Send + Archive" toggle on
-          // for a reply, archive the original thread/message immediately
-          // after a successful send. Failure here is best-effort and does
-          // not block the success transition.
-          if (sendAndArchive && isReply && params.reply_uid) {
-            try { await archiveEmail(params.reply_uid, params.folder || 'INBOX'); } catch {}
+        const r = await sendEmail(toStr, sendSubject, finalBody, ccStr, bccStr, params.reply_uid || null, params.folder || 'INBOX', sendAttachments, { trackOpens, fromAlias, undoDelay: delay });
+        if (r && r.success) {
+          // Stash the server send_id so the Desfazer button can cancel the
+          // queued message backend-side (real undo, not just a local timer).
+          const sid = r.data?.send_id || null;
+          undoSendIdRef.current = sid;
+          if (delay > 0 && sid) {
+            // Show the visual countdown; the backend transmits after `delay`s
+            // unless cancelUndoSend() hits cancel_send(sid) first.
+            setUndoCountdown(delay);
+            const countRef = { value: delay };
+            undoIntervalRef.current = setInterval(() => {
+              countRef.value -= 1;
+              setUndoCountdown(countRef.value);
+              if (countRef.value <= 0) clearInterval(undoIntervalRef.current);
+            }, 1000);
+            undoSendRef.current = setTimeout(() => {
+              clearInterval(undoIntervalRef.current);
+              setUndoCountdown(0);
+              undoSendIdRef.current = null;
+              finishSendSuccess();
+            }, delay * 1000);
+          } else {
+            // No undo window (delay 0) — already sent, transition immediately.
+            finishSendSuccess();
           }
-          if (draftTimerRef.current) clearInterval(draftTimerRef.current);
-          setSuccess(true);
-          if (Platform.OS !== 'web') Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          refresh();
-          setTimeout(() => router.back(), 1200);
         } else {
-          setError(r.message || t('compose.errorSend'));
+          setError((r && r.message) || t('compose.errorSend'));
           setSending(false);
         }
       } catch (e) {
         setError(t('compose.errorConnection'));
         setSending(false);
       }
-    }, delay * 1000);
+    })();
   };
 
   const handleScheduleSend = async (isoDateString) => {

@@ -134,10 +134,21 @@ async function _drainAllConversations() {
   let launched = 0;
   for (const row of pending) {
     if (launched >= 200) break; // catastrophic backstop
-    if (row.state !== 'queued') continue;       // skip sending/failed-waiting
-    if ((row.next_retry_at | 0) > now) continue; // backoff not elapsed yet
     const conv = row.conversation_id;
-    if (_inflight.has(conv) || startedThisPass.has(conv)) continue; // one per conv
+    // Already in flight or blocked earlier this pass — never launch a
+    // higher-seq row of the same conversation (strict FIFO).
+    if (_inflight.has(conv) || startedThisPass.has(conv)) continue;
+    if (row.state !== 'queued') continue;       // skip sending/failed-waiting
+    if ((row.next_retry_at | 0) > now) {
+      // [#bugfix FIFO] This is the LOWEST-seq pending row for this conv
+      // (rows arrive ordered conv ASC, seq ASC) and it's still in backoff.
+      // BLOCK the whole conversation this pass — otherwise a newer
+      // (higher-seq) queued message would overtake it and the recipient
+      // sees messages out of order. The conv re-evaluates next pass once
+      // the backoff elapses.
+      startedThisPass.add(conv);
+      continue;
+    }
     // First due row encountered for this conv wins (lowest seq → FIFO).
     startedThisPass.add(conv);
     _kickoff(row);
@@ -470,20 +481,25 @@ export function start() {
     }
   } catch {}
 
-  // WS hooks — both authenticated (cold-start of socket) and reconnected
-  // (post-disconnect re-auth) fire poke, plus we wire msg_ack to flip
-  // outbox state in real-time even when our send used HTTP (server
-  // broadcasts msg_ack on the sender's channel).
+  // WS hooks — drain on socket ready, plus wire msg_ack to flip outbox
+  // state in real-time even when our send used HTTP (server broadcasts
+  // msg_ack on the sender's channel).
+  //
+  // [#bugfix] The WS class NEVER emits bare 'authenticated'/'reconnected'
+  // events — it emits a single umbrella 'connection' event with a `status`
+  // field. The old ws.on('authenticated', …) / ws.on('reconnected', …)
+  // listeners were dead and never fired a poke on (re)connect, so the
+  // outbox only drained on the 60s safety timer after a reconnect. Listen
+  // for the real ready-states instead: 'authenticated' (socket logged in)
+  // and 'connected' (fresh/reconnected transport).
   try {
     const ws = _ws();
     if (ws?.on) {
-      _wsAuthedUnsub = ws.on('authenticated', () => { poke(); });
-      // 'connection' fires with status='authenticated' too; listen for it
-      // as well for older WS plumbing that emits the umbrella event.
       const connListener = (data) => {
-        if (data?.status === 'authenticated') poke();
+        const st = data?.status;
+        if (st === 'authenticated' || st === 'connected') poke();
       };
-      try { ws.on('connection', connListener); } catch {}
+      _wsAuthedUnsub = ws.on('connection', connListener);
       _wsAckUnsub = ws.on('message_ack', (msg) => {
         const cmi = msg?.client_message_id || msg?.temp_id;
         if (!cmi) return;

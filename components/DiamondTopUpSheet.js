@@ -37,6 +37,10 @@ function formatBrl(value) {
 }
 
 export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange }) {
+  // DIAMANTE DESLIGADO — compra de diamantes removida (não é armazenamento/plano).
+  // Backend retorna 410; o sheet vira no-op (nunca renderiza / nunca abre).
+  return null;
+  // eslint-disable-next-line no-unreachable
   const { colors, isDark } = useTheme();
   const { t, language } = useLanguage();
 

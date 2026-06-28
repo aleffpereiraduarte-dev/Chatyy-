@@ -1694,6 +1694,25 @@ export async function fullDeltaSync(apiCall, opts = {}) {
       ? opts.surfaces
       : DEFAULT_SURFACES;
 
+    // ⚠️ NON-FUNCTIONAL (2026-06-28): this multi-surface delta sync was wired to
+    // a unified `app_sync`/`chat_sync` endpoint that takes {since_seq, types} and
+    // returns {emails, contacts, calendar_events, ..., sync_seq}. That backend
+    // endpoint was NEVER implemented. The live `chat_sync` handler (chat.php
+    // case 'chat_sync', ~21970) is the Telegram-style PER-CONVERSATION pts sync:
+    // it reads `$input['conversations'] = [{id, since_pts, limit}]` and returns
+    // ONLY {conversations:[{events, messages, latest_pts, has_more}]}. Calling it
+    // with {since_seq, types, limit} makes the server see an EMPTY conversations
+    // array → it returns nothing → res.emails / res.contacts / res.calendar_events
+    // are always undefined → email/calendar/contacts delta has been a SILENT
+    // no-op. `app_sync` is not routed anywhere in api/*.php (only named in a
+    // sync.php doc comment), so there is no correct endpoint to point at yet —
+    // the unified delta endpoint must be built server-side first. Bail out here
+    // so we stop firing a contract-wrong request on every foreground/reconnect.
+    // Email, calendar and contacts still hydrate via each screen's own fetch.
+    // NOTE: keep `incrementalSync` (app_sync) in mind — it shares the same gap.
+    return;
+
+    // eslint-disable-next-line no-unreachable
     const res = await apiCall('chat_sync', {
       since_seq: lastSeq,
       types,

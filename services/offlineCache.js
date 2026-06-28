@@ -706,6 +706,18 @@ export async function replayOfflineQueue(api) {
           }
           if (r?.success && r.data?.id) {
             const serverMsg = { ...r.data, client_message_id: action.client_message_id };
+            // 0. Flip the SQLite outbox row to 'sent' (✓). The replay path
+            //    delivered the message but never told messageOutbox, so the
+            //    optimistic "Enviando..." bubble stayed a zombie forever AND
+            //    the sendWorker could re-send the same row. markSent is
+            //    idempotent — a no-op when there's no matching outbox row
+            //    (e.g. the send originated purely from the MMKV queue).
+            if (action.client_message_id) {
+              try {
+                const outbox = require('./messageOutbox');
+                await outbox.markSent?.(action.client_message_id, serverMsg.id);
+              } catch {}
+            }
             // 1. Drop the persisted "pending" entry — without this, the
             //    chat screen restores it on next mount and the user sees
             //    the same message twice (one wandering, one fresh).

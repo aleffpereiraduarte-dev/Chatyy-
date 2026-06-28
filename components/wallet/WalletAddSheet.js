@@ -38,6 +38,10 @@ function formatBrl(value) {
 }
 
 export default function WalletAddSheet({ visible, onClose, onBalanceChange }) {
+  // DIAMANTE DESLIGADO — "Recarregar saldo" compra DIAMOND_PACKS (carteira de
+  // diamante), NÃO armazenamento/plano. Backend retorna 410; sheet vira no-op.
+  return null;
+  // eslint-disable-next-line no-unreachable
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { t, language } = useLanguage();

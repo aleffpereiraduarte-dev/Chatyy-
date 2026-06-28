@@ -7,6 +7,7 @@ import {
 // FlatList only (FlashList crashes iOS)
 const ListComponent = FlatList;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useLocalSearchParams } from 'expo-router';
 import AvatarCircle, { bumpAvatarCache } from './AvatarCircle';
 import FeedPost from './FeedPost';
 import FeedComments from './FeedComments';
@@ -309,6 +310,13 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   // edge-to-edge windows. Use runtime insets with a small floor.
   const insets = useSafeAreaInsets();
   const safeTopPill = Math.max(insets.top, Platform.OS === 'android' ? 12 : 44) + 8;
+  // Route params — used to consume the `repost_of` deep-link from
+  // FeedPost.handleRepost's fallback (router.push('/chat', { tab:'feed',
+  // repost_of })). Reads it once and opens the composer pre-filled.
+  const routeParams = useLocalSearchParams();
+  // Active (viewable) post id from the FlatList — only this post's video plays;
+  // every other one pauses so off-screen videos don't leak audio while scrolling.
+  const [activePostId, setActivePostId] = useState(null);
   const [feedMode, setFeedMode] = useState(initialFeedMode === 'reels' ? 'reels' : 'posts'); // 'posts' | 'reels' | 'profile'
   // Note: the "Para você / Seguindo" sub-tab is already handled via the
   // existing `algorithm` state below — `algorithm='following'` routes to
@@ -742,6 +750,32 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
     }
   }, []);
 
+  // Consume the `repost_of` deep-link param exactly once. FeedPost rendered
+  // outside this container (profile, hashtag, single-post viewer) falls back to
+  // router.push('/chat', { tab:'feed', repost_of }) — we pick it up here, find
+  // the quoted post in the loaded feed if present, and open the composer.
+  const repostParamConsumedRef = useRef(null);
+  useEffect(() => {
+    const rid = routeParams?.repost_of;
+    if (!rid || repostParamConsumedRef.current === String(rid)) return;
+    repostParamConsumedRef.current = String(rid);
+    const original = posts.find(p => String(p.id) === String(rid)) || null;
+    setRepostTarget({ repostOf: rid, originalPost: original });
+    setCreateVisible(true);
+  }, [routeParams?.repost_of, posts]);
+
+  // Stable refs for the FlatList viewability tracking — RN forbids changing
+  // onViewableItemsChanged / viewabilityConfig identity after mount, so they
+  // live in refs. The top-most fully-enough visible POST (skipping the
+  // suggestion rails) becomes the active row whose video is allowed to play.
+  const viewabilityConfigRef = useRef({ itemVisiblePercentThreshold: 60 });
+  const onViewableItemsChangedRef = useRef(({ viewableItems }) => {
+    const firstPost = (viewableItems || []).find(
+      v => v?.item && v.item.__type !== 'suggestionsRail' && v.item.id != null
+    );
+    setActivePostId(firstPost ? String(firstPost.item.id) : null);
+  });
+
   const handlePostCreated = useCallback((newPost) => {
     if (newPost) {
       setPosts(prev => {
@@ -1173,9 +1207,10 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
         onDeletePost={handleDeletePost}
         onPressUser={handlePressUser}
         onHidePost={handleDeletePost}
+        isActive={parentActive && String(item.id) === activePostId}
       />
     );
-  }, [colors, isDark, t, user, handleOpenComments, handleDeletePost, handlePressUser, renderSuggestionsRail]);
+  }, [colors, isDark, t, user, handleOpenComments, handleDeletePost, handlePressUser, renderSuggestionsRail, parentActive, activePostId]);
 
   // Stable keyExtractor — hoisted out of the list JSX so its identity stays
   // constant across the many parent re-renders this screen does (notif poll,
@@ -1484,6 +1519,8 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
         estimatedItemSize={450}
         onScroll={handleFeedScroll}
         scrollEventThrottle={32}
+        onViewableItemsChanged={onViewableItemsChangedRef.current}
+        viewabilityConfig={viewabilityConfigRef.current}
         onEndReached={handleLoadMore}
         onEndReachedThreshold={0.5}
         // [perf] Virtualization tuning for the main feed. Posts are tall

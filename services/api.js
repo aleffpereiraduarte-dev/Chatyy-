@@ -2111,6 +2111,10 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
   // opts.fromAlias — verified send-as alias to use for the From: header.
   const trackOpens = !!opts.trackOpens;
   const fromAlias = (opts.fromAlias || '').trim();
+  // Undo Send: seconds the backend should hold the message queued before
+  // actually sending (it replies with a {send_id} the client can cancel via
+  // cancelSend()). 0 = send immediately (legacy behavior). Clamped server-side.
+  const undoDelay = Math.max(0, parseInt(opts.undoDelay, 10) || 0);
   // If attachments provided, use FormData instead of JSON
   if (attachments && attachments.length > 0) {
     const formData = new FormData();
@@ -2122,7 +2126,7 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
     if (bcc) formData.append('bcc', bcc);
     if (replyToUid) formData.append('reply_to_uid', replyToUid);
     if (folder) formData.append('folder', folder);
-    formData.append('undo_delay', '0');
+    formData.append('undo_delay', String(undoDelay));
     if (trackOpens) formData.append('track_opens', '1');
     if (fromAlias) formData.append('from_alias', fromAlias);
     attachments.forEach((att, i) => {
@@ -2167,9 +2171,17 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
     }
   }
 
-  const sendBody = { to, subject, body, cc, bcc, reply_to_uid: replyToUid, folder, undo_delay: 0, track_opens: trackOpens ? 1 : 0 };
+  const sendBody = { to, subject, body, cc, bcc, reply_to_uid: replyToUid, folder, undo_delay: undoDelay, track_opens: trackOpens ? 1 : 0 };
   if (fromAlias) sendBody.from_alias = fromAlias;
   return apiCall('send', sendBody, 'POST');
+}
+
+// Cancel a queued (undo-delayed) send by its server-issued send_id. The
+// backend holds the message in a per-user queue file until undo_delay
+// elapses; this deletes that file so the email never leaves the MTA. Safe to
+// call after the window closed — server replies 404 (already sent).
+export async function cancelSend(sendId) {
+  return apiCall('cancel_send', { send_id: sendId }, 'POST');
 }
 
 // Send-as aliases (Gmail multi-from). The user's login email is implicitly

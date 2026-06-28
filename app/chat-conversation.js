@@ -13270,6 +13270,13 @@ function ChatConversationInner() {
           } catch {
             setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _sendError: 'unauthorized' } : m));
           }
+          if (OUTBOX_V2_ONLY) {
+            // [401 not-rescued fix] Without this the outbox row stays stuck in
+            // 'sending' forever — mirror the server-error/network branches and
+            // bump it back to 'queued' on the backoff ladder so sendWorker
+            // re-drains it after the next successful (re)login.
+            try { messageOutbox.markFailed(msgId, 'unauthorized').catch(() => {}); } catch {}
+          }
         }
       } else {
         // Server error — queue for retry instead of showing error (WhatsApp-style).
@@ -17481,7 +17488,7 @@ function ChatConversationInner() {
     }
     return max;
   }, [readReceipts]);
-  const enrichedMessages = useMemo(() => {
+  const _enrichedMessagesBase = useMemo(() => {
     const cache = _enrichCacheRef.current;
     const out = new Array(reversedMessages.length);
     const newCache = new Map();
@@ -17550,14 +17557,15 @@ function ChatConversationInner() {
       else if (isOwn && conversationType !== 'group' && item.delivered_at) readStatus = 1.5;
       const isHighlighted = item.id === highlightedMsgId;
       const isHeartPop = item.id === heartPopMsg;
-      const uploadPct = uploadProgress[item.id];
+      // NOTE: live upload byte-progress is intentionally NOT folded in here
+      // (see `enrichedMessages` overlay below). It used to be a dep of this
+      // memo, which re-derived the WHOLE array on every ~60Hz progress tick.
       // Check if we can reuse the previous enriched wrapper (reference-identical)
       const prev = cache.get(item.id);
       if (prev &&
           prev.source === item &&
           prev.enriched._isHighlighted === isHighlighted &&
           prev.enriched._heartPop === isHeartPop &&
-          prev.enriched._uploadPct === uploadPct &&
           prev.enriched._readStatus === readStatus) {
         out[i] = prev.enriched;
         newCache.set(item.id, prev);
@@ -17567,7 +17575,6 @@ function ChatConversationInner() {
         ...item,
         _isHighlighted: isHighlighted,
         _heartPop: isHeartPop,
-        _uploadPct: uploadPct,
         _readStatus: readStatus,
       };
       out[i] = enriched;
@@ -17575,7 +17582,27 @@ function ChatConversationInner() {
     }
     _enrichCacheRef.current = newCache; // drop stale entries
     return out;
-  }, [reversedMessages, highlightedMsgId, heartPopMsg, uploadProgress, maxReadId, currentEmail]);
+  }, [reversedMessages, highlightedMsgId, heartPopMsg, maxReadId, currentEmail]);
+
+  // [perf] Overlay live upload progress onto ONLY the row(s) currently
+  // uploading. uploadProgress ticks ~60×/s during a media send; folding it
+  // into the enrich memo above re-mapped the entire message list on every
+  // tick. Here the heavy enrich stays referentially stable and we shallow-copy
+  // the array (no per-row re-derive) injecting `_uploadPct` solely for the
+  // uploading messages. When nothing is uploading we return the base array by
+  // reference, so downstream memos + FlatList skip work entirely.
+  const enrichedMessages = useMemo(() => {
+    if (!uploadProgress || Object.keys(uploadProgress).length === 0) return _enrichedMessagesBase;
+    const out = _enrichedMessagesBase.slice();
+    for (let i = 0; i < out.length; i++) {
+      const it = out[i];
+      if (!it || it._type === 'separator' || it._type === 'album') continue;
+      if (Object.prototype.hasOwnProperty.call(uploadProgress, it.id)) {
+        out[i] = { ...it, _uploadPct: uploadProgress[it.id] };
+      }
+    }
+    return out;
+  }, [_enrichedMessagesBase, uploadProgress]);
 
   // Pre-compute smart quick-reply suggestions so the render path doesn't do a
   // linear messages.find() scan on every keystroke/state update.

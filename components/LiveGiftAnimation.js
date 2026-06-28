@@ -37,6 +37,10 @@ export default function LiveGiftAnimation({
   i18n = {},
   duration = 2600,
 }) {
+  // DIAMANTE DESLIGADO — overlay de animação de presente pago (mostra contagem
+  // de diamantes) escondido. Sem envio de presente, nenhum evento dispara mesmo.
+  return null;
+  // eslint-disable-next-line no-unreachable
   const scale = useRef(new Animated.Value(0)).current;
   const opacity = useRef(new Animated.Value(0)).current;
   const diamondAnim = useRef(new Animated.Value(0)).current;

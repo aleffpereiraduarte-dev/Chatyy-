@@ -337,7 +337,7 @@ self.addEventListener('push', (e) => {
   const icon  = data.icon  || '/favicon.ico';
   const badge = data.badge || '/favicon.ico';
   const conv  = data.data?.conversation_id || data.conversation_id || '';
-  const url   = conv ? '/chat-conversation?conversation_id=' + encodeURIComponent(conv) : '/chat';
+  const url   = conv ? '/chat-conversation?id=' + encodeURIComponent(conv) : '/chat';
   const opts = {
     body, tag, icon, badge,
     data: { url, ...(data.data || {}) },

@@ -32,6 +32,9 @@ try { mailWs = require('../services/websocket').default; } catch {}
 import Svg, { Circle as SvgCircle, Path, Rect, Defs, LinearGradient, Stop } from 'react-native-svg';
 import AnimatedStatusText from './status/AnimatedStatusText';
 import ReactionSwipeUp from './status/ReactionSwipeUp';
+// Shared text-status gradient presets + resolver — single source of truth so
+// the composer picker, StoryViewer and AnimatedStatusText never drift apart.
+import { TEXT_BG_GRADIENTS, resolveTextGradient as resolveGradient } from './status/textGradients';
 
 // Android status bar safe area — `StatusBar.currentHeight` is null on iOS
 // (where the 54px ios padding already covers the notch) so we just hard-fall
@@ -365,31 +368,9 @@ const TEXT_BG_COLORS = [
   '#E84393', '#D63031', '#E17055', '#FDCB6E', '#00B894',
 ];
 
-// Text-status gradient presets — Instagram-style 6 multi-stop fills the
-// composer offers alongside solid colors. `id` is the serialization key
-// (persisted in bg_color as `gradient:<id>`) so the StoryViewer can
-// reconstruct the same SVG <LinearGradient> from a published row. Order
-// inside `colors` is top-left → bottom-right (SVG x1/y1=0, x2/y2=1).
-// Note: expo-linear-gradient isn't in the dep tree on SDK 55, so we
-// render via react-native-svg's <LinearGradient> (already imported above).
-const TEXT_BG_GRADIENTS = [
-  { id: 'purple_pink', colors: ['#8B5CF6', '#EC4899'] },
-  { id: 'blue_cyan',   colors: ['#2563EB', '#06B6D4'] },
-  { id: 'orange_red',  colors: ['#F97316', '#EF4444'] },
-  { id: 'green_teal',  colors: ['#10B981', '#14B8A6'] },
-  { id: 'sunset',      colors: ['#FACC15', '#F97316', '#EF4444'] },
-  { id: 'aurora',      colors: ['#06B6D4', '#8B5CF6', '#EC4899'] },
-];
-
-// Resolve a published `bg_color` (string solid OR `gradient:<id>` token)
-// back to a gradient descriptor. Returns null for plain hex colors so the
-// caller can fall through to backgroundColor.
-function resolveGradient(bgColor) {
-  if (!bgColor || typeof bgColor !== 'string') return null;
-  if (!bgColor.startsWith('gradient:')) return null;
-  const id = bgColor.slice('gradient:'.length);
-  return TEXT_BG_GRADIENTS.find(g => g.id === id) || null;
-}
+// TEXT_BG_GRADIENTS (preset array) + resolveGradient now live in the shared
+// ./status/textGradients module (imported above) so the composer picker,
+// StoryViewer and AnimatedStatusText all read from one source of truth.
 
 // Circular 40x40 glass button used in the photo-status editor top-right
 // toolbar. Defined once so each tool shares the same hit target, backdrop

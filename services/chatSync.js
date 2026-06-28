@@ -212,6 +212,15 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
         if (convId && Array.isArray(rx)) {
           chatCache.updateCachedMessage?.(convId, mid, { reactions: rx }).catch?.(() => {});
         }
+      } else if (ev.type === 'read') {
+        // Mirror the blue ✓✓ to disk so a cold reopen doesn't regress it back to
+        // grey ✓✓. `read_at` is the persisted SQLite column (see updateMessage's
+        // allowed list); `_readStatus: 2` keeps the MMKV hot-cache row in sync for
+        // the synchronous cold-load renderer. convId may be absent on a read
+        // event — the SQLite path keys by message id regardless, so this still
+        // persists; convId only feeds the MMKV mirror key when present.
+        const convId = ev?.payload?.conversation_id;
+        chatCache.updateCachedMessage?.(convId, mid, { read_at: ev.created_at, _readStatus: 2 }).catch?.(() => {});
       }
     }
   } catch (e) {

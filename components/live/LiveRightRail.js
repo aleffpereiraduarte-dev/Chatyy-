@@ -110,29 +110,8 @@ export default function LiveRightRail({
         ) : null}
       </View>
 
-      {/* Diamond tip — wave 16 (2026-05-17). 1 diamond = 1 paid heart with
-          a gold-sparkle particle on all viewers' screens. Falls back silently
-          to a toast if the wallet is empty.
-          Round 66 (2026-05-18) — replaced 💎 emoji with IconDiamond SVG
-          (project rule: SVG only in UI), wrapped in its own slot so we can
-          surface the "Diamante" caption below it (matches the Like slot,
-          gives the action a clear label so users know what tapping does). */}
-      {typeof onDiamondPress === 'function' ? (
-        <View style={styles.slot}>
-          <TouchableOpacity
-            style={[styles.btn, styles.btnDiamond]}
-            onPress={onDiamondPress}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel={i18n.diamond || 'Diamante'}
-          >
-            <IconDiamond size={24} color="#60a5fa" />
-          </TouchableOpacity>
-          <Text style={styles.diamondCaption} numberOfLines={1}>
-            {i18n.diamond || 'Diamante'}
-          </Text>
-        </View>
-      ) : null}
+      {/* DIAMANTE DESLIGADO — botão de "Diamante" (presente pago) removido do rail.
+          A curtida/coração grátis acima continua normal. */}
 
       {/* Chat toggle */}
       <TouchableOpacity

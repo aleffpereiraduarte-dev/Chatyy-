@@ -103,6 +103,10 @@ export default function LiveGiftPicker({
   onSelect,
   i18n = {},
 }) {
+  // DIAMANTE DESLIGADO — picker de presente (custo em diamante) escondido (no-op).
+  // GIFT_CATALOG / GiftGlyph / IconGiftBox continuam exportados pra não quebrar imports.
+  return null;
+  // eslint-disable-next-line no-unreachable
   const slide = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.timing(slide, {
