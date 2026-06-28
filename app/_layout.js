@@ -1637,9 +1637,10 @@ export default function RootLayout() {
                 <Suspense fallback={null}>
                   <LiveLocationHeartbeat />
                 </Suspense>
-                <Suspense fallback={null}>
-                  <FirebasePhoneHost />
-                </Suspense>
+                {/* [2026-06-28] Firebase Phone Auth REMOVIDO do login (OTP vai por
+                    MSG91/Infobip no backend). Host do WebView não é mais montado —
+                    zero traço de Firebase no fluxo de login. google-services.* ficam
+                    (são do FCM/push, não do login). */}
                 <Suspense fallback={null}>
                   <DeclineWithMessageSheet />
                 </Suspense>
