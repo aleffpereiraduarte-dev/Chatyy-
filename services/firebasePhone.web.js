@@ -71,7 +71,8 @@ function ensureRecaptchaDiv() {
 }
 
 export function firebasePhoneAvailable() {
-  return typeof document !== 'undefined' && typeof window !== 'undefined';
+  // [2026-06-26] Firebase SMS DESLIGADO — web tambem usa o backend OTP (MSG91/Infobip).
+  return false;
 }
 
 export async function fbSendCode(e164Phone) {

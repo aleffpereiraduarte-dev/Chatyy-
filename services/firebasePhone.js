@@ -30,7 +30,8 @@ try {
 
 // Available on native only, and only when the WebView module is present.
 export function firebasePhoneAvailable() {
-  return Platform.OS !== 'web' && !_webViewMissing;
+  // [2026-06-26] Firebase SMS DESLIGADO — OTP vai pelo backend (MSG91 p/ EUA, Infobip p/ resto).
+  return false;
 }
 
 // Send the verification SMS. Returns { ok, confirmation } or { ok:false, error }.
