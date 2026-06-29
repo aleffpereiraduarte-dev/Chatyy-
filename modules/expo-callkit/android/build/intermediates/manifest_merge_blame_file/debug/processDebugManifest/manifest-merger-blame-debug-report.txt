@@ -1,0 +1,396 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    xmlns:tools="http://schemas.android.com/tools"
+4    package="expo.modules.callkit" >
+5
+6    <uses-sdk android:minSdkVersion="26" />
+7
+8    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+8-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:4:3-79
+8-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:4:20-76
+9    <uses-permission android:name="android.permission.VIBRATE" />
+9-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:5:3-64
+9-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:5:20-61
+10    <uses-permission android:name="android.permission.WAKE_LOCK" />
+10-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:6:3-66
+10-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:6:20-63
+11    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+11-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:7:3-75
+11-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:7:20-72
+12    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+12-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:8:3-75
+12-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:8:20-72
+13    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+13-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:9:3-86
+13-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:9:20-83
+14    <!--
+15    [2026-05-16 Stage 4] FOREGROUND_SERVICE_DATA_SYNC for RelayWakeService.
+16    Required by Android 14+ when starting a foregroundServiceType=dataSync
+17    service from background (FCM-triggered silent wake). Without this the
+18    OS throws SecurityException and the service is killed immediately.
+19    -->
+20    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+20-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:16:3-85
+20-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:16:20-82
+21    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+21-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:17:3-73
+21-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:17:20-70
+22    <!--
+23    [STAGE-B 2026-05-20] Self-managed Telecom integration. WhatsApp parity.
+24    READ_PHONE_NUMBERS lets the system attribute calls to our PhoneAccount
+25    in Recents without prompting; required for the dialer to display
+26    "Chatyy" as the call source. No runtime grant required — it's in the
+27    normal permission tier on API 26+.
+28    -->
+29    <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
+29-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:25:3-75
+29-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:25:20-72
+30
+31    <application>
+31-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:27:3-255:17
+32        <activity
+32-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:29:5-38:46
+33            android:name="expo.modules.callkit.IncomingCallActivity"
+33-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:30:7-43
+34            android:excludeFromRecents="true"
+34-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:35:7-40
+35            android:exported="false"
+35-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:31:7-31
+36            android:launchMode="singleInstance"
+36-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:36:7-42
+37            android:screenOrientation="portrait"
+37-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:38:7-43
+38            android:showWhenLocked="true"
+38-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:32:7-36
+39            android:taskAffinity=""
+39-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:34:7-30
+40            android:theme="@style/Theme.AppCompat.NoActionBar"
+40-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:37:7-57
+41            android:turnScreenOn="true" />
+41-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:33:7-34
+42
+43        <!--
+44      Day 1 scaffold (2026-05-15) — full-native in-call screen that replaces
+45      React Native /call.js. Owns the entire call UX. singleTop so a second
+46      openNativeCall() while one is already running reuses the same instance.
+47        -->
+48        <activity
+48-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:45:5-56:46
+49            android:name="expo.modules.callkit.CallActivity"
+49-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:46:7-35
+50            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+50-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:54:7-100
+51            android:excludeFromRecents="true"
+51-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:51:7-40
+52            android:exported="false"
+52-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:47:7-31
+53            android:launchMode="singleTop"
+53-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:52:7-37
+54            android:screenOrientation="portrait"
+54-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:56:7-43
+55            android:showWhenLocked="true"
+55-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:48:7-36
+56            android:supportsPictureInPicture="true"
+56-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:53:7-46
+57            android:taskAffinity=""
+57-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:50:7-30
+58            android:theme="@style/Theme.AppCompat.NoActionBar"
+58-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:55:7-57
+59            android:turnScreenOn="true" />
+59-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:49:7-34
+60
+61        <!--
+62      [2026-05-16] Group-call scaffold — sibling of CallActivity for N-way
+63      LiveKit rooms (chat group voice/video). Mirrors the singleTop /
+64      PiP-capable / portrait / NoActionBar flags so multi-launch reuses the
+65      same instance and the activity can shrink into PiP for video group
+66      calls. Owner: openGroupCall AsyncFunction in ExpoCallKitModule.
+67        -->
+68        <activity
+68-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:65:5-76:46
+69            android:name="expo.modules.callkit.GroupCallActivity"
+69-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:66:7-40
+70            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+70-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:74:7-100
+71            android:excludeFromRecents="true"
+71-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:71:7-40
+72            android:exported="false"
+72-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:67:7-31
+73            android:launchMode="singleTop"
+73-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:72:7-37
+74            android:screenOrientation="portrait"
+74-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:76:7-43
+75            android:showWhenLocked="true"
+75-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:68:7-36
+76            android:supportsPictureInPicture="true"
+76-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:73:7-46
+77            android:taskAffinity=""
+77-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:70:7-30
+78            android:theme="@style/Theme.AppCompat.NoActionBar"
+78-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:75:7-57
+79            android:turnScreenOn="true" />
+79-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:69:7-34
+80
+81        <!--
+82      [Stage 998/1000 — 2026-05-17] Compose-based Live Broadcast host
+83      activity. Owns the LiveKit publisher Room + the WS connection for
+84      live_* events. Same flags as CallActivity (singleTop so re-tapping a
+85      live during one already running reuses the activity; portrait; no
+86      action bar; exported=false because JS launches it via the module
+87      bridge, never via implicit intent).
+88        -->
+89        <activity
+89-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:86:5-96:46
+90            android:name="expo.modules.callkit.LiveBroadcastActivity"
+90-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:87:7-44
+91            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+91-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:94:7-100
+92            android:excludeFromRecents="true"
+92-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:92:7-40
+93            android:exported="false"
+93-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:88:7-31
+94            android:launchMode="singleTop"
+94-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:93:7-37
+95            android:screenOrientation="portrait"
+95-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:96:7-43
+96            android:showWhenLocked="true"
+96-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:89:7-36
+97            android:taskAffinity=""
+97-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:91:7-30
+98            android:theme="@style/Theme.AppCompat.NoActionBar"
+98-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:95:7-57
+99            android:turnScreenOn="true" />
+99-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:90:7-34
+100
+101        <!--
+102      [Stage 998/1000 — 2026-05-17] Compose-based Live Viewer audience
+103      activity. Subscribe-only LK Room + WS for live_* events. Auto-closes
+104      on live_viewer_kicked carrying the local user's email.
+105        -->
+106        <activity
+106-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:103:5-113:46
+107            android:name="expo.modules.callkit.LiveViewerActivity"
+107-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:104:7-41
+108            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+108-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:111:7-100
+109            android:excludeFromRecents="true"
+109-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:109:7-40
+110            android:exported="false"
+110-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:105:7-31
+111            android:launchMode="singleTop"
+111-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:110:7-37
+112            android:screenOrientation="portrait"
+112-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:113:7-43
+113            android:showWhenLocked="true"
+113-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:106:7-36
+114            android:taskAffinity=""
+114-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:108:7-30
+115            android:theme="@style/Theme.AppCompat.NoActionBar"
+115-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:112:7-57
+116            android:turnScreenOn="true" />
+116-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:107:7-34
+117
+118        <receiver
+118-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:115:5-130:16
+119            android:name="expo.modules.callkit.CallActionReceiver"
+119-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:116:7-41
+120            android:exported="false" >
+120-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:117:7-31
+121
+122            <!--
+123        [missed-call recording fix 2026-05-26 P1] CallRingingService broadcasts
+124        CALL_MISSED on its 45s ring timeout (package-scoped). A manifest
+125        intent-filter lets the system instantiate CallActionReceiver to record
+126        the missed call server-side even when JS / the app process is dead
+127        (which is exactly when a call times out unanswered). Other class-
+128        targeted actions (ACCEPT/DECLINE/HANGUP/PIP_*) keep working — they're
+129        delivered via explicit Intent(context, CallActionReceiver::class).
+130            -->
+131            <intent-filter>
+131-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:127:7-129:23
+132                <action android:name="expo.modules.callkit.CALL_MISSED" />
+132-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:128:9-67
+132-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:128:17-64
+133            </intent-filter>
+134        </receiver>
+135
+136        <!--
+137      [notif-p0p1 2026-05-17] Chat notification actions. Backs MessagingStyle
+138      inline RemoteInput (quick reply), mark-as-read, mute 8h, snooze 1h.
+139      Explicit intent actions (setPackage in sender) so no permission/export.
+140        -->
+141        <receiver
+141-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:137:5-148:16
+142            android:name="expo.modules.callkit.ChatActionReceiver"
+142-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:138:7-41
+143            android:exported="false" >
+143-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:139:7-31
+144            <intent-filter>
+144-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:140:7-147:23
+145                <action android:name="com.onemundo.mail.ACTION_CHAT_REPLY" />
+145-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:141:9-70
+145-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:141:17-67
+146                <action android:name="com.onemundo.mail.ACTION_CHAT_MARK_READ" />
+146-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:142:9-74
+146-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:142:17-71
+147                <action android:name="com.onemundo.mail.ACTION_CHAT_MUTE_8H" />
+147-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:143:9-72
+147-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:143:17-69
+148                <action android:name="com.onemundo.mail.ACTION_CHAT_SNOOZE_1H" />
+148-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:144:9-74
+148-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:144:17-71
+149                <action android:name="com.onemundo.mail.ACTION_CHAT_SMART_REPLY" />
+149-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:145:9-76
+149-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:145:17-73
+150                <action android:name="com.onemundo.mail.ACTION_CALL_BACK" />
+150-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:146:9-69
+150-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:146:17-66
+151            </intent-filter>
+152        </receiver>
+153
+154        <!--
+155      CRITICAL: priority="10" ensures this service receives FCM messages
+156      BEFORE Expo's ExpoFirebaseMessagingService (which uses priority="-1").
+157      Android only delivers to ONE FirebaseMessagingService — the highest priority one.
+158      We handle call messages ourselves and delegate everything else to Expo's handler.
+159        -->
+160        <service
+160-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:156:5-163:15
+161            android:name="expo.modules.callkit.CallFirebaseMessagingService"
+161-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:157:7-51
+162            android:directBootAware="true"
+162-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:159:7-37
+163            android:exported="false" >
+163-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:158:7-31
+164            <intent-filter android:priority="10" >
+164-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:160:7-162:23
+164-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:160:22-43
+165                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+165-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:161:9-70
+165-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:161:17-67
+166            </intent-filter>
+167        </service>
+168
+169        <!--
+170      Foreground service for incoming call ringing.
+171      Required on Android 12+ to keep the process alive and show full-screen UI
+172      when the app is killed. Type "phoneCall" is required on Android 14+.
+173        -->
+174        <service
+174-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:170:5-174:51
+175            android:name="expo.modules.callkit.CallRingingService"
+175-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:171:7-41
+176            android:directBootAware="true"
+176-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:173:7-37
+177            android:exported="false"
+177-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:172:7-31
+178            android:foregroundServiceType="phoneCall" />
+178-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:174:7-48
+179
+180        <!--
+181      [2026-05-16] Foreground service for IN-PROGRESS calls (post-accept).
+182      Distinct from CallRingingService: this one uses a LOW-importance
+183      channel ("chatyy_calls_ongoing"), silent, persistent — its only job
+184      is to keep the process alive while the user has the app backgrounded
+185      mid-conversation (swipe home → LiveKit Room WS would otherwise die).
+186      foregroundServiceType MUST be "phoneCall" (not "dataSync") because we
+187      ARE in an active call and hold the mic; Android 14+ enforces the
+188      type-to-permission mapping (FOREGROUND_SERVICE_PHONE_CALL).
+189        -->
+190        <service
+190-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:186:5-189:51
+191            android:name="expo.modules.callkit.CallOngoingService"
+191-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:187:7-41
+192            android:exported="false"
+192-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:188:7-31
+193            android:foregroundServiceType="phoneCall" />
+193-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:189:7-48
+194
+195        <!--
+196      [2026-05-16 Stage 4] Silent push wake → raw WebSocket session. Started
+197      from CallFirebaseMessagingService.onMessageReceived when an FCM
+198      payload arrives with `type: "wake_relay"`. foregroundServiceType is
+199      `dataSync` because we are NOT placing a call — we are syncing data
+200      so another device (web companion) can read it. Android 14+ requires
+201      this exact type and the matching FOREGROUND_SERVICE_DATA_SYNC
+202      permission (declared above). No UI: see RelayWakeService.kt.
+203        -->
+204        <service
+204-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:200:5-203:50
+205            android:name="expo.modules.callkit.RelayWakeService"
+205-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:201:7-39
+206            android:exported="false"
+206-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:202:7-31
+207            android:foregroundServiceType="dataSync" />
+207-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:203:7-47
+208
+209        <!--
+210      [Telecom integration, 2026-05-17] InCallService scaffold so Chatyy
+211      shows up in Settings → Calling Accounts and the stock dialer's
+212      Recents tab can attribute calls to us. The matching ConnectionService
+213      will land in a follow-up — until then this is enough to register the
+214      PhoneAccountHandle and expose Chatyy as a calling app. See
+215      ChatyyInCallService.kt for the full architecture comment.
+216
+217      BIND_INCALL_SERVICE permission lets the system bind us when a call
+218      tied to our PhoneAccountHandle is active. The intent-filter is the
+219      contract the framework expects on this service class.
+220        -->
+221        <service
+221-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:217:5-227:15
+222            android:name="expo.modules.callkit.ChatyyInCallService"
+222-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:218:7-42
+223            android:exported="true"
+223-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:219:7-30
+224            android:permission="android.permission.BIND_INCALL_SERVICE" >
+224-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:220:7-66
+225            <meta-data
+225-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:221:7-223:33
+226                android:name="android.telecom.IN_CALL_SERVICE_UI"
+226-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:222:9-58
+227                android:value="false" />
+227-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:223:9-30
+228
+229            <intent-filter>
+229-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:224:7-226:23
+230                <action android:name="android.telecom.InCallService" />
+230-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:225:9-64
+230-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:225:17-61
+231            </intent-filter>
+232        </service>
+233
+234        <!--
+235      [STAGE-B 2026-05-20] Self-managed ConnectionService — the other
+236      half of the Telecom integration. ChatyyInCallService above is the
+237      InCallService binding (system → us for dialer UI); this one is the
+238      ConnectionService binding (us → system for the Call lifecycle).
+239      BIND_TELECOM_CONNECTION_SERVICE is the contract permission the
+240      framework requires on every ConnectionService. Without this entry
+241      addNewIncomingCall(handle) throws SecurityException and the call
+242      never appears in the system call UI — we fall back to Stage A's
+243      FSI+IncomingCallActivity path silently.
+244
+245      exported=true is correct here: the Telecom framework lives in the
+246      `com.android.server.telecom` system process and binds us across
+247      processes via the BIND_TELECOM_CONNECTION_SERVICE permission gate.
+248      No third-party app can bind because the permission is signature/
+249      privileged-only.
+250        -->
+251        <service
+251-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:246:5-253:15
+252            android:name="expo.modules.callkit.ChatyyConnectionService"
+252-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:247:7-46
+253            android:exported="true"
+253-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:248:7-30
+254            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE" >
+254-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:249:7-78
+255            <intent-filter>
+255-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:250:7-252:23
+256                <action android:name="android.telecom.ConnectionService" />
+256-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:251:9-68
+256-->/root/webmail-app/modules/expo-callkit/android/src/main/AndroidManifest.xml:251:17-65
+257            </intent-filter>
+258        </service>
+259    </application>
+260
+261</manifest>

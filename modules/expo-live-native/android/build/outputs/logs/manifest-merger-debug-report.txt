@@ -1,0 +1,44 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:1:1-39:12
+INJECTED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:1:1-39:12
+	package
+		INJECTED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml
+	xmlns:android
+		ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:1:11-69
+application
+ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:3:3-37:17
+activity#expo.modules.livenative.LiveHostActivity
+ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:11:5-15:46
+	android:screenOrientation
+		ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:15:7-43
+	android:exported
+		ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:13:7-31
+	android:theme
+		ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:14:7-57
+	android:name
+		ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:12:7-39
+activity#expo.modules.livenative.LiveViewerActivity
+ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:28:5-35:112
+	android:screenOrientation
+		ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:32:7-43
+	android:exported
+		ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:30:7-31
+	android:supportsPictureInPicture
+		ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:33:7-46
+	android:resizeableActivity
+		ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:34:7-40
+	android:configChanges
+		ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:35:7-109
+	android:theme
+		ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:31:7-57
+	android:name
+		ADDED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml:29:7-41
+uses-sdk
+INJECTED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml reason: use-sdk injection requested
+INJECTED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml
+INJECTED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml
+	android:targetSdkVersion
+		INJECTED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml
+	android:minSdkVersion
+		INJECTED from /root/webmail-app/modules/expo-live-native/android/src/main/AndroidManifest.xml

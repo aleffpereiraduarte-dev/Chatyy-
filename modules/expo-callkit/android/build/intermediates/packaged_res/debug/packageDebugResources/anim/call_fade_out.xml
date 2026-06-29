@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  [#1176 polish, 2026-05-18] Outgoing screen (chat) fades slightly while the
+  call slide-up enters. Keeps the chat visible enough that the user
+  perceives the call as overlaying it rather than replacing it — same
+  modal-sheet feel as iOS.
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:interpolator/decelerate_quint"
+    android:shareInterpolator="true">
+    <alpha
+        android:fromAlpha="1.0"
+        android:toAlpha="0.85"
+        android:duration="280" />
+</set>

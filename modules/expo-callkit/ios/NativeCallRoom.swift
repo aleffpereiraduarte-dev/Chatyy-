@@ -113,9 +113,6 @@ public enum NativeCallRoomEvent {
         if room != nil {
             print("[NativeCallRoom] clear: dropping room reference (callId=\(_callId ?? "<nil>"))")
         }
-        // [iOS call E2EE, 2026-06-28] Drop any per-call key so it can't leak
-        // into the next call (which mints its own fresh key when E2EE is on).
-        if let cid = _callId { clearE2EEKey(callId: cid) }
         self.room = nil
         self._callId = nil
         self.lastRoomName = nil
@@ -124,68 +121,6 @@ public enum NativeCallRoomEvent {
     }
 
     public func currentCallId() -> String? { return _callId }
-
-    // --- E2EE (call media encryption) — GATED, DEFAULT OFF --------------------
-    //
-    // [iOS call E2EE, 2026-06-28] LiveKit Swift exposes insertable-streams E2EE
-    // via `E2EEOptions(keyProvider:)`. We mirror the Android strategy: JS mints
-    // a per-call shared key and hands it to native through
-    // `ExpoCallKit.setCallE2EEKey(callId, keyBase64)` BEFORE the Room connects.
-    // The sole Room builder (`CallViewController`) calls
-    // `makeE2EEOptions(forCallId:)` while assembling `RoomOptions`; when a key
-    // is registered it attaches `E2EEOptions(keyProvider: BaseKeyProvider(
-    // sharedKey:))`, otherwise it returns nil and the Room connects EXACTLY as
-    // it does today (no E2EE).
-    //
-    // ⚠️ DEFAULT OFF: no key is ever registered unless JS — behind its own
-    // feature flag — calls `setCallE2EEKey`. With the store empty,
-    // `makeE2EEOptions` returns nil and the connect path is byte-for-byte
-    // identical to the pre-E2EE behavior. There is no autonomous code path that
-    // turns this on; it is purely key-gated.
-    private var pendingE2EEKeys: [String: String] = [:]
-    private let e2eeLock = NSLock()
-
-    /// Register the per-call shared E2EE key (base64). Invoked from the Expo
-    /// module's `setCallE2EEKey` Function, which JS calls before connect.
-    @objc public func setE2EEKey(callId: String, keyBase64: String) {
-        guard !callId.isEmpty, !keyBase64.isEmpty else { return }
-        e2eeLock.lock(); defer { e2eeLock.unlock() }
-        pendingE2EEKeys[callId] = keyBase64
-        print("[NativeCallRoom] E2EE key registered for callId=\(callId) (len=\(keyBase64.count))")
-    }
-
-    /// Drop a stored key (call ended / cleared). Also invoked from `clear()`.
-    @objc public func clearE2EEKey(callId: String) {
-        guard !callId.isEmpty else { return }
-        e2eeLock.lock(); defer { e2eeLock.unlock() }
-        pendingE2EEKeys.removeValue(forKey: callId)
-    }
-
-    private func e2eeKey(forCallId callId: String) -> String? {
-        e2eeLock.lock(); defer { e2eeLock.unlock() }
-        return pendingE2EEKeys[callId]
-    }
-
-    /// Build `E2EEOptions` for the given callId, or nil when no key is
-    /// registered (→ connect without E2EE, today's behavior). Centralizes all
-    /// LiveKit E2EE type usage so the Room builder only passes the optional
-    /// through to `RoomOptions(e2eeOptions:)`.
-    public func makeE2EEOptions(forCallId callId: String) -> E2EEOptions? {
-        guard let key = e2eeKey(forCallId: callId) else { return nil }
-        // BaseKeyProvider with a single shared key (no per-participant ratchet).
-        // CROSS-PLATFORM KEY CONTRACT (2026-06-28, reconciled): `key` is the
-        // base64 STRING of the per-call key. iOS feeds it via
-        // BaseKeyProvider(sharedKey:) (UTF-8 of the string), and Android now feeds
-        // the SAME string via BaseKeyProvider.setSharedKey(String) (also UTF-8) —
-        // so both platforms derive identical key material and frames decrypt
-        // cross-platform. (Previously Android decoded to raw bytes → mismatch;
-        // that was changed to the String API to match here.) QA still required to
-        // confirm a real encrypted iOS↔Android call before flipping CALL_E2EE.
-        let keyProvider = BaseKeyProvider(isSharedKey: true, sharedKey: key)
-        let opts = E2EEOptions(keyProvider: keyProvider)
-        print("[NativeCallRoom] E2EE ENABLED for callId=\(callId) (shared-key)")
-        return opts
-    }
 
     // --- Listener registration (called from adoptNativeRoom) ------------------
 

@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="expo.modules.backgroundupload" >
+
+    <uses-sdk android:minSdkVersion="26" />
+
+    <!--
+       Android 13+ scoped media permissions. READ_EXTERNAL_STORAGE is retained
+       only up to API 32 because Android 13 dropped it in favor of the
+       per-type READ_MEDIA_* permissions.
+    -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!--
+       Required for WorkManager-driven background uploads to keep the process
+       awake through the upload of large videos.
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!--
+       Foreground service for the actual upload work — required on Android 14+
+       when the worker is long-running. DATA_SYNC type matches what Google
+       Photos itself declares for the photo backup worker.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!--
+       POST_NOTIFICATIONS on Android 13+ for the worker's progress notification.
+       The app already has this for the chat/email side, so re-declaring here
+       is a no-op on merge but keeps the manifest self-documenting.
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+
+        <!--
+         WorkManager auto-discovers the BackupWorker via reflection; no
+         <service> entry is required because WorkManager runs its own
+         systemForegroundService internally.
+        -->
+    </application>
+
+</manifest>

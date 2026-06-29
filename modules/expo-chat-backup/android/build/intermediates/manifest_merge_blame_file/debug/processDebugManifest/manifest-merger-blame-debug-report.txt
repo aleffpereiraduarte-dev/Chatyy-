@@ -1,0 +1,25 @@
+1<?xml version="1.0" encoding="utf-8"?>
+2<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+3    package="expo.modules.chatbackup" >
+4
+5    <uses-sdk android:minSdkVersion="26" />
+6
+7    <!--
+8       Required for the HTTPS calls to www.googleapis.com (Drive REST API)
+9       and accounts.google.com (OAuth token exchange).
+10    -->
+11    <uses-permission android:name="android.permission.INTERNET" />
+11-->/root/webmail-app/modules/expo-chat-backup/android/src/main/AndroidManifest.xml:5:3-65
+11-->/root/webmail-app/modules/expo-chat-backup/android/src/main/AndroidManifest.xml:5:20-62
+12
+13    <!--
+14       GET_ACCOUNTS is needed on legacy Android versions so GoogleSignIn
+15       can enumerate the device's Google accounts; on modern Android the
+16       sign-in sheet handles account selection itself, but declaring this
+17       avoids regressions on older OEM builds (Samsung 10/11).
+18    -->
+19    <uses-permission android:name="android.permission.GET_ACCOUNTS" />
+19-->/root/webmail-app/modules/expo-chat-backup/android/src/main/AndroidManifest.xml:11:3-69
+19-->/root/webmail-app/modules/expo-chat-backup/android/src/main/AndroidManifest.xml:11:20-66
+20
+21</manifest>

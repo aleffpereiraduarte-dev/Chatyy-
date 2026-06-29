@@ -1,0 +1,261 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="expo.modules.callkit" >
+
+    <uses-sdk android:minSdkVersion="26" />
+
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <!--
+    [2026-05-16 Stage 4] FOREGROUND_SERVICE_DATA_SYNC for RelayWakeService.
+    Required by Android 14+ when starting a foregroundServiceType=dataSync
+    service from background (FCM-triggered silent wake). Without this the
+    OS throws SecurityException and the service is killed immediately.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+    <!--
+    [STAGE-B 2026-05-20] Self-managed Telecom integration. WhatsApp parity.
+    READ_PHONE_NUMBERS lets the system attribute calls to our PhoneAccount
+    in Recents without prompting; required for the dialer to display
+    "Chatyy" as the call source. No runtime grant required — it's in the
+    normal permission tier on API 26+.
+    -->
+    <uses-permission android:name="android.permission.READ_PHONE_NUMBERS" />
+
+    <application>
+        <activity
+            android:name="expo.modules.callkit.IncomingCallActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:screenOrientation="portrait"
+            android:showWhenLocked="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:turnScreenOn="true" />
+
+        <!--
+      Day 1 scaffold (2026-05-15) — full-native in-call screen that replaces
+      React Native /call.js. Owns the entire call UX. singleTop so a second
+      openNativeCall() while one is already running reuses the same instance.
+        -->
+        <activity
+            android:name="expo.modules.callkit.CallActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:showWhenLocked="true"
+            android:supportsPictureInPicture="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:turnScreenOn="true" />
+
+        <!--
+      [2026-05-16] Group-call scaffold — sibling of CallActivity for N-way
+      LiveKit rooms (chat group voice/video). Mirrors the singleTop /
+      PiP-capable / portrait / NoActionBar flags so multi-launch reuses the
+      same instance and the activity can shrink into PiP for video group
+      calls. Owner: openGroupCall AsyncFunction in ExpoCallKitModule.
+        -->
+        <activity
+            android:name="expo.modules.callkit.GroupCallActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:showWhenLocked="true"
+            android:supportsPictureInPicture="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:turnScreenOn="true" />
+
+        <!--
+      [Stage 998/1000 — 2026-05-17] Compose-based Live Broadcast host
+      activity. Owns the LiveKit publisher Room + the WS connection for
+      live_* events. Same flags as CallActivity (singleTop so re-tapping a
+      live during one already running reuses the activity; portrait; no
+      action bar; exported=false because JS launches it via the module
+      bridge, never via implicit intent).
+        -->
+        <activity
+            android:name="expo.modules.callkit.LiveBroadcastActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:showWhenLocked="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:turnScreenOn="true" />
+
+        <!--
+      [Stage 998/1000 — 2026-05-17] Compose-based Live Viewer audience
+      activity. Subscribe-only LK Room + WS for live_* events. Auto-closes
+      on live_viewer_kicked carrying the local user's email.
+        -->
+        <activity
+            android:name="expo.modules.callkit.LiveViewerActivity"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:screenOrientation="portrait"
+            android:showWhenLocked="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.AppCompat.NoActionBar"
+            android:turnScreenOn="true" />
+
+        <receiver
+            android:name="expo.modules.callkit.CallActionReceiver"
+            android:exported="false" >
+
+            <!--
+        [missed-call recording fix 2026-05-26 P1] CallRingingService broadcasts
+        CALL_MISSED on its 45s ring timeout (package-scoped). A manifest
+        intent-filter lets the system instantiate CallActionReceiver to record
+        the missed call server-side even when JS / the app process is dead
+        (which is exactly when a call times out unanswered). Other class-
+        targeted actions (ACCEPT/DECLINE/HANGUP/PIP_*) keep working — they're
+        delivered via explicit Intent(context, CallActionReceiver::class).
+            -->
+            <intent-filter>
+                <action android:name="expo.modules.callkit.CALL_MISSED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+      [notif-p0p1 2026-05-17] Chat notification actions. Backs MessagingStyle
+      inline RemoteInput (quick reply), mark-as-read, mute 8h, snooze 1h.
+      Explicit intent actions (setPackage in sender) so no permission/export.
+        -->
+        <receiver
+            android:name="expo.modules.callkit.ChatActionReceiver"
+            android:exported="false" >
+            <intent-filter>
+                <action android:name="com.onemundo.mail.ACTION_CHAT_REPLY" />
+                <action android:name="com.onemundo.mail.ACTION_CHAT_MARK_READ" />
+                <action android:name="com.onemundo.mail.ACTION_CHAT_MUTE_8H" />
+                <action android:name="com.onemundo.mail.ACTION_CHAT_SNOOZE_1H" />
+                <action android:name="com.onemundo.mail.ACTION_CHAT_SMART_REPLY" />
+                <action android:name="com.onemundo.mail.ACTION_CALL_BACK" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+      CRITICAL: priority="10" ensures this service receives FCM messages
+      BEFORE Expo's ExpoFirebaseMessagingService (which uses priority="-1").
+      Android only delivers to ONE FirebaseMessagingService — the highest priority one.
+      We handle call messages ourselves and delegate everything else to Expo's handler.
+        -->
+        <service
+            android:name="expo.modules.callkit.CallFirebaseMessagingService"
+            android:directBootAware="true"
+            android:exported="false" >
+            <intent-filter android:priority="10" >
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!--
+      Foreground service for incoming call ringing.
+      Required on Android 12+ to keep the process alive and show full-screen UI
+      when the app is killed. Type "phoneCall" is required on Android 14+.
+        -->
+        <service
+            android:name="expo.modules.callkit.CallRingingService"
+            android:directBootAware="true"
+            android:exported="false"
+            android:foregroundServiceType="phoneCall" />
+
+        <!--
+      [2026-05-16] Foreground service for IN-PROGRESS calls (post-accept).
+      Distinct from CallRingingService: this one uses a LOW-importance
+      channel ("chatyy_calls_ongoing"), silent, persistent — its only job
+      is to keep the process alive while the user has the app backgrounded
+      mid-conversation (swipe home → LiveKit Room WS would otherwise die).
+      foregroundServiceType MUST be "phoneCall" (not "dataSync") because we
+      ARE in an active call and hold the mic; Android 14+ enforces the
+      type-to-permission mapping (FOREGROUND_SERVICE_PHONE_CALL).
+        -->
+        <service
+            android:name="expo.modules.callkit.CallOngoingService"
+            android:exported="false"
+            android:foregroundServiceType="phoneCall" />
+
+        <!--
+      [2026-05-16 Stage 4] Silent push wake → raw WebSocket session. Started
+      from CallFirebaseMessagingService.onMessageReceived when an FCM
+      payload arrives with `type: "wake_relay"`. foregroundServiceType is
+      `dataSync` because we are NOT placing a call — we are syncing data
+      so another device (web companion) can read it. Android 14+ requires
+      this exact type and the matching FOREGROUND_SERVICE_DATA_SYNC
+      permission (declared above). No UI: see RelayWakeService.kt.
+        -->
+        <service
+            android:name="expo.modules.callkit.RelayWakeService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!--
+      [Telecom integration, 2026-05-17] InCallService scaffold so Chatyy
+      shows up in Settings → Calling Accounts and the stock dialer's
+      Recents tab can attribute calls to us. The matching ConnectionService
+      will land in a follow-up — until then this is enough to register the
+      PhoneAccountHandle and expose Chatyy as a calling app. See
+      ChatyyInCallService.kt for the full architecture comment.
+
+      BIND_INCALL_SERVICE permission lets the system bind us when a call
+      tied to our PhoneAccountHandle is active. The intent-filter is the
+      contract the framework expects on this service class.
+        -->
+        <service
+            android:name="expo.modules.callkit.ChatyyInCallService"
+            android:exported="true"
+            android:permission="android.permission.BIND_INCALL_SERVICE" >
+            <meta-data
+                android:name="android.telecom.IN_CALL_SERVICE_UI"
+                android:value="false" />
+
+            <intent-filter>
+                <action android:name="android.telecom.InCallService" />
+            </intent-filter>
+        </service>
+
+        <!--
+      [STAGE-B 2026-05-20] Self-managed ConnectionService — the other
+      half of the Telecom integration. ChatyyInCallService above is the
+      InCallService binding (system → us for dialer UI); this one is the
+      ConnectionService binding (us → system for the Call lifecycle).
+      BIND_TELECOM_CONNECTION_SERVICE is the contract permission the
+      framework requires on every ConnectionService. Without this entry
+      addNewIncomingCall(handle) throws SecurityException and the call
+      never appears in the system call UI — we fall back to Stage A's
+      FSI+IncomingCallActivity path silently.
+
+      exported=true is correct here: the Telecom framework lives in the
+      `com.android.server.telecom` system process and binds us across
+      processes via the BIND_TELECOM_CONNECTION_SERVICE permission gate.
+      No third-party app can bind because the permission is signature/
+      privileged-only.
+        -->
+        <service
+            android:name="expo.modules.callkit.ChatyyConnectionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE" >
+            <intent-filter>
+                <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
+        </service>
+    </application>
+
+</manifest>
