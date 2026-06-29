@@ -9,6 +9,7 @@ import android.opengl.EGL14
 import android.opengl.EGLConfig
 import android.opengl.EGLContext
 import android.opengl.EGLDisplay
+import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES11Ext
 import android.opengl.GLES20
@@ -18,6 +19,7 @@ import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
+import java.util.concurrent.locks.ReentrantLock
 
 /**
  * VideoTranscoder — Stage 2 (2026-06-29).
@@ -378,13 +380,6 @@ object VideoTranscoder {
     }
   }
 
-  // EGLExt.eglPresentationTimeANDROID lives in android.opengl.EGLExt.
-  private object EGLExt {
-    fun eglPresentationTimeANDROID(display: EGLDisplay, surface: EGLSurface, nsecs: Long) {
-      android.opengl.EGLExt.eglPresentationTimeANDROID(display, surface, nsecs)
-    }
-  }
-
   // ── GL: decoder output texture → fullscreen quad ────────────────────────────
 
   /**
@@ -397,29 +392,38 @@ object VideoTranscoder {
     val surface: Surface
     private val surfaceTexture: android.graphics.SurfaceTexture
     private val textureRender: TextureRender
-    private val frameSyncObject = Object()
+    // Kotlin can't use Object.wait/notify on Any, so use a Lock + Condition.
+    private val frameLock = ReentrantLock()
+    private val frameCondition = frameLock.newCondition()
     private var frameAvailable = false
 
     init {
       textureRender = TextureRender()
       surfaceTexture = android.graphics.SurfaceTexture(textureRender.textureId)
       surfaceTexture.setOnFrameAvailableListener {
-        synchronized(frameSyncObject) {
+        frameLock.lock()
+        try {
           frameAvailable = true
-          frameSyncObject.notifyAll()
+          frameCondition.signalAll()
+        } finally {
+          frameLock.unlock()
         }
       }
       surface = Surface(surfaceTexture)
     }
 
     fun awaitNewImage() {
-      val timeoutMs = 2500L
-      synchronized(frameSyncObject) {
+      frameLock.lock()
+      try {
+        // Wait up to 2.5s for the decoder to push a frame onto the texture.
         while (!frameAvailable) {
-          frameSyncObject.wait(timeoutMs)
-          if (!frameAvailable) throw RuntimeException("frame wait timed out")
+          if (frameCondition.awaitNanos(2_500_000_000L) <= 0L && !frameAvailable) {
+            throw RuntimeException("frame wait timed out")
+          }
         }
         frameAvailable = false
+      } finally {
+        frameLock.unlock()
       }
       surfaceTexture.updateTexImage()
     }

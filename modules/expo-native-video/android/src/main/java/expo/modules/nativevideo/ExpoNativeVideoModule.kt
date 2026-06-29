@@ -223,7 +223,7 @@ class ExpoNativeVideoModule : Module() {
     if (srcPath != null && cacheDir != null) {
       try {
         val r = VideoTranscoder.transcode(srcPath, cacheDir, maxWidth, maxHeight, targetBitrate, fps)
-        if (r != null && r.size in 1 until srcSize) {
+        if (r != null && r.size in 1L until srcSize) {
           // Only adopt the transcode if it actually got SMALLER — a re-encode
           // that grew the file (rare, e.g. already-efficient source) isn't worth
           // the upload; keep the raw clip in that case.
