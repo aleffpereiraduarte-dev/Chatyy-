@@ -382,6 +382,25 @@ async function clearAccountScopedMmkv() {
   } catch {}
 }
 
+// [2026-06-29 P0 PRIVACY] Defense-in-depth for the cross-account bare-key
+// leak when a clean logout never ran (server-side session death, app killed,
+// token revoked) and a DIFFERENT account then authenticates on cold start.
+// Persist the owner of the unscoped MMKV caches and wipe them ONLY when the
+// authenticating account differs. Same-user cold start keeps its cache, so
+// offline mode is untouched and we never wipe on every launch.
+async function clearMmkvIfAccountChanged(email) {
+  try {
+    const { getString, setString } = require('../services/mmkv');
+    const cur = String(email || '').trim().toLowerCase();
+    if (!cur) return;
+    const prev = String(getString('omc_cache_owner') || '').trim().toLowerCase();
+    if (prev && prev !== cur) {
+      await clearAccountScopedMmkv();
+    }
+    if (prev !== cur) { try { setString('omc_cache_owner', cur); } catch {} }
+  } catch {}
+}
+
 // Aggressively wipe every per-account cache on the device. Goes well beyond
 // `clearAllCache()` (which only touches MMKV @chatyy_cache_*) and `clearChatCache()`
 // (which only resets the chat SQLite/in-memory layer). Catches AsyncStorage
@@ -394,6 +413,15 @@ async function clearAccountScopedMmkv() {
 // the multi-account roster, and the bio_email/bio_token pair (Face ID for
 // the LAST user — already gated by device biometric).
 async function clearAllPerAccountCaches() {
+  // 0. P0 PRIVACY [2026-06-29]: the three bare-key MMKV caches
+  // (chat_conversations, omc_profile, omc_call_history) are written by
+  // services/api.js with RAW keys, bypassing the per-user hashing in
+  // services/cache.js. The AsyncStorage/localStorage sweep below does NOT
+  // reach MMKV, and nothing else here cleared them — so after logout they
+  // survived on disk and the NEXT account that logged in read the previous
+  // user's conversations / profile / call-log (the reported cross-account
+  // leak). Clear them explicitly on every full cache wipe.
+  try { await clearAccountScopedMmkv(); } catch {}
   // 1. Standard MMKV cache + chat-cache module (lazy to break cycle)
   try { await clearAllCache(); } catch {}
   try { const fn = await getLazyClearChatCache(); await fn(); } catch {}
@@ -540,6 +568,7 @@ export function AuthProvider({ children }) {
           if (cachedUser) {
             const userData = JSON.parse(cachedUser);
             if (userData?.email) {
+              await clearMmkvIfAccountChanged(userData.email);
               setCacheUser(userData.email);
               setUser(userData);
               loadAccounts();
@@ -634,6 +663,7 @@ export function AuthProvider({ children }) {
           /not.*authenticated|session.*expired|invalid.*token|unauthor/i.test(r.message)
         );
         if (r.success && r.data?.email) {
+          await clearMmkvIfAccountChanged(r.data.email);
           setCacheUser(r.data.email);
           setUser(r.data);
           try {
