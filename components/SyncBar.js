@@ -128,15 +128,17 @@ export default function SyncBar() {
     };
     const handleSync = ({ phase, progress: p }) => {
       clearTimeout(graceTimer.current);
-      // WhatsApp-grade silent sync (2026-05-18, #1131): web NEVER shows the
-      // syncing progress bar. Initial-sync on web is a no-op (see
-      // services/initialSync.js web fast-path), and any future heavy delta
-      // should happen invisibly in the background — the cached chat list
-      // paints instantly while deltas trickle through WS. Mobile keeps the
-      // full visual since the on-device DB warm-up legitimately takes time.
-      if (Platform.OS === 'web') {
-        return;
-      }
+      // [2026-06-29] Fully SILENT history sync on ALL platforms (founder:
+      // "toda hora aparece em cima, deveria ser mais no background sem o
+      // cliente ver"). The routine initial/delta sync runs every cold start;
+      // surfacing a "Sincronizando…" bar each time felt like the app was
+      // stuck. The sync ENGINE (services/initialSync + fullHistorySync) is
+      // unaffected — it keeps running in the background; we just never paint
+      // the progress bar. The cached chat list shows instantly and messages
+      // fill in as the sync completes, exactly like WhatsApp. Only genuine
+      // connectivity states (offline / connecting) still surface, and those
+      // are NOT "toda hora" — they only appear after a real disconnect grace.
+      return;
       if (phase === 'start') {
         show('syncing');
         setProgress(0);
@@ -163,6 +165,15 @@ export default function SyncBar() {
     // thin pill "Sincronizando histórico • N/M conversas" that auto-hides
     // when the bootstrap reports phase=done.
     const handleBootstrap = ({ phase, convDone = 0, convTotal = 0 }) => {
+      // [2026-06-29] SILENT history restore (founder request). The full-history
+      // bootstrap on a new device / reinstall now runs entirely in the
+      // background with NO visible bar — the chat list paints from the server
+      // list immediately and each conversation's history streams into SQLite
+      // invisibly. (The engine in services/fullHistorySync.js is unchanged and
+      // keeps running; we just stop driving the UI bar.) Kept registered as a
+      // no-op so re-enabling later is a one-line revert.
+      return;
+      // eslint-disable-next-line no-unreachable
       if (Platform.OS === 'web') return; // SQLite-only feature
       if (phase === 'start') {
         setBootConvDone(0);
