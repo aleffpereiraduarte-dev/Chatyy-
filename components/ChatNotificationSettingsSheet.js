@@ -83,7 +83,20 @@ const DEFAULT_SETTINGS = {
   mention_exception: true,
   mute_until: null,
   ringtone: 'default', // per-conversation call ringtone (gap_notifications #4)
+  led_color: null, // Android notification LED color '#RRGGBB' | null (OS default)
+  notify_mode: 'all', // 'all' | 'mentions_only' | 'off' (group notification mode)
 };
+
+// Notification LED color swatches (Android only). null = OS default.
+const LED_COLORS = [
+  { value: null,      hex: null,      label: 'Padrão' },
+  { value: '#ffffff', hex: '#ffffff', label: 'Branco' },
+  { value: '#ff0000', hex: '#ff0000', label: 'Vermelho' },
+  { value: '#00ff00', hex: '#00ff00', label: 'Verde' },
+  { value: '#2563eb', hex: '#2563eb', label: 'Azul' },
+  { value: '#7c3aed', hex: '#7c3aed', label: 'Roxo' },
+  { value: '#f59e0b', hex: '#f59e0b', label: 'Amarelo' },
+];
 
 // System-supplied ringtone identifiers. The 16 names match Android system
 // ringtones (Default, Argon, Beat Plucker, Caffeinated Rattlesnake, etc.)
@@ -294,6 +307,39 @@ export default function ChatNotificationSettingsSheet({
               }}
               colors={colors}
             />
+
+            {/* Cor da luz (LED) — Android-only. Tapping a swatch writes the
+                hex (or null for "Padrão") to chat_user_conv_settings.led_color;
+                the native push handler maps it to the notification LED color. */}
+            {Platform.OS === 'android' ? (
+              <>
+                <SectionHeader text={t?.('notif.ledColor') || 'Cor da luz (LED)'} colors={colors} />
+                <LedColorRow
+                  value={settings.led_color || null}
+                  onChange={(hex) => saveField({ led_color: hex })}
+                  defaultLabel={t?.('notif.ledDefault') || 'Padrão'}
+                  colors={colors}
+                />
+              </>
+            ) : null}
+
+            {/* Notificações do grupo — 3-mode radio. Only meaningful for
+                groups, but harmless for 1:1, so we gate on isGroup. */}
+            {isGroup ? (
+              <>
+                <SectionHeader text={t?.('notif.groupMode') || 'Notificações do grupo'} colors={colors} />
+                <PickerRow
+                  options={[
+                    { value: 'all',           label: t?.('notif.modeAll') || 'Todas' },
+                    { value: 'mentions_only', label: t?.('notif.modeMentions') || 'Só menções' },
+                    { value: 'off',           label: t?.('notif.modeOff') || 'Desativadas' },
+                  ]}
+                  value={settings.notify_mode || 'all'}
+                  onChange={(v) => saveField({ notify_mode: v })}
+                  colors={colors}
+                />
+              </>
+            ) : null}
 
             {/* Mention exception — only meaningful for groups */}
             {isGroup ? (
@@ -546,6 +592,48 @@ function PickerRow({ options, value, onChange, colors }) {
           colors={colors}
         />
       ))}
+    </View>
+  );
+}
+
+// Row of tappable LED color swatches. The selected swatch gets an accent
+// ring; "Padrão" (null) renders as an outlined circle with a small check.
+function LedColorRow({ value, onChange, defaultLabel, colors }) {
+  return (
+    <View style={{
+      flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap',
+      paddingHorizontal: 18, paddingVertical: 12, gap: 14,
+    }}>
+      {LED_COLORS.map((c) => {
+        const active = String(c.value) === String(value);
+        const isDefault = c.value === null;
+        return (
+          <TouchableOpacity
+            key={String(c.value)}
+            onPress={() => onChange(c.value)}
+            activeOpacity={0.7}
+            accessibilityLabel={isDefault ? defaultLabel : c.label}
+            style={{ alignItems: 'center', width: 44 }}
+          >
+            <View style={{
+              width: 34, height: 34, borderRadius: 17,
+              alignItems: 'center', justifyContent: 'center',
+              backgroundColor: isDefault ? 'transparent' : c.hex,
+              borderWidth: active ? 3 : (isDefault ? 1.5 : StyleSheet.hairlineWidth),
+              borderColor: active ? ACCENT : (colors?.border || '#ccc'),
+            }}>
+              {active ? (
+                <IconCheck size={16} color={isDefault ? (colors?.text || '#000') : '#fff'} />
+              ) : null}
+            </View>
+            {isDefault ? (
+              <Text style={{ fontSize: 10, color: colors?.textSecondary, marginTop: 4 }} numberOfLines={1}>
+                {defaultLabel}
+              </Text>
+            ) : null}
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
 }
