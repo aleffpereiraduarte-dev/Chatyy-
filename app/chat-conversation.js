@@ -5047,6 +5047,10 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
   // Per-index edited URI map (rotate/flip/draw output replaces the display
   // URI for that slot; send uses the edited URI when present).
   const [edits, setEdits] = useState({});
+  // Per-index caption map (album legend-per-photo, like `edits`). The
+  // TextInput's `caption` is the ACTIVE photo's buffer; switching photos
+  // persists it here and loads the target's. Send flushes + aligns to files.
+  const [captions, setCaptions] = useState({});
   const [editing, setEditing] = useState(false);
   const [drawOpen, setDrawOpen] = useState(false);
   // Full-screen crop/filter editor — opens on the active image so the user
@@ -5073,6 +5077,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
     setFiles(list);
     setActiveIdx(0);
     setEdits({});
+    setCaptions({});
     setCaption('');
     setViewOnce(false);
     setDrawOpen(false);
@@ -5120,6 +5125,9 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
   };
 
   const removeAt = (idx) => {
+    // Snapshot the active photo's in-progress caption so the reindex below
+    // doesn't lose what the user just typed into the buffer.
+    const capsNow = { ...captions, [activeIdx]: caption };
     setFiles(prev => {
       const next = prev.filter((_, i) => i !== idx);
       if (next.length === 0) { onClose?.(); return prev; }
@@ -5135,17 +5143,38 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
       });
       return next;
     });
-    setActiveIdx(prev => {
-      if (prev === idx) return 0;
-      return prev > idx ? prev - 1 : prev;
+    // Reindex captions the same way as edits so each photo keeps its legend.
+    const nextCaps = {};
+    Object.entries(capsNow).forEach(([k, v]) => {
+      const ki = parseInt(k, 10);
+      if (ki === idx) return;
+      nextCaps[ki > idx ? ki - 1 : ki] = v;
     });
+    setCaptions(nextCaps);
+    const newActive = activeIdx === idx ? 0 : (activeIdx > idx ? activeIdx - 1 : activeIdx);
+    setActiveIdx(newActive);
+    setCaption(nextCaps[newActive] || '');
+  };
+
+  // Switch the active photo, persisting the current caption into the per-index
+  // map and loading the target photo's caption back into the input buffer.
+  // Mirrors the `edits` map so every photo in an album keeps its OWN legenda.
+  const switchToIdx = (i) => {
+    if (i === activeIdx) return;
+    setCaptions(prev => ({ ...prev, [activeIdx]: caption }));
+    setCaption(captions[i] || '');
+    setActiveIdx(i);
   };
 
   const handleSendPress = () => {
     // Hand the whole (possibly-edited, possibly-pruned) batch to the parent
     // so it can fire one uploadAndSendFile per file with the shared batch id.
     const outFiles = files.map((f, i) => edits[i] ? { ...f, uri: edits[i] } : f);
-    onSend(caption, viewOnce, outFiles);
+    // Flush the active buffer into the map, then build a per-index caption
+    // array aligned to `files` so each photo sends with its own legend.
+    const finalCaps = { ...captions, [activeIdx]: caption };
+    const capsArr = files.map((_, i) => finalCaps[i] || '');
+    onSend(caption, viewOnce, outFiles, capsArr);
   };
 
   return (
@@ -5305,7 +5334,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
                 return (
                   <View key={i} style={{ position: 'relative' }}>
                     <TouchableOpacity
-                      onPress={() => setActiveIdx(i)}
+                      onPress={() => switchToIdx(i)}
                       style={{
                         width: 60, height: 60, borderRadius: 8, overflow: 'hidden',
                         borderWidth: isActive ? 2 : 0, borderColor: '#7C3AED',
@@ -10248,7 +10277,15 @@ function ChatConversationInner() {
               if (c2 && Number(c2.latest_pts) > 0) {
                 try {
                   const { observePts } = require('../services/chatSync');
-                  observePts(conversationId, Number(c2.latest_pts));
+                  // has_more ⇒ the server truncated to a PAGE whose last event
+                  // is < latest_pts. Advancing the watermark to latest_pts here
+                  // would skip every event in the gap on the next pull — only
+                  // advance to the max pts we actually received. (sibling fix in
+                  // chatSync.js)
+                  const evMax2 = (c2.has_more && Array.isArray(c2.events) && c2.events.length)
+                    ? c2.events.reduce((m, e) => Math.max(m, Number(e.pts) || 0), 0)
+                    : 0;
+                  observePts(conversationId, (c2.has_more && evMax2 > 0) ? evMax2 : Number(c2.latest_pts));
                 } catch {}
               }
             } catch {}
@@ -10280,7 +10317,14 @@ function ChatConversationInner() {
         if (c && Number(c.latest_pts) > 0) {
           try {
             const { observePts } = require('../services/chatSync');
-            observePts(conversationId, Number(c.latest_pts));
+            // has_more ⇒ truncated page; advancing to latest_pts would skip the
+            // un-fetched gap between the last returned event and latest_pts on
+            // the next sync. Advance only to the max pts actually received.
+            // (sibling fix in chatSync.js)
+            const evMax = (c.has_more && Array.isArray(c.events) && c.events.length)
+              ? c.events.reduce((m, e) => Math.max(m, Number(e.pts) || 0), 0)
+              : 0;
+            observePts(conversationId, (c.has_more && evMax > 0) ? evMax : Number(c.latest_pts));
           } catch {}
         }
         // needsFullReload = 2 consecutive pages of has_more for this conv.
@@ -10302,11 +10346,55 @@ function ChatConversationInner() {
       const apiMod = require('../services/api');
       replayOfflineQueue(apiMod).catch(() => {});
     } catch {}
-    // Clear ALL stale data on mount — nuclear cleanup to fix ghost messages.
-    // 1. Clear pending messages from MMKV + JS SQLite
+    // 1. Restore in-flight sends on mount — WhatsApp-grade durability.
+    //    Previously this NUKED all pending rows (chatCache.clearPendingMessages)
+    //    on every open, so a message queued offline / mid-send VANISHED the
+    //    moment the user left and came back. Instead, read the SQLite outbox V2
+    //    (messageOutbox.getPending) and re-hydrate any queued/sending/failed
+    //    rows as pending bubbles (clock icon), deduped by client_message_id so
+    //    a row the server already confirmed never doubles. The sendWorker /
+    //    replayOfflineQueue (above) still own the actual retry.
     try {
-      const { clearPendingMessages: _clearPending } = require('../services/chatCache');
-      _clearPending?.(conversationId)?.catch(() => {});
+      messageOutbox.getPending(conversationId).then((rows) => {
+        if (!mountedRef.current || !Array.isArray(rows) || rows.length === 0) return;
+        const bubbles = rows.map((row) => {
+          const p = row?.payload || {};
+          const cmi = String(row.client_message_id || p.client_message_id || '');
+          const isFailed = row.state === 'failed';
+          const createdAt = p.created_at
+            || (row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString());
+          return {
+            id: p.temp_id || ('tmp_' + cmi),
+            conversation_id: conversationId,
+            sender_email: p.sender_email || currentEmail,
+            content: p.content || p.caption || '',
+            type: p.type || 'text',
+            file_url: p.file_url || p.local_uri || null,
+            file_name: p.file_name || null,
+            reply_to_id: p.reply_to_id || null,
+            created_at: createdAt,
+            _client_id: cmi,
+            client_message_id: cmi,
+            _pending: !isFailed,
+            _queued: !isFailed,
+            _failed: isFailed,
+            pending_state: isFailed ? 'failed' : 'queued',
+          };
+        }).filter(b => b._client_id);
+        if (bubbles.length === 0) return;
+        setMessages(prev => {
+          const existingIds = new Set(prev.map(m => m.id));
+          const existingClientIds = new Set();
+          for (const m of prev) {
+            if (m._client_id) existingClientIds.add(String(m._client_id));
+            if (m.client_message_id) existingClientIds.add(String(m.client_message_id));
+          }
+          const fresh = bubbles.filter(b =>
+            !existingIds.has(b.id) && !existingClientIds.has(String(b._client_id))
+          );
+          return fresh.length > 0 ? [...prev, ...fresh] : prev;
+        });
+      }).catch(() => {});
     } catch {}
     // 2. Clear native SQLite cache for this conversation (one-time fix for stale tmp_ msgs)
     //    The new Swift code (build 332+) won't save tmp_ anymore, but old data persists.
@@ -16726,6 +16814,16 @@ function ChatConversationInner() {
       ok = results.filter(x => x.status === 'fulfilled' && x.value?.success).length;
     }
     const fail = targets.length - ok;
+    // Durable offline retry: if EVERY target failed (batch endpoint threw AND
+    // the per-conv fallback all rejected — almost always "offline / server
+    // unreachable"), enqueue the forward so it replays when connectivity
+    // returns. Replay handler: offlineCache 'chat_forward_multi' case.
+    if (ok === 0 && targets.length > 0) {
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        queueOfflineAction({ type: 'chat_forward_multi', message_id: msgId, conversation_ids: targets, hide_origin: false }).catch(() => {});
+      } catch {}
+    }
     setForwardSending(false);
     setForwardMsg(null);
     setForwardSearch('');
@@ -16769,6 +16867,12 @@ function ChatConversationInner() {
         safeAlert(t('chatConv.forwardError') || 'Erro', detail);
       }
     } catch (e) {
+      // Network failure — enqueue for durable offline replay (unified under the
+      // chat_forward_multi action with a single-target conversation list).
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        queueOfflineAction({ type: 'chat_forward_multi', message_id: msgId, conversation_ids: [targetConvId], hide_origin: false }).catch(() => {});
+      } catch {}
       safeAlert(t('chatConv.forwardError') || 'Erro', String(e?.message || e));
     }
   };
@@ -27269,7 +27373,7 @@ function ChatConversationInner() {
         files={mediaPreview.files || []}
         colors={colors}
         onClose={() => setMediaPreview({ visible: false, files: [] })}
-        onSend={(caption, viewOnce, outFiles) => {
+        onSend={(caption, viewOnce, outFiles, captions) => {
           // The modal hands back the (edited, possibly-pruned) batch. Close
           // the modal, then fire every upload in parallel with a shared
           // albumBatchId so the album grouper collapses them in the chat
@@ -27360,7 +27464,9 @@ function ChatConversationInner() {
             }
             await uploadAndSendFile(f, viewOnce, cap, albumBatchId);
           };
-          // Caption rides on the first file only (WhatsApp rule).
+          // Caption is per-photo (album legend-per-photo): MediaPreview hands
+          // back a `captions` array aligned to the batch; fall back to "first
+          // file only" only when the array is absent (older preview path).
           // Concurrency cap: parallel uploads to R2 + image compression
           // each hold the full file blob in memory. On iPhone 11 / iOS 15,
           // 30 simultaneous photo uploads spike RAM enough to OOM-kill the
@@ -27368,7 +27474,7 @@ function ChatConversationInner() {
           // stays bounded and the user still gets fast wifi throughput.
           (async () => {
             const stripExif = await stripExifPromise;
-            const queue = batch.map((f, i) => ({ file: f, cap: i === 0 ? (caption || '') : '' }));
+            const queue = batch.map((f, i) => ({ file: f, cap: (Array.isArray(captions) && captions[i] != null) ? String(captions[i]) : (i === 0 ? (caption || '') : '') }));
             const workers = Math.min(4, queue.length);
             await Promise.all(Array.from({ length: workers }, async () => {
               while (queue.length) {

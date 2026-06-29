@@ -26,7 +26,7 @@ import { BASE_URL } from '../../services/api';
 import { IconX, IconPlus, IconTrash, IconSend, IconCheck, IconMessageSquare, IconEye, IconMusic, IconVolume2, IconVolumeX, IconPause, IconArrowRight, IconDownload, IconCamera, IconAlertTriangle } from '../Icons';
 import AvatarCircle from '../AvatarCircle';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect } from 'react-native-svg';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect, Path } from 'react-native-svg';
 // Shared text-status gradient presets + resolver — single source of truth so
 // StoryViewer, AnimatedStatusText and ChatStatusTab never drift apart.
 import { resolveTextGradient as _resolveTextGradient } from './textGradients';
@@ -133,6 +133,62 @@ function _extractGifStickers(item) {
         width: Math.max(1, Number(s.width) || 200),
         height: Math.max(1, Number(s.height) || 200),
       });
+    }
+  }
+  return out;
+}
+
+// Walk a status item and surface the freehand draw strokes the publisher
+// painted in the composer. The composer (ChatStatusTab) serializes them under
+// `meta.draw_paths` (also tolerant of a top-level `draw_paths` for legacy
+// rows). Each path is `{ color, points: [{x,y}] }` in the SAME pixel space the
+// composer captured, so the viewer paints them at the raw (x, y) — identical
+// to how gif/interactive stickers are placed. Without this, every drawing was
+// silently dropped on the viewer side.
+function _extractDrawPaths(item) {
+  if (!item) return [];
+  const lists = [];
+  if (Array.isArray(item.draw_paths)) lists.push(item.draw_paths);
+  if (Array.isArray(item.meta?.draw_paths)) lists.push(item.meta.draw_paths);
+  const out = [];
+  for (const list of lists) {
+    for (const p of list) {
+      if (!p || !Array.isArray(p.points) || p.points.length < 2) continue;
+      out.push({
+        color: typeof p.color === 'string' ? p.color : '#fff',
+        points: p.points
+          .filter(pt => pt && typeof pt.x === 'number' && typeof pt.y === 'number')
+          .map(pt => ({ x: pt.x, y: pt.y })),
+      });
+    }
+    // First non-empty source wins — avoids double-painting when the backend
+    // serializes both top-level and meta copies for compat.
+    if (out.length > 0) break;
+  }
+  return out.filter(p => p.points.length >= 2);
+}
+
+// Walk a status item and surface the draggable text overlays the publisher
+// added in the composer (`meta.text_overlays`, tolerant of a top-level copy).
+// Each overlay is `{ text, x, y, color }` in the composer's pixel space, so
+// the viewer paints them at the raw (x, y) just like stickers. Without this,
+// text drawn over a photo never appeared in the viewer.
+function _extractTextOverlays(item) {
+  if (!item) return [];
+  const lists = [];
+  if (Array.isArray(item.text_overlays)) lists.push(item.text_overlays);
+  if (Array.isArray(item.meta?.text_overlays)) lists.push(item.meta.text_overlays);
+  const out = [];
+  const seen = new Set();
+  for (const list of lists) {
+    for (const to of list) {
+      if (!to || !to.text) continue;
+      const x = Number(to.x) || 0;
+      const y = Number(to.y) || 0;
+      const key = `${to.text}:${x}:${y}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ text: String(to.text), x, y, color: typeof to.color === 'string' ? to.color : '#fff' });
     }
   }
   return out;
@@ -1694,6 +1750,12 @@ export default function StoryViewer({
   // already render via a dedicated viewer surface so we filter them out
   // here to avoid double-painting them on the media canvas.
   const interactiveStickers = _extractInteractiveStickers(cur).filter(s => s.type !== 'poll' && s.type !== 'quiz');
+  // Freehand drawings + text overlays the publisher painted in the composer.
+  // The composer flattens neither (it ships them as meta), so the viewer is the
+  // only place they get rendered — at the raw composer (x, y), same convention
+  // as gif/interactive stickers above.
+  const drawPaths = (isImage || isVideo) ? _extractDrawPaths(cur) : [];
+  const textOverlays = (isImage || isVideo) ? _extractTextOverlays(cur) : [];
 
   // Caption: text status uses `content` AS the caption-rendered-as-big-text
   // (handled in renderMedia below). Image/video status uses `content` as
@@ -2160,6 +2222,59 @@ export default function StoryViewer({
               {caption}
             </Text>
           </Animated.View>
+        ) : null}
+
+        {/* Freehand drawings — SVG paths painted in the composer at the raw
+            (x, y) capture space. zIndex 3 so strokes sit above the media but
+            below gif/interactive stickers + chrome. pointerEvents none so they
+            never swallow tap-to-advance. */}
+        {drawPaths.length > 0 ? (
+          <View
+            pointerEvents="none"
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 3 }}
+          >
+            <Svg width="100%" height="100%" style={{ position: 'absolute', top: 0, left: 0 }}>
+              {drawPaths.map((p, pi) => {
+                const d = p.points.map((pt, j) => `${j === 0 ? 'M' : 'L'}${pt.x},${pt.y}`).join(' ');
+                return (
+                  <Path
+                    key={pi}
+                    d={d}
+                    stroke={p.color}
+                    strokeWidth={3}
+                    fill="none"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                );
+              })}
+            </Svg>
+          </View>
+        ) : null}
+
+        {/* Text overlays — draggable text the publisher placed in the composer,
+            painted at the raw (x, y). zIndex 5 so text sits above drawings/gifs
+            but below the chrome. Non-interactive (display only in the viewer). */}
+        {textOverlays.length > 0 ? (
+          <View
+            pointerEvents="none"
+            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 5 }}
+          >
+            {textOverlays.map((to, ti) => (
+              <View
+                key={ti}
+                style={{
+                  position: 'absolute', left: to.x, top: to.y,
+                  backgroundColor: 'rgba(0,0,0,0.5)',
+                  paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8,
+                }}
+              >
+                <Text style={{ color: to.color || '#fff', fontSize: 24, fontWeight: '700', textAlign: 'center' }}>
+                  {to.text}
+                </Text>
+              </View>
+            ))}
+          </View>
         ) : null}
 
         {/* GIF stickers — animated overlays positioned at the publisher's

@@ -794,6 +794,39 @@ export default function useStatuses(currentEmail, opts = {}) {
     fpRef.current = null;
   }, []);
 
+  // Optimistic MUTE of an entire group by owner email (mute flow). Unlike
+  // `removeGroup` (which dropped the row entirely and made it inaccessible),
+  // this flags `muted: true` on the matching group so the consuming surface
+  // (ChatStatusTab) partitions it into the collapsed "Silenciados" section
+  // instead of deleting it. The user keeps access to the muted contact's
+  // status; it's just deprioritized (no push, out of the top feed). The
+  // backend already persists is_muted and echoes it on the next refetch, so
+  // this is purely the instant-feedback mirror. Persist to live store + MMKV +
+  // disk so the muted flag survives nav/cold-start before the server catches up.
+  const muteGroup = useCallback((email) => {
+    const lc = String(email || '').toLowerCase();
+    if (!lc) return;
+    const markGroups = (gs) => (gs || []).map(g =>
+      String(g.email || '').toLowerCase() === lc ? { ...g, muted: true } : g);
+    const markOthers = (gs) => (gs || []).map(g =>
+      String(g.ownerEmail || g.email || '').toLowerCase() === lc ? { ...g, muted: true } : g);
+    setGroups(prev => {
+      const next = markGroups(prev);
+      if (_liveStore) {
+        _liveStore = {
+          ..._liveStore,
+          groups: next,
+          others: markOthers(_liveStore.others),
+        };
+        _writeMMKV(_liveStore);
+        try { setCache('statuses', _liveStore, 2592000000).catch(() => {}); } catch {}
+      }
+      return next;
+    });
+    setOthers(prev => markOthers(prev));
+    fpRef.current = null;
+  }, []);
+
   // Archive a single status. Mirrors `removeStatus`'s durability (live store +
   // MMKV + disk cache) so the archived item stays hidden across nav/restart,
   // and fires the backend `status_archive` endpoint so the hidden flag also
@@ -826,5 +859,5 @@ export default function useStatuses(currentEmail, opts = {}) {
     fpRef.current = null;
   }, []);
 
-  return { groups, mine, others, loading, refetch, markViewed, removeStatus, removeGroup, archiveStatus, pendingViewReceipts };
+  return { groups, mine, others, loading, refetch, markViewed, removeStatus, removeGroup, muteGroup, archiveStatus, pendingViewReceipts };
 }

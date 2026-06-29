@@ -651,6 +651,43 @@ export async function registerForPushNotifications() {
         bypassDnd: false,
       });
 
+      // chat_mention — someone @-mentioned the user in a chat (DM or group).
+      // HIGH importance + default sound + vibration so a direct mention
+      // pierces the quiet group bucket. Mirrors the iOS 'chat_mention'
+      // category. Backend (firebase_push.php) tags the FCM payload with
+      // channelId 'chat_mention' when the message @-mentions the recipient.
+      await Notifications.setNotificationChannelAsync('chat_mention', {
+        name: 'Chat — Menções',
+        description: 'Quando alguém menciona você (@) em uma conversa',
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 200, 100, 200],
+        lightColor: '#8b5cf6',
+        sound: 'default',
+        enableLights: true,
+        enableVibrate: true,
+        showBadge: true,
+        bypassDnd: false,
+      });
+
+      // chat_reaction — someone reacted (emoji) to one of the user's
+      // messages. LOW importance + silent so reactions don't ping audibly
+      // (WhatsApp/Telegram both keep reactions quiet); they still show in the
+      // tray. Mirrors the iOS 'chat_reaction' category. Backend tags the FCM
+      // payload with channelId 'chat_reaction' for reaction pushes.
+      await Notifications.setNotificationChannelAsync('chat_reaction', {
+        name: 'Chat — Reações',
+        description: 'Quando alguém reage a uma mensagem sua',
+        importance: Notifications.AndroidImportance.LOW,
+        vibrationPattern: [0, 100],
+        lightColor: '#f59e0b',
+        // null sound = system silent for this channel.
+        sound: null,
+        enableLights: true,
+        enableVibrate: false,
+        showBadge: true,
+        bypassDnd: false,
+      });
+
       // Call channel - highest priority with custom ringtone
       await Notifications.setNotificationChannelAsync('calls', {
         name: 'Incoming Calls',

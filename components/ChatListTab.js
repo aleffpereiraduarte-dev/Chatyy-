@@ -506,8 +506,14 @@ const ConversationRow = React.memo(function ConversationRow({
     preview = '';
   } else if (lastMsg) {
     if (lastMsg.sender_email === currentEmail) {
-      if (lastMsg.read_at) statusType = 'read';
-      else if (lastMsg.delivered_at) statusType = 'delivered';
+      // Defense-in-depth for group read receipts: only paint the blue
+      // double-check ('read') in a group when the backend confirms EVERY
+      // member has read it (lastMsg.all_read). In a 1:1 a single read_at is
+      // authoritative, so DMs keep the existing behavior. If all_read isn't
+      // present yet (older backend), a group caps at 'delivered' instead of
+      // wrongly showing blue — never regresses DM.
+      if (lastMsg.read_at && (!isGroup || lastMsg.all_read)) statusType = 'read';
+      else if (lastMsg.delivered_at || lastMsg.read_at) statusType = 'delivered';
       else statusType = 'sent';
     }
 

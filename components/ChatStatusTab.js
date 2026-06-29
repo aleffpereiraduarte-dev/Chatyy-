@@ -1524,6 +1524,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     markViewed: hookMarkViewed,
     removeStatus: hookRemoveStatus,
     removeGroup: hookRemoveGroup,
+    muteGroup: hookMuteGroup,
   } = useStatuses(currentEmail, { warmCacheVideos: true });
 
   // Mirror hook → local state. setState bails when the reference is unchanged
@@ -3049,13 +3050,17 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   setPreviewGroup(null);
                   try { await api.statusMute(targetEmail); } catch {}
                   try { Haptics.notificationAsync?.(Haptics.NotificationFeedbackType.Success); } catch {}
-                  // Wave 4 finalize: route through the hook so the muted
-                  // owner drops out of MMKV/disk cache too — otherwise
-                  // ChatListTab home strip would still paint the row on
-                  // its next mount until the next 120s poll. The mirror
-                  // useEffect re-pushes hookOthers → setContactStatuses,
-                  // so the local list collapses on the next render.
-                  try { hookRemoveGroup?.(targetEmail); } catch {}
+                  // Route through the hook's MUTE (not remove): flag the
+                  // group muted:true so it drops into the collapsed
+                  // "Silenciados" section instead of vanishing entirely.
+                  // The user keeps access to the muted contact's status —
+                  // it's just deprioritized (no push, out of the top feed).
+                  // muteGroup persists muted:true to MMKV/disk so it survives
+                  // nav/cold-start; the mirror useEffect re-pushes hookOthers
+                  // → setContactStatuses → mutedStatuses partition on the
+                  // next render. (removeGroup used to delete it outright,
+                  // which made the silenced status disappear.)
+                  try { hookMuteGroup?.(targetEmail); } catch {}
                   try { Alert.alert?.(t?.('status.muteSuccess') || 'Silenciado', `${t?.('status.mutedBody') || 'Status de'} ${targetName} ${t?.('status.mutedSuffix') || 'foi silenciado.'}`); } catch {}
                 }}
                 style={({ pressed }) => ({

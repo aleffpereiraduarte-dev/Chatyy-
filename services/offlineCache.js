@@ -880,6 +880,52 @@ export async function replayOfflineQueue(api) {
           }
           break;
         }
+        case 'chat_forward_multi': {
+          // WhatsApp-style multi-target forward replay. message_id +
+          // conversation_ids required. Mirrors chat_react: hard errors drop the
+          // action, transient errors throw to trigger retry. Server clones
+          // idempotently per (origin, target) so replay is safe.
+          const convIds = Array.isArray(action.conversation_ids) ? action.conversation_ids : [];
+          if (!action.message_id || convIds.length === 0) break;
+          try {
+            const r = await api.chatForwardMulti(
+              action.message_id,
+              convIds,
+              { hideOrigin: !!action.hide_origin },
+            );
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+              if (!isHardError) throw new Error('chat_forward_multi_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
+        case 'chat_forward': {
+          // Single-target forward replay. message_id + conversation_id required.
+          if (!action.message_id || !action.conversation_id) break;
+          try {
+            const r = await api.chatForward(
+              action.message_id,
+              action.conversation_id,
+              { hideOrigin: !!action.hide_origin },
+            );
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+              if (!isHardError) throw new Error('chat_forward_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            const isHardError = /not_found|invalid|permission|forbidden|expired|window/i.test(msg);
+            if (!isHardError) throw e;
+          }
+          break;
+        }
         case 'chat_star_message': {
           // Favorite/unfavorite a single message. Star intent persists across
           // crashes via the queue.

@@ -1,1 +1,1 @@
-2026-06-28T17:13:01Z — remove Firebase do login (build nativo MSG91/Infobip)
+2026-06-29T01:07:35Z

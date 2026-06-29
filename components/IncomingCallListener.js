@@ -761,7 +761,49 @@ function IncomingCallListenerWeb() {
         // and stale-state bugs (Codex GPT-5.5-pro #842). The stale-refs
         // branch above already handles refs left over from teardown.
         if (_callActive && !sameCallId) {
-          voipDiag('ws_call_invite_skipped', data?.call_id || '', { reason: 'active_call' });
+          // [call-waiting busy-signal, OTA-only 2026-06-28] A 2nd call_invite
+          // arrived while a *different* call is already live. Previously we just
+          // returned, leaving the 2nd caller ringing until their ~45s timeout.
+          // We can't do native hold/accept over OTA (that's a separate build),
+          // but we CAN immediately tell the 2nd caller we're busy by reusing the
+          // exact decline transport already used by handleDecline / auto-decline:
+          //   1. a WS call_end aimed at that caller (stops their ring NOW), and
+          //   2. a backend call_status=declined safety net.
+          // reason='declined' is the proven value the WS server already accepts
+          // on the normal decline path (busy is just a flavor of decline here).
+          const busyCallId = data?.call_id || data?.room_id || '';
+          const busyTarget = data?.caller_email || '';
+          voipDiag('ws_call_invite_skipped', busyCallId, {
+            reason: 'active_call',
+            busy_signal: !!(busyCallId && busyTarget && busyTarget !== user.email),
+          });
+          if (busyCallId && busyTarget && busyTarget !== user.email) {
+            try {
+              if (mailWs.isConnected) {
+                mailWs._send({
+                  type: 'call_end',
+                  call_id: busyCallId,
+                  target_email: busyTarget,
+                  reason: 'declined',
+                });
+              }
+            } catch {}
+            try {
+              const api = require('../services/api');
+              if (typeof api.callStatus === 'function') {
+                api.callStatus(busyCallId, 'declined', 0).catch(() => {});
+              }
+            } catch {}
+            // Optional local heads-up so the user knows someone tried to call.
+            try {
+              if (Platform.OS === 'android') {
+                const ToastAndroid = require('react-native').ToastAndroid;
+                if (ToastAndroid) {
+                  ToastAndroid.show('Ligação recebida durante chamada', ToastAndroid.SHORT);
+                }
+              }
+            } catch {}
+          }
           return;
         }
         if ((!data?.room_id && !data?.call_id) || data.caller_email === user.email) {

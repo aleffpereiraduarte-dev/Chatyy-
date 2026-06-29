@@ -224,6 +224,56 @@ object CallNotificationService {
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
     )
 
+    // [A2 missed-call quick actions, 2026-06-28] "Ligar de volta" — reopens
+    // the conversation and signals the JS layer to start a fresh call. Same
+    // launch-intent deeplink pattern as the tap intent, plus start_call=true
+    // so /chat-conversation kicks off the invite on mount. Distinct request
+    // code (notificationId+1) so its PendingIntent doesn't clobber tapPI.
+    val callBackIntent = try {
+      val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+      launchIntent?.apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        putExtra("path", "/chat-conversation")
+        putExtra("conv_id", conversationId)
+        putExtra("caller_email", callerEmail)
+        putExtra("from_missed_call", true)
+        putExtra("start_call", true)
+        putExtra("call_is_video", isVideo)
+      } ?: Intent()
+    } catch (_: Throwable) {
+      Intent()
+    }
+    val callBackPI = PendingIntent.getActivity(
+      context,
+      notificationId + 1,
+      callBackIntent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
+    // [A2 missed-call quick actions, 2026-06-28] "Mensagem" — opens the
+    // conversation focused on the composer so the user can reply by text.
+    // Distinct request code (notificationId+2) so it doesn't clobber the
+    // others.
+    val messageIntent = try {
+      val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+      launchIntent?.apply {
+        flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        putExtra("path", "/chat-conversation")
+        putExtra("conv_id", conversationId)
+        putExtra("caller_email", callerEmail)
+        putExtra("from_missed_call", true)
+        putExtra("focus_compose", true)
+      } ?: Intent()
+    } catch (_: Throwable) {
+      Intent()
+    }
+    val messagePI = PendingIntent.getActivity(
+      context,
+      notificationId + 2,
+      messageIntent,
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
     val smallIconRes = try {
       context.resources.getIdentifier("phone_missed", "drawable", context.packageName)
         .takeIf { it != 0 }
@@ -251,6 +301,8 @@ object CallNotificationService {
       .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
       .setAutoCancel(true)
       .setContentIntent(tapPI)
+      .addAction(0, "Ligar de volta", callBackPI)
+      .addAction(0, "Mensagem", messagePI)
       .setWhen(System.currentTimeMillis())
       .setShowWhen(true)
 

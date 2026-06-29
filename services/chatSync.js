@@ -81,7 +81,16 @@ async function _runSync(convIds) {
       for (const c of out) {
         if (c?.denied) { gapStreak.delete(c.id); continue; }
         const latest = Number(c.latest_pts || 0);
-        if (latest > 0) setLastPts(c.id, latest);
+        // Watermark fix (2026-06-28): when has_more, the server only returned a
+        // PAGE of events up to some pts < latest_pts. Advancing the watermark to
+        // latest_pts here would skip every event between the last returned event
+        // and latest_pts on the next pull. Advance only to the max pts we
+        // actually received; needsFullReload below stays as the safety net.
+        const evMax = Array.isArray(c.events)
+          ? c.events.reduce((m, e) => Math.max(m, Number(e.pts) || 0), 0)
+          : 0;
+        const wm = c.has_more ? evMax : latest;
+        if (wm > 0) setLastPts(c.id, wm);
         if (c.has_more) {
           const n = (gapStreak.get(c.id) || 0) + 1;
           gapStreak.set(c.id, n);
