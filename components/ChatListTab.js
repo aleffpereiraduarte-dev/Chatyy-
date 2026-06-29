@@ -3670,7 +3670,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           return prev.map((c, i) => {
             if (i !== idx) return c;
             const next = { ...c };
-            if (!readerLower || readerLower === meLower) {
+            // Only zero MY unread on a CONFIRMED self-read. The old
+            // `!readerLower || ...` treated a payload with a missing
+            // reader/email field as "I read it" → wrongly cleared my unread
+            // badge when a peer (or an incomplete WS frame) triggered the
+            // event. Missing email now falls through (no-op) instead.
+            if (readerLower && readerLower === meLower) {
               next.unread_count = 0;
             } else if (c.last_message && c.last_message.sender_email
                        && c.last_message.sender_email.toLowerCase() === meLower

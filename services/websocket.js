@@ -114,7 +114,12 @@ const AUTH_REJECT_STOP = 3;
 // before we hard-stop we're not hammering: 2s → 4s → 8s … capped at 60s.
 const AUTH_REJECT_BACKOFF_BASE = 2000;
 const AUTH_REJECT_BACKOFF_MAX = 60000;
-const MAX_QUEUE_SIZE = 100;
+// Outbound relay/retry frames are tiny (<300 B), so a generous cap costs
+// almost nothing (~150 KB at 500) but covers a long reconnect window where
+// >100 messages queue up — at 100 the #101+ frames were silently dropped
+// (server delivery still durable via messageOutbox, but the optimistic
+// real-time relay to online peers was lost). 500 ≈ a very chatty offline burst.
+const MAX_QUEUE_SIZE = 500;
 const TYPING_DEBOUNCE = 3000;   // Send typing every 3s max
 const TYPING_STOP_DELAY = 3000; // Send stopped_typing after 3s idle
 const CLIENT_MSG_RETRY_MS = 3000; // Retry outgoing messages after 3s
