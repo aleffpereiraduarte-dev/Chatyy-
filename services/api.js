@@ -5381,8 +5381,8 @@ export async function chatReportThread(conversationId, reason = '', action = 'bl
   }, 'POST');
 }
 
-export async function chatReportUser(email, reason, messageId) {
-  const params = { email, reason };
+export async function chatReportUser(email, reason, messageId, alsoBlock = false) {
+  const params = { email, reason, also_block: alsoBlock };
   if (messageId) params.message_id = messageId;
   return apiCall('chat_report_user', params, 'POST');
 }
@@ -5974,8 +5974,8 @@ export async function chatBroadcastUpdate(broadcastId, name, members) {
 export async function chatBroadcastDelete(broadcastId) {
   return apiCall('chat_broadcast_delete', { broadcast_id: broadcastId }, 'POST');
 }
-export async function chatBroadcastSend(broadcastId, content, type = 'text') {
-  return apiCall('chat_broadcast_send', { broadcast_id: broadcastId, content, type }, 'POST');
+export async function chatBroadcastSend(broadcastId, content, type = 'text', fileUrl = '', fileName = '', fileSize = '') {
+  return apiCall('chat_broadcast_send', { broadcast_id: broadcastId, id: broadcastId, content, type, file_url: fileUrl, file_name: fileName, file_size: fileSize }, 'POST');
 }
 
 // Channels

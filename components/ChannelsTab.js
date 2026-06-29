@@ -6,7 +6,17 @@ import {
 import AvatarCircle from './AvatarCircle';
 import { IconSearch, IconPlus, IconArrowLeft } from './Icons';
 import Svg, { Path, Circle as SvgCircle, Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
+import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
+
+function IconPaperclip({ size = 22, color = '#666' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
+    </Svg>
+  );
+}
 
 const ACCENT = '#7C3AED';
 const ACCENT_DARK = '#5B21B6';
@@ -391,12 +401,14 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
 
 // ── Channel View: scrollable feed of posts ──
 function ChannelView({ channel, colors, isDark, t, onBack }) {
+  const { user } = useAuth();
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [info, setInfo] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [newPost, setNewPost] = useState('');
   const [posting, setPosting] = useState(false);
+  const [attaching, setAttaching] = useState(false);
 
   const loadPosts = useCallback(async () => {
     try {
@@ -424,6 +436,49 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
       }
     } catch {} finally { setPosting(false); }
   }, [newPost, posting, channel.id, loadPosts]);
+
+  const handleAttach = useCallback(async () => {
+    if (attaching || posting) return;
+    try {
+      const ImagePicker = require('expo-image-picker');
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert(t('common.error') || 'Erro', t('channel.mediaPermission') || 'Permita o acesso à galeria para anexar mídia');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'],
+        quality: 0.8,
+      });
+      if (result.canceled || !result.assets || !result.assets[0]) return;
+      const asset = result.assets[0];
+      const isVideo = asset.type === 'video' || /\.(mp4|mov|m4v|webm)$/i.test(asset.uri || '');
+      const postType = isVideo ? 'video' : 'image';
+      const file = {
+        uri: asset.uri,
+        name: asset.fileName || (isVideo ? 'video.mp4' : 'image.jpg'),
+        type: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
+      };
+      setAttaching(true);
+      const up = await api.rustUpload(file, user?.email, 'channel');
+      const fileUrl = up?.cdn_url || up?.data?.cdn_url;
+      if (!up?.success || !fileUrl) {
+        Alert.alert(t('common.error') || 'Erro', t('channel.uploadFailed') || 'Não foi possível enviar a mídia');
+        return;
+      }
+      const res = await api.channelPost(channel.id, newPost.trim(), postType, fileUrl);
+      if (api.apiOk(res)) {
+        setNewPost('');
+        loadPosts();
+      } else {
+        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('channel.postFailed') || 'Não foi possível publicar'));
+      }
+    } catch {
+      Alert.alert(t('common.error') || 'Erro', t('channel.uploadFailed') || 'Não foi possível enviar a mídia');
+    } finally {
+      setAttaching(false);
+    }
+  }, [attaching, posting, channel.id, newPost, user, loadPosts, t]);
 
   const handleReact = useCallback(async (postId, emoji) => {
     try {
@@ -531,6 +586,18 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
           backgroundColor: isDark ? '#0a0a0f' : '#fff',
           borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
         }]}>
+          <TouchableOpacity
+            onPress={handleAttach}
+            disabled={attaching || posting}
+            style={[styles.attachBtn, { opacity: attaching || posting ? 0.4 : 1 }]}
+            accessibilityLabel={t('channel.attach') || 'Anexar mídia'}
+          >
+            {attaching ? (
+              <ActivityIndicator size="small" color={ACCENT} />
+            ) : (
+              <IconPaperclip size={22} color={isDark ? '#8b8b96' : '#6b7280'} />
+            )}
+          </TouchableOpacity>
           <TextInput
             value={newPost}
             onChangeText={setNewPost}
@@ -894,6 +961,13 @@ const styles = StyleSheet.create({
     padding: 10,
     borderTopWidth: 1,
     gap: 8,
+  },
+  attachBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   postTextInput: {
     flex: 1,

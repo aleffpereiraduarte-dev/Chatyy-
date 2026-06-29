@@ -22,6 +22,17 @@ function loadExpoAudio() {
   return _expoAudioMod;
 }
 
+// expo-screen-capture is native-only (no-op on web). Load defensively so the
+// view-once viewer still mounts if the module is absent (web bundle / older
+// native build that predates the dependency).
+let _screenCaptureMod = null;
+function loadScreenCapture() {
+  if (_screenCaptureMod !== null) return _screenCaptureMod;
+  try { _screenCaptureMod = require('expo-screen-capture'); }
+  catch { _screenCaptureMod = false; }
+  return _screenCaptureMod;
+}
+
 const VIEWED_KEY = 'chatyy.viewOnceViewed.v1';
 
 async function _loadLocalViewed() {
@@ -104,9 +115,42 @@ function FullscreenVideoPlayer({ uri, onLoaded, onEnded, onError }) {
   );
 }
 
-function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, onError }) {
+function ViewOnceFullscreen({ uri, isVideo, t, senderName, onClose, onLoaded, onError, conversationId, messageId }) {
   const [loaded, setLoaded] = useState(false);
   const [errored, setErrored] = useState(false);
+
+  // Anti-screenshot: block OS screen capture while the one-shot media is on
+  // screen and notify the sender if a screenshot still slips through (same
+  // pattern as ChatMediaViewer). Native-only — no-op on web / when the module
+  // is missing.
+  useEffect(() => {
+    const SC = loadScreenCapture();
+    if (!SC) return;
+    let sub;
+    (async () => {
+      try { await SC.preventScreenCaptureAsync?.('chatyy-view-once'); } catch {}
+      try {
+        sub = SC.addScreenshotListener?.(() => {
+          // Notify the peer that this user just took a screenshot. Backend
+          // (chat.php case 'chat_screenshot_event') inserts a system msg with
+          // subtype='screenshot' + emits a WS event. Fire-and-forget.
+          if (conversationId) {
+            try {
+              const api = require('../services/api');
+              api.apiCall?.('chat_screenshot_event', {
+                conversation_id: conversationId,
+                message_id: messageId || 0,
+              }, 'POST').catch(() => {});
+            } catch {}
+          }
+        });
+      } catch {}
+    })();
+    return () => {
+      try { sub?.remove?.(); } catch {}
+      try { SC.allowScreenCaptureAsync?.('chatyy-view-once'); } catch {}
+    };
+  }, [conversationId, messageId]);
 
   // Android back closes modal — mirror iOS X close
   useEffect(() => {
@@ -398,6 +442,8 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
           isVideo={isVideo}
           t={t}
           senderName={msg?.sender_name || ''}
+          conversationId={msg?.conversation_id}
+          messageId={msg?.id}
           onClose={() => {
             // [FIX 2026-05-20] Lock state moves to onClose so the Modal stays
             // mounted while the user is actually viewing. Previously setLocalViewed

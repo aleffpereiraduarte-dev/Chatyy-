@@ -1602,6 +1602,8 @@ export default function RootLayout() {
                   <Stack.Screen name="kids-learn" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="hashtag" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="hashtag/[tag]" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  {/* Channel follow deep-link: /ch/<handle> → chat_channel_join */}
+                  <Stack.Screen name="ch/[handle]" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   {/* Snap-Map / Friends-on-a-Map (Find My Friends style). */}
                   <Stack.Screen name="snap-map" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   {/* Reels P0 — "Use this sound" deep link + Duet/Stitch composer. */}

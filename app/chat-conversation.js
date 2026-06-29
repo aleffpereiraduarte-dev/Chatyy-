@@ -3031,6 +3031,11 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
         if (!played) {
           setPlayed(true);
           _markAudioPlayed(messageId);
+          // Also tell the server at playback START (not end) so the sender's
+          // bubble flips to the blue "played" mic right away. Only for
+          // received notes; idempotent + batched server-side. End-of-play
+          // ack stays in place — this just makes it fire sooner.
+          if (!isOwn && messageId != null) { try { api.chatVoicePlayed(messageId); } catch {} }
         }
         // Clear any prior interval before starting a new one — without this,
         // rapid pause/play can leave two setInterval handles updating progress
@@ -3200,7 +3205,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
         try {
           player.play();
           setPlaying(true);
-          if (!played) { setPlayed(true); _markAudioPlayed(messageId); }
+          if (!played) { setPlayed(true); _markAudioPlayed(messageId); if (!isOwn && messageId != null) { try { api.chatVoicePlayed(messageId); } catch {} } }
         }
         catch (e) {
           console.warn('[AudioPlayer/play] failed:', e?.message);
@@ -3219,7 +3224,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
         try {
           soundRef.current.play();
           setPlaying(true);
-          if (!played) { setPlayed(true); _markAudioPlayed(messageId); }
+          if (!played) { setPlayed(true); _markAudioPlayed(messageId); if (!isOwn && messageId != null) { try { api.chatVoicePlayed(messageId); } catch {} } }
         }
         catch (e) { console.warn('[AudioPlayer/resume]', e?.message); }
       }

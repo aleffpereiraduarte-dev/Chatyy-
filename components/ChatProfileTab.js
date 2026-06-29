@@ -18,7 +18,7 @@ import {
   IconShield, IconGlobe, IconTranslate, IconSmartphone, IconInfo,
   IconHeart, IconMessageSquare, IconUsers, IconKey, IconTrash,
   IconEye, IconEyeOff, IconFileText, IconLogout, IconUpload, IconDownload,
-  IconStar, IconMusic, IconFilm,
+  IconStar, IconMusic, IconFilm, IconPlus, IconSearch,
 } from './Icons';
 import { CallerIdVerifyContent } from './ChatCallsTab';
 
@@ -283,6 +283,11 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   const [blockedCount, setBlockedCount] = useState(0);
   const [blockedList, setBlockedList] = useState([]);
   const [blockedLoading, setBlockedLoading] = useState(true);
+  const [addBlockVisible, setAddBlockVisible] = useState(false);
+  const [addBlockContacts, setAddBlockContacts] = useState([]);
+  const [addBlockLoading, setAddBlockLoading] = useState(false);
+  const [addBlockQuery, setAddBlockQuery] = useState('');
+  const [addBlockBusy, setAddBlockBusy] = useState('');
 
   // Account sub-screen state
   const [currentPw, setCurrentPw] = useState('');
@@ -924,7 +929,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   }
 
   // ─── Sub-screen header ───
-  const SubHeader = ({ title }) => (
+  const SubHeader = ({ title, right }) => (
     <View style={[styles.subHeader, {
       backgroundColor: isDark ? '#1F2C33' : '#6D28D9',
       borderBottomWidth: 0,
@@ -935,7 +940,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         </View>
       </TouchableOpacity>
       <Text style={[styles.subTitle, { color: '#fff' }]}>{title}</Text>
-      <View style={{ width: 48 }} />
+      {right != null ? right : <View style={{ width: 48 }} />}
     </View>
   );
 
@@ -2116,9 +2121,157 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     };
     const blocked = blockedList.map(b => b.blocked_email);
 
+    const openAddBlock = async () => {
+      setAddBlockQuery('');
+      setAddBlockVisible(true);
+      setAddBlockLoading(true);
+      try {
+        const r = await api.chatContacts();
+        let list = [];
+        if (typeof api.apiList === 'function') {
+          list = api.apiList(r, 'contacts');
+        } else {
+          const d = r?.data;
+          list = Array.isArray(d) ? d : (Array.isArray(d?.data) ? d.data : []);
+        }
+        setAddBlockContacts(Array.isArray(list) ? list.filter(c => c && c.email) : []);
+      } catch {
+        setAddBlockContacts([]);
+      } finally {
+        setAddBlockLoading(false);
+      }
+    };
+
+    const handleBlockAdd = async (email) => {
+      const clean = String(email || '').trim().toLowerCase();
+      if (!clean || addBlockBusy) return;
+      if (blocked.includes(clean)) { setAddBlockVisible(false); return; }
+      setAddBlockBusy(clean);
+      try {
+        await api.chatBlockUser(clean);
+        setBlockedList(prev => (
+          prev.some(e => e.blocked_email === clean) ? prev : [...prev, { blocked_email: clean }]
+        ));
+        setBlockedCount(c => c + 1);
+        setAddBlockVisible(false);
+      } catch {
+        safeAlert(t?.('common.error') || 'Erro', t?.('config.blockFailed') || 'Não foi possível bloquear este contato.');
+      } finally {
+        setAddBlockBusy('');
+      }
+    };
+
+    const addBlockFiltered = (() => {
+      const q = addBlockQuery.trim().toLowerCase();
+      return addBlockContacts.filter(c => {
+        const em = String(c.email || '').toLowerCase();
+        if (blocked.includes(em)) return false;
+        if (!q) return true;
+        return em.includes(q) || String(c.name || '').toLowerCase().includes(q);
+      });
+    })();
+    const addBlockManualEmail = (() => {
+      const q = addBlockQuery.trim().toLowerCase();
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(q) && !blocked.includes(q) ? q : '';
+    })();
+
     return (
       <View style={[styles.container, { backgroundColor: screenBg }]}>
-        <SubHeader title={t?.('config.blocked') || 'Contatos bloqueados'} />
+        <SubHeader
+          title={t?.('config.blocked') || 'Contatos bloqueados'}
+          right={(
+            <TouchableOpacity onPress={openAddBlock} style={[styles.subBackBtn, { alignItems: 'flex-end' }]} activeOpacity={0.7}>
+              <View style={[styles.subBackCircle, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
+                <IconPlus size={18} color="#fff" />
+              </View>
+            </TouchableOpacity>
+          )}
+        />
+        <Modal
+          visible={addBlockVisible}
+          animationType="slide"
+          transparent
+          onRequestClose={() => setAddBlockVisible(false)}
+        >
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+            <View style={{
+              backgroundColor: surfaceBg,
+              borderTopLeftRadius: 20, borderTopRightRadius: 20,
+              maxHeight: '75%', paddingBottom: 40,
+            }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
+                <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>
+                  {t?.('config.blockContact') || 'Bloquear contato'}
+                </Text>
+                <TouchableOpacity onPress={() => setAddBlockVisible(false)} style={{ padding: 4 }}>
+                  <IconX size={20} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', margin: 16, paddingHorizontal: 12, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f3f4f6' }}>
+                <IconSearch size={16} color={isDark ? '#6b7280' : '#9ca3af'} />
+                <TextInput
+                  value={addBlockQuery}
+                  onChangeText={setAddBlockQuery}
+                  placeholder={t?.('config.searchContact') || 'Buscar ou digitar e-mail'}
+                  placeholderTextColor={isDark ? '#6b7280' : '#9ca3af'}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  style={{ flex: 1, paddingVertical: 10, paddingHorizontal: 8, color: colors.text, fontSize: 15 }}
+                />
+              </View>
+              {addBlockLoading ? (
+                <ActivityIndicator style={{ padding: 30 }} color={colors.primary} />
+              ) : (
+                <ScrollView style={{ maxHeight: 380 }} keyboardShouldPersistTaps="handled">
+                  {addBlockManualEmail ? (
+                    <TouchableOpacity
+                      onPress={() => handleBlockAdd(addBlockManualEmail)}
+                      disabled={!!addBlockBusy}
+                      style={styles.blockedRowModern}
+                      activeOpacity={0.7}
+                    >
+                      <AvatarCircle name={emailToDisplayName(addBlockManualEmail)} email={addBlockManualEmail} size={42} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.blockedEmail, { color: colors.text }]} numberOfLines={1}>{addBlockManualEmail}</Text>
+                        <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 12, marginTop: 2 }}>{t?.('config.blockThis') || 'Bloquear este e-mail'}</Text>
+                      </View>
+                      {addBlockBusy === addBlockManualEmail
+                        ? <ActivityIndicator color="#dc2626" />
+                        : <IconLock size={18} color="#dc2626" />}
+                    </TouchableOpacity>
+                  ) : null}
+                  {addBlockFiltered.length === 0 && !addBlockManualEmail ? (
+                    <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', textAlign: 'center', padding: 30 }}>
+                      {t?.('config.noContacts') || 'Nenhum contato'}
+                    </Text>
+                  ) : (
+                    addBlockFiltered.map((c) => {
+                      const em = String(c.email).toLowerCase();
+                      return (
+                        <TouchableOpacity
+                          key={em}
+                          onPress={() => handleBlockAdd(em)}
+                          disabled={!!addBlockBusy}
+                          style={styles.blockedRowModern}
+                          activeOpacity={0.7}
+                        >
+                          <AvatarCircle name={c.name || emailToDisplayName(em)} email={em} size={42} />
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.blockedEmail, { color: colors.text }]} numberOfLines={1}>{c.name || emailToDisplayName(em)}</Text>
+                            <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{em}</Text>
+                          </View>
+                          {addBlockBusy === em
+                            ? <ActivityIndicator color="#dc2626" />
+                            : <IconLock size={18} color="#dc2626" />}
+                        </TouchableOpacity>
+                      );
+                    })
+                  )}
+                </ScrollView>
+              )}
+            </View>
+          </View>
+        </Modal>
         <ScrollView contentContainerStyle={{ paddingBottom: 100 }}>
           <SectionCard style={{ marginTop: 16 }}>
             {blockedLoading ? (

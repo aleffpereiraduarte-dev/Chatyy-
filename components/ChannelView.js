@@ -7,7 +7,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl,
-  ActivityIndicator, TextInput, Platform, Alert, Animated, Pressable,
+  ActivityIndicator, TextInput, Platform, Alert, Animated, Pressable, Share,
 } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -97,6 +97,26 @@ function IconShield({ size = 16, color = '#666' }) {
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none"
       stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </Svg>
+  );
+}
+
+function IconShare({ size = 20, color = '#666' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8" />
+      <Path d="M16 6l-4-4-4 4" />
+      <Path d="M12 2v13" />
+    </Svg>
+  );
+}
+
+function IconPaperclip({ size = 22, color = '#666' }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48" />
     </Svg>
   );
 }
@@ -262,6 +282,7 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
   const [refreshing, setRefreshing] = useState(false);
   const [newPost, setNewPost] = useState('');
   const [posting, setPosting] = useState(false);
+  const [attaching, setAttaching] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const offsetRef = useRef(0);
@@ -353,6 +374,72 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
     }
   }, [newPost, posting, channel.id, loadPosts, t]);
 
+  // ── Attach media (image/video) — same picker + upload as chat composer ────
+  const handleAttach = useCallback(async () => {
+    if (attaching || posting) return;
+    try {
+      const ImagePicker = require('expo-image-picker');
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) {
+        Alert.alert(t('common.error') || 'Erro', t('channel.mediaPermission') || 'Permita o acesso à galeria para anexar mídia');
+        return;
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'],
+        quality: 0.8,
+      });
+      if (result.canceled || !result.assets || !result.assets[0]) return;
+      const asset = result.assets[0];
+      const isVideo = asset.type === 'video' || /\.(mp4|mov|m4v|webm)$/i.test(asset.uri || '');
+      const postType = isVideo ? 'video' : 'image';
+      const file = {
+        uri: asset.uri,
+        name: asset.fileName || (isVideo ? 'video.mp4' : 'image.jpg'),
+        type: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
+      };
+      setAttaching(true);
+      const up = await api.rustUpload(file, user?.email, 'channel');
+      const fileUrl = up?.cdn_url || up?.data?.cdn_url;
+      if (!up?.success || !fileUrl) {
+        Alert.alert(t('common.error') || 'Erro', t('channel.uploadFailed') || 'Não foi possível enviar a mídia');
+        return;
+      }
+      const res = await api.channelPost(channel.id, newPost.trim(), postType, fileUrl);
+      if (api.apiOk(res)) {
+        setNewPost('');
+        offsetRef.current = 0;
+        loadPosts(true);
+      } else {
+        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('channel.postFailed') || 'Não foi possível publicar'));
+      }
+    } catch {
+      Alert.alert(t('common.error') || 'Erro', t('channel.uploadFailed') || 'Não foi possível enviar a mídia');
+    } finally {
+      setAttaching(false);
+    }
+  }, [attaching, posting, channel.id, newPost, user, loadPosts, t]);
+
+  // ── Share channel link ────────────────────────────────────────────────────
+  const handleShare = useCallback(async () => {
+    const handle = info?.public_handle || channel.public_handle || channel.id;
+    const url = `https://chatyy.com.br/ch/${handle}`;
+    const msg = (channel.name ? `${channel.name} — ` : '') + url;
+    try {
+      if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.share) {
+        await navigator.share({ text: msg, url });
+      } else if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(url);
+        Alert.alert(t('common.copied') || 'Copiado', url);
+      } else {
+        await Share.share({ message: msg, url });
+        try {
+          const Clipboard = require('expo-clipboard');
+          await Clipboard.setStringAsync?.(url);
+        } catch {}
+      }
+    } catch {}
+  }, [info, channel.public_handle, channel.id, channel.name, t]);
+
   // ── React ─────────────────────────────────────────────────────────────────
   const handleReact = useCallback(async (postId, emoji) => {
     // Optimistic toggle
@@ -418,6 +505,15 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
             <Text style={styles.adminBadgeText}>{t('community.admin') || 'Admin'}</Text>
           </View>
         )}
+        <TouchableOpacity
+          onPress={handleShare}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          style={styles.shareBtn}
+          accessibilityLabel={t('channel.share') || 'Compartilhar'}
+          accessibilityRole="button"
+        >
+          <IconShare size={18} color={colors.text} />
+        </TouchableOpacity>
       </View>
 
       {/* ── Hero header: cover image + gradient overlay + avatar + name + members pill ── */}
@@ -545,6 +641,19 @@ export default function ChannelView({ channel, onBack, colors: propColors, isDar
           backgroundColor: isDark ? '#0a0a0f' : '#fff',
           borderTopColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.07)',
         }]}>
+          <TouchableOpacity
+            onPress={handleAttach}
+            disabled={attaching || posting}
+            style={[styles.attachBtn, { opacity: attaching || posting ? 0.4 : 1 }]}
+            accessibilityLabel={t('channel.attach') || 'Anexar mídia'}
+            accessibilityRole="button"
+          >
+            {attaching ? (
+              <ActivityIndicator size="small" color={ACCENT} />
+            ) : (
+              <IconPaperclip size={22} color={isDark ? '#8b8b96' : '#6b7280'} />
+            )}
+          </TouchableOpacity>
           <TextInput
             value={newPost}
             onChangeText={setNewPost}
@@ -605,6 +714,17 @@ const styles = StyleSheet.create({
   },
   backBtn: {
     padding: 2,
+  },
+  shareBtn: {
+    padding: 4,
+    marginLeft: 4,
+  },
+  attachBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 
   // Hero header (cover + avatar + name + pills)

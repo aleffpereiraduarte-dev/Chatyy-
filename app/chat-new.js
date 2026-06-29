@@ -195,6 +195,11 @@ export default function ChatNewScreen() {
   // "add member to group" mode and the user shouldn't see lists then).
   const [broadcastLists, setBroadcastLists] = useState([]);
   const [showBroadcastModal, setShowBroadcastModal] = useState(false);
+  // Android composer (no Alert.prompt on Android) — holds the target list
+  // object and the message text for the inline broadcast-send modal.
+  const [broadcastComposeList, setBroadcastComposeList] = useState(null);
+  const [broadcastComposeText, setBroadcastComposeText] = useState('');
+  const [broadcastSending, setBroadcastSending] = useState(false);
 
   // QR modal
   const [showQrModal, setShowQrModal] = useState(false);
@@ -1976,9 +1981,10 @@ export default function ChatNewScreen() {
                                 const txt = window.prompt(`${promptTitle}\n${t('chat.broadcastSend') || 'Mensagem'}`);
                                 if (txt != null) sendIt(txt);
                               } else {
-                                // Android: open the editor (BroadcastModal) so user can review members,
-                                // then a follow-up tap on the same list row sends. Simpler than a custom dialog.
-                                safeAlert(promptTitle, `${count} ${t('chat.broadcastMembers') || 'membros'}`);
+                                // Android: no Alert.prompt — open a real input modal that
+                                // composes the message and sends via chatBroadcastSend.
+                                setBroadcastComposeText('');
+                                setBroadcastComposeList(bl);
                               }
                             }}
                             onLongPress={() => {
@@ -2309,6 +2315,71 @@ export default function ChatNewScreen() {
         colors={colors}
         t={t}
       />
+
+      {/* Android broadcast composer — Alert.prompt is iOS-only, so Android
+          uses this inline modal to type and send to a broadcast list. */}
+      <Modal
+        visible={!!broadcastComposeList}
+        transparent
+        animationType="fade"
+        onRequestClose={() => { if (!broadcastSending) setBroadcastComposeList(null); }}
+      >
+        <View style={sty.modalOverlay}>
+          <View style={[sty.qrModal, { backgroundColor: colors.surface }]}>
+            <View style={sty.qrModalHeader}>
+              <Text style={[sty.qrModalTitle, { color: colors.text }]} numberOfLines={1}>
+                {broadcastComposeList?.name || (t('chat.broadcastList') || 'Lista de transmissão')}
+              </Text>
+              <TouchableOpacity
+                onPress={() => { if (!broadcastSending) setBroadcastComposeList(null); }}
+                style={{ padding: 8 }}
+              >
+                <IconX size={22} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 12 }}>
+              {(broadcastComposeList?.recipients || []).length} {t('chat.broadcastMembers') || 'membros'}
+            </Text>
+            <TextInput
+              style={[sty.inviteInput, { color: colors.text, backgroundColor: isDark ? '#1e1e1e' : '#f5f5f7', borderColor: isDark ? '#333' : '#e0e0e0', width: '100%', minHeight: 80, textAlignVertical: 'top' }]}
+              placeholder={t('chat.broadcastSend') || 'Mensagem para a lista'}
+              placeholderTextColor={colors.textTertiary}
+              value={broadcastComposeText}
+              onChangeText={setBroadcastComposeText}
+              multiline
+              autoFocus
+            />
+            <TouchableOpacity
+              style={[sty.qrActionBtn, { backgroundColor: '#7C3AED', marginTop: 16, alignSelf: 'stretch', opacity: (broadcastSending || !broadcastComposeText.trim()) ? 0.5 : 1 }]}
+              disabled={broadcastSending || !broadcastComposeText.trim()}
+              onPress={() => {
+                const bl = broadcastComposeList;
+                const v = (broadcastComposeText || '').trim();
+                if (!bl || !v) return;
+                const count = (bl.recipients || []).length;
+                setBroadcastSending(true);
+                api.chatBroadcastSend(bl.id, v).then(r => {
+                  setBroadcastSending(false);
+                  setBroadcastComposeList(null);
+                  setBroadcastComposeText('');
+                  if (r?.success) {
+                    safeAlert(
+                      t('chat.broadcastSent') || 'Enviado',
+                      `${r.data?.sent ?? count} / ${r.data?.total ?? count}`
+                    );
+                  }
+                }).catch(() => {
+                  setBroadcastSending(false);
+                });
+              }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '600' }}>
+                {broadcastSending ? (t('common.sending') || 'Enviando...') : (t('common.send') || 'Enviar')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
