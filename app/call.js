@@ -205,6 +205,10 @@ export const MAX_CALL_PARTICIPANTS = 32;
 // Global call state lives in services/callState so it survives module re-imports
 // (Expo Router loads screens as separate chunks; module-level vars don't share).
 import { getGlobalCall as _getGC, setGlobalCall as _setGC, clearGlobalCall as _clearGC } from '../services/callState';
+// [CALL-E2EE 2026-06-28] Master kill-switch for end-to-end encrypted calls.
+// DEFAULT false → none of the call-key path below executes; the call behaves
+// exactly like today. See constants/featureFlags.js + services/callE2ee.js.
+import { CALL_E2EE_ENABLED } from '../constants/featureFlags';
 export const getGlobalCall = _getGC;
 export const clearGlobalCall = _clearGC;
 
@@ -424,6 +428,11 @@ function CallScreenInner() {
   const [qualityScore, setQualityScore] = useState(5);
   const [reconnecting, setReconnecting] = useState(false);
   const [connectionFailed, setConnectionFailed] = useState(false);
+  // [CALL-E2EE 2026-06-28] true once the per-call key has been generated
+  // (caller) / received+unwrapped (callee) AND wired into the media layer.
+  // Drives the "Criptografada" lock chip. Stays false forever when
+  // CALL_E2EE_ENABLED is off (the path that sets it never runs).
+  const [e2eeActive, setE2eeActive] = useState(false);
   const [showSlowConnectOverlay, setShowSlowConnectOverlay] = useState(false);
   // [WAVE 68 2026-05-21] Progressive connect phase. Drives the topStatus
   // line BEFORE peer joins so user never sees an alarmist "Conexão lenta"
@@ -1364,6 +1373,41 @@ function CallScreenInner() {
       return;
     }
     connectingRef.current = true;
+    // [CALL-E2EE 2026-06-28] Resolve the per-call symmetric key BEFORE we
+    // adopt/create the Room. Scoped to this function so it's in scope at both
+    // the native-key set (below) and the web roomOpts.e2ee build (further
+    // down). Stays null unless CALL_E2EE_ENABLED — flag OFF ⇒ identical flow.
+    //   - Caller: generateCallKey + fire-and-forget envelope distribution.
+    //   - Callee: await the envelope (delivered via WS → callE2ee
+    //     .deliverCallKeyEnvelope), unwrap; null on timeout ⇒ DTLS-SRTP.
+    // A null result NEVER blocks the call — we just skip the e2ee wiring.
+    let _e2eeKeyB64 = null;
+    if (CALL_E2EE_ENABLED) {
+      try {
+        const callE2ee = require('../services/callE2ee');
+        const _peers = _safePeerEmail ? [_safePeerEmail] : [];
+        _e2eeKeyB64 = await callE2ee.getOrAwaitCallKey(String(callId), _peers, {
+          isCaller,
+          conversationId,
+        });
+        if (_e2eeKeyB64) {
+          setE2eeActive(true);
+          // Mobile: hand the key bytes to the native frame-cryptor so BOTH
+          // the native-adopted Room and the JS-fallback Room are encrypted.
+          if (Platform.OS !== 'web') {
+            try {
+              const ExpoCallKit = require('../modules/expo-callkit');
+              ExpoCallKit.setCallE2EEKey?.(String(callId), _e2eeKeyB64);
+            } catch (e) {
+              try { console.warn('[CALL-E2EE] native setCallE2EEKey failed:', e?.message || e); } catch {}
+            }
+          }
+        }
+      } catch (e) {
+        // Non-fatal: any failure falls back to DTLS-SRTP. The call connects.
+        try { console.warn('[CALL-E2EE] key resolve failed (non-fatal):', e?.message || e); } catch {}
+      }
+    }
     try {
     ensureLiveKitRegistered();
 
@@ -1734,6 +1778,46 @@ function CallScreenInner() {
       roomOpts.rtcConfig = { iceServers, iceTransportPolicy: 'all' };
     } else {
       roomOpts.rtcConfig = { iceTransportPolicy: 'all' };
+    }
+    // [CALL-E2EE 2026-06-28] WEB: wire LiveKit insertable-streams E2EE into
+    // the Room constructor (the `e2ee` option must be set BEFORE connect — it
+    // can't be attached after). Mobile uses the native frame-cryptor instead
+    // (ExpoCallKit.setCallE2EEKey above), so this block is web-only.
+    // Fully guarded + gated on the flag + the key: with CALL_E2EE_ENABLED off
+    // (or no key) NONE of this runs and roomOpts is byte-for-byte unchanged.
+    // The E2EE worker is supplied by the host (globalThis.__chatyyLkE2eeWorker
+    // / Factory) so we never embed a static `new URL(..., import.meta.url)`
+    // that could break the Metro/web bundle. If no worker is wired we skip
+    // e2ee (call still connects, just not E2E) — see needs_qa.
+    if (CALL_E2EE_ENABLED && Platform.OS === 'web' && _e2eeKeyB64) {
+      try {
+        const lk = require('livekit-client');
+        const KeyProviderCtor = lk.ExternalE2EEKeyProvider || lk.BaseKeyProvider;
+        let worker = null;
+        try {
+          const g = typeof globalThis !== 'undefined' ? globalThis : window;
+          if (g && typeof g.__chatyyLkE2eeWorkerFactory === 'function') {
+            worker = g.__chatyyLkE2eeWorkerFactory();
+          } else if (g && g.__chatyyLkE2eeWorker) {
+            worker = g.__chatyyLkE2eeWorker;
+          }
+        } catch {}
+        if (KeyProviderCtor && worker) {
+          const keyProvider = new KeyProviderCtor();
+          // ExternalE2EEKeyProvider.setKey accepts a base64 string or bytes.
+          if (typeof keyProvider.setKey === 'function') {
+            keyProvider.setKey(_e2eeKeyB64);
+          }
+          roomOpts.e2ee = { keyProvider, worker };
+          try { _diag('e2ee_web_wired'); } catch {}
+        } else {
+          try { console.warn('[CALL-E2EE] web: no E2EE worker wired — skipping (call stays DTLS-SRTP)'); } catch {}
+          setE2eeActive(false);
+        }
+      } catch (e) {
+        try { console.warn('[CALL-E2EE] web e2ee setup failed (non-fatal):', e?.message || e); } catch {}
+        setE2eeActive(false);
+      }
     }
     let r;
     try {
@@ -4540,6 +4624,17 @@ function CallScreenInner() {
                     : (t('call.peerSharing') || 'Tela compartilhada')}
                 </Text>
               )}
+              {/* [CALL-E2EE 2026-06-28] "Criptografada" lock chip — only when the
+                  per-call key is active (flag on + key distributed/unwrapped). */}
+              {CALL_E2EE_ENABLED && e2eeActive && (
+                <View style={styles.e2eeLockChip} accessibilityRole="text"
+                  accessibilityLabel={t('call.e2eeEncrypted') || 'Criptografada de ponta a ponta'}>
+                  <Svg width={11} height={11} viewBox="0 0 24 24" fill="none">
+                    <SvgPath d="M7 11V8a5 5 0 0110 0v3M5 11h14v9H5z" stroke="#34d399" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" fill="none" />
+                  </Svg>
+                  <Text style={styles.e2eeLockChipText}>{t('call.e2eeEncrypted') || 'Criptografada'}</Text>
+                </View>
+              )}
             </View>
             {peerConnected && (
               <View style={styles.encryptionBadge}>
@@ -5737,6 +5832,15 @@ const styles = StyleSheet.create({
     borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(255,255,255,0.08)',
   },
   encryptionText: { color: 'rgba(255,255,255,0.62)', fontSize: 10, fontWeight: '600', letterSpacing: 0.3 },
+  // [CALL-E2EE 2026-06-28] "Criptografada" lock chip in the call topbar.
+  e2eeLockChip: {
+    flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
+    marginTop: 4, gap: 4,
+    backgroundColor: 'rgba(52,211,153,0.12)',
+    borderRadius: 10, paddingHorizontal: 7, paddingVertical: 3,
+    borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(52,211,153,0.25)',
+  },
+  e2eeLockChipText: { color: '#34d399', fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 },
   centerArea: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 180 },
   pulseRing: { position: 'absolute', borderRadius: 999, borderWidth: 1 },
   pulseRingOuter: { width: 212, height: 212, borderColor: 'rgba(196,181,253,0.10)' },

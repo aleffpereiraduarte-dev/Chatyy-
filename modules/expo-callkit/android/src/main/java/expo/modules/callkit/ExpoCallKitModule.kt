@@ -54,6 +54,37 @@ class ExpoCallKitModule : Module() {
       return acceptingCallIds.containsKey(callId)
     }
 
+    // ────────────── [CALL_E2EE, flag-gated, default OFF] ──────────────
+    // Pending E2EE shared keys, keyed by callId. The JS layer calls
+    // setCallE2EEKey(callId, keyBase64) BEFORE the Room connects — but ONLY
+    // when the CALL_E2EE feature flag is ON and it has already negotiated a
+    // symmetric key with the peer (via the encrypted envelope channel). The
+    // value stored is the RAW decoded key bytes (base64 → bytes).
+    //
+    // NativeCallRoom reads this map at Room-create time. If there is NO entry
+    // for the callId (flag off / key never set / decode failed), the Room is
+    // created EXACTLY as before — plaintext, zero behavior change. This is the
+    // hard guarantee: no key ⇒ today's behavior.
+    private val pendingE2EEKeys = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+
+    fun setPendingE2EEKey(callId: String, key: ByteArray) {
+      if (callId.isEmpty() || key.isEmpty()) return
+      pendingE2EEKeys[callId] = key
+      Log.i(TAG, "setPendingE2EEKey: stored ${key.size}-byte key for callId=$callId")
+    }
+
+    /** Read (without removing) the pending E2EE key for [callId], or null. Kept
+     *  across reconnects; cleared via [clearPendingE2EEKey] on call teardown. */
+    fun pendingE2EEKey(callId: String?): ByteArray? {
+      if (callId.isNullOrEmpty()) return null
+      return pendingE2EEKeys[callId]
+    }
+
+    fun clearPendingE2EEKey(callId: String?) {
+      if (callId.isNullOrEmpty()) return
+      pendingE2EEKeys.remove(callId)
+    }
+
     // [2026-05-15 #977 cold-start phantom decline]
     // The in-memory `acceptingCallIds` HashMap doesn't survive a process
     // kill. FCM cold-start scenarios can recycle the JVM mid-accept (e.g.,
@@ -852,6 +883,27 @@ class ExpoCallKitModule : Module() {
     // directly. Replacement: toggleCamera() lands in v2.4.x.
     AsyncFunction("lkSetCameraEnabled") { enabled: Boolean ->
       NativeCallRoom.setCameraEnabled(enabled)
+    }
+
+    // [CALL_E2EE, flag-gated, default OFF] Stash a per-call E2EE shared key so
+    // NativeCallRoom enables LiveKit frame encryption when it creates/connects
+    // the Room for this callId. JS calls this ONLY when the CALL_E2EE flag is
+    // ON and it has already exchanged the symmetric key via the encrypted
+    // envelope channel — BEFORE connecting. If JS never calls this (flag off),
+    // no key is stored and the Room connects plaintext exactly as today.
+    // keyBase64 is the base64 of the raw key bytes; we decode and store bytes.
+    Function("setCallE2EEKey") { callId: String, keyBase64: String ->
+      try {
+        val bytes = android.util.Base64.decode(keyBase64, android.util.Base64.DEFAULT)
+        if (callId.isNotEmpty() && bytes != null && bytes.isNotEmpty()) {
+          setPendingE2EEKey(callId, bytes)
+        } else {
+          Log.w(TAG, "setCallE2EEKey: empty callId or key — ignoring (no E2EE)")
+        }
+      } catch (t: Throwable) {
+        // Decode failure ⇒ no key stored ⇒ Room stays plaintext (today's path).
+        Log.w(TAG, "setCallE2EEKey: base64 decode failed (${t.message}) — no E2EE for callId=$callId")
+      }
     }
 
     // [#1205 live muting fix, 2026-05-19] Reset AudioManager mode before

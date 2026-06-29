@@ -606,6 +606,17 @@ public class ExpoCallKitModule: Module {
       NativeCallRoom.shared.setCameraEnabled(enabled)
     }
 
+    // [iOS call E2EE, 2026-06-28] GATED — DEFAULT OFF.
+    // Store the per-call shared encryption key (base64) so the native Room
+    // builder (CallViewController) attaches LiveKit `E2EEOptions` when it
+    // connects. JS — behind its own feature flag — calls this BEFORE the call
+    // connects (mirrors the Android `setCallE2EEKey` bridge). If JS never calls
+    // it, the key store stays empty and every Room connects with NO E2EE,
+    // exactly as it does today. There is no behavior change until a key is set.
+    Function("setCallE2EEKey") { (callId: String, keyBase64: String) -> Void in
+      NativeCallRoom.shared.setE2EEKey(callId: callId, keyBase64: keyBase64)
+    }
+
     // [#1205 live muting fix, 2026-05-19] Pre-broadcast AVAudioSession reset.
     // Symptom: live broadcast "ficando muda" — host's mic captures the first
     // few seconds then progressively silences. Root cause is a leaked

@@ -125,12 +125,30 @@ async function pullOnce() {
       const envelopes = resp?.data?.envelopes || resp?.envelopes || [];
       if (!Array.isArray(envelopes) || envelopes.length === 0) break;
 
-      // Lazy import of localDb — it's a React-Native-only module and we
-      // don't want envelope-mode-off builds to load it eagerly.
-      let saveMessage = null;
+      // Lazy import of localDb. The Metro/web bundler resolves this to the
+      // platform variant:
+      //   - native  → localDb.js      (expo-sqlite, exposes saveMessage())
+      //   - web     → localDb.web.js  (IndexedDB, exposes webSaveMessages())
+      // [WEB-RECV 2026-06-28] localDb.web.js has NO saveMessage() — so on web
+      // the old code left `saveMessage` null and silently dropped every
+      // decrypted envelope (ack'd but never persisted → secret chats never
+      // appeared on web). We now resolve a platform-correct persist function:
+      // native writes through saveMessage(), web writes through
+      // webSaveMessages(convId, [row]) into the IndexedDB `messages` store
+      // (indexed by conversation_id, the same store the web chat screen reads
+      // via webGetMessages). This only changes behavior when envelope mode is
+      // ON (default OFF) and only ADDS reception on web — native path is byte
+      // identical to before.
+      const isWeb = Platform.OS === 'web';
+      let saveMessage = null;       // native (localDb.js)
+      let webSaveMessages = null;   // web (localDb.web.js)
       try {
         const ld = require('./localDb');
-        if (ld && typeof ld.saveMessage === 'function') saveMessage = ld.saveMessage;
+        if (isWeb) {
+          if (ld && typeof ld.webSaveMessages === 'function') webSaveMessages = ld.webSaveMessages;
+        } else if (ld && typeof ld.saveMessage === 'function') {
+          saveMessage = ld.saveMessage;
+        }
       } catch (e) {
         console.warn('[envelopePuller] localDb unavailable', e?.message);
       }
@@ -149,7 +167,27 @@ async function pullOnce() {
       // ever match, but at least we keep the previous behavior).
       let mySecret = null;
       try {
-        const devicePair = await getDeviceKeyPair();
+        let devicePair = await getDeviceKeyPair();
+        // [WEB-RECV 2026-06-28] On web (and any fresh device) the per-device
+        // keypair is lazy — getDeviceKeyPair() returns null until something
+        // calls getDevicePublicKey() to generate+persist it. Auth normally
+        // bootstraps it (AuthContext publishes the device pubkey on every
+        // login, web included), but make the puller self-sufficient: if the
+        // keypair isn't there yet, generate+persist it now (getDevicePublicKey
+        // does exactly that via the same SecureStore/localStorage abstraction)
+        // and re-load. tweetnacl runs natively in the browser, so this works
+        // on web unchanged. Republish so senders pick up the fresh pubkey.
+        if (!devicePair?.secretKey) {
+          try {
+            const pub = await getDevicePublicKey(); // generate+persist if missing
+            devicePair = await getDeviceKeyPair();
+            if (pub && devicePair?.secretKey) {
+              const did2 = await getDeviceId();
+              const kind = Platform.OS === 'web' ? 'web' : Platform.OS;
+              if (did2) chatDeviceKeyPublish(did2, pub, kind).catch(() => {});
+            }
+          } catch {}
+        }
         if (devicePair?.secretKey) mySecret = devicePair.secretKey;
       } catch {}
       if (!mySecret) {
@@ -224,7 +262,7 @@ async function pullOnce() {
         // reset the consecutive-fail counter so we don't republish on
         // an occasional honest-bad-envelope.
         _decryptFailsInSession = 0;
-        if (saveMessage) {
+        if (saveMessage || webSaveMessages) {
           try {
             // 2026-05-28 Lester QA: "Limpar conversa" re-paints porque
             // envelopes ANTERIORES ao clear ainda eram entregues pelo WS
@@ -233,6 +271,9 @@ async function pullOnce() {
             // <= cleared_at_<conv_id> persistido (ChatListTab grava esse
             // watermark sempre que user limpa). Continue ainda permite ack
             // pra server tirar da fila — não voltamos a pullar.
+            // [WEB-RECV 2026-06-28] AsyncStorage ships a web shim backed by
+            // localStorage, so this watermark check works on web too; the
+            // try/catch keeps it harmless if the shim is ever absent.
             try {
               const AsyncStorage = require('@react-native-async-storage/async-storage').default;
               const clearedRaw = await AsyncStorage.getItem(`cleared_at_${env.conversation_id}`);
@@ -247,7 +288,7 @@ async function pullOnce() {
               }
             } catch { /* AsyncStorage unavailable on web fallback — skip */ }
             const placeholderId = _hashClientId(env.client_message_id);
-            await saveMessage({
+            const row = {
               id: placeholderId,
               client_message_id: env.client_message_id,
               client_temp_id: env.client_message_id,
@@ -257,7 +298,19 @@ async function pullOnce() {
               type: 'text',
               created_at: env.created_at || new Date().toISOString(),
               pending_state: 'sent',
-            });
+            };
+            // [WEB-RECV 2026-06-28] Platform-split persistence. Native uses
+            // saveMessage() (handles placeholder→server-row swap by
+            // client_temp_id). Web uses webSaveMessages(convId, [row]) which
+            // does store.put keyed by `id` (our deterministic negative hash,
+            // so re-pulling the same envelope overwrites in place rather than
+            // duplicating) into the IndexedDB `messages` store — exactly the
+            // store the web chat screen reads via webGetMessages(convId).
+            if (isWeb) {
+              await webSaveMessages(env.conversation_id, [row]);
+            } else {
+              await saveMessage(row);
+            }
           } catch (e) {
             console.warn('[envelopePuller] saveMessage failed', e?.message);
             try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'envelopePuller_saveMessage', message: `cmi=${env?.client_message_id} ${e?.message}`, stack: e?.stack }); } catch {}

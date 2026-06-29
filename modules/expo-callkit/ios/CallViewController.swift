@@ -1033,6 +1033,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // [WAVE 115, 2026-05-21] Relay-first ICE: start with .relay so the
             // first connect always goes over TURN (never NAT-blocked, 200-500ms).
             // Phase-2 upgrade (P2P attempt after 5s) happens in didConnect delegate.
+            // [iOS call E2EE, 2026-06-28] GATED — DEFAULT OFF. nil unless JS
+            // registered a per-call shared key via setCallE2EEKey(callId,…)
+            // BEFORE connect. When nil, RoomOptions(e2eeOptions: nil) is
+            // byte-for-byte identical to today's connect path (no E2EE).
+            let e2eeOpts = NativeCallRoom.shared.makeE2EEOptions(forCallId: self.callId)
+            if e2eeOpts != nil { NSLog("[CallVC] E2EE active for callId=\(self.callId) (viewDidLoad path)") }
             var roomOpts = RoomOptions(
                 defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
                 defaultAudioCaptureOptions: Self.defaultAudioCaptureOptions(),
@@ -1041,7 +1047,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 // stream from the very first packet (loss resilience on cellular).
                 defaultAudioPublishOptions: Self.defaultAudioPublishOptions(),
                 adaptiveStream: true,
-                dynacast: true
+                dynacast: true,
+                e2eeOptions: e2eeOpts
             )
             // [DISABLED 2026-05-25 — call-connect root-cause] Relay-first ICE
             // (iceTransportPolicy=.relay) is now HARMFUL and the biggest cause
@@ -2763,6 +2770,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // the user's RNNoise / background-blur toggle state.
         _ = RNNoiseAudioProcessor.shared
         _ = BackgroundProcessor.shared
+        // [iOS call E2EE, 2026-06-28] GATED — DEFAULT OFF. nil unless JS
+        // registered a per-call shared key for this callId before the ring
+        // window. Preconnect must use the SAME E2EE options as the viewDidLoad
+        // path so the pre-warmed Room (adopted by CXAnswer) decrypts correctly.
+        let e2eeOpts = NativeCallRoom.shared.makeE2EEOptions(forCallId: callId)
+        if e2eeOpts != nil { NSLog("[CallVC] E2EE active for callId=\(callId) (preconnect path)") }
         // [WAVE 115, 2026-05-21] Relay-first ICE — same policy as viewDidLoad path.
         let roomOptions = RoomOptions(
             defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
@@ -2771,7 +2784,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // [HD tuning 2026-05-26] DTX + RED on the published Opus stream.
             defaultAudioPublishOptions: Self.defaultAudioPublishOptions(),
             adaptiveStream: true,
-            dynacast: true
+            dynacast: true,
+            e2eeOptions: e2eeOpts
         )
         // delegate: nil — there's no VC yet. CallViewController.viewDidLoad
         // (called when present() lands) will rebind its own RoomDelegate via

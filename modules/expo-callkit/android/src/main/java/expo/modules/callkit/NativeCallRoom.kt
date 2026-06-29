@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import io.livekit.android.LiveKit
+import io.livekit.android.RoomOptions
+import io.livekit.android.e2ee.BaseKeyProvider
+import io.livekit.android.e2ee.E2EEOptions
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
@@ -140,6 +143,51 @@ object NativeCallRoom {
         hwAudioEffects.clear()
     }
 
+    // ────────────── [CALL_E2EE, flag-gated, default OFF] ──────────────
+    /**
+     * Build LiveKit E2EE options for [callId] IFF the JS layer pushed a
+     * pending shared key (via ExpoCallKitModule.setCallE2EEKey, which only
+     * fires when the CALL_E2EE feature flag is ON). Returns null when there is
+     * no key — in which case the caller creates the Room exactly as before
+     * (plaintext), so production behavior is unchanged until the flag is on.
+     *
+     * Key material: the JS-supplied bytes are the RAW 32-byte shared key. We
+     * feed them straight to the WebRTC FrameCryptor via the BaseKeyProvider's
+     * rtcKeyProvider.setSharedKey(index, bytes). We deliberately do NOT use
+     * BaseKeyProvider.setSharedKey(String) because that overload hashes the
+     * UTF-8 bytes of the string — passing base64 there would make the key
+     * material the base64 text, not the raw bytes, and iOS/web would have to
+     * match that quirk. Using raw bytes keeps the cross-platform contract
+     * simple: "the shared key is the raw decoded bytes".
+     *
+     * LiveKit Android 2.24.1 verified API:
+     *   BaseKeyProvider()            → enableSharedKey defaults to true
+     *   getRtcKeyProvider()          → livekit.org.webrtc.FrameCryptorKeyProvider
+     *     .setSharedKey(index: Int, key: ByteArray): Boolean
+     *   E2EEOptions(KeyProvider, livekit.LivekitModels.Encryption.Type)
+     *   RoomOptions(e2eeOptions = ...)  (Kotlin data class, all-defaults ctor)
+     */
+    private fun buildE2EEOptionsFor(callId: String?): E2EEOptions? {
+        val key = ExpoCallKitModule.pendingE2EEKey(callId) ?: return null
+        if (key.isEmpty()) return null
+        return try {
+            val keyProvider = BaseKeyProvider().apply {
+                // Raw-bytes shared key at index 0 (GCM shared-key mode).
+                rtcKeyProvider.setSharedKey(0, key)
+            }
+            val opts = E2EEOptions(
+                keyProvider,
+                livekit.LivekitModels.Encryption.Type.GCM
+            )
+            Log.i(TAG, "buildE2EEOptionsFor: E2EE ENABLED for callId=$callId (GCM, ${key.size}-byte shared key)")
+            opts
+        } catch (t: Throwable) {
+            // Any failure ⇒ fall back to plaintext rather than blocking the call.
+            Log.w(TAG, "buildE2EEOptionsFor: failed (${t.message}) — connecting WITHOUT E2EE")
+            null
+        }
+    }
+
     // ────────────── Public state ──────────────
 
     fun isConnected(): Boolean {
@@ -227,6 +275,9 @@ object NativeCallRoom {
         preconnectJob?.cancel()
         preconnectJob = null
         preconnectingCallId = null
+        // [CALL_E2EE] Drop the staged shared key so it can't leak into a later
+        // call that happens to reuse the same callId string. No-op when unset.
+        try { ExpoCallKitModule.clearPendingE2EEKey(callId) } catch (_: Throwable) {}
         releaseHwAudioEffects()
         room = null
         callId = null
@@ -533,7 +584,16 @@ object NativeCallRoom {
         preconnectJob?.cancel()
         preconnectJob = scope.launch {
             try {
-                val r = LiveKit.create(ctx.applicationContext)
+                // [CALL_E2EE, flag-gated] If JS staged a shared key for this
+                // callId (flag ON), create the Room with E2EEOptions so frames
+                // are encrypted. No key ⇒ e2ee == null ⇒ LiveKit.create() with
+                // default options == the exact pre-E2EE path.
+                val e2ee = buildE2EEOptionsFor(callId)
+                val r = if (e2ee != null) {
+                    LiveKit.create(ctx.applicationContext, RoomOptions(e2eeOptions = e2ee))
+                } else {
+                    LiveKit.create(ctx.applicationContext)
+                }
                 // publish() here so events.collect is wired BEFORE we await
                 // connect — otherwise the first Connected event might fire
                 // before our listener attaches and JS would miss it.

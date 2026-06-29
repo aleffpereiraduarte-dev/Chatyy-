@@ -32,6 +32,20 @@ import messageOutbox, {
   cleanup as outboxCleanup,
 } from './messageOutbox';
 
+// ── WS-FIRST SEND flag (default OFF) ─────────────────────────────────────
+// [2026-06-28] When TRUE *and* the socket is healthy, the worker attempts a
+// `chat_send` WS frame first and waits up to WS_ACK_TIMEOUT_MS for a
+// `message_ack` (latency ~5–30ms vs HTTP's ~150–400ms). On timeout / not-
+// healthy / any error it transparently falls back to _httpSend (today's
+// path). With the flag FALSE the behaviour is byte-for-byte identical to
+// today: every outbox-drained text send goes straight to HTTP.
+//
+// DO NOT flip this to true until the C++ hub ships its `chat_send` handler
+// AND chat.php's chat_send accepts the X-WS-Internal internal POST. See the
+// QA checklist — flipping it before the server side is live just burns one
+// WS_ACK_TIMEOUT_MS per send before the HTTP fallback (harmless but pointless).
+const WS_FIRST_SEND = false;
+
 // One-shot guards
 let _started = false;
 let _stopped = false;
@@ -193,15 +207,30 @@ async function _processRow(row) {
     return;
   }
 
-  // [#bugfix 2026-05-25] WS-first is DISABLED. The C++ WS server has NO
-  // `chat_send` handler — every frame we'd send is silently dropped, so
-  // _tryWsSend ALWAYS times out (WS_ACK_TIMEOUT_MS) and then falls to HTTP.
-  // That's a guaranteed ~250ms of dead latency on every outbox-drained
-  // send (queued / retry). Go straight to HTTP instead. _tryWsSend is left
-  // intact below as dead code: re-enable this call only once the server
-  // actually implements a `case "chat_send":` and replies `message_ack`.
-  // (The foreground path in app/chat-conversation.js is unaffected — it
-  // does not use this worker.)
+  // WS-FIRST (flag-gated, default OFF). When WS_FIRST_SEND is true AND the
+  // socket is authenticated/healthy, try a `chat_send` frame first and wait
+  // up to WS_ACK_TIMEOUT_MS for the server's `message_ack`. Any other result
+  // ('timeout' / 'skip' / unhealthy) falls through to the HTTP path below.
+  //
+  // With WS_FIRST_SEND=false (today) this whole block is skipped and every
+  // send goes straight to HTTP — byte-for-byte the current behaviour.
+  //
+  // [#bugfix 2026-05-25 — historical] WS-first was disabled because the C++
+  // WS server had NO `chat_send` handler, so _tryWsSend always timed out and
+  // burned WS_ACK_TIMEOUT_MS before HTTP. That handler now exists in the hub
+  // (gated; see /opt/chatyy-ws-cpp/src/main.cpp), so the path is re-enabled
+  // here behind the flag. _tryWsSend already marks the row 'sent' on ack.
+  if (WS_FIRST_SEND) {
+    let wsResult = 'skip';
+    try {
+      wsResult = await _tryWsSend(row);
+    } catch {
+      wsResult = 'skip';
+    }
+    if (wsResult === 'ok') return; // acked over WS — _tryWsSend marked it sent
+    // 'timeout' / 'skip' / anything else → HTTP fallback below.
+  }
+
   await _httpSend(row);
 }
 
