@@ -3915,6 +3915,7 @@ export default {
   'chatConv.editFailed': 'Não foi possível editar a mensagem',
   'chatConv.messages': 'mensagens',
   'chatConv.deleteFailed': 'Não foi possível apagar a mensagem',
+  'chatConv.pinFailed': 'Não foi possível fixar a mensagem. Tente de novo.',
   'chatConv.saveMediaError': 'Nenhuma mídia para salvar',
   'chatConv.mediaLibraryPermission': 'Permita acesso à galeria pra salvar',
   'chatConv.mediaSaved': 'Salvo na galeria',

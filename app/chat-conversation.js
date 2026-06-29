@@ -15748,7 +15748,16 @@ function ChatConversationInner() {
         await api.chatDelete(msgId, 'for_me');
       } catch (e) {
         console.warn('Delete for me error:', e);
-        safeAlert(t('common.error') || 'Error', t('chatConv.deleteFailed') || 'Failed to delete message');
+        // Queue a durable retry so the for_me hide eventually persists
+        // server-side. Without this, we removed the bubble locally but the
+        // server never recorded the hide → the very next sync re-sent the
+        // message and it reappeared (mirrors the for_all path above).
+        try {
+          await queueOfflineAction({ type: 'chat_delete', message_id: msgId, mode: 'for_me' });
+        } catch {
+          // Couldn't even queue — surface so the user knows it didn't stick.
+          safeAlert(t('common.error') || 'Error', t('chatConv.deleteFailed') || 'Failed to delete message');
+        }
       }
       animateDeleteThenRemove(msgId);
       try {
@@ -16257,8 +16266,16 @@ function ChatConversationInner() {
           if (exists) return prev.filter(p => p.id !== msg.id);
           return [{ ...msg, pinned_until: pinnedUntil }, ...prev];
         });
+      } else {
+        // Server rejected — don't leave the user thinking it pinned.
+        safeAlert(t('common.error') || 'Erro', t('chatConv.pinFailed') || 'Não foi possível fixar a mensagem. Tente de novo.');
       }
-    } catch {}
+    } catch (e) {
+      // Was silently swallowed: UI showed nothing but the pin never reached
+      // the server (and never synced to other devices). Surface it.
+      console.warn('Pin failed:', e?.message);
+      safeAlert(t('common.error') || 'Erro', t('chatConv.pinFailed') || 'Não foi possível fixar a mensagem. Tente de novo.');
+    }
     setSelectedMsg(null);
   }, []);
 
@@ -25489,7 +25506,30 @@ function ChatConversationInner() {
               onSubmitEditing={enterSends ? () => { if (!sending) handleSend(); } : undefined}
               blurOnSubmit={enterSends}
               onFocus={() => setInputFocused(true)}
-              onBlur={() => setInputFocused(false)}
+              onBlur={() => {
+                setInputFocused(false);
+                // WhatsApp parity: kill "X está digitando…" on the peer's
+                // screen IMMEDIATELY when the user taps away, instead of
+                // letting it linger up to TYPING_STOP_MS (3s) on the idle
+                // auto-stop timer. Mirror the "input emptied" path above.
+                if (typingStopTimerRef.current) {
+                  clearTimeout(typingStopTimerRef.current);
+                  typingStopTimerRef.current = null;
+                }
+                if (typingLastSentAt.current) {
+                  try {
+                    const mailWs = require('../services/websocket').default;
+                    mailWs.sendStoppedTyping?.(conversationId);
+                  } catch {}
+                  try {
+                    require('../services/api').apiCall?.('chat_typing', {
+                      conversation_id: conversationId,
+                      typing: false,
+                    }, 'POST');
+                  } catch {}
+                  typingLastSentAt.current = 0;
+                }
+              }}
               onSelectionChange={(e) => {
                 const sel = e.nativeEvent.selection;
                 inputSelectionRef.current = sel;

@@ -3882,6 +3882,7 @@ export default {
   'chatConv.editFailed': 'No se pudo editar el mensaje',
   'chatConv.messages': 'mensajes',
   'chatConv.deleteFailed': 'No se pudo eliminar el mensaje',
+  'chatConv.pinFailed': 'No se pudo fijar el mensaje. Inténtalo de nuevo.',
   'chatConv.saveMediaError': 'No hay medios para guardar',
   'chatConv.mediaLibraryPermission': 'Permite acceso a la galería para guardar',
   'chatConv.mediaSaved': 'Guardado en la galería',

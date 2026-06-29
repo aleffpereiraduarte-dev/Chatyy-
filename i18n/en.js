@@ -3877,6 +3877,7 @@ export default {
   'chatConv.editFailed': 'Failed to edit message',
   'chatConv.messages': 'messages',
   'chatConv.deleteFailed': 'Failed to delete message',
+  'chatConv.pinFailed': 'Couldn\'t pin the message. Try again.',
   'chatConv.saveMediaError': 'No media to save',
   'chatConv.mediaLibraryPermission': 'Allow gallery access to save',
   'chatConv.mediaSaved': 'Saved to gallery',
