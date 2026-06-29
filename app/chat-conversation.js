@@ -6866,6 +6866,26 @@ function ChatConversationInner() {
       try { console.warn?.('[safeScrollToMsg] load_around failed:', e?.message || e); } catch {}
     }
   }, [conversationId]);
+
+  // [WA-parity 2026-06-29] Jump-to-message when the conversation is opened from
+  // a GLOBAL chat-list search hit OR a starred-message tap that lives in another
+  // chat. ChatListTab passes scrollToMessageId/highlightMessageId, but they were
+  // written and NEVER read — the chat just opened at the bottom with no scroll
+  // and no highlight (WhatsApp lands you on the highlighted hit). safeScrollToMsg
+  // loads-around if the target isn't in the first window and flashes the same
+  // 1.5s highlight used for reply-jump + in-chat search. Fires once.
+  const _jumpTargetId = params?.scrollToMessageId ?? params?.highlightMessageId ?? null;
+  const _didJumpRef = useRef(false);
+  useEffect(() => {
+    if (_didJumpRef.current) return;
+    if (_jumpTargetId == null || _jumpTargetId === '') return;
+    if (!Array.isArray(messages) || messages.length === 0) return;
+    _didJumpRef.current = true;
+    // Defer so the list lays out before scrollToIndex / load-around runs.
+    const tm = setTimeout(() => { safeScrollToMsg({ id: _jumpTargetId }); }, 250);
+    return () => clearTimeout(tm);
+  }, [_jumpTargetId, messages.length, safeScrollToMsg]);
+
   const webFilePickFocusRef = useRef(null); // Track web file picker focus handler for cleanup
   const _nativeChatViewRef = useRef(null);
   const inputRef = useRef(null);
@@ -29939,7 +29959,23 @@ function ChatConversationInner() {
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', padding: Spacing.sm, backgroundColor: colors.surface, borderRadius: BorderRadius.md, marginBottom: Spacing.xs }}
-                  onPress={() => { setShowStarredModal(false); if (String(item.conversation_id) === String(conversationId)) { const idx = messages.findIndex(m => m.id === item.id); if (idx >= 0 && flatListRef.current) flatListRef.current.scrollToIndex({ index: idx, animated: true }); } }}
+                  onPress={() => {
+                    setShowStarredModal(false);
+                    if (String(item.conversation_id) === String(conversationId)) {
+                      // Same chat — jump + flash highlight via safeScrollToMsg
+                      // (load-around if the star is older than the loaded window).
+                      safeScrollToMsg({ id: item.id });
+                    } else if (item.conversation_id != null) {
+                      // [WA-parity 2026-06-29] Star from ANOTHER chat — open that
+                      // chat and land on the message (was a dead no-op before).
+                      router.push({ pathname: '/chat-conversation', params: {
+                        id: String(item.conversation_id),
+                        type: item.conversation_type || undefined,
+                        scrollToMessageId: String(item.id),
+                        highlightMessageId: String(item.id),
+                      }});
+                    }
+                  }}
                 >
                   <View style={{ flex: 1 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 2 }}>
