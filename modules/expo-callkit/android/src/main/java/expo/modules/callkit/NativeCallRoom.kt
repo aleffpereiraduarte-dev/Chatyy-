@@ -166,7 +166,11 @@ object NativeCallRoom {
      *   E2EEOptions(KeyProvider, livekit.LivekitModels.Encryption.Type)
      *   RoomOptions(e2eeOptions = ...)  (Kotlin data class, all-defaults ctor)
      */
-    private fun buildE2EEOptionsFor(callId: String?): E2EEOptions? {
+    // internal (not private) so CallActivity's cold-launch bringUpRoom() can
+    // apply the SAME E2EE options. Previously only the WARM preconnect path
+    // (this object) had E2EE; a cold-launched incoming call (CallActivity
+    // builds its OWN Room) connected plaintext even with a staged key.
+    internal fun buildE2EEOptionsFor(callId: String?): E2EEOptions? {
         val keyB64 = ExpoCallKitModule.pendingE2EEKey(callId) ?: return null
         if (keyB64.isEmpty()) return null
         return try {

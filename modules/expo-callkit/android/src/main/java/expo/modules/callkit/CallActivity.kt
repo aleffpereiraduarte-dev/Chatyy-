@@ -1525,7 +1525,23 @@ class CallActivity : ComponentActivity() {
     // LiveKit still gathers relay candidates under ALL — they just aren't
     // forced as the ONLY option.
     Log.d(TAG, "[relay-first] DISABLED — using default iceTransportPolicy=ALL (direct SFU path + TURN fallback)")
-    val r = LiveKit.create(applicationContext, options = roomOptions)
+    // [CALL_E2EE, flag-gated, default OFF] Cold-launch parity: CallActivity
+    // builds its OWN Room (the app was killed; NativeCallRoom.preconnect never
+    // ran), so without this the cold-launched incoming call connected WITHOUT
+    // E2EE even when JS had staged a shared key via setCallE2EEKey. Apply the
+    // same options the warm preconnect path uses. No key staged ⇒ null ⇒
+    // plaintext, byte-for-byte the previous behaviour (zero prod change).
+    val roomOptionsFinal = try {
+      val e2ee = NativeCallRoom.buildE2EEOptionsFor(callId)
+      if (e2ee != null) {
+        Log.i(TAG, "[CALL_E2EE] cold-launch applying E2EE for callId=$callId")
+        roomOptions.copy(e2eeOptions = e2ee)
+      } else roomOptions
+    } catch (t: Throwable) {
+      Log.w(TAG, "[CALL_E2EE] cold-launch e2ee build failed (${t.message}) — plaintext")
+      roomOptions
+    }
+    val r = LiveKit.create(applicationContext, options = roomOptionsFinal)
     room = r
     LiveKitRoomHolder.set(r)
     // [Wave 17.6 F2] Wire ScreenAudioMixer.mixInto() into the local mic
