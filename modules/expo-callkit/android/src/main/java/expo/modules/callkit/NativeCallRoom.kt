@@ -151,35 +151,34 @@ object NativeCallRoom {
      * no key — in which case the caller creates the Room exactly as before
      * (plaintext), so production behavior is unchanged until the flag is on.
      *
-     * Key material: the JS-supplied bytes are the RAW 32-byte shared key. We
-     * feed them straight to the WebRTC FrameCryptor via the BaseKeyProvider's
-     * rtcKeyProvider.setSharedKey(index, bytes). We deliberately do NOT use
-     * BaseKeyProvider.setSharedKey(String) because that overload hashes the
-     * UTF-8 bytes of the string — passing base64 there would make the key
-     * material the base64 text, not the raw bytes, and iOS/web would have to
-     * match that quirk. Using raw bytes keeps the cross-platform contract
-     * simple: "the shared key is the raw decoded bytes".
+     * Key material — CROSS-PLATFORM CONTRACT (2026-06-28): the JS-supplied value
+     * is the base64 STRING of the per-call key. Both Android and iOS feed THIS
+     * EXACT STRING into BaseKeyProvider's String shared-key API, which uses the
+     * string's UTF-8 bytes as key material. Because both platforms use the same
+     * string + same String API, they derive identical material and frames
+     * decrypt cross-platform. (LiveKit runs the shared key through its own
+     * ratchet/KDF, so 44-byte base64 text is fine as key material — what matters
+     * is that BOTH sides feed the SAME bytes, which they now do.)
      *
      * LiveKit Android 2.24.1 verified API:
-     *   BaseKeyProvider()            → enableSharedKey defaults to true
-     *   getRtcKeyProvider()          → livekit.org.webrtc.FrameCryptorKeyProvider
-     *     .setSharedKey(index: Int, key: ByteArray): Boolean
+     *   BaseKeyProvider()                 → enableSharedKey defaults to true
+     *   BaseKeyProvider.setSharedKey(String)  → UTF-8 of the string (matches iOS)
      *   E2EEOptions(KeyProvider, livekit.LivekitModels.Encryption.Type)
      *   RoomOptions(e2eeOptions = ...)  (Kotlin data class, all-defaults ctor)
      */
     private fun buildE2EEOptionsFor(callId: String?): E2EEOptions? {
-        val key = ExpoCallKitModule.pendingE2EEKey(callId) ?: return null
-        if (key.isEmpty()) return null
+        val keyB64 = ExpoCallKitModule.pendingE2EEKey(callId) ?: return null
+        if (keyB64.isEmpty()) return null
         return try {
             val keyProvider = BaseKeyProvider().apply {
-                // Raw-bytes shared key at index 0 (GCM shared-key mode).
-                rtcKeyProvider.setSharedKey(0, key)
+                // Base64-string shared key (UTF-8) — matches iOS BaseKeyProvider(sharedKey:).
+                setSharedKey(keyB64)
             }
             val opts = E2EEOptions(
                 keyProvider,
                 livekit.LivekitModels.Encryption.Type.GCM
             )
-            Log.i(TAG, "buildE2EEOptionsFor: E2EE ENABLED for callId=$callId (GCM, ${key.size}-byte shared key)")
+            Log.i(TAG, "buildE2EEOptionsFor: E2EE ENABLED for callId=$callId (GCM, shared-key str len=${keyB64.length})")
             opts
         } catch (t: Throwable) {
             // Any failure ⇒ fall back to plaintext rather than blocking the call.

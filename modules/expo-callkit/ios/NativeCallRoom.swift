@@ -173,15 +173,14 @@ public enum NativeCallRoomEvent {
     public func makeE2EEOptions(forCallId callId: String) -> E2EEOptions? {
         guard let key = e2eeKey(forCallId: callId) else { return nil }
         // BaseKeyProvider with a single shared key (no per-participant ratchet).
-        // ⚠️ KEY-CONTRACT MISMATCH — MUST RESOLVE BEFORE ENABLING CALL_E2EE:
-        // Android decodes the base64 → RAW 32 bytes and feeds those via
-        // rtcKeyProvider.setSharedKey(index, ByteArray). Here we pass the base64
-        // STRING straight into BaseKeyProvider(sharedKey:), and LiveKit Swift uses
-        // the string's UTF-8 bytes as key material → DIFFERENT bytes than Android,
-        // so cross-platform frames would NOT decrypt. During QA (Pods installed),
-        // decode `key` (base64 → Data) and feed RAW bytes to whatever Data-based
-        // key API the pinned LiveKitClient exposes, so both platforms use the same
-        // 32 raw bytes. Same-platform (iOS↔iOS) works today; iOS↔Android does not.
+        // CROSS-PLATFORM KEY CONTRACT (2026-06-28, reconciled): `key` is the
+        // base64 STRING of the per-call key. iOS feeds it via
+        // BaseKeyProvider(sharedKey:) (UTF-8 of the string), and Android now feeds
+        // the SAME string via BaseKeyProvider.setSharedKey(String) (also UTF-8) —
+        // so both platforms derive identical key material and frames decrypt
+        // cross-platform. (Previously Android decoded to raw bytes → mismatch;
+        // that was changed to the String API to match here.) QA still required to
+        // confirm a real encrypted iOS↔Android call before flipping CALL_E2EE.
         let keyProvider = BaseKeyProvider(isSharedKey: true, sharedKey: key)
         let opts = E2EEOptions(keyProvider: keyProvider)
         print("[NativeCallRoom] E2EE ENABLED for callId=\(callId) (shared-key)")

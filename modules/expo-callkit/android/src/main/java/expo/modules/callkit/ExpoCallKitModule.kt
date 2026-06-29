@@ -65,17 +65,22 @@ class ExpoCallKitModule : Module() {
     // for the callId (flag off / key never set / decode failed), the Room is
     // created EXACTLY as before — plaintext, zero behavior change. This is the
     // hard guarantee: no key ⇒ today's behavior.
-    private val pendingE2EEKeys = java.util.concurrent.ConcurrentHashMap<String, ByteArray>()
+    // Stores the base64 STRING verbatim (NOT decoded). Cross-platform key
+    // contract (2026-06-28): both Android and iOS feed this exact base64 string
+    // into BaseKeyProvider's String shared-key API, so both derive identical key
+    // material (UTF-8 of the same string). Do NOT decode here — decoding on one
+    // platform and not the other is exactly the mismatch that broke iOS↔Android.
+    private val pendingE2EEKeys = java.util.concurrent.ConcurrentHashMap<String, String>()
 
-    fun setPendingE2EEKey(callId: String, key: ByteArray) {
-      if (callId.isEmpty() || key.isEmpty()) return
-      pendingE2EEKeys[callId] = key
-      Log.i(TAG, "setPendingE2EEKey: stored ${key.size}-byte key for callId=$callId")
+    fun setPendingE2EEKey(callId: String, keyB64: String) {
+      if (callId.isEmpty() || keyB64.isEmpty()) return
+      pendingE2EEKeys[callId] = keyB64
+      Log.i(TAG, "setPendingE2EEKey: stored key (len=${keyB64.length}) for callId=$callId")
     }
 
-    /** Read (without removing) the pending E2EE key for [callId], or null. Kept
-     *  across reconnects; cleared via [clearPendingE2EEKey] on call teardown. */
-    fun pendingE2EEKey(callId: String?): ByteArray? {
+    /** Read (without removing) the pending E2EE key (base64 string) for [callId],
+     *  or null. Kept across reconnects; cleared via [clearPendingE2EEKey]. */
+    fun pendingE2EEKey(callId: String?): String? {
       if (callId.isNullOrEmpty()) return null
       return pendingE2EEKeys[callId]
     }
@@ -891,12 +896,13 @@ class ExpoCallKitModule : Module() {
     // ON and it has already exchanged the symmetric key via the encrypted
     // envelope channel — BEFORE connecting. If JS never calls this (flag off),
     // no key is stored and the Room connects plaintext exactly as today.
-    // keyBase64 is the base64 of the raw key bytes; we decode and store bytes.
+    // keyBase64 is stored VERBATIM (not decoded). Both platforms feed this exact
+    // base64 string to BaseKeyProvider's String shared-key API → identical key
+    // material cross-platform. See pendingE2EEKeys contract note above.
     Function("setCallE2EEKey") { callId: String, keyBase64: String ->
       try {
-        val bytes = android.util.Base64.decode(keyBase64, android.util.Base64.DEFAULT)
-        if (callId.isNotEmpty() && bytes != null && bytes.isNotEmpty()) {
-          setPendingE2EEKey(callId, bytes)
+        if (callId.isNotEmpty() && keyBase64.isNotEmpty()) {
+          setPendingE2EEKey(callId, keyBase64)
         } else {
           Log.w(TAG, "setCallE2EEKey: empty callId or key — ignoring (no E2EE)")
         }
