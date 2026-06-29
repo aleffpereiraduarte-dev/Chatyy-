@@ -2715,7 +2715,7 @@ function _persistVoiceRate(rate) {
   } catch {}
 }
 
-function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
+function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, playedByPeer }) {
   const { t } = useLanguage();
   const isDarkMode = colors.background === '#0B141A' || colors.background === '#000' || colors.background === '#000000' || (colors.background && colors.background.startsWith('#0'));
   const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
@@ -3455,12 +3455,13 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform }) {
             <Text style={[audioStyles.duration, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
               {formatDuration(displayTime)}
             </Text>
-            {/* Played indicator: small filled dot once the user has played
-                this voice note at least once. Only shown for incoming
-                messages (their own audio is always "played" trivially).
-                WhatsApp parity: blue dot when heard. */}
-            {!isOwn && played ? (
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#7C3AED' }} />
+            {/* Played indicator (WhatsApp blue mic dot): for INCOMING notes
+                it's a local "I listened" marker; for OWN outgoing notes it's
+                the real "heard by recipient" receipt — driven by playedByPeer
+                (server played_at, delivered via the `voice_played` WS event +
+                chat_messages cold-load). WA uses blue #53BDEB. */}
+            {(isOwn ? playedByPeer : played) ? (
+              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#53BDEB' }} />
             ) : null}
           </View>
           <TouchableOpacity
@@ -11630,6 +11631,24 @@ function ChatConversationInner() {
         }));
       });
       wsUnsubs.push(unsubVmListened);
+
+      // [WA-parity 2026-06-29] Voice "heard" receipt. When the recipient plays
+      // our outgoing voice note, the server stamps played_at and broadcasts
+      // `voice_played` to the sender's devices (chat.php:_broadcastToOwnDevices).
+      // This was computed + broadcast but NEVER consumed — the sender's mic dot
+      // never turned blue. Map played_at onto the matching own message so the
+      // bubble flips in real time (playedByPeer prop).
+      const unsubVoicePlayed = mailWs.on('voice_played', (data) => {
+        if (!mountedRef.current) return;
+        const vpId = data?.message_id ?? data?.id;
+        if (vpId == null) return;
+        setMessages(prev => prev.map(m =>
+          (String(m.id) === String(vpId))
+            ? { ...m, _voice_played: true, played_at: m.played_at || data?.played_at || new Date().toISOString() }
+            : m
+        ));
+      });
+      wsUnsubs.push(unsubVoicePlayed);
 
       // Listen for message delivery/read status updates via WS (instant tick updates).
       // Skip if reader_email missing — otherwise we'd create a phantom 'peer'
@@ -19895,6 +19914,7 @@ function ChatConversationInner() {
                 colors={colors}
                 messageId={msg.id}
                 waveform={msg.waveform}
+                playedByPeer={!!(msg.played_at || msg._voice_played)}
               />
               {/* [WAVE 43D] Multi-select sticky — overlay intercepts taps on
                   the AudioPlayer (play/seek) while in selection mode and
@@ -21203,6 +21223,7 @@ function ChatConversationInner() {
                 colors={colors}
                 messageId={msg.id}
                 waveform={msg.waveform}
+                playedByPeer={!!(msg.played_at || msg._voice_played)}
               />
             );
           }
