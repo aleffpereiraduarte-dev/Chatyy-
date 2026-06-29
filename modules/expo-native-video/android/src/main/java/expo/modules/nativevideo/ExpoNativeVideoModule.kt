@@ -211,12 +211,39 @@ class ExpoNativeVideoModule : Module() {
       )
     }
 
-    // Stage 1 fallback: real MediaCodec transcode pipeline is deferred to
-    // Stage 2 (see file header TODO). Returning the source URI unchanged
-    // means the JS upload path proceeds with the raw clip — same behaviour
-    // as before this module existed. iOS users still get the win via
-    // AVAssetExportSession, so this isn't a regression anywhere.
-    Log.w(TAG, "compressVideo: src ${srcW}x${srcH} ${srcBitrate}bps EXCEEDS target ${maxWidth}x${maxHeight} ${targetBitrate}bps but Android MediaCodec transcode is Stage 2 — uploading raw")
+    // Stage 2: real MediaCodec surface-to-surface transcode (VideoTranscoder).
+    // Best-effort — on ANY failure it returns null and we fall back to the
+    // Stage 1 behaviour (upload the raw source), so this can never regress
+    // into a crash or a broken upload. Only attempt it when we can resolve a
+    // filesystem path (file:// or bare path); content:// streams fall back.
+    val audioBitrate = (options["audioBitrate"] as? Number)?.toInt() ?: 128_000
+    val fps = (options["fps"] as? Number)?.toInt() ?: 30
+    val srcPath = resolveFilePath(srcUri)
+    val cacheDir = appContext.reactContext?.cacheDir
+    if (srcPath != null && cacheDir != null) {
+      try {
+        val r = VideoTranscoder.transcode(srcPath, cacheDir, maxWidth, maxHeight, targetBitrate, fps)
+        if (r != null && r.size in 1 until srcSize) {
+          // Only adopt the transcode if it actually got SMALLER — a re-encode
+          // that grew the file (rare, e.g. already-efficient source) isn't worth
+          // the upload; keep the raw clip in that case.
+          Log.i(TAG, "compressVideo: transcoded ${srcW}x${srcH} -> ${r.width}x${r.height}, ${srcSize} -> ${r.size} bytes")
+          return mapOf(
+            "uri" to "file://${r.path}",
+            "size" to r.size,
+            "width" to r.width,
+            "height" to r.height,
+            "durationMs" to durationMs
+          )
+        }
+      } catch (t: Throwable) {
+        Log.w(TAG, "compressVideo: transcode threw, uploading raw: ${t.message}")
+      }
+    }
+
+    // Fallback: return the source URI unchanged — the JS upload path proceeds
+    // with the raw clip (same behaviour as before this module existed).
+    Log.w(TAG, "compressVideo: src ${srcW}x${srcH} ${srcBitrate}bps — transcode unavailable/skipped, uploading raw")
     return mapOf(
       "uri" to srcUri,
       "size" to srcSize,
@@ -224,5 +251,18 @@ class ExpoNativeVideoModule : Module() {
       "height" to srcH,
       "durationMs" to durationMs
     )
+  }
+
+  /** Resolve a file:// or bare path to a filesystem path; null for content:// etc. */
+  private fun resolveFilePath(srcUri: String): String? {
+    return try {
+      val uri = Uri.parse(srcUri)
+      when (uri.scheme) {
+        "file", null -> uri.path ?: srcUri
+        else -> if (srcUri.startsWith("/")) srcUri else null
+      }
+    } catch (_: Throwable) {
+      null
+    }
   }
 }

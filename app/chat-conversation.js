@@ -14312,15 +14312,19 @@ function ChatConversationInner() {
         try {
           const ExpoNativeVideo = require('../modules/expo-native-video').default;
           if (ExpoNativeVideo?.isAvailable?.()) {
-            // 1280x720 @ 1.5 Mbps — chat parity target. The native side
-            // skips the transcode automatically if the source is already
-            // within envelope, so this is cheap on already-compressed clips.
+            // HD toggle (MediaPreview header): HD on → 1080p @3Mbps,
+            // Standard → 720p @1.5Mbps. Both iOS (AVAssetExportSession) and
+            // Android (MediaCodec Stage 2 transcoder) honour the profile; the
+            // native side skips the transcode automatically when the source is
+            // already within envelope, so this is cheap on small/efficient clips.
+            const _qp = (_videoSendPipeline?.getQualityProfile?.(hdMode ? '1080p' : '720p'))
+              || { maxWidth: 1280, maxHeight: 720, bitrate: 1_500_000, audioBitrate: 128_000, fps: 30 };
             const compressed = await ExpoNativeVideo.compressVideo(file.uri, {
-              maxWidth: 1280,
-              maxHeight: 720,
-              bitrate: 1_500_000,
-              audioBitrate: 128_000,
-              fps: 30,
+              maxWidth: _qp.maxWidth,
+              maxHeight: _qp.maxHeight,
+              bitrate: _qp.bitrate,
+              audioBitrate: _qp.audioBitrate,
+              fps: _qp.fps,
             });
             if (compressed?.uri && compressed?.size > 0) {
               file = {
