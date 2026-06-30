@@ -1629,7 +1629,14 @@ function CallScreenInner() {
           // native covered the warm-up gap (incl. cold-start), now the pretty
           // /call.js takes over. No-op on Android / if no native screen up.
           try { ExpoCallKit.dismissNativeCallVC?.(); } catch {}
-          setPeerConnected(true);
+          // [FIX 2026-06-30 "relógio dispara antes de atender"] Only the CALLEE
+          // flips connected on adopt — the callee adopts AFTER tapping Accept,
+          // so the caller is already in the room (real connected). The CALLER
+          // adopts its OWN room the instant it joins the SFU, BEFORE the callee
+          // answers, so flipping here started the timer prematurely (WhatsApp
+          // shows "Chamando…" until the callee answers). The caller now waits
+          // for the WS call_accepted signal (handler below) to flip connected.
+          if (!isCaller) setPeerConnected(true);
           // Flip the global flag so the WS chat_call_end gate
           // (isNativeRoomConnected helper below) knows the native side owns
           // the call lifecycle and JS must NOT race a duplicate hangup.
@@ -3142,9 +3149,14 @@ function CallScreenInner() {
           if (callerTimeoutRef.current) clearTimeout(callerTimeoutRef.current);
           try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
           setPeerRinging(true);
-          // Real Accept tap. If the peer was already in the LK Room (warm
-          // preconnect on the callee side), flip caller UI to connected now.
-          if (peerParticipantConnectedAtRef.current > 0 && !endedRef.current) {
+          // Real Accept tap = the callee answered. Flip caller UI to connected
+          // (start the timer) now. Conditions that count as "answered, media on
+          // the way": the peer is already in the LK Room (warm preconnect/JS
+          // Room path), OR the native Room owns the call (iOS adopted-native
+          // path, where JS never sees LK ParticipantConnected so the ref stays
+          // 0 — without this the caller's timer never started after answer).
+          // [FIX 2026-06-30] Added the __chatyyNativeCallActive branch.
+          if ((peerParticipantConnectedAtRef.current > 0 || globalThis.__chatyyNativeCallActive) && !endedRef.current) {
             setPeerConnected(true);
             peerJoinedAtRef.current = Date.now();
             try { callKeep.reportConnected(callId); } catch {}
