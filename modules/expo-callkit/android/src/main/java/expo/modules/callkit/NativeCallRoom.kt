@@ -191,6 +191,72 @@ object NativeCallRoom {
         }
     }
 
+    /**
+     * [HD voice + DSP 2026-06-29] RoomOptions for a 1:1 call with the SAME audio
+     * quality knobs the GROUP path (GroupCallActivity) already pins, so the most
+     * common call type (1:1) stops riding on whatever the LK SDK default happens
+     * to be (which can silently shift across SDK bumps) and instead gets:
+     *   - Opus PUBLISH: dtx (silence suppression) + red (REDundant audio —
+     *     recovers single/short-burst loss with NO retransmit latency = the fix
+     *     for "voz cortando" no 4G) + 48 kbps HD mono voice.
+     *   - CAPTURE DSP: AEC (echo cancel) + AGC (auto gain) + NS (noise supp.)
+     *     pinned explicitly (the LK 2.x default has them on, but pin protects a
+     *     future SDK from flipping it).
+     * Folds in the E2EE options when present. Reflective on purpose — the
+     * RoomOptions field names + the AudioTrackPublishDefaults ctor have bounced
+     * across SDK revs, and a hard compile dep would break on the next bump.
+     * Every step is try/caught: any failure leaves SDK defaults in place, never
+     * crashes/degrades the call (matches the proven block in CallActivity).
+     */
+    private fun buildCallRoomOptions(e2ee: E2EEOptions?): RoomOptions {
+        val roomOptions = if (e2ee != null) RoomOptions(e2eeOptions = e2ee) else RoomOptions()
+        // Capture-side DSP defaults (AEC + AGC + NS via the ctor defaults).
+        try {
+            val cls = Class.forName("io.livekit.android.room.track.LocalAudioTrackOptions")
+            val audioOpts = cls.getDeclaredConstructor().newInstance()
+            val field = roomOptions.javaClass.declaredFields.firstOrNull {
+                it.name.contains("audio", ignoreCase = true) &&
+                it.name.contains("captureDefault", ignoreCase = true)
+            }
+            if (field != null) {
+                field.isAccessible = true
+                field.set(roomOptions, audioOpts)
+                Log.d(TAG, "buildCallRoomOptions: ${field.name} pinned (aec+agc+ns)")
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "buildCallRoomOptions: audio capture defaults set failed (graceful): ${t.message}")
+        }
+        // Publish-side Opus knobs: AudioTrackPublishDefaults(audioBitrate, dtx, red, preconnect).
+        try {
+            val apdCls = Class.forName("io.livekit.android.room.participant.AudioTrackPublishDefaults")
+            val apdCtor = apdCls.getDeclaredConstructor(
+                java.lang.Integer::class.java,
+                java.lang.Boolean.TYPE,
+                java.lang.Boolean.TYPE,
+                java.lang.Boolean.TYPE
+            )
+            apdCtor.isAccessible = true
+            val audioPublishOpts = apdCtor.newInstance(
+                Integer.valueOf(48_000), // audioBitrate — HD mono voice
+                true,                    // dtx
+                true,                    // red
+                false                    // preconnect (we publish after connect)
+            )
+            val apField = roomOptions.javaClass.declaredFields.firstOrNull {
+                it.name.contains("audio", ignoreCase = true) &&
+                it.name.contains("publish", ignoreCase = true)
+            }
+            if (apField != null) {
+                apField.isAccessible = true
+                apField.set(roomOptions, audioPublishOpts)
+                Log.d(TAG, "buildCallRoomOptions: ${apField.name} pinned (Opus dtx+red+48k)")
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "buildCallRoomOptions: audio publish defaults set failed (graceful): ${t.message}")
+        }
+        return roomOptions
+    }
+
     // ────────────── Public state ──────────────
 
     fun isConnected(): Boolean {
@@ -592,11 +658,11 @@ object NativeCallRoom {
                 // are encrypted. No key ⇒ e2ee == null ⇒ LiveKit.create() with
                 // default options == the exact pre-E2EE path.
                 val e2ee = buildE2EEOptionsFor(callId)
-                val r = if (e2ee != null) {
-                    LiveKit.create(ctx.applicationContext, RoomOptions(e2eeOptions = e2ee))
-                } else {
-                    LiveKit.create(ctx.applicationContext)
-                }
+                // [HD voice + DSP 2026-06-29] 1:1 now creates the Room with the
+                // same audio tuning the group already has (Opus 48k + RED + DTX
+                // + AEC/AGC/NS). buildCallRoomOptions folds e2ee in when present,
+                // so the no-key path == the old default + audio knobs.
+                val r = LiveKit.create(ctx.applicationContext, buildCallRoomOptions(e2ee))
                 // publish() here so events.collect is wired BEFORE we await
                 // connect — otherwise the first Connected event might fire
                 // before our listener attaches and JS would miss it.
