@@ -6884,7 +6884,14 @@ function ChatConversationInner() {
     // Defer so the list lays out before scrollToIndex / load-around runs.
     const tm = setTimeout(() => { safeScrollToMsg({ id: _jumpTargetId }); }, 250);
     return () => clearTimeout(tm);
-  }, [_jumpTargetId, messages.length, safeScrollToMsg]);
+    // [P0 fix 2026-06-30] `messages?.length` (optional chaining) — the body
+    // guards Array.isArray(messages), but this DEP ARRAY runs during render,
+    // BEFORE the effect, and `messages` is undefined on first mount of some
+    // conversations → `messages.length` threw "Cannot read property 'length'
+    // of undefined" in ChatConversationInner, tripping the ErrorBoundary
+    // ("Algo deu errado") on every open. Optional chaining yields undefined
+    // safely; the effect still re-runs when messages loads.
+  }, [_jumpTargetId, messages?.length, safeScrollToMsg]);
 
   const webFilePickFocusRef = useRef(null); // Track web file picker focus handler for cleanup
   const _nativeChatViewRef = useRef(null);
