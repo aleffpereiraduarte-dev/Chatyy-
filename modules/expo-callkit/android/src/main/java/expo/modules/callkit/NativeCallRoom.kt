@@ -303,6 +303,30 @@ object NativeCallRoom {
         if (previous != null && previous !== room) {
             Log.w(TAG, "publish: replacing previous Room (callId=${this.callId} → $callId)")
             listenerJob?.cancel()
+            // [FIX 2026-06-30 DUPLICATE_IDENTITY] CallActivity.bringUpRoom just
+            // created a NEW Room and is about to connect it (attemptConnect runs
+            // AFTER this publish()). If the PREVIOUS Room is the warm preconnect
+            // Room (same identity, still live on the SFU), leaving it connected
+            // makes the SFU see two connections with the same identity → it
+            // evicts one (DUPLICATE_IDENTITY in the livekit log) → audio/state
+            // churn on the callee. Disconnecting the orphan HERE drops the old
+            // identity cleanly BEFORE the new Room dials → no collision.
+            // Timeout-bounded + fire-and-forget (a hung WS teardown can't block
+            // the new call). Guarded `previous !== room` above → we never touch
+            // the Room we're about to publish.
+            try {
+                val st = previous.state
+                if (st == Room.State.CONNECTED || st == Room.State.CONNECTING || st == Room.State.RECONNECTING) {
+                    Log.d(TAG, "publish: disconnecting orphan preconnect Room (state=$st) to avoid DUPLICATE_IDENTITY")
+                    scope.launch(Dispatchers.IO) {
+                        withTimeoutOrNull(5_000L) {
+                            try { previous.disconnect() } catch (_: Throwable) {}
+                        }
+                    }
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "publish: orphan disconnect skipped: ${t.message}")
+            }
         }
         this.room = room
         this.callId = callId
