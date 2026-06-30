@@ -182,6 +182,25 @@ function rnPost(obj) {
   } catch (e) {}
 }
 
+// Catch any uncaught JS failure in the map page — most importantly the case
+// where the maplibre-gl <script> never loaded (CDN/network) so 'maplibregl'
+// is undefined and bootMap() throws. Without this the whole page dies
+// silently and the host only sees a gray rectangle.
+window.onerror = function(message, src, line, col, err){
+  try { rnPost({ type: 'map_error', stage: 'window', message: String(message), line: line }); } catch(_){}
+  return false;
+};
+window.addEventListener('unhandledrejection', function(ev){
+  try { rnPost({ type: 'map_error', stage: 'promise', message: String((ev && ev.reason && ev.reason.message) || ev.reason || 'rejection') }); } catch(_){}
+});
+// If maplibre-gl didn't define its global within 5s, the CDN script failed —
+// report the single most common real-world cause directly.
+setTimeout(function(){
+  if (typeof maplibregl === 'undefined') {
+    try { rnPost({ type: 'map_error', stage: 'no_maplibre', message: 'maplibre-gl CDN script did not load' }); } catch(_){}
+  }
+}, 5000);
+
 function pinHtml(pin) {
   var initial = (pin.name || pin.email || '?').trim().charAt(0).toUpperCase();
   var img = pin.avatar_url
@@ -262,6 +281,33 @@ function bootMap() {
   // Zoom buttons (top-left, like the old zoomControl:true). No compass —
   // snap-map never rotates.
   try { __map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-left'); } catch (e) {}
+
+  // ── Diagnostics: surface WHY the basemap goes gray. The engine can
+  // construct (zoom buttons render) yet never paint tiles — WebGL context
+  // failure, a rejected style/tile fetch, or a sandbox-blocked worker all
+  // present identically as a blank gray canvas with no console we can read
+  // on-device. Forward the real MapLibre error + the load lifecycle back to
+  // the RN host so it lands in logs (and we stop guessing). The host ignores
+  // unknown message types, so this is additive/safe.
+  try {
+    __map.on('error', function(e){
+      var m = (e && e.error && (e.error.message || e.error)) || 'unknown';
+      try { rnPost({ type: 'map_error', stage: 'maplibre', message: String(m) }); } catch(_){}
+    });
+  } catch (e) {}
+  // WKWebView sometimes lays the WebView out AFTER the map is constructed, so
+  // MapLibre grabs a 0×0 drawing buffer and paints nothing. A couple of
+  // deferred resize() calls re-measure the container once layout settles —
+  // zero-risk no-op when the size was already correct.
+  setTimeout(function(){ try { __map.resize(); } catch(_){} }, 350);
+  setTimeout(function(){ try { __map.resize(); } catch(_){} }, 1200);
+  // Watchdog: if the style + first tiles haven't loaded within 7s, the
+  // basemap is almost certainly stuck — report it so we learn the cause.
+  setTimeout(function(){
+    if (__ready) return;
+    var loaded = false; try { loaded = __map.isStyleLoaded(); } catch(_){}
+    try { rnPost({ type: 'map_error', stage: 'load_timeout', styleLoaded: loaded }); } catch(_){}
+  }, 7000);
 
   // Re-create / update every friend avatar marker. Markers we no longer see
   // are removed (privacy: a revoked share drops the pin immediately).
@@ -512,6 +558,7 @@ export default function SnapMapScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [myLocation, setMyLocation] = useState(null);
   const [selected, setSelected] = useState(null); // bottom sheet pin
+  const [mapErr, setMapErr] = useState(null); // basemap diagnostic (gray-map cause)
   const [pendingReqs, setPendingReqs] = useState([]); // incoming requests
   // [WAVE 69 2026-05-21] IP-based fallback location + permission state.
   // ipLocation = result of `geo_locate_ip` (Cloudflare or ipapi.co). Used
@@ -1064,6 +1111,12 @@ export default function SnapMapScreen() {
       } else if (msg.type === 'pin_tap') {
         const found = sharesRef.current.find((s) => (s.email || '').toLowerCase() === (msg.email || '').toLowerCase());
         if (found) setSelected(found);
+      } else if (msg.type === 'map_error') {
+        // The basemap failed to paint (gray map). Surface the real reason —
+        // this is what we read on-device to stop guessing why MapLibre is
+        // blank inside the WKWebView (WebGL ctx, CDN script, tile fetch…).
+        console.warn('[SNAPMAP] map_error', JSON.stringify(msg));
+        setMapErr(msg);
       }
     } catch {}
   }, [pushToMap]);
@@ -1292,6 +1345,26 @@ export default function SnapMapScreen() {
           <View style={{ position: 'absolute', top: 14, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <ActivityIndicator size="small" color="#fff" />
             <Text style={{ color: '#fff', fontSize: 13 }}>{t?.('common.loading') || 'Carregando…'}</Text>
+          </View>
+        )}
+
+        {/* Basemap diagnostic — only shows when MapLibre reported it couldn't
+            paint the tiles (gray map). Surfaces the real reason on-screen so a
+            screenshot tells us the cause, with a one-tap reload of the WebView. */}
+        {mapErr && (
+          <View pointerEvents="box-none" style={{ position: 'absolute', bottom: 90, left: 16, right: 16, alignItems: 'center' }}>
+            <View style={{ backgroundColor: 'rgba(127,29,29,0.94)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10, maxWidth: 340, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' }}>
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Mapa não carregou</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 10, marginTop: 2 }} numberOfLines={2}>
+                {String(mapErr.stage || '')}: {String(mapErr.message || mapErr.styleLoaded === false ? 'style/tiles travaram' : mapErr.message || '')}
+              </Text>
+              <TouchableOpacity
+                onPress={() => { setMapErr(null); mapReadyRef.current = false; try { webRef.current?.reload?.(); } catch(_){} }}
+                style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12 }}
+              >
+                <Text style={{ color: '#7f1d1d', fontSize: 12, fontWeight: '700' }}>Recarregar</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
 
