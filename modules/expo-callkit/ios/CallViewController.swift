@@ -2895,6 +2895,17 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             guard let root = resolvePresentingViewController() else { return }
             if let vc = existingCallVC(from: root) {
                 nativeCallDiag("callvc_dismiss_for_js", vc.callId)
+                // [FIX 2026-06-30 iPhone→Android "conectado fantasma"] Mark the
+                // Room as ceded to JS BEFORE dismissing. Without this, the JS
+                // handoff dismiss → ARC dealloc → deinit (~line 2692) takes the
+                // `!cededToJs` branch and runs r.disconnect() on the LIVE caller
+                // Room → CLIENT_REQUEST_LEAVE ~1s after the caller joined, before
+                // the callee answered (proven in the SFU log). cededToJs was
+                // declared for exactly this handoff but never assigned anywhere;
+                // setting it routes deinit to the keep-alive branch (Room stays
+                // owned by NativeCallRoom.shared / driven by JS). Real hangup
+                // still disconnects via handleHangup, which clears flags first.
+                vc.cededToJs = true
                 vc.dismiss(animated: false, completion: nil)
             }
         }

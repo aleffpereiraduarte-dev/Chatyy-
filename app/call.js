@@ -1582,7 +1582,16 @@ function CallScreenInner() {
         // conectar". Cap the iOS caller at 3 polls (300ms safety) and connect.
         // Callee (post-CallKit answer) + Android caller (native preconnect)
         // keep the full 4s cold-start budget — they really do adopt.
-        const maxPolls = (Platform.OS === 'ios' && isCaller && !wantsAdoptNative) ? 3 : 40;
+        // [FIX 2026-06-30] The iOS caller 3-poll cap was added when the native
+        // outgoing VC was dead-coded (adopt always failed → 40 polls = 4s dead-
+        // wait). WAVE 145 re-enabled presentOutgoingCallVC, so the caller's
+        // native Room now DOES exist and adopt SUCCEEDS — the loop breaks early
+        // (line ~1602 `if (snap) break;`), so there's no dead-wait. Capping at 3
+        // (300ms) made adopt miss the ~1s native connect → JS fell through to a
+        // 2nd Room.connect with the SAME identity (iOS DUPLICATE_IDENTITY) OR
+        // dismissed the native VC mid-connect. Give every path the full 4s
+        // budget; the early-break keeps fast paths fast.
+        const maxPolls = 40;
         for (let i = 0; i < maxPolls; i++) {
           polls = i + 1;
           snap = await ExpoCallKit.adoptNativeRoom?.(callId);
