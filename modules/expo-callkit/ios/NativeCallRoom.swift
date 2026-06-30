@@ -303,29 +303,18 @@ public enum NativeCallRoomEvent {
                 // exists — if it was disposed (e.g. user denied mic, then
                 // re-granted) the next setMicrophone(true) creates a new
                 // track that needs the DSP pin from the start.
-                // [HD voice + DSP 2026-06-29] Bring 1:1 audio to the group's
-                // level. captureOptions: pin AEC + AGC + NS explicitly (LK 2.x
-                // defaults them on; pinning protects against a future SDK flip).
-                // publishOptions: Opus at 48 kbps HD mono voice + red (REDundant
-                // audio — recovers single/short-burst loss with no retransmit
-                // latency = the fix for "voz cortando" on cellular) + dtx
-                // (silence suppression). dtx/red default true in LK Swift 2.x;
-                // pinned here so a default change can't silently regress voice.
-                // Applies when a fresh track is published; ignored on a plain
-                // re-enable where the existing track is reused — same lifecycle
-                // as captureOptions, which was already passed on every toggle.
+                // [HD voice 2026-06-29 — iOS DEFERRED] The 48k+red/dtx publish
+                // options were reverted: the pinned LiveKitClient (~> 2.0) pod's
+                // AudioPublishOptions/AudioEncoding API couldn't be compile-
+                // verified here (no Mac, no Actions log), and an unverified Swift
+                // change blocks the iOS archive. iOS LiveKit already defaults
+                // red+dtx ON for audio publishing, so 1:1 keeps loss-resilient
+                // voice; only the explicit 48k bump is deferred until it can be
+                // compiled on the Mac. Android got the full HD-voice tuning
+                // (compiled local). Back to the known-good call.
                 _ = try await r.localParticipant.setMicrophone(
                     enabled: enabled,
-                    captureOptions: AudioCaptureOptions(
-                        echoCancellation: true,
-                        autoGainControl: true,
-                        noiseSuppression: true
-                    ),
-                    publishOptions: AudioPublishOptions(
-                        encoding: AudioEncoding(maxBitrate: 48_000),
-                        dtx: true,
-                        red: true
-                    )
+                    captureOptions: AudioCaptureOptions()
                 )
             } catch {
                 print("[NativeCallRoom] setMicEnabled(\(enabled)) failed: \(error)")
