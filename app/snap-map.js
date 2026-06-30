@@ -1329,7 +1329,7 @@ export default function SnapMapScreen() {
         ) : (
           <WebView
             ref={webRef}
-            source={{ html: mapHtml, baseUrl: 'https://chatyy.com.br/' }}
+            source={{ html: mapHtml, baseUrl: 'https://boraum.com.br/' }}
             originWhitelist={['*']}
             javaScriptEnabled
             domStorageEnabled

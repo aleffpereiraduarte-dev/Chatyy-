@@ -3822,7 +3822,7 @@ html,body,#map{margin:0;padding:0;width:100%;height:100%;background:#000}
         ) : (
           <WebView
             ref={webRef}
-            source={{ html, baseUrl: 'https://chatyy.com.br/' }}
+            source={{ html, baseUrl: 'https://boraum.com.br/' }}
             style={{ flex: 1, width: '100%', backgroundColor: '#000' }}
             javaScriptEnabled
             domStorageEnabled
