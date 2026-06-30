@@ -330,6 +330,15 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
 
   const isLocked = !!msg?.expired_at || vbHasMe || localViewed;
   const [modalOpen, setModalOpen] = useState(false);
+  // [FIX 2026-06-30 "foto de visualização única tem bug"] Snapshot the media
+  // URL the instant the modal opens. The server's chat_view_once_open handler
+  // (called via onView on image load) now ACTUALLY deletes the file + clears
+  // file_url + stamps expired_at, then broadcasts an 'update'. That update
+  // round-trips back to THIS device and (a) flips isLocked→true (which used to
+  // unmount the Modal mid-view) and (b) blanks msg.file_url (which blanked the
+  // <Image> source). Holding the opened URI in state keeps the already-decoded
+  // image on screen until the user dismisses it — true WhatsApp view-once UX.
+  const [openedUri, setOpenedUri] = useState(null);
 
   // ───────────── SENDER BRANCH ─────────────
   if (isOwn) {
@@ -362,7 +371,11 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
   }
 
   // ───────────── RECEIVER EXPIRED ─────────────
-  if (isLocked) {
+  // Stay out of the expired-pill branch while the fullscreen modal is open, so
+  // a server 'update' (expired_at/viewed_by/file_url cleared, fired the instant
+  // the photo loads) can't unmount the Modal before the user has actually seen
+  // the photo. Locks cleanly once they close it (onClose sets modalOpen=false).
+  if (isLocked && !modalOpen) {
     const accent = safeColors.primary;
     const subtle = safeColors.textSecondary;
     const title = isAudio
@@ -415,7 +428,7 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
   return (
     <>
       <TouchableOpacity
-        onPress={() => { if (!modalOpen) setModalOpen(true); }}
+        onPress={() => { if (!modalOpen) { setOpenedUri(fileUrl); setModalOpen(true); } }}
         activeOpacity={0.7}
         style={s.tapRow}
         accessibilityRole="button"
@@ -438,7 +451,7 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
 
       {modalOpen ? (
         <ViewOnceFullscreen
-          uri={fileUrl}
+          uri={openedUri || fileUrl}
           isVideo={isVideo}
           t={t}
           senderName={msg?.sender_name || ''}
