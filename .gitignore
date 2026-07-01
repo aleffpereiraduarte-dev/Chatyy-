@@ -63,3 +63,6 @@ export/
 # iOS signing credentials (re-hydrated in CI from GitHub Secrets)
 credentials.json
 credentials/
+
+# Kotlin/Gradle build artifacts (compiled locally, never ship)
+modules/*/android/build/
