@@ -64,6 +64,15 @@ export default function LoginScreen() {
   const params = useLocalSearchParams();
   const isAddAccount = params.add_account === '1';
 
+  // When re-logging into an existing account from the account switcher, the
+  // email is passed as ?email=... so the user only has to type the password.
+  useEffect(() => {
+    const pre = typeof params?.email === 'string' ? params.email : (Array.isArray(params?.email) ? params.email[0] : '');
+    if (isAddAccount && pre) {
+      try { setEmail(pre); setStep(2); } catch {}
+    }
+  }, [isAddAccount, params?.email]);
+
   // Deep-link return path: if the user arrived here from a protected URL
   // (?next=/chat-conversation?id=X), bounce back there after login. Guard
   // against open-redirect by only honouring paths that start with '/'.

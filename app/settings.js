@@ -7,6 +7,7 @@ import {
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import AvatarCircle from '../components/AvatarCircle';
+import AccountSwitcherSheet from '../components/AccountSwitcherSheet';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -319,7 +320,8 @@ function SettingsScreenInner() {
   const [e2eBackupPass2, setE2eBackupPass2] = useState('');
   const [e2eBackupBusy, setE2eBackupBusy] = useState(false);
   const [e2eBackupMsg, setE2eBackupMsg] = useState('');
-  const { logout, user } = useAuth();
+  const { logout, user, accounts } = useAuth();
+  const [accountSwitcherOpen, setAccountSwitcherOpen] = useState(false);
   const confirm = useConfirm();
   const router = useRouter();
   const params = useLocalSearchParams();
@@ -1347,6 +1349,32 @@ function SettingsScreenInner() {
             accessibilityRole="button"
           >
             <Text style={[s.changePhotoBtnText, { color: colors.primary }]}>{t('settings.changePhoto')}</Text>
+          </TouchableOpacity>
+
+          {/* Multi-account switcher — browser/WhatsApp-style. Opens a sheet
+              listing every signed-in account (active one focused) + add/remove.
+              The engine already exists (AuthContext.switchAccount); this just
+              surfaces it in the main app, not only the email inbox menu. */}
+          <TouchableOpacity
+            style={[s.switchAccountBtn, { backgroundColor: colors.primary + '12', borderColor: colors.primary + '30' }]}
+            onPress={() => setAccountSwitcherOpen(true)}
+            activeOpacity={0.7}
+            accessibilityRole="button"
+          >
+            <View style={s.switchAccountLeft}>
+              <IconUsers size={18} color={colors.primary} />
+              <Text style={[s.switchAccountText, { color: colors.primary }]}>
+                {t('account.switch') || 'Trocar conta'}
+              </Text>
+            </View>
+            <View style={s.switchAccountRight}>
+              {(accounts?.length || 0) > 1 && (
+                <View style={[s.accountCountBadge, { backgroundColor: colors.primary }]}>
+                  <Text style={s.accountCountText}>{accounts.length}</Text>
+                </View>
+              )}
+              <IconChevronRight size={18} color={colors.primary} />
+            </View>
           </TouchableOpacity>
         </View>
         )}
@@ -5197,6 +5225,9 @@ function SettingsScreenInner() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      {/* Multi-account switcher sheet */}
+      <AccountSwitcherSheet visible={accountSwitcherOpen} onClose={() => setAccountSwitcherOpen(false)} />
     </View>
   );
 }
@@ -5263,6 +5294,21 @@ const s = StyleSheet.create({
   changePhotoBtnText: {
     fontSize: FontSize.md, fontWeight: '700', letterSpacing: -0.1,
   },
+  // Multi-account switcher entry — full-width pill under "Alterar foto".
+  switchAccountBtn: {
+    marginTop: Spacing.sm, borderWidth: 1, borderRadius: 14,
+    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    alignSelf: 'stretch',
+  },
+  switchAccountLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  switchAccountRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  switchAccountText: { fontSize: FontSize.md, fontWeight: '600', letterSpacing: -0.1 },
+  accountCountBadge: {
+    minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  accountCountText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   // Section title — kept big and bold (20px) so users still see it as the
   // card heading, but added a thin uppercase eyebrow style via `sectionEyebrow`
   // below for sections that opt-in. Letter-spacing tightened to -0.4 (was
