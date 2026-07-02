@@ -1097,6 +1097,23 @@ export function apiList(r, ...keys) {
 }
 
 export async function apiCall(action, params = {}, method = 'GET', opts = {}) {
+  // [2026-07-02] Offline gate (web). When the browser reports no connectivity,
+  // DON'T fire the request — it just fails and spams the console with
+  // ERR_INTERNET_DISCONNECTED for every poller (chat_sync, inbox, unread). Like
+  // WhatsApp Web, we pause the network while offline and resume automatically on
+  // reconnect (next poll tick + WS reconnect re-drive it). For a GET with a warm
+  // SWR cache we serve the cached copy so the UI keeps its last state; otherwise
+  // we reject with a clean {offline:true} the callers already treat as a network
+  // failure (background pollers ignore it; the send outbox queues the message).
+  // navigator.onLine is only ever `false` on web; on native it's undefined, so
+  // this is a no-op there (native has its own NetInfo-based handling).
+  if (typeof navigator !== 'undefined' && navigator.onLine === false && !opts.ignoreOffline) {
+    if (method === 'GET') {
+      const cachedOffline = _swrCache.get(_inflightKey(action, params));
+      if (cachedOffline) return cachedOffline.data;
+    }
+    const _offErr = new Error('offline'); _offErr.offline = true; throw _offErr;
+  }
   if (method === 'GET') {
     const key = _inflightKey(action, params);
     // In-flight dedup
