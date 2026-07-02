@@ -60,9 +60,20 @@ let _cachedWebToken = null;
 let _status = 'IDLE';
 export function getWebPushStatus() { return _status; }
 
+// [2026-07-02] KILL-SWITCH for browser web push. It is currently broken by a
+// Firebase JS SDK anomaly: getToken() → fcmregistrations 401 "missing required
+// authentication credential", which dumped a huge error stack in the console on
+// EVERY boot for users who'd granted permission. Server/config/VAPID are all
+// verified correct — it's SDK-internal. Since the feature never succeeds anyway
+// (100% broken), we skip the whole path to keep the console clean. MOBILE push
+// (native FCM) is completely unaffected. Flip to true after fixing the SDK path
+// (DevTools → Network → fcmregistrations → compare x-goog-* headers).
+const WEB_PUSH_ENABLED = false;
+
 export async function registerForWebPush(interactive = false) {
   if (Platform.OS !== 'web') return null;
   if (typeof window === 'undefined') return null;
+  if (!WEB_PUSH_ENABLED) { _status = 'DISABLED'; return null; }
   if (_registered || _registering) return null;
   _registering = true;
   try {
