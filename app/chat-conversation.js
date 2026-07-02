@@ -9468,7 +9468,17 @@ function ChatConversationInner() {
                   } catch {}
                 })();
               }
-            }).catch(() => {});
+            }).catch(() => {
+              // [2026-07-02] Previously an empty catch left the bubble stuck on
+              // "…" FOREVER when the async X3DH decrypt rejected (key mismatch,
+              // stale prekey bundle, device key not yet published). Show a
+              // WhatsApp-style "waiting" state instead, and KEEP _e2eRaw so the
+              // next remount/decrypt pass auto-retries (e.g. after the sender's
+              // device key propagates).
+              setMessages(prev => prev.map(m => (
+                m.id === msgId ? { ...m, content: '🔒 Aguardando esta mensagem', _e2e: true } : m
+              )));
+            });
             // Meanwhile show "Descriptografando..." so the bubble isn't blank
             return { ...msg, content: '...', _e2e: true, _e2eRaw: raw };
           }
@@ -10988,7 +10998,17 @@ function ChatConversationInner() {
         // Advance the pts watermark as soon as a new message arrives. Future
         // chat_sync calls start from here, so we never re-fetch this row.
         if (raw.conv_pts) {
-          try { require('../services/chatSync').observePts(conversationId, Number(raw.conv_pts)); } catch {}
+          // [2026-07-02] Advance only on a CONTIGUOUS pts. A non-contiguous jump
+          // means an earlier event (e.g. a reaction/read that broadcast to zero
+          // subscribers during a blip) was missed — advancing past it would skip
+          // it forever. Leaving the watermark low lets the next chat_sync backfill
+          // the gap; the message itself is already applied (dedup covers re-delivery).
+          try {
+            const _cs = require('../services/chatSync');
+            const _inc = Number(raw.conv_pts);
+            const _loc = _cs.getLastPts(conversationId) || 0;
+            if (_loc <= 0 || _inc <= _loc + 1) _cs.observePts(conversationId, _inc);
+          } catch {}
         }
         if (!_recvIdSet.current) _recvIdSet.current = new Set();
         // Dedup keys: both message id AND client_message_id (when present) —
@@ -11989,7 +12009,14 @@ function ChatConversationInner() {
         // Advance pts watermark so chat_sync doesn't re-fetch this event
         // (the WS handler above does this too; TCP was silently missing it).
         if (msg.conv_pts) {
-          try { require('../services/chatSync').observePts(conversationId, Number(msg.conv_pts)); } catch {}
+          // [2026-07-02] Contiguous-only advance (see WS path above) — skip the
+          // watermark bump on a gap so the next chat_sync backfills missed events.
+          try {
+            const _cs = require('../services/chatSync');
+            const _inc = Number(msg.conv_pts);
+            const _loc = _cs.getLastPts(conversationId) || 0;
+            if (_loc <= 0 || _inc <= _loc + 1) _cs.observePts(conversationId, _inc);
+          } catch {}
         }
         // ★ Decrypt + normalize for native view. Mirror the WS path: process
         // FIRST and only mark the id in the dedup set AFTER a valid msg comes
