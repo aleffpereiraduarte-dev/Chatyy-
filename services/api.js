@@ -1077,6 +1077,21 @@ export function swrInvalidate(action, params) {
 // left lists empty. These helpers tolerate BOTH shapes so the mismatch can
 // never resurface, regardless of which layer a wrapper returns.
 export function apiOk(r) { return !!(r && (r.success ?? r.data?.success)); }
+// [2026-07-02] Guard for the SWR cache: only STORE responses that are not a
+// definitive failure. A transient network timeout/blip returns a body like
+// { success:false, message:'Connection error'|'Tempo limite excedido'|... }
+// with status 0. If we cached that into _swrCache it would poison the hot list
+// (chat_list, feed_list, get_folders, get_contacts, status_list,
+// chat_pinned_messages) for the whole TTL (60s). We only ever want SUCCESSFUL
+// bodies to become "fresh" cache. We refuse to store when the body is missing
+// or explicitly reports success:false at either nesting level; anything else
+// (a genuine payload that simply omits the field) is still cacheable.
+function _swrCacheable(r) {
+  if (!r) return false;
+  if (r.success === false) return false;
+  if (r.data && typeof r.data === 'object' && r.data.success === false) return false;
+  return true;
+}
 export function apiMsg(r) { return (r && (r.message ?? r.data?.message)) || ''; }
 export function apiPayload(r) {
   if (!r) return null;
@@ -1130,7 +1145,13 @@ export async function apiCall(action, params = {}, method = 'GET', opts = {}) {
         if (!cached.revalidating) {
           cached.revalidating = true;
           _apiCallImpl(action, params, method).then((r) => {
-            _swrCache.set(key, { data: r, at: Date.now(), revalidating: false });
+            // Only overwrite the warm cache with a SUCCESSFUL revalidation.
+            // A failed/network-error body must not clobber the good copy.
+            if (_swrCacheable(r)) {
+              _swrCache.set(key, { data: r, at: Date.now(), revalidating: false });
+            } else {
+              cached.revalidating = false;
+            }
           }).catch(() => { cached.revalidating = false; });
         }
         return cached.data;
@@ -1140,7 +1161,7 @@ export async function apiCall(action, params = {}, method = 'GET', opts = {}) {
     const promise = (async () => {
       try {
         const r = await _apiCallImpl(action, params, method);
-        if (swrEnabled) {
+        if (swrEnabled && _swrCacheable(r)) {
           _swrCache.set(key, { data: r, at: Date.now(), revalidating: false });
           if (_swrCache.size > _SWR_MAX) {
             // Evict oldest half when the map grows past the cap.

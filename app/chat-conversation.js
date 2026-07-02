@@ -7308,6 +7308,13 @@ function ChatConversationInner() {
 
   // Chatyy settings (font size, read receipts, etc.)
   const [chatyySettings, setChatyySettings] = useState({ font_size: 'medium', read_receipts: true });
+  // [2026-07-02] Keep a live ref of the current settings. onViewableItemsChanged
+  // is built once via useRef(fn).current, so it closes over the INITIAL
+  // chatyySettings (read_receipts:true). Reading through settingsRef.current
+  // instead lets a mid-session toggle (e.g. disabling read receipts) actually
+  // take effect without recreating the viewability handler.
+  const settingsRef = useRef(chatyySettings);
+  settingsRef.current = chatyySettings;
   useEffect(() => {
     api.chatGetSettings().then(r => {
       if (r.success && r.data) setChatyySettings(r.data);
@@ -8700,10 +8707,41 @@ function ChatConversationInner() {
   // MemoizedMessageRow's comparator filters out rows that don't render the
   // countdown.
   const [vanishTickNow, setVanishTickNow] = useState(() => Date.now());
+  // [2026-07-02] Gate the 30s ticker. It used to run in EVERY open conversation
+  // forever, forcing a full-list re-render twice a minute even when nothing on
+  // screen is counting down. We only need it when something time-sensitive is
+  // present: disappearing/vanish mode is on, OR a message carries a vanish_at
+  // countdown badge, OR there is an active live-location share (mine or a
+  // peer's) — all three read vanishTickNow to repaint. Recomputed only when the
+  // message list / mode flags change (NOT on the tick itself), so it's cheap.
+  const needsVanishTick = useMemo(() => {
+    if (disappearingTimer > 0 || vanishMode || liveLocActive) return true;
+    const list = Array.isArray(messages) ? messages : null;
+    if (!list) return false;
+    const nowSec = Date.now() / 1000;
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      if (!m) continue;
+      if (m.vanish_at) return true;
+      if (m.type === 'location') {
+        // Live-location message: live_until may sit on the row or inside a
+        // JSON `content` blob. Any still-active share keeps the ticker alive.
+        let lu = m.live_until || null;
+        if (!lu && typeof m.content === 'string' && m.content.includes('live_until')) {
+          try { lu = JSON.parse(m.content).live_until || null; } catch {}
+        } else if (!lu && m.content && typeof m.content === 'object') {
+          lu = m.content.live_until || null;
+        }
+        if (lu && Number(lu) > nowSec) return true;
+      }
+    }
+    return false;
+  }, [disappearingTimer, vanishMode, liveLocActive, messages]);
   useEffect(() => {
+    if (!needsVanishTick) return undefined;
     const id = setInterval(() => setVanishTickNow(Date.now()), 30000);
     return () => clearInterval(id);
-  }, []);
+  }, [needsVanishTick]);
 
   // Message effects
   const [activeEffect, setActiveEffect] = useState(null); // 'confetti' | 'hearts' | 'fire' | null
@@ -18308,7 +18346,7 @@ function ChatConversationInner() {
     // inverted FlatList aren't guaranteed to be in any specific order, so
     // tail can be the OLDEST visible message and the read marker drifts
     // backwards (server thinks the user "unread" newer messages).
-    if (chatyySettings.read_receipts !== false) {
+    if (settingsRef.current.read_receipts !== false) {
       let maxVisibleId = 0;
       for (const v of viewableItems) {
         const m = v?.item;

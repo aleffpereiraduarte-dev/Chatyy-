@@ -76,7 +76,15 @@ async function _runSync(convIds) {
     }
     try {
       const r = await api.apiCall('chat_sync', body, 'POST');
-      if (!r?.success) { lastErr = r?.error || 'no_success'; continue; }
+      if (!r?.success) {
+        // [2026-07-02] A returned body (even success:false) is a DEFINITIVE
+        // server answer — bad conv id, PG error, etc. Retrying it 3× with
+        // 500ms + 1500ms backoff just stalls the foreground ~2s for a result
+        // that will not change. Only NETWORK/transport errors (which throw
+        // below into the catch) deserve a retry. So break out immediately here.
+        lastErr = r?.error || 'no_success';
+        break;
+      }
       const out = Array.isArray(r.data?.conversations) ? r.data.conversations : [];
       for (const c of out) {
         if (c?.denied) { gapStreak.delete(c.id); continue; }

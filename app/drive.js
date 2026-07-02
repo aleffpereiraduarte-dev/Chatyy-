@@ -29,6 +29,7 @@ import {
 } from '../components/Icons';
 import FileViewer from '../components/FileViewer';
 import BrandFab from '../components/BrandFab';
+import CachedImage from '../components/CachedImage';
 
 // ============================================================
 // Web-only drag/drop wrapper — RN Web's View strips drag props,
@@ -1477,7 +1478,7 @@ function DriveScreenInner() {
         delayLongPress={400}
         activeOpacity={0.8}
       >
-        <Image source={{ uri: thumbUrl }} style={styles.photoThumb} resizeMode="cover" />
+        <CachedImage source={{ uri: thumbUrl }} style={styles.photoThumb} resizeMode="cover" />
         {isVid && (
           <View style={styles.videoOverlay}>
             <View style={styles.playIconBg}>
@@ -1508,22 +1509,49 @@ function DriveScreenInner() {
     }
 
     const groups = groupByDate(media, t);
+    // [2026-07-02] Virtualize the photo library. The old code mapped every
+    // photo (potentially thousands) into a plain ScrollView, mounting every
+    // cell at once — huge memory + jank on the Photos tab. We flatten the
+    // date-grouped photos into a row list (each entry is a group HEADER or a
+    // ROW of up to `photoColumns` photos) and feed it to a FlatList so only
+    // the rows near the viewport are mounted. Layout is identical: each row
+    // reuses the same photoGrid + photoItem styles.
+    const photoRows = [];
+    for (const group of groups) {
+      photoRows.push({ type: 'header', key: `h:${group.title}`, title: group.title });
+      const items = group.data || [];
+      for (let i = 0; i < items.length; i += photoColumns) {
+        const rowItems = items.slice(i, i + photoColumns);
+        photoRows.push({ type: 'row', key: `r:${group.title}:${rowItems[0]?.id}`, items: rowItems });
+      }
+    }
+    const renderPhotoRow = ({ item }) => {
+      if (item.type === 'header') {
+        return <Text style={[styles.photoGroupTitle, { color: colors.text }]}>{item.title}</Text>;
+      }
+      return (
+        <View style={[styles.photoGrid, { marginBottom: 2 }]}>
+          {item.items.map(ph => renderPhotoItem(ph))}
+        </View>
+      );
+    };
     return (
-      <ScrollView contentContainerStyle={styles.photosContainer}>
-        {/* Backup button */}
-        <TouchableOpacity style={[styles.backupBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#F5F3FF', borderColor: colors.primary + '30' }]} onPress={handleUploadPhotos}>
-          <IconCamera size={18} color={colors.primary} />
-          <Text style={[styles.backupBtnText, { color: colors.primary }]}>{t('drive.backupPhotos')}</Text>
-        </TouchableOpacity>
-        {groups.map((group, gi) => (
-          <View key={gi}>
-            <Text style={[styles.photoGroupTitle, { color: colors.text }]}>{group.title}</Text>
-            <View style={styles.photoGrid}>
-              {group.data.map(item => renderPhotoItem(item))}
-            </View>
-          </View>
-        ))}
-      </ScrollView>
+      <FlatList
+        data={photoRows}
+        keyExtractor={(it) => it.key}
+        renderItem={renderPhotoRow}
+        contentContainerStyle={styles.photosContainer}
+        initialNumToRender={8}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews
+        ListHeaderComponent={
+          <TouchableOpacity style={[styles.backupBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#F5F3FF', borderColor: colors.primary + '30' }]} onPress={handleUploadPhotos}>
+            <IconCamera size={18} color={colors.primary} />
+            <Text style={[styles.backupBtnText, { color: colors.primary }]}>{t('drive.backupPhotos')}</Text>
+          </TouchableOpacity>
+        }
+      />
     );
   };
 
