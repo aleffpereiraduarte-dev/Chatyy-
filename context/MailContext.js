@@ -357,6 +357,22 @@ export function MailProvider({ children }) {
 
   const openEmail = useCallback(async (uid, folder) => {
     setLoadingMessage(true);
+    // [2026-07-02 email speed] Paint from the LOCAL cache FIRST so re-opening an
+    // already-seen email is instant (Gmail/Superhuman pattern), then revalidate
+    // from the network in the background. Email bodies are immutable once
+    // delivered, so the cached copy is correct; the network result only refreshes
+    // mutable bits (flags/labels) and self-corrects the view when it lands.
+    // Guarded: a cache miss (or a body-less stub) falls straight through to the
+    // network path below with the spinner still showing.
+    let paintedFromCache = false;
+    try {
+      const cached = await getMessageFromCache(uid);
+      if (cached && (cached.body_html || cached.body_text || cached.body)) {
+        setSelectedEmail({ ...cached, seen: true, read: true });
+        paintedFromCache = true;
+        setLoadingMessage(false); // we already have something real on screen
+      }
+    } catch {}
     try {
       const r = await api.getMessage(uid, folder || currentFolder);
       if (r.success) {

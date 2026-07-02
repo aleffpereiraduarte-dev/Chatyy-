@@ -10920,7 +10920,17 @@ function ChatConversationInner() {
             if (Array.isArray(c.events) && c.events.length > 0) {
               applyEvents(c.events, null, setMessages, c.messages || []);
             }
-            if (Number(c.latest_pts) > 0) observePts(conversationId, Number(c.latest_pts));
+            // [2026-07-02 watermark P1] has_more ⇒ the server truncated the page;
+            // jumping the watermark to latest_pts would permanently skip every
+            // event between the last returned event and latest_pts (missed
+            // messages/reactions/reads after a long offline window). Advance only
+            // to the max pts actually received — same guard as the reopen path.
+            if (Number(c.latest_pts) > 0) {
+              const evMax = (c.has_more && Array.isArray(c.events) && c.events.length)
+                ? c.events.reduce((m, e) => Math.max(m, Number(e.pts) || 0), 0)
+                : 0;
+              observePts(conversationId, (c.has_more && evMax > 0) ? evMax : Number(c.latest_pts));
+            }
             if (c.needsFullReload) loadMessages(false);
           } catch {}
         })();
@@ -11846,11 +11856,19 @@ function ChatConversationInner() {
                 const c = results?.[0];
                 if (c && Array.isArray(c.events) && c.events.length > 0) {
                   applyEvents(c.events, null, setMessages, c.messages || []);
-                  if (c.latest_pts) observePts(conversationId, c.latest_pts);
+                  // [2026-07-02 watermark P1] has_more ⇒ the page was truncated;
+                  // advancing to latest_pts would skip the un-returned tail
+                  // forever. Advance only to the max pts actually received, and
+                  // do a full refetch (below) since delta can't cover the gap.
+                  const evMax = c.has_more
+                    ? c.events.reduce((m, e) => Math.max(m, Number(e.pts) || 0), 0)
+                    : 0;
+                  if (c.latest_pts) observePts(conversationId, (c.has_more && evMax > 0) ? evMax : c.latest_pts);
                   // Reactions aren't carried in events yet — if any reaction
                   // event fired while we were offline, pull the affected
-                  // messages fresh once so counts come in right.
-                  if (c.events.some(e => e.type === 'reaction')) {
+                  // messages fresh once so counts come in right. Also refetch
+                  // whenever has_more (gap too big for delta to catch up).
+                  if (c.has_more || c.events.some(e => e.type === 'reaction')) {
                     try { loadMessages(false); } catch {}
                   }
                 } else if (c && c.has_more) {
