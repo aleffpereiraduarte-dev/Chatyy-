@@ -6874,24 +6874,15 @@ function ChatConversationInner() {
   // and no highlight (WhatsApp lands you on the highlighted hit). safeScrollToMsg
   // loads-around if the target isn't in the first window and flashes the same
   // 1.5s highlight used for reply-jump + in-chat search. Fires once.
+  // _jumpTargetId is a plain params read (safe anywhere); the useEffect that
+  // consumes it was MOVED to just after the `messages` useState declaration
+  // (~line 7700) — see the [P0 fix 2026-07-01] note there. Reason: the dep
+  // array `[..., messages.length, ...]` runs during render; with the effect
+  // up here (before `const [messages]`), reading `messages` hit the TDZ. On
+  // web (Metro keeps `const`) that surfaced as a hard "Cannot access 'X'
+  // before initialization" crash on EVERY chat open, tripping ErrorBoundary.
   const _jumpTargetId = params?.scrollToMessageId ?? params?.highlightMessageId ?? null;
   const _didJumpRef = useRef(false);
-  useEffect(() => {
-    if (_didJumpRef.current) return;
-    if (_jumpTargetId == null || _jumpTargetId === '') return;
-    if (!Array.isArray(messages) || messages.length === 0) return;
-    _didJumpRef.current = true;
-    // Defer so the list lays out before scrollToIndex / load-around runs.
-    const tm = setTimeout(() => { safeScrollToMsg({ id: _jumpTargetId }); }, 250);
-    return () => clearTimeout(tm);
-    // [P0 fix 2026-06-30] `messages?.length` (optional chaining) — the body
-    // guards Array.isArray(messages), but this DEP ARRAY runs during render,
-    // BEFORE the effect, and `messages` is undefined on first mount of some
-    // conversations → `messages.length` threw "Cannot read property 'length'
-    // of undefined" in ChatConversationInner, tripping the ErrorBoundary
-    // ("Algo deu errado") on every open. Optional chaining yields undefined
-    // safely; the effect still re-runs when messages loads.
-  }, [_jumpTargetId, messages?.length, safeScrollToMsg]);
 
   const webFilePickFocusRef = useRef(null); // Track web file picker focus handler for cleanup
   const _nativeChatViewRef = useRef(null);
@@ -7698,6 +7689,26 @@ function ChatConversationInner() {
   });
   // Keep the sync ref in sync with messages state (runs every render).
   _messagesCountRef.current = messages?.length || 0;
+
+  // [P0 fix 2026-07-01] Reply-jump / in-chat-search scroll effect.
+  // MOVED here (was ~line 6879, ABOVE the `const [messages]` useState) because
+  // its dep array `[..., messages.length, ...]` is evaluated during render:
+  // reading `messages` before its `const` was initialized was a TDZ. On mobile
+  // (Metro hoists const→var) it read `undefined` → "length of undefined"; on
+  // web (const kept) it threw "Cannot access 'X' before initialization" and
+  // crashed EVERY chat open via ErrorBoundary (QA 2026-07-01, saved-messages /
+  // chat-new / chat-conversation). Declaring the effect AFTER `messages` fixes
+  // both and re-enables the jump firing when messages loads. Hook order stays
+  // stable (unconditional effect at a fixed new position).
+  useEffect(() => {
+    if (_didJumpRef.current) return;
+    if (_jumpTargetId == null || _jumpTargetId === '') return;
+    if (!Array.isArray(messages) || messages.length === 0) return;
+    _didJumpRef.current = true;
+    // Defer so the list lays out before scrollToIndex / load-around runs.
+    const tm = setTimeout(() => { safeScrollToMsg({ id: _jumpTargetId }); }, 250);
+    return () => clearTimeout(tm);
+  }, [_jumpTargetId, messages?.length, safeScrollToMsg]);
 
   // [ongoing group call banner 2026-06-12] Cheap key that bumps whenever a
   // call_card message is present near either end of the list (new call
