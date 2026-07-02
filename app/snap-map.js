@@ -301,13 +301,36 @@ function bootMap() {
   // zero-risk no-op when the size was already correct.
   setTimeout(function(){ try { __map.resize(); } catch(_){} }, 350);
   setTimeout(function(){ try { __map.resize(); } catch(_){} }, 1200);
-  // Watchdog: if the style + first tiles haven't loaded within 7s, the
-  // basemap is almost certainly stuck — report it so we learn the cause.
-  setTimeout(function(){
+  // Watchdog + AUTO-RETRY. On a flaky/slow connection the style + first tiles
+  // can time out, leaving a gray basemap forever. Instead of giving up we
+  // re-fetch the style a few times (each attempt gets more time) before
+  // surfacing the error — and we retry the instant the network comes back.
+  // The map now self-heals like WhatsApp/Snapchat maps: the error chip only
+  // shows after several failed attempts, and clears itself once tiles paint.
+  var __mapTries = 0;
+  function __mapWatchdog(){
     if (__ready) return;
+    __mapTries++;
+    if (__mapTries <= 3) {
+      try { rnPost({ type: 'map_retry', attempt: __mapTries }); } catch(_){}
+      try { __map.setStyle(STYLE_URL); } catch(_){}
+      setTimeout(function(){ try { __map.resize(); } catch(_){} }, 300);
+      setTimeout(__mapWatchdog, 6000);
+      return;
+    }
     var loaded = false; try { loaded = __map.isStyleLoaded(); } catch(_){}
     try { rnPost({ type: 'map_error', stage: 'load_timeout', styleLoaded: loaded }); } catch(_){}
-  }, 7000);
+  }
+  setTimeout(__mapWatchdog, 7000);
+  // Network came back → re-fetch immediately instead of waiting for the tick.
+  try {
+    window.addEventListener('online', function(){
+      if (__ready) return;
+      try { __map.setStyle(STYLE_URL); } catch(_){}
+      setTimeout(function(){ try { __map.resize(); } catch(_){} }, 300);
+      setTimeout(__mapWatchdog, 5000);
+    });
+  } catch(_){}
 
   // Re-create / update every friend avatar marker. Markers we no longer see
   // are removed (privacy: a revoked share drops the pin immediately).
@@ -1100,6 +1123,7 @@ export default function SnapMapScreen() {
       const msg = typeof raw === 'string' ? JSON.parse(raw) : raw;
       if (msg.type === 'map_ready') {
         mapReadyRef.current = true;
+        setMapErr(null); // map recovered (incl. after an auto-retry) → drop the error chip
         if (pendingPinsRef.current) {
           pushToMap({ type: 'pins', pins: pendingPinsRef.current });
           pendingPinsRef.current = null;
@@ -1353,16 +1377,16 @@ export default function SnapMapScreen() {
             screenshot tells us the cause, with a one-tap reload of the WebView. */}
         {mapErr && (
           <View pointerEvents="box-none" style={{ position: 'absolute', bottom: 90, left: 16, right: 16, alignItems: 'center' }}>
-            <View style={{ backgroundColor: 'rgba(127,29,29,0.94)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10, maxWidth: 340, borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)' }}>
-              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Mapa não carregou</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 10, marginTop: 2 }} numberOfLines={2}>
-                {String(mapErr.stage || '')}: {String(mapErr.message || mapErr.styleLoaded === false ? 'style/tiles travaram' : mapErr.message || '')}
+            <View style={{ backgroundColor: 'rgba(28,28,33,0.95)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10, maxWidth: 340, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' }}>
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Sem conexão com o mapa</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 10, marginTop: 2 }} numberOfLines={2}>
+                Verifique sua internet — o mapa recarrega sozinho quando você voltar online.
               </Text>
               <TouchableOpacity
                 onPress={() => { setMapErr(null); mapReadyRef.current = false; try { webRef.current?.reload?.(); } catch(_){} }}
-                style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: '#fff', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12 }}
+                style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: '#7c3aed', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 12 }}
               >
-                <Text style={{ color: '#7f1d1d', fontSize: 12, fontWeight: '700' }}>Recarregar</Text>
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Tentar de novo</Text>
               </TouchableOpacity>
             </View>
           </View>
