@@ -19254,7 +19254,9 @@ function ChatConversationInner() {
           if (_w > 0 && _h > 0) {
             const ratio = _h / _w;
             imgBoxW = 280;
-            imgBoxH = Math.round(Math.max(140, Math.min(380, 280 * ratio)));
+            // [2026-07-03] Cap portrait height so an un-loaded photo (weak network,
+            // no thumb yet) never becomes a screen-filling box — WhatsApp caps it too.
+            imgBoxH = Math.round(Math.max(140, Math.min(330, 280 * ratio)));
           }
           // [WAVE 34 2026-05-20] Per-msg error flag — see mediaErrors state up
           // top. When onError fires AND there's no local cache to fall back
@@ -19451,7 +19453,7 @@ function ChatConversationInner() {
                 const u = String(msg.file_url || msg.id || '');
                 let h = 0;
                 for (let i = 0; i < u.length; i++) h = (h * 31 + u.charCodeAt(i)) & 0xffffffff;
-                return `hsl(${Math.abs(h) % 360}, 6%, 86%)`;
+                return `hsl(${Math.abs(h) % 360}, 7%, 80%)`;
               })() }}>
                 {/* [WAVE 45 2026-05-21] Photo thumb sumindo Android — root cause.
                     `ExpoImage` was aliased to react-native's <Image> which silently
@@ -19475,7 +19477,7 @@ function ChatConversationInner() {
                   const u = String(msg.file_url || msg.id || '');
                   let h = 0;
                   for (let i = 0; i < u.length; i++) h = (h * 31 + u.charCodeAt(i)) & 0xffffffff;
-                  return `hsl(${Math.abs(h) % 360}, 5%, 88%)`;
+                  return `hsl(${Math.abs(h) % 360}, 7%, 80%)`;
                 })(), alignItems: 'center', justifyContent: 'center' }}>
                   {!imgUploading && !imgFailed && !msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && (
                     <>
