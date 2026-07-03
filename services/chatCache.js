@@ -883,7 +883,7 @@ export function prefetchConversation(conversationId, opts = {}) {
     try {
       const api = require('./api');
       const lastId = await getLastSyncId(conversationId).catch(() => 0);
-      const limit = Math.max(1, Math.min(opts.limit ?? 30, 100));
+      const limit = Math.max(1, Math.min(opts.limit ?? 50, 100)); // [2026-07-03] 30→50 to match the 50-row paint window (getCachedMessagesSync) — avoids an extra fetch on open
       // Delta-only when we already have cache; full page when first open.
       const r = await api.chatMessages(conversationId, limit, null, lastId || 0);
       const msgs = r?.data?.messages || [];

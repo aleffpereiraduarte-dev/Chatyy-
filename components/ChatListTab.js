@@ -839,7 +839,12 @@ const ConversationRow = React.memo(function ConversationRow({
           }}
           delayLongPress={isWeb ? 300 : 500}
           activeOpacity={0.6}
-          delayPressIn={60}
+          // [2026-07-03 telegram-speed] 60→20ms: the touch-down prefetch fires
+          // from onPressIn, and 60ms delay ate into the finger-down→open window
+          // it was designed to exploit. 20ms still absorbs scroll jitter (no
+          // pressed-state flicker) but starts warming the conversation ~40ms
+          // sooner → snappier open.
+          delayPressIn={20}
           {...(isWeb ? {
             onMouseEnter: () => setHovered(true),
             onMouseLeave: () => setHovered(false),

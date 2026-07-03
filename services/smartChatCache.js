@@ -248,7 +248,27 @@ export function getCachedMessagesSync(convId, limit = 50) {
   if (_isLocked()) return [];
   if (convId == null) return [];
   // Accept both numeric and string ids
-  const arr = _msgs.get(convId) || _msgs.get(String(convId)) || _msgs.get(Number(convId)) || [];
+  let arr = _msgs.get(convId) || _msgs.get(String(convId)) || _msgs.get(Number(convId)) || [];
+  // [2026-07-03 telegram-speed] Cold-start fallback. The parsed in-memory Map
+  // (_msgs) is only warm AFTER _doHydrate() finishes. If the user taps a
+  // conversation in the first few hundred ms after launch, _msgs is still cold
+  // → the screen fell back to the ASYNC SQLite read and flashed a skeleton
+  // ("demora abrir"). But the raw JSON is ALREADY available synchronously via
+  // MMKV's in-mem layer — read+parse it on demand and warm _msgs so the thread
+  // paints from frame 1. Cheap (one getString + parse), only when the Map is
+  // cold for this conv.
+  if (arr.length === 0) {
+    try {
+      const raw = getString(MSG_KEY_PREFIX + String(convId));
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length) {
+          _msgs.set(convId, parsed);
+          arr = parsed;
+        }
+      }
+    } catch {}
+  }
   _index.lru[convId] = Date.now();
   if (!limit || arr.length <= limit) return arr.slice();
   return arr.slice(-limit);
