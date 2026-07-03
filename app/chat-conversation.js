@@ -19919,6 +19919,19 @@ function ChatConversationInner() {
             } catch {}
           }
           const _vidQuality = _vidHeight >= 2160 ? '4K' : _vidHeight >= 1080 ? 'HD' : '';
+          // [2026-07-03] Size the video bubble to the REAL aspect ratio (from
+          // image_variants.full_w/full_h or msg.width/height) instead of a
+          // fixed 280×200 landscape box. A portrait 9:16 clip was being
+          // center-cropped to a thin horizontal slice — that's the "thumber
+          // horrível". Now it keeps its shape (clamped to sane bounds).
+          let _vbW = 280, _vbH = 200;
+          if (_vidWidth > 0 && _vidHeight > 0) {
+            const _ar = _vidWidth / _vidHeight;
+            if (_ar >= 1) { _vbW = 280; _vbH = Math.round(280 / _ar); }
+            else { _vbH = 340; _vbW = Math.round(340 * _ar); }
+            _vbW = Math.max(160, Math.min(_vbW, 280));
+            _vbH = Math.max(150, Math.min(_vbH, 380));
+          }
           // WhatsApp-style: mostra download icon em vez de play button quando
           // o vídeo ainda não foi baixado localmente. Assim user sabe que
           // precisa tappear pra carregar (não é só lento — é download).
@@ -20036,7 +20049,7 @@ function ChatConversationInner() {
                   )}
                 </View>
               ) : (
-                <View style={{ width: 280, height: 200, backgroundColor: '#1f2937', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+                <View style={{ width: _vbW, height: _vbH, backgroundColor: '#1f2937', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                   {/* Gradient placeholder visible whenever the real thumb
                       isn't loaded yet (or doesn't exist). Was plain black
                       → user reported "thumb do video tá preto". Now we
@@ -20045,7 +20058,7 @@ function ChatConversationInner() {
                       look intentional instead of broken. The Image
                       layers on top with onError to hide cleanly if the
                       remote .thumb.jpg 404s. */}
-                  <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: 280, height: 200, backgroundColor: '#111827' }} />
+                  <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: _vbW, height: _vbH, backgroundColor: '#111827' }} />
                   <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 100, backgroundColor: 'rgba(55,65,81,0.5)' }} />
                   <View pointerEvents="none" style={{ position: 'absolute', opacity: 0.18 }}>
                     <IconVideo size={64} color="#9ca3af" />
@@ -20059,9 +20072,9 @@ function ChatConversationInner() {
                   {msg.thumb_b64 && !vidUploading && (
                     <Image
                       source={{ uri: `data:image/jpeg;base64,${msg.thumb_b64}` }}
-                      style={{ position: 'absolute', top: 0, left: 0, width: 280, height: 200, opacity: 0.9 }}
+                      style={{ position: 'absolute', top: 0, left: 0, width: _vbW, height: _vbH, opacity: 0.9 }}
                       resizeMode="cover"
-                      blurRadius={15}
+                      blurRadius={8}
                     />
                   )}
                   {msg.file_url && !vidUploading && (() => {
@@ -20084,7 +20097,7 @@ function ChatConversationInner() {
                         videoThumb={msg.video_thumb}
                         imageVariantsThumb={_ivThumb}
                         thumbB64={msg.thumb_b64}
-                        style={{ position: 'absolute', top: 0, left: 0, width: 280, height: 200 }}
+                        style={{ position: 'absolute', top: 0, left: 0, width: _vbW, height: _vbH }}
                       />
                     );
                   })()}

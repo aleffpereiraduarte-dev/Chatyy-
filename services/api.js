@@ -2826,12 +2826,23 @@ function _avatarDailyBust() {
 // fresh fetch. Cost is exactly 1 cache miss per friend per UTC day. Backend
 // already serves long max-age=86400 so the next 23h59m are still cached on
 // disk by expo-image.
+// [2026-07-03 iOS avatar] Append `&viewer=<currentUser>` so native <Image>
+// requests (expo-image sends NO cookie and NO Bearer) still identify the
+// viewer to the backend privacy gate. On WEB the same-origin <img> carries the
+// session cookie so the backend already knows the viewer — that's why the photo
+// showed on web but fell back to the initials PNG on iOS whenever the target's
+// profile-photo visibility was "meus contatos"/"ninguém". The backend documents
+// `viewer=` as the mechanism for <img> tags exactly for this reason.
+function _avatarViewerPart() {
+  const me = savedCredentials?.email;
+  return me ? `&viewer=${encodeURIComponent(me)}` : '';
+}
 export function getAvatarUrl(email) {
   const e = email || savedCredentials?.email || '';
   const v = _avatarV(e);
   const d = _avatarDailyBust();
   const vPart = v ? `&v=${v}` : '';
-  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(e)}${vPart}&d=${d}`;
+  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(e)}${vPart}&d=${d}${_avatarViewerPart()}`;
 }
 
 export function getAvatarUrlForEmail(email) {
@@ -2839,7 +2850,7 @@ export function getAvatarUrlForEmail(email) {
   const v = _avatarV(email);
   const d = _avatarDailyBust();
   const vPart = v ? `&v=${v}` : '';
-  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(email)}${vPart}&d=${d}`;
+  return `${API_URL}?action=get_avatar&email=${encodeURIComponent(email)}${vPart}&d=${d}${_avatarViewerPart()}`;
 }
 
 /**
