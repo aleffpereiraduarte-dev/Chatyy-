@@ -51,7 +51,7 @@ const _saveFeedToMMKV = (posts) => {
 const _feedFingerprint = (arr) => {
   if (!Array.isArray(arr)) return '';
   return arr.map(p =>
-    `${p.id}:${p.likes_count ?? p.like_count ?? 0}:${p.comments_count ?? p.comment_count ?? 0}:${p.updated_at || p.created_at || ''}`
+    `${p.id}:${p.likes_count ?? p.like_count ?? 0}:${p.comments_count ?? p.comment_count ?? 0}:${p.updated_at || p.created_at || ''}:${p.author_name || ''}`
   ).join('|');
 };
 
@@ -71,6 +71,11 @@ const FeedPostRow = React.memo(function FeedPostRow(props) {
   if ((a.liked_by_me || false) !== (b.liked_by_me || false)) return false;
   if ((a.bookmarked_by_me || false) !== (b.bookmarked_by_me || false)) return false;
   if ((a.caption || '') !== (b.caption || '')) return false;
+  // [2026-07-03] Repaint when the resolved author changes — the backend now
+  // live-resolves author_name from accounts (renames), so a stale-name client
+  // must re-render once the corrected name arrives.
+  if ((a.author_name || '') !== (b.author_name || '')) return false;
+  if ((a.author_email || '') !== (b.author_email || '')) return false;
   // Ignore function reference changes (onOpenComments, onDeletePost, etc.)
   return true;
 });
