@@ -81,13 +81,27 @@ export default function LinkedDevicesScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try {
-      const r = await api.apiCall('sessions_list');
-      if (r?.success && r.data) {
-        const list = Array.isArray(r.data) ? r.data : (r.data.sessions || []);
-        setSessions(list);
+    // sessions_list requires auth; on a cold mount the bearer token can lag a
+    // tick behind the screen (QA robot flagged a transient 401 here). Retry a
+    // couple times with a short backoff so we never surface an unauthed miss.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const r = await api.apiCall('sessions_list');
+        if (r?.success && r.data) {
+          const list = Array.isArray(r.data) ? r.data : (r.data.sessions || []);
+          setSessions(list);
+          break;
+        }
+        if (r && r.success === false && attempt < 2) {
+          await new Promise((res) => setTimeout(res, 400 * (attempt + 1)));
+          continue;
+        }
+        break;
+      } catch (e) {
+        if (attempt < 2) { await new Promise((res) => setTimeout(res, 400 * (attempt + 1))); continue; }
+        console.warn('[devices] load:', e);
       }
-    } catch (e) { console.warn('[devices] load:', e); }
+    }
     setLoading(false);
   }, []);
 
