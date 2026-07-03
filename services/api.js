@@ -2834,7 +2834,14 @@ function _avatarDailyBust() {
 // profile-photo visibility was "meus contatos"/"ninguém". The backend documents
 // `viewer=` as the mechanism for <img> tags exactly for this reason.
 function _avatarViewerPart() {
-  const me = savedCredentials?.email;
+  // [2026-07-03] savedCredentials is only set during login()/signup() of the
+  // CURRENT process — it is NOT rehydrated on a cold start / OTA reload (the
+  // session is restored from the stored token without calling login()). So
+  // after reopening the app it was null → `viewer=` was dropped → the backend
+  // served the initials PNG for contacts-only avatars (e.g. "Nicole"), which is
+  // why the photo showed on web (cookie) but not on native. getActiveAccountEmail()
+  // IS hydrated from SecureStore on boot, so it survives a restart.
+  const me = savedCredentials?.email || (typeof getActiveAccountEmail === 'function' ? getActiveAccountEmail() : '') || '';
   return me ? `&viewer=${encodeURIComponent(me)}` : '';
 }
 export function getAvatarUrl(email) {

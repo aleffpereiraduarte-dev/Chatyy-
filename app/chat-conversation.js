@@ -27766,7 +27766,7 @@ function ChatConversationInner() {
                           </View>
                         )}
                         <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6 }}>
-                          {(t(titleKey) || fallback)} ({list.length})
+                          {(t(titleKey) !== titleKey ? t(titleKey) : fallback)} ({list.length})
                         </Text>
                       </View>
                       {list.length === 0 ? (
