@@ -11205,7 +11205,14 @@ function ChatConversationInner() {
       // recipient sees on app return is "ghost" — no bubble. Re-run the
       // delta sync immediately when the push lands.
       const unsubSilentSync = mailWs.on('silent_sync', (data) => {
-        if (data?.type && data.type !== 'chat') return;
+        // [2026-07-03 sempre-tempo-real] Accept the chat-scoped silent wake
+        // regardless of exact payload shape — the backend fcmSendSilentSync
+        // sets type='silent_sync' + sync_type='chat' (the presence-skip path
+        // fires this when a recipient has the thread open but their WS may be
+        // a zombie). runDeltaSync is pts-based + idempotent, so a spurious
+        // trigger is harmless; better to over-sync than miss a message.
+        const _st = data?.sync_type || data?.type;
+        if (_st && _st !== 'chat' && _st !== 'silent_sync') return;
         runDeltaSync();
       });
       wsUnsubs.push(unsubSilentSync);
@@ -11215,7 +11222,24 @@ function ChatConversationInner() {
       // already arrive in <100ms; this only covers the rare case where WS
       // disconnected and the auto-resub raced. pts-based sync = O(0) when
       // nothing new, so the poll is essentially free when chat is quiet.
-      const safetyPoll = setInterval(runDeltaSync, 15000);
+      // [2026-07-03 sempre-tempo-real] ADAPTIVE safety poll — the hard
+      // guarantee that a message NEVER sits invisible in the open thread.
+      // If the WS hasn't produced ANY inbound frame in >12s the socket is
+      // likely an iOS "zombie" (readyState OPEN but radio-dead), so we drop
+      // to a 2.5s HTTP delta-sync → the message lands in ≤3s instead of the
+      // old fixed 15s. When the socket is healthy (frames flowing) we stay at
+      // 15s (near-free). runDeltaSync is pts-based → O(0) when nothing new, so
+      // aggressive polling only while the socket LOOKS dead costs ~nothing.
+      let _lastPollAt = Date.now();
+      const safetyPoll = setInterval(() => {
+        const inbound = mailWs?.lastInboundAt || 0;
+        const looksZombie = (Date.now() - inbound) > 12000;
+        const gap = looksZombie ? 2500 : 15000;
+        if (Date.now() - _lastPollAt >= gap) {
+          _lastPollAt = Date.now();
+          runDeltaSync();
+        }
+      }, 2500);
       wsUnsubs.push(() => clearInterval(safetyPoll));
 
       // First-paint perf: defer the catch-up sync 1.5s after mount so it

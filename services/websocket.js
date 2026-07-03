@@ -160,6 +160,7 @@ class MailWebSocket {
     this.destroyed = false;
     this._hidden = false;
     this.lastPongTime = 0;
+    this.lastInboundAt = 0;         // [2026-07-03] ts of last inbound frame — zombie-socket detector for the open chat thread's adaptive poll
     this._messageQueue = [];        // Offline message queue
     this._subscribedChannels = new Set(); // Track subscribed channels for re-subscribe on reconnect
 
@@ -520,6 +521,12 @@ class MailWebSocket {
     };
 
     this.ws.onmessage = (event) => {
+      // [2026-07-03 sempre-tempo-real] ANY inbound frame proves the socket is
+      // actually alive (not just readyState===OPEN). The open chat thread reads
+      // this to decide whether to poll aggressively — if no frame has arrived in
+      // a while the socket is likely an iOS "zombie" and the thread falls back to
+      // fast HTTP delta-sync so a new message never sits invisible.
+      this.lastInboundAt = Date.now();
       try {
         let msg;
         // Binary frame → server is speaking msgpack to this connection.
