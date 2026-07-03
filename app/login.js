@@ -23,6 +23,7 @@ import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
 import RestoreHistoryPrompt from '../components/RestoreHistoryPrompt';
 import ChangePasswordModal from '../components/ChangePasswordModal';
 import { LANGUAGES } from '../i18n';
+import { PASSKEYS_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
 import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../services/firebasePhone';
 import { getDeviceId as getE2eDeviceId, getDevicePublicKey as getE2eDevicePublicKey } from '../services/e2e';
@@ -777,6 +778,71 @@ export default function LoginScreen() {
     }
     setError('');
     animateStep(2);
+  };
+
+  // ── Passkey (WebAuthn) login — FLAG-GATED, default OFF. ────────────────────
+  // The button that calls this is only rendered when PASSKEYS_ENABLED is true
+  // (constants/featureFlags.js). The native passkey bridge (react-native-passkey)
+  // is NOT installed yet, so we lazy-require it inside try/catch: a missing
+  // module can NEVER crash the bundle — it just shows a graceful notice. When the
+  // dep + build + associated-domains land, flip the flag and this path is live.
+  // Backend ceremony endpoints: /api/passkeys.php (passkey_login_begin/finish).
+  const handlePasskeyLogin = async () => {
+    if (!PASSKEYS_ENABLED) return; // hard guard — never runs while gated off
+    try {
+      const fullEmail = email.includes('@') ? email : `${email}@chatyy.com.br`;
+      if (!fullEmail || !fullEmail.includes('@')) { setError(t('login.errorEmail') || 'Informe o email'); shake(); return; }
+
+      // Lazy-require the native passkey module. Absent today → graceful notice.
+      let Passkey = null;
+      try { Passkey = require('react-native-passkey').Passkey; } catch { Passkey = null; }
+      if (!Passkey) {
+        Alert.alert(t('login.passkey') || 'Passkey', t('login.passkeyUnavailable') || 'Passkey ainda nao esta disponivel neste app.');
+        return;
+      }
+
+      setLoading(true);
+      const base = api.getBaseUrl?.() || 'https://chatyy.com.br';
+      const pkFetch = async (action, body) => {
+        const res = await fetch(`${base}/api/passkeys.php?action=${action}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        return res.json();
+      };
+
+      // 1) begin — get assertion options + challenge from the server.
+      const begin = await pkFetch('passkey_login_begin', { email: fullEmail });
+      if (!begin?.success || !begin?.data?.has_passkeys) {
+        Alert.alert(t('login.passkey') || 'Passkey', t('login.passkeyNone') || 'Nenhuma passkey cadastrada nesta conta.');
+        setLoading(false); return;
+      }
+      // 2) platform authenticator (Face ID / Touch ID / Android biometrics).
+      const assertion = await Passkey.get({ ...begin.data });
+      // 3) finish — server verifies the assertion signature + mints the bearer.
+      const finish = await pkFetch('passkey_login_finish', {
+        email: fullEmail,
+        id: assertion.id,
+        response: assertion.response,
+      });
+      if (!finish?.success || !finish?.data?.token) {
+        setError(finish?.message || t('login.passkeyError') || 'Falha no login com passkey'); shake();
+        setLoading(false); return;
+      }
+      // Adopt the minted bearer via the SAME path biometric/QR login uses.
+      const r = await loginWithToken(finish.data.token, fullEmail);
+      if (!mountedRef.current) return;
+      if (r?.success) {
+        goAfterLogin(r.data?.is_child || isChildAccount());
+      } else {
+        setError(r?.message || t('login.passkeyError') || 'Falha no login com passkey'); shake();
+      }
+    } catch (e) {
+      if (!/cancel|abort/i.test(String(e?.message || ''))) {
+        setError(t('login.passkeyError') || 'Falha no login com passkey'); shake();
+      }
+    } finally {
+      if (mountedRef.current) setLoading(false);
+    }
   };
 
   const handleLogin = async () => {
@@ -2727,6 +2793,23 @@ export default function LoginScreen() {
                       >
                         <Text style={[s.igGhostBtnLabel, { color: colors.primary }]}>{t('login.back')}</Text>
                       </TouchableOpacity>
+
+                      {/* Passkey (WebAuthn) login — FLAG-GATED, hidden in prod.
+                          Renders ONLY when PASSKEYS_ENABLED (default false in
+                          constants/featureFlags.js) so nothing changes until the
+                          native react-native-passkey bridge ships in a build.
+                          See handlePasskeyLogin above + /api/passkeys.php. */}
+                      {PASSKEYS_ENABLED && (
+                        <TouchableOpacity
+                          onPress={handlePasskeyLogin}
+                          style={s.igGhostBtn}
+                          activeOpacity={0.6}
+                          disabled={loading}
+                          accessibilityRole="button"
+                        >
+                          <Text style={[s.igGhostBtnLabel, { color: colors.primary }]}>{t('login.passkeyCta') || 'Entrar com passkey'}</Text>
+                        </TouchableOpacity>
+                      )}
                     </>
                   )}
                 </Animated.View>

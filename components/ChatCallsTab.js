@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Dimensions, Modal, FlatList, TextInput, Switch, AppState } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Dimensions, Modal, FlatList, TextInput, Switch, AppState, Share } from 'react-native';
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import BrandFab from './BrandFab';
-import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar, IconVerifiedBadge } from './Icons';
+import { IconPhone, IconVideo, IconInfo, IconX, IconPhoneOff, IconMic, IconMicOff, IconVolume2, IconVolumeX, IconGrid, IconUserPlus, IconTrash, IconSmartphone, IconCheck, IconCalendar, IconVerifiedBadge, IconLink } from './Icons';
 import SwipeAction from './SwipeAction';
 import ScheduleCallModal from './ScheduleCallModal';
 import { callHistoryList, callHistoryAdd, callHistoryDelete, callHistoryClear, voipCall, voipToken, voipSipCredentials, voipMinutesRemaining, voipUpdateDuration, searchContacts, voipVerifiedNumberRequest, voipVerifiedNumberConfirm, getProfile, callNotify as apiCallNotify } from '../services/api';
@@ -3160,6 +3160,76 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     }
   }, [t]);
 
+  // ─── Shareable call link (WhatsApp "Create call link") ───
+  // Creates a standalone link anyone can tap to join a call (voice/video),
+  // then opens the native share sheet with the returned url. Backend contract:
+  //   chat_create_call_link { call_type } → { link_id, url, is_video }
+  const [creatingLink, setCreatingLink] = useState(false);
+  const createAndShareLink = useCallback(async (callType) => {
+    if (creatingLink) return;
+    setCreatingLink(true);
+    try {
+      const api = require('../services/api');
+      const r = await api.chatCreateCallLink(callType);
+      const data = r?.data || r;
+      const url = data?.url;
+      if (!r || r.success === false || !url) {
+        const msg = String(r?.message || '');
+        Alert.alert(
+          t?.('calls.callLink') || 'Link de chamada',
+          msg || t?.('calls.callLinkFailed') || 'Não foi possível criar o link. Tente novamente.'
+        );
+        return;
+      }
+      try {
+        if (Platform.OS === 'web') {
+          // Web: no native share sheet — copy to clipboard, fall back to prompt.
+          try {
+            if (navigator?.clipboard?.writeText) await navigator.clipboard.writeText(url);
+          } catch {}
+          Alert.alert(t?.('calls.callLink') || 'Link de chamada', url);
+        } else if (Share?.share) {
+          await Share.share({
+            message: (t?.('calls.callLinkShareMsg') || 'Entre na minha chamada no Chatyy: ') + url,
+            url,
+          });
+        }
+      } catch {}
+    } catch (e) {
+      if (__DEV__) console.warn('[ChatCallsTab.createLink]', e?.message);
+      Alert.alert(
+        t?.('calls.callLink') || 'Link de chamada',
+        t?.('calls.callLinkFailed') || 'Não foi possível criar o link. Tente novamente.'
+      );
+    } finally {
+      setCreatingLink(false);
+    }
+  }, [creatingLink, t]);
+
+  const handleCreateCallLink = useCallback(() => {
+    if (creatingLink) return;
+    const videoLabel = t?.('calls.videoCall') || 'Chamada de vídeo';
+    const voiceLabel = t?.('calls.voiceCall') || 'Chamada de voz';
+    const cancelLabel = t?.('common.cancel') || 'Cancelar';
+    if (Platform.OS === 'web') {
+      // Minimal chooser on web (no ActionSheet) — default to video, offer voice.
+      const wantVoice = typeof confirm === 'function'
+        ? !confirm((t?.('calls.callLinkTypePrompt') || 'Criar link de chamada de vídeo?') + '\n\n' + (t?.('calls.callLinkVoiceHint') || 'OK = vídeo, Cancelar = voz'))
+        : false;
+      createAndShareLink(wantVoice ? 'audio' : 'video');
+      return;
+    }
+    Alert.alert(
+      t?.('calls.callLink') || 'Link de chamada',
+      t?.('calls.callLinkChooseType') || 'Que tipo de chamada?',
+      [
+        { text: videoLabel, onPress: () => createAndShareLink('video') },
+        { text: voiceLabel, onPress: () => createAndShareLink('audio') },
+        { text: cancelLabel, style: 'cancel' },
+      ]
+    );
+  }, [creatingLink, t, createAndShareLink]);
+
   // Merge and filter history
   const allHistory = useMemo(() => {
     const merged = [];
@@ -3360,6 +3430,40 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         </View>
         <SilenceToggle isDark={isDark} />
       </View>
+
+      {/* Create shareable call link (WhatsApp parity) */}
+      <TouchableOpacity
+        onPress={handleCreateCallLink}
+        activeOpacity={0.7}
+        disabled={creatingLink}
+        style={{
+          flexDirection: 'row', alignItems: 'center',
+          marginHorizontal: 16, marginTop: 8, marginBottom: 4,
+          paddingVertical: 12, paddingHorizontal: 16, borderRadius: 12,
+          backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7',
+          opacity: creatingLink ? 0.6 : 1,
+        }}
+        accessibilityRole="button"
+        accessibilityLabel={t?.('calls.createCallLink') || 'Criar link de chamada'}
+      >
+        <View style={{
+          width: 40, height: 40, borderRadius: 20, marginRight: 12,
+          alignItems: 'center', justifyContent: 'center',
+          backgroundColor: 'rgba(124,58,237,0.15)',
+        }}>
+          {creatingLink
+            ? <ActivityIndicator size="small" color="#7C3AED" />
+            : <IconLink size={20} color="#7C3AED" />}
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: '#7C3AED' }}>
+            {t?.('calls.createCallLink') || 'Criar link de chamada'}
+          </Text>
+          <Text style={{ fontSize: 11, color: isDark ? '#8e8e93' : '#8e8e93', marginTop: 2 }}>
+            {t?.('calls.createCallLinkDesc') || 'Compartilhe um link para uma chamada'}
+          </Text>
+        </View>
+      </TouchableOpacity>
 
       {/* Call history */}
       <ScrollView

@@ -31,6 +31,7 @@ import { useConfirm } from '../components/ConfirmModal';
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow, RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
+import { SCAN_DOCUMENT_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
 import { formatBytes } from '../services/format';
@@ -4136,6 +4137,14 @@ function AttachmentMenu({ visible, onClose, onPick, colors }) {
     // text-input edge where stray keyboard-open taps used to land.
     { key: 'gif', icon: IconGifBadge, label: t('chatConv.gif') || 'GIF', color: '#ec4899' },
     { key: 'file', icon: IconFileText, label: t('chatConv.file') || 'Arquivo', color: '#3b82f6' },
+    // Scan document → PDF (native VisionKit / ML Kit). FLAG-GATED, default OFF
+    // (constants/featureFlags.js SCAN_DOCUMENT_ENABLED). The slot is not even
+    // rendered until the native scanner dep ships in a build, so production is
+    // unchanged. When ON, handlePickAttachment('scan_document') runs the scan
+    // and pipes the PDF into uploadAndSendFile (with caption).
+    ...(SCAN_DOCUMENT_ENABLED ? [{
+      key: 'scan_document', icon: IconFileText, label: t('chatConv.scanDocument') || 'Digitalizar documento', color: '#0ea5e9',
+    }] : []),
     // [2026-05-15] "Localização" agora abre LocationPickerSheet que já tem
     // chips 15min/1h/8h pra share ao vivo — botão "Loc. ao vivo" separado
     // virou dedup. User: "se dentro da localizacao ja tem opcao de
@@ -14019,6 +14028,13 @@ function ChatConversationInner() {
       case 'camera':       return handleCamera();
       case 'gallery':      return handleGallery();
       case 'file':         return handleAttachFile();
+      // Scan document → multi-page PDF → attach. FLAG-GATED (the menu slot only
+      // renders when SCAN_DOCUMENT_ENABLED). The native scanner dep is NOT
+      // installed yet, so we lazy-require it in try/catch — a missing module can
+      // never crash; it just shows a notice. When the dep lands (build) and the
+      // flag flips, this scans and hands the PDF to uploadAndSendFile with a
+      // caption, reusing the exact document-send path a picked PDF uses.
+      case 'scan_document': return handleScanDocument();
       // GIF moved out of the composer pill (was sitting right at the
       // text-input's right edge → fat-finger mis-tap every time the
       // keyboard opened). Now lives in the + menu (and the left-swipe
@@ -14063,6 +14079,51 @@ function ChatConversationInner() {
           console.warn('[short_video] send failed', e?.message || e);
         }
         return;
+      }
+    }
+  };
+
+  // Scan document → PDF → send. FLAG-GATED (SCAN_DOCUMENT_ENABLED). Native
+  // capture (VisionKit on iOS / ML Kit Document Scanner on Android) via a dep
+  // that is NOT installed yet, so we lazy-require it in try/catch — absent today
+  // → graceful notice, never a crash. When the dep + build land and the flag is
+  // ON, the produced multi-page PDF is piped into the SAME caption-preview →
+  // uploadAndSendFile document path a picked PDF uses.
+  const handleScanDocument = async () => {
+    if (!SCAN_DOCUMENT_ENABLED) return; // hard guard — never runs while gated off
+    try {
+      let scanner = null;
+      try { scanner = require('react-native-document-scanner-plugin'); } catch { scanner = null; }
+      if (!scanner || !scanner.scanDocument) {
+        safeAlert(t('chatConv.scanDocument') || 'Digitalizar documento', t('chatConv.scanUnavailable') || 'O scanner ainda nao esta disponivel neste app.');
+        return;
+      }
+      // responseType 'imageFilePath' + our own PDF assembly, OR the plugin's PDF
+      // mode when available. We request PDF directly so the output is one file.
+      const { scannedImages, status, scannedPdf } = await scanner.scanDocument({
+        responseType: scanner.ResponseType?.Base64 ? undefined : undefined,
+        croppedImageQuality: 90,
+      });
+      if (status === 'cancel') return;
+      const pdfUri = scannedPdf || (Array.isArray(scannedImages) ? scannedImages[0] : null);
+      if (!pdfUri) {
+        safeAlert(t('common.error') || 'Error', t('chatConv.scanError') || 'Nao foi possivel digitalizar.');
+        return;
+      }
+      const fileName = `documento_${Date.now()}.pdf`;
+      // Route through the existing caption preview → uploadAndSendFile document
+      // path (same as a picked PDF), so caption + send + bubble all reuse.
+      setCaptionPreview({
+        visible: true,
+        kind: 'doc',
+        file: { uri: pdfUri, name: fileName, type: 'application/pdf' },
+        gif: null,
+        gifUri: null,
+      });
+    } catch (e) {
+      console.warn('[scan_document] failed', e?.message || e);
+      if (!/cancel/i.test(String(e?.message || ''))) {
+        safeAlert(t('common.error') || 'Error', t('chatConv.scanError') || 'Nao foi possivel digitalizar.');
       }
     }
   };

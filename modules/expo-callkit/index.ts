@@ -73,6 +73,14 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   getDiagnostics(): Record<string, any>;
   consumePendingEvents(): Array<Record<string, any>>;
   consumePendingCall(): { callId: string; callerName: string; hasVideo: boolean } | null;
+  // [per-chat-tone 2026-07-02] Android-only per-conversation custom
+  // notification sound + vibration. No-ops on iOS (returns null / []).
+  listChatNotificationSounds?(): Promise<Array<{ title: string; uri: string }>>;
+  setChatNotificationTone?(
+    conversationId: string,
+    config: { sound?: string; vibration?: number[]; vibrationOff?: boolean; led?: string | null }
+  ): Promise<string | null>;
+  clearChatNotificationTone?(conversationId: string): Promise<void>;
   // [#992 Stage 1+2] Native LiveKit Room control. Positional args; both
   // platforms accept this shape (Android Kotlin via @AsyncFunction direct
   // positional; iOS Swift adapts internally).
@@ -401,6 +409,47 @@ export function consumePendingCall(): { callId: string; callerName: string; hasV
     return m.consumePendingCall() || null;
   } catch {
     return null;
+  }
+}
+
+// ─── Per-chat custom notification tone + vibration (Android, 2026-07-02) ─────
+// WhatsApp parity: pick a sound + vibration for a single conversation. Backed
+// by a per-conversation NotificationChannel (immutable sound/vibration → one
+// channel per config). All calls are best-effort; a missing module (iOS / web /
+// Expo Go / pre-rebuild) resolves to a safe no-op so the caller never breaks.
+
+export async function listChatNotificationSounds(): Promise<Array<{ title: string; uri: string }>> {
+  const m = getModule();
+  if (!m || typeof m.listChatNotificationSounds !== 'function') return [];
+  try {
+    return (await m.listChatNotificationSounds()) || [];
+  } catch (e) {
+    console.warn('[ExpoCallKit] listChatNotificationSounds error:', e);
+    return [];
+  }
+}
+
+export async function setChatNotificationTone(
+  conversationId: string,
+  config: { sound?: string; vibration?: number[]; vibrationOff?: boolean; led?: string | null }
+): Promise<string | null> {
+  const m = getModule();
+  if (!m || typeof m.setChatNotificationTone !== 'function') return null;
+  try {
+    return (await m.setChatNotificationTone(conversationId, config || {})) || null;
+  } catch (e) {
+    console.warn('[ExpoCallKit] setChatNotificationTone error:', e);
+    return null;
+  }
+}
+
+export async function clearChatNotificationTone(conversationId: string): Promise<void> {
+  const m = getModule();
+  if (!m || typeof m.clearChatNotificationTone !== 'function') return;
+  try {
+    await m.clearChatNotificationTone(conversationId);
+  } catch (e) {
+    console.warn('[ExpoCallKit] clearChatNotificationTone error:', e);
   }
 }
 

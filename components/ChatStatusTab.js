@@ -35,6 +35,7 @@ import ReactionSwipeUp from './status/ReactionSwipeUp';
 // Shared text-status gradient presets + resolver — single source of truth so
 // the composer picker, StoryViewer and AnimatedStatusText never drift apart.
 import { TEXT_BG_GRADIENTS, resolveTextGradient as resolveGradient } from './status/textGradients';
+import { segmentVideoForStatus } from '../services/statusVideoSegments';
 
 // Android status bar safe area — `StatusBar.currentHeight` is null on iOS
 // (where the 54px ios padding already covers the notch) so we just hard-fall
@@ -2322,29 +2323,37 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       }
 
       const file = { uri: uploadUri, name: uploadName, type: uploadType };
-      const uploadR = await api.statusUpload(file);
-      if (uploadR?.success && uploadR.data?.url) {
-        const statusType = capture.type === 'video' ? 'video' : 'image';
-        const extraMeta = capture.isBoomerang ? { is_boomerang: true } : {};
-        const camMusic = capture.music ? {
-          title: capture.music.title || capture.music.name || '',
-          artist: capture.music.artist || '',
-          previewUrl: capture.music.previewUrl || capture.music.preview_url || capture.music.url || '',
-          coverUrl: capture.music.coverUrl || capture.music.cover_url || capture.music.artwork || '',
-        } : null;
-        const r = await api.statusPublish(uploadR.data.url, statusType, '#000000', camMusic, extraMeta);
-        if (r?.success) {
-          loadStatuses();
-        } else {
-          // Camera capture published successfully to R2 but server rejected
-          // the status_create row — without this the user sees the camera
-          // close and assumes the status went up.
-          console.warn('[StatusCamera] publish rejected:', r?.message);
-          try { Alert.alert?.(t?.('common.error') || 'Erro', r?.message || t?.('status.publishFailed') || 'Não foi possível publicar o status.'); } catch {}
+      const statusType = capture.type === 'video' ? 'video' : 'image';
+      const camMusic = capture.music ? {
+        title: capture.music.title || capture.music.name || '',
+        artist: capture.music.artist || '',
+        previewUrl: capture.music.previewUrl || capture.music.preview_url || capture.music.url || '',
+        coverUrl: capture.music.coverUrl || capture.music.cover_url || capture.music.artwork || '',
+      } : null;
+      // Long captured video → split into ≤30s back-to-back segments (WhatsApp).
+      const parts = capture.type === 'video' ? await segmentVideoForStatus(file) : [file];
+      let anySuccess = false;
+      let firstErr = null;
+      for (let i = 0; i < parts.length; i++) {
+        const isFirst = i === 0;
+        const uploadR = await api.statusUpload(parts[i]);
+        if (uploadR?.success && uploadR.data?.url) {
+          // First segment carries the boomerang flag + music; the rest post plain.
+          const meta = (isFirst && capture.isBoomerang) ? { is_boomerang: true } : {};
+          const music = isFirst ? camMusic : null;
+          const r = await api.statusPublish(uploadR.data.url, statusType, '#000000', music, meta);
+          if (r?.success) anySuccess = true;
+          else if (!firstErr) firstErr = r?.message;
+        } else if (!firstErr) {
+          firstErr = uploadR?.message;
         }
+      }
+      if (anySuccess) {
+        loadStatuses();
       } else {
-        console.warn('[StatusCamera] upload failed:', uploadR?.message);
-        try { Alert.alert?.(t?.('common.error') || 'Erro', uploadR?.message || t?.('status.uploadFailed') || 'Falha no upload da mídia.'); } catch {}
+        // Every segment failed — surface so the user knows the status didn't go up.
+        console.warn('[StatusCamera] publish/upload failed:', firstErr);
+        try { Alert.alert?.(t?.('common.error') || 'Erro', firstErr || t?.('status.publishFailed') || 'Não foi possível publicar o status.'); } catch {}
       }
     } catch (e) {
       console.warn('[StatusCamera publish]', e);
@@ -2402,31 +2411,46 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     setPublishing(true);
     try {
       if ((creatorMode === 'photo' || creatorMode === 'video') && photoFile) {
-        const uploadR = await api.statusUpload(photoFile);
-        if (uploadR?.success && uploadR.data?.url) {
-          const caption = textContent.trim();
-          const content = caption ? uploadR.data.url + '\n' + caption : uploadR.data.url;
-          const statusType = creatorMode === 'video' ? 'video' : 'image';
-          const r = await api.statusPublish(content, statusType, '#000000', musicData, extraMeta);
-          if (r?.success) {
-            setCreatorVisible(false); setMusicPickerVisible(false); setSelectedMusic(null); setCrossPostFeed(false); loadStatuses();
-            // Success haptic — without this, users tap "publish" and aren't sure
-            // the post landed since the modal close + list reload have a brief gap.
-            if (Platform.OS !== 'web') {
-              try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
-            }
-          } else {
-            // Server rejected status_create — surface so user can retry instead
-            // of staring at the open creator with no signal. Previously silent
-            // (`catch {}` below also swallowed thrown errors).
-            console.warn('[Status] publish rejected:', r?.message);
-            try { Alert.alert?.(t?.('common.error') || 'Erro', r?.message || t?.('status.publishFailed') || 'Não foi possível publicar o status.'); } catch {}
+        // Long video → split into ≤30s back-to-back status segments (WhatsApp).
+        // Photos and short videos yield a single-element array = unchanged flow.
+        const parts = creatorMode === 'video'
+          ? await segmentVideoForStatus(photoFile)
+          : [photoFile];
+        const caption = textContent.trim();
+        const statusType = creatorMode === 'video' ? 'video' : 'image';
+        let anySuccess = false;
+        let firstErr = null;
+        for (let i = 0; i < parts.length; i++) {
+          const isFirst = i === 0;
+          const uploadR = await api.statusUpload(parts[i]);
+          if (uploadR?.success && uploadR.data?.url) {
+            // Only the first segment carries caption / music / stickers; the
+            // rest post as plain clips (privacy preserved so the whole set is
+            // consistently visible). Single-clip posts keep the full meta.
+            const content = (isFirst && caption) ? uploadR.data.url + '\n' + caption : uploadR.data.url;
+            const meta = isFirst
+              ? extraMeta
+              : { privacy: extraMeta.privacy, except_emails: extraMeta.except_emails };
+            const music = isFirst ? musicData : null;
+            const r = await api.statusPublish(content, statusType, '#000000', music, meta);
+            if (r?.success) anySuccess = true;
+            else if (!firstErr) firstErr = r?.message;
+          } else if (!firstErr) {
+            firstErr = uploadR?.message;
+          }
+        }
+        if (anySuccess) {
+          setCreatorVisible(false); setMusicPickerVisible(false); setSelectedMusic(null); setCrossPostFeed(false); loadStatuses();
+          // Success haptic — without this, users tap "publish" and aren't sure
+          // the post landed since the modal close + list reload have a brief gap.
+          if (Platform.OS !== 'web') {
+            try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {}
           }
         } else {
-          // Upload failed (Rust + PHP fallback both returned !success). Tell
-          // the user — without this they sit on the creator with no feedback.
-          console.warn('[Status] upload failed:', uploadR?.message);
-          try { Alert.alert?.(t?.('common.error') || 'Erro', uploadR?.message || t?.('status.uploadFailed') || 'Falha no upload da mídia.'); } catch {}
+          // Every segment failed (upload or status_create). Surface so user can
+          // retry instead of staring at the open creator with no signal.
+          console.warn('[Status] publish rejected:', firstErr);
+          try { Alert.alert?.(t?.('common.error') || 'Erro', firstErr || t?.('status.publishFailed') || 'Não foi possível publicar o status.'); } catch {}
         }
       } else {
         const r = await api.statusPublish(textContent.trim(), 'text', textBgColor, musicData, extraMeta);

@@ -71,10 +71,27 @@ export interface VideoInfo {
 
 // ─── Native module declaration ───────────────────────────────────────────────
 
+export interface VideoSegment {
+  /** file:// URI of the segment clip in cache (or the source URI if not split). */
+  uri: string;
+  /** 0-based order index. */
+  index: number;
+  /** Segment duration in ms. */
+  durationMs: number;
+}
+
+export interface SegmentResult {
+  /** true if the clip was split into multiple segments. */
+  segmented: boolean;
+  /** Ordered segments to post back-to-back. Length 1 (the source) when not split. */
+  segments: VideoSegment[];
+}
+
 declare class ExpoNativeVideoModuleType extends NativeModule {
   compressVideo(srcUri: string, options: CompressOptions): Promise<CompressResult>;
   generateThumbnail(srcUri: string, atMs: number, maxDim: number): Promise<ThumbnailResult>;
   getInfo(srcUri: string): Promise<VideoInfo>;
+  segmentVideo(srcUri: string, segmentMs: number): Promise<SegmentResult>;
 }
 
 let mod: ExpoNativeVideoModuleType | null = null;
@@ -152,9 +169,30 @@ export async function getInfo(srcUri: string): Promise<VideoInfo> {
   return m.getInfo(srcUri);
 }
 
+/**
+ * Split a long video into back-to-back ≤`segmentMs` chunks (default 30s),
+ * WhatsApp-status style. Sample-copy remux on both platforms — no re-encode,
+ * so it's fast and lossless. A clip already within one segment resolves with
+ * `segmented:false` and the source URI as the single segment.
+ *
+ * Throws if the module isn't available; callers should try/catch and fall back
+ * to posting the single (capped) video so a user's post is never lost.
+ */
+export async function segmentVideo(
+  srcUri: string,
+  segmentMs: number = 30_000
+): Promise<SegmentResult> {
+  const m = getModule();
+  if (!m || typeof (m as any).segmentVideo !== 'function') {
+    throw new Error('ExpoNativeVideo.segmentVideo not available');
+  }
+  return m.segmentVideo(srcUri, segmentMs);
+}
+
 export default {
   isAvailable,
   compressVideo,
   generateThumbnail,
   getInfo,
+  segmentVideo,
 };

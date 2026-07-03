@@ -17,6 +17,8 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -29,6 +31,7 @@ import com.google.firebase.messaging.RemoteMessage
 import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONArray
+import org.json.JSONObject
 
 object ChatMessagingStyleHandler {
 
@@ -42,6 +45,26 @@ object ChatMessagingStyleHandler {
      *  to the same conv don't re-create. */
     private const val LED_CHANNELS_PREFS = "chatyy_chat_led_channels"
     private const val LED_CHANNELS_KEY = "created_channel_ids"
+
+    /** [per-chat-tone, 2026-07-02] Per-conversation custom notification tone
+     *  (sound Uri) + vibration pattern + LED, WhatsApp-style. A
+     *  NotificationChannel's sound/vibration are IMMUTABLE post-creation, so
+     *  each distinct (sound+vibration+led) combo needs its own channel. We:
+     *    1. Persist the chosen config per conversation as JSON under
+     *       `cfg_<convId>` in `chatyy_chat_tone_channels` prefs. The JS
+     *       settings sheet writes this via the ExpoCallKit bridge
+     *       (setChatNotificationTone) so the channel is created eagerly when
+     *       the user picks a tone — and re-created on change (delete old id +
+     *       create new, since channels can't mutate).
+     *    2. Derive a deterministic channel id `chat_conv_tone_<convId>_<hash>`
+     *       from the config so repeat pushes reuse the same channel and a
+     *       config change lands on a fresh channel.
+     *    3. Read it back in tryHandle to route the notification to the custom
+     *       channel. Any failure at any step falls back to the default "chat"
+     *       channel — a broken tone can NEVER drop the notification. */
+    private const val TONE_PREFS = "chatyy_chat_tone_channels"
+    private const val TONE_CREATED_KEY = "created_tone_channel_ids"
+    private fun toneCfgKey(convId: String) = "cfg_$convId"
 
     // RemoteInput keys + intent actions — kept in lockstep with the JS side
     // (see services/pushNotifications.js, response listener).
@@ -111,8 +134,15 @@ object ChatMessagingStyleHandler {
             // immutable post-creation, so we have to spawn one channel per
             // distinct color. Keyword channel still wins (sound > LED).
             val ledColor = data["led_color"]?.takeIf { isValidHex(it) }
+            // [per-chat-tone] A user-chosen per-conversation tone (custom sound
+            // + vibration, optionally + LED) wins over the payload LED channel.
+            // Keyword sound still trumps everything (documented behaviour:
+            // sound > tone > LED). ensureToneChannel returns null on any
+            // failure, so we transparently fall through to the LED/default path.
+            val toneChannelId = if (!isKeywordHit) ensureToneChannel(ctx, conversationId) else null
             val channelId = when {
                 isKeywordHit -> "chat_keyword"
+                toneChannelId != null -> toneChannelId
                 ledColor != null -> ensureLedChannel(ctx, ledColor)
                 else -> "chat"
             }
@@ -446,6 +476,283 @@ object ChatMessagingStyleHandler {
             return "chat"
         }
         return channelId
+    }
+
+    // ---- per-conversation custom tone + vibration channels ------------------
+    //
+    // Public API (called from ExpoCallKitModule bridge):
+    //   setChatNotificationTone(convId, sound, vibration[], vibrationOff, led)
+    //   clearChatNotificationTone(convId)
+    //   listNotificationSounds()  → real device notification sounds
+    //
+    // All entry points are wrapped so a failure is a no-op that leaves the
+    // default "chat" channel behavior intact.
+
+    /**
+     * Persist + (re)create a per-conversation notification channel carrying a
+     * custom sound + vibration + optional LED. Returns the channel id created,
+     * or null on any failure (caller should keep using defaults).
+     *
+     * @param soundRaw  a real content:// / android.resource:// / file:// Uri
+     *                  string, or the sentinel "default" / "" (system default
+     *                  notification sound) or "silent" (no sound).
+     * @param vibration explicit vibration pattern in ms (WhatsApp preset or a
+     *                  user-recorded rhythm); empty = channel default vibration.
+     * @param vibrationOff true → vibration disabled for this conversation.
+     * @param led       "#RRGGBB" LED color or null.
+     */
+    fun setConversationTone(
+        ctx: Context,
+        conversationId: String,
+        soundRaw: String?,
+        vibration: LongArray?,
+        vibrationOff: Boolean,
+        led: String?,
+    ): String? {
+        return try {
+            if (conversationId.isBlank()) return null
+            val sound = (soundRaw ?: "default").trim().ifEmpty { "default" }
+            val vib = vibration?.takeIf { it.isNotEmpty() }
+            val ledHex = led?.takeIf { isValidHex(it) }
+            val channelId = computeToneChannelId(conversationId, sound, vib, vibrationOff, ledHex)
+
+            // If a previous channel for this conversation exists and the config
+            // changed, drop it — channels are immutable so a stale one would
+            // keep the old sound. Best-effort; ignore if already gone.
+            val sp = ctx.getSharedPreferences(TONE_PREFS, Context.MODE_PRIVATE)
+            val prev = readToneConfig(ctx, conversationId)
+            if (prev != null && prev.channelId != channelId) {
+                deleteToneChannel(ctx, prev.channelId)
+            }
+
+            // Persist the new config BEFORE creating the channel so a push that
+            // races in still finds it (ensureToneChannel will create on demand).
+            val json = JSONObject().apply {
+                put("sound", sound)
+                put("vibOff", vibrationOff)
+                if (vib != null) {
+                    val arr = JSONArray()
+                    for (v in vib) arr.put(v)
+                    put("vib", arr)
+                }
+                if (ledHex != null) put("led", ledHex)
+                put("channelId", channelId)
+            }
+            sp.edit().putString(toneCfgKey(conversationId), json.toString()).apply()
+
+            // Create the channel now (idempotent — createNotificationChannel
+            // on an existing id is a no-op on the OS side).
+            ensureToneChannel(ctx, conversationId)
+        } catch (t: Throwable) {
+            Log.w(TAG, "setConversationTone failed: ${t.message}")
+            null
+        }
+    }
+
+    /** Drop the per-conversation tone → future pushes use the default channel. */
+    fun clearConversationTone(ctx: Context, conversationId: String) {
+        try {
+            val prev = readToneConfig(ctx, conversationId)
+            if (prev != null) deleteToneChannel(ctx, prev.channelId)
+            ctx.getSharedPreferences(TONE_PREFS, Context.MODE_PRIVATE)
+                .edit().remove(toneCfgKey(conversationId)).apply()
+        } catch (t: Throwable) {
+            Log.w(TAG, "clearConversationTone failed: ${t.message}")
+        }
+    }
+
+    /** Real device notification sounds for the JS tone picker: [{title, uri}]. */
+    fun listNotificationSounds(ctx: Context): List<Map<String, String>> {
+        val out = ArrayList<Map<String, String>>()
+        try {
+            out.add(mapOf("title" to "Padrão", "uri" to "default"))
+            out.add(mapOf("title" to "Silencioso", "uri" to "silent"))
+            val rm = RingtoneManager(ctx)
+            rm.setType(RingtoneManager.TYPE_NOTIFICATION)
+            val cursor = rm.cursor
+            var guard = 0
+            while (cursor.moveToNext() && guard < 200) {
+                guard++
+                val title = cursor.getString(RingtoneManager.TITLE_COLUMN_INDEX) ?: continue
+                val uri = rm.getRingtoneUri(cursor.position)?.toString() ?: continue
+                out.add(mapOf("title" to title, "uri" to uri))
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "listNotificationSounds failed: ${t.message}")
+        }
+        return out
+    }
+
+    private data class ToneConfig(
+        val sound: String,
+        val vib: LongArray?,
+        val vibOff: Boolean,
+        val led: String?,
+        val channelId: String,
+    )
+
+    private fun readToneConfig(ctx: Context, conversationId: String): ToneConfig? {
+        return try {
+            val sp = ctx.getSharedPreferences(TONE_PREFS, Context.MODE_PRIVATE)
+            val raw = sp.getString(toneCfgKey(conversationId), null) ?: return null
+            val o = JSONObject(raw)
+            val sound = o.optString("sound", "default")
+            val vibOff = o.optBoolean("vibOff", false)
+            val led = o.optString("led", "").takeIf { it.isNotEmpty() && isValidHex(it) }
+            val vibArr = o.optJSONArray("vib")
+            val vib = if (vibArr != null && vibArr.length() > 0) {
+                LongArray(vibArr.length()) { vibArr.optLong(it) }
+            } else null
+            val channelId = o.optString("channelId", "")
+                .ifEmpty { computeToneChannelId(conversationId, sound, vib, vibOff, led) }
+            ToneConfig(sound, vib, vibOff, led, channelId)
+        } catch (t: Throwable) {
+            null
+        }
+    }
+
+    private fun computeToneChannelId(
+        conversationId: String,
+        sound: String,
+        vib: LongArray?,
+        vibOff: Boolean,
+        led: String?,
+    ): String {
+        val sig = buildString {
+            append(sound); append('|')
+            append(if (vibOff) "off" else vib?.joinToString(",") ?: "def"); append('|')
+            append(led ?: "none")
+        }
+        val hash = (sig.hashCode() and 0x7FFFFFFF).toString(16)
+        // Keep the conv id sanitized so it's a valid channel id fragment.
+        val safeConv = conversationId.filter { it.isLetterOrDigit() || it == '_' }.take(40)
+        return "chat_conv_tone_${safeConv}_$hash"
+    }
+
+    /**
+     * Ensure the per-conversation tone channel exists (create-if-missing) and
+     * return its id, or null if this conversation has no custom tone / the OS
+     * rejected it. Called from both the bridge and the push path so the channel
+     * is guaranteed to exist before we post on it.
+     */
+    private fun ensureToneChannel(ctx: Context, conversationId: String): String? {
+        val cfg = readToneConfig(ctx, conversationId) ?: return null
+        // Pre-O has no channels; custom per-conv sound isn't applied there and
+        // we fall back to the default channel (acceptable — Android 7 and older
+        // is a vanishingly small install base). Returning null routes to "chat".
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return null
+        return try {
+            val sp = ctx.getSharedPreferences(TONE_PREFS, Context.MODE_PRIVATE)
+            val created = sp.getStringSet(TONE_CREATED_KEY, emptySet()) ?: emptySet()
+            if (cfg.channelId in created) return cfg.channelId
+
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            val channel = NotificationChannel(
+                cfg.channelId,
+                "Chat (personalizado)",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Mensagens de chat com som/vibração personalizados"
+                setShowBadge(true)
+                // Sound
+                if (cfg.sound == "silent") {
+                    setSound(null, null)
+                } else {
+                    val uri = resolveSoundUri(ctx, cfg.sound)
+                    if (uri != null) {
+                        val attrs = AudioAttributes.Builder()
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                            .build()
+                        setSound(uri, attrs)
+                    }
+                }
+                // Vibration
+                if (cfg.vibOff) {
+                    enableVibration(false)
+                } else if (cfg.vib != null) {
+                    enableVibration(true)
+                    vibrationPattern = cfg.vib
+                } else {
+                    enableVibration(true)
+                }
+                // LED
+                if (cfg.led != null) {
+                    try {
+                        enableLights(true)
+                        lightColor = Color.parseColor(cfg.led)
+                    } catch (_: Throwable) {}
+                }
+            }
+            nm.createNotificationChannel(channel)
+            val next = HashSet(created)
+            next.add(cfg.channelId)
+            sp.edit().putStringSet(TONE_CREATED_KEY, next).apply()
+            Log.d(TAG, "Created tone channel ${cfg.channelId} for conv=$conversationId")
+            cfg.channelId
+        } catch (t: Throwable) {
+            Log.w(TAG, "ensureToneChannel failed: ${t.message}")
+            null
+        }
+    }
+
+    private fun deleteToneChannel(ctx: Context, channelId: String) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                nm.deleteNotificationChannel(channelId)
+            }
+            val sp = ctx.getSharedPreferences(TONE_PREFS, Context.MODE_PRIVATE)
+            val created = sp.getStringSet(TONE_CREATED_KEY, emptySet()) ?: emptySet()
+            if (channelId in created) {
+                val next = HashSet(created)
+                next.remove(channelId)
+                sp.edit().putStringSet(TONE_CREATED_KEY, next).apply()
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "deleteToneChannel failed: ${t.message}")
+        }
+    }
+
+    /**
+     * Resolve a sound sentinel/name/uri to a real Uri. "default"/"" → system
+     * default notification sound. A real content://, android.resource:// or
+     * file:// string is used verbatim. Anything else is treated as a ringtone
+     * title and matched against the device's notification sounds; unmatched
+     * names fall back to the default sound (never silent by accident).
+     */
+    private fun resolveSoundUri(ctx: Context, raw: String): Uri? {
+        return try {
+            if (raw.isEmpty() || raw == "default") {
+                RingtoneManager.getActualDefaultRingtoneUri(ctx, RingtoneManager.TYPE_NOTIFICATION)
+                    ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            } else if (raw.startsWith("content://") || raw.startsWith("android.resource://") || raw.startsWith("file://")) {
+                Uri.parse(raw)
+            } else {
+                // Title match against device notification sounds.
+                var match: Uri? = null
+                try {
+                    val rm = RingtoneManager(ctx)
+                    rm.setType(RingtoneManager.TYPE_NOTIFICATION)
+                    val cursor = rm.cursor
+                    var guard = 0
+                    while (cursor.moveToNext() && guard < 200) {
+                        guard++
+                        val title = cursor.getString(RingtoneManager.TITLE_COLUMN_INDEX) ?: continue
+                        if (title.equals(raw, ignoreCase = true) || title.contains(raw, ignoreCase = true)) {
+                            match = rm.getRingtoneUri(cursor.position)
+                            break
+                        }
+                    }
+                } catch (_: Throwable) {}
+                match
+                    ?: RingtoneManager.getActualDefaultRingtoneUri(ctx, RingtoneManager.TYPE_NOTIFICATION)
+                    ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "resolveSoundUri($raw) failed: ${t.message}")
+            null
+        }
     }
 
     private fun pendingIntentFlags(mutable: Boolean): Int {

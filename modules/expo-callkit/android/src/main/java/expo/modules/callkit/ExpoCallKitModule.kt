@@ -547,6 +547,63 @@ class ExpoCallKitModule : Module() {
       }
     }
 
+    // ─── Per-chat custom notification tone + vibration (2026-07-02) ──────────
+    //
+    // WhatsApp parity: a user can pick a notification sound + vibration for a
+    // SINGLE conversation. On Android O+ that means a per-conversation
+    // NotificationChannel (sound/vibration are immutable once a channel is
+    // created), so we persist the config + (re)create the channel here. The
+    // FCM push handler (ChatMessagingStyleHandler.tryHandle) reads it back and
+    // routes the notification to the custom channel. Every step is fail-safe:
+    // any exception leaves the default "chat" channel untouched so a broken
+    // tone can NEVER drop a chat notification.
+    //
+    // JS side: components/ChatNotificationSettingsSheet.js calls these when the
+    // user changes the sound / vibration rows.
+
+    // listNotificationSounds → [{title, uri}] of real device notification
+    // sounds so the JS picker can offer genuine tones (uri fed back into
+    // setChatNotificationTone). "default" + "silent" sentinels included.
+    AsyncFunction("listChatNotificationSounds") {
+      return@AsyncFunction try {
+        ChatMessagingStyleHandler.listNotificationSounds(context)
+      } catch (t: Throwable) {
+        Log.w(TAG, "listChatNotificationSounds failed: ${t.message}")
+        emptyList<Map<String, String>>()
+      }
+    }
+
+    // setChatNotificationTone(conversationId, config) — config keys:
+    //   sound: String   — a real Uri string, or "default" / "silent"
+    //   vibration: List<Double>? — explicit ms pattern (empty = channel default)
+    //   vibrationOff: Boolean    — true disables vibration for this conv
+    //   led: String?    — "#RRGGBB" LED color
+    // Returns the created channel id, or null on failure.
+    AsyncFunction("setChatNotificationTone") { conversationId: String, config: Map<String, Any> ->
+      return@AsyncFunction try {
+        val sound = config["sound"] as? String
+        val vibList = (config["vibration"] as? List<*>)?.mapNotNull { (it as? Number)?.toLong() }
+        val vibArray = vibList?.takeIf { it.isNotEmpty() }?.toLongArray()
+        val vibOff = (config["vibrationOff"] as? Boolean) ?: false
+        val led = config["led"] as? String
+        ChatMessagingStyleHandler.setConversationTone(
+          context, conversationId, sound, vibArray, vibOff, led
+        )
+      } catch (t: Throwable) {
+        Log.w(TAG, "setChatNotificationTone failed: ${t.message}")
+        null
+      }
+    }
+
+    // clearChatNotificationTone(conversationId) — revert to the default channel.
+    AsyncFunction("clearChatNotificationTone") { conversationId: String ->
+      try {
+        ChatMessagingStyleHandler.clearConversationTone(context, conversationId)
+      } catch (t: Throwable) {
+        Log.w(TAG, "clearChatNotificationTone failed: ${t.message}")
+      }
+    }
+
     AsyncFunction("displayIncomingCall") { callId: String, callerName: String, hasVideo: Boolean, callerEmail: String?, conversationId: String?, lkToken: String?, lkUrl: String? ->
       // [STAGE-B 2026-05-20] WhatsApp parity path. We do THREE things in
       // parallel:

@@ -26,6 +26,7 @@ import {
 } from 'react-native';
 import * as api from '../services/api';
 import { IconX, IconBell, IconCheck } from './Icons';
+import { CHAT_CUSTOM_NOTIF_TONE } from '../constants/featureFlags';
 
 // Built-in vibration patterns matched to the picker labels. Mirrors the
 // values the native push handler reads when emitting vibration so the
@@ -53,6 +54,44 @@ function previewVibration(name, pattern) {
 
 const ACCENT = '#7C3AED';
 
+// ── Native per-conversation tone channel sync (Android only) ───────────────
+// Translates the sheet's abstract settings into the concrete { sound, vibration
+// pattern, led } the native expo-callkit tone-channel API expects, then pushes
+// it so the FCM notification for THIS conversation plays the chosen sound +
+// vibration. Fully guarded: on any platform without the rebuilt native method
+// (iOS / web / Expo Go / old build) this is a silent no-op and the backend
+// save still records the preference.
+function resolveNativeSound(s) {
+  if (s?.sound === 'silent') return 'silent';
+  if (s?.sound === 'custom' && s?.sound_uri) return s.sound_uri;
+  return 'default';
+}
+function resolveNativeVibration(s) {
+  if (s?.vibration === 'off') return { vibrationOff: true, vibration: [] };
+  if (s?.vibration === 'custom' && Array.isArray(s?.vibration_pattern?.durations) && s.vibration_pattern.durations.length) {
+    return { vibrationOff: false, vibration: s.vibration_pattern.durations };
+  }
+  // 'default' → empty array = channel default vibration. 'short'/'long' → preset.
+  const preset = VIB_PRESETS[s?.vibration];
+  return { vibrationOff: false, vibration: (preset && preset.length) ? preset : [] };
+}
+async function syncNativeTone(conversationId, next) {
+  if (Platform.OS !== 'android' || !CHAT_CUSTOM_NOTIF_TONE || !conversationId) return;
+  try {
+    const callkit = require('../modules/expo-callkit');
+    if (typeof callkit.setChatNotificationTone !== 'function') return;
+    const vib = resolveNativeVibration(next);
+    const cfg = {
+      sound: resolveNativeSound(next),
+      vibration: vib.vibration,
+      vibrationOff: vib.vibrationOff,
+    };
+    // Only include led when set — avoids sending a null into the native record.
+    if (next?.led_color) cfg.led = next.led_color;
+    await callkit.setChatNotificationTone(String(conversationId), cfg);
+  } catch {}
+}
+
 // Cache mirror so the push handler can read these settings synchronously
 // (it lives in services/pushNotifications.js and may run in the
 // notification-handler tick where awaiting is risky).
@@ -77,6 +116,7 @@ async function writeCachedConvSettings(conversationId, settings) {
 const DEFAULT_SETTINGS = {
   notify_messages: true,
   sound: 'default',
+  sound_uri: null, // Android: real device notification-sound Uri chosen in the picker
   vibration: 'default',
   vibration_pattern: null, // {durations:[100,50,200]} | null
   preview: true,
@@ -129,6 +169,23 @@ export default function ChatNotificationSettingsSheet({
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Android: real device notification sounds for the "Tom de notificação"
+  // picker. Loaded lazily from the native module; empty on other platforms.
+  const [deviceSounds, setDeviceSounds] = useState([]);
+
+  useEffect(() => {
+    if (!visible || Platform.OS !== 'android' || !CHAT_CUSTOM_NOTIF_TONE) return;
+    let alive = true;
+    (async () => {
+      try {
+        const callkit = require('../modules/expo-callkit');
+        if (typeof callkit.listChatNotificationSounds !== 'function') return;
+        const list = await callkit.listChatNotificationSounds();
+        if (alive && Array.isArray(list) && list.length) setDeviceSounds(list);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [visible]);
 
   // Hydrate every time the sheet opens — pulls fresh server state but falls
   // back to the local cache so the UI is never blank if the request fails.
@@ -142,7 +199,11 @@ export default function ChatNotificationSettingsSheet({
       try {
         const r = await api.chatGetConvSettings(conversationId);
         if (alive && r?.success && r?.data) {
+          // sound_uri is an Android-local-only field (real device sound Uri);
+          // the server never round-trips it, so preserve it from the cache so
+          // the picker keeps the user's chosen device tone after re-open.
           const merged = { ...DEFAULT_SETTINGS, ...r.data };
+          if (cached?.sound_uri && merged.sound_uri == null) merged.sound_uri = cached.sound_uri;
           setSettings(merged);
           writeCachedConvSettings(conversationId, merged);
         }
@@ -158,6 +219,13 @@ export default function ChatNotificationSettingsSheet({
     const next = { ...settings, ...patch };
     setSettings(next);
     writeCachedConvSettings(conversationId, next);
+    // Push sound/vibration/LED to the native per-conversation channel so the
+    // change takes effect on the next push (Android). No-op elsewhere.
+    if (Platform.OS === 'android' &&
+        ('sound' in patch || 'sound_uri' in patch || 'vibration' in patch ||
+         'vibration_pattern' in patch || 'led_color' in patch)) {
+      syncNativeTone(conversationId, next);
+    }
     setSaving(true);
     try {
       const r = await api.chatSetConvSettings(conversationId, patch);
@@ -264,6 +332,29 @@ export default function ChatNotificationSettingsSheet({
               onChange={(v) => saveField({ sound: v })}
               colors={colors}
             />
+
+            {/* Tom de notificação (Android) — real device notification sounds.
+                Only shown when the user picked "Personalizado" above; choosing
+                one writes the concrete sound Uri to the per-conversation native
+                NotificationChannel (WhatsApp parity). iOS/web don't expose a
+                per-channel sound, so this section is Android-only. */}
+            {Platform.OS === 'android' && settings.sound === 'custom' ? (
+              (() => {
+                const realSounds = deviceSounds.filter(s => s.uri !== 'default' && s.uri !== 'silent');
+                if (!realSounds.length) return null;
+                return (
+                  <>
+                    <SectionHeader text={t?.('chatConv.notifTone') || 'Tom de notificação'} colors={colors} />
+                    <PickerRow
+                      options={realSounds.map(s => ({ value: s.uri, label: s.title }))}
+                      value={settings.sound_uri || ''}
+                      onChange={(uri) => saveField({ sound_uri: uri })}
+                      colors={colors}
+                    />
+                  </>
+                );
+              })()
+            ) : null}
 
             {/* Toque personalizado (ringtone) — per-conversation call
                 ringtone. Picker shows 16 system ringtones; the chosen

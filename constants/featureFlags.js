@@ -36,6 +36,18 @@ export const PREMIUM_BADGES_VISIBLE = MONETIZATION_ENABLED;
 export function isMonetizationActive() { return MONETIZATION_ENABLED; }
 
 // ────────────────────────────────────────────────────────────────────────
+// CHAT_CUSTOM_NOTIF_TONE — Android per-conversation custom notification
+// sound + vibration (WhatsApp parity). Backed by a per-conversation
+// NotificationChannel created by the native expo-callkit module
+// (ChatMessagingStyleHandler). The whole native path is fail-safe (any
+// error falls back to the default "chat" channel) and the JS calls are
+// guarded (no-op when the native method is missing — iOS / web / Expo Go /
+// pre-rebuild), so this defaults ON. Flip false to stop the JS settings
+// sheet from touching the native tone channels. Effective only on Android
+// with the rebuilt native module; a no-op everywhere else.
+export const CHAT_CUSTOM_NOTIF_TONE = true;
+
+// ────────────────────────────────────────────────────────────────────────
 // DEFAULT_E2EE — master kill-switch for end-to-end encrypted chat delivery
 // (the "envelope mode" send/pull pipeline). **DEFAULT false.** DO NOT FLIP
 // without full dual-device QA (see below).
@@ -109,3 +121,40 @@ export function isE2eeDefaultOn() { return DEFAULT_E2EE === true; }
 //   4. Flag-OFF regression: with this false, a normal call is identical to
 //      production today (no badge, no extra network calls).
 export const CALL_E2EE_ENABLED = false;
+
+// ────────────────────────────────────────────────────────────────────────
+// PASSKEYS_ENABLED — master switch for WebAuthn / FIDO2 passwordless login
+// ("Entrar com passkey"). **DEFAULT false.** DO NOT FLIP until the native
+// passkey bridge ships in a build.
+//
+// The backend ceremony endpoints live in /api/passkeys.php (inert until
+// called) and are complete. The MISSING piece is the native RN bridge that
+// talks to the platform authenticator (Face ID / Touch ID / Android
+// biometrics) — recommended dep `react-native-passkey`. Because adding a
+// native dep has repeatedly broken the iOS Archive here, the dep is NOT
+// installed yet, so this flag stays OFF and the login-screen affordance stays
+// hidden. When ON, login.js calls passkey_login_begin/finish; the "Register
+// passkey" affordance in settings calls passkey_register_begin/finish.
+//
+// BEFORE FLIPPING TO true:
+//   1. Install + build with `react-native-passkey` (build, not OTA).
+//   2. Ship apple-app-site-association (webcredentials) on chatyy.com.br +
+//      Associated Domains entitlement, and Android assetlinks.json + Digital
+//      Asset Links, so the platform trusts rpId=chatyy.com.br.
+//   3. Set PASSKEY_ANDROID_ORIGIN in /etc/mail-api.env to the Android
+//      apk-key-hash origin so passkeys.php accepts the native origin.
+//   4. Dual-device QA: register on device A, login on device B.
+export const PASSKEYS_ENABLED = false;
+
+// ────────────────────────────────────────────────────────────────────────
+// SCAN_DOCUMENT_ENABLED — master switch for the in-app "Digitalizar
+// documento" scanner in the chat attach menu (native VisionKit on iOS /
+// ML Kit Document Scanner on Android → multi-page PDF → attach to chat).
+// **DEFAULT false.** DO NOT FLIP until the native scanner bridge ships.
+//
+// Native capture requires a dep that is NOT installed (recommended:
+// `react-native-document-scanner-plugin`). While OFF, the attach-menu slot is
+// not rendered. When ON, the produced PDF flows into the existing
+// uploadAndSendFile() document path (with caption support) exactly like a
+// picked PDF. Requires a native build (not OTA) to land the dep.
+export const SCAN_DOCUMENT_ENABLED = false;

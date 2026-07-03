@@ -3109,10 +3109,21 @@ export default function Profile({
             if (result.canceled || !result.assets?.[0]) return;
             const a = result.assets[0];
             const file = { uri: a.uri, name: a.fileName || (a.type === 'video' ? 'status.mp4' : 'status.jpg'), type: a.mimeType || (a.type === 'video' ? 'video/mp4' : 'image/jpeg') };
-            const uploadR = await api.statusUpload?.(file);
-            if (uploadR?.success && uploadR.data?.url) {
-              const statusType = a.type === 'video' ? 'video' : 'image';
-              await api.statusPublish?.(uploadR.data.url, statusType, '#000000', null, {});
+            const statusType = a.type === 'video' ? 'video' : 'image';
+            // Long video → split into ≤30s back-to-back status segments (WhatsApp).
+            // Single-element array for photos / short clips = unchanged flow.
+            let parts = [file];
+            if (a.type === 'video') {
+              try {
+                const { segmentVideoForStatus } = require('../services/statusVideoSegments');
+                parts = await segmentVideoForStatus(file);
+              } catch { parts = [file]; }
+            }
+            for (const part of parts) {
+              const uploadR = await api.statusUpload?.(part);
+              if (uploadR?.success && uploadR.data?.url) {
+                await api.statusPublish?.(uploadR.data.url, statusType, '#000000', null, {});
+              }
             }
           }
         } catch (e) {

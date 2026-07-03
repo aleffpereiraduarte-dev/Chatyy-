@@ -1,8 +1,11 @@
 package expo.modules.nativevideo
 
 import android.graphics.Bitmap
+import android.media.MediaCodec
+import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
+import android.media.MediaMuxer
 import android.net.Uri
 import android.util.Log
 import expo.modules.kotlin.modules.Module
@@ -10,6 +13,8 @@ import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.exception.CodedException
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
+import kotlin.math.min
 
 /**
  * ExpoNativeVideoModule — Stage 1 (2026-05-16).
@@ -70,6 +75,18 @@ class ExpoNativeVideoModule : Module() {
 
     AsyncFunction("compressVideo") { srcUri: String, options: Map<String, Any?> ->
       return@AsyncFunction compress(srcUri, options)
+    }
+
+    // segmentVideo(srcUri, segmentMs) — split a long clip into back-to-back
+    // ≤segmentMs chunks (WhatsApp status parity: post a >30s video as several
+    // 30s segments). Uses MediaExtractor → MediaMuxer sample-copy (NO re-encode
+    // — fast + lossless), cutting on keyframe boundaries. Returns:
+    //   { segments: [ { uri, index, durationMs } ], segmented: Boolean }
+    // A clip already ≤segmentMs returns the source unchanged (segmented=false).
+    // Throws only on unrecoverable errors so the JS caller falls back to
+    // posting the single (capped) video — a user's post is never lost.
+    AsyncFunction("segmentVideo") { srcUri: String, segmentMs: Double ->
+      return@AsyncFunction segment(srcUri, segmentMs.toLong())
     }
   }
 
@@ -251,6 +268,165 @@ class ExpoNativeVideoModule : Module() {
       "height" to srcH,
       "durationMs" to durationMs
     )
+  }
+
+  // ─── segmentVideo ────────────────────────────────────────────────────────
+
+  private fun segment(srcUri: String, segmentMsIn: Long): Map<String, Any> {
+    val segmentMs = if (segmentMsIn > 0) segmentMsIn else 30_000L
+    val info = readInfo(srcUri)
+    val totalMs = (info["durationMs"] as? Long) ?: 0L
+
+    // Short clip (or unknown duration) → nothing to split; return as-is so the
+    // JS path uploads it unchanged.
+    if (totalMs <= 0L || totalMs <= segmentMs + 1_500L) {
+      return mapOf(
+        "segmented" to false,
+        "segments" to listOf(
+          mapOf("uri" to srcUri, "index" to 0, "durationMs" to totalMs)
+        )
+      )
+    }
+
+    val cacheDir = appContext.reactContext?.cacheDir
+      ?: throw CodedException("E_SEG_NO_CACHE", "cacheDir unavailable", null)
+
+    // Rotation so each segment preserves the shooting orientation.
+    val rotation = try {
+      val mmr = openRetriever(srcUri)
+      try {
+        mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+      } finally { try { mmr.release() } catch (_: Throwable) {} }
+    } catch (_: Throwable) { 0 }
+
+    val totalUs = totalMs * 1000L
+    val segUs = segmentMs * 1000L
+    val stamp = System.currentTimeMillis()
+    val segments = ArrayList<Map<String, Any>>()
+    val written = ArrayList<File>()
+    var index = 0
+    var startUs = 0L
+    try {
+      while (startUs < totalUs) {
+        val endUs = min(startUs + segUs, totalUs)
+        val outFile = File(cacheDir, "seg_${stamp}_${index}.mp4")
+        val actualDurUs = writeSegment(srcUri, outFile, startUs, endUs, rotation)
+        if (actualDurUs <= 0L || !outFile.exists() || outFile.length() <= 0L) {
+          throw CodedException("E_SEG_EMPTY", "Segment $index produced no output", null)
+        }
+        written.add(outFile)
+        segments.add(
+          mapOf(
+            "uri" to "file://${outFile.absolutePath}",
+            "index" to index,
+            "durationMs" to (actualDurUs / 1000L)
+          )
+        )
+        index++
+        startUs = endUs
+        // Safety cap — never spawn an unbounded number of segments.
+        if (index >= 20) break
+      }
+    } catch (t: Throwable) {
+      // Clean up partial output so we don't leak files, then rethrow so JS
+      // falls back to posting the single video.
+      for (f in written) { try { f.delete() } catch (_: Throwable) {} }
+      Log.w(TAG, "segmentVideo failed: ${t.message}")
+      throw if (t is CodedException) t else CodedException("E_SEG_FAILED", t.message ?: "segment failed", t)
+    }
+
+    Log.i(TAG, "segmentVideo: split ${totalMs}ms into ${segments.size} segments of ≤${segmentMs}ms")
+    return mapOf("segmented" to true, "segments" to segments)
+  }
+
+  /**
+   * Copy the sample range [startUs, endUs) from the source into a fresh MP4 at
+   * `outFile` without re-encoding. Seeks to the keyframe at/before startUs so
+   * the video is decodable, and rebases timestamps to 0. Returns the actual
+   * written duration in µs (0 on failure).
+   */
+  private fun writeSegment(srcUri: String, outFile: File, startUs: Long, endUs: Long, rotation: Int): Long {
+    var extractor: MediaExtractor? = null
+    var muxer: MediaMuxer? = null
+    try {
+      extractor = MediaExtractor()
+      val uri = Uri.parse(srcUri)
+      when (uri.scheme) {
+        "content" -> extractor.setDataSource(appContext.reactContext!!, uri, null)
+        "file", null -> extractor.setDataSource(uri.path ?: srcUri)
+        else -> extractor.setDataSource(srcUri)
+      }
+
+      val trackCount = extractor.trackCount
+      if (outFile.exists()) outFile.delete()
+      muxer = MediaMuxer(outFile.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+
+      val indexMap = HashMap<Int, Int>()
+      var maxInputSize = 0
+      for (i in 0 until trackCount) {
+        val format = extractor.getTrackFormat(i)
+        val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+        if (mime.startsWith("video/") || mime.startsWith("audio/")) {
+          extractor.selectTrack(i)
+          val dst = muxer.addTrack(format)
+          indexMap[i] = dst
+          if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) {
+            maxInputSize = maxOf(maxInputSize, format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE))
+          }
+        }
+      }
+      if (indexMap.isEmpty()) return 0L
+
+      if (rotation != 0) {
+        try { muxer.setOrientationHint(rotation) } catch (_: Throwable) {}
+      }
+      muxer.start()
+
+      val bufSize = if (maxInputSize > 0) maxInputSize else 1 shl 20 // 1MB fallback
+      val buffer = ByteBuffer.allocate(bufSize)
+      val bufferInfo = MediaCodec.BufferInfo()
+
+      // Seek to the keyframe at/before the segment start so decoding is clean.
+      extractor.seekTo(startUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
+
+      var baseUs = -1L
+      var lastUs = 0L
+      while (true) {
+        bufferInfo.offset = 0
+        bufferInfo.size = extractor.readSampleData(buffer, 0)
+        if (bufferInfo.size < 0) break
+        val sampleTime = extractor.sampleTime
+        if (sampleTime < 0) break
+        if (sampleTime >= endUs) break
+        if (baseUs < 0L) baseUs = sampleTime
+        val track = extractor.sampleTrackIndex
+        val dst = indexMap[track]
+        if (dst != null) {
+          bufferInfo.presentationTimeUs = sampleTime - baseUs
+          bufferInfo.flags = sampleFlagsToBufferFlags(extractor.sampleFlags)
+          muxer.writeSampleData(dst, buffer, bufferInfo)
+          if (bufferInfo.presentationTimeUs > lastUs) lastUs = bufferInfo.presentationTimeUs
+        }
+        extractor.advance()
+      }
+      return lastUs
+    } catch (t: Throwable) {
+      Log.w(TAG, "writeSegment failed: ${t.message}")
+      return 0L
+    } finally {
+      try { muxer?.stop() } catch (_: Throwable) {}
+      try { muxer?.release() } catch (_: Throwable) {}
+      try { extractor?.release() } catch (_: Throwable) {}
+    }
+  }
+
+  /** Map MediaExtractor sample flags → MediaCodec buffer flags for the muxer. */
+  private fun sampleFlagsToBufferFlags(sampleFlags: Int): Int {
+    var flags = 0
+    if (sampleFlags and MediaExtractor.SAMPLE_FLAG_SYNC != 0) {
+      flags = flags or MediaCodec.BUFFER_FLAG_KEY_FRAME
+    }
+    return flags
   }
 
   /** Resolve a file:// or bare path to a filesystem path; null for content:// etc. */

@@ -48,6 +48,15 @@ public class ExpoNativeVideoModule: Module {
     AsyncFunction("compressVideo") { (srcUri: String, options: [String: Any], promise: Promise) in
       Self.runCompress(srcUri: srcUri, options: options, promise: promise)
     }
+
+    // segmentVideo(srcUri, segmentMs) — split a long clip into back-to-back
+    // ≤segmentMs chunks (WhatsApp status parity). Uses AVAssetExportSession
+    // with a per-segment timeRange + passthrough preset (no re-encode). Resolves
+    // { segments: [ { uri, index, durationMs } ], segmented: Bool }. Rejects
+    // only on unrecoverable failure so JS falls back to posting the single clip.
+    AsyncFunction("segmentVideo") { (srcUri: String, segmentMs: Double, promise: Promise) in
+      Self.runSegment(srcUri: srcUri, segmentMs: segmentMs, promise: promise)
+    }
   }
 
   // ─── URL helper ────────────────────────────────────────────────────────────
@@ -272,5 +281,93 @@ public class ExpoNativeVideoModule: Module {
         promise.reject("E_COMP_STATE", "Unexpected export status: \(session.status.rawValue)")
       }
     }
+  }
+
+  // ─── segmentVideo ────────────────────────────────────────────────────────
+
+  private static func runSegment(srcUri: String, segmentMs: Double, promise: Promise) {
+    guard let url = resolveURL(srcUri) else {
+      promise.reject("E_SEG_URL", "Cannot parse srcUri: \(srcUri)")
+      return
+    }
+    let asset = AVURLAsset(url: url)
+    let totalSeconds = CMTimeGetSeconds(asset.duration)
+    let segSeconds = (segmentMs > 0 ? segmentMs : 30_000.0) / 1000.0
+
+    // Short clip → return unchanged (JS uploads it as-is).
+    if !totalSeconds.isFinite || totalSeconds <= 0 || totalSeconds <= segSeconds + 1.5 {
+      promise.resolve([
+        "segmented": false,
+        "segments": [["uri": srcUri, "index": 0, "durationMs": Int64(max(0, totalSeconds) * 1000.0)]],
+      ])
+      return
+    }
+
+    // Passthrough preset = remux only, no re-encode. Fall back to the JS single
+    // upload if the device can't offer it for this asset.
+    let preset = AVAssetExportPresetPassthrough
+    guard AVAssetExportSession.allExportPresets().contains(preset) else {
+      promise.reject("E_SEG_PRESET", "Passthrough preset unsupported for this asset")
+      return
+    }
+
+    let segmentCount = min(20, Int(ceil(totalSeconds / segSeconds)))
+    let tmpDir = NSTemporaryDirectory()
+    let stamp = Int(Date().timeIntervalSince1970 * 1000)
+    var results: [[String: Any]] = []
+    var writtenURLs: [URL] = []
+
+    // Export segments sequentially — AVAssetExportSession is async, so we chain
+    // via a recursive helper. On any failure we clean up + reject so JS falls
+    // back to the single-clip path.
+    func cleanup() {
+      for u in writtenURLs { try? FileManager.default.removeItem(at: u) }
+    }
+    func exportSegment(_ index: Int) {
+      if index >= segmentCount {
+        promise.resolve(["segmented": true, "segments": results])
+        return
+      }
+      let startSec = Double(index) * segSeconds
+      let endSec = min(startSec + segSeconds, totalSeconds)
+      let durSec = endSec - startSec
+      if durSec <= 0 {
+        promise.resolve(["segmented": true, "segments": results])
+        return
+      }
+
+      guard let session = AVAssetExportSession(asset: asset, presetName: preset) else {
+        cleanup()
+        promise.reject("E_SEG_SESSION", "Cannot init export session for segment \(index)")
+        return
+      }
+      let outURL = URL(fileURLWithPath: tmpDir).appendingPathComponent("seg_\(stamp)_\(index).mp4")
+      try? FileManager.default.removeItem(at: outURL)
+      session.outputURL = outURL
+      session.outputFileType = .mp4
+      session.shouldOptimizeForNetworkUse = true
+      let start = CMTime(seconds: startSec, preferredTimescale: 600)
+      let dur = CMTime(seconds: durSec, preferredTimescale: 600)
+      session.timeRange = CMTimeRange(start: start, duration: dur)
+
+      session.exportAsynchronously {
+        switch session.status {
+        case .completed:
+          writtenURLs.append(outURL)
+          results.append([
+            "uri": "file://\(outURL.path)",
+            "index": index,
+            "durationMs": Int64(durSec * 1000.0),
+          ])
+          exportSegment(index + 1)
+        default:
+          cleanup()
+          let msg = session.error?.localizedDescription ?? "unknown"
+          promise.reject("E_SEG_FAILED", "Segment \(index) export failed: \(msg)")
+        }
+      }
+    }
+
+    exportSegment(0)
   }
 }

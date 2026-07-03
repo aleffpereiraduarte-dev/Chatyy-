@@ -4734,9 +4734,18 @@ export async function chatEditHistory(messageId) {
 
 // Streaks
 export async function chatGetStreaks() { return apiCall('chat_get_streaks', {}); }
-// Call links
+// Shareable call links (standalone — NOT the same as chat_call_create_link,
+// which shares an already-running group call). Contract:
+//   chat_create_call_link  { call_type }        → { link_id, url, is_video }
+//   chat_call_link_info    { link_id }          → { creator_name, creator_avatar, is_video, revoked, expired, participant_count }
+//   chat_call_link_join    { link_id }          → { url, token, room, is_video }
+//   chat_call_link_revoke  { link_id }          (creator-only)
 export async function chatCreateCallLink(callType = 'video') { return apiCall('chat_create_call_link', { call_type: callType }, 'POST'); }
-export async function chatJoinCallLink(linkId) { return apiCall('chat_join_call_link', { link_id: linkId }); }
+export async function chatCallLinkInfo(linkId) { return apiCall('chat_call_link_info', { link_id: linkId }); }
+export async function chatCallLinkJoin(linkId) { return apiCall('chat_call_link_join', { link_id: linkId }, 'POST'); }
+export async function chatCallLinkRevoke(linkId) { return apiCall('chat_call_link_revoke', { link_id: linkId }, 'POST'); }
+// Back-compat alias for older callers of the pre-contract name.
+export async function chatJoinCallLink(linkId) { return chatCallLinkJoin(linkId); }
 // Status stickers
 export async function statusPollVote(statusId, optionIndex) { return apiCall('status_poll_vote', { status_id: statusId, option_index: optionIndex }, 'POST'); }
 export async function statusQuestionAnswer(statusId, answer, stickerId = '') { return apiCall('status_question_answer', { status_id: statusId, answer, sticker_id: stickerId }, 'POST'); }

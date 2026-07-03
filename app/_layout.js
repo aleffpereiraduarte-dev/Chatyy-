@@ -1526,6 +1526,7 @@ export default function RootLayout() {
                   <Stack.Screen name="feed/[id]" options={{ headerShown: false, animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="search" options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false, freezeOnBlur: false }} />
+                  <Stack.Screen name="call/[id]" options={{ headerShown: false, presentation: 'card', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="voicemail-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false }} />
                   <Stack.Screen name="meetings" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
                   <Stack.Screen name="meeting-create" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 150 }} />
