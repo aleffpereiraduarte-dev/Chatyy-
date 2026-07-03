@@ -4992,7 +4992,10 @@ export async function statusPublish(content, type = 'text', bgColor = '#7C3AED',
   // fell back to rendering the URL as text ("status/status_69..."). Route
   // URL to the right column; caption (if any) rides along in `content`.
   const params = { type, background: bgColor };
-  if (type === 'image' || type === 'video') {
+  if (type === 'image' || type === 'video' || type === 'voice' || type === 'audio') {
+    // Voice/audio statuses ride the same media_url column as image/video (the
+    // audio file's URL). The backend persists media_url regardless of the
+    // (possibly coerced) type, and the viewer sniffs the audio extension.
     params.media_url = content || '';
     params.content = extraMeta?.caption || '';
   } else if (type === 'poll') {
@@ -5021,7 +5024,7 @@ export async function statusPublish(content, type = 'text', bgColor = '#7C3AED',
   // separated above) so the backend persists them. Skip ones already
   // sent above or that don't belong in status_create.
   if (extraMeta && typeof extraMeta === 'object') {
-    for (const k of ['caption_locale', 'caption_translations', 'privacy', 'filter', 'stickers', 'text_overlays', 'draw_paths', 'font_style', 'is_boomerang']) {
+    for (const k of ['caption_locale', 'caption_translations', 'privacy', 'filter', 'stickers', 'text_overlays', 'draw_paths', 'font_style', 'is_boomerang', 'mentions']) {
       if (extraMeta[k] !== undefined && params[k] === undefined) params[k] = extraMeta[k];
     }
     // cross_post_feed — server creates a feed_posts row with same media when true.

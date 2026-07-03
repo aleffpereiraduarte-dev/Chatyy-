@@ -9,7 +9,7 @@ import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
 import StatusCamera from './StatusCamera';
 import BrandFab from './BrandFab';
-import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown } from './Icons';
+import { IconPlus, IconCamera, IconEdit, IconX, IconSearch, IconTrash, IconEye, IconChevronLeft, IconChevronRight, IconSend, IconPause, IconPlay, IconForward, IconSmile, IconType, IconBrush, IconUndo2, IconRotateCw, IconBookmark, IconBarChart, IconHelpCircle, IconClock, IconAtSign, IconAward, IconMapPin, IconLink, IconArrowRight, IconArchive, IconSliders, IconFeedShare, IconCheck, IconCheckbox, IconCheckboxChecked, IconChevronUp, IconChevronDown, IconMic } from './Icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as api from '../services/api';
 import * as Haptics from 'expo-haptics';
@@ -287,6 +287,13 @@ function StatusVideoPlayer({ url, posterUrl, onDuration, onLoaded, onError }) {
 
 const STATUS_DURATION = 5000;
 const ACCENT = '#7C3AED';
+
+// mm:ss for the voice-status recording timer.
+function _fmtDur(secs) {
+  const s = Math.max(0, Math.floor(Number(secs) || 0));
+  const m = Math.floor(s / 60);
+  return `${m}:${String(s % 60).padStart(2, '0')}`;
+}
 const GRADIENT_COLORS = ['#7C3AED', '#6D28D9', '#6D28D9'];
 
 // --- Music Note Icon ---
@@ -1307,6 +1314,24 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const [linkPromptVisible, setLinkPromptVisible] = useState(false);
   const [linkPromptUrl, setLinkPromptUrl] = useState('');
   const [linkPromptLabel, setLinkPromptLabel] = useState('');
+  // Mention sticker contact-picker. Instead of dropping the poster's own name,
+  // the user picks a real contact — we store { username, email } on the sticker
+  // and fan the email out via extraMeta.mentions so the backend can notify them.
+  const [mentionPromptVisible, setMentionPromptVisible] = useState(false);
+  const [mentionContacts, setMentionContacts] = useState([]);
+  const [mentionLoading, setMentionLoading] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  // Voice status (standalone audio-only story). Records via expo-audio (native)
+  // / MediaRecorder (web), uploads the note, and publishes it as a 'voice'
+  // status (URL rides the media_url column; StoryViewer plays it back).
+  const [voiceComposerVisible, setVoiceComposerVisible] = useState(false);
+  const [voiceRecording, setVoiceRecording] = useState(false);
+  const [voiceUploading, setVoiceUploading] = useState(false);
+  const [voiceElapsed, setVoiceElapsed] = useState(0);
+  const voiceRecRef = useRef(null);
+  const voiceMediaRef = useRef(null);
+  const voiceStartRef = useRef(0);
+  const voiceTickRef = useRef(null);
   // GIF sticker picker — opened from the sticker tray's "GIF" tile. Reuses
   // the existing GifPickerPanel (Tenor search + cached previews). On select
   // we drop a new gif-type sticker on the canvas at a randomized origin so
@@ -2169,6 +2194,102 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     }
   }, [t]);
 
+  // ── Voice status recorder ──────────────────────────────────────────────
+  // Mirrors FeedComments' voice-comment capture (expo-audio native / Web
+  // MediaRecorder) but publishes the recording as a standalone voice status.
+  const openVoiceComposer = useCallback(() => {
+    if (Date.now() < statusPressLockRef.current) return;
+    statusPressLockRef.current = Date.now() + 600;
+    setVoiceRecording(false);
+    setVoiceUploading(false);
+    setVoiceElapsed(0);
+    setStatusPrivacy('all');
+    setVoiceComposerVisible(true);
+  }, []);
+
+  const startVoiceRecording = useCallback(async () => {
+    if (voiceRecording || voiceUploading) return;
+    try {
+      if (Platform.OS === 'web') {
+        if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) return;
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mr = new MediaRecorder(stream);
+        const chunks = [];
+        mr.ondataavailable = (e) => { if (e.data?.size) chunks.push(e.data); };
+        voiceMediaRef.current = { mr, stream, chunks };
+        mr.start();
+      } else {
+        const expoAudio = require('expo-audio');
+        try { await expoAudio.setAudioModeAsync?.({ allowsRecording: true, playsInSilentMode: true }); } catch {}
+        const AudioMod = require('expo-audio/build/AudioModule').default;
+        const { RecordingPresets } = require('expo-audio');
+        const recorder = await AudioMod.createRecorder(RecordingPresets.HIGH_QUALITY);
+        await recorder.prepareToRecordAsync();
+        recorder.record();
+        voiceRecRef.current = recorder;
+      }
+      voiceStartRef.current = Date.now();
+      setVoiceElapsed(0);
+      if (voiceTickRef.current) clearInterval(voiceTickRef.current);
+      voiceTickRef.current = setInterval(() => setVoiceElapsed(Math.floor((Date.now() - voiceStartRef.current) / 1000)), 250);
+      setVoiceRecording(true);
+      if (Platform.OS !== 'web') { try { require('expo-haptics').impactAsync(); } catch {} }
+    } catch (e) {
+      setVoiceRecording(false);
+    }
+  }, [voiceRecording, voiceUploading]);
+
+  const stopVoiceRecording = useCallback(async (cancel = false) => {
+    if (!voiceRecording) return;
+    setVoiceRecording(false);
+    if (voiceTickRef.current) { clearInterval(voiceTickRef.current); voiceTickRef.current = null; }
+    const elapsed = Date.now() - voiceStartRef.current;
+    let audio = null;
+    try {
+      if (Platform.OS === 'web') {
+        const ref = voiceMediaRef.current;
+        if (!ref) return;
+        await new Promise((resolve) => { ref.mr.onstop = () => resolve(); try { ref.mr.stop(); } catch { resolve(); } });
+        try { ref.stream.getTracks().forEach(tr => tr.stop()); } catch {}
+        if (!cancel && ref.chunks.length) audio = { blob: new Blob(ref.chunks, { type: 'audio/webm' }), name: `voice_status_${Date.now()}.webm`, type: 'audio/webm' };
+        voiceMediaRef.current = null;
+      } else {
+        const recorder = voiceRecRef.current;
+        if (!recorder) return;
+        try { await recorder.stop(); } catch {}
+        const uri = recorder.uri;
+        try { recorder.release?.(); } catch {}
+        voiceRecRef.current = null;
+        if (!cancel && uri) audio = { uri, name: `voice_status_${Date.now()}.m4a`, type: 'audio/m4a' };
+        try { require('expo-audio').setAudioModeAsync?.({ allowsRecording: false }); } catch {}
+      }
+    } catch {}
+    // Sub-second taps → treat as cancel (no ghost upload).
+    if (cancel || elapsed < 800 || !audio) { setVoiceComposerVisible(false); return; }
+    setVoiceUploading(true);
+    try {
+      const uploadR = await api.statusUpload(audio);
+      const url = uploadR?.data?.url || uploadR?.data?.cdn_url;
+      if (uploadR?.success && url) {
+        const extraMeta = { privacy: statusPrivacy !== 'all' ? statusPrivacy : undefined };
+        const r = await api.statusPublish(url, 'voice', '#7C3AED', null, extraMeta);
+        if (r?.success) {
+          setVoiceComposerVisible(false);
+          loadStatuses();
+          if (Platform.OS !== 'web') { try { Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success); } catch {} }
+        } else {
+          try { Alert.alert?.(t?.('common.error') || 'Erro', r?.message || t?.('status.publishFailed') || 'Não foi possível publicar o status.'); } catch {}
+        }
+      } else {
+        try { Alert.alert?.(t?.('common.error') || 'Erro', uploadR?.message || t?.('status.uploadFailed') || 'Falha no upload do áudio.'); } catch {}
+      }
+    } catch (e) {
+      try { Alert.alert?.(t?.('common.error') || 'Erro', e?.message || 'Falha ao publicar'); } catch {}
+    } finally {
+      setVoiceUploading(false);
+    }
+  }, [voiceRecording, statusPrivacy, loadStatuses, t]);
+
   // Handler for when StatusCamera captures a photo/video.
   // Perf: photos are compressed to ~1200px / 0.82 JPEG before upload so a 4 MB
   // HEIC/PNG becomes ~150 KB — cuts upload time on 4G from ~8 s to <1 s. Video
@@ -2254,11 +2375,23 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       // Backend persists it under meta.except_emails and filters per viewer.
       except_emails: (statusPrivacy === 'except' && exceptEmails.length > 0) ? exceptEmails : undefined,
       filter: photoFilter !== 'normal' ? photoFilter : undefined,
-      stickers: stickers.length > 0 ? stickers.map(s => ({
-        ...(s.emoji ? { emoji: s.emoji } : {}),
-        ...(s.type ? { type: s.type, ...s } : {}),
-        x: Math.round(s.x), y: Math.round(s.y),
-      })) : undefined,
+      stickers: stickers.length > 0 ? stickers.map(s => {
+        // Never broadcast a mentioned contact's email to viewers — it rides in
+        // the top-level `mentions` array (server-side notify only). Strip it
+        // from the public sticker payload; keep the @username label.
+        const { email: _mentEmail, ...safe } = s;
+        return {
+          ...(s.emoji ? { emoji: s.emoji } : {}),
+          ...(s.type ? { type: s.type, ...safe } : {}),
+          x: Math.round(s.x), y: Math.round(s.y),
+        };
+      }) : undefined,
+      // Emails of contacts @-mentioned via mention stickers. Backend fans out a
+      // "Fulano mencionou você no status" push to each (mention_type='status').
+      mentions: (() => {
+        const ms = stickers.filter(s => s.type === 'mention' && s.email).map(s => s.email);
+        return ms.length ? Array.from(new Set(ms)) : undefined;
+      })(),
       text_overlays: textOverlays.length > 0 ? textOverlays.map(to => ({ text: to.text, x: Math.round(to.x), y: Math.round(to.y), color: to.color })) : undefined,
       draw_paths: drawPaths.length > 0 ? drawPaths.map(p => ({ color: p.color, points: p.points.map(pt => ({ x: Math.round(pt.x), y: Math.round(pt.y) })) })) : undefined,
       // Cross-post to Feed — only forwarded for image/video modes (backend
@@ -2978,6 +3111,16 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
         <IconCamera size={22} color={ACCENT} />
       </BrandFab>
       <BrandFab
+        style={{ position: 'absolute', bottom: (insets?.bottom || 0) + 148, right: 24 }}
+        size={48}
+        variant="secondary"
+        surfaceColor={isDark ? '#2a2e2b' : '#fff'}
+        onPress={openVoiceComposer}
+        accessibilityLabel={t?.('status.voiceStatus') || 'Status de voz'}
+      >
+        <IconMic size={22} color={ACCENT} />
+      </BrandFab>
+      <BrandFab
         style={{ position: 'absolute', bottom: (insets?.bottom || 0) + 16, right: 20 }}
         size={58}
         color={ACCENT}
@@ -2986,6 +3129,46 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       >
         <IconEdit size={24} color="#fff" />
       </BrandFab>
+
+      {/* Voice status recorder — record → upload → publish as a voice story */}
+      {voiceComposerVisible && (
+        <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={() => { if (!voiceRecording && !voiceUploading) setVoiceComposerVisible(false); }}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.92)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+            <TouchableOpacity
+              onPress={() => { if (voiceRecording) stopVoiceRecording(true); else if (!voiceUploading) setVoiceComposerVisible(false); }}
+              style={{ position: 'absolute', top: (insets?.top || 0) + 16, left: 16, padding: 10 }}
+              accessibilityLabel={t?.('common.close') || 'Fechar'}
+            >
+              <IconX size={26} color="#fff" />
+            </TouchableOpacity>
+
+            <View style={{ width: 140, height: 140, borderRadius: 70, backgroundColor: voiceRecording ? 'rgba(236,72,153,0.25)' : 'rgba(124,58,237,0.22)', alignItems: 'center', justifyContent: 'center', marginBottom: 28 }}>
+              <View style={{ width: 104, height: 104, borderRadius: 52, backgroundColor: voiceRecording ? '#EC4899' : '#7C3AED', alignItems: 'center', justifyContent: 'center' }}>
+                <IconMic size={48} color="#fff" />
+              </View>
+            </View>
+
+            <Text style={{ color: '#fff', fontSize: 22, fontWeight: '700', letterSpacing: 1 }}>
+              {voiceUploading ? (t?.('common.sending') || 'Enviando...') : voiceRecording ? _fmtDur(voiceElapsed) : (t?.('status.voiceStatus') || 'Mensagem de voz')}
+            </Text>
+            <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13, marginTop: 10, textAlign: 'center' }}>
+              {voiceUploading ? '' : voiceRecording ? (t?.('status.voiceTapStop') || 'Toque para parar e publicar') : (t?.('status.voiceTapRecord') || 'Toque no microfone para gravar')}
+            </Text>
+
+            {voiceUploading ? (
+              <ActivityIndicator color="#fff" size="large" style={{ marginTop: 32 }} />
+            ) : (
+              <TouchableOpacity
+                onPress={() => { if (voiceRecording) stopVoiceRecording(false); else startVoiceRecording(); }}
+                style={{ marginTop: 34, width: 76, height: 76, borderRadius: 38, backgroundColor: voiceRecording ? '#EC4899' : '#7C3AED', alignItems: 'center', justifyContent: 'center', borderWidth: 4, borderColor: 'rgba(255,255,255,0.25)' }}
+                accessibilityLabel={voiceRecording ? (t?.('status.voiceStop') || 'Parar') : (t?.('status.voiceRecord') || 'Gravar')}
+              >
+                {voiceRecording ? <IconCheck size={34} color="#fff" /> : <IconMic size={34} color="#fff" />}
+              </TouchableOpacity>
+            )}
+          </View>
+        </Modal>
+      )}
 
       {/* ─── Instagram-style Camera Modal ─── */}
       {Platform.OS !== 'web' && (
@@ -4919,6 +5102,28 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                             setLinkPromptVisible(true);
                             return;
                           }
+                          if (s.key === 'mention') {
+                            // Open the contact picker (loads recent chats). The
+                            // real @mention + notify is applied on selection.
+                            setMentionQuery('');
+                            setMentionPromptVisible(true);
+                            if (!mentionContacts.length) {
+                              setMentionLoading(true);
+                              chatConversations().then(r => {
+                                const convs = (r?.success && r.data?.conversations) ? r.data.conversations : [];
+                                const people = convs
+                                  .filter(c => (c.other_email || c.email) && !(c.is_group || c.type === 'group'))
+                                  .map(c => ({
+                                    email: c.other_email || c.email,
+                                    name: c.name || c.other_name || emailToDisplayName(c.other_email || c.email || ''),
+                                  }));
+                                // De-dupe by email.
+                                const seen = new Set();
+                                setMentionContacts(people.filter(p => p.email && !seen.has(p.email) && seen.add(p.email)));
+                              }).catch(() => {}).finally(() => setMentionLoading(false));
+                            }
+                            return;
+                          }
                           if (s.key === 'gif') {
                             // Pop the GIF search modal. We close the sticker
                             // picker so the GIF picker has full screen height
@@ -4939,8 +5144,6 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                           } else if (s.key === 'countdown') {
                             const tomorrow = new Date(); tomorrow.setDate(tomorrow.getDate() + 1); tomorrow.setHours(12, 0, 0, 0);
                             setStickers(prev => [...prev, { id: Date.now(), type: 'countdown', x: 60, y: 200, label: 'Evento', targetDate: tomorrow.toISOString() }]);
-                          } else if (s.key === 'mention') {
-                            setStickers(prev => [...prev, { id: Date.now(), type: 'mention', x: 80, y: 250, username: user?.name || user?.email?.split('@')[0] || 'amigo' }]);
                           } else if (s.key === 'quiz') {
                             setStickers(prev => [...prev, { id: Date.now(), type: 'quiz', x: 40, y: 180, question: 'Qual a resposta?', options: ['A', 'B', 'C'], correct: 0 }]);
                           } else if (s.key === 'slider') {
@@ -5035,6 +5238,68 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                             <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{t?.('common.add') || 'Adicionar'}</Text>
                           </TouchableOpacity>
                         </View>
+                      </View>
+                    )}
+
+                    {/* Mention contact picker — pick a real contact to @-tag.
+                        Selection drops a mention sticker carrying the contact's
+                        email so the backend can send them a notification. */}
+                    {mentionPromptVisible && (
+                      <View style={{ backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 10, padding: 12, marginBottom: 14 }}>
+                        <Text style={{ color: 'rgba(255,255,255,0.6)', fontSize: 10, fontWeight: '700', marginBottom: 6, letterSpacing: 0.5 }}>
+                          {t?.('status.mentionPick') || 'MENCIONAR CONTATO'}
+                        </Text>
+                        <TextInput
+                          value={mentionQuery}
+                          onChangeText={setMentionQuery}
+                          placeholder={t?.('common.search') || 'Buscar...'}
+                          placeholderTextColor="rgba(255,255,255,0.35)"
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          style={{ color: '#fff', fontSize: 13, backgroundColor: 'rgba(0,0,0,0.35)', borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}) }}
+                        />
+                        <View style={{ maxHeight: 180, marginTop: 8 }}>
+                          {mentionLoading ? (
+                            <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, paddingVertical: 10, textAlign: 'center' }}>{t?.('common.loading') || 'Carregando...'}</Text>
+                          ) : (
+                            <ScrollView showsVerticalScrollIndicator={false} nestedScrollEnabled>
+                              {mentionContacts
+                                .filter(c => !mentionQuery.trim() || (c.name || '').toLowerCase().includes(mentionQuery.trim().toLowerCase()) || (c.email || '').toLowerCase().includes(mentionQuery.trim().toLowerCase()))
+                                .slice(0, 30)
+                                .map(c => (
+                                  <TouchableOpacity
+                                    key={c.email}
+                                    onPress={() => {
+                                      const uname = (c.name && c.name.trim()) ? c.name.trim() : (c.email.split('@')[0]);
+                                      recordEdit();
+                                      setStickers(prev => [...prev, { id: Date.now(), type: 'mention', x: 80, y: 250, username: uname, email: c.email }]);
+                                      setMentionPromptVisible(false);
+                                      setMentionQuery('');
+                                      setShowStickerPicker(false);
+                                    }}
+                                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 4, gap: 10 }}
+                                  >
+                                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center' }}>
+                                      <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{(c.name || c.email || '?').charAt(0).toUpperCase()}</Text>
+                                    </View>
+                                    <View style={{ flex: 1 }}>
+                                      <Text numberOfLines={1} style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>{c.name || c.email}</Text>
+                                      <Text numberOfLines={1} style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>{c.email}</Text>
+                                    </View>
+                                  </TouchableOpacity>
+                                ))}
+                              {!mentionLoading && mentionContacts.length === 0 && (
+                                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, paddingVertical: 10, textAlign: 'center' }}>{t?.('status.noContacts') || 'Nenhum contato'}</Text>
+                              )}
+                            </ScrollView>
+                          )}
+                        </View>
+                        <TouchableOpacity
+                          onPress={() => { setMentionPromptVisible(false); setMentionQuery(''); }}
+                          style={{ paddingVertical: 9, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.12)', alignItems: 'center', marginTop: 8 }}
+                        >
+                          <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>{t?.('common.cancel') || 'Cancelar'}</Text>
+                        </TouchableOpacity>
                       </View>
                     )}
 

@@ -33,6 +33,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow, RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
+import { formatBytes } from '../services/format';
 import * as e2eService from '../services/e2e';
 import * as DocumentPicker from 'expo-document-picker';
 import * as Haptics from 'expo-haptics';
@@ -1429,8 +1430,134 @@ function _splitCustomEmoji(str) {
   return out.length ? out : [{ text: str }];
 }
 
+// Segment a single line of text into inline markdown parts (bold/italic/
+// strike/inline-code/spoiler). Shared by the block-level renderer below so
+// quote/list lines still get **bold**/_italic_/etc. Mirrors the inline loop
+// inside FormattedText (kept separate to avoid disturbing that hot path).
+function _segmentInline(text) {
+  const parts = [];
+  const formatRegex = new RegExp(_FORMAT_REGEX.source, 'g');
+  let lastIndex = 0;
+  let match;
+  while ((match = formatRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) parts.push({ text: text.slice(lastIndex, match.index), fmt: null });
+    const raw = match[0];
+    if (raw.startsWith('||') && raw.endsWith('||')) {
+      parts.push({ text: raw.slice(2, -2), spoiler: true });
+    } else if (raw.startsWith('```') && raw.endsWith('```')) {
+      parts.push({ text: raw.slice(3, -3).replace(/^\n/, '').replace(/\n$/, ''), fmt: { fontFamily: Platform.OS === 'web' ? 'monospace' : 'Courier', fontSize: 13 } });
+    } else if (raw.startsWith('**') && raw.endsWith('**')) {
+      parts.push({ text: raw.slice(2, -2), fmt: { fontWeight: '700' } });
+    } else if (raw.startsWith('__') && raw.endsWith('__')) {
+      parts.push({ text: raw.slice(2, -2), fmt: { fontStyle: 'italic' } });
+    } else if (raw.startsWith('~~') && raw.endsWith('~~')) {
+      parts.push({ text: raw.slice(2, -2), fmt: { textDecorationLine: 'line-through' } });
+    } else if (raw.startsWith('*')) {
+      parts.push({ text: raw.slice(1, -1), fmt: { fontWeight: '700' } });
+    } else if (raw.startsWith('_')) {
+      parts.push({ text: raw.slice(1, -1), fmt: { fontStyle: 'italic' } });
+    } else if (raw.startsWith('~')) {
+      parts.push({ text: raw.slice(1, -1), fmt: { textDecorationLine: 'line-through' } });
+    } else if (raw.startsWith('`')) {
+      parts.push({ text: raw.slice(1, -1), fmt: { fontFamily: Platform.OS === 'web' ? 'monospace' : 'Courier', backgroundColor: 'rgba(0,0,0,0.08)', paddingHorizontal: 3, borderRadius: 3, fontSize: 13 } });
+    }
+    lastIndex = match.index + raw.length;
+  }
+  if (lastIndex < text.length) parts.push({ text: text.slice(lastIndex), fmt: null });
+  return parts;
+}
+
+// Render inline parts (from _segmentInline) as <Text> children. Handles
+// spoiler + custom-animated-emoji segments the same way the main renderer does.
+function _renderInline(parts, style, colors, keyBase) {
+  return parts.map((p, i) => {
+    const key = `${keyBase}_${i}`;
+    if (p.spoiler) return <SpoilerText key={key} style={style}>{p.text}</SpoilerText>;
+    if (!p.fmt) {
+      const ce = _splitCustomEmoji(p.text);
+      if (ce.length > 1 || (ce[0] && ce[0].ce)) {
+        return (
+          <Text key={key}>
+            {ce.map((seg, j) => seg.ce ? (
+              <Image key={j} source={{ uri: seg.ce }} style={{ width: 20, height: 20, marginHorizontal: 1, transform: [{ translateY: 4 }] }} accessibilityLabel="custom-emoji" />
+            ) : (
+              <Text key={j}>{seg.text}</Text>
+            ))}
+          </Text>
+        );
+      }
+    }
+    return <Text key={key} style={p.fmt}>{p.text}</Text>;
+  });
+}
+
+// True if any line is a WhatsApp block construct: quote `> `, bullet `- `/`* `,
+// or numbered `1. `. Used to switch FormattedText into block layout mode.
+const _QUOTE_LINE_RE = /^\s*>\s(.*)$/;
+const _BULLET_LINE_RE = /^(\s*)[-*]\s+(.*)$/;
+const _NUM_LINE_RE = /^(\s*)(\d+)\.\s+(.*)$/;
+function _hasBlockMarkdown(text) {
+  if (!text || text.indexOf('\n') === -1 && !_QUOTE_LINE_RE.test(text) && !_BULLET_LINE_RE.test(text) && !_NUM_LINE_RE.test(text)) return false;
+  const lines = text.split('\n');
+  for (const line of lines) {
+    if (_QUOTE_LINE_RE.test(line) || _BULLET_LINE_RE.test(line) || _NUM_LINE_RE.test(line)) return true;
+  }
+  return false;
+}
+
+// Block-level renderer: quote lines (accent bar + muted text), bullet lists,
+// numbered lists. Each line's text still runs through inline markdown.
+function _renderBlocks(text, style, colors) {
+  const lines = text.split('\n');
+  const accent = (colors && (colors.primary || colors.accent)) || '#25D366';
+  const muted = (colors && (colors.textSecondary || colors.textTertiary)) || 'rgba(120,120,120,0.9)';
+  return (
+    <View>
+      {lines.map((line, i) => {
+        const q = line.match(_QUOTE_LINE_RE);
+        if (q) {
+          return (
+            <View key={i} style={{ flexDirection: 'row', marginVertical: 1 }}>
+              <View style={{ width: 3, borderRadius: 2, backgroundColor: accent, marginRight: 8, alignSelf: 'stretch', opacity: 0.85 }} />
+              <Text style={[style, { color: muted, flex: 1 }]} selectable={true}>
+                {_renderInline(_segmentInline(q[1]), [style, { color: muted }], colors, `q${i}`)}
+              </Text>
+            </View>
+          );
+        }
+        const b = line.match(_BULLET_LINE_RE);
+        if (b) {
+          return (
+            <View key={i} style={{ flexDirection: 'row', marginVertical: 0.5, paddingLeft: b[1] ? 12 : 0 }}>
+              <Text style={[style, { marginRight: 6 }]}>{'•'}</Text>
+              <Text style={[style, { flex: 1 }]} selectable={true}>{_renderInline(_segmentInline(b[2]), style, colors, `b${i}`)}</Text>
+            </View>
+          );
+        }
+        const n = line.match(_NUM_LINE_RE);
+        if (n) {
+          return (
+            <View key={i} style={{ flexDirection: 'row', marginVertical: 0.5, paddingLeft: n[1] ? 12 : 0 }}>
+              <Text style={[style, { marginRight: 6 }]}>{`${n[2]}.`}</Text>
+              <Text style={[style, { flex: 1 }]} selectable={true}>{_renderInline(_segmentInline(n[3]), style, colors, `n${i}`)}</Text>
+            </View>
+          );
+        }
+        if (line === '') return <Text key={i} style={style}>{' '}</Text>;
+        return <Text key={i} style={style} selectable={true}>{_renderInline(_segmentInline(line), style, colors, `p${i}`)}</Text>;
+      })}
+    </View>
+  );
+}
+
 function FormattedText({ text, style, colors }) {
   if (!text) return <Text style={style}>{''}</Text>;
+  // Block-level formatting (quote / bullet / numbered list). Skipped when a
+  // fenced ``` code block is present (those span lines and are handled inline
+  // below). Keeps the common inline-only path untouched.
+  if (text.indexOf('```') === -1 && _hasBlockMarkdown(text)) {
+    return _renderBlocks(text, style, colors);
+  }
   const parts = [];
   // Match ||spoiler||, ```code blocks```, *bold*, _italic_, ~strike~, `inline code`
   // Re-create with lastIndex=0 each call since exec() is stateful on the /g flag
@@ -5385,6 +5512,76 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
   );
 }
 
+// Lightweight caption preview for media that doesn't need the photo editor:
+// documents (PDF/doc), audio FILES, and GIFs. WhatsApp shows a caption field
+// for all of these before sending. The heavy MediaPreview above is image/video
+// specific (renders <Image>, auto-opens the crop editor) so those types get
+// this simpler sheet instead. Caption is delivered through the SAME field the
+// photo/video path uses (uploadAndSendFile's `caption` arg → chat_send content).
+function FileCaptionPreview({ visible, kind, file, gifUri, colors, t, onClose, onSend }) {
+  const [caption, setCaption] = useState('');
+  useEffect(() => { if (visible) setCaption(''); }, [visible]);
+  if (!visible) return null;
+  const _t = (k, d) => (typeof t === 'function' ? (t(k) || d) : d);
+  const name = file?.name || '';
+  const sizeStr = file?.size ? formatBytes(file.size) : '';
+  const isGif = kind === 'gif';
+  const isAudio = kind === 'audio';
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={previewStyles.container}>
+        <View style={previewStyles.header}>
+          <TouchableOpacity onPress={onClose} style={previewStyles.headerBtn} accessibilityLabel={_t('common.close', 'Close')} accessibilityRole="button">
+            <IconX size={24} color="#fff" />
+          </TouchableOpacity>
+          <View style={{ flex: 1 }} />
+        </View>
+
+        <View style={previewStyles.mediaContainer}>
+          {isGif ? (
+            <View style={{ width: 240, height: 200, borderRadius: 14, overflow: 'hidden', backgroundColor: '#111' }}>
+              <ChatMedia uri={gifUri} style={{ width: 240, height: 200 }} contentFit="cover" recyclingKey={`gifprev-${gifUri}`} />
+              <View pointerEvents="none" style={{ position: 'absolute', left: 8, bottom: 8, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5, backgroundColor: 'rgba(0,0,0,0.55)' }}>
+                <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>GIF</Text>
+              </View>
+            </View>
+          ) : (
+            <View style={{ alignItems: 'center', paddingHorizontal: 32 }}>
+              <View style={{ width: 96, height: 96, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.10)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+                {isAudio ? <IconMusic size={44} color="#fff" /> : <IconFileText size={44} color="#fff" />}
+              </View>
+              <Text numberOfLines={2} style={{ color: '#fff', fontSize: 16, fontWeight: '600', textAlign: 'center' }}>{name || (isAudio ? 'Áudio' : 'Documento')}</Text>
+              {!!sizeStr && <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 13, marginTop: 4 }}>{sizeStr}</Text>}
+            </View>
+          )}
+        </View>
+
+        <View style={previewStyles.bottomBar}>
+          <View style={previewStyles.captionRow}>
+            <TextInput
+              style={previewStyles.captionInput}
+              placeholder={_t('chatConv.addCaption', 'Adicionar legenda...')}
+              placeholderTextColor="rgba(255,255,255,0.5)"
+              value={caption}
+              onChangeText={setCaption}
+              maxLength={1024}
+              multiline
+            />
+            <TouchableOpacity
+              style={previewStyles.sendBtn}
+              onPress={() => { const c = caption; onSend(c); }}
+              accessibilityLabel={_t('chatConv.send', 'Enviar')}
+              accessibilityRole="button"
+            >
+              <IconSend size={22} color="#fff" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
 const previewStyles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   header: {
@@ -8225,6 +8422,8 @@ function ChatConversationInner() {
 
   // WhatsApp features state
   const [mediaPreview, setMediaPreview] = useState({ visible: false, files: [] });
+  // Caption preview for documents / audio files / GIFs (see FileCaptionPreview).
+  const [captionPreview, setCaptionPreview] = useState({ visible: false, kind: null, file: null, gif: null, gifUri: null });
   // HD quality toggle (2048 vs 4096) — defaults to ON per user request
   // "sem perder qualidade". Browser-only compression still caps at 4096px
   // to keep uploads reasonable; native uses the original file unchanged.
@@ -13589,13 +13788,27 @@ function ChatConversationInner() {
   // ============================================================
   // SEND GIF
   // ============================================================
-  const handleSendGif = async (gif) => {
+  // Picker tap → open the caption sheet (WhatsApp lets you caption a GIF).
+  const openGifCaption = (gif) => {
+    setShowGifPicker(false);
+    const previewUri = gif?.medium || gif?.tiny || gif?.url;
+    setCaptionPreview({ visible: true, kind: 'gif', file: null, gif, gifUri: previewUri });
+  };
+
+  const handleSendGif = async (gif, caption = '') => {
     setShowGifPicker(false);
     // WhatsApp/Telegram parity: prefer Tenor's mediumgif URL (200-800KB) so
     // receivers load <1s on cellular. We still bail on absurdly large GIFs
     // (Telegram caps at 20MB, WhatsApp 16MB — 8MB is conservative). Tenor's
     // itemsize.size is the full gif size; tinygif/mediumgif are much smaller.
     const sendUrl = gif?.medium || gif?.tiny || gif?.url;
+    // Optional caption (WhatsApp parity). When present the GIF url moves to
+    // file_url and the caption rides in content; the bubble renderer prefers
+    // file_url and falls back to content, so no-caption GIFs (content=url)
+    // stay byte-for-byte backward compatible.
+    const _cap = (caption && String(caption).trim()) ? String(caption).trim() : '';
+    const bodyContent = _cap || sendUrl;
+    const fileUrlArg = _cap ? sendUrl : null;
     try {
       const declared = Number(gif?.size || gif?.bytes || 0);
       let bytes = declared;
@@ -13624,7 +13837,7 @@ function ChatConversationInner() {
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
       id: tempId, conversation_id: conversationId, sender_email: currentEmail,
-      content: sendUrl, type: 'gif', created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
+      content: bodyContent, file_url: fileUrlArg, type: 'gif', created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
 
@@ -13640,12 +13853,12 @@ function ChatConversationInner() {
     } catch {}
 
     // ⭐ Save pending GIF BEFORE network attempt
-    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: sendUrl, type: 'gif', created_at: optimisticMsg.created_at, sender_email: currentEmail };
+    const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, type: 'gif', created_at: optimisticMsg.created_at, sender_email: currentEmail };
     await savePendingMessage(conversationId, pendingData).catch(() => {});
 
     requestAnimationFrame(() => { flatListRef.current?.scrollToOffset?.({ offset: 0, animated: true }); });
     try {
-      const r = await enqueueChatSend(() => api.chatSend(conversationId, sendUrl, 'gif', null, null, null, tempId, msgId));
+      const r = await enqueueChatSend(() => api.chatSend(conversationId, bodyContent, 'gif', null, null, fileUrlArg, tempId, msgId));
       if (r.success && r.data?.id) {
         // [#1188 fix] Preserve sender_email — envelope mode returns null and
         // would flip the bubble to incoming side.
@@ -13656,7 +13869,7 @@ function ChatConversationInner() {
         // Mirror text-send fallback: queue for retry instead of dropping.
         try {
           const { queueOfflineAction } = require('../services/offlineCache');
-          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sendUrl, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
+          await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
         } catch {
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
@@ -13665,7 +13878,7 @@ function ChatConversationInner() {
     } catch {
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
-        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: sendUrl, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
+        await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true } : m));
       } catch {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
@@ -13862,7 +14075,7 @@ function ChatConversationInner() {
       if (Platform.OS === 'web') {
         const picked = await handleWebFilePick('audio/*', false);
         if (!picked) return;
-        setMediaPreview({ visible: true, files: [picked] });
+        setCaptionPreview({ visible: true, kind: 'audio', file: picked, gif: null, gifUri: null });
         return;
       }
       const DocumentPicker = require('expo-document-picker');
@@ -13879,9 +14092,9 @@ function ChatConversationInner() {
         type: asset.mimeType || 'audio/mp4',
         size: asset.size,
       };
-      // Skip the preview for plain audio files — they don't need
-      // cropping/filters — and hand straight to the upload pipeline.
-      uploadAndSendFile(file);
+      // Audio files don't need the photo editor, but WhatsApp still lets you
+      // add a caption before sending — surface the lightweight caption sheet.
+      setCaptionPreview({ visible: true, kind: 'audio', file, gif: null, gifUri: null });
     } catch (e) {
       console.warn('[audio-pick]', e?.message);
     }
@@ -14114,7 +14327,7 @@ function ChatConversationInner() {
       if (Platform.OS === 'web') {
         // Accept common document types + any file
         const file = await handleWebFilePick('.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.csv,.rtf,application/*,text/*,*/*');
-        if (file) await uploadAndSendFile(file);
+        if (file) setCaptionPreview({ visible: true, kind: 'doc', file, gif: null, gifUri: null });
         return;
       }
       // copyToCacheDirectory: false avoids iOS staging the entire file into
@@ -14150,11 +14363,13 @@ function ChatConversationInner() {
         }
       }
       const mimeType = asset.mimeType || asset.type || 'application/octet-stream';
-      await uploadAndSendFile({
-        uri: asset.uri,
-        name: fileName,
-        type: mimeType,
-        size: asset.size,
+      // Offer a caption field (WhatsApp parity) before sending the document.
+      setCaptionPreview({
+        visible: true,
+        kind: 'doc',
+        file: { uri: asset.uri, name: fileName, type: mimeType, size: asset.size },
+        gif: null,
+        gifUri: null,
       });
     } catch (e) {
       console.warn('File pick error:', e);
@@ -20799,8 +21014,13 @@ function ChatConversationInner() {
         }
 
         case 'gif': {
+          // URL lives in file_url when the GIF was sent WITH a caption (the
+          // caption then rides in content); otherwise content IS the url
+          // (backward-compatible with every GIF sent before caption support).
+          const gifCaption = msg.file_url ? String(msg.content || '') : '';
+          const gifSrc = msg.file_url ? String(msg.file_url) : String(msg.content || '');
           // Strip any stray commas/spaces from the URL (paranoia: some clients send weird chars)
-          const gifUrl = String(msg.content || '').trim().replace(/,/g, '.').replace(/\s+/g, '');
+          const gifUrl = gifSrc.trim().replace(/,/g, '.').replace(/\s+/g, '');
           if (!gifUrl || !/^https?:\/\//.test(gifUrl)) {
             return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{msg.content}</Text>;
           }
@@ -20811,6 +21031,7 @@ function ChatConversationInner() {
           // Wrapper provides the relative parent for the absolute-positioned
           // status footer pill (timestamp + checks) at bottom-right corner.
           return (
+            <View>
             <View style={{ width: 220, height: 180, borderRadius: 12, overflow: 'hidden' }}>
               <ChatMedia
                 uri={gifUrl}
@@ -20835,6 +21056,12 @@ function ChatConversationInner() {
                 <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', letterSpacing: 0.5 }}>GIF</Text>
               </View>
               <MediaStatusFooter msg={msg} isOwn={isOwn} />
+            </View>
+            {!!gifCaption && (
+              <View style={{ maxWidth: 220, marginTop: 4 }}>
+                <FormattedText text={gifCaption} style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]} colors={colors} />
+              </View>
+            )}
             </View>
           );
         }
@@ -21339,17 +21566,25 @@ function ChatConversationInner() {
             const fileAudioLocalPath = (typeof msg.local_path === 'string' && msg.local_path)
               ? (msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
               : null;
-            // Render as audio player
+            // Render as audio player (+ optional caption, WhatsApp parity).
+            const audioCap = (msg.content && msg.content !== msg.file_name && !/^https?:\/\//.test(String(msg.content))) ? String(msg.content) : '';
             return (
-              <AudioPlayer
-                url={msg._localUri || fileAudioLocalPath || resolveMediaUri(msg.file_url)}
-                duration={msg.duration || 0}
-                isOwn={isOwn}
-                colors={colors}
-                messageId={msg.id}
-                waveform={msg.waveform}
-                playedByPeer={!!(msg.played_at || msg._voice_played)}
-              />
+              <View>
+                <AudioPlayer
+                  url={msg._localUri || fileAudioLocalPath || resolveMediaUri(msg.file_url)}
+                  duration={msg.duration || 0}
+                  isOwn={isOwn}
+                  colors={colors}
+                  messageId={msg.id}
+                  waveform={msg.waveform}
+                  playedByPeer={!!(msg.played_at || msg._voice_played)}
+                />
+                {!!audioCap && (
+                  <View style={{ maxWidth: 260, marginTop: 4 }}>
+                    <FormattedText text={audioCap} style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]} colors={colors} />
+                  </View>
+                )}
+              </View>
             );
           }
           // WhatsApp-style: arquivo só fica realmente "pronto" quando o
@@ -21509,7 +21744,12 @@ function ChatConversationInner() {
             }
           };
 
+          // Caption (WhatsApp parity) — content carries the legend for docs sent
+          // with one. Guard against legacy rows where content held the filename
+          // or a bare URL so we never render those as a caption.
+          const fileCaption = (msg.content && msg.content !== msg.file_name && !/^https?:\/\//.test(String(msg.content))) ? String(msg.content) : '';
           return (
+            <View>
             <View style={{ flexDirection: 'row', alignItems: 'stretch', minWidth: 220 }}>
               <TouchableOpacity
                 onPress={() => {
@@ -21636,6 +21876,12 @@ function ChatConversationInner() {
                   </Text>
                 </TouchableOpacity>
               )}
+            </View>
+            {!!fileCaption && (
+              <View style={{ maxWidth: 260, marginTop: 4 }}>
+                <FormattedText text={fileCaption} style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]} colors={colors} />
+              </View>
+            )}
             </View>
           );
         }
@@ -26266,10 +26512,32 @@ function ChatConversationInner() {
       {/* GIF Picker Panel */}
       {showGifPicker && (
         <GifPickerPanel
-          onSelect={handleSendGif}
+          onSelect={openGifCaption}
           onClose={() => setShowGifPicker(false)}
           colors={colors}
           t={t}
+        />
+      )}
+
+      {/* Caption sheet for documents / audio files / GIFs */}
+      {captionPreview.visible && (
+        <FileCaptionPreview
+          visible={captionPreview.visible}
+          kind={captionPreview.kind}
+          file={captionPreview.file}
+          gifUri={captionPreview.gifUri}
+          colors={colors}
+          t={t}
+          onClose={() => setCaptionPreview({ visible: false, kind: null, file: null, gif: null, gifUri: null })}
+          onSend={(cap) => {
+            const cp = captionPreview;
+            setCaptionPreview({ visible: false, kind: null, file: null, gif: null, gifUri: null });
+            if (cp.kind === 'gif') {
+              handleSendGif(cp.gif, cap);
+            } else if (cp.file) {
+              uploadAndSendFile(cp.file, false, cap || '');
+            }
+          }}
         />
       )}
 

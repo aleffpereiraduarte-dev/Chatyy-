@@ -839,6 +839,35 @@ const StoryMedia = React.memo(function StoryMedia({
 // missing. Loops the ~30s preview while the story is visible & not paused.
 let _expoAudio = null;
 try { _expoAudio = require('expo-audio'); } catch {}
+
+// Full-screen visual for a voice-only status: gradient backdrop + mic disc +
+// a static waveform + label. The audio itself is driven by StatusMusicPlayer;
+// this only paints the canvas (StoryMedia handles image/video/text).
+function VoiceStatusMedia({ caption, bgColor, t }) {
+  const bg = (bgColor && /^#|rgb/.test(String(bgColor))) ? bgColor : '#7C3AED';
+  const bars = [10, 18, 26, 16, 30, 22, 34, 20, 28, 14, 24, 32, 18, 26, 12, 22, 30, 16, 24, 20];
+  return (
+    <View style={{ flex: 1, backgroundColor: bg, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+      <View style={{ width: 108, height: 108, borderRadius: 54, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center', marginBottom: 26 }}>
+        <View style={{ width: 84, height: 84, borderRadius: 42, backgroundColor: 'rgba(255,255,255,0.22)', alignItems: 'center', justifyContent: 'center' }}>
+          <IconMusic size={40} color="#fff" />
+        </View>
+      </View>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, height: 40 }}>
+        {bars.map((h, i) => (
+          <View key={i} style={{ width: 4, height: h, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.85)' }} />
+        ))}
+      </View>
+      <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 14, fontWeight: '600', marginTop: 24, letterSpacing: 0.3 }}>
+        {t?.('status.voiceStatus') || 'Mensagem de voz'}
+      </Text>
+      {!!caption && (
+        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '500', marginTop: 12, textAlign: 'center' }} numberOfLines={3}>{caption}</Text>
+      )}
+    </View>
+  );
+}
+
 function StatusMusicPlayer({ url, active, startMs = 0 }) {
   const playerRef = useRef(null);
   useEffect(() => {
@@ -1619,7 +1648,12 @@ export default function StoryViewer({
     // Grace flag is cleared 4s later by the blur handler so a second visit
     // (next story) is back to normal cadence. Re-using STORY_DURATION_MS as
     // the base keeps the cadence predictable; we just bump the floor.
-    const duration = replyGraceRef.current ? Math.max(STORY_DURATION_MS, 5000) : STORY_DURATION_MS;
+    // Voice/audio statuses hold longer so the recorded note isn't cut off by
+    // the default 5s image cadence. (Ideal = advance on audio 'ended'; a fixed
+    // 30s floor is the safe JS-only approximation until duration is plumbed.)
+    const _isVoiceStatus = (cur.type === 'voice' || cur.type === 'audio')
+      || (!!cur.media_url && cur.type !== 'image' && cur.type !== 'video' && /\.(m4a|mp3|aac|wav|ogg|opus|webm)(\?|$)/i.test(String(cur.media_url)));
+    const duration = _isVoiceStatus ? 30000 : (replyGraceRef.current ? Math.max(STORY_DURATION_MS, 5000) : STORY_DURATION_MS);
     // Instagram-style ease-out so the bar fills crisp at the start and
     // glides into the seam — feels less mechanical than the linear ramp.
     animRef.current = Animated.timing(progressRef.current, {
@@ -1773,7 +1807,17 @@ export default function StoryViewer({
         : '');
   const mediaUrl = rawMedia ? (rawMedia.startsWith('http') ? rawMedia : `${BASE_URL}${rawMedia}`) : '';
 
+  // Voice status — an audio-only story. Detected by an explicit type OR by a
+  // media_url that points at an audio file on a non-image/non-video status
+  // (the backend currently coerces unknown types to 'text' but still persists
+  // media_url, so extension-sniffing keeps it working without a backend change).
+  const isVoice = (cur.type === 'voice' || cur.type === 'audio')
+    || (!!rawMedia && !isImage && !isVideo && /\.(m4a|mp3|aac|wav|ogg|opus|webm)(\?|$)/i.test(String(rawMedia)));
+
   const renderMedia = () => (
+    isVoice ? (
+      <VoiceStatusMedia caption={(cur.content || '').trim()} bgColor={cur.bg_color || cur.background} t={t} />
+    ) : (
     <StoryMedia
       cur={cur}
       isText={isText}
@@ -1797,6 +1841,7 @@ export default function StoryViewer({
       boomerangRef={boomerangRef}
       boomerangStateRef={boomerangStateRef}
     />
+    )
   );
 
   // Modern gradient progress bar — animates left-to-right with a soft glow.
@@ -1868,7 +1913,7 @@ export default function StoryViewer({
       {/* Music playback for music statuses — plays while this item is shown and
           the viewer isn't paused; skipped for video (video carries its own
           audio). Renders nothing visually. */}
-      <StatusMusicPlayer url={isVideo ? null : (cur?.music_preview_url || null)} active={!paused} startMs={Number(cur?.music_start_ms) || 0} />
+      <StatusMusicPlayer url={isVideo ? null : (isVoice ? mediaUrl : (cur?.music_preview_url || null))} active={!paused} startMs={isVoice ? 0 : (Number(cur?.music_start_ms) || 0)} />
       <Animated.View
         style={{
           flex: 1, backgroundColor: '#000',

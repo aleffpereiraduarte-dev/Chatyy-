@@ -2732,6 +2732,33 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const [showArchived, setShowArchived] = useState(false);
   const [lockedIds, setLockedIds] = useState(new Set());
   const [unlockedIds, setUnlockedIds] = useState(new Set());
+  // WhatsApp "Secret code" for locked chats. When set, the Locked Chats
+  // collection is hidden from the list entirely and only revealed when the
+  // exact code is typed into the chat search bar. Stored in the device
+  // keychain (expo-secure-store), scoped per account.
+  const [secretCode, setSecretCode] = useState('');
+  const [secretCodeModalVisible, setSecretCodeModalVisible] = useState(false);
+  const [secretCodeInput, setSecretCodeInput] = useState('');
+  const _secretCodeKey = useMemo(() => `chat_secret_code_${String(user?.email || 'anon').replace(/[^a-zA-Z0-9]/g, '_')}`, [user?.email]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const SecureStore = require('expo-secure-store');
+        const code = await SecureStore.getItemAsync(_secretCodeKey);
+        if (alive) setSecretCode(code || '');
+      } catch { if (alive) setSecretCode(''); }
+    })();
+    return () => { alive = false; };
+  }, [_secretCodeKey]);
+  const persistSecretCode = useCallback(async (code) => {
+    try {
+      const SecureStore = require('expo-secure-store');
+      if (code) await SecureStore.setItemAsync(_secretCodeKey, code);
+      else await SecureStore.deleteItemAsync(_secretCodeKey);
+    } catch {}
+    setSecretCode(code || '');
+  }, [_secretCodeKey]);
   const [typingUsers, setTypingUsers] = useState({});
   const [showBroadcast, setShowBroadcast] = useState(false);
   const [showFabMenu, setShowFabMenu] = useState(false);
@@ -5729,6 +5756,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // Hidden when there are no locked chats so the home screen stays clean.
   const renderLockedHeader = () => {
     if (filter !== 'all' || lockedCount === 0) return null;
+    // Secret-code mode: the whole collection is hidden until the user types
+    // the exact code into the search bar (WhatsApp "Secret code"). Without a
+    // code set, the collection behaves as before (always visible on 'all').
+    if (secretCode) {
+      const typed = (debouncedQuery || '').trim();
+      if (typed !== secretCode) return null;
+    }
     // Entering the hidden section is itself gated by Face ID / passcode.
     // The per-chat gate still fires when the user opens one of the rows,
     // but the index-level gate stops a shoulder-surfer from even reading
@@ -5886,6 +5920,38 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
 
   const ListHeaderComponent = useMemo(() => (
     <>
+      {/* Locked-chats "Secret code" settings — shown at the top of the locked
+          folder so the user can set/change/remove the code that hides the
+          collection (WhatsApp parity). */}
+      {filter === 'locked' && (
+        <TouchableOpacity
+          onPress={() => { setSecretCodeInput(''); setSecretCodeModalVisible(true); }}
+          activeOpacity={0.7}
+          style={{
+            flexDirection: 'row', alignItems: 'center', gap: 10,
+            paddingHorizontal: 16, paddingVertical: 12,
+            borderBottomWidth: StyleSheet.hairlineWidth,
+            borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+          }}
+        >
+          <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: '#52525b', alignItems: 'center', justifyContent: 'center' }}>
+            <IconLock size={15} color="#fff" />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }}>
+              {t?.('chat.secretCode') || 'Código secreto'}
+            </Text>
+            <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 1 }}>
+              {secretCode
+                ? (t?.('chat.secretCodeOn') || 'Ativado — busque pelo código para ver')
+                : (t?.('chat.secretCodeOff') || 'Defina um código para ocultar esta pasta')}
+            </Text>
+          </View>
+          <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '700' }}>
+            {secretCode ? (t?.('common.edit') || 'Editar') : (t?.('common.set') || 'Definir')}
+          </Text>
+        </TouchableOpacity>
+      )}
       {/* Feature C — Drafts section header (collapsible) when 2+ drafts exist */}
       {hasDraftSection && (
         <TouchableOpacity
@@ -6164,7 +6230,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         </View>
       )}
     </>
-  ), [filter, pinnedCount, isDark, colors, t, archivedCount, lockedCount, searchQuery, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinnedSizes, pinDraggingId, typingUsers, lockedIds, unlockedIds]);
+  ), [filter, pinnedCount, isDark, colors, t, archivedCount, lockedCount, searchQuery, debouncedQuery, secretCode, filteredConversations.length, user, router, pinnedAvatarsMode, pinnedConversations, selectionMode, selectedIds, handleConversationPress, enterSelectionMode, toggleSelected, contactBanner, contactBannerSyncing, handleContactBannerPress, dismissContactBanner, pinnedEditMode, pinnedSize, pinnedSizes, pinDraggingId, typingUsers, lockedIds, unlockedIds]);
 
   // Footer: "MENSAGENS" section with chat_search hits, shown when searching
   const ListFooterComponent = useMemo(() => {
@@ -6547,6 +6613,61 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         colors={colors}
         t={t}
       />
+
+      {/* Secret code setter for locked chats (WhatsApp "Secret code") */}
+      {secretCodeModalVisible && (
+        <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={() => setSecretCodeModalVisible(false)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28 }}>
+            <View style={{ width: '100%', maxWidth: 380, backgroundColor: isDark ? '#1c1c24' : '#fff', borderRadius: 18, padding: 22 }}>
+              <Text style={{ color: colors.text, fontSize: 17, fontWeight: '700', marginBottom: 6 }}>
+                {t?.('chat.secretCode') || 'Código secreto'}
+              </Text>
+              <Text style={{ color: colors.textTertiary, fontSize: 13, marginBottom: 16, lineHeight: 18 }}>
+                {t?.('chat.secretCodeHelp') || 'Com um código definido, a pasta de conversas trancadas fica oculta e só aparece quando você digita o código na busca.'}
+              </Text>
+              <TextInput
+                value={secretCodeInput}
+                onChangeText={setSecretCodeInput}
+                placeholder={t?.('chat.secretCodePlaceholder') || 'Digite um código'}
+                placeholderTextColor={colors.textTertiary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                secureTextEntry
+                style={{
+                  color: colors.text, fontSize: 15,
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)',
+                  borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12,
+                  ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
+                }}
+              />
+              <View style={{ flexDirection: 'row', gap: 10, marginTop: 18 }}>
+                {!!secretCode && (
+                  <TouchableOpacity
+                    onPress={async () => { await persistSecretCode(''); setSecretCodeModalVisible(false); }}
+                    style={{ paddingVertical: 11, paddingHorizontal: 14, borderRadius: 10, backgroundColor: 'rgba(220,38,38,0.12)' }}
+                  >
+                    <Text style={{ color: '#dc2626', fontSize: 14, fontWeight: '700' }}>{t?.('common.remove') || 'Remover'}</Text>
+                  </TouchableOpacity>
+                )}
+                <View style={{ flex: 1 }} />
+                <TouchableOpacity
+                  onPress={() => setSecretCodeModalVisible(false)}
+                  style={{ paddingVertical: 11, paddingHorizontal: 16, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)' }}
+                >
+                  <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }}>{t?.('common.cancel') || 'Cancelar'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  disabled={!secretCodeInput.trim()}
+                  onPress={async () => { const c = secretCodeInput.trim(); if (!c) return; await persistSecretCode(c); setSecretCodeModalVisible(false); }}
+                  style={{ paddingVertical: 11, paddingHorizontal: 18, borderRadius: 10, backgroundColor: secretCodeInput.trim() ? '#7C3AED' : 'rgba(124,58,237,0.4)' }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{t?.('common.save') || 'Salvar'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
 
       {/* Create Group Flow */}
       <CreateGroupFlow
