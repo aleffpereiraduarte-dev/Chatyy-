@@ -18639,14 +18639,23 @@ function ChatConversationInner() {
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 30, minimumViewTime: 50 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }) => {
     if (!viewableItems || viewableItems.length === 0) return;
-    // Inverted list: first viewable = newest in current view
-    const top = viewableItems[0]?.item;
-    if (!top) return;
-    const ca = top.created_at || top.date;
+    // [QA 20260703-120403] The pill overlays the TOP of the viewport, so it
+    // must label the OLDEST visible message — viewableItems[0] is usually the
+    // NEWEST (inverted list) and the array order isn't guaranteed anyway (see
+    // FIX #1 below). Picking [0] showed "Hoje" floating over yesterday's
+    // messages in the founder's print. Scan for the min timestamp instead.
+    let ca = null;
+    let caTs = Infinity;
+    for (const v of viewableItems) {
+      const it = v?.item;
+      if (!it) continue;
+      const c = it.created_at || it.date;
+      if (!c) continue;
+      const ts = new Date(c.endsWith?.('Z') || c.includes?.('+') ? c : c + 'Z').getTime();
+      if (!isNaN(ts) && ts < caTs) { caTs = ts; ca = c; }
+    }
     if (!ca) return;
     try {
-      const d = new Date(ca.endsWith?.('Z') || ca.includes?.('+') ? ca : ca + 'Z');
-      if (isNaN(d.getTime())) return;
       const label = formatDateSeparator(ca, t);
       setFloatingDate(label);
       Animated.timing(floatingDateOpacity, { toValue: 1, duration: 180, useNativeDriver: true }).start();
