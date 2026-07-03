@@ -97,7 +97,30 @@ async function _runSync(convIds) {
         const evMax = Array.isArray(c.events)
           ? c.events.reduce((m, e) => Math.max(m, Number(e.pts) || 0), 0)
           : 0;
-        const wm = c.has_more ? evMax : latest;
+        // [2026-07-03] Hydration-gap guard. If the server returned a
+        // `new_message` event whose row is NOT in c.messages (under-hydration,
+        // or a message deleted between event-log write and hydration),
+        // advancing the watermark past it would drop that message FOREVER — the
+        // next delta asks since_pts > its pts, so it's never requested again.
+        // Detect the miss, hold the watermark one BELOW the lowest un-hydrated
+        // new_message pts (so it's re-requested), and flag a full reload as the
+        // belt-and-suspenders recovery. No-op when hydration is complete.
+        let hydCapPts = Infinity;
+        if (Array.isArray(c.events) && Array.isArray(c.messages)) {
+          const hydIds = new Set(c.messages.map(m => Number(m.id)));
+          for (const e of c.events) {
+            if (e?.type === 'new_message') {
+              const emid = Number(e?.payload?.message_id) || 0;
+              if (emid && !hydIds.has(emid)) {
+                const eps = Number(e.pts) || Infinity;
+                if (eps < hydCapPts) hydCapPts = eps;
+                c.needsFullReload = true;
+              }
+            }
+          }
+        }
+        let wm = c.has_more ? evMax : latest;
+        if (hydCapPts !== Infinity) wm = Math.min(wm, hydCapPts - 1);
         if (wm > 0) setLastPts(c.id, wm);
         if (c.has_more) {
           const n = (gapStreak.get(c.id) || 0) + 1;
@@ -289,8 +312,36 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
             indexByClientId.delete(cid);
             break;
           }
-          next.push({ ...hydrated, _animateIn: false });
-          indexById.set(mid, next.length - 1);
+          // [2026-07-03] Sorted insert (was a plain append). This path
+          // backfills MISSED messages on reconnect / gap-fill — a raw push
+          // lands a recovered older id (505) AFTER a newer already-shown one
+          // (510), leaving the thread mis-ordered until a reload. Find the
+          // position that keeps ascending id order (mirrors the live WS
+          // handler's sorted insert).
+          const row = { ...hydrated, _animateIn: false };
+          let ins = next.length;
+          for (let k = next.length - 1; k >= 0; k--) {
+            const kid = Number(next[k]?.id) || 0;
+            if (kid && kid < mid) { ins = k + 1; break; }
+            if (k === 0) ins = 0;
+          }
+          next.splice(ins, 0, row);
+          if (ins >= next.length - 1) {
+            // Appended at the tail (the common live case) — no index shift.
+            indexById.set(mid, next.length - 1);
+          } else {
+            // Mid-array backfill shifted every index after `ins`; rebuild both
+            // lookup maps so subsequent edit/delete/reaction events in this same
+            // batch still resolve to the correct row.
+            indexById.clear();
+            indexByClientId.clear();
+            for (let k = 0; k < next.length; k++) {
+              const kk = Number(next[k]?.id) || 0;
+              if (kk) indexById.set(kk, k);
+              const kc = next[k]?._client_id || next[k]?.client_message_id;
+              if (kc) indexByClientId.set(kc, k);
+            }
+          }
           break;
         }
         case 'edit': {

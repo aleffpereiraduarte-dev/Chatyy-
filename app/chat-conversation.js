@@ -11230,11 +11230,19 @@ function ChatConversationInner() {
       // old fixed 15s. When the socket is healthy (frames flowing) we stay at
       // 15s (near-free). runDeltaSync is pts-based → O(0) when nothing new, so
       // aggressive polling only while the socket LOOKS dead costs ~nothing.
+      // [2026-07-03] Tightened: baseline 15s→5s and zombie threshold 12s→9s.
+      // The zombie fallback only fired after 12s of TOTAL inbound silence, but
+      // chat-active pings bump lastInboundAt every 8s, so worst-case delivery
+      // was ~12-15s — barely better than the old fixed poll. A 5s baseline
+      // makes the hard ceiling ~5s even when zombie detection is slow, and 9s
+      // (just over the 8s ping cadence) trips the 2.5s fast poll sooner. Delta
+      // sync is pts-based → O(0) when nothing new, so this is near-free and
+      // only runs for the single OPEN conversation.
       let _lastPollAt = Date.now();
       const safetyPoll = setInterval(() => {
         const inbound = mailWs?.lastInboundAt || 0;
-        const looksZombie = (Date.now() - inbound) > 12000;
-        const gap = looksZombie ? 2500 : 15000;
+        const looksZombie = (Date.now() - inbound) > 9000;
+        const gap = looksZombie ? 2500 : 5000;
         if (Date.now() - _lastPollAt >= gap) {
           _lastPollAt = Date.now();
           runDeltaSync();
