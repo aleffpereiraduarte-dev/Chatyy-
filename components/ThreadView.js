@@ -39,6 +39,21 @@ function htmlToText(html) {
   return x.replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
 
+// [2026-07-03] Some servers return HTML markup INSIDE body_text/body (no real
+// text/plain MIME part), which rendered raw <p>/<a>/<br> tags in the thread
+// view on native — the founder's screenshot showed "<p>Hi Aleff,</p>..." as
+// literal text. The web path sanitizes+renders HTML (DOMPurify); native falls
+// to a <Text>. Prefer a GENUINE plaintext part, but if the text field actually
+// contains HTML tags, convert it via htmlToText instead of dumping the markup.
+function pickBodyText(m) {
+  const looksHtml = (s) => typeof s === 'string' && /<\/?[a-z][\s\S]*?>/i.test(s);
+  const txt = m.body_text || m.body || '';
+  if (txt && !looksHtml(txt)) return txt;      // real plaintext → use as-is
+  if (m.body_html) return htmlToText(m.body_html); // HTML source of truth
+  if (looksHtml(txt)) return htmlToText(txt);  // text field carried HTML
+  return txt;
+}
+
 function formatDate(dateStr) {
   if (!dateStr) return '';
   try {
@@ -109,7 +124,7 @@ function MessageItem({ message, isLast, colors, t, onReply, onReplyAll, onForwar
     }
     return (
       <Text style={[s.bodyText, { color: colors.text }]}>
-        {m.body_text || m.body || htmlToText(m.body_html) || t('reader.noContent')}
+        {pickBodyText(m) || t('reader.noContent')}
       </Text>
     );
   };
@@ -138,7 +153,7 @@ function MessageItem({ message, isLast, colors, t, onReply, onReplyAll, onForwar
           </View>
           {!expanded && (
             <Text style={[s.snippet, { color: colors.textTertiary }]} numberOfLines={1}>
-              {m.body_text || m.body || htmlToText(m.body_html) || (m.preview || m.snippet || '')}
+              {pickBodyText(m) || (m.preview || m.snippet || '')}
             </Text>
           )}
           {expanded && m.to && (
