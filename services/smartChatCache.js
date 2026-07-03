@@ -218,7 +218,12 @@ function _maybeEvict() {
     if (_index.totalBytes <= EVICT_DOWN_TO) break;
     try {
       remove(MSG_KEY_PREFIX + convId);
-      _msgs.delete(convId);
+      // [2026-07-03] _index.lru keys are always STRING (object-property
+      // coercion) but _msgs is keyed by the raw convId (a Number in practice),
+      // so `_msgs.delete(convId)` with the string key never matched → evicted
+      // conversations' message arrays stayed resident in memory (defeating the
+      // eviction). Delete all key shapes like clearConversation does.
+      _msgs.delete(convId); _msgs.delete(String(convId)); _msgs.delete(Number(convId));
       _index.totalBytes = Math.max(0, _index.totalBytes - (_index.bytes[convId] || 0));
       delete _index.bytes[convId];
       delete _index.lru[convId];

@@ -1556,7 +1556,16 @@ export function AuthProvider({ children }) {
             _lockCacheScopeSync(500);
             setCacheUser(null);
             try { await clearAllCache(); } catch {}
-            try { await clearChatCache(); } catch {}
+            // [2026-07-03] clearChatCache was referenced bare here but is NOT in
+            // switchAccount's scope (only login()/completeLoginAfterChallenge()
+            // resolve the lazy loader) → it threw a swallowed ReferenceError, so
+            // the chat cache was NEVER flushed on a stored-token account switch →
+            // account A's conversations/messages leaked into account B's first
+            // paint. Resolve the loader exactly like login() does, and drop the
+            // bare account-scoped MMKV blobs too (switchAccount was the only auth
+            // path missing clearAccountScopedMmkv).
+            try { const _clearChat = await getLazyClearChatCache(); await _clearChat(); } catch {}
+            try { await clearAccountScopedMmkv(); } catch {}
             // P0 PRIVACY: clearChatCache() deliberately does NOT touch the
             // native SQLite store (see its "SQLite cleared separately via
             // dbClearAll()" note). switchAccount NEVER wiped it — so the

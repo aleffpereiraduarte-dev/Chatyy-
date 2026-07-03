@@ -2270,6 +2270,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   // re-render; this is a pure render optimization and changes no behavior.
   if (prev.isActive !== next.isActive) return false;
   if (prev.preload !== next.preload) return false;
+  if (prev.muted !== next.muted) return false; // [2026-07-03] mute was never compared → global mute button didn't re-render the mounted reel until the user swiped
   if (prev.overlayOpen !== next.overlayOpen) return false;
   if (prev.screenFocused !== next.screenFocused) return false;
   if (prev.showLiveRing !== next.showLiveRing) return false;

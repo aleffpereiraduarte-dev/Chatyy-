@@ -18821,7 +18821,18 @@ function ChatConversationInner() {
         if (!m) return <View key={`empty-${keyIdx}`} style={{ width: w, height: h, backgroundColor: 'transparent' }} />;
         const url = m._localUri || resolveMediaUri(m.file_url);
         const isVideoCell = m.type === 'video';
-        const poster = isVideoCell ? (url + '.thumb.jpg') : url;
+        // [2026-07-03] Video poster must come from a REMOTE thumb. `url` may be a
+        // file:// local cache path when the video is downloaded, and appending
+        // '.thumb.jpg' to a local path yields a nonexistent sibling → the cell
+        // rendered a dead black box. Prefer the backend-generated thumbnail_url
+        // (direct-R2 poster), else the remote file_url + '.thumb.jpg' (which the
+        // server now generates for every video). Images keep their resolved url.
+        const _remoteFile = m.file_url ? (m.file_url.startsWith('http') ? m.file_url : `https://chatyy.com.br${m.file_url}`) : null;
+        const poster = isVideoCell
+          ? (m.thumbnail_url
+              ? (m.thumbnail_url.startsWith('http') ? m.thumbnail_url : `https://chatyy.com.br${m.thumbnail_url}`)
+              : (_remoteFile ? _remoteFile + '.thumb.jpg' : url))
+          : url;
         // Build placeholder data the same way the standalone image bubble does
         // so the fullscreen viewer paints an instant blurred preview when the
         // user taps an album cell. Without this, the viewer fell to a black

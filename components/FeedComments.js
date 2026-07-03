@@ -508,10 +508,13 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
       if (String(data.email || '').toLowerCase() === meLc) return; // own send already inserted
       setComments(prev => {
         if (prev.some(c => Number(c.id) === Number(data.id))) return prev;
+        // [2026-07-03] Bump the count only when the comment is actually NEW.
+        // It was incremented unconditionally below, so a duplicate/re-delivered
+        // feed_comment_new WS event inflated the count without adding a row.
+        currentCountRef.current += 1;
+        onCommentCountChange?.(currentCountRef.current);
         return [data, ...prev];
       });
-      currentCountRef.current += 1;
-      onCommentCountChange?.(currentCountRef.current);
     });
     return () => {
       try { unsub?.(); } catch {}

@@ -851,6 +851,13 @@ class MailWebSocket {
   _cleanup() {
     clearTimeout(this.reconnectTimer);
     this._stopPing();
+    // [2026-07-03] Reset the resume gate on every teardown. It's set true when a
+    // {type:'resume'} is sent and cleared only by a resume_* RESPONSE — so a
+    // disconnect that races the ack (drop after send, before response) left it
+    // stuck true, and every later _onAuthenticated skipped resume (`if
+    // (!this._resumeInFlight)`), silently disabling WS catch-up replay for the
+    // rest of the session. Resume is idempotent (server dedups by event_id).
+    this._resumeInFlight = false;
     // Cancel the foreground zombie-check watchdog if it was armed —
     // _cleanup is also called when the watchdog itself decides to
     // force-reconnect, in which case we're inside the timer callback

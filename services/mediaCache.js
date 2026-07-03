@@ -973,6 +973,11 @@ export function maybeAutoSaveToGallery(localUri, key, mediaType) {
   // Only photos + videos go to the gallery. Audio / docs / stickers / gifs
   // stay inside the app's media store. _bucketForType folds image/photo →
   // 'photos' and video → 'videos'; everything else is excluded here.
+  // [2026-07-03] Explicitly reject gif/sticker BEFORE the bucket fold — they
+  // were classifying as 'photos' and getting auto-saved to the camera roll,
+  // contradicting the documented "only photos + videos" intent (users found
+  // received GIFs/stickers spamming their gallery).
+  if (mediaType === 'gif' || mediaType === 'sticker') return;
   const bucket = _bucketForType(mediaType);
   if (bucket !== 'photos' && bucket !== 'videos') return;
   // De-dupe — never write the same media to the gallery twice.

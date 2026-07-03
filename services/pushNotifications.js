@@ -275,7 +275,7 @@ async function loadModules() {
           // but the receivedSub path runs AFTER handleNotification on some
           // platforms — eager ack here removes the ~50-200ms window where
           // the sender's UI is at ✓ while we're already handling the body.
-          if (data?.type === 'chat_message' && data.conversation_id && data.message_id) {
+          if (['chat_message','chat_mention','chat_keyword'].includes(data?.type) && data.conversation_id && data.message_id) {
             try {
               const convId = Number(data.conversation_id) || data.conversation_id;
               const mid = Number(data.message_id);
@@ -1381,7 +1381,7 @@ export async function setupNotificationListeners() {
     // tapped the notification. The backend `chat_delivery_ack` action is
     // idempotent (ON CONFLICT preserves first-write timestamp) so an extra
     // ack from a later WS handler is a no-op.
-    if (data?.type === 'chat_message' && data.conversation_id && data.message_id) {
+    if (['chat_message','chat_mention','chat_keyword'].includes(data?.type) && data.conversation_id && data.message_id) {
       try {
         const convId = Number(data.conversation_id) || data.conversation_id;
         const mid = Number(data.message_id);
@@ -1659,7 +1659,10 @@ function handleNotificationNavigation(data) {
       router.push(`/meeting-detail?room_id=${data.room_id}`);
       return;
     }
-    if (data.type === 'chat_message' && data.conversation_id) {
+    if ((data.type === 'chat_message' || data.type === 'chat_mention' || data.type === 'chat_keyword') && data.conversation_id) {
+      // [2026-07-03] chat_mention / chat_keyword pushes carry conversation_id
+      // just like chat_message; tapping them used to fall through to the email
+      // Inbox route below. Route them to the conversation too.
       const senderName = data.sender_name || data.title || '';
       const nameParam = senderName ? `&name=${encodeURIComponent(senderName)}` : '';
       const emailParam = data.sender_email ? `&email=${encodeURIComponent(data.sender_email)}` : '';
