@@ -11155,6 +11155,11 @@ function ChatConversationInner() {
       const tcpClient = require('../services/tcp-client').getTCPClient();
       // Subscribe to this conversation via TCP (replaces MQTT)
       mailWs.subscribe(`chat_${conversationId}`);  // Keep WS for presence/typing
+      // [2026-07-03 iOS realtime] Thread is open → switch the WS to aggressive
+      // ping cadence (8s/10s) so an iOS zombie socket is caught + reconnected
+      // within ~10s instead of ~18s. This is exactly where the user notices
+      // "só aparece quando saio e volto". Toggled off in cleanup below.
+      try { mailWs.setChatActive?.(true); } catch {}
       tcpClient.subscribe(conversationId);  // TCP for chat messages
 
       // App returning from background (iOS kills WS after ~30s asleep).
@@ -12676,6 +12681,8 @@ function ChatConversationInner() {
     // Real-time delivery: TCP handles chat messages, WS handles presence/typing
     return () => {
       if (wsDisconnectTimerRef.current) { clearTimeout(wsDisconnectTimerRef.current); wsDisconnectTimerRef.current = null; }
+      // [2026-07-03 iOS realtime] Thread closed → drop back to idle ping cadence.
+      try { require('../services/websocket').default.setChatActive?.(false); } catch {}
       wsUnsubs.forEach(fn => fn?.());
       tcpUnsubs.forEach(fn => fn?.());
       // Clear all typing timers

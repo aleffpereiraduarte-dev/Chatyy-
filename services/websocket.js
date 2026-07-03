@@ -103,7 +103,14 @@ const RECONNECT_MAX = 3000;     // Max 3s between retries (was 30s)
 // 5s pings = 12 packets/min, no impact on battery, kills the NAT idle
 // kill 100% of the time. WhatsApp uses ~5s keepalive.
 const PING_INTERVAL = 5000;
-const PING_TIMEOUT = 18000;
+// [2026-07-03 iOS realtime] Foreground zombie-socket detection. iOS keeps
+// ws.readyState === OPEN for a socket the radio already killed, so onmessage
+// never fires and a new chat message sits invisible until the 15s HTTP
+// safety-poll. 18s was far too slow — a message could hang ~18s before the
+// watchdog force-reconnected + HTTP-caught-up. 12s idle is safe against 4G
+// RTT spikes (would need a 12s round-trip to false-positive) and open-thread
+// drops to 10s via _chatActive (see _startPing).
+const PING_TIMEOUT = 12000;
 // [P0 2026-05-25 auth-reject storm] After this many consecutive
 // refreshed-but-still-rejected auth attempts, stop auto-reconnecting and
 // force a real re-login instead of storming the server. A single transient
@@ -968,11 +975,17 @@ class MailWebSocket {
 
   _startPing() {
     this._stopPing();
-    // Aggressive 8s/15s ping during active calls so a zombie socket is
-    // detected in ~15s instead of 60s — critical so ICE candidates and
-    // hangup messages don't disappear into a dead socket while audio dies.
-    const interval = this._callActive ? 8000 : PING_INTERVAL;
-    const timeout = this._callActive ? 15000 : PING_TIMEOUT;
+    // Aggressive ping cadence so an iOS "zombie" socket (radio killed it but
+    // readyState still reads OPEN → onmessage never fires) is caught fast
+    // instead of leaving a new message stuck until the 15s HTTP safety-poll.
+    //   • call active → 8s ping / 15s timeout (ICE + hangup can't stall)
+    //   • chat open   → 8s ping / 10s timeout (message in the OPEN thread
+    //                   lands within ~10s worst-case even on iOS; this is
+    //                   exactly where the user notices "só aparece quando
+    //                   saio e volto")
+    //   • idle/bg     → 5s ping / 12s timeout (NAT keepalive + list self-heal)
+    const interval = (this._callActive || this._chatActive) ? 8000 : PING_INTERVAL;
+    const timeout = this._callActive ? 15000 : (this._chatActive ? 10000 : PING_TIMEOUT);
     this.pingTimer = setInterval(() => {
       // Check socket health first
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
@@ -1002,6 +1015,23 @@ class MailWebSocket {
     const wasActive = this._callActive;
     this._callActive = !!active;
     if (wasActive !== this._callActive && this.pingTimer) {
+      this._startPing();
+    }
+  }
+
+  // [2026-07-03 iOS realtime] Toggle aggressive ping cadence while a chat
+  // thread is OPEN (chat-conversation mount/unmount). This is exactly where
+  // an iOS zombie socket is most visible — a new message sitting invisible
+  // until the 15s poll. Aggressive mode (8s/10s, see _startPing) catches the
+  // dead socket + reconnects + HTTP-syncs within ~10s instead of ~18s.
+  // Reference-counted so overlapping mounts (list peek + open thread) don't
+  // clobber each other, and a stale unmount can't flip it off early.
+  setChatActive(active) {
+    if (typeof this._chatActiveRefs !== 'number') this._chatActiveRefs = 0;
+    this._chatActiveRefs = Math.max(0, this._chatActiveRefs + (active ? 1 : -1));
+    const wasActive = this._chatActive;
+    this._chatActive = this._chatActiveRefs > 0;
+    if (wasActive !== this._chatActive && this.pingTimer) {
       this._startPing();
     }
   }

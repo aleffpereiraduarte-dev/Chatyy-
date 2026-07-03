@@ -1950,6 +1950,7 @@ export default {
   'chat.searchContacts': 'Search contacts or type an email address',
   'chat.createGroup': 'Create Group ({count} members)',
   'chat.createError': 'Could not create conversation',
+  'chat.contactNotOnChatyy': 'This contact is not on Chatyy yet.',
   'chat.createGroupError': 'Could not create group',
   'chat.directoryOnChatyy': 'People on Chatyy',
   'chat.contactsOnChatyy': 'Contacts on Chatyy',

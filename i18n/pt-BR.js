@@ -1944,6 +1944,7 @@ export default {
   'chat.searchContacts': 'Busque contatos ou digite um endereço de email',
   'chat.createGroup': 'Criar Grupo ({count} membros)',
   'chat.createError': 'Não foi possível criar a conversa',
+  'chat.contactNotOnChatyy': 'Este contato ainda não está no Chatyy.',
   'chat.createGroupError': 'Não foi possível criar o grupo',
   'chat.directoryOnChatyy': 'Pessoas no Chatyy',
   'chat.contactsOnChatyy': 'Contatos no Chatyy',

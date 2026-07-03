@@ -1951,6 +1951,7 @@ export default {
   'chat.searchContacts': 'Busca contactos o escribe una dirección de email',
   'chat.createGroup': 'Crear Grupo ({count} miembros)',
   'chat.createError': 'No se pudo crear la conversación',
+  'chat.contactNotOnChatyy': 'Este contacto aún no está en Chatyy.',
   'chat.createGroupError': 'No se pudo crear el grupo',
   'chat.directoryOnChatyy': 'Personas en Chatyy',
   'chat.contactsOnChatyy': 'Contactos en Chatyy',

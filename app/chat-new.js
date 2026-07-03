@@ -825,13 +825,21 @@ export default function ChatNewScreen() {
 
   const handleCreateDirect = async (targetEmail, targetName) => {
     if (creating) return;
+    // [2026-07-03 QA] Guard against contacts that carry no Chatyy email (e.g. a
+    // phone-only suggestion). chatCreate([undefined/'']) → server 400. Surface a
+    // clean message instead of a raw console error + spinner stuck.
+    const em = String(targetEmail || '').trim().toLowerCase();
+    if (!em || !em.includes('@')) {
+      safeAlert(t('common.error') || 'Erro', t('chat.contactNotOnChatyy') || 'Este contato ainda não está no Chatyy.');
+      return;
+    }
     setCreating(true);
     try {
-      const r = await api.chatCreate([targetEmail], '', 'direct');
+      const r = await api.chatCreate([em], '', 'direct');
       const convId = r.data?.conversation_id || r.data?.id;
       const convName = r.data?.name || targetName;
       if (r.success && convId) {
-        router.replace(`/chat-conversation?id=${convId}&name=${encodeURIComponent(convName)}&type=direct&email=${encodeURIComponent(targetEmail)}`);
+        router.replace(`/chat-conversation?id=${convId}&name=${encodeURIComponent(convName)}&type=direct&email=${encodeURIComponent(em)}`);
       } else {
         safeAlert(t('common.error'), r?.message || t('chat.createError'));
       }
