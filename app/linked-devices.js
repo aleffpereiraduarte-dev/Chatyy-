@@ -82,8 +82,14 @@ export default function LinkedDevicesScreen() {
   const load = useCallback(async () => {
     setLoading(true);
     // sessions_list requires auth; on a cold mount the bearer token can lag a
-    // tick behind the screen (QA robot flagged a transient 401 here). Retry a
-    // couple times with a short backoff so we never surface an unauthed miss.
+    // tick behind the screen (QA robot flagged a transient 401 here). Preflight:
+    // wait up to ~1s for the bearer to hydrate so the FIRST request goes out
+    // authed — the retry below already recovers functionally, but without this
+    // the initial unauthed fetch still 401s and the browser logs it to console.
+    for (let w = 0; w < 10 && !(typeof api.getAuthToken === 'function' && api.getAuthToken()); w++) {
+      await new Promise((res) => setTimeout(res, 100));
+    }
+    // Retry a couple times with a short backoff so we never surface an unauthed miss.
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const r = await api.apiCall('sessions_list');
