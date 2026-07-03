@@ -4167,21 +4167,28 @@ export async function chatReact(messageId, emoji, stickerUrl) {
   // round-trips through the server before any UI update. WS broadcast will
   // refresh the bubble.
   const ld = _ld();
-  if (ld && typeof ld.queueOfflineAction === 'function') {
-    try {
-      await ld.queueOfflineAction('chat_react', {
-        message_id: messageId,
-        emoji: emoji || null,
-        sticker_url: stickerUrl || null,
-        client_action_id: actionId,
-      });
-    } catch {}
-  }
+  // [2026-07-03] Was pre-queuing an offline chat_react replay on EVERY call
+  // (even a fully-online success) and never removing it on success. chat_react
+  // is a TOGGLE and the server idempotency guard only lasts ~300s, so an
+  // offline_queue drain >5min later re-fired the toggle and SILENTLY REMOVED
+  // the reaction (broadcasting the removal to everyone). Mirror chatPin: POST
+  // first, queue ONLY on genuine failure so the toggle applies exactly once.
+  const _queueReactOnFail = async (res) => {
+    if ((!res || res.success === false) && ld && typeof ld.queueOfflineAction === 'function') {
+      try {
+        await ld.queueOfflineAction('chat_react', {
+          message_id: messageId, emoji: emoji || null,
+          sticker_url: stickerUrl || null, client_action_id: actionId,
+        });
+      } catch {}
+    }
+    return res;
+  };
 
   // Sticker reaction (premium): URL up to 512 chars. Server gates by plan.
   if (typeof stickerUrl === 'string' && stickerUrl.length > 0) {
     if (stickerUrl.length > 512) return { success: false, message: 'sticker_url_too_long' };
-    return _normalizeReactResult(await apiCall('chat_react', { message_id: messageId, sticker_url: stickerUrl, client_action_id: actionId }, 'POST'));
+    return _queueReactOnFail(_normalizeReactResult(await apiCall('chat_react', { message_id: messageId, sticker_url: stickerUrl, client_action_id: actionId }, 'POST')));
   }
 
   // Emoji reaction. Reject silly payloads — sanity guard before hitting network.
@@ -4189,8 +4196,8 @@ export async function chatReact(messageId, emoji, stickerUrl) {
     return { success: false, message: 'invalid_emoji' };
   }
   const rust = await _rustChatPost('react', { message_id: messageId, emoji, client_action_id: actionId });
-  if (rust) return _normalizeReactResult(rust);
-  return _normalizeReactResult(await apiCall('chat_react', { message_id: messageId, emoji, client_action_id: actionId }, 'POST'));
+  if (rust) return _queueReactOnFail(_normalizeReactResult(rust));
+  return _queueReactOnFail(_normalizeReactResult(await apiCall('chat_react', { message_id: messageId, emoji, client_action_id: actionId }, 'POST')));
 }
 
 // [P2 2026-05-26] Treat a server "reaction already exists" / idempotent

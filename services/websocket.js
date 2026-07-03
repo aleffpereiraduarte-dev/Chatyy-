@@ -1669,7 +1669,11 @@ class MailWebSocket {
         break;
       }
 
-      // Presence updates (online/offline)
+      // Presence updates (online/offline). The C++ hub emits 'presence_update'
+      // frames, but consumers (ChatListTab, chat-conversation) listen on the
+      // 'presence' event — without this alias a live online/last_seen change
+      // only surfaced via the slow presence poll, never in real time.
+      case 'presence_update':
       case 'presence':
         this._emit('presence', msg);
         break;
