@@ -833,6 +833,21 @@ export default function ChatNewScreen() {
       safeAlert(t('common.error') || 'Erro', t('chat.contactNotOnChatyy') || 'Este contato ainda não está no Chatyy.');
       return;
     }
+    // [2026-07-04 QA] You can appear in your OWN friend suggestions — tapping
+    // yourself must open "Saved Messages" (WhatsApp parity), NOT chat_create,
+    // which the server correctly rejects with 400 "Cannot create a chat with
+    // yourself" (chat.php:3007) → console error + stuck spinner.
+    const _me = String((api.getActiveAccountEmail?.() || api.getSavedEmail?.() || '')).trim().toLowerCase();
+    if (_me && em === _me) {
+      try {
+        const rs = await api.chatSaved();
+        const sid = rs?.data?.id || rs?.data?.conversation_id;
+        if (rs?.success && sid) {
+          router.replace({ pathname: '/chat-conversation', params: { id: String(sid), name: t('chat.savedMessages') || 'Saved Messages' } });
+        }
+      } catch {}
+      return;
+    }
     setCreating(true);
     try {
       const r = await api.chatCreate([em], '', 'direct');
