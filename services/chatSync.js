@@ -279,6 +279,11 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
     for (let i = 0; i < next.length; i++) {
       const cid = next[i]?._client_id || next[i]?.client_message_id;
       if (cid) indexByClientId.set(cid, i);
+      // [2026-07-04 phantom-outbox fix] Also index by client_action_id so a
+      // server row echoing the native uploader's action id folds onto its
+      // optimistic/pending bubble instead of appending a duplicate.
+      const aid = next[i]?._action_id || next[i]?.client_action_id;
+      if (aid) indexByClientId.set(String(aid), i);
     }
     for (const ev of events) {
       const mid = Number(ev?.payload?.message_id) || 0;
@@ -291,8 +296,9 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
           // Replace optimistic bubble if this event is for a message the
           // sender's own client already queued locally.
           const cid = hydrated.client_message_id;
-          if (cid && indexByClientId.has(cid)) {
-            const i = indexByClientId.get(cid);
+          const aid = hydrated.client_action_id;
+          if ((cid && indexByClientId.has(cid)) || (aid && indexByClientId.has(String(aid)))) {
+            const i = (cid && indexByClientId.has(cid)) ? indexByClientId.get(cid) : indexByClientId.get(String(aid));
             // Preserve local-only fields the optimistic bubble carries that
             // the hydrated server row CAN'T know about: file:// blob/local
             // URI for instant media preview, and locally-decrypted plaintext
@@ -309,7 +315,8 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
             }
             next[i] = { ...hydrated, ...preserved, _animateIn: false };
             indexById.set(mid, i);
-            indexByClientId.delete(cid);
+            if (cid) indexByClientId.delete(cid);
+            if (aid) indexByClientId.delete(String(aid));
             break;
           }
           // [2026-07-03] Sorted insert (was a plain append). This path
@@ -340,6 +347,8 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
               if (kk) indexById.set(kk, k);
               const kc = next[k]?._client_id || next[k]?.client_message_id;
               if (kc) indexByClientId.set(kc, k);
+              const ka = next[k]?._action_id || next[k]?.client_action_id;
+              if (ka) indexByClientId.set(String(ka), k);
             }
           }
           break;

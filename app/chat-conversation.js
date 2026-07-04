@@ -10675,6 +10675,7 @@ function ChatConversationInner() {
             created_at: createdAt,
             _client_id: cmi,
             client_message_id: cmi,
+            _action_id: p.client_action_id || null,
             _pending: !isFailed,
             _queued: !isFailed,
             _failed: isFailed,
@@ -10685,13 +10686,33 @@ function ChatConversationInner() {
         setMessages(prev => {
           const existingIds = new Set(prev.map(m => m.id));
           const existingClientIds = new Set();
+          // [2026-07-04 phantom-outbox fix] Belt-and-suspenders: a stuck outbox
+          // bubble whose media matches a CONFIRMED server row (or shares its
+          // client_action_id) means the server already has this message — the
+          // "tap to retry" is a phantom. Skip re-hydrating it AND purge the
+          // outbox row so it stops re-surfacing and the worker stops re-sending.
+          const confirmedFileUrls = new Set();
+          const confirmedActionIds = new Set();
           for (const m of prev) {
             if (m._client_id) existingClientIds.add(String(m._client_id));
             if (m.client_message_id) existingClientIds.add(String(m.client_message_id));
+            const isConfirmed = typeof m.id === 'number' && !m._pending && !m._failed && !m._queued;
+            if (isConfirmed) {
+              if (typeof m.file_url === 'string' && /^https?:\/\//i.test(m.file_url)) confirmedFileUrls.add(m.file_url);
+              if (m.client_action_id) confirmedActionIds.add(String(m.client_action_id));
+            }
           }
-          const fresh = bubbles.filter(b =>
-            !existingIds.has(b.id) && !existingClientIds.has(String(b._client_id))
-          );
+          const purgeCmis = [];
+          const fresh = bubbles.filter(b => {
+            if (existingIds.has(b.id) || existingClientIds.has(String(b._client_id))) return false;
+            const urlMatch = typeof b.file_url === 'string' && /^https?:\/\//i.test(b.file_url) && confirmedFileUrls.has(b.file_url);
+            const aidMatch = b._action_id && confirmedActionIds.has(String(b._action_id));
+            if (urlMatch || aidMatch) { purgeCmis.push(String(b._client_id)); return false; }
+            return true;
+          });
+          if (purgeCmis.length > 0) {
+            try { purgeCmis.forEach(cmi => messageOutbox.remove?.(cmi)?.catch?.(() => {})); } catch {}
+          }
           return fresh.length > 0 ? [...prev, ...fresh] : prev;
         });
       }).catch(() => {});
@@ -10807,6 +10828,35 @@ function ChatConversationInner() {
       }).catch(() => {});
     }
   }, [loadMessages]);
+
+  // [2026-07-04 phantom-outbox fix] Whenever confirmed server rows land (initial
+  // load, WS new_message, or chat_sync gap-fill), reconcile them against the
+  // SQLite outbox: any pending/failed row the server already has (matched by
+  // client_action_id / client_message_id / same-sender-same-remote-file_url) is
+  // purged from the outbox AND its "tap to retry" bubble is dropped from state.
+  // This clears the founder's stuck phantom photos (which predate the
+  // client_action_id column) and stops the worker re-sending a confirmed msg.
+  // Gated on there actually being a pending/failed bubble so it's a no-op on the
+  // common case and won't loop (a second pass finds nothing left to remove).
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (!conversationId || !Array.isArray(messages) || messages.length === 0) return;
+    const hasStuck = messages.some(m => m && (m._failed || m._pending || m._queued));
+    if (!hasStuck) return;
+    const confirmed = messages.filter(m => m && typeof m.id === 'number' && !m._pending && !m._failed && !m._queued);
+    if (confirmed.length === 0) return;
+    let cancelled = false;
+    messageOutbox.reconcileWithServer?.(conversationId, confirmed).then(removed => {
+      if (cancelled || !mountedRef.current || !Array.isArray(removed) || removed.length === 0) return;
+      const rm = new Set(removed.map(String));
+      setMessages(prev => prev.filter(m => {
+        if (!m || !(m._failed || m._pending || m._queued)) return true; // keep confirmed rows
+        const key = String(m._client_id || m.client_message_id || '');
+        return !rm.has(key);
+      }));
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [messages, conversationId]);
 
   // [WAVE 36 2026-05-20] WhatsApp-grade auto-download on conv open.
   // ───────────────────────────────────────────────────────────────

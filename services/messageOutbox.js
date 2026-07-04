@@ -531,6 +531,64 @@ export async function remove(cmi) {
 }
 
 /**
+ * [2026-07-04 phantom-outbox fix] Reconcile stuck outbox rows against messages
+ * the server already confirmed. A pending/failed row is DROPPED (so it stops
+ * re-hydrating as a "tap to retry" bubble and the worker stops re-sending it)
+ * when a confirmed server message matches it by:
+ *   • client_action_id  (native direct-to-R2 uploader's idempotency key), OR
+ *   • client_message_id (the JS send path's dedup key), OR
+ *   • media match: same sender_email AND same remote file_url — this clears
+ *     phantoms created BEFORE the client_action_id column existed (the founder's
+ *     existing stuck photos), which have no id to reconcile on.
+ *
+ * `serverMessages` = confirmed rows (numeric id, not _pending/_failed/_queued).
+ * Returns the list of removed client_message_ids so the caller can also drop
+ * the matching bubbles from React state.
+ */
+export async function reconcileWithServer(conversationId, serverMessages) {
+  if (Platform.OS === 'web') return [];
+  if (!Array.isArray(serverMessages) || serverMessages.length === 0) return [];
+  const pending = await getPending(conversationId);
+  if (!pending.length) return [];
+
+  const confirmedCmi = new Set();
+  const confirmedAid = new Set();
+  const confirmedMedia = new Set(); // `${sender}\n${file_url}`
+  for (const m of serverMessages) {
+    if (!m) continue;
+    // Only trust rows the server actually confirmed (numeric id, no pending flags).
+    if (typeof m.id !== 'number') continue;
+    if (m._pending || m._failed || m._queued) continue;
+    if (m.client_message_id) confirmedCmi.add(String(m.client_message_id));
+    if (m.client_action_id) confirmedAid.add(String(m.client_action_id));
+    const url = typeof m.file_url === 'string' ? m.file_url : '';
+    // Only remote URLs (server-hosted) — a local file:// URI can never be a
+    // server row's file_url, so this never false-matches an un-uploaded bubble.
+    if (url && /^https?:\/\//i.test(url) && m.sender_email) {
+      confirmedMedia.add(String(m.sender_email).toLowerCase() + '\n' + url);
+    }
+  }
+
+  const removed = [];
+  for (const row of pending) {
+    const p = row?.payload || {};
+    const cmi = String(row.client_message_id || p.client_message_id || '');
+    const aid = p.client_action_id ? String(p.client_action_id) : '';
+    const url = typeof p.file_url === 'string' ? p.file_url : '';
+    const sender = p.sender_email ? String(p.sender_email).toLowerCase() : '';
+    const mediaKey = (url && /^https?:\/\//i.test(url) && sender) ? (sender + '\n' + url) : '';
+    const matched =
+      (cmi && confirmedCmi.has(cmi)) ||
+      (aid && confirmedAid.has(aid)) ||
+      (mediaKey && confirmedMedia.has(mediaKey));
+    if (matched && cmi) {
+      try { await remove(cmi); removed.push(cmi); } catch { /* best-effort */ }
+    }
+  }
+  return removed;
+}
+
+/**
  * All rows still pending (queued|sending|failed) — optionally filtered to one
  * conversation. Used by the worker on app boot to resume.
  */
@@ -641,6 +699,7 @@ export default {
   markFailed,
   requeue,
   remove,
+  reconcileWithServer,
   getPending,
   getAllPending,
   getStatus,
