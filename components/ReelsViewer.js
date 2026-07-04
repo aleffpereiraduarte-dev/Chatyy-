@@ -1321,7 +1321,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   const mediaUrls = parseMediaUrls(reel.media_urls);
   const videoUrl = resolveMediaUrl(mediaUrls[0]);
   const authorDisplay = reel.author_name || reel.author_email?.split('@')[0] || '?';
-  const commentCount = Number(reel.comment_count) || 0;
+  const commentCount = Number(reel.comment_count ?? reel.comments_count ?? reel.comments) || 0;
   const musicName = reel.audio_name || `${authorDisplay} - ${t('feed.originalAudio') || 'Audio original'}`;
 
   // Sync with prop changes
@@ -2283,7 +2283,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   if (!a || !b) return a === b;
   if (a.id !== b.id) return false;
   if ((a.like_count ?? 0) !== (b.like_count ?? 0)) return false;
-  if ((a.comment_count ?? 0) !== (b.comment_count ?? 0)) return false;
+  if ((Number(a.comment_count ?? a.comments_count ?? a.comments) || 0) !== (Number(b.comment_count ?? b.comments_count ?? b.comments) || 0)) return false;
   if ((a.view_count ?? 0) !== (b.view_count ?? 0)) return false;
   if ((a.user_liked || false) !== (b.user_liked || false)) return false;
   if ((a.user_bookmarked || false) !== (b.user_bookmarked || false)) return false;

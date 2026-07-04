@@ -855,6 +855,15 @@ export default function ChatNewScreen() {
       const convName = r.data?.name || targetName;
       if (r.success && convId) {
         router.replace(`/chat-conversation?id=${convId}&name=${encodeURIComponent(convName)}&type=direct&email=${encodeURIComponent(em)}`);
+      } else if (/yourself|voc[eê] mesmo|si mesmo/i.test(String(r?.message || ''))) {
+        // [2026-07-04 QA] Belt-and-suspenders: server rejected a self-DM. On web the
+        // pre-guard (getActiveAccountEmail) can be empty, so catch the 400 here and
+        // open "Saved Messages" instead of surfacing a raw error.
+        try {
+          const rs = await api.chatSaved();
+          const sid = rs?.data?.id || rs?.data?.conversation_id;
+          if (rs?.success && sid) router.replace({ pathname: '/chat-conversation', params: { id: String(sid), name: t('chat.savedMessages') || 'Saved Messages' } });
+        } catch {}
       } else {
         safeAlert(t('common.error'), r?.message || t('chat.createError'));
       }

@@ -33,7 +33,7 @@
 // now claims clients BEFORE cache eviction. CACHE_NAME bumped so this
 // deploy's activate clears the prior generation.
 
-const CACHE_NAME  = 'chatyy-v12';
+const CACHE_NAME  = 'chatyy-v13';
 const API_CACHE   = 'chatyy-api-v4';
 const MEDIA_CACHE = 'chatyy-media-v1';
 
@@ -86,9 +86,21 @@ async function trimCache(cacheName, limit) {
     const cache = await caches.open(cacheName);
     const keys = await cache.keys();
     if (keys.length <= limit) return;
+    // Never evict the app shell — without it the offline navigation branch
+    // (caches.match('/index.html') || caches.match('/')) misses and boot
+    // white-screens. The shell is inserted at install so it is the OLDEST
+    // entry and would otherwise be the first thing trimmed.
+    const isShell = (req) => {
+      try { return APP_SHELL.includes(new URL(req.url).pathname); }
+      catch { return false; }
+    };
+    const evictable = (cacheName === CACHE_NAME)
+      ? keys.filter((req) => !isShell(req))
+      : keys;
+    // Recompute excess against the total, but only delete from evictable.
     const excess = keys.length - limit;
-    for (let i = 0; i < excess; i++) {
-      try { await cache.delete(keys[i]); } catch {}
+    for (let i = 0; i < excess && i < evictable.length; i++) {
+      try { await cache.delete(evictable[i]); } catch {}
     }
   } catch {}
 }

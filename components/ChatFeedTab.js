@@ -68,8 +68,8 @@ const FeedPostRow = React.memo(function FeedPostRow(props) {
   if ((a.likes_count ?? a.like_count ?? 0) !== (b.likes_count ?? b.like_count ?? 0)) return false;
   if ((a.comments_count ?? a.comment_count ?? 0) !== (b.comments_count ?? b.comment_count ?? 0)) return false;
   if ((a.updated_at || '') !== (b.updated_at || '')) return false;
-  if ((a.liked_by_me || false) !== (b.liked_by_me || false)) return false;
-  if ((a.bookmarked_by_me || false) !== (b.bookmarked_by_me || false)) return false;
+  if (((a.user_liked ?? a.liked_by_me) || false) !== ((b.user_liked ?? b.liked_by_me) || false)) return false;
+  if (((a.user_bookmarked ?? a.bookmarked_by_me) || false) !== ((b.user_bookmarked ?? b.bookmarked_by_me) || false)) return false;
   if ((a.caption || '') !== (b.caption || '')) return false;
   // [2026-07-03] Repaint when the resolved author changes — the backend now
   // live-resolves author_name from accounts (renames), so a stale-name client
