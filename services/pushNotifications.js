@@ -1047,6 +1047,39 @@ function _enqueuePendingTokenSend(entry) {
   // entry from a previous session).
   while (next.length > PENDING_TOKEN_SENDS_MAX) next.shift();
   _writePendingTokenSends(next);
+  _armPendingFlushTimer();
+}
+
+// Timed retry for the pending queue. flushPendingTokens() only fires on
+// AppState foreground transition + WS auth_ack — a user who signs up and
+// KEEPS the app in the foreground never retries in-session (real case
+// 2026-07-04: fresh phone-first account hit the mailbox-heal window,
+// register_push_token 500'd, and the user stayed dark on push/calls for
+// hours because no foreground transition ever happened). One-shot timer,
+// re-armed while entries remain, capped so a permanent failure can't
+// poll forever.
+let _pendingFlushTimer = null;
+let _pendingFlushArms = 0;
+const _PENDING_FLUSH_DELAY_MS = 150 * 1000;
+const _PENDING_FLUSH_MAX_ARMS = 8;
+function _armPendingFlushTimer() {
+  if (Platform.OS === 'web') return;
+  if (_pendingFlushTimer) return;
+  if (_pendingFlushArms >= _PENDING_FLUSH_MAX_ARMS) return;
+  _pendingFlushArms++;
+  _pendingFlushTimer = setTimeout(async () => {
+    _pendingFlushTimer = null;
+    try { await flushPendingTokens(); } catch {}
+    try {
+      if (_readPendingTokenSends().length) {
+        _armPendingFlushTimer();
+      } else {
+        // Queue drained — reset the cap so a NEW failure later in a
+        // long-lived session gets its own retry budget.
+        _pendingFlushArms = 0;
+      }
+    } catch {}
+  }, _PENDING_FLUSH_DELAY_MS);
 }
 
 async function _getActiveEmailSafe() {
