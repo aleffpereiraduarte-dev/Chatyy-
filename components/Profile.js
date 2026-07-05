@@ -1540,14 +1540,36 @@ export default function Profile({
     if (!identity?.email) return;
     if (followInFlightRef.current) return;
     followInFlightRef.current = true;
-    // Optimistic UI update so the tap feels instant.
-    setData(prev => prev ? { ...prev, social: { ...prev.social, is_following: !prev.social.is_following, followers_count: prev.social.followers_count + (prev.social.is_following ? -1 : 1) } } : prev);
+    const wasFollowing = !!social?.is_following;
+    const prevCount = Number(social?.followers_count) || 0; // guard NaN
+    // Optimistic UI update so the tap feels instant (count guarded with `|| 0`
+    // so an undefined followers_count never produces NaN).
+    setData(prev => prev ? { ...prev, social: { ...prev.social,
+      is_following: !wasFollowing,
+      followers_count: prevCount + (wasFollowing ? -1 : 1),
+    } } : prev);
     try {
-      if (social?.is_following) await api.unfollowUser?.(identity.email);
-      else                       await api.followUser?.(identity.email);
+      const r = wasFollowing
+        ? await api.unfollowUser?.(identity.email)
+        : await api.followUser?.(identity.email);
+      if (r?.success === false) throw new Error('follow_failed');
+      // Merge the server's authoritative counts/flags so the optimistic guess
+      // self-corrects instead of drifting over repeated toggles. Previously
+      // the return value was ignored entirely.
+      const srv = r?.data || r || {};
+      if (srv && (srv.followers_count != null || srv.is_following != null || srv.follows_me != null)) {
+        setData(prev => prev ? { ...prev, social: { ...prev.social,
+          is_following: srv.is_following != null ? !!srv.is_following : prev.social?.is_following,
+          followers_count: srv.followers_count != null ? (Number(srv.followers_count) || 0) : (prev.social?.followers_count || 0),
+          follows_me: srv.follows_me != null ? !!srv.follows_me : prev.social?.follows_me,
+        } } : prev);
+      }
     } catch {
-      // Revert on failure.
-      setData(prev => prev ? { ...prev, social: { ...prev.social, is_following: !prev.social.is_following, followers_count: prev.social.followers_count + (prev.social.is_following ? -1 : 1) } } : prev);
+      // Revert to the pre-tap follow state on failure.
+      setData(prev => prev ? { ...prev, social: { ...prev.social,
+        is_following: wasFollowing,
+        followers_count: prevCount,
+      } } : prev);
     } finally {
       followInFlightRef.current = false;
     }
@@ -2482,7 +2504,11 @@ export default function Profile({
           <View style={{ flexDirection: 'row', gap: 8 }}>
             {actions.can_follow && (
               <FlatButton
-                label={social?.is_following ? (t?.('profile.following') || 'Seguindo') : (t?.('profile.follow') || 'Seguir')}
+                label={social?.is_following
+                  ? (t?.('profile.following') || 'Seguindo')
+                  : (social?.follows_me
+                      ? (t?.('profile.followBack') || 'Seguir de volta')
+                      : (t?.('profile.follow') || 'Seguir'))}
                 onPress={handleFollow}
                 isPrimary={!social?.is_following}
                 colors={colors}

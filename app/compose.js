@@ -512,6 +512,11 @@ export default function ComposeScreen() {
   const [draftStatus, setDraftStatus] = useState('idle');
   const [lastSavedAt, setLastSavedAt] = useState(null); // Date
   const draftUidRef = useRef(null);
+  // Set true once the message is successfully sent. From that point on
+  // saveDraft/flushDraft become no-ops so the unmount flush (or a late
+  // autosave tick) can't re-persist the just-sent content as a draft —
+  // which previously left the message showing in BOTH Sent AND Drafts.
+  const sentRef = useRef(false);
   const draftTimerRef = useRef(null);
   const draftSavedTimerRef = useRef(null);
   const contentChangedRef = useRef(false);
@@ -742,6 +747,9 @@ export default function ComposeScreen() {
   }, [to, cc, bcc, subject, body, attachments]);
 
   const saveDraft = useCallback(async () => {
+    // Message already sent → never re-persist its content as a draft
+    // (otherwise it shows up in Drafts as well as Sent).
+    if (sentRef.current) return;
     if (!contentChangedRef.current) return;
     // Never persist a completely empty compose as a draft. If we are
     // editing an existing draft that the user cleared to empty, delete it
@@ -816,6 +824,7 @@ export default function ComposeScreen() {
   // existing saveDraft (which early-returns when clean) actually writes.
   const flushDraft = useCallback(() => {
     try {
+      if (sentRef.current) return; // sent → don't resurrect as a draft
       if (isComposeEmpty()) return;
       contentChangedRef.current = true;
       // Fire-and-forget: on unmount/background the component may be gone before
@@ -1118,6 +1127,25 @@ export default function ComposeScreen() {
     // "sent" and pop back. For undo_delay>0 the backend holds the message and
     // actually transmits it after `delay`s — this only governs our visuals.
     const finishSendSuccess = async () => {
+      // Message is sent — flip the guard FIRST so the unmount flush + any
+      // pending autosave tick become no-ops and can't re-create the draft.
+      sentRef.current = true;
+      contentChangedRef.current = false;
+      // Delete the autosaved draft (if one exists) so the sent message does
+      // NOT also linger in Drafts. Best-effort with a single retry; clear the
+      // ref either way so nothing later targets a now-sent draft.
+      if (draftUidRef.current) {
+        const sentDraftUid = draftUidRef.current;
+        draftUidRef.current = null;
+        try {
+          const dr = await api.apiCall('draft_delete', { uid: sentDraftUid }, 'POST');
+          if (!dr?.success) {
+            try { await api.apiCall('draft_delete', { uid: sentDraftUid }, 'POST'); } catch {}
+          }
+        } catch {
+          try { await api.apiCall('draft_delete', { uid: sentDraftUid }, 'POST'); } catch {}
+        }
+      }
       // Send & Archive: when the user has the toggle on for a reply, archive
       // the original thread. Best-effort, never blocks the success transition.
       if (sendAndArchive && isReply && params.reply_uid) {

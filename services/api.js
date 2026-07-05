@@ -1925,6 +1925,13 @@ export async function clearAuthTokenAsync() {
   sessionCookie = '';
   csrfToken = '';
   savedCredentials = null;
+  // Mirror the sync clearAuthToken(): the refresh token is a long-lived
+  // credential that can mint fresh bearers, so an explicit logout MUST kill
+  // it too. Previously this async variant left refreshToken/refreshDeviceId
+  // in memory + storage, so a cold-start refresh could resurrect the session.
+  refreshToken = '';
+  refreshDeviceId = '';
+  try { await storeRefreshToken(null); } catch {}
   _tokenMeta = { last_auth_ok_at: 0, created_at: 0, email: '' };
   try { await _saveTokenMeta(); } catch {}
   try { await storeToken(null); } catch {}
@@ -2794,17 +2801,25 @@ function _scheduleAvatarMapWrite() {
 }
 export function bustAvatarCache(email, version) {
   if (!email) return;
-  const v = (typeof version === 'number' && version > 0) ? version : Date.now();
-  _avatarCacheBust.set(String(email).toLowerCase(), v);
+  const key = String(email).toLowerCase();
+  const hasServerVer = (typeof version === 'number' && version > 0);
+  // Skip entirely when the server avatar_version we already recorded matches
+  // the incoming one — nothing changed, so bumping would just thrash the
+  // cache (new URL → miss → remount → disk pileup) on every profile open.
+  if (hasServerVer && _avatarCacheBust.get(key) === version) return;
+  const v = hasServerVer ? version : Date.now();
+  _avatarCacheBust.set(key, v);
   _scheduleAvatarMapWrite();
   // Bump AvatarCircle's local version registry too — its <AvatarCircle>
   // listeners subscribe to that map to know when to re-render. Without this
   // call, the URL has the new ?v=… but no component knows to rebind to it,
   // so the photo only changes after a manual refresh / app reopen. (User
   // reported: "atualizo a foto e n atualiza automaticamente instantaneamente").
+  // Pass the server version through so AvatarCircle stores the AUTHORITATIVE
+  // avatar_version (enabling ETag/304) instead of a fresh Date.now() per open.
   try {
     const ac = require('../components/AvatarCircle');
-    ac?.bumpAvatarCache?.(String(email).toLowerCase());
+    ac?.bumpAvatarCache?.(key, hasServerVer ? version : undefined);
   } catch {}
 }
 function _avatarV(email) {

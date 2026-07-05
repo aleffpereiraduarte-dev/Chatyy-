@@ -61,10 +61,26 @@ function _persistVersions() {
     _mmkv?.setString?.(AVATAR_VER_KEY, JSON.stringify(obj));
   } catch {}
 }
-export function bumpAvatarCache(email) {
+export function bumpAvatarCache(email, version) {
   if (!email) return;
   const e = String(email).toLowerCase();
-  _avatarVersions.set(e, Date.now());
+  const cur = _avatarVersions.get(e) || 0;
+  // When a real server `avatar_version` is supplied (WS avatar_updated /
+  // profile fetch via bustAvatarCache), store THAT authoritative value and
+  // SKIP when it already matches — so the URL's `v=` equals the server's
+  // avatar_version (ETag/304 can hit) and we don't remount + refetch on every
+  // profile open. The old code set Date.now() on every call, so each open was
+  // a guaranteed cache miss + remount + disk pileup. When no version is known
+  // (e.g. own upload just happened), fall back to Date.now() to force a
+  // one-time bust so the freshly-uploaded photo shows immediately.
+  let next;
+  if (typeof version === 'number' && version > 0) {
+    if (version === cur) return; // unchanged → nothing to do
+    next = version;
+  } else {
+    next = Date.now();
+  }
+  _avatarVersions.set(e, next);
   _persistVersions();
   _versionListeners.forEach(fn => { try { fn(e); } catch {} });
   // ⚠️ Importante: NÃO chamar ExpoImage.clearDiskCache() aqui. Ele apaga
@@ -114,6 +130,17 @@ function _todayBust() {
   const m = String(d.getUTCMonth() + 1).padStart(2, '0');
   const day = String(d.getUTCDate()).padStart(2, '0');
   return `${y}${m}${day}`;
+}
+// Remove every existing `v=` query param from a URL and normalize any orphaned
+// separators. Used so AvatarCircle can be the single writer of the `v=`
+// cache-bust param (see the remoteAvatarUrl construction below).
+function _stripVParam(u) {
+  if (!u || typeof u !== 'string') return u;
+  return u
+    .replace(/([?&])v=[^&]*/gi, '$1') // drop v= but keep the leading ?/&
+    .replace(/\?&/g, '?')             // '?&x' → '?x'
+    .replace(/&&+/g, '&')             // collapse '&&'
+    .replace(/[?&]$/g, '');           // trailing ?/&
 }
 function normalizeAvatarUrl(url) {
   if (!url || typeof url !== 'string') return url;
@@ -454,8 +481,20 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   // it does bust, expo-image's disk cache is also cleared globally so
   // even iOS's NSURLCache drops the stale image.
   const cacheBust = version > 0 ? version : 0;
+  // Single source of truth for the `v=` cache-bust param. getAvatarUrlForEmail
+  // (api.js) may already append `&v=<serverVersion>`; appending a SECOND `&v=`
+  // here made PHP's $_GET['v'] take the LAST one, so the ETag/304 negotiation
+  // never matched the stored avatar_version → endless cache miss + remount.
+  // Strip any existing `v=` first, then append exactly one (AvatarCircle's
+  // version map is fed by BOTH bustAvatarCache and direct bumpAvatarCache
+  // callers, so it's the authoritative bust value).
   const remoteAvatarUrl = baseAvatarUrl
-    ? (cacheBust > 0 ? `${baseAvatarUrl}${baseAvatarUrl.includes('?') ? '&' : '?'}v=${cacheBust}` : baseAvatarUrl)
+    ? (cacheBust > 0
+        ? (() => {
+            const stripped = _stripVParam(baseAvatarUrl);
+            return `${stripped}${stripped.includes('?') ? '&' : '?'}v=${cacheBust}`;
+          })()
+        : baseAvatarUrl)
     : null;
   // Skip the native synchronous cache — ele retorna sempre o ÚLTIMO arquivo
   // baixado pra esse email (sem considerar a version), então quando o user

@@ -1189,12 +1189,14 @@ function InboxScreenInner() {
     try {
       const next = page + 1;
       setPage(next);
-      // The MailContext's silent loader appends results; flag clears after a
-      // beat so the footer spinner stays visible long enough to read.
+      // Actually FETCH the next page — setPage alone never triggered a load,
+      // so infinite scroll did nothing. loadEmails now APPENDS+dedupes for
+      // pg>1, so this grows the list instead of replacing it.
+      await loadEmails(currentFolder, next, search);
     } finally {
       setTimeout(() => setLoadingMore(false), 600);
     }
-  }, [loadingMore, page, endOfList, setPage]);
+  }, [loadingMore, page, endOfList, setPage, loadEmails, currentFolder, search]);
 
   // Memoize filtered emails — prevents inline IIFE creating new array every render
   const filteredEmails = useMemo(() => {

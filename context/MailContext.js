@@ -295,7 +295,17 @@ export function MailProvider({ children }) {
             recentlyRead.has(String(e.uid)) && !e.seen ? { ...e, seen: true } : e
           );
 
-        if (silent) {
+        if (pg > 1) {
+          // Pagination (infinite scroll / pager "next"): APPEND this page and
+          // dedupe by uid instead of REPLACING the list. Previously loadEmails
+          // replaced state for pg>1, so scrolling to page 2 wiped page 1 and
+          // the list appeared to reset — infinite scroll was effectively dead.
+          setEmails(prev => {
+            const seen = new Set(prev.map(e => String(e.uid)));
+            const additions = applyRecentlyRead(emailList).filter(e => !seen.has(String(e.uid)));
+            return additions.length ? [...prev, ...additions] : prev;
+          });
+        } else if (silent) {
           // Silent merge: update existing emails in-place, prepend new ones, remove deleted
           // IMPORTANT: preserve local seen=true if user just read the email (IMAP may lag)
           setEmails(prev => {
@@ -374,8 +384,19 @@ export function MailProvider({ children }) {
       }
     } catch {}
     try {
-      const r = await api.getMessage(uid, folder || currentFolder);
-      if (r.success) {
+      const _hasBody = (d) => !!(d && (d.body_html || d.body_text || d.body ||
+        (Array.isArray(d.attachments) && d.attachments.length > 0)));
+      let r = await api.getMessage(uid, folder || currentFolder);
+      // Desktop parity with app/read.js (~112): a single transient IMAP 401 /
+      // edge timeout — or an empty body from a Rust blip — used to strand the
+      // reader on a blank pane. Retry the fetch ONCE before trusting "no
+      // body". api.js's Rust-dead state is cooldown-based, so the retry can
+      // land on a healthy path (PHP fallback or recovered Rust).
+      if (!(r && r.success && _hasBody(r.data))) {
+        const r2 = await api.getMessage(uid, folder || currentFolder).catch(() => null);
+        if (r2 && r2.success && (_hasBody(r2.data) || !(r && r.success))) r = r2;
+      }
+      if (r && r.success) {
         // Optimistic: stamp seen=true on the selected message so the reader
         // pane never shows the "unread" pill/styling after open. The IMAP
         // \Seen flag flips server-side via Rust ?mark_seen=true OR via the

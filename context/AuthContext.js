@@ -440,6 +440,14 @@ async function clearAllPerAccountCaches() {
     await clearAvatarCache();
   } catch {}
 
+  // 1c. Email caches (MMKV list_/msg_ + web IDB). These are written by
+  // services/offlineCache.js directly to MMKV, bypassing services/cache.js —
+  // so clearAllCache() above does NOT reach them. Without this, account A's
+  // inbox rows + message bodies survived on disk and painted under account B
+  // (now account-namespaced, but we still purge every account's entries on a
+  // full wipe so nothing lingers).
+  try { require('../services/offlineCache').purgeEmailCaches?.(); } catch {}
+
   // 2. AsyncStorage sweep — anything that smells user-scoped
   try {
     const allKeys = await AsyncStorage.getAllKeys();
@@ -1397,6 +1405,22 @@ export function AuthProvider({ children }) {
     //    line 422 IIFE re-hydrated `authToken` from the stale entry —
     //    checkAuth() then succeeded and the user was auto-logged-back-in
     //    (reported 2026-05-07).
+    // 2b. SECURITY: revoke the bearer SERVER-SIDE while it is still set.
+    //     The server logout MUST run BEFORE we clear the token locally —
+    //     otherwise the request goes out with an empty Authorization header
+    //     (getAuthHeaders only attaches it when authToken is truthy) and the
+    //     server can't revoke the session, leaving the captured bearer valid.
+    //     Previously api.logout() ran at the END of doLogout, after the token
+    //     was already cleared — a dead revoke. Race a timeout so a slow
+    //     backend can't block the logout UI (already navigated to /login).
+    //     api.logout() also clears authToken; clearAuthTokenAsync below then
+    //     finishes the local wipe (refresh token + SecureStore).
+    try {
+      await Promise.race([
+        api.logout().catch(() => {}),
+        new Promise(r => setTimeout(r, 2500)),
+      ]);
+    } catch {}
     try { await api.clearAuthTokenAsync(); } catch { try { api.clearAuthToken(); } catch {} }
     // 3b. Clear the offline user cache so the next app-open's
     //     hydrateOffline() doesn't resurrect a logged-out session.
@@ -1490,8 +1514,9 @@ export function AuthProvider({ children }) {
       const push = require('../services/pushNotifications');
       push?.unregisterPushToken?.().catch(() => {});
     } catch {}
-    // 5. Server-side logout (best-effort) — wraps up server session
-    api.logout().catch(() => {});
+    // 5. Server-side logout already ran above (step 2b) WHILE the bearer was
+    //    still attached, so the session is revoked. (Calling it here again
+    //    would send an empty-bearer request that the server can't act on.)
     // Aggressive nuke AFTER the logout chain finishes — clearAllCache only
     // wipes MMKV, but AsyncStorage chat drafts / chatLockKey / effect-seen /
     // premium flag would leak into the next account that signs in on this
@@ -1566,6 +1591,11 @@ export function AuthProvider({ children }) {
             // path missing clearAccountScopedMmkv).
             try { const _clearChat = await getLazyClearChatCache(); await _clearChat(); } catch {}
             try { await clearAccountScopedMmkv(); } catch {}
+            // Email caches (offlineCache MMKV list_/msg_ + web IDB) are now
+            // account-namespaced, but purge every account's entries on switch
+            // so the previous account's inbox/bodies can't paint under the new
+            // one on the first render (belt-and-suspenders alongside the NS).
+            try { require('../services/offlineCache').purgeEmailCaches?.(); } catch {}
             // P0 PRIVACY: clearChatCache() deliberately does NOT touch the
             // native SQLite store (see its "SQLite cleared separately via
             // dbClearAll()" note). switchAccount NEVER wiped it — so the

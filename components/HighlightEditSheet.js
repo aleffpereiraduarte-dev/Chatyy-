@@ -78,18 +78,22 @@ export default function HighlightEditSheet({
     setCoverUrl(highlight.cover_url || '');
 
     const cached = _hlCache.get(highlight.id);
+    let cancelled = false;
     if (cached) {
-      // Instant paint from cache; skip the network round-trip entirely.
+      // Instant paint from cache (Instagram-feel)...
       setItems(cached.items);
       setStories(cached.stories);
       setStats(cached.stats);
       setLoading(false);
-      return;
+      // ...but DON'T `return`. The old short-circuit skipped the network
+      // entirely, so a clip deleted elsewhere (from the story viewer, another
+      // device) reappeared here forever — the module cache was never
+      // invalidated. Fall through to a background revalidate that overwrites
+      // the cache + state a beat later, so external deletes/edits reflect.
+    } else {
+      setItems([]);
+      setLoading(true);
     }
-
-    let cancelled = false;
-    setItems([]);
-    setLoading(true);
     Promise.all([
       api.statusHighlightItems?.(highlight.id).catch(() => null),
       api.statusList?.().catch(() => null),

@@ -46,10 +46,51 @@ function _msgHasBody(m) {
   } catch {}
 })();
 
+// ─── Account namespacing ───
+// Email caches (list + message bodies) MUST be scoped to the active account.
+// Without this, account A's inbox rows / message bodies paint under account B
+// after a switch (both accounts wrote to the same `list_INBOX` / `msg_<uid>`
+// keys). We derive the namespace lazily from api.getActiveAccountEmail() —
+// lazy require avoids a circular import at module load (api.js does not import
+// this file at top level). Falls back to `_noacct` when no account is active
+// so a logged-out read never collides with a signed-in one.
+function _acctNS() {
+  try {
+    const { getActiveAccountEmail } = require('./api');
+    const e = getActiveAccountEmail && getActiveAccountEmail();
+    return e ? String(e).toLowerCase() : '_noacct';
+  } catch { return '_noacct'; }
+}
+function _listKey(folder) { return CACHE_PREFIX + 'list_' + _acctNS() + '_' + folder; }
+function _msgKey(uid) { return CACHE_PREFIX + 'msg_' + _acctNS() + '_' + uid; }
+function _msgIndexKey() { return CACHE_PREFIX + 'msg_index_' + _acctNS(); }
+// Web IDB folder scoping: prefix the folder name so account A's INBOX blob in
+// IndexedDB can't be served to account B.
+function _webFolder(folder) { return _acctNS() + '::' + folder; }
+
+// Purge ALL email caches (list + message bodies + index) for EVERY account.
+// Called on logout / account switch so the outgoing identity's inbox and
+// bodies can't leak into the next account on this device.
+export function purgeEmailCaches() {
+  try {
+    const keys = getAllKeys() || [];
+    for (const k of keys) {
+      if (typeof k !== 'string') continue;
+      if (k.indexOf(CACHE_PREFIX + 'list_') === 0 ||
+          k.indexOf(CACHE_PREFIX + 'msg_') === 0) {
+        remove(k);
+      }
+    }
+  } catch {}
+  if (Platform.OS === 'web') {
+    try { require('./localDb').webClearAll?.(); } catch {}
+  }
+}
+
 // ─── Email List Cache ───
 
 export async function saveEmailsToCache(folder, emails) {
-  const key = CACHE_PREFIX + 'list_' + folder;
+  const key = _listKey(folder);
   const sliced = (emails || []).slice(0, MAX_EMAILS_PER_FOLDER);
   setJSON(key, { emails: sliced, ts: Date.now() });
   // Web: also save to IndexedDB for faster access — await pra que rejeições
@@ -57,7 +98,7 @@ export async function saveEmailsToCache(folder, emails) {
   if (Platform.OS === 'web') {
     try {
       const { webSaveEmails } = require('./localDb');
-      await webSaveEmails(folder, sliced);
+      await webSaveEmails(_webFolder(folder), sliced);
     } catch {}
   }
 }
@@ -67,11 +108,11 @@ export async function getEmailsFromCache(folder) {
   if (Platform.OS === 'web') {
     try {
       const { webGetEmails } = require('./localDb');
-      const idbEmails = await webGetEmails(folder);
+      const idbEmails = await webGetEmails(_webFolder(folder));
       if (idbEmails && idbEmails.length > 0) return idbEmails;
     } catch {}
   }
-  const key = CACHE_PREFIX + 'list_' + folder;
+  const key = _listKey(folder);
   const data = getJSON(key);
   return data?.emails || null;
 }
@@ -156,8 +197,8 @@ export async function getNotesFromCache() {
 // ─── Email Message Cache (individual read emails) ───
 
 export async function saveMessageToCache(uid, message) {
-  const indexKey = CACHE_PREFIX + 'msg_index';
-  const msgKey = CACHE_PREFIX + 'msg_' + uid;
+  const indexKey = _msgIndexKey();
+  const msgKey = _msgKey(uid);
   // NÃO cachear corpo vazio — senão envenena e mostra "(sem conteúdo)" pra sempre.
   // Se já existir uma entrada (possivelmente envenenada), remove.
   if (!_msgHasBody(message)) {
@@ -169,22 +210,23 @@ export async function saveMessageToCache(uid, message) {
   }
   setJSON(msgKey, message);
 
-  // Maintain LRU index
+  // Maintain LRU index (per-account)
   let index = getJSON(indexKey) || [];
   index = [uid, ...index.filter(u => u !== uid)];
   if (index.length > MAX_CACHED_MESSAGES) {
     const removed = index.splice(MAX_CACHED_MESSAGES);
-    for (const u of removed) remove(CACHE_PREFIX + 'msg_' + u);
+    for (const u of removed) remove(_msgKey(u));
   }
   setJSON(indexKey, index);
 }
 
 export async function getMessageFromCache(uid) {
-  const m = getJSON(CACHE_PREFIX + 'msg_' + uid);
+  const key = _msgKey(uid);
+  const m = getJSON(key);
   // Entrada SEM corpo é lixo (envenenamento legado) → trata como cache-miss e
   // remove, pra forçar rebusca do servidor (que sempre traz o corpo via PHP).
   if (!_msgHasBody(m)) {
-    if (m) remove(CACHE_PREFIX + 'msg_' + uid);
+    if (m) remove(key);
     return null;
   }
   return m;

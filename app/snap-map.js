@@ -714,7 +714,18 @@ export default function SnapMapScreen() {
               gotFreshGps = true;
             }
             try {
-              const fresh = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+              // Cold-start GPS can hang indefinitely (no OS-level timeout on
+              // getCurrentPositionAsync). Race it against a 10s timeout — same
+              // pattern as LocationPickerSheet (~168) — so a stuck fix doesn't
+              // leave the map frozen on the last-known (or empty) position.
+              const _withTimeout = (p, ms) => Promise.race([
+                p,
+                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms)),
+              ]);
+              const fresh = await _withTimeout(
+                Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+                10000,
+              );
               if (alive && fresh?.coords) {
                 setMyLocation({ lat: fresh.coords.latitude, lng: fresh.coords.longitude });
                 gotFreshGps = true;

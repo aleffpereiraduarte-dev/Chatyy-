@@ -380,6 +380,19 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
   // images so the "Show images" prompt only renders when relevant.
   const processEmailHtml = useCallback((html) => {
     if (!html || typeof html !== 'string') return html;
+    // Build a content-id → attachment part map so inline `cid:` image refs can
+    // be rewritten to real download URLs. The Rust open-path returns the HTML
+    // with raw `cid:` refs PLUS per-attachment `content_id` + `part_id`; the
+    // PHP path pre-inlines them as data: URIs (so its attachments carry no
+    // content_id and this map is empty → cid refs are left untouched). Without
+    // this, inline images opened via Rust rendered as broken image icons.
+    const cidMap = {};
+    try {
+      (email?.attachments || []).forEach((a, i) => {
+        const cid = String(a?.content_id || '').replace(/^<|>$/g, '').trim().toLowerCase();
+        if (cid) cidMap[cid] = a.part_id ?? a.part ?? (i + 1);
+      });
+    } catch {}
     let foundRemote = false;
     const processed = html.replace(/<img\b([^>]*)>/gi, (full, attrs) => {
       // Detect tracking pixel: width=1 height=1 OR style with 1px both
@@ -390,9 +403,24 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
       const srcMatch = attrs.match(/\bsrc\s*=\s*["']([^"']+)["']/i);
       const src = srcMatch ? srcMatch[1] : '';
       const isRemote = /^https?:\/\//i.test(src);
-      const isInline = /^cid:/i.test(src) || /^data:/i.test(src);
+      const isCid = /^cid:/i.test(src);
+      const isInline = isCid || /^data:/i.test(src);
       if (isRemote) foundRemote = true;
       let newAttrs = attrs;
+      // Rewrite inline `cid:<id>` → the real attachment download URL (Rust
+      // open-path). Falls through untouched when the cid isn't in the map
+      // (PHP path already inlined it, or the part is missing).
+      if (isCid && email?.uid != null) {
+        const cidRef = src.replace(/^cid:/i, '').replace(/^<|>$/g, '').trim().toLowerCase();
+        const part = cidMap[cidRef];
+        if (part != null) {
+          const cidUrl = getAttachmentUrl(email.uid, folder || 'INBOX', part);
+          newAttrs = newAttrs.replace(
+            /\bsrc\s*=\s*["'][^"']+["']/i,
+            'src="' + String(cidUrl).replace(/"/g, '&quot;') + '"'
+          );
+        }
+      }
       // Add lazy-load + async decode if not already present
       if (!/\bloading\s*=/i.test(newAttrs)) newAttrs += ' loading="lazy"';
       if (!/\bdecoding\s*=/i.test(newAttrs)) newAttrs += ' decoding="async"';
@@ -411,7 +439,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
       setTimeout(() => setHasRemoteImages(foundRemote), 0);
     }
     return processed;
-  }, [showImages, hasRemoteImages]);
+  }, [showImages, hasRemoteImages, email, folder]);
 
   // Smooth entry animation for email content
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -1063,7 +1091,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                 style={[s.downloadAllBtn, { backgroundColor: colors.primary + '12' }]}
                 onPress={() => {
                   email.attachments.forEach((a, i) => {
-                    const url = getAttachmentUrl(email.uid, folder || 'INBOX', a.part || (i + 1));
+                    const url = getAttachmentUrl(email.uid, folder || 'INBOX', a.part_id ?? a.part ?? (i + 1));
                     const link = document.createElement('a');
                     link.href = url;
                     link.download = a.filename || `anexo_${i + 1}`;
@@ -1086,7 +1114,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
               const AttachIcon = getAttachIconComponent(a.filename);
               const ext = (a.filename || '').split('.').pop().toLowerCase();
               const isImage = IMAGE_EXTS.includes(ext);
-              const downloadUrl = getAttachmentUrl(email.uid, folder || 'INBOX', a.part || (i + 1));
+              const downloadUrl = getAttachmentUrl(email.uid, folder || 'INBOX', a.part_id ?? a.part ?? (i + 1));
               const handleDownload = () => {
                 if (Platform.OS === 'web') {
                   const link = document.createElement('a');
@@ -1144,7 +1172,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         attachments={email.attachments || []}
         initialIndex={previewAttach.index}
         onClose={() => setPreviewAttach({ visible: false, index: 0 })}
-        getUrl={(a, i) => getAttachmentUrl(email.uid, folder || 'INBOX', a.part || (i + 1))}
+        getUrl={(a, i) => getAttachmentUrl(email.uid, folder || 'INBOX', a.part_id ?? a.part ?? (i + 1))}
       />
 
       {/* Smart Reply */}

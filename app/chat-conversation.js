@@ -9365,6 +9365,47 @@ function ChatConversationInner() {
 
   const currentEmail = user?.email || '';
 
+  // Rehydrate the live-location dup-session guard on mount / after messages
+  // load. `liveLocActive` initializes to null and was NEVER restored, so after
+  // an app restart (or re-entering the chat) the "você já está dividindo" guard
+  // didn't show and the user could start a 2nd concurrent share. Scan the
+  // loaded messages for an unexpired live-location share sent by the current
+  // user and restore both the reactive state + the cleanup ref.
+  const liveLocRehydratedRef = useRef(false);
+  useEffect(() => {
+    if (liveLocRehydratedRef.current) return;
+    if (liveLocActive) { liveLocRehydratedRef.current = true; return; }
+    if (!currentEmail || !Array.isArray(messages) || messages.length === 0) return;
+    const nowSec = Date.now() / 1000;
+    // Newest first so a restarted share picks the most recent session.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i];
+      if (!msg || msg.sender_email !== currentEmail) continue;
+      const mt = msg.msg_type || msg.type;
+      if (mt !== 'location') continue;
+      let loc = {};
+      try {
+        loc = typeof msg.content === 'string' ? JSON.parse(msg.content)
+          : (msg.content && typeof msg.content === 'object' ? msg.content : {});
+      } catch { loc = {}; }
+      const isLive = !!(loc.live || msg.live);
+      if (!isLive) continue;
+      const liveUntilTs = loc.live_until || msg.live_until || null;
+      const isUnlimited = !!loc.is_unlimited || !!msg.is_unlimited
+        || (liveUntilTs && (Number(liveUntilTs) - nowSec) > (365 * 24 * 3600));
+      const isActive = isUnlimited || (liveUntilTs && nowSec < Number(liveUntilTs));
+      if (!isActive) continue;
+      liveLocMsgIdRef.current = msg.id;
+      setLiveLocActive({
+        messageId: msg.id,
+        expiresAt: liveUntilTs ? Number(liveUntilTs) * 1000 : 0,
+        isUnlimited,
+      });
+      liveLocRehydratedRef.current = true;
+      break;
+    }
+  }, [messages, currentEmail, liveLocActive]);
+
   // ============================================================
   // KEYBOARD HANDLING (fixes modal keyboard overlap on iOS)
   // ============================================================
@@ -22837,16 +22878,34 @@ function ChatConversationInner() {
               // WhatsApp-grade tap-to-retry: tap on a red-❗failed bubble
               // immediately re-queues it for replay. Mark optimistic-pending
               // again so the UI shows clock instead of red, then drain the
-              // offline queue. The action stays queued client-side via
-              // queueOfflineAction (already done at send-time on failure)
-              // so retry just kicks the replay loop earlier than its next
-              // scheduled tick.
+              // offline queue.
               try {
                 if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
               } catch {}
               setMessages(prev => prev.map(m =>
                 m.id === msg.id ? { ...m, _failed: false, _pending: true, _queued: true } : m
               ));
+              // [2026-07-05 stuck-retry fix] replayOfflineQueue alone is NOT
+              // enough: the MMKV queue drops entries after repeated failures,
+              // and sendWorker's dequeueNext skips rows in state 'failed' — so
+              // a long-stuck bubble (founder's msg from 07-03) had NO owner
+              // left to re-send it and tap-to-retry was a silent no-op. Reset
+              // the SQLite outbox row to 'queued' (attempts=0) and poke the
+              // worker. Safe against duplicates: the re-send carries the
+              // original client_message_id and the server dedups via
+              // UNIQUE(sender_email, client_message_id), returning the
+              // existing row when the message actually made it before.
+              if (OUTBOX_V2_ONLY) {
+                const _cmi = msg._client_id || msg.client_message_id;
+                if (_cmi) {
+                  try {
+                    const _requeued = messageOutbox.requeue?.(String(_cmi));
+                    const _drain = () => { try { require('../services/sendWorker').poke?.(); } catch {} };
+                    if (_requeued && typeof _requeued.then === 'function') _requeued.then(_drain).catch(() => {});
+                    else _drain();
+                  } catch {}
+                }
+              }
               try {
                 const { replayOfflineQueue } = require('../services/offlineCache');
                 const apiMod = require('../services/api');
@@ -23371,7 +23430,13 @@ function ChatConversationInner() {
               {isOwn && !isDeleted && (() => {
                 if (msg._failed) return (
                   <TouchableOpacity
-                    onPress={async () => {
+                    onPress={() => {
+                      // A permanently-failed message used to re-send on tap with
+                      // NO way to remove it — a stuck "parasite" bubble forever.
+                      // WhatsApp lets you delete a failed message: open a 3-action
+                      // alert (Tentar / Limpar / Cancelar) instead of an immediate
+                      // re-send. `doRetry` holds the EXACT original retry logic.
+                      const doRetry = async () => {
                       const isText = msg.type === 'text' && msg.content;
                       const isMediaType = ['image','video','audio','voice','gif','sticker','file'].includes(msg.type);
                       const localUriRaw = msg._localUri || msg.file_url || '';
@@ -23442,6 +23507,27 @@ function ChatConversationInner() {
                       } catch {
                         setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: true, _pending: false } : m));
                       }
+                      };
+                      safeAlert(
+                        t('chat.msgFailed') || 'Falha ao enviar',
+                        t('chatConv.failedMsgPrompt') || 'Esta mensagem não foi enviada. Deseja tentar de novo ou remover?',
+                        [
+                          { text: t('chat.retry') || 'Tentar', onPress: doRetry },
+                          { text: t('chat.clearQueued') || 'Limpar', style: 'destructive', onPress: async () => {
+                            try {
+                              const { removePendingMessage } = require('../services/chatCache');
+                              await removePendingMessage(conversationId, msg.id).catch(()=>{});
+                              try {
+                                const outbox = require('../services/messageOutbox');
+                                const cmi = msg._client_id || msg.client_message_id || msg.id;
+                                if (outbox?.remove) await outbox.remove(cmi).catch(()=>{});
+                              } catch {}
+                              setMessages(prev => prev.filter(m => m.id !== msg.id));
+                            } catch {}
+                          } },
+                          { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
+                        ]
+                      );
                     }}
                     style={{ flexDirection: 'column', alignItems: 'center', marginLeft: 2, gap: 0 }}
                     accessibilityLabel={t('chat.retry') || 'Tentar novamente'}

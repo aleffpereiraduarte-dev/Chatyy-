@@ -453,6 +453,12 @@ export default function PhotosScreen() {
       backupInFlightRef.current = false;
       cleanupBackupRefresh();
       if (autoLoadTimerRef.current) { clearTimeout(autoLoadTimerRef.current); autoLoadTimerRef.current = null; }
+      // Reset Memories too — memoriesLoadedRef was never cleared on switch, so
+      // the previous account's "On this day" memories stayed on screen (the
+      // load short-circuits when the ref is already true). Clear both so the
+      // new account rebuilds its own memories.
+      memoriesLoadedRef.current = false;
+      setMemoriesData([]);
     }
     lastUserEmailRef.current = cur;
   }, [user?.email]);
@@ -1083,17 +1089,14 @@ export default function PhotosScreen() {
       // Fall-back: keep the legacy name-match as a secondary signal (still
       // helps web where there is no asset_id). Union of both signals.
       const cloudNames = new Set(cloudPhotos.map(p => p.name?.toLowerCase()));
-      // Global "complete" override — if the screen as a whole has decided
-      // backup is complete (server count caught up to device total), every
-      // device photo MUST show cloud-check, otherwise the per-photo overlay
-      // contradicts the banner. Without this, the user sees "100% complete"
-      // alongside a sea of cloud-slash icons.
-      const dt = deviceTotalCount || devicePhotos.length || 0;
-      const globalComplete =
-        backupStatus === 'complete' ||
-        (dt > 0 && (backedUpTotal || 0) >= dt);
+      // Per-asset backup status ONLY — no scalar "globalComplete" override.
+      // The old override forced EVERY device thumb to show a cloud-check
+      // whenever the account-wide backedUpTotal reached the device count, so
+      // on a FRESH device (photos backed up from another device) the user saw
+      // a sea of false "backed up" checks even though none of THESE assets were
+      // in the cloud. Now a photo is "backed up" only when it individually
+      // intersects the cloud (by asset id or, as a fallback, by name).
       const isPhotoBackedUp = (dp) => {
-        if (globalComplete) return true;
         if (dp.deviceId && backedUpIdSet.has(dp.deviceId)) return true;
         if (dp.name && cloudNames.has(dp.name.toLowerCase())) return true;
         return false;
@@ -1163,10 +1166,19 @@ export default function PhotosScreen() {
           setTimeout(() => { autoStartedRef.current = false; }, 5 * 60 * 1000);
         }
       } else if (totalOnDevice > 0 && pending === 0 && estimatedBackedUp > 0) {
-        // Pending hit 0 — flip to complete even if we were 'backing_up',
-        // otherwise the "Backup em andamento" banner sticks while showing
-        // the server count which can exceed device total.
-        if (backupStatus !== 'complete') setBackupStatus('complete');
+        // Scalar pending hit 0 — but corroborate with the per-asset
+        // intersection before declaring complete. On a FRESH device the
+        // account-wide backedUpTotal already exceeds this device's count, so
+        // scalar pending is 0 even though NONE of these photos are backed up.
+        // Only flip to complete when the loaded device photos individually
+        // match the cloud; otherwise they still need backing up.
+        const perAssetComplete = devicePhotos.length === 0 || backedUpCount >= devicePhotos.length;
+        if (perAssetComplete) {
+          if (backupStatus !== 'complete') setBackupStatus('complete');
+        } else if (backupStatus !== 'backing_up' && backupStatus !== 'complete') {
+          // Photos on THIS device aren't in the cloud yet → needs backup.
+          setBackupStatus('needs_backup');
+        }
       }
       // If totalOnDevice still 0, don't set any status (wait for count to load)
     })();
@@ -2681,6 +2693,18 @@ export default function PhotosScreen() {
       ? `${formatGB(storageInfo.total_used || storageInfo.used_bytes || 0)} GB ${t('photos.of')} ${formatGB(storageInfo.quota || storageInfo.plan_quota || 15 * 1024 * 1024 * 1024)} GB`
       : '';
 
+    // Per-asset corroboration for "backup complete". The scalar backedUpTotal
+    // is ACCOUNT-WIDE — on a FRESH device it already exceeds this device's
+    // photo count (those photos were backed up from ANOTHER device), so a
+    // scalar-only "deviceCount - backedUpTotal === 0" test falsely reported
+    // "100% / Backup completo" with a sea of cloud-check thumbs. Require the
+    // photos actually ON THIS device to individually match the cloud (via the
+    // per-asset `backedUp` flag) before trusting the scalar. A truly complete
+    // library has every loaded device photo matched; a fresh device has ~none.
+    const _matchedOnDevice = devicePhotos.filter(p => p.backedUp).length;
+    const _perAssetCorroborates =
+      devicePhotos.length === 0 || _matchedOnDevice >= devicePhotos.length;
+
     if (!backupEnabled) {
       return (
         <View style={[s.backupBanner, { backgroundColor: isDark ? '#1e293b' : '#f8fafc', borderColor: colors.border }]}>
@@ -2729,7 +2753,7 @@ export default function PhotosScreen() {
     // scanLibrary pendingCount (UserDefaults can be stale/inflated).
     const _bannerDeviceCount = deviceTotalCount || devicePhotos.length || 0;
     const _bannerRealPending = Math.max(0, _bannerDeviceCount - (backedUpTotal || 0));
-    if (backupStatus === 'complete' && _bannerRealPending === 0 && _bannerDeviceCount > 0) {
+    if (backupStatus === 'complete' && _bannerRealPending === 0 && _bannerDeviceCount > 0 && _perAssetCorroborates) {
       return (
         <View style={[s.backupBanner, { backgroundColor: isDark ? '#052e16' : '#f0fdf4', borderColor: isDark ? '#16a34a40' : '#bbf7d040' }]}>
           <View style={s.backupBannerLeft}>
@@ -2766,7 +2790,7 @@ export default function PhotosScreen() {
       // even when there are photos that aren't really backed up.
       const cappedBackedUp = Math.min(deviceCount, backedUpTotal || 0);
       const pending = Math.max(0, deviceCount - cappedBackedUp);
-      if (pending <= 0 && backedUpTotal > 0) {
+      if (pending <= 0 && backedUpTotal > 0 && _perAssetCorroborates) {
         // All backed up - show complete
         return (
           <View style={[s.backupBanner, { backgroundColor: isDark ? '#052e16' : '#f0fdf4', borderColor: isDark ? '#16a34a40' : '#bbf7d040' }]}>
