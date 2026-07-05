@@ -703,12 +703,21 @@ function ChatHub() {
   // ChatStatusTab consumes openStatusEmail and clears it via onOpenStatusConsumed.
   const requestOpenStatus = useCallback((email) => {
     setOpenStatusEmail(email || null);
+    // [fix 2026-07-05 status-strip blank] The 'status' tab is NOT in the bottom
+    // tab bar, so tapping a story ring in the chat-list strip switched activeTab
+    // to 'status' but never MOUNTED it (only handleTabPress mounts) → blank
+    // screen. Mount it here so ChatStatusTab exists and its openStatusEmail
+    // effect can open the viewer.
+    setMountedTabs(prev => prev.has('status') ? prev : new Set(prev).add('status'));
     try { setActiveTab('status'); } catch {}
   }, [setActiveTab]);
   // requestNewStatus(): chat-list strip → open the canonical status composer.
   // Switches to the status tab and flips autoNewStatus so ChatStatusTab opens
   // its creator. Re-armable across taps (unlike the mount-only params.new path).
   const requestNewStatus = useCallback(() => {
+    // [fix 2026-07-05] same mount gate as requestOpenStatus — the composer
+    // entry point also bypassed handleTabPress, leaving 'status' unmounted.
+    setMountedTabs(prev => prev.has('status') ? prev : new Set(prev).add('status'));
     try { setActiveTab('status'); } catch {}
     setAutoNewStatus(true);
   }, [setActiveTab]);

@@ -44,7 +44,7 @@ const safeAlert = (title, message, buttons) => {
 function formatRelativeTime(dateStr, t, language) {
   if (!dateStr) return '';
   const now = new Date();
-  const date = new Date(dateStr);
+  const date = api.parseServerDate(dateStr);
   if (isNaN(date.getTime())) return '';
   const diffMs = date - now;
   const diffMin = Math.round(diffMs / 60000);
@@ -76,7 +76,7 @@ function formatDuration(meeting, t) {
   const start = meeting.scheduled_at || meeting.started_at || meeting.created_at;
   const end = meeting.ended_at || meeting.scheduled_end_at;
   if (!start || !end) return null;
-  const ms = new Date(end) - new Date(start);
+  const ms = api.parseServerDate(end) - api.parseServerDate(start);
   if (!Number.isFinite(ms) || ms <= 0) return null;
   const min = Math.round(ms / 60000);
   if (min < 60) return `${min} min`;
@@ -88,7 +88,7 @@ function formatDuration(meeting, t) {
 // Treat meetings that started >4h ago without an explicit ended_at as ended.
 function isStale(meeting) {
   if (!meeting || meeting.status !== 'active') return false;
-  const startMs = new Date(meeting.started_at || meeting.scheduled_at || meeting.created_at || 0).getTime();
+  const startMs = api.parseServerDate(meeting.started_at || meeting.scheduled_at || meeting.created_at || 0).getTime();
   if (!Number.isFinite(startMs) || !startMs) return true;
   return (Date.now() - startMs) > 4 * 60 * 60 * 1000;
 }
@@ -98,18 +98,18 @@ function isLive(meeting) {
 function canJoin(meeting) {
   if (isLive(meeting)) return true;
   if (meeting.status !== 'scheduled' || !meeting.scheduled_at) return false;
-  const diff = new Date(meeting.scheduled_at) - new Date();
+  const diff = api.parseServerDate(meeting.scheduled_at) - new Date();
   return diff <= 15 * 60000 && diff >= -60 * 60000;
 }
 function isToday(meeting) {
-  const d = new Date(meeting.scheduled_at || meeting.started_at || meeting.created_at);
+  const d = api.parseServerDate(meeting.scheduled_at || meeting.started_at || meeting.created_at);
   if (isNaN(d.getTime())) return false;
   const now = new Date();
   return d.toDateString() === now.toDateString();
 }
 function isWithin1h(meeting) {
   if (meeting.status !== 'scheduled' || !meeting.scheduled_at) return false;
-  const diff = new Date(meeting.scheduled_at) - new Date();
+  const diff = api.parseServerDate(meeting.scheduled_at) - new Date();
   return diff > 0 && diff <= 60 * 60000;
 }
 function isPast(meeting) {
@@ -504,8 +504,8 @@ function MeetingsScreenInner() {
       const bLive = isLive(b);
       if (aLive && !bLive) return -1;
       if (bLive && !aLive) return 1;
-      const dateA = new Date(a.scheduled_at || a.created_at).getTime();
-      const dateB = new Date(b.scheduled_at || b.created_at).getTime();
+      const dateA = api.parseServerDate(a.scheduled_at || a.created_at).getTime();
+      const dateB = api.parseServerDate(b.scheduled_at || b.created_at).getTime();
       return tab === 'past' ? dateB - dateA : dateA - dateB;
     });
 

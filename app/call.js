@@ -1368,8 +1368,12 @@ function CallScreenInner() {
     // `new Room()` a second time, orphaning the first Room (leaked socket +
     // mic publisher fighting the SFU). Bail if a connect is in progress or a
     // Room is already live.
-    if (connectingRef.current || roomRef.current) {
-      try { console.log('[Call] connectToRoom re-entry skipped', { connecting: connectingRef.current, hasRoom: !!roomRef.current }); } catch {}
+    // [fix 2026-07-05] Also bail if a NATIVE room already owns this call — the
+    // adopt-success path returns without setting roomRef.current, so without
+    // this a later connectToRoom() (e.g. handleReconnect) builds a JS Room with
+    // the same identity → LiveKit DUPLICATE_IDENTITY eviction / media desync.
+    if (connectingRef.current || roomRef.current || (Platform.OS !== 'web' && globalThis.__chatyyNativeCallActive)) {
+      try { console.log('[Call] connectToRoom re-entry skipped', { connecting: connectingRef.current, hasRoom: !!roomRef.current, nativeActive: !!globalThis.__chatyyNativeCallActive }); } catch {}
       return;
     }
     connectingRef.current = true;
@@ -1426,7 +1430,15 @@ function CallScreenInner() {
     // - On the OUTGOING-call path (isCaller=1) and on Android (both
     //   directions), there is no CallKit owning the session, so we still
     //   call startAudioSession.
-    const skipLKAudioSession = Platform.OS === 'ios' && !isCaller;
+    // [fix 2026-07-05 iOS callee no remote audio] The old gate skipped the
+    // audio-session setup for EVERY iOS callee, assuming "CallKit owns the
+    // session" — but on the JS-modal accept path (no native CallVC presented)
+    // nothing owns it, and the onCallKitAudioActivated bridge it relied on is
+    // never subscribed → downlink had no output route → "não escuto a pessoa".
+    // We only reach connectToRoom's audio block when native did NOT adopt the
+    // call (the native-adopt path returns early / is now bailed by the guard
+    // above), so skip ONLY when a native CallKit room genuinely owns it.
+    const skipLKAudioSession = Platform.OS === 'ios' && !isCaller && globalThis.__chatyyNativeCallActive === true;
     if (Platform.OS !== 'web' && LK_AudioSession && !skipLKAudioSession) {
       try {
         // [no-remote-audio fix 2026-06-09] app/_layout.js boots LiveKit with
@@ -3209,7 +3221,11 @@ function CallScreenInner() {
             }
           } catch {}
           // Peer hung up. Run full teardown.
-          handleEndCall();
+          // [fix 2026-07-05] Use the ref, not the closed-over handleEndCall:
+          // this WS handler is mounted with [] deps so the captured closure
+          // froze peerConnected=false → terminalStatus mislabels connected
+          // peer-hangups as cancelled/declined AND the QoS rating never shows.
+          handleEndCallRef.current?.();
         }
       });
 

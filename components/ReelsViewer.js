@@ -93,11 +93,20 @@ const ShortsPlayerLazy = (() => {
     if (!wrapper) return null;
     if (Platform.OS === 'web') return null;
     try {
-      const { UIManager, NativeModules } = require('react-native');
-      const hasViewManager = typeof UIManager?.getViewManagerConfig === 'function'
-        ? !!UIManager.getViewManagerConfig('ExpoShortsPlayer')
-        : true;
-      const hasNativeModule = !!(NativeModules?.ExpoShortsModule || NativeModules?.ExpoShorts);
+      // [fix 2026-07-05] The native module/view registers as "ExpoShorts" (see
+      // ShortsPlayer.tsx requireNativeViewManager/requireNativeModule('ExpoShorts')),
+      // NOT the old "ExpoShortsPlayer" key, and SDK-55 Expo modules aren't in the
+      // legacy NativeModules registry — so the old probe was ALWAYS false and the
+      // native reels engine (AVPlayer/ExoPlayer pool + prefetch) was silently dead,
+      // every build falling back to expo-video. Probe the real names.
+      const { UIManager } = require('react-native');
+      let hasViewManager = false;
+      try {
+        hasViewManager = typeof UIManager?.getViewManagerConfig === 'function'
+          ? !!UIManager.getViewManagerConfig('ExpoShorts') : false;
+      } catch {}
+      let hasNativeModule = false;
+      try { hasNativeModule = !!require('expo-modules-core').requireNativeModule('ExpoShorts'); } catch {}
       if (!hasViewManager && !hasNativeModule) return null;
     } catch { /* if probe fails, trust the wrapper */ }
     return wrapper;

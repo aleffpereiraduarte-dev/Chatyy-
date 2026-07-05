@@ -41,7 +41,7 @@ export default function ChangePasswordModal({ visible, onClose, forced = false, 
       setError(t('changePassword.enterCurrent'));
       return false;
     }
-    if (newPassword.length < 6) {
+    if (newPassword.length < 8) {
       setError(t('changePassword.minLength'));
       return false;
     }

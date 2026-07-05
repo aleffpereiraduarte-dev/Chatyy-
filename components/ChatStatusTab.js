@@ -2472,7 +2472,10 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     } finally {
       setPublishing(false);
     }
-  }, [textContent, textBgColor, creatorMode, photoFile, publishing, loadStatuses, selectedMusic, textFontStyle, statusPrivacy, crossPostFeed, exceptEmails]);
+  // [fix 2026-07-05] add stickers/textOverlays/drawPaths/textAnimation/photoFilter
+  // to deps — the stale closure was building extraMeta from empty values, silently
+  // dropping filters, stickers, drawings and text overlays on Publish.
+  }, [textContent, textBgColor, creatorMode, photoFile, publishing, loadStatuses, selectedMusic, textFontStyle, statusPrivacy, crossPostFeed, exceptEmails, stickers, textOverlays, drawPaths, textAnimation, photoFilter]);
 
   // Multi-photo carousel publisher — uploads each picked image (up to 10)
   // in parallel, then calls status_carousel_publish to register them as one

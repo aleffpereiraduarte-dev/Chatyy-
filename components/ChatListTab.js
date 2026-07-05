@@ -505,7 +505,7 @@ const ConversationRow = React.memo(function ConversationRow({
   if (typingName) {
     preview = '';
   } else if (lastMsg) {
-    if (lastMsg.sender_email === currentEmail) {
+    if ((lastMsg.sender_email || '').toLowerCase() === _me) {
       // Defense-in-depth for group read receipts: only paint the blue
       // double-check ('read') in a group when the backend confirms EVERY
       // member has read it (lastMsg.all_read). In a 1:1 a single read_at is
@@ -601,11 +601,11 @@ const ConversationRow = React.memo(function ConversationRow({
 
     if (lastMsg.type === 'system') {
       preview = content;
-    } else if ((isGroup || isChannel) && lastMsg.sender_email !== currentEmail) {
+    } else if ((isGroup || isChannel) && (lastMsg.sender_email || '').toLowerCase() !== _me) {
       const sender = emailToDisplayName(lastMsg.sender_name || lastMsg.sender_email || '');
       preview = content;
       previewSender = sender;
-    } else if (lastMsg.sender_email === currentEmail) {
+    } else if ((lastMsg.sender_email || '').toLowerCase() === _me) {
       // WhatsApp-style: "You: message" for own messages in 1-1 chats
       preview = content;
       previewSender = t('chat.you') || 'Você';
@@ -3059,7 +3059,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         }
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
         if (!convs.length) return;
-        const fpNew = convs.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}`).join('|');
+        const fpNew = convs.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}:${c.last_message?.id||''}:${c.last_message?.read_at?1:0}:${c.last_message?.delivered_at?1:0}`).join('|');
         if (fpNew === lastConvsRef.current) return; // unchanged — skip setState
         lastConvsRef.current = fpNew;
         // Single-pass partition: was 2× filter (one for active, one for
@@ -3092,7 +3092,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         setLoading(false);
         // Background delta sync
         if (!searchText) {
-          const fp = (arr) => arr.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}`).join('|');
+          const fp = (arr) => arr.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}:${c.last_message?.id||''}:${c.last_message?.read_at?1:0}:${c.last_message?.delivered_at?1:0}`).join('|');
           api.chatConversations('', false).then(r => {
             if (!isFresh()) return;
             if (!r?.success) return;
@@ -3239,7 +3239,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           // Fast dedup: fingerprint includes id + unread_count + updated_at
           // so we re-render when a new message arrives or unread count changes,
           // but skip the setState (and flicker) when nothing actually changed.
-          const newFingerprint = convs.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}`).join('|');
+          const newFingerprint = convs.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}:${c.last_message?.id||''}:${c.last_message?.read_at?1:0}:${c.last_message?.delivered_at?1:0}`).join('|');
           if (convs.length > 0 && newFingerprint !== lastConvsRef.current) {
             lastConvsRef.current = newFingerprint;
             setConversations(convs.filter(c => !c.archived));

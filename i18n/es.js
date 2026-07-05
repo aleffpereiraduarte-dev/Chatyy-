@@ -3463,7 +3463,7 @@ export default {
   // Change Password
   'changePassword.title': 'Cambiar contrasena',
   'changePassword.enterCurrent': 'Ingrese su contrasena actual',
-  'changePassword.minLength': 'La nueva contrasena debe tener al menos 6 caracteres',
+  'changePassword.minLength': 'La nueva contrasena debe tener al menos 8 caracteres',
   'changePassword.mismatch': 'Las contrasenas no coinciden',
   'changePassword.mustDiffer': 'La nueva contrasena debe ser diferente de la actual',
   'changePassword.error': 'Error al cambiar contrasena',
@@ -3472,7 +3472,7 @@ export default {
   'changePassword.currentPassword': 'Contrasena actual',
   'changePassword.enterCurrentPlaceholder': 'Ingrese la contrasena actual',
   'changePassword.newPassword': 'Nueva contrasena',
-  'changePassword.minLengthPlaceholder': 'Minimo 6 caracteres',
+  'changePassword.minLengthPlaceholder': 'Minimo 8 caracteres',
   'changePassword.confirmPassword': 'Confirmar contrasena',
   'changePassword.repeatPassword': 'Repita la nueva contrasena',
   'changePassword.submit': 'Cambiar contrasena',
@@ -7474,7 +7474,7 @@ export default {
   'settings.plusTeaserTitle': 'Prueba Chatyy Plus',
   'settings.plusTeaserSubtitle': 'Funciones avanzadas sin límites',
   // Profile highlights (round 5 prints)
-  'profile.newHighlight': 'Nuevo',
+  'profile.newHighlight': 'Destacado',
   'profile.newHighlightHint': 'Dale un nombre al destacado (ej: Viajes, Playa).',
   'profile.newHighlightAndroidHint': 'Abre una historia tuya y toca "Agregar a destacado" en el menú para crear una colección.',
   // Profile highlights + avatar actions (round 6, 2026-05-15)

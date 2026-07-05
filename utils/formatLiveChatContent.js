@@ -28,6 +28,14 @@ const CHATYY_DEEPLINK_FULL = /^(?:https?:\/\/)?(?:www\.)?chatyy\.com\.br\/[gj]\/
 // generic schemed URLs.
 const CHATYY_DEEPLINK_INLINE = /(?:https?:\/\/)?(?:www\.)?chatyy\.com\.br\/[gj]\/\S+/gi;
 const CHATYY_ANY_INLINE = /(?:https?:\/\/)?(?:www\.)?chatyy\.com\.br\/\S+/gi;
+// Scheme-LESS links (e.g. `bit.ly/scam`, `wa.me/x`, `google.com/promo`). The
+// generic matcher below requires an https?:// scheme, so these were leaking
+// through raw — a spam/scam vector in the live overlay. Match `domain.tld`
+// (optionally with a path) guarded by a common-TLD allowlist so we don't
+// linkify prose like "etc." or "e.g.". The leading `(^|[^\w@/.])` capture
+// keeps us from mangling emails (`user@site.com`) or mid-path fragments; it's
+// re-emitted verbatim. Runs BEFORE the generic scheme matcher.
+const BARE_DOMAIN_INLINE = /(^|[^\w@/.])((?:https?:\/\/)?(?:www\.)?(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|io|co|br|me|ly|gg|app|xyz|info|biz|tv|link|live|to|be|us|uk|dev|ai|so|sh|online|store|site|club|shop|vip|win|top)(?:\/[^\s]*)?)/gi;
 const GENERIC_URL_INLINE = /https?:\/\/\S+/gi;
 
 const LINK_LABEL = 'Link compartilhado';
@@ -48,5 +56,6 @@ export default function formatLiveChatContent(raw) {
   return trimmed
     .replace(CHATYY_DEEPLINK_INLINE, LINK_LABEL)
     .replace(CHATYY_ANY_INLINE, LINK_LABEL)
+    .replace(BARE_DOMAIN_INLINE, (_m, pre) => pre + INLINE_LINK_LABEL)
     .replace(GENERIC_URL_INLINE, INLINE_LINK_LABEL);
 }

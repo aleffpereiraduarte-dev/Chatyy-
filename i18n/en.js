@@ -3460,7 +3460,7 @@ export default {
   // Change Password
   'changePassword.title': 'Change Password',
   'changePassword.enterCurrent': 'Enter your current password',
-  'changePassword.minLength': 'New password must be at least 6 characters',
+  'changePassword.minLength': 'New password must be at least 8 characters',
   'changePassword.mismatch': 'Passwords do not match',
   'changePassword.mustDiffer': 'New password must be different from current',
   'changePassword.error': 'Failed to change password',
@@ -3469,7 +3469,7 @@ export default {
   'changePassword.currentPassword': 'Current password',
   'changePassword.enterCurrentPlaceholder': 'Enter current password',
   'changePassword.newPassword': 'New password',
-  'changePassword.minLengthPlaceholder': 'At least 6 characters',
+  'changePassword.minLengthPlaceholder': 'At least 8 characters',
   'changePassword.confirmPassword': 'Confirm password',
   'changePassword.repeatPassword': 'Repeat new password',
   'changePassword.submit': 'Change password',
@@ -7458,7 +7458,7 @@ export default {
   'settings.plusTeaserTitle': 'Try Chatyy Plus',
   'settings.plusTeaserSubtitle': 'Advanced features without limits',
   // Profile highlights (round 5 prints)
-  'profile.newHighlight': 'New',
+  'profile.newHighlight': 'Highlight',
   'profile.newHighlightHint': 'Name your highlight (e.g. Travels, Beach).',
   'profile.newHighlightAndroidHint': 'Open one of your stories and tap "Add to highlight" in the menu to start a collection.',
   // Profile highlights + avatar actions (round 6, 2026-05-15)

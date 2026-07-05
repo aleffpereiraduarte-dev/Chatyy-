@@ -3482,7 +3482,7 @@ export default {
   // Change Password
   'changePassword.title': 'Alterar senha',
   'changePassword.enterCurrent': 'Insira sua senha atual',
-  'changePassword.minLength': 'A nova senha deve ter pelo menos 6 caracteres',
+  'changePassword.minLength': 'A nova senha deve ter pelo menos 8 caracteres',
   'changePassword.mismatch': 'As senhas não correspondem',
   'changePassword.mustDiffer': 'A nova senha deve ser diferente da atual',
   'changePassword.error': 'Falha ao alterar senha',
@@ -3491,7 +3491,7 @@ export default {
   'changePassword.currentPassword': 'Senha atual',
   'changePassword.enterCurrentPlaceholder': 'Insira a senha atual',
   'changePassword.newPassword': 'Nova senha',
-  'changePassword.minLengthPlaceholder': 'Minimo 6 caracteres',
+  'changePassword.minLengthPlaceholder': 'Minimo 8 caracteres',
   'changePassword.confirmPassword': 'Confirmar senha',
   'changePassword.repeatPassword': 'Repita a nova senha',
   'changePassword.submit': 'Alterar senha',
@@ -7550,7 +7550,7 @@ export default {
   'settings.plusTeaserTitle': 'Experimente Chatyy Plus',
   'settings.plusTeaserSubtitle': 'Recursos avançados sem limites',
   // Profile highlights (round 5 prints)
-  'profile.newHighlight': 'Novo',
+  'profile.newHighlight': 'Destaque',
   'profile.newHighlightHint': 'Dê um nome para o destaque (ex: Viagens, Praia).',
   'profile.newHighlightAndroidHint': 'Abra um status seu (Stories) e use "Adicionar a destaque" no menu pra criar uma coleção.',
   // Profile highlights + avatar actions (round 6, 2026-05-15)

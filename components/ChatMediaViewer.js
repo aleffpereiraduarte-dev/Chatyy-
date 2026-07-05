@@ -4,7 +4,7 @@ import {
   Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar, Alert, FlatList, Share,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck, IconShare, IconStar, IconStarFilled, IconMoreHorizontal, IconInfo } from './Icons';
+import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck, IconShare, IconStar, IconStarFilled, IconMoreHorizontal, IconInfo, IconForward } from './Icons';
 // Wave 14: 3D / depth-photo parallax view. Lazy-loaded so web stays green
 // (expo-sensors isn't available in the web bundle).
 let ParallaxPortraitView = null;
@@ -1286,7 +1286,7 @@ function GenericFileViewer({ url, filename, fileSize, messageId, t }) {
 // ============================================================
 // MAIN MODAL
 // ============================================================
-export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, videoDuration, videoWidth, videoHeight, mimeType, t, colors }) {
+export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, videoDuration, videoWidth, videoHeight, mimeType, onForward, t, colors }) {
   const insets = useSafeAreaInsets();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -2067,6 +2067,20 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               ? <IconStarFilled size={22} color="#facc15" />
               : <IconStar size={22} color="#fff" />}
           </TouchableOpacity>
+          {/* Forward — opens the app's existing forward picker for this media.
+              Only shown when a handler is wired and the item isn't view-once
+              (view-once media must not be forwardable). Safe no-op if absent. */}
+          {!viewOnce && typeof onForward === 'function' && (
+            <TouchableOpacity
+              onPress={() => { try { onForward(_active || { messageId: messageId || 0, fileUrl: url }); } catch {} }}
+              style={s.actionBtn}
+              hitSlop={10}
+              accessibilityLabel={(typeof t === 'function' && t('viewer.forward')) || 'Encaminhar'}
+              accessibilityRole="button"
+            >
+              <IconForward size={22} color="#fff" />
+            </TouchableOpacity>
+          )}
         </Animated.View>
 
         {/* WAVE 60: Info sheet — opens on More tap. Surfaces the technical

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, FlatList, TouchableOpacity, StyleSheet, RefreshControl,
-  ActivityIndicator, TextInput, Modal, Alert, Platform,
+  ActivityIndicator, TextInput, Modal, Alert, Platform, KeyboardAvoidingView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
@@ -337,7 +337,10 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
 
       {/* Create Modal */}
       <Modal visible={showCreate} transparent animationType="slide" onRequestClose={() => setShowCreate(false)}>
-        <View style={styles.modalOverlay}>
+        {/* [fix 2026-07-05] KeyboardAvoidingView — the card is justifyContent:flex-end
+            (bottom sheet) and the name input autoFocuses, so without this the keyboard
+            covered the whole card and the user saw only the dimmed overlay. */}
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: isDark ? '#1a1a2e' : '#fff' }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>{t('community.create') || 'Create community'}</Text>
@@ -373,12 +376,13 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Announcement Modal */}
       <Modal visible={!!announceCommunity} transparent animationType="slide" onRequestClose={() => setAnnounceCommunity(null)}>
-        <View style={styles.modalOverlay}>
+        {/* [fix 2026-07-05] KeyboardAvoidingView — same bottom-sheet + autoFocus keyboard trap. */}
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
           <View style={[styles.modalContent, { backgroundColor: isDark ? '#1a1a2e' : '#fff' }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>{t('community.announcement') || 'Announcement'}</Text>
@@ -411,7 +415,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
               )}
             </TouchableOpacity>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* Add Group Modal */}

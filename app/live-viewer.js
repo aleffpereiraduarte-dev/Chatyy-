@@ -394,6 +394,14 @@ export default function LiveViewerScreen() {
   const REACTION_LIMIT_PER_MIN = 60;
   const REACTION_WINDOW_MS = 60 * 1000;
   const reactionToastShownAtRef = useRef(0);
+  // Coalesce INCOMING remote reaction storms. During a viral moment dozens of
+  // viewers fire hearts within the same 100ms; each spawnHeart allocates an
+  // Animated.Value + triggers a re-render, so an unbounded remote feed janks
+  // the whole screen. Cap remote-driven spawns to ~15/sec (rolling window);
+  // excess are dropped — the animation is decorative and the server-side like
+  // tally is unaffected. Local taps are NOT gated here (handled elsewhere).
+  const remoteHeartWindowRef = useRef([]); // timestamps (ms) of remote spawns
+  const REMOTE_HEART_MAX_PER_SEC = 15;
   // Returns true if the reaction wire is still under the per-minute cap.
   // Side-effect: drops stale entries + records the new send. Caller should
   // ONLY call when actually about to send on the wire.
@@ -414,7 +422,7 @@ export default function LiveViewerScreen() {
         try {
           const { ToastAndroid, Platform: P } = require('react-native');
           const msg = (typeof t === 'function' && (t('live.tooManyHearts') || t('live.slowDown'))) ||
-            'Calma com os corações 💜';
+            'Calma com os corações';
           if (P.OS === 'android' && ToastAndroid?.show) {
             ToastAndroid.show(msg, ToastAndroid.SHORT);
           } else {
@@ -437,6 +445,13 @@ export default function LiveViewerScreen() {
   const hlsRetryTimerRef = useRef(null);
   const joinRetryTimerRef = useRef(null);
   const joinResetTimerRef = useRef(null);
+  // Codex #8 follow-up — two more requestToJoin timers that previously leaked
+  // (un-reffed setTimeouts): the 60s "allow re-request" reset on the happy
+  // path, and the 15s "give up" timer on the reconnecting path. Ref them so
+  // unmount can clear them and they don't fire setJoinRequested/toast on a
+  // dead screen.
+  const joinSentResetTimerRef = useRef(null);
+  const joinGiveupTimerRef = useRef(null);
   // WAVE 85 — Marker set the moment we get `live_session_info` from the WS.
   // Used by the REST-fallback effect (below) to know whether to keep polling
   // `live_status_cf` looking for the HLS URL. Old Go WS builds (<wave85)
@@ -1770,7 +1785,7 @@ export default function LiveViewerScreen() {
             });
           }
           break;
-        case 'live_reaction':
+        case 'live_reaction': {
           // Prefer emoji (from gift picker). Heart button also sends
           // emoji:'❤️' which we treat as the default heart animation
           // (no emoji text) for visual consistency with taps.
@@ -1778,6 +1793,13 @@ export default function LiveViewerScreen() {
           // Remote tap-spam: msg.x is normalized 0..1 (sender's screen
           // fraction). We map it back to local pixels so the column
           // shows up on the same side of the screen the sender tapped.
+          //
+          // Coalesce the storm first: cap remote-driven spawns to ~15/sec.
+          const _rnow = Date.now();
+          const _rwin = remoteHeartWindowRef.current;
+          while (_rwin.length && _rnow - _rwin[0] > 1000) _rwin.shift();
+          if (_rwin.length >= REMOTE_HEART_MAX_PER_SEC) break;
+          _rwin.push(_rnow);
           if (msg.emoji && msg.emoji !== '❤️' && !msg.isDiamond) {
             spawnHeart(msg.emoji);
           } else {
@@ -1795,6 +1817,7 @@ export default function LiveViewerScreen() {
             });
           }
           break;
+        }
         case 'live_gift': {
           // Viewer-side gift animation. Mirrors the broadcast handler:
           // pop LiveGiftAnimation in the center (queued if another is
@@ -2043,6 +2066,8 @@ export default function LiveViewerScreen() {
       if (hlsRetryTimerRef.current) { clearTimeout(hlsRetryTimerRef.current); hlsRetryTimerRef.current = null; }
       if (joinRetryTimerRef.current) { clearInterval(joinRetryTimerRef.current); joinRetryTimerRef.current = null; }
       if (joinResetTimerRef.current) { clearTimeout(joinResetTimerRef.current); joinResetTimerRef.current = null; }
+      if (joinSentResetTimerRef.current) { clearTimeout(joinSentResetTimerRef.current); joinSentResetTimerRef.current = null; }
+      if (joinGiveupTimerRef.current) { clearTimeout(joinGiveupTimerRef.current); joinGiveupTimerRef.current = null; }
       iceCandidateQueueRef.current = []; // Clear queued candidates
       guestPendingIceRef.current = []; // Clear queued guest ICE
       // TikTok cohost LK teardown
@@ -2625,7 +2650,11 @@ export default function LiveViewerScreen() {
       setJoinRequested(true);
       try { require('react-native').Vibration.vibrate(8); } catch {}
       fireToast(t('live.requestSent') || 'Pedido enviado ao host');
-      setTimeout(() => setJoinRequested(false), 60000); // allow re-request after 1 min
+      if (joinSentResetTimerRef.current) clearTimeout(joinSentResetTimerRef.current);
+      joinSentResetTimerRef.current = setTimeout(() => {
+        joinSentResetTimerRef.current = null;
+        setJoinRequested(false);
+      }, 60000); // allow re-request after 1 min
     } else {
       // WS reconnecting — flip state anyway so the user sees the tap took
       // effect, and queue a retry once the socket reopens. The host's
@@ -2659,7 +2688,9 @@ export default function LiveViewerScreen() {
       }, 500);
       // Give up after 15s — if still not connected the live session is
       // probably toast anyway. Revert button so user can retry.
-      setTimeout(() => {
+      if (joinGiveupTimerRef.current) clearTimeout(joinGiveupTimerRef.current);
+      joinGiveupTimerRef.current = setTimeout(() => {
+        joinGiveupTimerRef.current = null;
         if (joinRetryTimerRef.current) {
           clearInterval(joinRetryTimerRef.current);
           joinRetryTimerRef.current = null;
@@ -3186,39 +3217,72 @@ export default function LiveViewerScreen() {
           // HTMLVideoElement rendered via track.attach(). Since livekit-client
           // is already in the bundle (call.js) this resolves synchronously.
           (() => {
-            const _vt = lkTracks.find(t => t.kind === 'video');
-            if (!_vt?.track) return (
+            // [WAVE 110 + cohost grid] Render every remote VIDEO track. With a
+            // single publisher (the host) this is a full-bleed tile — same as
+            // before. When a co-host is approved and publishes, LiveKit
+            // subscribes us to a 2nd (or Nth) video track; we then lay the
+            // tiles out in a grid and PIN the host's tile first by matching the
+            // participant identity to the host email.
+            const _videos = lkTracks.filter(t => t.kind === 'video' && t.track);
+            if (_videos.length === 0) return (
               <View style={[StyleSheet.absoluteFill, styles.preStreamFallback]}>
                 <AvatarCircle name={displayHostName} email={displayHostEmail} size={88} style={styles.preStreamAvatar} />
               </View>
             );
             const _LK = loadLiveKit();
-            if (Platform.OS === 'web') {
-              // Web: attach the MediaStreamTrack to a video element.
+            const _hostLc = (displayHostEmail || '').toLowerCase();
+            const _identOf = (t) => String(t.participant?.identity || '').toLowerCase();
+            // Host tile first, co-hosts after (stable within each group).
+            const _ordered = [..._videos].sort((a, b) => {
+              const aHost = _hostLc && _identOf(a).includes(_hostLc) ? 0 : 1;
+              const bHost = _hostLc && _identOf(b).includes(_hostLc) ? 0 : 1;
+              return aHost - bHost;
+            });
+            const _renderTile = (vt, containerStyle, key) => {
+              if (Platform.OS === 'web') {
+                // Web: attach the MediaStreamTrack to a video element.
+                return (
+                  <View key={key} style={[containerStyle, { backgroundColor: '#0f0f1a', overflow: 'hidden' }]}>
+                    <video
+                      ref={(el) => { if (el) { try { const ms = new MediaStream([vt.track.mediaStreamTrack]); el.srcObject = ms; el.play().catch(() => {}); } catch {} } }}
+                      autoPlay playsInline
+                      style={{ width: '100%', height: '100%', objectFit: 'cover', backgroundColor: '#0f0f1a' }}
+                    />
+                  </View>
+                );
+              }
+              if (_LK?.VideoView) {
+                return (
+                  <View key={key} collapsable={false} style={[containerStyle, { backgroundColor: '#0f0f1a', overflow: 'hidden' }]}>
+                    <_LK.VideoView
+                      videoTrack={vt.track}
+                      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
+                      objectFit="cover"
+                    />
+                  </View>
+                );
+              }
               return (
-                <video
-                  key={`lk-${_vt.participant?.identity}`}
-                  ref={(el) => { if (el) { const ms = new MediaStream([_vt.track.mediaStreamTrack]); el.srcObject = ms; el.play().catch(() => {}); } }}
-                  autoPlay playsInline
-                  style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'cover', backgroundColor: '#0f0f1a' }}
-                />
-              );
-            }
-            if (_LK?.VideoView) {
-              return (
-                <View collapsable={false} style={[StyleSheet.absoluteFill, { backgroundColor: '#0f0f1a', overflow: 'hidden' }]}>
-                  <_LK.VideoView
-                    key={`lk-${_vt.participant?.identity}`}
-                    videoTrack={_vt.track}
-                    style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%' }}
-                    objectFit="cover"
-                  />
+                <View key={key} style={[containerStyle, styles.preStreamFallback]}>
+                  <AvatarCircle name={displayHostName} email={displayHostEmail} size={88} style={styles.preStreamAvatar} />
                 </View>
               );
+            };
+            // Single publisher → full-bleed (unchanged behavior).
+            if (_ordered.length === 1) {
+              return _renderTile(_ordered[0], StyleSheet.absoluteFill, `lk-${_identOf(_ordered[0])}`);
             }
+            // Co-host grid. 2 → stacked halves (host on top); 3-4 → 2×2;
+            // 5+ → 2-col × 3-row tiles.
+            const _n = _ordered.length;
             return (
-              <View style={[StyleSheet.absoluteFill, styles.preStreamFallback]}>
-                <AvatarCircle name={displayHostName} email={displayHostEmail} size={88} style={styles.preStreamAvatar} />
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: '#0f0f1a', flexDirection: 'row', flexWrap: 'wrap' }]}>
+                {_ordered.map((vt, i) => {
+                  const tileStyle = _n === 2
+                    ? { width: '100%', height: '50%' }
+                    : { width: '50%', height: _n <= 4 ? '50%' : '33.33%' };
+                  return _renderTile(vt, [tileStyle, { position: 'relative' }], `lk-tile-${_identOf(vt)}-${i}`);
+                })}
               </View>
             );
           })()

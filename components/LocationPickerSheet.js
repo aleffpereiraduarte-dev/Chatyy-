@@ -85,6 +85,13 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
   // so the parent can include it in the live-location WS payload.
   const [liveConfirm, setLiveConfirm] = useState(null); // { seconds, label }
   const [liveCaption, setLiveCaption] = useState('');
+  // [fix 2026-07-05, QA print 20260705-032342] The static-map <Image> had no
+  // onError handling: one failed tile-server response (transient render
+  // timeout/network blip) left a permanently blank white box behind the pin
+  // for the whole sheet session. On error we retry up to 2× with a
+  // cache-busting query param (endpoint verified to accept it) so RN's image
+  // cache can't pin the failure.
+  const [mapRetry, setMapRetry] = useState(0);
   const cancelRef = useRef(false);
   // 1s tick to repaint the dup-session guard's countdown. We only spin the
   // interval while the sheet is visible AND a live session is active —
@@ -115,6 +122,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
     setCoords(null);
     setAddress('');
     setApproxOnly(false);
+    setMapRetry(0);
 
     (async () => {
       try {
@@ -227,9 +235,13 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
     // Parent closes the sheet; we keep `sending` true to lock the button.
   };
 
-  const mapUrl = coords
+  const baseMapUrl = coords
     ? boraStaticMapUrl(coords.latitude, coords.longitude, 16, 320, 160)
     : null;
+  const mapUrl = baseMapUrl
+    ? (mapRetry > 0 ? `${baseMapUrl}?r=${mapRetry}` : baseMapUrl)
+    : null;
+  const onMapError = () => setMapRetry(r => (r < 2 ? r + 1 : r));
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -350,9 +362,11 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                 {mapUrl ? (
                   <View style={{ width: '100%', height: 180, alignItems: 'center', justifyContent: 'center' }}>
                     <Image
+                      key={mapUrl}
                       source={{ uri: mapUrl }}
                       style={{ width: '100%', height: 180, position: 'absolute', top: 0, left: 0 }}
                       resizeMode="cover"
+                      onError={onMapError}
                     />
                     <View style={{ marginTop: -10 }} pointerEvents="none">
                       <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: '#dc2626', borderWidth: 2, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
@@ -460,9 +474,11 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                 {mapUrl ? (
                   <View style={{ width: '100%', height: 160, alignItems: 'center', justifyContent: 'center' }}>
                     <Image
+                      key={mapUrl}
                       source={{ uri: mapUrl }}
                       style={{ width: '100%', height: 160, position: 'absolute', top: 0, left: 0 }}
                       resizeMode="cover"
+                      onError={onMapError}
                     />
                     <View style={{ marginTop: -10 }} pointerEvents="none">
                       <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: '#dc2626', borderWidth: 2, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>

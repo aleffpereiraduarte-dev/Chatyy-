@@ -70,6 +70,10 @@ export default function LiveViewerWeb() {
 
   // LK refs.
   const lkRoomRef = useRef(null);
+  // Tracks whether we ever successfully attached a remote track. If we did and
+  // the room later disconnects (host ended the live / socket dropped), we show
+  // an "ended" card instead of an infinite "Conectando à live..." spinner.
+  const wasConnectedRef = useRef(false);
 
   // HLS refs.
   const hlsInstanceRef = useRef(null);
@@ -232,6 +236,7 @@ export default function LiveViewerWeb() {
             if (playPromise && playPromise.catch) playPromise.catch(() => {});
           }
           setConnected(true);
+          wasConnectedRef.current = true;
         } catch (e) {
           console.warn('[live-viewer.web] track attach failed:', e?.message || e);
         }
@@ -262,6 +267,13 @@ export default function LiveViewerWeb() {
       room.on(RoomEvent.Disconnected, () => {
         detachAll();
         setConnected(false);
+        // Once we've had a live picture, a disconnect means the broadcast is
+        // over (host ended it) or our connection dropped for good. Render the
+        // "encerrada" card rather than leaving the viewer stuck on the
+        // "Conectando à live..." spinner forever (#permanent-loading).
+        if (wasConnectedRef.current) {
+          setPhase('ended');
+        }
       });
 
       await room.connect(url, lk_token);

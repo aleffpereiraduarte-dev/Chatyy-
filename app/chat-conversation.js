@@ -7953,6 +7953,13 @@ function ChatConversationInner() {
   // or throws. See loadMessages() — the catch used to be `} catch {}`.
   const [loadError, setLoadError] = useState(null);
   const [sending, setSending] = useState(false);
+  // [fix 2026-07-05 msg-dup] Synchronous re-entry lock. `sending` is React
+  // state — it lags a render frame, so a same-frame burst of onPress events
+  // (touch-digitizer bounce, a11y double-tap, or the leak/tone "Enviar mesmo"
+  // path) all read the stale `false` and each mint a fresh client_message_id,
+  // producing N duplicate server rows (prod: one msg saved 6×). A ref flips
+  // instantly, so the 2nd..Nth invocation in the same frame bail immediately.
+  const sendingRef = useRef(false);
   // hasMore starts true if we painted from native cache — there are
   // probably more messages on the server. The first onReachTop will sort
   // it out: if the server returns nothing, hasMore flips to false.
@@ -7986,6 +7993,7 @@ function ChatConversationInner() {
   }, [conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
   const searchSeqRef = useRef(0); // Sequence id for race-safe handleSearchMessages
   const rsvpInflightRef = useRef(new Set()); // Pending meetup RSVPs (de-dupes rapid taps)
+  const inflightReactionMsgIdsRef = useRef(new Set()); // msgIds with an in-flight local reaction — WS broadcast must not clobber our optimistic state until own HTTP reconciles
   const pollVoteLocksRef = useRef(new Set()); // Per-poll-id mutex for vote requests
   const clearInflightRef = useRef(false); // Guard for chat_clear action
   const webBlobUrlsRef = useRef(new Set()); // Revokable blob URLs from web file picks
@@ -11590,13 +11598,14 @@ function ChatConversationInner() {
           }
 
           // Clear typing indicator for sender (they sent a message, they stopped typing)
-          if (msg.sender_email && msg.sender_email !== currentEmail) {
+          if (msg.sender_email && msg.sender_email.toLowerCase() !== (currentEmail || '').toLowerCase()) {
+            const _senderKey = msg.sender_email.toLowerCase();
             setTypingUsers(prev => {
-              if (!prev.has(msg.sender_email)) return prev;
+              if (!prev.has(_senderKey)) return prev;
               const next = new Map(prev);
-              const entry = next.get(msg.sender_email);
+              const entry = next.get(_senderKey);
               if (entry?.timer) clearTimeout(entry.timer);
-              next.delete(msg.sender_email);
+              next.delete(_senderKey);
               return next;
             });
           }
@@ -11668,7 +11677,9 @@ function ChatConversationInner() {
         const m = _extractWsMsg(payload);
         if (!m || String(m.conversation_id) !== String(conversationId)) return;
         setMessages(prev => prev.map(row => {
-          if (row.id === m.id) {
+          // Relay-delivered ids can arrive as strings while local rows hold
+          // numbers — a strict === match made the edit invisible until refetch.
+          if (String(row.id) === String(m.id)) {
             return { ...row, content: m.content, edited_at: m.edited_at || new Date().toISOString(), edited: true };
           }
           if (row.reply_to && Number(row.reply_to.id) === Number(m.id)) {
@@ -11688,7 +11699,7 @@ function ChatConversationInner() {
         // my_votes is per-device (server doesn't know who's looking),
         // so preserve the existing value unless the payload supplied one.
         setMessages(prev => prev.map(row => {
-          if (row.id !== m.id) return row;
+          if (String(row.id) !== String(m.id)) return row;
           const fresh = m.poll || {};
           const prevPoll = row.poll || {};
           return {
@@ -11744,7 +11755,12 @@ function ChatConversationInner() {
         const m = _extractWsMsg(payload);
         if (!m || String(m.conversation_id) !== String(conversationId)) return;
         if (!m.reactions) return;
-        setMessages(prev => prev.map(row => row.id === m.id ? { ...row, reactions: m.reactions } : row));
+        // Concurrency guard: if we have an in-flight local reaction on this
+        // message, a peer's broadcast arriving before our own HTTP resolves
+        // would blind-replace (wipe) our optimistic reaction. Skip the row —
+        // our own HTTP reconcile carries the authoritative merged state.
+        if (inflightReactionMsgIdsRef.current.has(String(m.id))) return;
+        setMessages(prev => prev.map(row => String(row.id) === String(m.id) ? { ...row, reactions: m.reactions } : row));
       };
       wsUnsubs.push(mailWs.on('reaction', onWsReaction));
 
@@ -12103,8 +12119,11 @@ function ChatConversationInner() {
       // Listen for typing indicators (supports multiple typers in groups)
       const unsubTyping = mailWs.on('typing', (data) => {
         if (!mountedRef.current) return;
-        if (String(data?.conversation_id) === String(conversationId) && data?.email !== currentEmail) {
-          const email = data.email;
+        if (String(data?.conversation_id) === String(conversationId) && (data?.email || '').toLowerCase() !== (currentEmail || '').toLowerCase()) {
+          // Normalize to lowercase — peers sometimes send mixed-case emails,
+          // which caused Map.delete() to silently no-op and the typing bubble
+          // to persist forever (mirror of the TCP handler fix).
+          const email = (data.email || '').toLowerCase();
           const name = data.name || email?.split('@')[0];
           setTypingUsers(prev => {
             const next = new Map(prev);
@@ -12142,13 +12161,14 @@ function ChatConversationInner() {
       // Listen for explicit stopped_typing
       const unsubStopTyping = mailWs.on('stopped_typing', (data) => {
         if (!mountedRef.current) return;
-        if (String(data?.conversation_id) === String(conversationId) && data?.email !== currentEmail) {
+        if (String(data?.conversation_id) === String(conversationId) && (data?.email || '').toLowerCase() !== (currentEmail || '').toLowerCase()) {
+          const email = (data?.email || '').toLowerCase();
           setTypingUsers(prev => {
-            if (!prev.has(data.email)) return prev;
+            if (!prev.has(email)) return prev;
             const next = new Map(prev);
-            const entry = next.get(data.email);
+            const entry = next.get(email);
             if (entry?.timer) clearTimeout(entry.timer);
-            next.delete(data.email);
+            next.delete(email);
             return next;
           });
         }
@@ -13081,6 +13101,9 @@ function ChatConversationInner() {
     if (!text.replace(/[\s ​-‍﻿]/g, '').length) return;
     // Never flip sending→false here — that reopens a race window for
     // duplicate sends on rapid double-tap. Just ignore the second tap.
+    // Synchronous ref guard FIRST (state `sending` lags a frame — see decl).
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     if (sending) return;
     // Light haptic the instant the send button registers — tactile feedback
     // that the message is on its way (before the bubble even appears).
@@ -13267,7 +13290,7 @@ function ChatConversationInner() {
     // but any deliberate second tap to send another short message lands
     // sooner so rapid back-and-forth feels snappier. Each tap gets its own
     // tempId/msgId; the enqueueChatSend queue serializes HTTP order.
-    setTimeout(() => setSending(false), 150);
+    setTimeout(() => { setSending(false); sendingRef.current = false; }, 150);
 
     // Defer haptic so it runs AFTER the bubble paints (no first-frame cost)
     setTimeout(() => { try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {} }, 0);
@@ -13879,6 +13902,7 @@ function ChatConversationInner() {
       }
     } finally {
       setSending(false);
+      sendingRef.current = false;
       setTimeout(() => inputRef.current?.focus(), 50);
     }
   };
@@ -13934,7 +13958,7 @@ function ChatConversationInner() {
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
-      id: tempId, conversation_id: conversationId, sender_email: currentEmail,
+      id: tempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail,
       content: bodyContent, file_url: fileUrlArg, type: 'gif', created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
     };
     setMessages(prev => [...prev, optimisticMsg]);
@@ -13996,7 +14020,7 @@ function ChatConversationInner() {
     const msgId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const tempId = `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const optimisticMsg = {
-      id: tempId, conversation_id: conversationId, sender_email: currentEmail,
+      id: tempId, _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000), conversation_id: conversationId, sender_email: currentEmail,
       content: sticker, type: 'sticker',
       file_url: isImage ? sticker : null,
       created_at: new Date().toISOString(), _pending: true, _client_id: msgId,
@@ -15083,6 +15107,7 @@ function ChatConversationInner() {
     const audioViewOnce = !!audioData?.viewOnce;
     const optimisticMsg = {
       id: tempId,
+      _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000),
       sender_email: user?.email,
       sender_name: '',
       content: `Audio (${formatDuration(audioData.duration)})`,
@@ -15244,6 +15269,7 @@ function ChatConversationInner() {
     const clientId = 'msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
     const optimisticMsg = {
       id: tempId,
+      _negId: Date.now() * 1000 + Math.floor(Math.random() * 1000),
       sender_email: user?.email,
       sender_name: '',
       content: '',
@@ -16140,12 +16166,14 @@ function ChatConversationInner() {
     // Delete-for-everyone window — bumped to 1h in DMs (was 5 min, 2026-05-18)
     // so users have a more forgiving retraction window. Lines up with the
     // group-chat window and matches WhatsApp's extended retraction policy.
-    //   • personal (direct) chats:  1 hour
-    //   • group chats:              1 hour
+    //   • personal (direct) chats:  3 hours
+    //   • group chats:              3 hours
     // Helps surface a "(expirado)" hint in the alert + a countdown subtitle
     // when within the window so users know how long they have left.
+    // Must match the server window (chat.php delete-for-all: age > 10800s);
+    // at 1h the UI hid the option 2h before the server stopped honoring it.
     const isGroupChat = conversationType === 'group';
-    const deleteForAllWindowMs = 3600 * 1000;
+    const deleteForAllWindowMs = 10800 * 1000;
     const createdMs = (() => {
       try {
         if (!msg?.created_at) return 0;
@@ -16431,6 +16459,12 @@ function ChatConversationInner() {
       }
       return { ...m, reactions: next };
     }));
+    // Mark this message as having an in-flight local reaction so a peer's
+    // concurrent WS reaction broadcast won't wipe our optimistic chip before
+    // our own HTTP reconciles (cleared in finally below).
+    // Stored as String so the WS-side guard can match relay ids that arrive
+    // as strings (local msgId here can be number or tmp_* string).
+    inflightReactionMsgIdsRef.current.add(String(msgId));
     try {
       const r = await api.chatReact(msgId, isSticker ? null : emoji, isSticker ? stickerUrl : undefined);
       if (r.success) {
@@ -16472,6 +16506,8 @@ function ChatConversationInner() {
           setMessages(prev => prev.map(m => m.id === msgId ? { ...m, reactions: prevReactions } : m));
         }
       }
+    } finally {
+      inflightReactionMsgIdsRef.current.delete(String(msgId));
     }
     setShowReactions(null);
   };
@@ -20073,7 +20109,7 @@ function ChatConversationInner() {
             >
               <View style={{ overflow: 'hidden' }}>
               {Platform.OS === 'web' ? (
-                <View style={{ position: 'relative', width: 280, height: 200, backgroundColor: '#000' }}>
+                <View style={{ position: 'relative', width: (_vbW && !isNaN(_vbW)) ? _vbW : 280, height: (_vbH && !isNaN(_vbH)) ? _vbH : 200, backgroundColor: '#000' }}>
                   <video
                     src={videoUrl}
                     preload="metadata" muted playsInline
@@ -20094,7 +20130,7 @@ function ChatConversationInner() {
                         || (msg.file_url ? abs(msg.file_url) + '.thumb.jpg' : '')
                         || (msg.thumb_b64 ? `data:image/jpeg;base64,${msg.thumb_b64}` : undefined);
                     })()}
-                    style={{ width: 280, height: 200, objectFit: 'cover', backgroundColor: '#000', opacity: vidUploading ? 0.7 : 1 }}
+                    style={{ width: (_vbW && !isNaN(_vbW)) ? _vbW : 280, height: (_vbH && !isNaN(_vbH)) ? _vbH : 200, objectFit: 'cover', backgroundColor: '#000', opacity: vidUploading ? 0.7 : 1 }}
                     onLoadedData={(e) => { try { e.target.currentTime = 0.5; } catch {} }}
                     // Wave 14: animated thumbnail on hover. Seek to 3s, autoplay
                     // muted for 2s, then reset to the static 0.5s poster frame.
@@ -23432,7 +23468,15 @@ function ChatConversationInner() {
                               setMessages(prev => prev.filter(m => m.id !== msg.id));
                             } catch {}
                           }},
-                          { text: t('chat.retry') || 'Tentar', onPress: () => retryMessage?.(msg) },
+                          // A _queued row lives in the offline queue — retry =
+                          // drain the queue now. (Old handler called a
+                          // `retryMessage` that never existed → silent no-op.)
+                          { text: t('chat.retry') || 'Tentar', onPress: () => {
+                            try {
+                              const { replayOfflineQueue } = require('../services/offlineCache');
+                              replayOfflineQueue(api).catch(() => {});
+                            } catch {}
+                          } },
                           { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
                         ]
                       );
@@ -25930,7 +25974,10 @@ function ChatConversationInner() {
                 // Android renders the TextInput's own glyphs (overlay still
                 // mounts but only paints markers / formatted spans because
                 // we wrap the whole render with Platform.OS !== 'android').
-                color: Platform.OS === 'android' ? (isDark ? '#e5e7eb' : '#111') : 'transparent',
+                // [fix 2026-07-05 "letras pulsam no web"] Web now paints its OWN
+                // glyphs (like Android) instead of a transparent input + overlay
+                // repainted every keystroke — that repaint was the visible pulse.
+                color: (Platform.OS === 'android' || Platform.OS === 'web') ? (isDark ? '#e5e7eb' : '#111') : 'transparent',
                 minHeight: 40, maxHeight: 120,
                 paddingHorizontal: 4,
                 paddingTop: Platform.OS === 'ios' ? 10 : 8,
@@ -26130,7 +26177,7 @@ function ChatConversationInner() {
                 differ between <TextInput> (system font/Roboto) and <Text>
                 (sans-serif), so painting the overlay produced a "weird"
                 shifted glyph effect while typing. */}
-            {Platform.OS !== 'android' && (
+            {Platform.OS !== 'android' && Platform.OS !== 'web' && (
               <RichTextOverlay
                 text={inputText}
                 style={{
@@ -26534,7 +26581,11 @@ function ChatConversationInner() {
             <Text style={{ fontSize:14, color:colors.text, marginBottom:16 }}>{chatLeakWarning.warning}</Text>
             <View style={{ flexDirection:'row', gap:8 }}>
               <TouchableOpacity onPress={() => setChatLeakWarning(null)} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:colors.background, alignItems:'center' }}><Text style={{ color:colors.text, fontWeight:'600' }}>Editar</Text></TouchableOpacity>
-              <TouchableOpacity onPress={() => { setChatLeakWarning(null); chatSendBypassGuards.current = true; setTimeout(handleSend, 50); }} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:'#dc2626', alignItems:'center' }}><Text style={{ color:'#fff', fontWeight:'600' }}>Enviar mesmo</Text></TouchableOpacity>
+              {/* The AI guards run AFTER the send already went out (deferred,
+                  non-blocking — see handleSend ~13113), so "Enviar mesmo" must
+                  ONLY dismiss. Re-calling handleSend here sent a 2nd copy (or
+                  fired whatever new draft was in the input). */}
+              <TouchableOpacity onPress={() => setChatLeakWarning(null)} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:'#dc2626', alignItems:'center' }}><Text style={{ color:'#fff', fontWeight:'600' }}>Enviar mesmo</Text></TouchableOpacity>
             </View>
           </View>
         </View>
@@ -26561,7 +26612,8 @@ function ChatConversationInner() {
         const toneLabel = toneKeyMap[rawTone] ? t(toneKeyMap[rawTone]) : rawTone;
         const sug = (chatToneWarning.suggestion || '').toString().trim();
         const close = () => setChatToneWarning(null);
-        const sendAnyway = () => { close(); chatSendBypassGuards.current = true; setTimeout(handleSend, 50); };
+        // Message already went out (guards are post-send advisories) — just close.
+        const sendAnyway = () => { close(); };
         const useSuggestion = () => {
           close();
           setInputText(sug);
@@ -27981,6 +28033,14 @@ function ChatConversationInner() {
             senderName={mv.senderName}
             senderEmail={mv.senderEmail}
             createdAt={mv.createdAt}
+            onForward={(item) => {
+              // Reuse the existing forward flow: find the message for the
+              // currently-open media item and open the forward picker.
+              const mid = item?.messageId || item?.id || mv.messageId;
+              const msg = messages.find(m => String(m.id) === String(mid));
+              setMediaViewer(v => ({ ...v, visible: false }));
+              if (msg) setForwardMsg(msg);
+            }}
             t={t}
           />
         );

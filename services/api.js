@@ -53,6 +53,27 @@ try {
 // (TDZ) ReferenceError on web when MMKV had a cached edge server.
 let API_URL = 'https://chatyy.com.br/api/email.php';
 export function getApiUrl() { return API_URL; }
+
+// parseServerDate — safe Date() for backend datetime strings.
+//
+// The PHP backend serializes event/meeting timestamps as `Y-m-d H:i:s`
+// (a space between date and time, no `T`, no offset). Chrome/V8/Hermes
+// tolerate that form, but Safari's Date parser returns `Invalid Date` for
+// it — so calendar/event/meeting screens showed "Invalid Date" only on
+// iOS Safari / web. Normalizing the first space to `T` yields
+// `2026-07-05T15:00:00`, which every engine parses as LOCAL time (matching
+// the existing no-offset convention). Passes through Date objects, numbers,
+// and already-ISO strings untouched.
+export function parseServerDate(value) {
+  if (value == null || value === '') return new Date(NaN);
+  if (value instanceof Date) return value;
+  if (typeof value === 'number') return new Date(value);
+  let s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) {
+    s = s.replace(' ', 'T');
+  }
+  return new Date(s);
+}
 export let BASE_URL = 'https://chatyy.com.br';
 // [2026-05-30] media.chatyy.com.br is a Cloudflare CNAME → public.r2.dev (R2)
 // that was NEVER bound to a bucket → it 404s EVERY /data/ path (verified: even

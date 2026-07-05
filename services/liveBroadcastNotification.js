@@ -93,7 +93,7 @@ export async function start({ sessionId, title }) {
     await Notifications.scheduleNotificationAsync({
       identifier: _notifId(sessionId),
       content: {
-        title: '🔴 ' + (title || 'Transmitindo ao vivo'),
+        title: (title || 'Transmitindo ao vivo'),
         body: _body(0),
         data: {
           type: 'live_broadcast_self',
@@ -131,7 +131,7 @@ export async function updateViewers(sessionId, viewers) {
     await Notifications.scheduleNotificationAsync({
       identifier: _notifId(sessionId),
       content: {
-        title: '🔴 ' + (entry.title || 'Transmitindo ao vivo'),
+        title: (entry.title || 'Transmitindo ao vivo'),
         body: _body(viewers),
         data: { type: 'live_broadcast_self', session_id: String(sessionId) },
         sticky: true,

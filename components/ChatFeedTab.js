@@ -62,6 +62,9 @@ const FeedPostRow = React.memo(function FeedPostRow(props) {
   if (prev.isDark !== next.isDark) return false;
   if (prev.colors !== next.colors) return false;
   if (prev.user?.email !== next.user?.email) return false;
+  // [fix 2026-07-05] isActive drives autoplay (web) + scroll-away pause (native);
+  // it was frozen at mount → feed videos never autoplayed / never paused (audio leak).
+  if (prev.isActive !== next.isActive) return false;
   const a = prev.post, b = next.post;
   if (!a || !b) return a === b;
   if (a.id !== b.id) return false;

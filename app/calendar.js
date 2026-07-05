@@ -86,7 +86,7 @@ function isSameDay(d1, d2) {
 // international meetings ("10:00 (Brasil) / 14:00 (UTC) / 09:00 (NY)").
 function formatTimeInZone(dateStr, timeZone) {
   if (!dateStr) return '';
-  const d = new Date(dateStr);
+  const d = api.parseServerDate(dateStr);
   if (isNaN(d.getTime())) return '';
   try {
     const fmt = new Intl.DateTimeFormat([], { hour: '2-digit', minute: '2-digit', timeZone });
@@ -516,7 +516,7 @@ function RecurringBadge({ color }) {
 // grid to render a continuous color stripe across cells.
 function spansMultipleDays(evt) {
   if (!evt || !evt.start_at || !evt.end_at) return false;
-  const s = new Date(evt.start_at), e = new Date(evt.end_at);
+  const s = api.parseServerDate(evt.start_at), e = api.parseServerDate(evt.end_at);
   if (isNaN(s.getTime()) || isNaN(e.getTime())) return false;
   if (e <= s) return false;
   return !isSameDay(s, e);
@@ -531,7 +531,7 @@ function isStale(evt) {
   if (!evt) return false;
   if (evt.status && evt.status !== 'active') return false;
   if (evt.live_ended_at || evt.ended_at) return true;
-  const startMs = new Date(
+  const startMs = api.parseServerDate(
     evt.live_started_at || evt.started_at || evt.start_at || 0
   ).getTime();
   if (!Number.isFinite(startMs) || !startMs) return false;
@@ -625,7 +625,7 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
   const eventsByDate = useMemo(() => {
     const map = {};
     (events || []).forEach(evt => {
-      const d = new Date(evt.start_at);
+      const d = api.parseServerDate(evt.start_at);
       const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
       if (!map[key]) map[key] = [];
       map[key].push(evt);
@@ -636,7 +636,7 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
   // Count events in this month
   const monthEventCount = useMemo(() => {
     return (events || []).filter(evt => {
-      const d = new Date(evt.start_at);
+      const d = api.parseServerDate(evt.start_at);
       return d.getFullYear() === year && d.getMonth() === month;
     }).length;
   }, [events, year, month]);
@@ -768,7 +768,7 @@ function CalendarGrid({ year, month, selectedDate, events, colors, onSelectDate,
                   <View style={styles.cellStripeStack} pointerEvents="none">
                     {multiDayEvents.map((evt, mi) => {
                       const accent = evt.color || evt.calendar_color || colors.primary;
-                      const s = new Date(evt.start_at), e = new Date(evt.end_at);
+                      const s = api.parseServerDate(evt.start_at), e = api.parseServerDate(evt.end_at);
                       const isFirst = isSameDay(s, cell.date);
                       const isLast = isSameDay(e, cell.date);
                       return (
@@ -882,8 +882,8 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
       allDay[i] = [];
     }
     (events || []).forEach(evt => {
-      const evtStart = new Date(evt.start_at);
-      const evtEnd = new Date(evt.end_at);
+      const evtStart = api.parseServerDate(evt.start_at);
+      const evtEnd = api.parseServerDate(evt.end_at);
       for (let i = 0; i < 7; i++) {
         const dayStart = new Date(days[i]);
         dayStart.setHours(0, 0, 0, 0);
@@ -1204,7 +1204,7 @@ const weekStyles = StyleSheet.create({
 function getRelativeTime(startAt, t) {
   if (!startAt || !t) return '';
   const now = new Date();
-  const start = new Date(startAt);
+  const start = api.parseServerDate(startAt);
   const diffMs = start - now;
   if (diffMs < 0) return ''; // past
   const diffMin = Math.floor(diffMs / 60000);
@@ -1495,8 +1495,8 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
       if (!Number.isFinite(newStart) || !Number.isFinite(newEnd) || newEnd <= newStart) return [];
       return (existingEvents || []).filter(evt => {
         if (!evt?.start_at || !evt?.end_at || evt.all_day) return false;
-        const s = new Date(evt.start_at).getTime();
-        const e = new Date(evt.end_at).getTime();
+        const s = api.parseServerDate(evt.start_at).getTime();
+        const e = api.parseServerDate(evt.end_at).getTime();
         if (!Number.isFinite(s) || !Number.isFinite(e)) return false;
         return s < newEnd && e > newStart;
       }).slice(0, 3);
@@ -2420,7 +2420,7 @@ function CalendarScreenInner() {
     setLoadingReminders(true);
     try {
       const { aiAssist } = await import('../services/api');
-      const upcomingEvents = events.filter(e => new Date(e.start_at) >= new Date()).slice(0, 20);
+      const upcomingEvents = events.filter(e => api.parseServerDate(e.start_at) >= new Date()).slice(0, 20);
       const eventSummaries = upcomingEvents.map(e => ({
         title: e.title,
         start: e.start_at,
@@ -2607,8 +2607,8 @@ function CalendarScreenInner() {
         try {
           await ExpoCalendar.createEventAsync(targetCalId, {
             title: evt.title || t('calendar.untitledEvent'),
-            startDate: new Date(evt.start_at),
-            endDate: new Date(evt.end_at),
+            startDate: api.parseServerDate(evt.start_at),
+            endDate: api.parseServerDate(evt.end_at),
             location: evt.location || '',
             notes: evt.description || '',
             allDay: evt.all_day || false,
@@ -2639,8 +2639,8 @@ function CalendarScreenInner() {
           return hay.includes(q);
         })
       : events.filter(evt => {
-          const evtStart = new Date(evt.start_at);
-          const evtEnd = new Date(evt.end_at);
+          const evtStart = api.parseServerDate(evt.start_at);
+          const evtEnd = api.parseServerDate(evt.end_at);
           const dayStart = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate());
           const dayEnd = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), selectedDate.getDate(), 23, 59, 59);
           return evtStart <= dayEnd && evtEnd >= dayStart;
@@ -2648,7 +2648,7 @@ function CalendarScreenInner() {
     return base.sort((a, b) => {
       if (a.all_day && !b.all_day) return -1;
       if (!a.all_day && b.all_day) return 1;
-      return new Date(a.start_at) - new Date(b.start_at);
+      return api.parseServerDate(a.start_at) - api.parseServerDate(b.start_at);
     });
   }, [events, selectedDate, searchQuery]);
 

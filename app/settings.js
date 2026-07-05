@@ -2686,6 +2686,32 @@ function SettingsScreenInner() {
           </View>
         )}
 
+        {/* [2026-07-05] Alterar senha no WEB — a seção Segurança nativa logo
+            abaixo é `Platform.OS !== 'web'` (biometria/família/parental só
+            existem no app), então quem usa o chatyy.com.br não tinha COMO
+            trocar a senha. Este bloco web-only reusa o MESMO ChangePasswordModal
+            (RN Modal puro, web-safe, já montado no fim da tela). */}
+        {Platform.OS === 'web' && sectionMatches(t('settings.security'), 'segurança', 'senha', 'password', t('settings.changePassword')) && (
+          <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
+            <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.security') || 'Segurança'}</Text>
+            <TouchableOpacity
+              style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0 }]}
+              onPress={() => setChangePasswordOpen(true)}
+              activeOpacity={0.65}
+            >
+              <View style={s.settingInfo}>
+                <Text style={[s.settingLabel, { color: colors.text }]}>
+                  {t('settings.changePassword') || 'Alterar senha'}
+                </Text>
+                <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                  {t('settings.changePasswordDesc') || 'Atualize sua senha de acesso a qualquer momento'}
+                </Text>
+              </View>
+              <IconChevronRight size={18} color={colors.textTertiary} />
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Security — Biometric Lock + Parental Controls (native only; biometric items below self-gate on biometricAvailable) */}
         {Platform.OS !== 'web' && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança', 'senha', 'password', t('settings.changePassword'), '2fa', t('settings.twoFactor'), 'pin', 'backup', t('settings.e2eBackup'), t('settings.backupKey.rotate'), t('settings.activityLog'), 'byok', t('settings.advancedKey')) && (
           <View ref={registerSectionRef('security')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>

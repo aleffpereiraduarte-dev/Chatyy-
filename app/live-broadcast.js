@@ -1647,7 +1647,7 @@ export default function LiveBroadcastScreen() {
           console.warn('[live] live_start_cf fallback also failed:', cfErr?.message);
         }
       }
-      if (res.success && sid) {
+      if (res?.success && sid) {
         setSessionId(sid);
         sessionIdRef.current = sid;
 
@@ -1712,6 +1712,14 @@ export default function LiveBroadcastScreen() {
                   try {
                     const id = String(p?.identity || '');
                     if (!id) return;
+                    // Don't count the host's own second connection as a viewer.
+                    // Some flows connect the host to their own room as an SFU
+                    // publisher with a `-host`-suffixed identity (or one that
+                    // embeds the host email) — counting it inflates the viewer
+                    // tally and shows a phantom "self" chip in the entrou list.
+                    const idLc = id.toLowerCase();
+                    const hostEmailLc = (user?.email || '').toLowerCase();
+                    if (idLc.endsWith('-host') || (hostEmailLc && idLc.includes(hostEmailLc))) return;
                     setLkViewers(prev => {
                       if (prev.some(v => v.identity === id)) return prev;
                       // BUG (2026-05-22) — was leaking `email#hash` into the
