@@ -716,6 +716,12 @@ export async function replayOfflineQueue(api) {
                 null,
                 action.temp_id,
                 action.client_message_id,
+                action.topic_id || null,
+                // Retry MUST skip the Rust fast-path: this temp_id was already
+                // consumed by Rust on the first attempt, so re-hitting Rust
+                // 500s and demotes the whole session to PHP-only. Go straight
+                // to PHP (idempotent via client_message_id).
+                { skipRust: true },
               ),
               new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('chat_send_timeout')), 5000)
@@ -738,13 +744,26 @@ export async function replayOfflineQueue(api) {
           // antes ações com r.success=false (sem exception) eram consideradas
           // replayed e sumiam silenciosamente.
           if (!r?.success || !r?.data?.id) {
+            // Classify PERMANENT rejections (authz: muted / admin-only /
+            // blocked / not-a-member, i.e. HTTP 403 or a known permanent error
+            // string) as HARD errors. A hard error is DROPPED by the retry loop
+            // (see the `err.isHardError` branch) instead of retrying forever on
+            // the 1h ladder AND being added to blockedConvIds — which would
+            // freeze every later queued message in the same conversation behind
+            // one un-sendable row (head-of-line blocking). Conservative: only
+            // clear permanent signals qualify; transient (network / 5xx) keeps
+            // the existing indefinite-retry behavior.
+            const _rejMsg = String(r?.message || r?.error || r?.data?.error || '');
+            const _permanent = /\b403\b|forbidden|\bblocked\b|\bmuted\b|admin.?only|somente.?admin|apenas.?admin|not.?a.?member|no_permission|permission_denied/i.test(_rejMsg);
             if (action.client_message_id) {
               try {
                 const outbox = require('./messageOutbox');
-                outbox.markFailed?.(action.client_message_id, new Error('chat_send_failed'));
+                outbox.markFailed?.(action.client_message_id, new Error(_permanent ? ('chat_send_rejected:' + _rejMsg) : 'chat_send_failed'));
               } catch {}
             }
-            throw new Error('chat_send_failed');
+            const _sendErr = new Error(_permanent ? ('chat_send_rejected:' + _rejMsg) : 'chat_send_failed');
+            if (_permanent) _sendErr.isHardError = true;
+            throw _sendErr;
           }
           if (r?.success && r.data?.id) {
             const serverMsg = { ...r.data, client_message_id: action.client_message_id };
@@ -1219,12 +1238,14 @@ export async function replayOfflineQueue(api) {
       // dropa da fila silenciosamente em vez de bater no servidor pra
       // sempre. Ainda chama emitSendFail pro balão refletir o estado.
       if (err && err.isHardError) {
-        if (action.type === 'chat_file_upload' && action.temp_id) {
+        if ((action.type === 'chat_file_upload' || action.type === 'chat_send') && action.temp_id) {
           try {
             const evt = require('./sendFailEvents');
             evt.emitSendFail?.(action.conversation_id, action.temp_id, action.client_message_id);
           } catch {}
         }
+        // Dropped: NOT re-queued and NOT added to blockedConvIds, so later
+        // queued messages in this conversation are free to send.
         continue;
       }
       // WhatsApp-style retry: keep retrying indefinitely with exponential

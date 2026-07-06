@@ -33,7 +33,7 @@
 // now claims clients BEFORE cache eviction. CACHE_NAME bumped so this
 // deploy's activate clears the prior generation.
 
-const CACHE_NAME  = 'chatyy-v23';
+const CACHE_NAME  = 'chatyy-v26';
 const API_CACHE   = 'chatyy-api-v4';
 const MEDIA_CACHE = 'chatyy-media-v1';
 

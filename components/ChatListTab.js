@@ -536,6 +536,12 @@ const ConversationRow = React.memo(function ConversationRow({
       .replace(/_([^_\n]+)_/g, '$1')               // _italic_
       .replace(/~([^~\n]+)~/g, '$1')               // ~strike~
       .replace(/`([^`\n]+)`/g, '$1');              // `code`
+    // Snapshot the plain-text body BEFORE the JSON/media relabeling below
+    // overwrites `content`. For media rows (image/video/file) the real
+    // caption is carried in `content` as plain text; use it as a fallback
+    // when there's no explicit `caption`. Guard against raw JSON leaking in
+    // by only accepting a non-empty string that doesn't start with '{'.
+    const _plainBody = (typeof content === 'string' && content.trim() && !content.trim().startsWith('{')) ? content.trim() : '';
     if (content.startsWith('{')) {
       try {
         const parsed = JSON.parse(content);
@@ -585,12 +591,12 @@ const ConversationRow = React.memo(function ConversationRow({
     if (lastMsg.type === 'call_card' && !/Chamada/.test(content)) {
       content = '\uD83D\uDCDE ' + (t('chat.voiceCall') || 'Chamada');
     }
-    if (lastMsg.type === 'image') content = '\uD83D\uDCF7 ' + (caption || t('chat.photo') || 'Foto');
+    if (lastMsg.type === 'image') content = '\uD83D\uDCF7 ' + (caption || _plainBody || t('chat.photo') || 'Foto');
     else if (lastMsg.type === 'gif') content = '\uD83C\uDFAC ' + (caption || 'GIF');
     else if (lastMsg.type === 'sticker') content = '\uD83D\uDCAB ' + (caption || t('chat.sticker') || 'Sticker');
-    else if (lastMsg.type === 'video' && !content.startsWith('\uD83C\uDFA5')) content = '\uD83C\uDFA5 ' + (caption || t('chat.video') || 'Video');
+    else if (lastMsg.type === 'video' && !content.startsWith('\uD83C\uDFA5')) content = '\uD83C\uDFA5 ' + (caption || _plainBody || t('chat.video') || 'Video');
     else if (lastMsg.type === 'audio' && !content.startsWith('\uD83D\uDCDE')) content = '\uD83C\uDFB5 ' + (caption || t('chat.audio') || 'Audio');
-    else if (lastMsg.type === 'file') content = '\uD83D\uDCCE ' + (lastMsg.file_name || caption || t('chat.file') || 'Arquivo');
+    else if (lastMsg.type === 'file') content = '\uD83D\uDCCE ' + (lastMsg.file_name || caption || _plainBody || t('chat.file') || 'Arquivo');
     else if (lastMsg.type === 'poll') content = '\uD83D\uDCCA ' + (caption || t('chat.poll') || 'Enquete');
     else if (lastMsg.type === 'playlist') content = '\uD83C\uDFB5 ' + (caption || t('chatConv.playlist') || 'Playlist');
     else if (lastMsg.type === 'meetup') content = '\uD83D\uDCC5 ' + (caption || t('chatConv.meetup') || 'Encontro');
@@ -3400,12 +3406,28 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // of messages triggers one notification, not five. Last-heard conv id
       // + 1.2s window covers the typical WhatsApp-style quick reply pattern.
       let _lastNotifyAt = 0;
+      // Dedup: the SAME inbound message arrives as BOTH `chat_message` (Go
+      // relay) AND `chat_summary` (PHP fan-out), both wired to this handler.
+      // Without id-dedup the unread badge bumped +2 per received message.
+      // Keyed on message id; evicted wholesale when it grows past ~1000 so it
+      // never leaks unbounded for the subscription's lifetime.
+      const _listRecvIds = new Set();
       // Handler shared between `chat_message` (self or sender's other-device
       // broadcast) and `chat_summary` (per-user fan-out from the new
       // channel-split: recipients receive chat_summary, NEVER chat_message,
       // on their per-user channel so the in-thread and list-screen paths
       // don't both fire). Server guarantees the same payload shape.
       const onIncomingForList = (data) => {
+        // Dedup real message events by id (chat_message + chat_summary carry
+        // the same id). Only dedup when an id is present — presence/typing and
+        // other id-less events must always pass through.
+        const _recvId = data && (data.id ?? data.message_id);
+        if (_recvId != null) {
+          const _rk = String(_recvId);
+          if (_listRecvIds.has(_rk)) return;
+          if (_listRecvIds.size > 1000) _listRecvIds.clear();
+          _listRecvIds.add(_rk);
+        }
         // Task #886 — auto-download voice notes the instant the WS event lands,
         // even when the user is NOT inside the conversation. WhatsApp parity:
         // by the time the user opens the chat the audio is already on disk and
@@ -5110,7 +5132,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       const aPinned = (a.pinned || isSelfChat(a)) ? 1 : 0;
       const bPinned = (b.pinned || isSelfChat(b)) ? 1 : 0;
       if (aPinned !== bPinned) return bPinned - aPinned;
-      return _sortKey(b).localeCompare(_sortKey(a));
+      // Compare numerically by parsed time, NOT localeCompare on the ISO
+      // string: a millisecond stamp "...17.789Z" vs "...17Z" compares wrong
+      // lexically ('.' < 'Z'), sinking an optimistic just-sent row below
+      // same-second server rows. Date.parse folds both to epoch ms.
+      const ka = Date.parse(_sortKey(a)) || 0;
+      const kb = Date.parse(_sortKey(b)) || 0;
+      return kb - ka;
     });
     return list;
   }, [filter, conversations, archivedConversations, lockedConversations, debouncedQuery, chatFolders, user?.email]);

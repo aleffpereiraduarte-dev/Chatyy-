@@ -454,7 +454,10 @@ async function _httpSend(row) {
       p.opts || null,
     );
     if (r && (r.success || r.envelope_mode || r.message_id || r.data?.message_id)) {
-      const serverId = r.message_id || r.data?.message_id || r.message?.id || null;
+      // chat_send returns the inserted row at r.data.id (NOT message_id / not
+      // data.message) — try that FIRST, else serverId was always null and the
+      // outbox row never recorded its server id.
+      const serverId = r.data?.id || r.message_id || r.data?.message_id || r.message?.id || null;
       await markSent(row.client_message_id, serverId);
     } else if (r && r.success === false) {
       // Server-side rejection — backoff.

@@ -399,16 +399,11 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
           // behaviour if the server is old and omits it.
           const rx = ev?.payload?.reactions;
           if (Array.isArray(rx)) {
-            // Expand grouped {emoji, count, users:[]} rows into the flat
-            // [{emoji, email}, ...] shape the UI already renders.
-            const flat = [];
-            for (const g of rx) {
-              const emoji = g?.emoji;
-              if (!emoji) continue;
-              const users = Array.isArray(g?.users) ? g.users : [];
-              for (const u of users) flat.push({ emoji, email: u });
-            }
-            next[i] = { ...next[i], reactions: flat, _reactionsStale: false };
+            // Keep the GROUPED {emoji, count, users:[]} shape the renderer
+            // expects (it groups by emoji and strips chips whose users list is
+            // empty). Flattening to [{emoji,email}] rendered EMPTY chips. This
+            // mirrors the disk-cache path above (updateCachedMessage(..., {reactions: rx})).
+            next[i] = { ...next[i], reactions: rx, _reactionsStale: false };
           } else {
             next[i] = { ...next[i], _reactionsStale: true };
           }

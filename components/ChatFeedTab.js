@@ -35,14 +35,23 @@ if (Platform.OS !== 'web') {
   try {
     const { getString: _gs } = require('../services/mmkv');
     const raw = _gs('chat_feed');
-    if (raw) _preloadedFeedPosts = JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      // Envelope {ts, posts} — snapshots older than 24h are ignored so a
+      // rarely-opened Feed can't paint months-old posts on cold start (they'd
+      // include content since deleted server-side). Legacy raw-array shape has
+      // no timestamp, so it counts as stale too.
+      if (parsed && Array.isArray(parsed.posts) && Date.now() - (parsed.ts || 0) < 86400000) {
+        _preloadedFeedPosts = parsed.posts;
+      }
+    }
   } catch {}
 }
 const _saveFeedToMMKV = (posts) => {
   if (Platform.OS === 'web') return;
   try {
     const { setString: _ss } = require('../services/mmkv');
-    _ss('chat_feed', JSON.stringify(Array.isArray(posts) ? posts.slice(0, 100) : []));
+    _ss('chat_feed', JSON.stringify({ ts: Date.now(), posts: Array.isArray(posts) ? posts.slice(0, 100) : [] }));
   } catch {}
 };
 
@@ -480,7 +489,10 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
             setPosts(newPosts);
           }
           if (pageNum === 1) {
-            setCache('feed_posts', newPosts, 7776000000).catch(() => {});
+            // 24h TTL — feed content goes stale fast (posts get deleted); a
+            // long-lived cache was repainting the feed of weeks ago on cold
+            // start (QA ticket 20260705-194437).
+            setCache('feed_posts', newPosts, 86400000).catch(() => {});
             _saveFeedToMMKV(newPosts);
           }
         } else {

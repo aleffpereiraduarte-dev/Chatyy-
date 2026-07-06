@@ -5120,6 +5120,10 @@ function VideoThumbImage({ url, thumbnailUrl, posterUrl, videoThumb, imageVarian
     return out.filter((v, i, a) => v && a.indexOf(v) === i);
   }, [url, thumbnailUrl, posterUrl, videoThumb, imageVariantsThumb, thumbB64]);
   const [idx, setIdx] = React.useState(0);
+  // When the server re-broadcasts the enriched row with a fresh poster,
+  // `candidates` (a useMemo) recomputes but `idx` may be stuck past the end
+  // from prior onError increments → poster never shows. Reset on identity change.
+  React.useEffect(() => { setIdx(0); }, [candidates]);
   if (idx >= candidates.length) return null;
   return (
     <ExpoImage
@@ -10825,7 +10829,10 @@ function ChatConversationInner() {
         if (!mountedRef.current) break;
         try {
           const clientId = p.client_message_id || p.temp_id;
-          const r = await api.chatSend(conversationId, p.content, p.type || 'text', p.reply_to_id, p.mentions, null, p.temp_id, clientId);
+          // Replay path (auto-retry pending on mount): skip Rust — re-hitting the
+          // Rust fast-path with an already-used temp_id 500s and disables Rust
+          // for the whole session. Route through PHP (server dedups on CMI).
+          const r = await api.chatSend(conversationId, p.content, p.type || 'text', p.reply_to_id, p.mentions, null, p.temp_id, clientId, null, { skipRust: true });
           if (r?.success && r.data?.id && mountedRef.current) {
             // If the server's real id is ALREADY in state (loaded fresh by
             // the post-mount fetch while we were retrying in parallel), drop
@@ -11948,6 +11955,28 @@ function ChatConversationInner() {
       const unsubChatDelivered = mailWs.on('chat_delivered', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
+        // [batched-delivery fix] PHP coalesces a delivery-ack burst into ONE
+        // chat_delivered carrying the full data.message_ids[] array. Without
+        // this, sending N msgs to a peer who comes online flipped only the
+        // first bubble to ✓✓. Mirror the message_delivered batch handler:
+        // flip ALL bubbles whose numeric id is in the set (status !== 'read').
+        if (Array.isArray(data.message_ids)) {
+          const ids = new Set(data.message_ids.map(Number).filter(n => !Number.isNaN(n)));
+          if (!ids.size) return;
+          const deliveredStampBatch = data?.delivered_at || new Date().toISOString();
+          try {
+            const buf = deliveredIdBufferRef.current;
+            if (buf) { ids.forEach(id => buf.add(id)); if (buf.size > 600) buf.clear(); }
+          } catch {}
+          setMessages(prev => prev.map(m => {
+            if (m.status === 'read') return m;
+            const numId = Number(m.id);
+            return (!Number.isNaN(numId) && ids.has(numId))
+              ? { ...m, status: 'delivered', _delivered: true, delivered_at: m.delivered_at || deliveredStampBatch }
+              : m;
+          }));
+          return;
+        }
         const mid = data?.message_id;
         if (!mid) return;
         // [WhatsApp instant ✓ 2026-06-03] Remember this delivered server id so
@@ -12325,6 +12354,11 @@ function ChatConversationInner() {
                     null,
                     a.temp_id || a.id,
                     a.client_message_id || a.id,
+                    null,
+                    // Replay path: skip the Rust fast-path. Re-hitting Rust with
+                    // an already-used temp_id 500s and disables Rust for the whole
+                    // session — route retries through PHP (server dedups on CMI).
+                    { skipRust: true },
                   );
                   if (r?.success) {
                     await removeFromQueue(a.id);
@@ -12594,6 +12628,18 @@ function ChatConversationInner() {
       const onChatReact = (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
+        // The native TCP path delivers the FULL aggregated message row as
+        // payload (data.reactions = grouped array, no top-level emoji/email).
+        // Replace the target message's reactions wholesale, exactly like the
+        // WS-hub sibling onWsReaction does — respecting inflight local reactions
+        // so a peer broadcast doesn't wipe our optimistic state.
+        if (Array.isArray(data.reactions)) {
+          const rid = data.id ?? data.message_id;
+          if (rid == null) return;
+          if (inflightReactionMsgIdsRef.current.has(String(rid))) return;
+          setMessages(prev => prev.map(row => String(row.id) === String(rid) ? { ...row, reactions: data.reactions } : row));
+          return;
+        }
         const mid = data?.message_id ?? data?.id;
         if (!mid) return;
         const emoji = data.emoji;
@@ -13408,6 +13454,11 @@ function ChatConversationInner() {
           mentions: currentMentions,
           sender_email: currentEmail,
           created_at: optimisticMsg.created_at,
+          // sendWorker replays this row via api.chatSend(..., p.opts). Retries
+          // reuse temp_id, so they MUST skip the Rust fast-path (Rust 500s on a
+          // used temp_id and then disables itself session-wide). The foreground
+          // first attempt below still uses Rust.
+          opts: { skipRust: true },
         });
         // [double-send race fix 2026-05-25] The foreground OWNS the HTTP
         // send for this row (api.chatSend fires below). CLAIM the row
@@ -17025,7 +17076,7 @@ function ChatConversationInner() {
     const next = !hideMembers;
     setHideMembers(next); // optimistic
     try {
-      const r = await api.chatGroupAdmin(conversationId, { hide_members: next });
+      const r = await api.chatUpdateGroup(conversationId, { hide_members: next });
       if (!r?.success) setHideMembers(!next);
     } catch {
       setHideMembers(!next);
@@ -23515,12 +23566,30 @@ function ChatConversationInner() {
                           { text: t('chat.retry') || 'Tentar', onPress: doRetry },
                           { text: t('chat.clearQueued') || 'Limpar', style: 'destructive', onPress: async () => {
                             try {
-                              const { removePendingMessage } = require('../services/chatCache');
-                              await removePendingMessage(conversationId, msg.id).catch(()=>{});
+                              // Purge from EVERY persistence layer so a permanently-failed
+                              // message can't rehydrate on reopen (chatCache list + pending,
+                              // SQLite messages + pending_messages, and the outbox).
+                              const cc = require('../services/chatCache');
+                              const cmi = msg._client_id || msg.client_message_id || msg.id;
+                              try { await cc.removePendingMessage?.(conversationId, msg.id)?.catch?.(()=>{}); } catch {}
+                              try { if (msg.temp_id && msg.temp_id !== msg.id) await cc.removePendingMessage?.(conversationId, msg.temp_id)?.catch?.(()=>{}); } catch {}
+                              try { await cc.deleteCachedMessage?.(conversationId, msg.id)?.catch?.(()=>{}); } catch {}
+                              try {
+                                const db = require('../services/db');
+                                await db.dbRemovePending?.(msg.id)?.catch?.(()=>{});
+                                if (msg.temp_id && msg.temp_id !== msg.id) await db.dbRemovePending?.(msg.temp_id)?.catch?.(()=>{});
+                              } catch {}
                               try {
                                 const outbox = require('../services/messageOutbox');
-                                const cmi = msg._client_id || msg.client_message_id || msg.id;
                                 if (outbox?.remove) await outbox.remove(cmi).catch(()=>{});
+                              } catch {}
+                              // 7th layer: the offlineCache replay queue — without purging
+                              // it, the ghost re-materializes on the next replayOfflineQueue
+                              // (foreground/reconnect). This is why it kept coming back.
+                              try {
+                                const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
+                                await removeChatSendFromQueueByClientMsgId?.(cmi)?.catch?.(()=>{});
+                                if (msg.client_message_id && msg.client_message_id !== cmi) await removeChatSendFromQueueByClientMsgId?.(msg.client_message_id)?.catch?.(()=>{});
                               } catch {}
                               setMessages(prev => prev.filter(m => m.id !== msg.id));
                             } catch {}
@@ -23549,8 +23618,20 @@ function ChatConversationInner() {
                         [
                           { text: t('chat.clearQueued') || 'Limpar', style: 'destructive', onPress: async () => {
                             try {
-                              const { removePendingMessage } = require('../services/chatCache');
-                              await removePendingMessage(conversationId, msg.id).catch(() => {});
+                              // Purge from every layer (chatCache list + pending, SQLite
+                              // messages + pending, outbox) so it can't rehydrate on reopen.
+                              const cc = require('../services/chatCache');
+                              const cmi = msg._client_id || msg.client_message_id || msg.id;
+                              try { await cc.removePendingMessage?.(conversationId, msg.id)?.catch?.(() => {}); } catch {}
+                              try { if (msg.temp_id && msg.temp_id !== msg.id) await cc.removePendingMessage?.(conversationId, msg.temp_id)?.catch?.(()=>{}); } catch {}
+                              try { await cc.deleteCachedMessage?.(conversationId, msg.id)?.catch?.(() => {}); } catch {}
+                              try {
+                                const db = require('../services/db');
+                                await db.dbRemovePending?.(msg.id)?.catch?.(()=>{});
+                                if (msg.temp_id && msg.temp_id !== msg.id) await db.dbRemovePending?.(msg.temp_id)?.catch?.(()=>{});
+                              } catch {}
+                              try { const outbox = require('../services/messageOutbox'); if (outbox?.remove) await outbox.remove(cmi).catch(()=>{}); } catch {}
+                              try { const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache'); await removeChatSendFromQueueByClientMsgId?.(cmi)?.catch?.(()=>{}); if (msg.client_message_id && msg.client_message_id !== cmi) await removeChatSendFromQueueByClientMsgId?.(msg.client_message_id)?.catch?.(()=>{}); } catch {}
                               setMessages(prev => prev.filter(m => m.id !== msg.id));
                             } catch {}
                           }},

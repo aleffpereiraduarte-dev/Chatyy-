@@ -963,8 +963,11 @@ function ceilingSet(set, max) {
  * No-ops on: web, setting OFF, non-image/video type, missing key/uri,
  * permission denied (latched for the session), already-saved key.
  */
-export function maybeAutoSaveToGallery(localUri, key, mediaType) {
+export function maybeAutoSaveToGallery(localUri, key, mediaType, opts) {
   if (Platform.OS === 'web') return;
+  // PRIVACY (view-once): defense-in-depth — even if a view-once download ever
+  // reaches this path, never mirror it into the camera roll.
+  if (opts && opts.viewOnce) return;
   if (!localUri || typeof localUri !== 'string' || !localUri.startsWith('file://')) return;
   if (!key) return;
   // Setting gate (default ON).
@@ -1465,7 +1468,7 @@ export async function cacheMedia(url, opts = {}) {
     // De-duped + permission-gated + type-filtered inside the helper, so it's
     // safe to call unconditionally on every successful inbound download.
     if (opts.received && result && typeof result === 'string' && result.startsWith('file://') && Platform.OS !== 'web') {
-      try { maybeAutoSaveToGallery(result, key, opts.mediaType || _bucketForUrl(url)); } catch {}
+      try { maybeAutoSaveToGallery(result, key, opts.mediaType || _bucketForUrl(url), { viewOnce: !!opts.viewOnce }); } catch {}
     }
     // [#1215 2026-05-19] PHONE-FIRST MEDIA WRITE-BACK
     // When a foto/áudio/vídeo/gif/sticker/file download lands, mirror the
@@ -1578,9 +1581,21 @@ export async function saveMediaPermanent(url, opts = {}) {
     try {
       const download = await fs.downloadAsync(url, localPath);
       if (download.status === 200) {
-        registerSyncKey(url, localPath);
-        _countDownloadedBytes(fs, localPath); // network-usage counter (getNetStats)
-        return localPath;
+        // Integrity guard (mirror cacheMedia ~1413): a 200 with an empty/
+        // truncated body would otherwise be registered as a "valid" file and
+        // served forever as a blank photo / silent audio. Only accept a
+        // non-zero on-disk file; drop a zero-byte (or unstattable) result and
+        // fall through to returning the remote URL.
+        let okSize = true;
+        try {
+          const st = await fs.getInfoAsync(localPath);
+          okSize = !!(st && st.exists && st.size > 0);
+        } catch { okSize = false; }
+        if (okSize) {
+          registerSyncKey(url, localPath);
+          _countDownloadedBytes(fs, localPath); // network-usage counter (getNetStats)
+          return localPath;
+        }
       }
       try { await fs.deleteAsync(localPath, { idempotent: true }); } catch {}
     } finally {
@@ -1667,6 +1682,13 @@ export function prefetchIncomingMessageMedia(message) {
   const isFile    = t === 'file' || t === 'document';
   const isGifLike = t === 'gif' || t === 'sticker';
   if (!isAudio && !isImage && !isVideo && !isFile && !isGifLike) return;
+
+  // PRIVACY (view-once): NEVER background-prefetch view-once media. Doing so
+  // downloads it permanently AND — because the download is flagged received —
+  // auto-saves it to the camera roll BEFORE the recipient ever opens it,
+  // defeating the whole point of view-once. Bail out entirely; the bubble's
+  // explicit tap-to-view path handles fetching a view-once item on demand.
+  if (message && (message.is_view_once || message.view_once || message.isViewOnce)) return;
 
   // GIFs / stickers ship their URL in `content` (Tenor / sticker server),
   // not file_url. Other types use file_url. Support both shapes.

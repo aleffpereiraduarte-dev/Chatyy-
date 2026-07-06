@@ -66,3 +66,6 @@ credentials/
 
 # Kotlin/Gradle build artifacts (compiled locally, never ship)
 modules/*/android/build/
+
+# Scratch dir for the autonomous QA-ticket routine (screenshot copies)
+.qa-tmp/
