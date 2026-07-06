@@ -32,7 +32,10 @@ export default function SendStatusText({ msg, color, fontSize = 10, onRetry, sty
   const { colors } = useTheme();
   const { t } = useLanguage();
 
-  const cmi = msg?.client_message_id || msg?.id || null;
+  // Current-session optimistic bubbles carry the outbox key ONLY in
+  // _client_id (their `id` is the tmp_ placeholder, which matches nothing
+  // in the outbox — tap-to-retry was a silent no-op for them).
+  const cmi = msg?.client_message_id || msg?._client_id || msg?.id || null;
   const [snap, setSnap] = useState(null);
 
   // Initial hydration + live subscription.

@@ -744,9 +744,18 @@ function InboxScreenInner() {
         case 'p': // Print
           if (sel && Platform.OS === 'web') {
             const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+            // The print window is same-origin — raw body_html here is XSS with
+            // full access to the app's storage. DOMPurify or plain-text only.
+            let printBody = esc(sel.body_text || '').replace(/\n/g, '<br>');
+            if (sel.body_html) {
+              try {
+                const DOMPurify = require('dompurify');
+                if (DOMPurify?.sanitize) printBody = DOMPurify.sanitize(sel.body_html);
+              } catch {}
+            }
             const pw = window.open('', '_blank');
             if (pw) {
-              pw.document.write(`<!DOCTYPE html><html><head><title>${esc(sel.subject || 'Email')}</title><style>body{font-family:-apple-system,system-ui,sans-serif;padding:40px;max-width:800px;margin:0 auto}.header{border-bottom:1px solid #ddd;padding-bottom:16px;margin-bottom:16px}.from{font-weight:600;font-size:16px}.meta{color:#666;font-size:13px;margin-top:4px}.body{font-size:14px;line-height:1.7}img{max-width:100%}@media print{body{padding:20px}}</style></head><body><div class="header"><div class="from">${esc(sel.from_name || sel.from)}</div><div class="meta">Para: ${esc(sel.to || '')}</div><div class="meta">${esc(sel.date || '')}</div><div style="font-size:18px;margin-top:12px">${esc(sel.subject || '')}</div></div><div class="body">${sel.body_html ? sel.body_html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/on\w+\s*=/gi, 'data-x=') : esc(sel.body_text || '').replace(/\n/g, '<br>')}</div></body></html>`);
+              pw.document.write(`<!DOCTYPE html><html><head><title>${esc(sel.subject || 'Email')}</title><style>body{font-family:-apple-system,system-ui,sans-serif;padding:40px;max-width:800px;margin:0 auto}.header{border-bottom:1px solid #ddd;padding-bottom:16px;margin-bottom:16px}.from{font-weight:600;font-size:16px}.meta{color:#666;font-size:13px;margin-top:4px}.body{font-size:14px;line-height:1.7}img{max-width:100%}@media print{body{padding:20px}}</style></head><body><div class="header"><div class="from">${esc(sel.from_name || sel.from)}</div><div class="meta">Para: ${esc(sel.to || '')}</div><div class="meta">${esc(sel.date || '')}</div><div style="font-size:18px;margin-top:12px">${esc(sel.subject || '')}</div></div><div class="body">${printBody}</div></body></html>`);
               pw.document.close();
               setTimeout(() => pw.print(), 300);
             }
