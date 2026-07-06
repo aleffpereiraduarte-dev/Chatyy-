@@ -754,7 +754,7 @@ export async function replayOfflineQueue(api) {
             // clear permanent signals qualify; transient (network / 5xx) keeps
             // the existing indefinite-retry behavior.
             const _rejMsg = String(r?.message || r?.error || r?.data?.error || '');
-            const _permanent = /\b403\b|forbidden|\bblocked\b|\bmuted\b|admin.?only|somente.?admin|apenas.?admin|not.?a.?member|no_permission|permission_denied/i.test(_rejMsg);
+            const _permanent = /\b403\b|forbidden|\bblocked\b|\bmuted\b|admin.?only|somente.?admin|apenas.?admin|not.?a.?member|no_permission|permission_denied|not.?found|\b404\b|\b410\b|\bgone\b|conversation.?deleted|does.?not.?exist/i.test(_rejMsg);
             if (action.client_message_id) {
               try {
                 const outbox = require('./messageOutbox');
@@ -1267,6 +1267,27 @@ export async function replayOfflineQueue(api) {
       const delay = isRateLimit
         ? Math.max(60000, delaysMs[Math.min(attempts, delaysMs.length - 1)])
         : delaysMs[Math.min(attempts, delaysMs.length - 1)];
+      // POISON-PILL GUARD (2026-07-06): a chat_send that keeps failing on a
+      // *soft* error (timeout, 5xx, or a rejection string the permanent-classifier
+      // at the send site didn't recognize — e.g. not_found / conversation deleted)
+      // used to stay in the queue FOREVER. Every reconnect/foreground re-ran it,
+      // re-emitted sendFail, and re-materialized the "failed message that keeps
+      // coming back" ghost (and blocked every later send in that conversation via
+      // blockedConvIds). WhatsApp retries generously but does NOT loop a dead send
+      // forever. After MAX_SEND_ATTEMPTS (~several hours across the backoff ladder)
+      // we STOP: drop it from the queue, don't block the conversation. The failed
+      // bubble persists in the message store; the user's tap-to-retry re-enqueues
+      // a fresh action (retries=0). This is what finally kills the recurring ghost.
+      const MAX_SEND_ATTEMPTS = 8;
+      if (action.type === 'chat_send' && attempts >= MAX_SEND_ATTEMPTS) {
+        if (action.temp_id) {
+          try {
+            const evt = require('./sendFailEvents');
+            evt.emitSendFail?.(action.conversation_id, action.temp_id, action.client_message_id);
+          } catch {}
+        }
+        continue; // dropped: NOT re-queued, NOT added to blockedConvIds
+      }
       failedActions.push({
         ...action,
         retries: attempts,
