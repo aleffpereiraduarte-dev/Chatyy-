@@ -3660,6 +3660,18 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // old-server (still firing chat_message) and new-server paths.
       unsubs.push(mailWs.on('chat_summary', onIncomingForList));
 
+      // [G2 2026-07-06] Server signals we were removed from a group. Drop the
+      // conversation from both buckets immediately — without this the kicked
+      // member kept the (now un-sendable) row around and, if the thread was
+      // open, kept receiving its live messages via the shared thread channel.
+      // chat-conversation.js handles the open-thread case (unsubscribe + back).
+      unsubs.push(mailWs.on('removed_from_conversation', (data) => {
+        const convId = data?.conversation_id;
+        if (convId == null) return;
+        setConversations(prev => prev.filter(c => !(c.id == convId || c.conversation_id == convId)));
+        setArchivedConversations(prev => prev.filter(c => !(c.id == convId || c.conversation_id == convId)));
+      }));
+
       // Backend broadcasts `delete`/`edit` when a message is deleted-for-all
       // or edited. The list never subscribed to these, so a deleted/edited
       // LAST message left a stale preview ("Mensagem apagada" never showed,

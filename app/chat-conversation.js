@@ -11710,6 +11710,27 @@ function ChatConversationInner() {
       };
       wsUnsubs.push(mailWs.on('envelope_available', onEnvelopeAvailable));
 
+      // [G2 2026-07-06] We were removed from THIS group while it's open. The
+      // thread channel (chat_{convId}) broadcasts to every subscriber with no
+      // membership check, so a kicked member kept receiving live messages until
+      // a manual refetch. Leave the channel + bounce back to the list. Unmount
+      // cleanup also unsubscribes, but we do it eagerly so no in-flight event
+      // slips through between the alert and the pop.
+      const onRemovedFromConv = (payload) => {
+        const cid = payload?.conversation_id ?? payload?.data?.conversation_id;
+        if (cid == null || String(cid) !== String(conversationId)) return;
+        try { mailWs.unsubscribe(`chat_${conversationId}`); } catch {}
+        try { const tcpClient = require('../services/tcpClient'); tcpClient.unsubscribe?.(conversationId); } catch {}
+        try {
+          Alert.alert(
+            t?.('chatConv.removedTitle') || 'Removido',
+            t?.('chatConv.removedFromGroup') || 'Você foi removido deste grupo.'
+          );
+        } catch {}
+        try { router.back(); } catch {}
+      };
+      wsUnsubs.push(mailWs.on('removed_from_conversation', onRemovedFromConv));
+
       // Bug 2026-05-12: edit/delete/reaction/poll_vote were only applied
       // via the TCP signal-server path. Devices that hit the Node WS hub
       // instead (web + the sender's other devices) never saw their own

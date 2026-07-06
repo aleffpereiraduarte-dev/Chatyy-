@@ -3571,6 +3571,8 @@ export default {
 
   // Chat Conversation
   'chatConv.deletedMessage': 'Mensagem apagada',
+  'chatConv.removedTitle': 'Removido do grupo',
+  'chatConv.removedFromGroup': 'Você foi removido deste grupo.',
   'chatConv.edited': 'editada',
   'chatConv.translate': 'Traduzir',
   'chatConv.translated': 'Traduzido',
