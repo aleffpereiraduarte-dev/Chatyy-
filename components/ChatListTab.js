@@ -2918,7 +2918,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     }
   }, [contactBanner, router, t]);
   const searchTimerRef = useRef(null);
-  const wsUpdateTimer = useRef(null);
+  const wsUpdateTimer = useRef(new Map()); // per-conversation debounce timers (keyed by conversation_id)
   const typingTimeoutsRef = useRef({});
 
   const exitSelectionMode = useCallback(() => {
@@ -3453,8 +3453,16 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         // list shifts in the same frame as the WS event. LayoutAnimation
         // smooths the move. Bursts still coalesce naturally because React
         // batches state updates per frame.
-        if (wsUpdateTimer.current) clearTimeout(wsUpdateTimer.current);
-        wsUpdateTimer.current = setTimeout(() => {
+        // Per-conversation timer (was ONE shared timer cleared on every event):
+        // a burst of messages across DIFFERENT conversations no longer clobbers
+        // each other — each conv's unread bump + move-to-top runs, instead of
+        // only the last event's. Same-conv rapid events still coalesce (last
+        // state wins; server count reconciles on next sync).
+        const _wsCid = data.conversation_id;
+        const _wsPrevTimer = wsUpdateTimer.current.get(_wsCid);
+        if (_wsPrevTimer) clearTimeout(_wsPrevTimer);
+        wsUpdateTimer.current.set(_wsCid, setTimeout(() => {
+          wsUpdateTimer.current.delete(_wsCid);
           // Don't bump unread for messages we sent ourselves (echoed back
           // by relay) — without this, the badge counts the user's own
           // outgoing messages.
@@ -3643,7 +3651,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           if (Platform.OS === 'web' && nextConvsForCache) {
             try { cacheConversations(nextConvsForCache).catch(() => {}); } catch {}
           }
-        }, 0);
+        }, 0));
       };
       unsubs.push(mailWs.on('chat_message', onIncomingForList));
       // chat_summary is the new per-user-channel event introduced by the
@@ -4042,7 +4050,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     } catch {}
     return () => {
       unsubs.forEach(fn => fn?.());
-      if (wsUpdateTimer.current) clearTimeout(wsUpdateTimer.current);
+      if (wsUpdateTimer.current) { wsUpdateTimer.current.forEach(t => clearTimeout(t)); wsUpdateTimer.current.clear(); }
       Object.values(typingTimeoutsRef.current).forEach(id => clearTimeout(id));
       typingTimeoutsRef.current = {};
       try {

@@ -127,14 +127,16 @@ async function _runDeltaForAll(allConvIds) {
   let { syncConversations } = await import('./chatSync');
   if (typeof syncConversations !== 'function') return { batches: 0, convs: 0 };
 
-  // Optional WS->SQLite event applier so the delta payloads actually land
-  // in the local DB (otherwise the chat list would still paint from stale
-  // cache until the screen re-mounts).
-  let applyRealtimeEvent = null;
-  try {
-    const ld = await import('./localDb');
-    if (typeof ld.applyRealtimeEvent === 'function') applyRealtimeEvent = ld.applyRealtimeEvent;
-  } catch {}
+  // Persist the hydrated rows the delta pulls into chatCache/SQLite so the chat
+  // list + next cold-open reflect them even when the thread is CLOSED at
+  // reconnect time. Before: the applier was imported from './localDb' where it
+  // doesn't exist (always null) → the delta advanced each conv's pts watermark
+  // but THREW AWAY the returned `conv.messages`. The next chat_sync then came
+  // back empty (since_pts had caught up), so the list/local cache stayed stale
+  // until a full reload — "mensagem que só aparece depois de reabrir o app".
+  // cacheSingleMessage is an idempotent upsert, safe on already-cached rows.
+  let chatCache = null;
+  try { chatCache = await import('./chatCache'); } catch {}
 
   // Build batches of CONV_BATCH and process CONV_CONCURRENCY in parallel.
   const batches = [];
@@ -148,14 +150,16 @@ async function _runDeltaForAll(allConvIds) {
     const results = await Promise.all(slice.map(async (ids) => {
       try {
         const out = await syncConversations(ids);
-        // Best-effort apply of each event into localDb. We skip if applyRealtimeEvent
-        // wasn't available — syncConversations already bumped lastPts so the
-        // next foreground render picks up the same events via normal load.
-        if (applyRealtimeEvent && Array.isArray(out)) {
+        // Persist the hydrated rows the delta pulled so the chat list + next
+        // cold-open reflect them (they used to be thrown away — see comment
+        // above). cacheSingleMessage is an idempotent upsert.
+        if (chatCache?.cacheSingleMessage && Array.isArray(out)) {
           for (const conv of out) {
-            const events = Array.isArray(conv?.events) ? conv.events : [];
-            for (const ev of events) {
-              try { await applyRealtimeEvent(ev); } catch {}
+            const msgs = Array.isArray(conv?.messages) ? conv.messages : [];
+            for (const m of msgs) {
+              if (m && m.conversation_id) {
+                try { await chatCache.cacheSingleMessage(m.conversation_id, m); } catch {}
+              }
             }
           }
         }

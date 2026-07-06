@@ -473,7 +473,11 @@ export async function replayOfflineQueue(api) {
   const blockedConvIds = new Set();
 
   for (const action of due) {
-    if (action.type === 'chat_send' && blockedConvIds.has(action.conversation_id)) {
+    // Head-of-line: block every later message-producing action (text OR media)
+    // for a conversation once an earlier one failed this pass — keeps photo+text
+    // in the order the user sent them (a fast text must not overtake a pending
+    // photo/voice upload). Was chat_send-only, so media could land out of order.
+    if ((action.type === 'chat_send' || action.type === 'chat_file_upload' || action.type === 'chat_voice_upload') && blockedConvIds.has(action.conversation_id)) {
       failedActions.push(action);
       continue;
     }
@@ -1303,7 +1307,7 @@ export async function replayOfflineQueue(api) {
           evt.emitSendFail?.(action.conversation_id, action.temp_id, action.client_message_id);
         } catch {}
       }
-      if (action.type === 'chat_send' && action.conversation_id) {
+      if ((action.type === 'chat_send' || action.type === 'chat_file_upload' || action.type === 'chat_voice_upload') && action.conversation_id) {
         blockedConvIds.add(action.conversation_id);
       }
     }
