@@ -640,13 +640,20 @@ export default function ComposeScreen() {
             const smartReply = params.smart_reply || '';
             const senderLabel = orig.from_name ? `${orig.from_name} <${orig.from}>` : orig.from;
             const qHeader = t('compose.replyHeader', { date: formatGmailDate(orig.date), sender: senderLabel });
-            const qContent = orig.body_html || orig.body_text || '';
+            // If the original has no HTML part, its plain text must be HTML-escaped and
+            // newline-converted before it goes into a <blockquote> — otherwise line
+            // breaks collapse into one run-on paragraph and literal < / & are read as markup.
+            const qContent = orig.body_html
+              ? orig.body_html
+              : (orig.body_text || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])).replace(/\n/g, '<br>');
             setQuotedHeader(qHeader);
             setQuotedHtml(sanitizeQuotedHtml(qContent));
             setBody(smartReply || '');
           } else {
             // Forward
-            const fwdBody = orig.body_html || orig.body_text || '';
+            const fwdBody = orig.body_html
+              ? orig.body_html
+              : (orig.body_text || '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])).replace(/\n/g, '<br>');
             const fwdHeader = t('compose.forwardHeader', { from: orig.from, date: formatGmailDate(orig.date), subject: orig.subject, to: orig.to });
             setQuotedHeader(fwdHeader);
             setQuotedHtml(sanitizeQuotedHtml(fwdBody));

@@ -658,7 +658,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         try {
           const HtmlView = require('../modules/expo-native-toolkit').HtmlView;
           if (HtmlView) {
-            const css = `body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:${colors.text};word-break:break-word;background:transparent;overflow-x:hidden}img{max-width:100%;height:auto}a{color:${colors.primary}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}`;
+            const css = `body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:#111;word-break:break-word;background:#ffffff;overflow-x:hidden}img{max-width:100%;height:auto}a{color:${colors.primary}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}`;
             return (
               <HtmlView
                 style={{ width: '100%', height: webViewHeight, backgroundColor: 'transparent' }}
@@ -700,7 +700,12 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         })();
         true;
       `;
-      const htmlDoc = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:${colors.text};word-break:break-word;background:${colors.authCardBg || 'transparent'};overflow-x:hidden}img{max-width:100%;height:auto}a{color:${colors.primary}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}</style></head><body>${safeBody}</body></html>`;
+      // HTML emails render on a fixed white surface (like Gmail/Apple Mail) so mail
+      // authored for white backgrounds — dark text, its own <style> now preserved —
+      // stays readable in the app's dark theme. The email's own CSS (incl. its
+      // @media dark rules) still overrides this base. The 12px body margin shows the
+      // app background around it, giving a clean white "card" look.
+      const htmlDoc = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:#111;word-break:break-word;background:#ffffff;overflow-x:hidden}img{max-width:100%;height:auto}a{color:${colors.primary}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}</style></head><body>${safeBody}</body></html>`;
       return (
         <WebView
           originWhitelist={['*']}
@@ -749,7 +754,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
     const { main, quoted } = splitQuoted(text);
     return (
       <View>
-        <Text style={[s.bodyText, { color: colors.text }]}>{main}</Text>
+        <Text dataDetectorType="link" style={[s.bodyText, { color: colors.text }]}>{main}</Text>
         {!!quoted && (
           <View style={{ marginTop: Spacing.md }}>
             <TouchableOpacity
@@ -770,7 +775,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
               </Animated.View>
             </TouchableOpacity>
             {showQuoted && (
-              <Text style={[s.bodyText, { color: colors.textSecondary, marginTop: 8, paddingLeft: 12, borderLeftWidth: 3, borderLeftColor: colors.borderLight }]}>{quoted}</Text>
+              <Text dataDetectorType="link" style={[s.bodyText, { color: colors.textSecondary, marginTop: 8, paddingLeft: 12, borderLeftWidth: 3, borderLeftColor: colors.borderLight }]}>{quoted}</Text>
             )}
           </View>
         )}
