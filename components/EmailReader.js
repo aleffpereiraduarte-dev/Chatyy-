@@ -63,14 +63,13 @@ if (Platform.OS === 'web' && DOMPurify?.addHook) {
 // event handlers, and dangerous URI schemes (javascript:, vbscript:,
 // data:text/html, data:application/*) so a malicious quoted body can never
 // run code or load an executable data: payload via img/src or href.
-const _regexFallbackSanitize = (html) =>
-  html
+const _regexFallbackSanitize = (html, opts = {}) => {
+  let out = html
     .replace(/<script[\s\S]*?<\/script>/gi, '')
     .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
     .replace(/<embed[\s\S]*?\/?>/gi, '')
     .replace(/<object[\s\S]*?<\/object>/gi, '')
     .replace(/<form[\s\S]*?<\/form>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
     .replace(/<svg[\s\S]*?<\/svg>/gi, '')
     .replace(/<math[\s\S]*?<\/math>/gi, '')
     .replace(/<link[^>]*>/gi, '')
@@ -83,6 +82,15 @@ const _regexFallbackSanitize = (html) =>
     .replace(/vbscript\s*:/gi, '')
     .replace(/data\s*:\s*text\/html/gi, '')
     .replace(/data\s*:\s*application\//gi, '');
+  // <style> is preserved on native (opts.keepStyle): the email body renders in
+  // an ISOLATED WebView/HtmlView, so its CSS cannot leak into the app UI — and
+  // stripping it collapsed styled HTML emails (newsletters/transactional) into
+  // unstyled "broken" blocks. On web (inline DOM render) we still strip it to
+  // avoid CSS leaking into the app chrome. javascript:/vbscript: inside the
+  // style block were already neutralized above.
+  if (!opts.keepStyle) out = out.replace(/<style[\s\S]*?<\/style>/gi, '');
+  return out;
+};
 
 const sanitizeHtml = (html) => {
   if (!html) return html;
@@ -102,8 +110,10 @@ const sanitizeHtml = (html) => {
       FORBID_TAGS: ['style', 'svg', 'math'],
     }) : _regexFallbackSanitize(html);
   }
-  // Mobile: strip dangerous tags and event handlers (DOMPurify requires browser DOM)
-  return _regexFallbackSanitize(html);
+  // Mobile: strip dangerous tags and event handlers (DOMPurify requires browser
+  // DOM). Keep <style> — the body renders in an isolated WebView/HtmlView, so the
+  // email's own CSS can't leak into the app, and dropping it broke styled emails.
+  return _regexFallbackSanitize(html, { keepStyle: true });
 };
 const MEET_LINK_RE = /https?:\/\/(meet\.jit\.si|meet\.onemundo\.com\.br|mail\.onemundo\.com\.br\/meet)\/[\w-]+/g;
 const ONEMUNDO_MEET_RE = /https?:\/\/mail\.onemundo\.com\.br\/meet\/([\w-]+)/;
