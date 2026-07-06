@@ -11635,14 +11635,23 @@ function ChatConversationInner() {
           // Mark as read since user is viewing the conversation (debounced)
           // Store pending msgId so flush-on-unmount can fire it if timer hasn't run yet
           if (msg.sender_email !== currentEmail && msg.id && chatyySettings.read_receipts !== false) {
-            if (readDebounceRef.current) clearTimeout(readDebounceRef.current);
-            const msgId = msg.id;
-            pendingReadMsgIdRef.current = msgId;
-            // [STAGE-E 2026-05-20 GAP#2] WhatsApp parity: blue ticks flip
-            // INSTANT on chat open. Drop 500ms → 0 so the in-band WS read
-            // fires immediately. lastReadAckRef de-dupes the HTTP write.
-            readDebounceRef.current = setTimeout(() => { readDebounceRef.current = null; pendingReadMsgIdRef.current = null; markReadUpTo(msgId); }, 0);
-            if (isScrolledUpRef.current) setNewMsgCount(c => c + 1);
+            if (isScrolledUpRef.current) {
+              // Scrolled up = the new bubble is NOT on screen. WhatsApp only
+              // marks read what's actually visible, so don't fire a blue-tick
+              // receipt here — just bump the "new messages" pill. onViewable-
+              // ItemsChanged acks it when the user scrolls down to it. (Fixes
+              // read receipts sent for messages the user never saw + the
+              // resulting unread-count drift.)
+              setNewMsgCount(c => c + 1);
+            } else {
+              if (readDebounceRef.current) clearTimeout(readDebounceRef.current);
+              const msgId = msg.id;
+              pendingReadMsgIdRef.current = msgId;
+              // [STAGE-E 2026-05-20 GAP#2] WhatsApp parity: blue ticks flip
+              // INSTANT on chat open. Drop 500ms → 0 so the in-band WS read
+              // fires immediately. lastReadAckRef de-dupes the HTTP write.
+              readDebounceRef.current = setTimeout(() => { readDebounceRef.current = null; pendingReadMsgIdRef.current = null; markReadUpTo(msgId); }, 0);
+            }
           }
 
           // Clear typing indicator for sender (they sent a message, they stopped typing)
@@ -11822,7 +11831,11 @@ function ChatConversationInner() {
         // cached file:// URI even after backend strip.
         let priorFileUrl = '';
         setMessages(prev => prev.map(row => {
-          if (row.id !== m.id) return row;
+          // String-coerce: relay-delivered delete ids arrive as strings while
+          // local rows hold numbers (matches onWsEdit/onWsReaction). Without
+          // this the deleted bubble was never tombstoned live — content/media
+          // stayed visible until a manual refetch.
+          if (String(row.id) !== String(m.id)) return row;
           priorFileUrl = row.file_url || '';
           return {
             ...row,
@@ -13338,7 +13351,12 @@ function ChatConversationInner() {
     const hasEveryoneMention = /@(everyone|all|todos)\b/i.test(text);
     if (hasEveryoneMention && conversationType === 'group') {
       const allMemberEmails = (members || []).map(m => m?.email).filter(e => e && e !== currentEmail);
-      currentMentions = [...new Set([...currentMentions, ...allMemberEmails])];
+      // Also send the literal '@everyone' token so the SERVER expands it against
+      // the real current membership (chat.php:294). Without it, a group opened
+      // via a push deep-link before `members` finished loading would notify only
+      // a partial set (or nobody) and the server had no token to recover from.
+      // Server-side expansion is authoritative; the local emails stay as a fast path.
+      currentMentions = [...new Set([...currentMentions, '@everyone', ...allMemberEmails])];
     }
     // @admins — only the group admins (Telegram parity for shorter ping list)
     const hasAdminsMention = /@(admins|admin)\b/i.test(text);
