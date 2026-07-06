@@ -33,6 +33,7 @@ import {
   IconFlag, IconLogOut, IconCheck, IconRefresh,
 } from '../components/Icons';
 import * as api from '../services/api';
+import FadeSlideIn from '../components/FadeSlideIn';
 
 const PAGE = 100;
 
@@ -423,6 +424,7 @@ export default function ActivityLogScreen() {
           <ActivityIndicator color={colors.primary} />
         </View>
       ) : (
+        <FadeSlideIn>
         <FlatList
           data={listData}
           keyExtractor={i => i.key || String(i.id || Math.random())}
@@ -443,6 +445,7 @@ export default function ActivityLogScreen() {
           }
           contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}
         />
+        </FadeSlideIn>
       )}
     </View>
   );

@@ -7,6 +7,8 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconShield, IconMonitor, IconSmartphone, IconCamera, IconUserPlus, IconX } from '../components/Icons';
 import * as api from '../services/api';
 import { loadDeviceRegistry, installAppStateHook } from '../services/deviceRegistry';
+import FadeSlideIn from '../components/FadeSlideIn';
+import PressableScale from '../components/PressableScale';
 
 // Lazy-load expo-camera so web doesn't crash if it's not bundled. Same
 // pattern as profile-qr.js / chat-new.js.
@@ -307,6 +309,7 @@ export default function LinkedDevicesScreen() {
         <Text style={styles.title} numberOfLines={1}>{t('devices.title') || 'Linked devices'}</Text>
       </View>
 
+      <FadeSlideIn>
       <View style={[styles.hero, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : 'rgba(124,58,237,0.06)' }]}>
         <IconShield size={40} color="#7C3AED" />
         <Text style={[styles.heroTitle, { color: colors.text }]}>
@@ -325,7 +328,7 @@ export default function LinkedDevicesScreen() {
           confirms the link from here. WhatsApp/Telegram offer both
           directions; we mirror that. */}
       <View style={styles.ctaRow}>
-        <TouchableOpacity
+        <PressableScale
           style={[styles.ctaBtn, { backgroundColor: '#7C3AED' }]}
           onPress={() => router.push('/companion-qr')}
         >
@@ -333,7 +336,7 @@ export default function LinkedDevicesScreen() {
           <Text style={styles.ctaBtnText}>
             {t('devices.linkAnotherPhone') || 'Vincular outro celular'}
           </Text>
-        </TouchableOpacity>
+        </PressableScale>
         <TouchableOpacity
           style={[styles.ctaBtn, styles.ctaBtnSecondary, { borderColor: '#7C3AED' }]}
           onPress={openScanner}
@@ -378,6 +381,7 @@ export default function LinkedDevicesScreen() {
           )}
         </>
       )}
+      </FadeSlideIn>
 
       {/* Camera-scan modal for the "I want to scan another phone" flow. We
           keep this inline (rather than a separate route) so the busy state +

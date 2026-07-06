@@ -6,6 +6,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconStar, IconMessageSquare, IconBookmark, IconArrowRight } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import FadeSlideIn from '../components/FadeSlideIn';
 import * as api from '../services/api';
 
 // Unified "Salvas | Favoritas" screen (E.3).
@@ -103,6 +104,7 @@ export default function StarredMessagesScreen() {
         </TouchableOpacity>
       </View>
 
+      <FadeSlideIn>
       {tab === 'saved' ? (
         <View style={styles.savedPane}>
           <Text style={[styles.paneExplain, { color: colors.secondaryText }]}>
@@ -178,6 +180,7 @@ export default function StarredMessagesScreen() {
           )}
         />
       )}
+      </FadeSlideIn>
     </View>
   );
 }

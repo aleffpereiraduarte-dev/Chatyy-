@@ -8,6 +8,8 @@ import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
 import AvatarCircle from '../components/AvatarCircle';
 import AccountSwitcherSheet from '../components/AccountSwitcherSheet';
+import FadeSlideIn from '../components/FadeSlideIn';
+import PressableScale from '../components/PressableScale';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -1237,7 +1239,7 @@ function SettingsScreenInner() {
           <IconArrowLeft size={24} color={colors.textSecondary} />
         </TouchableOpacity>
         <Text style={[s.headerTitle, { color: colors.text }]} numberOfLines={1}>{t('settings.title')}</Text>
-        <TouchableOpacity
+        <PressableScale
           style={[s.saveBtn, { backgroundColor: colors.primary }, saving && s.saveBtnDisabled]}
           onPress={handleSave}
           disabled={saving}
@@ -1247,12 +1249,13 @@ function SettingsScreenInner() {
           ) : (
             <Text style={s.saveBtnText}>{saved ? t('settings.saved') : t('settings.save')}</Text>
           )}
-        </TouchableOpacity>
+        </PressableScale>
       </View>
 
       {loading ? (
         <SettingsSkeleton sections={4} rows={3} />
       ) : (
+      <FadeSlideIn>
       <ScrollView ref={scrollRef} contentContainerStyle={s.scroll}>
         {/* Search bar — filtra sections em tempo real por título/label.
             Empty query mostra tudo; clear (✕) reseta. Sticky-ish topo da
@@ -4235,6 +4238,7 @@ function SettingsScreenInner() {
         </View>
         )}
       </ScrollView>
+      </FadeSlideIn>
       )}
 
       <FilterRuleEditor visible={showFilters} onClose={() => setShowFilters(false)} />

@@ -6,6 +6,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
+import FadeSlideIn from '../components/FadeSlideIn';
 import { IconArrowLeft, IconSearch, IconStar, IconCheck } from '../components/Icons';
 import { emailToDisplayName } from '../services/api';
 
@@ -92,6 +93,7 @@ export default function CloseFriendsScreen() {
         <IconStar size={22} color="#22C55E" />
       </View>
 
+      <FadeSlideIn>
       <View style={{ padding: 12 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: isDark ? '#222' : '#f1f5f9', borderRadius: 12, paddingHorizontal: 12 }}>
           <IconSearch size={18} color={colors.textSecondary} />
@@ -145,6 +147,7 @@ export default function CloseFriendsScreen() {
           }
         />
       )}
+      </FadeSlideIn>
     </View>
   );
 }

@@ -27,6 +27,8 @@ import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconLock, IconKey, IconTrash, IconShare, IconCheck } from '../components/Icons';
 import { pgpKeyUpload, pgpKeyDelete, pgpKeyGet } from '../services/api';
 import ModalHeader from '../components/ModalHeader';
+import FadeSlideIn from '../components/FadeSlideIn';
+import PressableScale from '../components/PressableScale';
 import * as SecureStore from 'expo-secure-store';
 import * as Clipboard from 'expo-clipboard';
 
@@ -153,6 +155,7 @@ export default function PgpKeysScreen() {
   return (
     <View style={[s.root, { backgroundColor: colors.background }]}>
       <ModalHeader title={t('pgp.title') || 'Chave PGP'} onClose={() => router.back()} />
+      <FadeSlideIn>
       <ScrollView contentContainerStyle={{ padding: Spacing.lg, paddingBottom: 80 }}>
         <Text style={[s.intro, { color: colors.textSecondary }]}>
           {t('pgp.intro') || 'Gere uma chave OpenPGP pra trocar emails criptografados ponta-a-ponta. A chave privada nunca sai do seu aparelho.'}
@@ -220,7 +223,7 @@ export default function PgpKeysScreen() {
                 value={confirmPassphrase}
                 onChangeText={setConfirmPassphrase}
               />
-              <TouchableOpacity
+              <PressableScale
                 disabled={busy}
                 style={[s.primaryBtn, { backgroundColor: colors.primary, opacity: busy ? 0.7 : 1 }]}
                 onPress={generate}
@@ -231,11 +234,12 @@ export default function PgpKeysScreen() {
                     <Text style={s.primaryBtnLabel}>{t('pgp.generate') || 'Gerar chave PGP'}</Text>
                   </>
                 )}
-              </TouchableOpacity>
+              </PressableScale>
             </View>
           </>
         )}
       </ScrollView>
+      </FadeSlideIn>
     </View>
   );
 }

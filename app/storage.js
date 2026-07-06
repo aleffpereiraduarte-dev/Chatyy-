@@ -21,6 +21,8 @@ import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { IconArrowLeft, IconCloud, IconDatabase, IconRefresh } from '../components/Icons';
 import StorageShopSheet from '../components/StorageShopSheet';
+import FadeSlideIn from '../components/FadeSlideIn';
+import PressableScale from '../components/PressableScale';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED } from '../constants/featureFlags';
 
@@ -127,6 +129,7 @@ export default function StorageScreen() {
         </TouchableOpacity>
       </View>
 
+      <FadeSlideIn>
       <ScrollView
         contentContainerStyle={{ paddingBottom: (insets.bottom || 0) + 24 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.tint} />}
@@ -209,7 +212,7 @@ export default function StorageScreen() {
             )}
 
             {MONETIZATION_ENABLED && (
-              <TouchableOpacity
+              <PressableScale
                 onPress={onShopOpen}
                 style={[styles.upgradeBtn, { backgroundColor: colors.tint || '#0a84ff' }]}
                 activeOpacity={0.85}
@@ -220,7 +223,7 @@ export default function StorageScreen() {
                     ? (t('storage.changeTier') || 'Mudar plano')
                     : (t('storage.upgrade') || 'Aumentar armazenamento')}
                 </Text>
-              </TouchableOpacity>
+              </PressableScale>
             )}
 
             <TouchableOpacity
@@ -240,6 +243,7 @@ export default function StorageScreen() {
           </>
         )}
       </ScrollView>
+      </FadeSlideIn>
 
       {/* [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag */}
       {MONETIZATION_ENABLED && (

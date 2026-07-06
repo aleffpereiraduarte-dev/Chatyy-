@@ -33,6 +33,8 @@ import {
   IconArrowLeft, IconPhone, IconPlus, IconTrash, IconX, IconCheck,
   IconChevronRight,
 } from '../components/Icons';
+import FadeSlideIn from '../components/FadeSlideIn';
+import PressableScale from '../components/PressableScale';
 
 export default function LinkedPhones() {
   const router = useRouter();
@@ -241,6 +243,7 @@ export default function LinkedPhones() {
         <View style={s.headerBtn} />
       </View>
 
+      <FadeSlideIn>
       <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
         <Text style={[s.intro, { color: colors.textSecondary }]}>
           {t('linkedPhones.intro') || 'Adicione números secundários para serem encontrado por mais pessoas.'}
@@ -263,15 +266,16 @@ export default function LinkedPhones() {
           </View>
         )}
 
-        <TouchableOpacity
+        <PressableScale
           onPress={() => setAddOpen(true)}
           style={[s.addBtn, { backgroundColor: '#7C3AED' }]}
           activeOpacity={0.85}
         >
           <IconPlus size={18} color="#fff" />
           <Text style={s.addBtnText}>{t('linkedPhones.add') || 'Adicionar número'}</Text>
-        </TouchableOpacity>
+        </PressableScale>
       </ScrollView>
+      </FadeSlideIn>
 
       {/* Add modal */}
       <Modal visible={addOpen} animationType="slide" transparent onRequestClose={closeAdd}>
