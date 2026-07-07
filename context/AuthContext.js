@@ -1155,6 +1155,18 @@ export function AuthProvider({ children }) {
     const _clearChat = await getLazyClearChatCache(); await _clearChat();
     setCacheUser(data?.email);
     setUser(data);
+    // Register the challenge-login account into the switcher + active marker
+    // (parity with login()/loginWithToken(); this path skipped it, so the
+    // account was missing from the switcher and an offline restart hit the
+    // /login bounce). Also drop any stale SWR from a prior identity.
+    try {
+      const _tok = (data?.token || api.getAuthToken?.() || '').toString();
+      if (_tok && data?.email) {
+        api.upsertAccount(data.email, _tok, data.name || data.email);
+        api.setActiveAccountEmail(data.email);
+      }
+      api.swrInvalidate();
+    } catch {}
     loadAccounts();
     registerPushAfterAuth();
     _bootSyncEngines();
@@ -1331,6 +1343,19 @@ export function AuthProvider({ children }) {
       await clearLocalChatStoreFailClosed();
       setCacheUser(r.data?.email);
       setUser(r.data);
+      // Register the new account into the switcher + active marker (login()/
+      // loginWithToken() do this; signup didn't — so the fresh account was
+      // missing from the account switcher AND an offline cold-restart, finding
+      // no active marker, bounced a fully-valid session to /login). Also drop
+      // any stale SWR from a prior identity. upsertAccount is idempotent.
+      try {
+        const _tok = (r.data?.token || api.getAuthToken?.() || '').toString();
+        if (_tok && r.data?.email) {
+          api.upsertAccount(r.data.email, _tok, r.data.name || r.data.email);
+          api.setActiveAccountEmail(r.data.email);
+        }
+        api.swrInvalidate();
+      } catch {}
       loadAccounts();
       registerPushAfterAuth();
     }

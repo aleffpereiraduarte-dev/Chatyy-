@@ -15509,12 +15509,36 @@ function ChatConversationInner() {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...noteMsg, _pending: false, sender_email: noteMsg.sender_email || m.sender_email || currentEmail } : m));
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, noteMsg, tempId, getMemberEmails()); } catch {}
       } else {
-        // Mark optimistic bubble as failed; user can long-press → retry.
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m));
-        safeAlert(t('common.error') || 'Error', r?.message || t('chatConv.sendFailed') || 'Failed to send');
+        // Queue for auto-retry on reconnect (parity with photo/audio) — before
+        // this the note was silently LOST if the app closed. Reuses the proven
+        // chat_file_upload replay path with msg_type='video_note'. We queue the
+        // ORIGINAL file.uri (not the compressed cache-dir copy iOS can purge →
+        // 404 on a delayed replay).
+        try {
+          const { queueOfflineAction } = require('../services/offlineCache');
+          await queueOfflineAction({
+            type: 'chat_file_upload', conversation_id: conversationId,
+            uri: file.uri, name: file.name || '', file_type: file.type || 'video/mp4',
+            msg_type: 'video_note', client_message_id: clientId, temp_id: tempId, caption: '',
+          });
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _uploading: false } : m));
+        } catch {
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m));
+          safeAlert(t('common.error') || 'Error', r?.message || t('chatConv.sendFailed') || 'Failed to send');
+        }
       }
     } catch (e) {
-      setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m));
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        await queueOfflineAction({
+          type: 'chat_file_upload', conversation_id: conversationId,
+          uri: file.uri, name: file.name || '', file_type: file.type || 'video/mp4',
+          msg_type: 'video_note', client_message_id: clientId, temp_id: tempId, caption: '',
+        });
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _uploading: false } : m));
+      } catch {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _uploading: false } : m));
+      }
     } finally {
       if (mountedRef.current) {
         setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
