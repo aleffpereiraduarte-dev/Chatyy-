@@ -472,6 +472,17 @@ export async function replayOfflineQueue(api) {
   // overtaking message #2 when #2 hits a transient error.
   const blockedConvIds = new Set();
 
+  // Head-of-line across backoff: if a conversation has an earlier message
+  // still waiting out its retry backoff (notDue, skipped this pass), every
+  // DUE message in that same conversation must wait too — otherwise a later
+  // message sends now and overtakes the earlier one the recipient never got.
+  // Seed the block set from notDue message-producing actions before the loop.
+  for (const a of notDue) {
+    if ((a.type === 'chat_send' || a.type === 'chat_file_upload' || a.type === 'chat_voice_upload') && a.conversation_id) {
+      blockedConvIds.add(a.conversation_id);
+    }
+  }
+
   for (const action of due) {
     // Head-of-line: block every later message-producing action (text OR media)
     // for a conversation once an earlier one failed this pass — keeps photo+text
@@ -717,7 +728,10 @@ export async function replayOfflineQueue(api) {
                 action.msgType || 'text',
                 action.reply_to_id,
                 action.mentions || null,
-                null,
+                // fileUrl — MUST forward the queued media URL. A captioned GIF
+                // (content=caption, file_url=tenorUrl) or image-sticker loses
+                // its media entirely if this replays as null.
+                action.file_url ?? null,
                 action.temp_id,
                 action.client_message_id,
                 action.topic_id || null,
@@ -1313,8 +1327,18 @@ export async function replayOfflineQueue(api) {
     }
   }
 
-  // Save only failed actions + still-backing-off entries back to queue
-  setJSON(QUEUE_KEY, [...failedFromBackoff, ...failedActions]);
+  // Persist failed + still-backing-off entries — BUT preserve any actions that
+  // were enqueued DURING this replay. The snapshot at the top (`queue`) is
+  // stale: `queueOfflineAction` runs on the live send path (not under the
+  // replay mutex) and appends to QUEUE_KEY across the many awaits above. A
+  // blind overwrite here would silently drop those new sends (never sent,
+  // never queued, no failure bubble). Re-read the live queue and keep only
+  // entries whose id wasn't in our snapshot — those are the fresh arrivals.
+  const snapshotIds = new Set(queue.map(a => a && a.id).filter(Boolean));
+  let liveNow = [];
+  try { liveNow = getJSON(QUEUE_KEY) || []; } catch {}
+  const newArrivals = liveNow.filter(a => a && a.id && !snapshotIds.has(a.id));
+  setJSON(QUEUE_KEY, [...failedFromBackoff, ...failedActions, ...newArrivals]);
   return { replayed, failed };
   })().finally(() => { _replayInFlight = null; });
   return _replayInFlight;

@@ -1604,6 +1604,13 @@ export function AuthProvider({ children }) {
             // setUser, and fail-closed so a throwing clear holds the cache
             // scope locked rather than painting the prior account's rows.
             await clearLocalChatStoreFailClosed();
+            // P0 PRIVACY: the api.js SWR memory cache (get_profile, contacts,
+            // feed_list, chat_list…) is keyed by action+params with NO account
+            // component, and is only cleared on logout — NOT on switch. Without
+            // this, the switched-to account reads the previous account's cached
+            // API responses for up to the SWR TTL (~60s). Clear it here, in the
+            // same wipe cluster, before setUser paints the new account.
+            try { api.swrInvalidate(); } catch {}
             setCacheUser(check.data.email);
             setUser(check.data);
             // SECURITY (P1): identity changed → force the biometric app-lock

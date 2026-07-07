@@ -1080,7 +1080,13 @@ if (typeof window !== 'undefined' && typeof sessionStorage !== 'undefined') {
 }
 
 export function swrInvalidate(action, params) {
-  if (!action) { _swrCache.clear(); return; }
+  if (!action) {
+    _swrCache.clear();
+    // Also drop the web persistence copy so an account switch / re-login in
+    // the same browser tab can't restore the previous user's cached responses.
+    try { if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(_SWR_PERSIST_KEY); } catch {}
+    return;
+  }
   if (params === undefined) {
     for (const k of _swrCache.keys()) if (k.startsWith(action + '|')) _swrCache.delete(k);
     return;
