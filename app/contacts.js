@@ -26,6 +26,8 @@ import {
 import AvatarCircle from '../components/AvatarCircle';
 import SwipeAction from '../components/SwipeAction';
 import ScreenEmptyState from '../components/ScreenEmptyState';
+import FadeSlideIn from '../components/FadeSlideIn';
+import PressableScale from '../components/PressableScale';
 
 // Try to import expo-contacts (available on native, unavailable on web)
 let Contacts = null;
@@ -1307,7 +1309,7 @@ function ContactsScreenInner() {
           {t('contacts.title')}{contacts.length > 0 ? ` (${contacts.length})` : ''}
         </Text>
         <View style={{ flexDirection: 'row', gap: 4 }}>
-          <TouchableOpacity
+          <PressableScale
             onPress={() => { setForm({ name: '', email: '', phone: '', group: '', notes: '', favorite: false }); setEditContact(null); setShowAdd(true); }}
             style={[s.addBtn, { backgroundColor: colors.primary + '14', borderRadius: 18, width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }]}
             activeOpacity={0.7}
@@ -1315,7 +1317,7 @@ function ContactsScreenInner() {
             accessibilityRole="button"
           >
             <IconPlus size={20} color={colors.primary} />
-          </TouchableOpacity>
+          </PressableScale>
         </View>
       </View>
 
@@ -1438,6 +1440,7 @@ function ContactsScreenInner() {
       )}
 
       {/* Content */}
+      <FadeSlideIn>
       {loadError && contacts.length === 0 ? (
         <View style={s.emptyContainer}>
           <View style={[s.emptyIconCircle, { backgroundColor: isDark ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.08)' }]}>
@@ -1546,6 +1549,7 @@ function ContactsScreenInner() {
           contentContainerStyle={s.list}
         />
       )}
+      </FadeSlideIn>
 
       {/* Add/Edit Modal */}
       <Modal visible={showAdd} animationType="slide" transparent>

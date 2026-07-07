@@ -12,6 +12,7 @@ import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
+import FadeSlideIn from '../components/FadeSlideIn';
 import CreatePostModal from '../components/CreatePostModal';
 import UnifiedComposeFab from '../components/UnifiedComposeFab';
 import LikersSheet from '../components/LikersSheet';
@@ -298,6 +299,7 @@ export default function SpotlightScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000' }}>
+      <FadeSlideIn>
       <FlatList
         data={posts}
         keyExtractor={(item, i) => String(item.id || i)}
@@ -341,6 +343,7 @@ export default function SpotlightScreen() {
           ) : null
         }
       />
+      </FadeSlideIn>
 
       {/* Header — just back button + title, no "+" (UnifiedComposeFab
           at bottom-right handles creation now). Stops the user seeing

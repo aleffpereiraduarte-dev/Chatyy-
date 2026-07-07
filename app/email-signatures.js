@@ -24,6 +24,8 @@ import { IconPlus, IconTrash, IconEdit, IconCheck } from '../components/Icons';
 import { apiCall } from '../services/api';
 import BrandFab from '../components/BrandFab';
 import ModalHeader from '../components/ModalHeader';
+import FadeSlideIn from '../components/FadeSlideIn';
+import PressableScale from '../components/PressableScale';
 
 export default function EmailSignaturesScreen() {
   const router = useRouter();
@@ -110,6 +112,7 @@ export default function EmailSignaturesScreen() {
         onClose={() => editing ? reset() : router.back()}
       />
 
+      <FadeSlideIn>
       {editing ? (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 40 }}>
           <Text style={[s.label, { color: colors.textSecondary }]}>
@@ -151,10 +154,10 @@ export default function EmailSignaturesScreen() {
             <Switch value={isDefault} onValueChange={setIsDefault} trackColor={{ true: colors.primary, false: colors.border }} />
           </View>
 
-          <TouchableOpacity onPress={handleSave} style={[s.cta, { backgroundColor: '#7C3AED' }]}>
+          <PressableScale onPress={handleSave} style={[s.cta, { backgroundColor: '#7C3AED' }]}>
             <IconCheck size={18} color="#fff" />
             <Text style={s.ctaText}>{t('common.save') || 'Salvar'}</Text>
-          </TouchableOpacity>
+          </PressableScale>
         </ScrollView>
       ) : (
         <>
@@ -243,6 +246,7 @@ export default function EmailSignaturesScreen() {
           </BrandFab>
         </>
       )}
+      </FadeSlideIn>
     </View>
   );
 }

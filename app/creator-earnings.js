@@ -32,6 +32,8 @@ import {
   IconArrowLeft, IconGiftBox, IconHeart, IconChevronRight, IconStar,
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import FadeSlideIn from '../components/FadeSlideIn';
+import PressableScale from '../components/PressableScale';
 import { formatInt } from '../utils/dateFormat';
 
 const MIN_CASHOUT_CENTS = 5000;
@@ -221,6 +223,7 @@ export default function CreatorEarningsScreen() {
           <ActivityIndicator color={BRAND_GREEN} size="large" />
         </View>
       ) : (
+        <FadeSlideIn>
         <ScrollView
           contentContainerStyle={{ paddingHorizontal: 14, paddingBottom: 60 }}
           showsVerticalScrollIndicator={false}
@@ -240,7 +243,7 @@ export default function CreatorEarningsScreen() {
             <Text style={[styles.heroSub, { color: colors.textTertiary }]} numberOfLines={2}>
               {t('creatorEarnings.heroSub') || 'Receba via PIX em até 48h úteis. Mínimo R$ 50,00.'}
             </Text>
-            <TouchableOpacity
+            <PressableScale
               onPress={() => router.push('/wallet-cashout')}
               disabled={!canCashout}
               style={[styles.cashoutCta, {
@@ -252,7 +255,7 @@ export default function CreatorEarningsScreen() {
               <Text style={styles.cashoutCtaText}>
                 {t('creatorEarnings.cashoutCta') || 'Solicitar saque'}
               </Text>
-            </TouchableOpacity>
+            </PressableScale>
             {!canCashout && data.pending_payout_cents > 0 ? (
               <Text style={[styles.cashoutHint, { color: colors.textTertiary }]} numberOfLines={2}>
                 {(t('creatorEarnings.cashoutHint') || 'Faltam R$ {missing} para sacar.')
@@ -358,6 +361,7 @@ export default function CreatorEarningsScreen() {
             {t('creatorEarnings.tos') || 'Você recebe 70% do valor de cada presente. Os 30% restantes cobrem taxas de plataforma e processamento de IAP.'}
           </Text>
         </ScrollView>
+        </FadeSlideIn>
       )}
     </View>
   );

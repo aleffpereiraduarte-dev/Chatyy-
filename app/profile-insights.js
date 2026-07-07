@@ -13,6 +13,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import * as api from '../services/api';
 import { IconArrowLeft } from '../components/Icons';
+import FadeSlideIn from '../components/FadeSlideIn';
 
 // Compact 7-point sparkline. Pure SVG — works on web + native, no native
 // chart lib needed. Falls back to a dashed baseline when all values are 0
@@ -116,6 +117,7 @@ export default function ProfileInsightsScreen() {
           <ActivityIndicator color={accent} />
         </View>
       ) : (
+        <FadeSlideIn>
         <ScrollView contentContainerStyle={styles.scrollBody} showsVerticalScrollIndicator={false}>
           <Card
             title={t?.('profile.viewsLast7d') || 'Visualizações do perfil (7d)'}
@@ -136,6 +138,7 @@ export default function ProfileInsightsScreen() {
             color="#F59E0B"
           />
         </ScrollView>
+        </FadeSlideIn>
       )}
     </View>
   );

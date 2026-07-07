@@ -19,6 +19,8 @@ import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconCheck, IconCheckbox, IconCheckboxChecked, IconPlus, IconTrash, IconMail } from '../components/Icons';
 import { taskList, taskCreate, taskUpdate, taskDelete } from '../services/api';
 import ModalHeader from '../components/ModalHeader';
+import FadeSlideIn from '../components/FadeSlideIn';
+import PressableScale from '../components/PressableScale';
 
 const FILTERS = [
   { key: 'pending', label: 'Pendentes' },
@@ -151,15 +153,16 @@ export default function TasksScreen() {
           onSubmitEditing={addTask}
           returnKeyType="done"
         />
-        <TouchableOpacity
+        <PressableScale
           disabled={adding || !newTitle.trim()}
           onPress={addTask}
           style={[s.addBtn, { backgroundColor: colors.primary, opacity: adding || !newTitle.trim() ? 0.4 : 1 }]}
         >
           {adding ? <ActivityIndicator color="#fff" size="small" /> : <IconPlus size={18} color="#fff" />}
-        </TouchableOpacity>
+        </PressableScale>
       </View>
 
+      <FadeSlideIn>
       {loading ? (
         <View style={{ padding: 30 }}><ActivityIndicator color={colors.primary} /></View>
       ) : (
@@ -175,6 +178,7 @@ export default function TasksScreen() {
           contentContainerStyle={{ paddingBottom: 60 }}
         />
       )}
+      </FadeSlideIn>
     </View>
   );
 }

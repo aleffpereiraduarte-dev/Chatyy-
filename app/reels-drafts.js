@@ -29,6 +29,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useLanguage } from '../context/LanguageContext';
 import { IconX, IconTrash } from '../components/Icons';
+import FadeSlideIn from '../components/FadeSlideIn';
 import { REEL_DRAFTS_KEY } from './reels-recorder';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -168,6 +169,7 @@ export default function ReelsDraftsScreen() {
           </Text>
         </View>
       ) : (
+        <FadeSlideIn>
         <FlatList
           data={drafts}
           keyExtractor={(item) => item.id}
@@ -177,6 +179,7 @@ export default function ReelsDraftsScreen() {
           ItemSeparatorComponent={() => <View style={{ height: TILE_GAP }} />}
           contentContainerStyle={{ paddingTop: TILE_GAP, paddingBottom: insets.bottom + 20 }}
         />
+        </FadeSlideIn>
       )}
     </View>
   );

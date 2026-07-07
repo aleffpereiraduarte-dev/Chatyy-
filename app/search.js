@@ -8,6 +8,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconSearch, IconX, IconHash, IconVideo, IconMusic } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
+import FadeSlideIn from '../components/FadeSlideIn';
 import * as api from '../services/api';
 
 const ACCENT = '#7C3AED';
@@ -407,10 +408,12 @@ export default function SearchScreen() {
         </View>
       )}
 
-      {tab === 'people' && renderPeople()}
-      {tab === 'hashtags' && renderHashtags()}
-      {tab === 'sounds' && renderSounds()}
-      {tab === 'lives' && renderLives()}
+      <FadeSlideIn>
+        {tab === 'people' && renderPeople()}
+        {tab === 'hashtags' && renderHashtags()}
+        {tab === 'sounds' && renderSounds()}
+        {tab === 'lives' && renderLives()}
+      </FadeSlideIn>
     </View>
   );
 }

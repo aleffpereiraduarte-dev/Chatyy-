@@ -27,6 +27,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { IconCheck } from '../components/Icons';
+import FadeSlideIn from '../components/FadeSlideIn';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { apiCall } from '../services/api';
@@ -228,6 +229,7 @@ export default function NotificationPreferences() {
         <View style={s.backBtn} />
       </View>
 
+      <FadeSlideIn>
       <ScrollView style={s.scroll} contentContainerStyle={{ paddingBottom: 40 }}>
         {/* ─── Mention-only ──────────────────────────────────────────── */}
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
@@ -426,6 +428,7 @@ export default function NotificationPreferences() {
           })}
         </View>
       </ScrollView>
+      </FadeSlideIn>
 
       {/* Sound picker modal — full bottom sheet so all 16 options are
           scrollable on small phones. */}

@@ -29,6 +29,7 @@ import * as proxyCfg from '../services/proxyConfig';
 import * as screenGate from '../services/screenCaptureGate';
 import * as vpnDetect from '../services/vpnDetect';
 import * as api from '../services/api';
+import FadeSlideIn from '../components/FadeSlideIn';
 
 export default function AdvancedPrivacyScreen() {
   const { colors } = useTheme();
@@ -101,6 +102,7 @@ export default function AdvancedPrivacyScreen() {
         </Text>
       </View>
 
+      <FadeSlideIn>
       <ScrollView contentContainerStyle={styles.scrollContent}>
 
         {/* VPN suggestion (auto-hidden if user already on VPN) */}
@@ -200,6 +202,7 @@ export default function AdvancedPrivacyScreen() {
         </Section>
 
       </ScrollView>
+      </FadeSlideIn>
     </View>
   );
 }

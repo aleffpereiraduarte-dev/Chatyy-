@@ -15,6 +15,8 @@ import { formatBytes } from '../services/format';
 import { safeAlert } from '../services/alerts';
 import { mapApiError } from '../services/errorMap';
 import AvatarCircle from '../components/AvatarCircle';
+import FadeSlideIn from '../components/FadeSlideIn';
+import PressableScale from '../components/PressableScale';
 import {
   IconArrowLeft, IconUpload, IconCheck, IconTrash, IconShield, IconLock, IconRefresh,
 } from '../components/Icons';
@@ -479,6 +481,7 @@ export default function BackupScreen() {
         </TouchableOpacity>
       </View>
 
+      <FadeSlideIn>
       <ScrollView contentContainerStyle={[s.scrollContent, { alignItems: 'center' }]} showsVerticalScrollIndicator={false}>
         <View style={{ width: contentWidth, maxWidth: '100%', paddingHorizontal: Spacing.lg }}>
 
@@ -775,7 +778,7 @@ export default function BackupScreen() {
             )}
             {/* Action row */}
             <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
-              <TouchableOpacity
+              <PressableScale
                 onPress={handleSnapshotNow}
                 disabled={snapshotBusy}
                 style={{ flex: 1, minWidth: 140, height: 42, borderRadius: 10, backgroundColor: ACCENT, alignItems: 'center', justifyContent: 'center', opacity: snapshotBusy ? 0.6 : 1 }}
@@ -784,17 +787,17 @@ export default function BackupScreen() {
                 {snapshotBusy
                   ? <ActivityIndicator color="#fff" />
                   : <Text style={{ color: '#fff', fontWeight: '700' }}>{t('backup.snapshotNow') || 'Fazer backup agora'}</Text>}
-              </TouchableOpacity>
+              </PressableScale>
               {snapshot.has_backup && (
                 <>
-                  <TouchableOpacity
+                  <PressableScale
                     onPress={handleSnapshotRestore}
                     disabled={snapshotBusy}
                     style={{ minWidth: 110, height: 42, paddingHorizontal: 14, borderRadius: 10, backgroundColor: isDark ? 'rgba(96,165,250,0.15)' : 'rgba(37,99,235,0.1)', alignItems: 'center', justifyContent: 'center' }}
                     accessibilityRole="button"
                   >
                     <Text style={{ color: ACCENT, fontWeight: '700' }}>{t('backup.snapshotRestore') || 'Restaurar'}</Text>
-                  </TouchableOpacity>
+                  </PressableScale>
                   <TouchableOpacity
                     onPress={handleSnapshotDelete}
                     disabled={snapshotBusy}
@@ -883,6 +886,7 @@ export default function BackupScreen() {
           )}
         </View>
       </ScrollView>
+      </FadeSlideIn>
 
       {/* E2E Password Modal */}
       <Modal visible={showE2eModal} animationType="slide" transparent onRequestClose={() => setShowE2eModal(false)}>

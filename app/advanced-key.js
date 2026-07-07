@@ -22,6 +22,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconArrowLeft, IconShield, IconCopy, IconTrash, IconCheck, IconAlertTriangle } from '../components/Icons';
+import FadeSlideIn from '../components/FadeSlideIn';
 import * as byok from '../services/byok';
 
 export default function AdvancedKeyScreen() {
@@ -274,6 +275,7 @@ export default function AdvancedKeyScreen() {
           {t('byok.title') || 'Chave avançada'}
         </Text>
       </View>
+      <FadeSlideIn>
       <ScrollView contentContainerStyle={{ padding: Spacing.md, paddingBottom: 32 }}>
         {existing === null ? <ActivityIndicator color={colors.primary} style={{ marginTop: 48 }} /> :
           phase === 'idle' ? renderIdle() :
@@ -281,6 +283,7 @@ export default function AdvancedKeyScreen() {
           phase === 'confirm' ? renderConfirm() :
           renderDone()}
       </ScrollView>
+      </FadeSlideIn>
     </View>
   );
 }
