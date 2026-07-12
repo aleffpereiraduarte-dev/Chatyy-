@@ -837,7 +837,12 @@ export default function ChatNewScreen() {
     // yourself must open "Saved Messages" (WhatsApp parity), NOT chat_create,
     // which the server correctly rejects with 400 "Cannot create a chat with
     // yourself" (chat.php:3007) → console error + stuck spinner.
-    const _me = String((api.getActiveAccountEmail?.() || api.getSavedEmail?.() || '')).trim().toLowerCase();
+    // [2026-07-12 QA] Prefer the MailContext/useAuth `user.email` — on WEB the
+    // getActiveAccountEmail()/getSavedEmail() cache is empty (cookie session), so
+    // the self-check missed and chat_create fired → server 400 "yourself" logged
+    // to console (QA robot: click "AD Aleff" → 400). user.email is the same
+    // source the suggestions list already filters self by (line ~304).
+    const _me = String((user?.email || api.getActiveAccountEmail?.() || api.getSavedEmail?.() || '')).trim().toLowerCase();
     if (_me && em === _me) {
       try {
         const rs = await api.chatSaved();
