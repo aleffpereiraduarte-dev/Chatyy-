@@ -36,6 +36,16 @@ const _nativeSaveEmails = (folder, emails) => {
   try { _NativeCache.saveEmails(folder, emails); } catch {}
 };
 
+// Sort key for an email list row (newest = larger). Within a folder the IMAP
+// UID is monotonic (higher = newer), so caller prefers UID; this is the date
+// fallback for the rare row without a numeric UID.
+const _emailDateKey = (e) => {
+  if (!e) return -Infinity;
+  if (Number.isFinite(e.date_ts)) return e.date_ts;
+  const t = e.date ? Date.parse(e.date) : NaN;
+  return Number.isFinite(t) ? t : -Infinity;
+};
+
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -185,6 +195,14 @@ export function MailProvider({ children }) {
 
   // Track recently-read UIDs to prevent seen state from reverting (IMAP flag lag)
   const recentlyReadRef = useRef(new Set());
+  // Track recently-ARRIVED UIDs (uid -> ts) prepended by the new_email WS
+  // handler, so a silent refresh doesn't DROP a just-arrived email when the
+  // server's IMAP page-1 view hasn't indexed it yet (list flicker fix).
+  const recentlyArrivedRef = useRef(new Map());
+  // In-memory Map<folder, rows[]> retaining each folder's last rows across
+  // switches, so changeFolder can paint instantly instead of showing the
+  // previous folder's rows under the new header (instant folder switch fix).
+  const folderRowsRef = useRef(new Map());
   // Tracks the folder+query of the last loadEmails call so we can force page 1
   // when either changes (prevents requesting a non-existent page after a
   // folder/search switch). Seeded to the initial folder.
@@ -221,6 +239,14 @@ export function MailProvider({ children }) {
 
   // Keep folder ref in sync
   useEffect(() => { folderRef.current = currentFolder; }, [currentFolder]);
+
+  // Remember each folder's current rows in-memory so returning to a
+  // previously-visited folder is instant (FIX: instant folder switch). Skip
+  // while a search is active — search results are not the folder's canonical
+  // list. Covers every mutation path (network load, silent merge, WS prepend).
+  useEffect(() => {
+    if (!search) folderRowsRef.current.set(currentFolder, emails);
+  }, [emails, currentFolder, search]);
 
   // Reset all state (used when switching accounts)
   const resetMailState = useCallback(() => {
@@ -316,8 +342,9 @@ export function MailProvider({ children }) {
             )) {
               return prev; // No change — skip re-render entirely
             }
-            // Merge: keep order from server, but preserve local optimistic state
-            return emailList.map(e => {
+            // Reconcile the server page: keep order from server, but preserve
+            // local optimistic state.
+            const reconciled = emailList.map(e => {
               const existing = prevMap.get(e.uid);
               if (!existing) {
                 // New email from server — still apply recentlyRead protection
@@ -332,6 +359,34 @@ export function MailProvider({ children }) {
               }
               return { ...e, seen: mergedSeen };
             });
+            // UNION merge (FIX: "últimos emails somem depois aparecem"). The
+            // server's page-1 is authoritative for the *content* of the rows it
+            // returns, but NOT for MEMBERSHIP: a just-arrived email (prepended
+            // by the new_email WS handler) is dropped when IMAP hasn't indexed
+            // it yet, then reappears next poll. So we keep local-only rows that
+            // are NEWER than the server's newest returned item — or that just
+            // arrived within the protection window (recentlyArrivedRef, mirrors
+            // recentlyReadRef for seen-state). Deleted/moved rows still fall out
+            // (email_deleted / email_moved WS events prune `prev`), and older
+            // page-2+ rows are still collapsed as before.
+            const serverUids = new Set(emailList.map(e => String(e.uid)));
+            const arrived = recentlyArrivedRef.current;
+            const arrivedCutoff = Date.now() - 120000; // 2 min
+            // Prune stale arrival marks so the set can't grow unbounded.
+            for (const [uid, ts] of arrived) {
+              if (ts < arrivedCutoff || serverUids.has(uid)) arrived.delete(uid);
+            }
+            const newestUid = emailList.length ? Number(emailList[0].uid) : NaN;
+            const newestKey = emailList.length ? _emailDateKey(emailList[0]) : -Infinity;
+            const survivors = prev.filter(e => {
+              const key = String(e.uid);
+              if (serverUids.has(key)) return false; // reconciled above
+              if (arrived.has(key)) return true; // just arrived, protect it
+              const uidN = Number(e.uid);
+              if (Number.isFinite(uidN) && Number.isFinite(newestUid)) return uidN > newestUid;
+              return _emailDateKey(e) > newestKey; // date fallback
+            });
+            return survivors.length ? [...survivors, ...reconciled] : reconciled;
           });
         } else {
           // Non-silent load: replace all, but still protect recently-read emails
@@ -402,7 +457,13 @@ export function MailProvider({ children }) {
         // \Seen flag flips server-side via Rust ?mark_seen=true OR via the
         // markAsRead POST below; either way the UI must not lag.
         setSelectedEmail({ ...r.data, seen: true, read: true });
-        markAsRead(uid, folder);
+        // FIX: drop the redundant markRead POST. getMessage hits Rust with
+        // ?mark_seen=true, so when the message comes back already seen the
+        // server has ALREADY set \Seen — skip the extra POST and keep only the
+        // local optimistic seen-state + persisted recentlyRead set. When the
+        // message came back unseen (PHP fallback / offline stub that didn't
+        // flag it), fall through to the full path that also POSTs to the server.
+        markAsRead(uid, folder, r.data?.seen === true);
         saveMessageToCache(uid, r.data).catch(() => {});
       }
     } catch {
@@ -415,7 +476,7 @@ export function MailProvider({ children }) {
   }, [currentFolder]);
 
   // Mark email as read — updates both server and local state
-  const markAsRead = useCallback(async (uid, folder) => {
+  const markAsRead = useCallback(async (uid, folder, skipServerPost = false) => {
     const uidStr = String(uid);
     const targetFolder = folder || currentFolder;
     // Optimistic UI update — capture whether the row was actually unread
@@ -460,32 +521,38 @@ export function MailProvider({ children }) {
         await AsyncStorage.setItem('recentlyRead', JSON.stringify(stored));
       }
     } catch {}
-    // Call the server — await so it completes before app might close
-    try {
-      const r = await api.markRead(uid, targetFolder);
-      if (!r?.success) {
-        console.warn('markRead failed for uid', uid, r?.message);
-        // Backend rejected the flag-set. Revert the optimistic seen=true and
-        // the folder badge decrement, otherwise the unread "bounces back" on
-        // the next folders/inbox refresh and the counter drifts. Only revert
-        // rows we actually flipped (wasUnread).
-        if (wasUnread) {
-          recentlyReadRef.current.delete(uidStr);
-          setEmails(prev => prev.map(e =>
-            String(e.uid) === uidStr ? { ...e, seen: false } : e
-          ));
-          setFolders(prev => prev.map(f => {
-            if (f.name !== targetFolder) return f;
-            const cur = (f.unread ?? f.unseen ?? 0) | 0;
-            const next = cur + 1;
-            return { ...f, unread: next, unseen: next };
-          }));
+    // Call the server — await so it completes before app might close.
+    // skipServerPost=true when the caller already knows the server set \Seen
+    // (e.g. openEmail's getMessage used ?mark_seen=true and came back seen),
+    // making this POST redundant. The optimistic seen-state + persisted
+    // recentlyRead above still run; only the network round-trip is skipped.
+    if (!skipServerPost) {
+      try {
+        const r = await api.markRead(uid, targetFolder);
+        if (!r?.success) {
+          console.warn('markRead failed for uid', uid, r?.message);
+          // Backend rejected the flag-set. Revert the optimistic seen=true and
+          // the folder badge decrement, otherwise the unread "bounces back" on
+          // the next folders/inbox refresh and the counter drifts. Only revert
+          // rows we actually flipped (wasUnread).
+          if (wasUnread) {
+            recentlyReadRef.current.delete(uidStr);
+            setEmails(prev => prev.map(e =>
+              String(e.uid) === uidStr ? { ...e, seen: false } : e
+            ));
+            setFolders(prev => prev.map(f => {
+              if (f.name !== targetFolder) return f;
+              const cur = (f.unread ?? f.unseen ?? 0) | 0;
+              const next = cur + 1;
+              return { ...f, unread: next, unseen: next };
+            }));
+          }
         }
+      } catch (e) {
+        console.warn('markRead error for uid', uid, e);
+        // Queue for offline retry
+        queueOfflineAction({ type: 'markRead', uid, folder: targetFolder }).catch(() => {});
       }
-    } catch (e) {
-      console.warn('markRead error for uid', uid, e);
-      // Queue for offline retry
-      queueOfflineAction({ type: 'markRead', uid, folder: targetFolder }).catch(() => {});
     }
     // No auto-expire timer needed — recentlyRead is cleaned up from
     // persisted storage on load (24h cutoff) and the ref is cleared on unmount.
@@ -513,6 +580,18 @@ export function MailProvider({ children }) {
     setPage(1);
     setSearch('');
     clearSelection();
+    // Instant folder switch: SYNCHRONOUSLY paint this folder's last-known rows
+    // from the in-memory map, so the UI never shows the PREVIOUS folder's rows
+    // under the new folder's header while loadEmails awaits disk/network. An
+    // unvisited folder → empty list + loading, which renders the honest
+    // skeleton (EmailList shows the skeleton only when loading && no rows).
+    const remembered = folderRowsRef.current.get(folder);
+    if (remembered && remembered.length > 0) {
+      setEmails(remembered);
+    } else {
+      setEmails([]);
+      setLoadingList(true);
+    }
     loadEmails(folder, 1, '');
   }, [loadEmails]);
 
@@ -836,7 +915,12 @@ export function MailProvider({ children }) {
           });
           // Só incrementa total se realmente prependou — antes incrementava
           // mesmo em duplicata, dessincronizando o contador.
-          if (prepended) setTotal(prev => prev + 1);
+          if (prepended) {
+            setTotal(prev => prev + 1);
+            // Protect this arrival from being dropped by a silent refresh that
+            // races IMAP indexing (see UNION merge in loadEmails).
+            recentlyArrivedRef.current.set(String(data.email.uid), Date.now());
+          }
         } else {
           // No email data provided, silent refresh
           silentRefresh();

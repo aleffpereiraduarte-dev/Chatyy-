@@ -148,7 +148,7 @@ function formatLikeCount(count, t) {
 // `isActive` (default true) comes from the feed's onViewableItemsChanged — when
 // the post scrolls out of view we pass false so the video pauses (kills the
 // audio leak where an off-screen post kept playing sound).
-function VideoPlayer({ uri, poster, colors, isDark, t, filterName, isActive = true }) {
+const VideoPlayer = memo(function VideoPlayer({ uri, poster, colors, isDark, t, filterName, isActive = true }) {
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
   const [progress, setProgress] = useState(0);
@@ -391,11 +391,12 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName, isActive = tr
 
   return (
     <TouchableOpacity style={styles.mediaFrame} onPress={handleNativeOpen} activeOpacity={0.8} accessibilityLabel={t('feed.playVideo') || 'Play video'}>
-      <Image
+      <_CachedFeedImage
         source={{ uri: resolveMediaUrl(poster || uri) }}
         style={[StyleSheet.absoluteFill, getNativeFilterStyle(filterName)]}
         resizeMode="cover"
         accessibilityLabel={t?.('feed.video') || 'Video'}
+        recyclingKey={`vidposter-${resolveMediaUrl(poster || uri)}`}
       />
       <View style={styles.videoOverlay}>
         <View style={styles.playButton}>
@@ -404,7 +405,7 @@ function VideoPlayer({ uri, poster, colors, isDark, t, filterName, isActive = tr
       </View>
     </TouchableOpacity>
   );
-}
+});
 
 // ── Animated carousel dot ──
 // Smoothly fades + scales between the inactive (white, 6×6, 50% opacity) and

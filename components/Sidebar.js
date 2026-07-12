@@ -64,7 +64,7 @@ const FOLDER_KEYS = {
 
 const DEFAULT_FOLDERS = [
   { name: 'INBOX' }, { name: 'Flagged' }, { name: 'Snoozed' }, { name: 'Sent' },
-  { name: 'Drafts' }, { name: 'Trash' }, { name: 'Spam' },
+  { name: 'Drafts' }, { name: 'Archive' }, { name: 'Trash' }, { name: 'Spam' },
 ];
 
 // Animated badge component with entrance animation

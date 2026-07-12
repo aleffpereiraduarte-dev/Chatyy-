@@ -1026,7 +1026,7 @@ const _SWR_TTL_DEFAULT = 60_000; // 60s — was 15s; the tight TTL was why
 // Actions worth caching aggressively — stable-ish lookups that dominate hot
 // paths. Keep the set broad; specific mutations still invalidate precise keys.
 const SWR_ALLOW = new Set([
-  'chat_list', 'chat_conversations', 'get_folders', 'get_profile',
+  'chat_list', 'chat_conversations', 'folders', 'inbox', 'get_profile',
   'get_public_profile', 'get_settings', 'chat_get_settings', 'chat_privacy_get',
   'chat_get_wallpaper', 'chat_get_auto_reply', 'chat_starred_messages',
   'chat_folders_list', 'chat_blocked_list', 'chat_pinned_messages',
@@ -1037,6 +1037,16 @@ const SWR_ALLOW = new Set([
   'status_list', 'chat_pending_members',
   'status_archive_list', 'chat_dnd_get',
   'meet_list', 'calendar_events', 'files_list',
+]);
+
+// Email mutations that change what the inbox/folders lists return. When one
+// fires we drop the SWR cache for 'inbox' and 'folders' so a delete / read /
+// move can't briefly resurface a stale row (or stale unread count) on the
+// PHP-fallback path (Rust down) for the 60s TTL. Mirrors the chat_list
+// invalidation in apiCall() below.
+const EMAIL_MUTATION_ACTIONS = new Set([
+  'delete', 'mark_read', 'mark_unread', 'move', 'star',
+  'mark_not_spam', 'empty_trash', 'empty_spam',
 ]);
 
 // Persist SWR cache to sessionStorage on web so navigating back to the app
@@ -1205,11 +1215,52 @@ export async function apiCall(action, params = {}, method = 'GET', opts = {}) {
   // Mutation — invalidate any cached reads that look related so the next
   // GET fetches fresh data.
   if (action.startsWith('chat_')) swrInvalidate('chat_list');
+  else if (EMAIL_MUTATION_ACTIONS.has(action)) { swrInvalidate('inbox'); swrInvalidate('folders'); }
   return _apiCallImpl(action, params, method);
 }
 
+// [network-resilience 2026-07-12] POST actions that are safe to fire a 2nd
+// time (idempotent: same input -> same end-state, no duplicate side effect).
+// Only these opt into the transient-5xx/524/timeout retry below; every other
+// POST is skipped to avoid double-sends (chat_send, compose, follow, etc.).
+const _IDEMPOTENT_RETRY_POST = new Set([
+  'check_auth', 'chat_read_receipt', 'chat_typing_set',
+  'chat_unread_count', 'chat_starred_list', 'chat_pinned_list',
+  'chat_user_privacy', 'get_settings', 'profile_get', 'get_profile',
+]);
+
 async function _apiCallImpl(action, params = {}, method = 'GET') {
-  const result = await _rawApiCall(action, params, method);
+  let result = await _rawApiCall(action, params, method);
+
+  // [network-resilience 2026-07-12] Retry-once-with-backoff for transient
+  // upstream failures. A single 5xx/524 (known incident pattern — see memory
+  // email_524_imap_conn_exhaustion) or a dead-transport blip (AbortController
+  // timeout -> status 0 'Tempo limite excedido', or fetch reject -> status 0
+  // 'Connection error') used to surface immediately as a user-facing failure
+  // with ZERO retry, even though the 401 cascade below already proves this
+  // codebase self-heals transient blips. We mirror that + the chunked-upload
+  // backoff (~800ms) with exactly ONE extra attempt. Reads (GET) always
+  // qualify; POSTs only if on the idempotent allowlist, so nothing double-sends.
+  try {
+    const _m = String(method || 'GET').toUpperCase();
+    const _msg = (result && result.data && result.data.message) || '';
+    const _isTransient =
+      (result.status >= 500) ||
+      (result.status === 0 && (_msg === 'Tempo limite excedido' || _msg === 'Connection error'));
+    const _retryable = (_m === 'GET') || _IDEMPOTENT_RETRY_POST.has(action);
+    if (_isTransient && _retryable && action !== 'login' && action !== 'signup') {
+      await new Promise(r => setTimeout(r, 800));
+      const _retry = await _rawApiCall(action, params, method);
+      // Never-worse: only adopt the retry if it is NOT itself transient
+      // (2xx/3xx or a definitive 4xx). Otherwise keep the original result so
+      // the error surfaces exactly as it did before this branch existed.
+      const _retryMsg = (_retry && _retry.data && _retry.data.message) || '';
+      const _retryTransient =
+        (_retry.status >= 500) ||
+        (_retry.status === 0 && (_retryMsg === 'Tempo limite excedido' || _retryMsg === 'Connection error'));
+      if (!_retryTransient) result = _retry;
+    }
+  } catch {}
 
   // Reset the consecutive-401 counter on any non-401 response — even errors
   // count, since they prove the network/host is alive. This way only a

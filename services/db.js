@@ -490,32 +490,34 @@ async function _runSelfCheck() {
 
 export async function dbSaveConversations(conversations) {
   if (isWeb || !_db || !conversations?.length) return;
-  const stmt = await _db.prepareAsync(
-    `INSERT OR REPLACE INTO conversations (id, name, type, last_message, last_message_time, last_message_sender, unread_count, avatar_url, pinned, muted, archived, is_group, member_count, description, updated_at, raw_json)
-     VALUES ($id, $name, $type, $lastMsg, $lastTime, $lastSender, $unread, $avatar, $pinned, $muted, $archived, $isGroup, $members, $desc, $updated, $raw)`
-  );
-  try {
-    for (const c of conversations) {
-      await stmt.executeAsync({
-        $id: c.id,
-        $name: c.name || c.display_name || '',
-        $type: c.type || 'direct',
-        $lastMsg: c.last_message || '',
-        $lastTime: c.last_message_time || c.updated_at || '',
-        $lastSender: c.last_message_sender || '',
-        $unread: c.unread_count || 0,
-        $avatar: c.avatar_url || '',
-        $pinned: c.pinned ? 1 : 0,
-        $muted: c.muted ? 1 : 0,
-        $archived: c.archived ? 1 : 0,
-        $isGroup: c.type === 'group' ? 1 : 0,
-        $members: c.member_count || 0,
-        $desc: c.description || '',
-        $updated: c.updated_at || '',
-        $raw: JSON.stringify(c),
-      });
-    }
-  } finally { await stmt.finalizeAsync(); }
+  await _db.withTransactionAsync(async () => {
+    const stmt = await _db.prepareAsync(
+      `INSERT OR REPLACE INTO conversations (id, name, type, last_message, last_message_time, last_message_sender, unread_count, avatar_url, pinned, muted, archived, is_group, member_count, description, updated_at, raw_json)
+       VALUES ($id, $name, $type, $lastMsg, $lastTime, $lastSender, $unread, $avatar, $pinned, $muted, $archived, $isGroup, $members, $desc, $updated, $raw)`
+    );
+    try {
+      for (const c of conversations) {
+        await stmt.executeAsync({
+          $id: c.id,
+          $name: c.name || c.display_name || '',
+          $type: c.type || 'direct',
+          $lastMsg: c.last_message || '',
+          $lastTime: c.last_message_time || c.updated_at || '',
+          $lastSender: c.last_message_sender || '',
+          $unread: c.unread_count || 0,
+          $avatar: c.avatar_url || '',
+          $pinned: c.pinned ? 1 : 0,
+          $muted: c.muted ? 1 : 0,
+          $archived: c.archived ? 1 : 0,
+          $isGroup: c.type === 'group' ? 1 : 0,
+          $members: c.member_count || 0,
+          $desc: c.description || '',
+          $updated: c.updated_at || '',
+          $raw: JSON.stringify(c),
+        });
+      }
+    } finally { await stmt.finalizeAsync(); }
+  });
 }
 
 export async function dbGetConversations(includeArchived = false) {
@@ -574,70 +576,72 @@ export async function dbSaveMessages(conversationId, messages) {
   // local_path back to NULL. Result: user taps audio offline, msg.local_path
   // is NULL, bubble shows "mídia ainda não foi baixada" — even though the
   // file is on disk. Persisting all media columns closes the gap.
-  const stmt = await _db.prepareAsync(
-    `INSERT OR REPLACE INTO messages
-       (id, conversation_id, sender_email, sender_name, content, type,
-        file_url, file_name, file_size, reply_to_id, message_id,
-        read_at, edited_at, deleted, deleted_at, reactions, read_by,
-        created_at, sync_seq, local_seq, client_temp_id, pending_state,
-        local_path, media_width, media_height, media_duration, raw_json)
-     VALUES
-       ($id, $convId, $sender, $senderName, $content, $type,
-        $fileUrl, $fileName, $fileSize, $replyTo, $messageId,
-        $readAt, $edited, $deleted, $deletedAt, $reactions, $readBy,
-        $created, $syncSeq, $localSeq, $clientTempId, $pendingState,
-        $localPath, $mediaW, $mediaH, $mediaDur, $raw)`
-  );
-  // [#1206 2026-05-19] Surface row-level executeAsync failures via crash
-  // beacon. Outer caller still gets the throw (existing semantics) — this
-  // only adds a beacon hop so the bad row's id + error message reach us
-  // instead of being lost in a swallowing catch block upstream.
-  try {
-    for (const m of messages) {
-      if (!m.id || String(m.id).startsWith('tmp_')) continue;
-      try {
-        await stmt.executeAsync({
-          $id: m.id,
-          $convId: conversationId || m.conversation_id,
-          $sender: m.sender_email || m.sender || '',
-          $senderName: m.sender_name || '',
-          $content: m.content || '',
-          $type: m.type || 'text',
-          $fileUrl: m.file_url || '',
-          $fileName: m.file_name || '',
-          $fileSize: m.file_size || 0,
-          $replyTo: m.reply_to_id || null,
-          $messageId: m.message_id || null,
-          $readAt: m.read_at || null,
-          $edited: m.edited_at || null,
-          $deleted: m.deleted ? 1 : 0,
-          $deletedAt: m.deleted_at || null,
-          $reactions: m.reactions ? JSON.stringify(m.reactions) : null,
-          $readBy: m.read_by ? JSON.stringify(m.read_by) : null,
-          $created: m.created_at || '',
-          $syncSeq: m.sync_seq || 0,
-          $localSeq: m.local_seq != null ? m.local_seq : 0,
-          $clientTempId: m.client_temp_id || m.client_message_id || null,
-          $pendingState: m.pending_state || 'sent',
-          // [#1218 2026-05-20] Preserve media path/dim across re-syncs.
-          // m.local_path comes from a prior cacheMedia write-back; m._localUri
-          // is the optimistic UI hint set on send. Prefer the persisted one
-          // but fall back to optimistic so the bubble keeps showing the local
-          // file while the row is in flight. media_width/height/duration
-          // also persisted so a re-sync (INSERT OR REPLACE) doesn't blank the
-          // aspect-ratio render data.
-          $localPath: m.local_path || m._localUri || null,
-          $mediaW: m.media_width || (m.media && m.media.width) || null,
-          $mediaH: m.media_height || (m.media && m.media.height) || null,
-          $mediaDur: m.media_duration || (m.media && m.media.duration) || null,
-          $raw: JSON.stringify(m),
-        });
-      } catch (rowErr) {
-        try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbSaveMessages_row', message: `id=${m?.id} ${rowErr?.message}`, stack: rowErr?.stack }); } catch {}
-        throw rowErr;
+  await _db.withTransactionAsync(async () => {
+    const stmt = await _db.prepareAsync(
+      `INSERT OR REPLACE INTO messages
+         (id, conversation_id, sender_email, sender_name, content, type,
+          file_url, file_name, file_size, reply_to_id, message_id,
+          read_at, edited_at, deleted, deleted_at, reactions, read_by,
+          created_at, sync_seq, local_seq, client_temp_id, pending_state,
+          local_path, media_width, media_height, media_duration, raw_json)
+       VALUES
+         ($id, $convId, $sender, $senderName, $content, $type,
+          $fileUrl, $fileName, $fileSize, $replyTo, $messageId,
+          $readAt, $edited, $deleted, $deletedAt, $reactions, $readBy,
+          $created, $syncSeq, $localSeq, $clientTempId, $pendingState,
+          $localPath, $mediaW, $mediaH, $mediaDur, $raw)`
+    );
+    // [#1206 2026-05-19] Surface row-level executeAsync failures via crash
+    // beacon. Outer caller still gets the throw (existing semantics) — this
+    // only adds a beacon hop so the bad row's id + error message reach us
+    // instead of being lost in a swallowing catch block upstream.
+    try {
+      for (const m of messages) {
+        if (!m.id || String(m.id).startsWith('tmp_')) continue;
+        try {
+          await stmt.executeAsync({
+            $id: m.id,
+            $convId: conversationId || m.conversation_id,
+            $sender: m.sender_email || m.sender || '',
+            $senderName: m.sender_name || '',
+            $content: m.content || '',
+            $type: m.type || 'text',
+            $fileUrl: m.file_url || '',
+            $fileName: m.file_name || '',
+            $fileSize: m.file_size || 0,
+            $replyTo: m.reply_to_id || null,
+            $messageId: m.message_id || null,
+            $readAt: m.read_at || null,
+            $edited: m.edited_at || null,
+            $deleted: m.deleted ? 1 : 0,
+            $deletedAt: m.deleted_at || null,
+            $reactions: m.reactions ? JSON.stringify(m.reactions) : null,
+            $readBy: m.read_by ? JSON.stringify(m.read_by) : null,
+            $created: m.created_at || '',
+            $syncSeq: m.sync_seq || 0,
+            $localSeq: m.local_seq != null ? m.local_seq : 0,
+            $clientTempId: m.client_temp_id || m.client_message_id || null,
+            $pendingState: m.pending_state || 'sent',
+            // [#1218 2026-05-20] Preserve media path/dim across re-syncs.
+            // m.local_path comes from a prior cacheMedia write-back; m._localUri
+            // is the optimistic UI hint set on send. Prefer the persisted one
+            // but fall back to optimistic so the bubble keeps showing the local
+            // file while the row is in flight. media_width/height/duration
+            // also persisted so a re-sync (INSERT OR REPLACE) doesn't blank the
+            // aspect-ratio render data.
+            $localPath: m.local_path || m._localUri || null,
+            $mediaW: m.media_width || (m.media && m.media.width) || null,
+            $mediaH: m.media_height || (m.media && m.media.height) || null,
+            $mediaDur: m.media_duration || (m.media && m.media.duration) || null,
+            $raw: JSON.stringify(m),
+          });
+        } catch (rowErr) {
+          try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbSaveMessages_row', message: `id=${m?.id} ${rowErr?.message}`, stack: rowErr?.stack }); } catch {}
+          throw rowErr;
+        }
       }
-    }
-  } finally { await stmt.finalizeAsync(); }
+    } finally { await stmt.finalizeAsync(); }
+  });
 }
 
 export async function dbGetMessages(conversationId, limit = 50, beforeId = null) {
@@ -847,23 +851,25 @@ export async function dbClearLocalPathByFilenames(filenames) {
 
 export async function dbSaveContacts(contacts) {
   if (isWeb || !_db || !contacts?.length) return;
-  const stmt = await _db.prepareAsync(
-    `INSERT OR REPLACE INTO contacts (email, name, phone, avatar_url, is_chatyy_user, about, raw_json)
-     VALUES ($email, $name, $phone, $avatar, $isChatyy, $about, $raw)`
-  );
-  try {
-    for (const c of contacts) {
-      await stmt.executeAsync({
-        $email: c.email || '',
-        $name: c.name || c.display_name || '',
-        $phone: c.phone || '',
-        $avatar: c.avatar_url || '',
-        $isChatyy: c.is_chatyy_user ? 1 : 0,
-        $about: c.about || '',
-        $raw: JSON.stringify(c),
-      });
-    }
-  } finally { await stmt.finalizeAsync(); }
+  await _db.withTransactionAsync(async () => {
+    const stmt = await _db.prepareAsync(
+      `INSERT OR REPLACE INTO contacts (email, name, phone, avatar_url, is_chatyy_user, about, raw_json)
+       VALUES ($email, $name, $phone, $avatar, $isChatyy, $about, $raw)`
+    );
+    try {
+      for (const c of contacts) {
+        await stmt.executeAsync({
+          $email: c.email || '',
+          $name: c.name || c.display_name || '',
+          $phone: c.phone || '',
+          $avatar: c.avatar_url || '',
+          $isChatyy: c.is_chatyy_user ? 1 : 0,
+          $about: c.about || '',
+          $raw: JSON.stringify(c),
+        });
+      }
+    } finally { await stmt.finalizeAsync(); }
+  });
 }
 
 export async function dbGetContacts() {
@@ -887,29 +893,31 @@ export async function dbSearchContacts(query) {
 
 export async function dbSaveEmails(folder, emails) {
   if (isWeb || !_db || !emails?.length) return;
-  const stmt = await _db.prepareAsync(
-    `INSERT OR REPLACE INTO emails (uid, folder, from_email, from_name, subject, snippet, date, is_read, is_starred, is_flagged, has_attachments, labels, raw_json)
-     VALUES ($uid, $folder, $fromEmail, $fromName, $subject, $snippet, $date, $read, $starred, $flagged, $attach, $labels, $raw)`
-  );
-  try {
-    for (const e of emails) {
-      await stmt.executeAsync({
-        $uid: e.uid || e.id,
-        $folder: folder,
-        $fromEmail: e.from?.email || e.from_email || '',
-        $fromName: e.from?.name || e.from_name || '',
-        $subject: e.subject || '',
-        $snippet: e.snippet || e.preview || '',
-        $date: e.date || '',
-        $read: e.seen || e.is_read ? 1 : 0,
-        $starred: e.flagged || e.is_starred ? 1 : 0,
-        $flagged: e.flagged ? 1 : 0,
-        $attach: e.hasAttachments || e.has_attachments ? 1 : 0,
-        $labels: e.labels ? JSON.stringify(e.labels) : null,
-        $raw: JSON.stringify(e),
-      });
-    }
-  } finally { await stmt.finalizeAsync(); }
+  await _db.withTransactionAsync(async () => {
+    const stmt = await _db.prepareAsync(
+      `INSERT OR REPLACE INTO emails (uid, folder, from_email, from_name, subject, snippet, date, is_read, is_starred, is_flagged, has_attachments, labels, raw_json)
+       VALUES ($uid, $folder, $fromEmail, $fromName, $subject, $snippet, $date, $read, $starred, $flagged, $attach, $labels, $raw)`
+    );
+    try {
+      for (const e of emails) {
+        await stmt.executeAsync({
+          $uid: e.uid || e.id,
+          $folder: folder,
+          $fromEmail: e.from?.email || e.from_email || '',
+          $fromName: e.from?.name || e.from_name || '',
+          $subject: e.subject || '',
+          $snippet: e.snippet || e.preview || '',
+          $date: e.date || '',
+          $read: e.seen || e.is_read ? 1 : 0,
+          $starred: e.flagged || e.is_starred ? 1 : 0,
+          $flagged: e.flagged ? 1 : 0,
+          $attach: e.hasAttachments || e.has_attachments ? 1 : 0,
+          $labels: e.labels ? JSON.stringify(e.labels) : null,
+          $raw: JSON.stringify(e),
+        });
+      }
+    } finally { await stmt.finalizeAsync(); }
+  });
 }
 
 export async function dbGetEmails(folder = 'INBOX', limit = 50, offset = 0) {
@@ -926,25 +934,27 @@ export async function dbGetEmails(folder = 'INBOX', limit = 50, offset = 0) {
 
 export async function dbSaveEvents(events) {
   if (isWeb || !_db || !events?.length) return;
-  const stmt = await _db.prepareAsync(
-    `INSERT OR REPLACE INTO calendar_events (id, title, description, start_time, end_time, location, all_day, color, raw_json)
-     VALUES ($id, $title, $desc, $start, $end, $loc, $allDay, $color, $raw)`
-  );
-  try {
-    for (const e of events) {
-      await stmt.executeAsync({
-        $id: String(e.id),
-        $title: e.title || '',
-        $desc: e.description || '',
-        $start: e.start || e.start_time || '',
-        $end: e.end || e.end_time || '',
-        $loc: e.location || '',
-        $allDay: e.all_day ? 1 : 0,
-        $color: e.color || '',
-        $raw: JSON.stringify(e),
-      });
-    }
-  } finally { await stmt.finalizeAsync(); }
+  await _db.withTransactionAsync(async () => {
+    const stmt = await _db.prepareAsync(
+      `INSERT OR REPLACE INTO calendar_events (id, title, description, start_time, end_time, location, all_day, color, raw_json)
+       VALUES ($id, $title, $desc, $start, $end, $loc, $allDay, $color, $raw)`
+    );
+    try {
+      for (const e of events) {
+        await stmt.executeAsync({
+          $id: String(e.id),
+          $title: e.title || '',
+          $desc: e.description || '',
+          $start: e.start || e.start_time || '',
+          $end: e.end || e.end_time || '',
+          $loc: e.location || '',
+          $allDay: e.all_day ? 1 : 0,
+          $color: e.color || '',
+          $raw: JSON.stringify(e),
+        });
+      }
+    } finally { await stmt.finalizeAsync(); }
+  });
 }
 
 export async function dbGetEvents(startDate, endDate) {
@@ -961,30 +971,32 @@ export async function dbGetEvents(startDate, endDate) {
 
 export async function dbSaveFiles(files) {
   if (isWeb || !_db || !files?.length) return;
-  const stmt = await _db.prepareAsync(
-    `INSERT OR REPLACE INTO files (id, name, path, parent_id, size, mime_type, is_folder, is_starred, is_trashed, thumbnail_url, cdn_url, created_at, updated_at, raw_json)
-     VALUES ($id, $name, $path, $parent, $size, $mime, $isFolder, $starred, $trashed, $thumb, $cdn, $created, $updated, $raw)`
-  );
-  try {
-    for (const f of files) {
-      await stmt.executeAsync({
-        $id: f.id,
-        $name: f.name || f.original_name || '',
-        $path: f.path || '',
-        $parent: f.parent_id || f.folder_id || 0,
-        $size: f.size || 0,
-        $mime: f.mime_type || '',
-        $isFolder: f.is_folder ? 1 : 0,
-        $starred: f.is_starred ? 1 : 0,
-        $trashed: f.is_trashed ? 1 : 0,
-        $thumb: f.thumbnail_url || '',
-        $cdn: f.cdn_url || '',
-        $created: f.created_at || '',
-        $updated: f.updated_at || '',
-        $raw: JSON.stringify(f),
-      });
-    }
-  } finally { await stmt.finalizeAsync(); }
+  await _db.withTransactionAsync(async () => {
+    const stmt = await _db.prepareAsync(
+      `INSERT OR REPLACE INTO files (id, name, path, parent_id, size, mime_type, is_folder, is_starred, is_trashed, thumbnail_url, cdn_url, created_at, updated_at, raw_json)
+       VALUES ($id, $name, $path, $parent, $size, $mime, $isFolder, $starred, $trashed, $thumb, $cdn, $created, $updated, $raw)`
+    );
+    try {
+      for (const f of files) {
+        await stmt.executeAsync({
+          $id: f.id,
+          $name: f.name || f.original_name || '',
+          $path: f.path || '',
+          $parent: f.parent_id || f.folder_id || 0,
+          $size: f.size || 0,
+          $mime: f.mime_type || '',
+          $isFolder: f.is_folder ? 1 : 0,
+          $starred: f.is_starred ? 1 : 0,
+          $trashed: f.is_trashed ? 1 : 0,
+          $thumb: f.thumbnail_url || '',
+          $cdn: f.cdn_url || '',
+          $created: f.created_at || '',
+          $updated: f.updated_at || '',
+          $raw: JSON.stringify(f),
+        });
+      }
+    } finally { await stmt.finalizeAsync(); }
+  });
 }
 
 export async function dbGetFiles(parentId = 0) {

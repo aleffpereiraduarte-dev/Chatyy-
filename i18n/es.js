@@ -3430,6 +3430,7 @@ export default {
   // Smart Reply
   'smartReply.suggested': 'Respuestas sugeridas',
   'smartReply.generating': 'Generando respuestas...',
+  'smartReply.generate': 'Generar respuesta con IA',
 
   // Attachment Picker
   'attachment.maxFiles': 'Maximo de {{count}} archivos permitidos',

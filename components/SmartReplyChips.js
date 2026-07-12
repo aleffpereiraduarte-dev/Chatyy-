@@ -18,6 +18,7 @@ export default function SmartReplyChips({ email, onSelectReply, onSendReply, rep
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   const [sendingIdx, setSendingIdx] = useState(-1);
+  const [triggered, setTriggered] = useState(false); // AI reply is on-demand (button), NEVER auto on open
   const fadeAnims = useRef([]).current;
 
   // Sync external replies prop into state so a new question regenerates chips.
@@ -40,11 +41,14 @@ export default function SmartReplyChips({ email, onSelectReply, onSendReply, rep
     }
   }, [replies]);
 
+  // Reset on email switch so the "Generate reply" button reappears for the new
+  // message. We DO NOT auto-generate on open — that fired a paid AI call on
+  // EVERY email open and made opening slow. Generation is on-demand (button).
   useEffect(() => {
     if (usingProvided) return;
-    if (email?.body_text || email?.body) {
-      generateReplies();
-    }
+    setTriggered(false);
+    setReplies([]);
+    setError(false);
   }, [email?.uid, usingProvided]);
 
   const generateReplies = async () => {
@@ -92,7 +96,29 @@ export default function SmartReplyChips({ email, onSelectReply, onSendReply, rep
     }
   };
 
-  if (error || (!loading && replies.length === 0)) return null;
+  if (usingProvided && replies.length === 0 && !loading) return null;
+  if (!usingProvided && triggered && !loading && replies.length === 0) return null;
+
+  // Email mode, not yet triggered: show an on-demand button. Tapping it (and
+  // ONLY then) fires the AI smart-reply call — so opening the email stays fast
+  // and doesn't burn an AI call on every open.
+  if (!usingProvided && !triggered) {
+    return (
+      <View style={[s.container, { borderTopColor: colors.borderLight }]}>
+        <TouchableOpacity
+          style={[s.genBtn, { borderColor: BRAND, backgroundColor: BRAND + '0A' }]}
+          onPress={() => { setTriggered(true); generateReplies(); }}
+          activeOpacity={0.7}
+          accessibilityLabel={t('smartReply.generate') || 'Gerar resposta com IA'}
+        >
+          <IconSparkles size={15} color={BRAND} style={{ marginRight: 7 }} />
+          <Text style={[s.genBtnText, { color: BRAND }]}>
+            {t('smartReply.generate') || 'Gerar resposta com IA'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={[s.container, { borderTopColor: colors.borderLight }]}>
@@ -179,6 +205,18 @@ const s = StyleSheet.create({
     paddingHorizontal: Spacing.lg,
   },
   label: { fontSize: FontSize.sm, fontWeight: '600', letterSpacing: 0.3 },
+  genBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+    marginHorizontal: Spacing.lg,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: 9,
+    borderWidth: 1.5,
+    borderRadius: BorderRadius.xxl,
+  },
+  genBtnText: { fontSize: FontSize.sm, fontWeight: '700', letterSpacing: 0.2 },
   loadingRow: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { AppState, Platform, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { usePathname } from 'expo-router';
@@ -336,17 +336,26 @@ export function BiometricProvider({ children }) {
     </View>
   ) : null;
 
+  // Memoiza o value: BiometricProvider embrulha TODA a árvore (app/_layout.js)
+  // e roda AppState listener + timer de auto-lock que disparam re-renders
+  // periódicos. Sem o memo, cada re-render recria este objeto e força todo
+  // consumidor de useBiometric a re-renderizar mesmo sem mudança real de
+  // estado. Mesmo padrão de AuthContext.js / ThemeContext.js. Deps cobrem os
+  // 8 campos; toggleBiometric/authenticate/lockNowLocal/setAutoLockInterval já
+  // são useCallback estáveis, então o memo só invalida em mudança real.
+  const value = useMemo(() => ({
+    isLocked,
+    biometricEnabled,
+    biometricAvailable,
+    toggleBiometric,
+    authenticate,
+    lockNow: lockNowLocal,
+    autoLockInterval,
+    setAutoLockInterval,
+  }), [isLocked, biometricEnabled, biometricAvailable, toggleBiometric, authenticate, lockNowLocal, autoLockInterval, setAutoLockInterval]);
+
   return (
-    <BiometricContext.Provider value={{
-      isLocked,
-      biometricEnabled,
-      biometricAvailable,
-      toggleBiometric,
-      authenticate,
-      lockNow: lockNowLocal,
-      autoLockInterval,
-      setAutoLockInterval,
-    }}>
+    <BiometricContext.Provider value={value}>
       {children}
       {lockOverlay}
     </BiometricContext.Provider>

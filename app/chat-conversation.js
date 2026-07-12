@@ -14729,6 +14729,26 @@ function ChatConversationInner() {
       is_view_once: forceViewOnce ? 1 : 0,
     };
     setMessages(prev => [...prev, optimisticMsg]);
+    // [LQIP 2026-07-12] Wire imageSendPipeline's blur placeholder into the
+    // optimistic bubble. The bubble already paints the full local URI, but a
+    // large camera-roll JPEG can take a beat to decode on-device; the ~40px
+    // base64 LQIP renders in <1ms and shows a soft blur underneath instead of a
+    // gray/hard flash. Fire-and-forget so we NEVER delay the instant local
+    // preview (never-worse: on any failure the bubble is exactly as before).
+    // preflightOutgoing({ skipResize:true }) returns ONLY the LQIP here, leaving
+    // the existing network-aware compression path (below) fully untouched.
+    if (fileType === 'image' && localUri) {
+      (async () => {
+        try {
+          const { preflightOutgoing, attachLqipToTempMessage } = require('../services/imageSendPipeline');
+          const pf = await preflightOutgoing(localUri, { skipResize: true });
+          const b64 = pf && pf.thumbB64;
+          if (!b64 || !mountedRef.current) return;
+          try { attachLqipToTempMessage && attachLqipToTempMessage(tempId, b64); } catch {}
+          setMessages(prev => prev.map(m => (m.id === tempId && !m.thumb_b64) ? { ...m, thumb_b64: b64 } : m));
+        } catch {}
+      })();
+    }
     // [receipt-sync media 2026-06-04] Echo the outbound MEDIA to the chat
     // list (text already does this in _handleSendInner via the same event).
     // Without it the list row kept the PREVIOUS message as preview, so the
