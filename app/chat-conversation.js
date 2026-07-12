@@ -12385,10 +12385,15 @@ function ChatConversationInner() {
                     a.msgType || 'text',
                     a.reply_to_id,
                     a.mentions || null,
-                    null,
+                    // Mirror do replay canônico (offlineCache.js): este loop
+                    // corre CONTRA ele e o server dedupa por client_message_id
+                    // — se este vencer com file_url null, um GIF/sticker/foto
+                    // enfileirado vira mensagem sem mídia PERMANENTE (a versão
+                    // certa do outro replay é descartada no dedup).
+                    a.file_url ?? null,
                     a.temp_id || a.id,
                     a.client_message_id || a.id,
-                    null,
+                    a.topic_id || null,
                     // Replay path: skip the Rust fast-path. Re-hitting Rust with
                     // an already-used temp_id 500s and disables Rust for the whole
                     // session — route retries through PHP (server dedups on CMI).
