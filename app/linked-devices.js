@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
+import { useAuth } from '../context/AuthContext';
 import { IconArrowLeft, IconShield, IconMonitor, IconSmartphone, IconCamera, IconUserPlus, IconX } from '../components/Icons';
 import * as api from '../services/api';
 import { loadDeviceRegistry, installAppStateHook } from '../services/deviceRegistry';
@@ -68,6 +69,7 @@ export default function LinkedDevicesScreen() {
   const insets = useSafeAreaInsets();
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
+  const { user } = useAuth();
 
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -83,17 +85,24 @@ export default function LinkedDevicesScreen() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    // sessions_list requires auth; on a cold mount the bearer token can lag a
-    // tick behind the screen (QA robot flagged a transient 401 here). Preflight:
-    // wait up to ~1s for the bearer to hydrate so the FIRST request goes out
-    // authed — the retry below already recovers functionally, but without this
-    // the initial unauthed fetch still 401s and the browser logs it to console.
-    for (let w = 0; w < 10 && !(typeof api.getAuthToken === 'function' && api.getAuthToken()); w++) {
+    // sessions_list requires auth; on a cold mount the auth can lag a tick
+    // behind the screen (QA robot flagged a transient 401 here). Preflight:
+    // wait for auth to be READY before the FIRST request so it goes out authed.
+    // [2026-07-12] On WEB there is NO bearer (getAuthToken() is empty forever —
+    // web authenticates via session cookie), so the old bearer-only gate never
+    // satisfied and the first fetch raced the cookie → 401 logged to console
+    // even though the retry recovered. Now we treat auth as ready when EITHER a
+    // bearer exists (native) OR the AuthContext user is hydrated (web cookie is
+    // established once user.email is present). Never fire an unauthed request.
+    const _authReady = () => (typeof api.getAuthToken === 'function' && api.getAuthToken()) || !!user?.email;
+    for (let w = 0; w < 20 && !_authReady(); w++) {
       await new Promise((res) => setTimeout(res, 100));
     }
     // Retry a couple times with a short backoff so we never surface an unauthed miss.
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
+        // Still not authed? Don't fire (would 401 + log to console) — wait + retry.
+        if (!_authReady()) { await new Promise((res) => setTimeout(res, 400 * (attempt + 1))); continue; }
         const r = await api.apiCall('sessions_list');
         if (r?.success && r.data) {
           const list = Array.isArray(r.data) ? r.data : (r.data.sessions || []);
@@ -111,7 +120,7 @@ export default function LinkedDevicesScreen() {
       }
     }
     setLoading(false);
-  }, []);
+  }, [user?.email]);
 
   useEffect(() => { load(); }, [load]);
 
