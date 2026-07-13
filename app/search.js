@@ -1,8 +1,9 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
-  View, Text, FlatList, TouchableOpacity, StyleSheet, TextInput,
+  View, Text, TouchableOpacity, StyleSheet, TextInput,
   ActivityIndicator, Platform, ScrollView, Image,
 } from 'react-native';
+import { FlashList } from '@shopify/flash-list';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -151,7 +152,7 @@ export default function SearchScreen() {
 
   // Renderers per tab.
   const renderPeople = () => (
-    <FlatList
+    <FlashList
       data={results.people}
       keyExtractor={(u) => u.email}
       contentContainerStyle={{ padding: 12 }}
@@ -184,7 +185,7 @@ export default function SearchScreen() {
   const renderHashtags = () => {
     const showList = query.trim().length >= 2 ? results.hashtags : trendingTags;
     return (
-      <FlatList
+      <FlashList
         data={showList}
         keyExtractor={(h) => String(h.tag)}
         contentContainerStyle={{ padding: 12 }}
@@ -225,7 +226,7 @@ export default function SearchScreen() {
     const useTrending = query.trim().length < 2;
     const showList = useTrending ? trendingSounds : results.sounds;
     return (
-      <FlatList
+      <FlashList
         data={showList}
         keyExtractor={(s, i) => String(s.id || s.sound_id || s.track_id || s.title || i)}
         contentContainerStyle={{ padding: 12 }}
@@ -280,7 +281,7 @@ export default function SearchScreen() {
   };
 
   const renderLives = () => (
-    <FlatList
+    <FlashList
       data={results.lives}
       keyExtractor={(l) => String(l.id || l.session_id)}
       contentContainerStyle={{ padding: 12 }}

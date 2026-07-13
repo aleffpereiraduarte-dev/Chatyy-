@@ -902,15 +902,26 @@ export function prefetchConversation(conversationId, opts = {}) {
   })();
 }
 
-// Helper: merge two arrays of messages by ID, sorted by created_at
+// Helper: merge two arrays of messages by ID, ordered by server id.
+// Prefer the monotonic server id (BIGSERIAL) over created_at — created_at is
+// TEXT/second-granular and skews with client clocks, so two messages in the
+// same second (or an optimistic row with a fast clock) could render out of
+// order. Fall back to created_at ONLY for un-acked optimistic rows that don't
+// have a numeric server id yet, and sort those after their acked peers.
 function mergeMessages(existing, incoming) {
   const map = new Map();
   for (const m of existing) map.set(m.id, m);
   for (const m of incoming) if (m.id) map.set(m.id, m);
   return Array.from(map.values()).sort((a, b) => {
-    const ta = new Date(a.created_at).getTime();
-    const tb = new Date(b.created_at).getTime();
-    return ta - tb;
+    const ia = Number(a.id), ib = Number(b.id);
+    const aNum = Number.isFinite(ia), bNum = Number.isFinite(ib);
+    if (aNum && bNum) return ia - ib;            // both real server rows → monotonic id
+    const ta = new Date(a.created_at).getTime() || 0;
+    const tb = new Date(b.created_at).getTime() || 0;
+    if (ta !== tb) return ta - tb;               // different timestamps → time order
+    if (aNum && !bNum) return -1;                // acked row before optimistic at same time
+    if (!aNum && bNum) return 1;
+    return 0;
   });
 }
 
