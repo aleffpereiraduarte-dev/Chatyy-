@@ -1589,12 +1589,22 @@ export default function StoryViewer({
       // on (status_id, viewer_email) so duplicates are a no-op.
       try {
         const _statusId = cur.id;
-        Promise.resolve(api.statusView?.(_statusId)).catch(() => {
+        const _queueView = () => {
           try {
             const { queueOfflineAction } = require('../../services/offlineCache');
             queueOfflineAction({ type: 'status_view', params: { status_id: _statusId } });
           } catch {}
-        });
+        };
+        Promise.resolve(api.statusView?.(_statusId)).then((r) => {
+          // apiCall resolves {success:false} on native network failure (it
+          // never rejects there — .catch only fires on the web offline gate),
+          // so queueing only inside .catch made the queue dead code on native.
+          // Mirror the replay handler: queue transient failures, drop hard errors.
+          if (r && r.success === false
+              && !/not_found|already|duplicate|invalid|permission|forbidden|expired/i.test(String(r.message || r.error || ''))) {
+            _queueView();
+          }
+        }).catch(_queueView);
       } catch {}
       try { onMarkViewed?.(cur.id); } catch {}
     }

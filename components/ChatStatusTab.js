@@ -1466,6 +1466,21 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       }
       if (r?.success) {
         if (typeof overrideText !== 'string') setViewerReply('');
+      } else if (r && r.success === false
+          && /Connection error|Tempo limite excedido|Servidor indisponivel/i.test(String(r.message || ''))) {
+        // Native network failure resolves (apiCall never rejects there — the
+        // catch above only fires on the web offline gate), so without this
+        // branch an offline reply fell into the legacy fallback, whose
+        // chatCreate also fails → the reply was lost. Queue + optimistic
+        // clear, same as the netErr path.
+        try {
+          const { queueOfflineAction } = require('../services/offlineCache');
+          await queueOfflineAction({
+            type: 'status_reply_dm',
+            params: { status_id: currentItem.id, content: text },
+          });
+        } catch {}
+        if (typeof overrideText !== 'string') setViewerReply('');
       } else {
         // Legacy fallback — sends the reply via regular chatSend so older
         // clients still work. Kept intentionally simple; the server-side
@@ -1873,14 +1888,24 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     if (!item || item.viewed || item._placeholder || String(item.id).startsWith('__manifest_')) return;
     const _viewId = item.id;
     if (!_viewId) return;
-    api.statusView(_viewId).catch(() => {
-      // Offline / 5xx — queue the view receipt so it lands next reconnect.
-      // Server insert is idempotent on (status_id, viewer_email).
+    // Offline / 5xx — queue the view receipt so it lands next reconnect.
+    // Server insert is idempotent on (status_id, viewer_email).
+    const _queueView = () => {
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
         queueOfflineAction({ type: 'status_view', params: { status_id: _viewId } });
       } catch {}
-    });
+    };
+    api.statusView(_viewId).then((r) => {
+      // apiCall resolves {success:false} on native network failure (it never
+      // rejects there — the .catch below only fires on the web offline gate),
+      // so queueing only inside .catch made the queue dead code on native.
+      // Mirror the replay handler: queue transient failures, drop hard errors.
+      if (r && r.success === false
+          && !/not_found|already|duplicate|invalid|permission|forbidden|expired/i.test(String(r.message || r.error || ''))) {
+        _queueView();
+      }
+    }).catch(_queueView);
     // Local viewer snapshot still needs the immediate flip — `viewerStatuses`
     // was captured at openViewer time and isn't bound to the hook output,
     // so this keeps the in-modal "Vistos" badge truthy for this same item.
