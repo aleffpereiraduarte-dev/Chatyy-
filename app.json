@@ -13,6 +13,9 @@
     "userInterfaceStyle": "automatic",
     "scheme": "onemundomail",
     "owner": "aleffduarte",
+    "experiments": {
+      "reactCompiler": true
+    },
     "runtimeVersion": "2.5.0",
     "updates": {
       "enabled": true,

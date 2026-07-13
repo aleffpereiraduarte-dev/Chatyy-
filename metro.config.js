@@ -53,6 +53,18 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
       };
     }
   }
+  // expo-av was REMOVED in SDK 54+; several files keep defensive
+  // `require('expo-av')` fallbacks (never taken on SDK 55). Metro must still
+  // resolve it at bundle time — point it at an empty-object stub so the require
+  // yields undefined and the try/catch fallbacks behave as if it threw. Without
+  // this, enabling React Compiler makes the export fail on "Unable to resolve
+  // module expo-av". Applies to ALL platforms.
+  if (moduleName === 'expo-av') {
+    return {
+      filePath: require.resolve('./stubs/expo-av.js'),
+      type: 'sourceFile',
+    };
+  }
   if (moduleName === 'event-target-shim') {
     return context.resolveRequest(context, 'event-target-shim', platform);
   }
