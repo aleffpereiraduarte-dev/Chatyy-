@@ -1737,7 +1737,7 @@ export default {
   'chatConv.contact': 'Contacto',
   'chat.pollCreate': 'Criar enquete',
   'chat.youVoted': 'Votaste',
-  'compose.replyHeader': 'Em {daté}, {sender} escreveu:',
+  'compose.replyHeader': 'Em {date}, {sender} escreveu:',
   'compose.forwardHeader': '---------- Mensagem encaminhada ---------\nDe: {from}\nData: {daté}\nAssunto: {subject}\nPara: {to}',
   'compose.discardDraftConfirm': 'Descartar rascunho?',
   'compose.hide': 'Ocultar',

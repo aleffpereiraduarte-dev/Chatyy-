@@ -1987,7 +1987,7 @@ export default {
   'chat.youVoted': 'Voc\u00EA votou',
 
   // Compose extras
-  'compose.replyHeader': 'Em {daté}, {sender} escreveu:',
+  'compose.replyHeader': 'Em {date}, {sender} escreveu:',
   'compose.forwardHeader': '---------- Mensagem encaminhada ---------\nDe: {from}\nData: {daté}\nAssunto: {subject}\nPara: {to}',
   'compose.discardDraftConfirm': 'Descartar rascunho?',
   'compose.hide': 'Ocultar',

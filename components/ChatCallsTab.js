@@ -2107,6 +2107,8 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
   }, []);
 
   const handleHangup = useCallback(() => {
+    // Para o ringback imediatamente ao encerrar (mesmo durante a discagem).
+    try { require('../services/ringtone').stopRingtone(); } catch {}
     // Always try SIP hangup first (works for both web and native via the unified sipCall service)
     try { hangupSipCall(); } catch {}
     try { hangupPstnCall(); } catch {}
@@ -2200,6 +2202,12 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
         // Show green bar globally via CallContext
         ctxStartCall({ contactName: resolvedName || phoneNum, contactEmail: phoneNum, isVideo: false, isCaller: true, callType: 'pstn' });
 
+        // Ringback "tuuum...tuuum" enquanto o número toca. O app entra na sala
+        // LiveKit em SILÊNCIO (o áudio da pessoa só entra quando ela atende via
+        // ponte SIP), então sem esse tom local o usuário não ouve nada durante a
+        // discagem. Parado em 'connected'/'ended'/'error' abaixo.
+        try { require('../services/ringtone').startCallingTone(); } catch {}
+
         // Proximity sensor → tela apaga no ouvido. NÃO chamamos
         // ExpoAudioSession.activateForCall: o LiveKit (pstnCall.js) é dono do
         // AVAudioSession agora — disputar a sessão causaria o mudo.
@@ -2241,10 +2249,13 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             setActiveCall(prev => prev ? { ...prev, state: 'ringing' } : null);
             setCallResult({ success: true, message: t?.('calls.ringing') || 'Ringing...' });
           } else if (state === 'connected') {
+            // Atendeu → para o ringback; agora entra o áudio real da pessoa.
+            try { require('../services/ringtone').stopRingtone(); } catch {}
             _callConnectedAt = Date.now();
             setActiveCall(prev => prev ? { ...prev, state: 'connected' } : null);
             setCallResult({ success: true, message: t?.('calls.callStarted') || 'Call started!' });
           } else if (state === 'ended') {
+            try { require('../services/ringtone').stopRingtone(); } catch {}
             _persistCallHistory();
             setActiveCall(null); setCallResult(null); ctxEndCall();
             _proximityOff();
@@ -2252,6 +2263,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             _callDuration = (_callDuration || 0) + 1;
             setActiveCall(prev => prev ? { ...prev, duration: (prev.duration || 0) + 1 } : null);
           } else if (state?.startsWith?.('error:')) {
+            try { require('../services/ringtone').stopRingtone(); } catch {}
             _persistCallHistory();
             setActiveCall(null); ctxEndCall();
             setCallResult({ success: false, message: state.replace('error:', '') });

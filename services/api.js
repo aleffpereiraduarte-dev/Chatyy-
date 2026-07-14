@@ -1587,7 +1587,23 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
       // Carol-style "logged out for no reason" almost always traces to a
       // brief edge auth glitch that ran the strike counter up — we now
       // simply ignore it instead of nuking her session.
-      if (shouldSignal) {
+      // [2026-07-14] Web dead-token escape hatch. On web after a reload there is
+      // NO in-memory password and NO refresh token in this runtime, so the ONLY
+      // recovery from a genuinely-dead bearer is the user re-authenticating at
+      // /login. The 90-day grace window below (built to avoid NUKING a still-
+      // RECOVERABLE session on a transient blip) then traps the user in an
+      // endless 401 loop on inbox/folders: the token was alive minutes ago (a
+      // backend storm orphaned its server-side token file), so grace refuses
+      // logout forever and the inbox never loads. When check_auth has CONFIRMED
+      // the bearer is dead (shouldSignal only becomes true via that probe) AND
+      // there is genuinely no silent-recovery path, bypass grace and route to
+      // /login. Web-only + no-creds + no-refresh keeps this clear of the mobile
+      // false-logout cases the grace window exists to protect.
+      const _webDeadNoRecovery = shouldSignal &&
+        Platform.OS === 'web' &&
+        !(savedCredentials && savedCredentials.password) &&
+        !refreshToken;
+      if (shouldSignal && !_webDeadNoRecovery) {
         const ageMs = _tokenLastOkAgeMs();
         if (ageMs !== Infinity && ageMs < TOKEN_GRACE_MS) {
           shouldSignal = false;
