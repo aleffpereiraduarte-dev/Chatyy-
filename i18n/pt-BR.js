@@ -356,6 +356,7 @@ export default {
   'reader.cc': 'cc',
   'reader.reply': 'Responder',
   'reader.replyAll': 'Resp. todos',
+  'reader.snooze': 'Adiar',
   'reader.forward': 'Encaminhar',
   'thread.message': 'mensagem',
   'thread.messages': 'mensagens',

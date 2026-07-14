@@ -619,7 +619,12 @@ export function MailProvider({ children }) {
     loadEmails(currentFolder, 1, q);
   }, [currentFolder, loadEmails]);
 
-  const deleteEmail = useCallback(async (uid) => {
+  const deleteEmail = useCallback(async (uid, folder) => {
+    // folder is OPTIONAL and defaults to currentFolder. The reader (read.js)
+    // passes the email's REAL folder so a delete triggered from a message
+    // opened in a folder other than the one the list is showing (e.g. a
+    // cross-folder search result) hits the correct mailbox — not currentFolder.
+    const f = folder || currentFolder;
     animateListChange();
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const removed = emails.find(e => e.uid === uid);
@@ -627,14 +632,14 @@ export function MailProvider({ children }) {
     if (selectedEmail?.uid === uid) setSelectedEmail(null);
     if (!isOnline()) {
       offlineQueueRef.current = true;
-      queueOfflineAction({ type: 'delete', uid, folder: currentFolder });
+      queueOfflineAction({ type: 'delete', uid, folder: f });
     } else {
       // Gmail-style: show a 5s Undo toast and DEFER the real API call so the
       // user can take it back. Same infra as bulkDelete. On failure, restore.
       showUndo('deleted', [uid], removed ? [removed] : []);
       scheduleAction(async () => {
         try {
-          const r = await api.deleteEmail(uid, currentFolder);
+          const r = await api.deleteEmail(uid, f);
           if (!r?.success) {
             if (removed) setEmails(prev => [removed, ...prev]);
             console.warn('deleteEmail failed:', r?.message);
@@ -785,7 +790,11 @@ export function MailProvider({ children }) {
     }
   }, [currentFolder, selectedEmail, emails]);
 
-  const archiveEmail = useCallback(async (uid) => {
+  const archiveEmail = useCallback(async (uid, folder) => {
+    // folder OPTIONAL, defaults to currentFolder — same reasoning as deleteEmail:
+    // the reader passes the message's real folder so archive never hits the
+    // wrong mailbox when the reader's folder ≠ the list's currentFolder.
+    const f = folder || currentFolder;
     animateListChange();
     if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const removed = emails.find(e => e.uid === uid);
@@ -795,7 +804,7 @@ export function MailProvider({ children }) {
     showUndo('archived', [uid], removed ? [removed] : []);
     scheduleAction(async () => {
       try {
-        const r = await api.archiveEmail(uid, currentFolder);
+        const r = await api.archiveEmail(uid, f);
         if (!r?.success && removed) {
           setEmails(prev => [...prev, removed].sort((a, b) => b.uid - a.uid));
         }
@@ -807,13 +816,14 @@ export function MailProvider({ children }) {
 
   // --- Snooze ---
 
-  const snoozeEmail = useCallback(async (uid, snoozeUntil) => {
+  const snoozeEmail = useCallback(async (uid, snoozeUntil, folder) => {
+    const f = folder || currentFolder; // reader passes real folder (see deleteEmail)
     animateListChange();
     const removed = emails.find(e => e.uid === uid);
     setEmails(prev => prev.filter(e => e.uid !== uid));
     if (selectedEmail?.uid === uid) setSelectedEmail(null);
     try {
-      const r = await api.snoozeEmail(uid, snoozeUntil, currentFolder);
+      const r = await api.snoozeEmail(uid, snoozeUntil, f);
       if (!r?.success && removed) setEmails(prev => [removed, ...prev]);
     } catch { if (removed) setEmails(prev => [removed, ...prev]); }
   }, [currentFolder, selectedEmail, emails]);
@@ -1161,7 +1171,7 @@ export function MailProvider({ children }) {
   const contextValue = useMemo(() => ({
     emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
     page, total, search, wsStatus,
-    loadFolders, loadEmails, openEmail, changeFolder, refresh, doSearch,
+    loadFolders, loadEmails, openEmail, changeFolder, refresh, silentRefresh, doSearch,
     deleteEmail, moveEmail, setPage, setSelectedEmail, markAsRead,
     starEmail, archiveEmail,
     // Selection
@@ -1181,7 +1191,7 @@ export function MailProvider({ children }) {
   }), [
     emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
     page, total, search, wsStatus,
-    loadFolders, loadEmails, openEmail, changeFolder, refresh, doSearch,
+    loadFolders, loadEmails, openEmail, changeFolder, refresh, silentRefresh, doSearch,
     deleteEmail, moveEmail, setPage, setSelectedEmail, markAsRead,
     starEmail, archiveEmail,
     selectedUids, selectMode, toggleSelect, selectAll, clearSelection,

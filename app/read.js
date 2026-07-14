@@ -9,7 +9,8 @@ import { useLanguage } from '../context/LanguageContext';
 import { Shadow, Spacing, FontSize, BorderRadius, AnimTiming } from '../constants/theme';
 import EmailReader from '../components/EmailReader';
 import ThreadView from '../components/ThreadView';
-import { IconChevronLeft, IconChevronRight, IconReply, IconArchive, IconTrash, IconForward } from '../components/Icons';
+import { IconChevronLeft, IconChevronRight, IconReply, IconReplyAll, IconArchive, IconTrash, IconForward, IconClock } from '../components/Icons';
+import SnoozePickerModal from '../components/SnoozePickerModal';
 import { MessageSkeleton } from '../components/SkeletonLoader';
 
 export default function ReadScreen() {
@@ -23,7 +24,8 @@ export default function ReadScreen() {
   // payload and shows the suggested message preview + a "Send follow-up"
   // button that hops to /compose with the suggestion pre-filled.
   const [followupSuggestion, setFollowupSuggestion] = useState(null); // {days, suggested_message, urgency}
-  const { refresh, markAsRead } = useMail();
+  const { refresh, markAsRead, deleteEmail: ctxDelete, archiveEmail: ctxArchive, snoozeEmail: ctxSnooze } = useMail();
+  const [showSnooze, setShowSnooze] = useState(false);
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
@@ -261,31 +263,26 @@ export default function ReadScreen() {
     } catch {}
   };
 
-  const handleDelete = async () => {
-    const doDelete = async () => {
-      await apiDelete(uid, folder);
-      refresh();
-      router.back();
-    };
-    const title = t('read.confirmDeleteTitle');
-    const msg = t('read.confirmDeleteMsg');
-    if (Platform.OS === 'web') {
-      // [2026-06-04 caçada R3 P1] No RN-web, Alert.alert é um NO-OP que NUNCA
-      // lança → o try "sucedia" sem renderizar nada e o catch (window.confirm)
-      // ficava inalcançável → Excluir e-mail era ação MORTA no navegador. Vai
-      // direto pro window.confirm.
-      if (typeof window !== 'undefined' && window.confirm(`${title}\n\n${msg}`)) doDelete();
-    } else {
-      Alert.alert(title, msg, [
-        { text: t('common.cancel'), style: 'cancel' },
-        { text: t('reader.delete'), style: 'destructive', onPress: doDelete },
-      ]);
-    }
+  const handleDelete = () => {
+    // Gmail-grade: delete instantly with an Undo toast (no confirm dialog). The
+    // context deleteEmail removes the row optimistically, shows a 5s Undo, and
+    // DEFERS the real API call — all scoped to the email's REAL folder (passed
+    // explicitly so a message opened from a non-current folder / cross-folder
+    // search still deletes from the right mailbox). Back out immediately so it
+    // feels instant; the undo lives on the list.
+    ctxDelete(uid, folder);
+    router.back();
   };
 
-  const handleArchive = async () => {
-    await archiveEmail(uid, folder);
-    refresh();
+  const handleArchive = () => {
+    ctxArchive(uid, folder); // optimistic + Undo + correct folder (same as delete)
+    router.back();
+  };
+
+  const handleSnooze = () => setShowSnooze(true);
+  const onSnoozePick = (iso) => {
+    ctxSnooze(uid, iso, folder);
+    setShowSnooze(false);
     router.back();
   };
 
@@ -384,7 +381,11 @@ export default function ReadScreen() {
   const actionBar = Platform.OS !== 'web' && email ? (
     <View style={[s.actionBar, Shadow.lg, { backgroundColor: colors.surface, paddingBottom: insets.bottom + 8, borderTopColor: colors.borderLight }]}>
       <ActionBarButton icon={IconReply} label={t('reader.reply')} color={colors.primary} onPress={() => handleReply(email)} accessibilityLabel={t('reader.reply')} primary />
+      {((email.cc && String(email.cc).trim()) || (email.to && String(email.to).split(',').filter(s => s.trim()).length > 1)) ? (
+        <ActionBarButton icon={IconReplyAll} label={t('reader.replyAll')} color={colors.textSecondary} onPress={() => handleReplyAll(email)} accessibilityLabel={t('reader.replyAll')} />
+      ) : null}
       <ActionBarButton icon={IconForward} label={t('reader.forward')} color={colors.textSecondary} onPress={handleForward} accessibilityLabel={t('reader.forward')} />
+      <ActionBarButton icon={IconClock} label={t('reader.snooze')} color={colors.textSecondary} onPress={handleSnooze} accessibilityLabel={t('reader.snooze')} />
       <ActionBarButton icon={IconArchive} label={t('reader.archive')} color={colors.textSecondary} onPress={handleArchive} accessibilityLabel={t('reader.archive')} />
       <ActionBarButton icon={IconTrash} label={t('reader.delete')} color={colors.error} onPress={handleDelete} accessibilityLabel={t('reader.delete')} />
     </View>
@@ -467,6 +468,7 @@ export default function ReadScreen() {
           onClose={() => router.back()}
         />
         {actionBar}
+        <SnoozePickerModal visible={showSnooze} onClose={() => setShowSnooze(false)} onSnooze={onSnoozePick} />
       </View>
     );
   }
@@ -504,6 +506,7 @@ export default function ReadScreen() {
         />
       </Animated.View>
       {actionBar}
+      <SnoozePickerModal visible={showSnooze} onClose={() => setShowSnooze(false)} onSnooze={onSnoozePick} />
     </View>
   );
 }

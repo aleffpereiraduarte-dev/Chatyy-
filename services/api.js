@@ -2110,6 +2110,26 @@ export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search 
   // Search operators (from/to/subject/is:/before/after/larger/smaller) are now
   // handled natively; label KEYWORD maps and category bucketing stay on PHP.
   const needsPHP = !!label || (!!category && category !== 'all');
+  // ⚡ Gmail-grade inbox search: when the user is searching plain text (no
+  // label/category scoping, no is:/from: operator, first page) route the query
+  // to the dedicated Meilisearch engine (typo-tolerant + prefix + ranking) via
+  // the search_emails action. It returns FULL rows in the same shape as a
+  // normal folder page. NEVER-CAI: any failure / zero hits / operator query
+  // just falls through to the existing Rust/PHP IMAP substring search below,
+  // so search is never worse than before — only smarter when Meili answers.
+  const _q = (search || '').trim();
+  const _hasOperator = /\b(from|to|subject|is|before|after|larger|smaller|has|label|in|filename|cc|bcc):/i.test(_q);
+  if (_q.length >= 2 && !_hasOperator && !needsPHP && !filter && page === 1 && authToken) {
+    try {
+      const mr = await apiCall('search_emails', { q: _q, folder });
+      if (mr?.success && Array.isArray(mr?.data?.emails) && mr.data.emails.length > 0) {
+        const list = mr.data.emails;
+        // total = returned count so infinite-scroll won't page past Meili's
+        // result set into a different (IMAP) answer.
+        return { success: true, data: { emails: list, total: list.length, source: 'meili' } };
+      }
+    } catch (_) { /* fall through to IMAP search */ }
+  }
   if (!needsPHP) {
     if (authToken && !_isRustDead()) {
       try {

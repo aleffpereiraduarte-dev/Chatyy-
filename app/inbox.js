@@ -1,10 +1,10 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Modal, Pressable, TextInput,
-  ActivityIndicator, useWindowDimensions, Platform, Animated, Easing, Alert,
+  ActivityIndicator, useWindowDimensions, Platform, Animated, Easing, Alert, AppState,
 } from 'react-native';
 // FlashList reverted to FlatList
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth, isChildAccount } from '../context/AuthContext';
 import { useMail } from '../context/MailContext';
@@ -94,7 +94,7 @@ function InboxScreenInner() {
   const {
     emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
     page, total, search,
-    loadFolders, loadEmails, openEmail, changeFolder, refresh, doSearch,
+    loadFolders, loadEmails, openEmail, changeFolder, refresh, silentRefresh, doSearch,
     deleteEmail, setSelectedEmail, setPage,
     starEmail: ctxStarEmail, archiveEmail: ctxArchiveEmail,
     // Selection
@@ -115,6 +115,29 @@ function InboxScreenInner() {
   const { colors, isDark, toggle } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
+
+  // ⚡ Gmail-grade freshness: silently re-pull the current folder every time the
+  // inbox regains focus (navigating back from read/compose/another tab) AND when
+  // the app returns to the foreground. Without this the list kept showing the
+  // last in-memory snapshot — sometimes days old — until a manual pull-to-refresh
+  // or a WS event, which is exactly the "muda de página e mostra e-mails de dias
+  // atrás antes de atualizar" the founder reported. silentRefresh does a
+  // background page-1 merge (no spinner, no scroll jump).
+  const didInitialFocus = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      // Skip the very first focus — the mount effect already loads the list —
+      // so we don't double-fetch on open. Every RE-focus triggers a refresh.
+      if (!didInitialFocus.current) { didInitialFocus.current = true; return; }
+      try { silentRefresh(); } catch {}
+    }, [silentRefresh])
+  );
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') { try { silentRefresh(); } catch {} }
+    });
+    return () => sub.remove();
+  }, [silentRefresh]);
 
   const getGreeting = () => {
     const h = new Date().getHours();
