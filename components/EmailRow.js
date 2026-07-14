@@ -585,9 +585,10 @@ function EmailRow({
   return (
     <View style={{ position: 'relative' }}>
       <SwipeableRow
-        onSwipeRight={() => onArchive?.(email)}
-        onSwipeLeft={() => onDelete?.(email)}
+        onArchive={() => onArchive?.(email)}
+        onDelete={() => onDelete?.(email)}
         onSnooze={() => onSnooze?.(email)}
+        colors={colors}
       >
         {row}
       </SwipeableRow>

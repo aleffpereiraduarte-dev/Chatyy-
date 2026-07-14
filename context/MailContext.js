@@ -629,17 +629,21 @@ export function MailProvider({ children }) {
       offlineQueueRef.current = true;
       queueOfflineAction({ type: 'delete', uid, folder: currentFolder });
     } else {
-      try {
-        const r = await api.deleteEmail(uid, currentFolder);
-        if (!r?.success) {
-          // Restore email on failure
+      // Gmail-style: show a 5s Undo toast and DEFER the real API call so the
+      // user can take it back. Same infra as bulkDelete. On failure, restore.
+      showUndo('deleted', [uid], removed ? [removed] : []);
+      scheduleAction(async () => {
+        try {
+          const r = await api.deleteEmail(uid, currentFolder);
+          if (!r?.success) {
+            if (removed) setEmails(prev => [removed, ...prev]);
+            console.warn('deleteEmail failed:', r?.message);
+          }
+        } catch (e) {
           if (removed) setEmails(prev => [removed, ...prev]);
-          console.warn('deleteEmail failed:', r?.message);
+          console.warn('deleteEmail error:', e);
         }
-      } catch (e) {
-        if (removed) setEmails(prev => [removed, ...prev]);
-        console.warn('deleteEmail error:', e);
-      }
+      });
     }
   }, [currentFolder, selectedEmail, emails]);
 
@@ -787,14 +791,18 @@ export function MailProvider({ children }) {
     const removed = emails.find(e => e.uid === uid);
     setEmails(prev => prev.filter(e => e.uid !== uid));
     if (selectedEmail?.uid === uid) setSelectedEmail(null);
-    try {
-      const r = await api.archiveEmail(uid, currentFolder);
-      if (!r?.success && removed) {
-        setEmails(prev => [...prev, removed].sort((a, b) => b.uid - a.uid));
+    // Gmail-style undo: toast + defer the real archive 5s so it can be taken back.
+    showUndo('archived', [uid], removed ? [removed] : []);
+    scheduleAction(async () => {
+      try {
+        const r = await api.archiveEmail(uid, currentFolder);
+        if (!r?.success && removed) {
+          setEmails(prev => [...prev, removed].sort((a, b) => b.uid - a.uid));
+        }
+      } catch {
+        if (removed) setEmails(prev => [...prev, removed].sort((a, b) => b.uid - a.uid));
       }
-    } catch {
-      if (removed) setEmails(prev => [...prev, removed].sort((a, b) => b.uid - a.uid));
-    }
+    });
   }, [currentFolder, selectedEmail, emails]);
 
   // --- Snooze ---
