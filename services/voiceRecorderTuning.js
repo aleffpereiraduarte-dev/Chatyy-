@@ -24,10 +24,10 @@
  * Idempotent — patch runs once per module evaluation.
  */
 
-let _patched = false;
-
 export function applyVoiceRecorderTuning() {
-  if (_patched) return true;
+  // Guard on globalThis so a duplicate module copy (web code-splitting) doesn't
+  // re-patch / re-log. Module-local `let` wouldn't be shared across copies.
+  if (globalThis.__chatyy_voicePatched) return true;
   try {
     const mod = require('expo-audio');
     const presets = mod && mod.RecordingPresets;
@@ -79,7 +79,7 @@ export function applyVoiceRecorderTuning() {
     // its own extension above, so the actual on-disk file is correct.
     // Only switch the top-level extension if we ever ship full Opus on iOS.
 
-    _patched = true;
+    globalThis.__chatyy_voicePatched = true;
     try {
       console.log('[voiceTuning] patched RecordingPresets.HIGH_QUALITY → Opus 32k mono 16/22kHz');
     } catch {}

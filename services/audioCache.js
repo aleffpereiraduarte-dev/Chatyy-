@@ -118,6 +118,20 @@ function _createTrackedBlobUrl(remoteUrl, blob) {
   return blobUrl;
 }
 
+// Drop a poisoned blob URL for a remote URL so the next resolve re-creates it.
+// Called by the web player when an <audio> element fails to load a blob: src
+// (e.g. the blob was revoked out from under it by a concurrent re-cache).
+// After this, the caller should retry with the direct remote URL, which
+// browsers stream natively via range requests.
+export function invalidateWebAudio(remoteUrl) {
+  if (!remoteUrl) return;
+  try {
+    const prev = _blobUrlMap.get(remoteUrl);
+    if (prev) { try { URL.revokeObjectURL(prev); } catch {} }
+    _blobUrlMap.delete(remoteUrl);
+  } catch {}
+}
+
 async function webGetCachedUri(url) {
   if (typeof caches === 'undefined') return url;
   // Return existing blob URL if we already have one

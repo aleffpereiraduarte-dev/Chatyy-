@@ -2867,6 +2867,7 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
   // players, two intervals, and a soundRef that points to the wrong one
   // — random "stuck on play" / "won't pause" behavior.
   const playLockRef = useRef(false);
+  const blobRetryRef = useRef(false); // one-shot: web blob died → retried direct URL
   const isMountedRef = useIsMounted();
 
   // Dancing waveform: while audio is playing, a gentle scaleY pulse runs
@@ -3142,7 +3143,30 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
           const audio = new window.Audio(playUri);
           audio.preload = 'auto';
           audio.onended = () => { if (!isMountedRef.current) return; setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); try { require('../services/voicePlaybackBus').emitAudioFinished(messageId); } catch {} };
-          audio.onerror = () => { if (!isMountedRef.current) return; setPlaying(false); soundRef.current = null; };
+          audio.onerror = () => {
+            if (!isMountedRef.current) return;
+            setPlaying(false);
+            soundRef.current = null;
+            // Self-heal: if we were playing a blob: that died (revoked out from
+            // under us by a concurrent re-cache — ERR_FILE_NOT_FOUND), purge the
+            // poisoned blob + the cached ref and retry ONCE with the direct
+            // remote URL, which the browser streams natively. Without this, the
+            // stale blob is reused on every subsequent tap → silent fail forever.
+            const wasBlob = typeof playUri === 'string' && playUri.startsWith('blob:');
+            if (wasBlob && !blobRetryRef.current) {
+              blobRetryRef.current = true;
+              try { require('../services/audioCache').invalidateWebAudio(url); } catch {}
+              cachedUriRef.current = null;
+              try {
+                const fresh = new window.Audio(url);
+                fresh.preload = 'auto';
+                fresh.onended = audio.onended;
+                fresh.playbackRate = speed;
+                soundRef.current = fresh;
+                fresh.play().then(() => { if (isMountedRef.current) setPlaying(true); }).catch(() => {});
+              } catch {}
+            }
+          };
           soundRef.current = audio;
         }
         // Resume from current position instead of restarting (only reset if finished)

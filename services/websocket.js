@@ -2325,6 +2325,12 @@ class MailWebSocket {
   }
 }
 
-// Singleton
-const mailWs = new MailWebSocket();
+// Singleton — pinned on globalThis so that if web code-splitting emits this
+// module into two chunks (each with its own module registry), BOTH copies
+// share ONE MailWebSocket instance. Without this, two instances each connect
+// with the same bearer; the server enforces one session per bearer (close
+// code 4002 = session_replaced), so they kill each other's socket in an
+// endless "3 consecutive ACK fails → forcing resurrect" tug-of-war. Same
+// idiom already used for globalThis.__chatyy_cwp_ws above.
+const mailWs = globalThis.__chatyy_mailWs || (globalThis.__chatyy_mailWs = new MailWebSocket());
 export default mailWs;
