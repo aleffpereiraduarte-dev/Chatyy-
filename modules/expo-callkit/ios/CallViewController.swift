@@ -1542,7 +1542,21 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         publishOptions: publishOpts
                     )
                     await MainActor.run {
-                        self.session.localVideoTrack = pub?.track as? LocalVideoTrack
+                        let track = pub?.track as? LocalVideoTrack
+                        self.session.localVideoTrack = track
+                        // [autopreview instant 2026-07-15] Bind the local preview
+                        // synchronously the moment the track exists — matching the
+                        // STAGE-A answer (L978) + didActivate retry (L2255) sites,
+                        // which already call applyLocalVideoTrack() directly as
+                        // defense-in-depth. This was the ONLY publish site relying
+                        // solely on the $localVideoTrack Combine sink, which fires
+                        // one extra main-queue hop later; the local VideoView
+                        // renders straight from the (already-live) capturer, so a
+                        // direct bind shows the self-view as early as this atomic
+                        // setCamera() allows. applyLocalVideoTrack is idempotent +
+                        // guarded, and touches only the local PiP — no signaling,
+                        // no renegotiation.
+                        self.applyLocalVideoTrack(track)
                     }
                     print("[CallVC] camera first-publish — callId=\(self.callId)")
                     // [2026-06-01 VIDEO PARITY] Tell the peer we just switched to
