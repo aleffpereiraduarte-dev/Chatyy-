@@ -1517,10 +1517,19 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// `if session.camEnabled` guard handles hiding the preview entirely).
     /// On first-enable (no track yet) we fall through to setCamera() which
     /// performs the initial publish.
+    /// Serializes camera on/off (see uikitOnVideoToggle) so overlapping async
+    /// toggles can't race and stick. Only ever HELD by a user toggle; always
+    /// released when this func's async Task completes or on any early return.
+    private var isTogglingCamera = false
+
     private func applyCamEnabled(_ enabled: Bool) {
-        guard let r = self.room else { return }
+        guard let r = self.room else {
+            Task { @MainActor in self.isTogglingCamera = false }
+            return
+        }
         Task { [weak self] in
             guard let self = self else { return }
+            defer { Task { @MainActor in self.isTogglingCamera = false } }
             do {
                 if let track = self.session.localVideoTrack {
                     // Track already published — just mute / unmute the
@@ -3020,6 +3029,14 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     }
 
     @objc private func uikitOnVideoToggle() {
+        // [2026-07-15] Re-entrancy guard — setCamera/mute/unmute inside
+        // applyCamEnabled are ASYNC; a 2nd tap while the 1st is in-flight fired
+        // overlapping LiveKit camera ops that raced and left the camera STUCK
+        // (founder: "camera stucks when trying to on and off"). Ignore taps
+        // until the current toggle settles (applyCamEnabled clears the flag
+        // when its Task finishes, incl. the room-nil early return).
+        guard !isTogglingCamera else { return }
+        isTogglingCamera = true
         let desired = !session.camEnabled
         session.camEnabled = desired
         applyCamEnabled(desired)
