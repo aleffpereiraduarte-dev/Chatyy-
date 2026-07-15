@@ -1900,7 +1900,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
   );
 }
 
-function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, callerIdVerified: cidVerifiedProp, onVerified }) {
+function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, callerIdVerified: cidVerifiedProp, onVerified, prefill, autoDial, onAutoDialConsumed }) {
   const { startCall: ctxStartCall, endCall: ctxEndCall } = useCall();
   const { width: winWidth, height: winHeight } = require('react-native').useWindowDimensions();
   // Responsive key size: shrink keypad on narrow viewports
@@ -2300,6 +2300,23 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
   // (precisa de ref pq history press fica acima de handleCall declaration).
   const handleCallRef = useRef(null);
   useEffect(() => { handleCallRef.current = handleCall; }, [handleCall]);
+
+  // Prefill + auto-dial (redial a partir do histórico). ChatCallsTab seta
+  // prefill/autoDial via props — setNumber e handleCall vivem AQUI DENTRO do
+  // DialerModal, então o pai não consegue chamá-los direto (escopos separados;
+  // era a causa do ReferenceError: setNumber is not defined).
+  const autoDialFiredRef = useRef(false);
+  useEffect(() => {
+    if (visible && prefill) setNumber(prefill);
+    if (!visible) autoDialFiredRef.current = false;
+  }, [visible, prefill]);
+  useEffect(() => {
+    if (visible && autoDial && !autoDialFiredRef.current && number && number.length >= 4 && !calling) {
+      autoDialFiredRef.current = true;
+      const id = setTimeout(() => { try { handleCallRef.current?.(); } catch {} try { onAutoDialConsumed?.(); } catch {} }, 350);
+      return () => clearTimeout(id);
+    }
+  }, [visible, autoDial, number, calling]);
 
   const country = detectCountry(number);
   const canCall = isPaid && number.trim().length >= 4 && !calling;
@@ -2766,6 +2783,8 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
   const [loadingHistory, setLoadingHistory] = useState(!(Array.isArray(_preloadedCalls) && _preloadedCalls.length > 0));
   const lastCallsFpRef = useRef(_callsFingerprint(_preloadedCalls));
   const [dialerVisible, setDialerVisible] = useState(false);
+  const [dialerPrefill, setDialerPrefill] = useState('');
+  const [dialerAutoDial, setDialerAutoDial] = useState(false);
   const [scheduleVisible, setScheduleVisible] = useState(false);
   const [infoItem, setInfoItem] = useState(null);
   const [showCallerIdModal, setShowCallerIdModal] = useState(false);
@@ -2904,22 +2923,13 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       // Preenche o number state + abre o dialer com auto-dial flag.
       const cleanNum = item.to_number.replace(/[^0-9+]/g, '');
       const dialNum = cleanNum.startsWith('+') ? cleanNum.slice(1) : cleanNum;
-      setNumber(dialNum);
+      // Preenche o dialer + auto-disca via PROPS do DialerModal. setNumber e
+      // handleCall vivem DENTRO do DialerModal (escopo separado) — chamá-los
+      // daqui dava ReferenceError: setNumber is not defined e travava o app
+      // ao tocar num item de histórico (não deixava ligar pela web).
+      setDialerPrefill(dialNum);
+      setDialerAutoDial(true);
       setDialerVisible(true);
-      // Dispara handleCall após o modal montar + handleCallRef ser setado.
-      // 80ms era curto demais — em devices lentos o ref ainda era null,
-      // o tap "fazia nada". 300ms cobre cold-start do modal sem nojo
-      // visual. Tentamos 3x com backoff caso o ref demore mais ainda.
-      let attempts = 0;
-      const tryDial = () => {
-        attempts++;
-        if (handleCallRef.current) {
-          try { handleCallRef.current(); } catch {}
-        } else if (attempts < 4) {
-          setTimeout(tryDial, 200);
-        }
-      };
-      setTimeout(tryDial, 250);
       return;
     }
     if (!router) return;
@@ -3571,13 +3581,16 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       {/* Dialer modal */}
       <DialerModal
         visible={dialerVisible}
-        onClose={() => setDialerVisible(false)}
+        onClose={() => { setDialerVisible(false); setDialerAutoDial(false); setDialerPrefill(''); }}
         isDark={isDark}
         t={t}
         minutesInfo={minutesInfo}
         onCallPlaced={refreshData}
         callerIdVerified={callerIdVerified}
         onVerified={() => setCallerIdVerified(true)}
+        prefill={dialerPrefill}
+        autoDial={dialerAutoDial}
+        onAutoDialConsumed={() => setDialerAutoDial(false)}
       />
 
       {/* Schedule a call — opens the date+title+participants picker.

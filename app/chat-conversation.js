@@ -7474,15 +7474,28 @@ function ChatConversationInner() {
       const av = conv.avatar_url || conv.avatar || '';
       if (av) setConversationAvatar(av);
     };
+    // Capture the server read watermark (last_read_message_id) so the "Não
+    // lidas" divider can position by it. Take the MAX seen (a fresher/higher
+    // watermark from multi-device reads wins). Absent field ⇒ leave null so
+    // the count fallback stays in play for older backends.
+    const _applyConvWatermark = (conv) => {
+      if (conv && Object.prototype.hasOwnProperty.call(conv, 'last_read_message_id')) {
+        const w = Number(conv.last_read_message_id) || 0;
+        setLastReadWatermark(prev => (prev == null || w > prev) ? w : prev);
+      }
+    };
     getCachedConversations().then(cached => {
       const conv = cached.find(c => c.id === conversationId || String(c.id) === String(conversationId));
       _applyConvName(conv);
+      _applyConvWatermark(conv);
     }).catch(() => {});
     api.chatConversations().then(r => {
-      if (!r.success) return;
+      if (!r.success) { setConvMetaResolved(true); return; }
       const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
       const conv = convs.find(c => c.id === conversationId || String(c.id) === String(conversationId));
       _applyConvName(conv);
+      _applyConvWatermark(conv);
+      setConvMetaResolved(true);
       // WhatsApp parity: if the conversation row doesn't carry a
       // display_name AND we don't have a custom nickname, fall back to
       // the peer's PUBLIC PROFILE name (the name they set in their own
@@ -7513,7 +7526,7 @@ function ChatConversationInner() {
           }
         }
       } catch {}
-    }).catch(() => {});
+    }).catch(() => { setConvMetaResolved(true); });
   }, [conversationId]);
 
   // Chatyy settings (font size, read receipts, etc.)
@@ -18131,9 +18144,39 @@ function ChatConversationInner() {
   // and mark the (last - unread_count + 1)th incoming message as the first unread.
   const firstUnreadIdRef = useRef(null);
   const initialUnreadCountRef = useRef(parseInt(params.unread || '0', 10));
+  // [2026-07-15] Read watermark for the "Não lidas" divider.
+  //   lastReadWatermark: null  → conv meta not resolved yet
+  //                       >0   → server's last_read_message_id (authoritative)
+  //                       0    → nothing read / older backend that didn't send
+  //                              the field → fall back to the count offset.
+  // Positioning by the watermark instead of a from-the-end count self-heals
+  // the "Não lidas volta / divisor acima de msgs velhas" bug where the count
+  // drifted (stale badge, multi-device reads). Fed from the conversation
+  // object (cache + server chat_list, which now echo last_read_message_id).
+  const [lastReadWatermark, setLastReadWatermark] = useState(null);
+  const [convMetaResolved, setConvMetaResolved] = useState(false);
   useEffect(() => {
     if (firstUnreadIdRef.current !== null) return;
     if (messages.length === 0) return;
+    // Preferred: divider sits above the first incoming message the server
+    // still considers unread (id > watermark).
+    if (lastReadWatermark != null && lastReadWatermark > 0) {
+      for (let i = 0; i < messages.length; i++) {
+        const m = messages[i];
+        if (!m || m._type || m.type === 'system') continue;
+        if (m.sender_email === currentEmail) continue;
+        if (Number(m.id) > lastReadWatermark) {
+          firstUnreadIdRef.current = m.id;
+          break;
+        }
+      }
+      return; // watermark authoritative — never fall through to the count path
+    }
+    // Count fallback (compat): only once we've resolved conv meta WITHOUT a
+    // usable watermark (older backend / fail-open sync path). Waiting for the
+    // resolve prevents a stale count from claiming the divider before the
+    // watermark arrives.
+    if (!convMetaResolved) return;
     const unreadN = initialUnreadCountRef.current;
     if (unreadN <= 0) return;
     // Find the Nth-from-end incoming message (skip own + system)
@@ -18148,7 +18191,7 @@ function ChatConversationInner() {
         break;
       }
     }
-  }, [messages, currentEmail]);
+  }, [messages, currentEmail, lastReadWatermark, convMetaResolved]);
 
   // Cache of wrapped message objects so identical messages keep the same
   // reference across renders — critical for MemoizedMessageRow to skip work.
@@ -20206,6 +20249,7 @@ function ChatConversationInner() {
             ? (msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
             : null;
           const videoUrl = msg._localUri || videoLocalPath || resolveMediaUri(msg.file_url);
+          const _vidLqipB64 = msg.thumb_b64 || (Platform.OS !== 'web' ? getThumbB64Sync(msg.id) : null);
           const vidUploading = !!msg._uploading;
           const vidProgress = msg._uploadPct || 0;
           const vidIndeterminate = vidUploading && (msg._uploadPct === undefined);
@@ -20389,9 +20433,9 @@ function ChatConversationInner() {
                       is created by chat_upload (chat.php) right after the
                       move_uploaded_file() step. If it doesn't exist the
                       Image's onError hides it so the gradient stays. */}
-                  {msg.thumb_b64 && !vidUploading && (
+                  {_vidLqipB64 && !vidUploading && (
                     <Image
-                      source={{ uri: `data:image/jpeg;base64,${msg.thumb_b64}` }}
+                      source={{ uri: `data:image/jpeg;base64,${_vidLqipB64}` }}
                       style={{ position: 'absolute', top: 0, left: 0, width: _vbW, height: _vbH, opacity: 0.9 }}
                       resizeMode="cover"
                       blurRadius={8}
@@ -20416,7 +20460,7 @@ function ChatConversationInner() {
                         posterUrl={msg.poster_url}
                         videoThumb={msg.video_thumb}
                         imageVariantsThumb={_ivThumb}
-                        thumbB64={msg.thumb_b64}
+                        thumbB64={_vidLqipB64}
                         style={{ position: 'absolute', top: 0, left: 0, width: _vbW, height: _vbH }}
                       />
                     );

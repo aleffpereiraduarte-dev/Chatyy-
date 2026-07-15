@@ -985,6 +985,11 @@ function IncomingCallListenerWeb() {
       // even though the JS-side modal/ringtone is cleared — user reported
       // "se eu atender em um dispositivo, o outro continua tocando".
       unsubs.push(mailWs.on('call_dismissed', (data) => {
+        // [multi-device answered_elsewhere] The backend now fans call_dismissed
+        // to BOTH devices of the callee — including the one that just answered.
+        // If THIS device already accepted this exact call, ignore its own
+        // dismiss so it doesn't tear down the freshly-answered call.
+        if (acceptedRef.current && callRef.current?.call_id === data?.call_id) { return; }
         if (callRef.current?.call_id === data?.call_id) {
           console.log('[IncomingCall] call_dismissed received:', data.call_id, 'reason=' + (data?.reason || 'n/a'));
           if (data?.call_id) _pendingIceByCallId.delete(String(data.call_id));
@@ -1068,6 +1073,10 @@ function IncomingCallListenerWeb() {
       // this event, the existing call_end handler still covers the hangup
       // path via WS — this is purely additive for multi-device parity.
       unsubs.push(mailWs.on('call_cancel', (data) => {
+        // [multi-device answered_elsewhere] Same guard as call_dismissed: the
+        // device that already accepted this call must ignore its own cancel/
+        // dismiss fan-out so the just-answered call isn't torn down.
+        if (acceptedRef.current && callRef.current?.call_id === data?.call_id) { return; }
         if (callRef.current?.call_id === data?.call_id) {
           console.log('[IncomingCall] call_cancel (caller-aborted ring):', data.call_id);
           if (data?.call_id) _pendingIceByCallId.delete(String(data.call_id));

@@ -672,6 +672,67 @@ async function getStoredRefreshToken() {
   } catch {}
 })();
 
+// Auto-heal de bearer órfão SEM re-login: troca o refresh_token (180d,
+// rotacionado) por um access bearer novo. Single-flight compartilhado
+// (_authRefreshInFlight) — 401s concorrentes de apiCall PHP, dos fetch
+// Rust de email e do WS todos aguardam a MESMA troca em voo, sem
+// estampidar o endpoint. Retorna true se `authToken` passou a conter um
+// bearer fresco e válido; o chamador deve repetir a requisição UMA vez.
+export async function ensureFreshBearer() {
+  // Re-hidratação defensiva: a IIFE de boot é async/fire-and-forget e o
+  // in-memory refreshToken pode estar vazio (boot ainda não resolveu) ou
+  // ter driftado. Re-lê do storage antes de desistir — assim o auto-heal
+  // dispara mesmo no caminho Rust-first de cold start.
+  if (!refreshToken || !refreshDeviceId) {
+    try {
+      const stored = await getStoredRefreshToken();
+      if (stored?.token) {
+        refreshToken = stored.token;
+        refreshDeviceId = stored.deviceId || refreshDeviceId || '';
+      }
+    } catch {}
+  }
+  if (!refreshToken || !refreshDeviceId) return false;
+  if (!_authRefreshInFlight) {
+    _authRefreshInFlight = (async () => {
+      try {
+        const r = await _rawApiCall('auth_refresh', {
+          refresh_token: refreshToken,
+          device_id: refreshDeviceId,
+        }, 'POST');
+        const newAccess = r?.data?.data?.token || r?.data?.token;
+        const newRefresh = r?.data?.data?.refresh_token || r?.data?.refresh_token;
+        if (newAccess && r.status >= 200 && r.status < 300) {
+          authToken = newAccess;
+          await storeToken(newAccess).catch(() => {});
+          try { _noteAuthOk(); } catch {}
+          // Um bearer novo merece uma chance limpa no caminho Rust rápido.
+          try { _resetRustHealth(); } catch {}
+          if (newRefresh) {
+            refreshToken = newRefresh;
+            await storeRefreshToken(newRefresh, refreshDeviceId).catch(() => {});
+          }
+          return true;
+        }
+        // Servidor diz que o refresh está inválido/revogado → zera pra não
+        // ficar retentando. Cobre os dois níveis de aninhamento da resposta.
+        const err = r?.data?.data?.error || r?.data?.error;
+        if (err === 'revoked' || err === 'expired') {
+          refreshToken = '';
+          await storeRefreshToken(null).catch(() => {});
+        }
+        return false;
+      } catch { return false; }
+    })().finally(() => { _authRefreshInFlight = null; });
+  }
+  return _authRefreshInFlight;
+}
+
+// Alias reusado pelo cliente WebSocket (services/websocket.js), que aciona
+// o mesmo single-flight de /auth_refresh para curar um bearer órfão antes
+// de entrar em backoff/relogin-stop. Mesma função — nomes históricos.
+export const forceBearerRefresh = ensureFreshBearer;
+
 // --- Multi-account storage (works on web + mobile) ---
 let _cachedAccounts = null;
 
@@ -1376,49 +1437,22 @@ async function _apiCallImpl(action, params = {}, method = 'GET') {
     // a password. No more "ghost logged-in" 401 spirals — the app self-heals.
     // Single-flight: if multiple 401s come in concurrently, all wait on one
     // refresh attempt instead of stampeding the endpoint.
-    if (refreshToken && refreshDeviceId) {
-      try {
-        if (!_authRefreshInFlight) {
-          _authRefreshInFlight = (async () => {
-            try {
-              const r = await _rawApiCall('auth_refresh', {
-                refresh_token: refreshToken,
-                device_id: refreshDeviceId,
-              }, 'POST');
-              const newAccess = r?.data?.data?.token || r?.data?.token;
-              const newRefresh = r?.data?.data?.refresh_token || r?.data?.refresh_token;
-              if (newAccess && r.status >= 200 && r.status < 300) {
-                authToken = newAccess;
-                await storeToken(newAccess).catch(() => {});
-                if (newRefresh) {
-                  refreshToken = newRefresh;
-                  await storeRefreshToken(newRefresh, refreshDeviceId).catch(() => {});
-                }
-                return true;
-              }
-              // Server says refresh is invalid/revoked → nuke it so we don't
-              // keep retrying. Fall through to password path or user-prompt.
-              if (r?.data?.data?.error === 'revoked' || r?.data?.data?.error === 'expired') {
-                refreshToken = '';
-                await storeRefreshToken(null).catch(() => {});
-              }
-              return false;
-            } catch { return false; }
-          })().finally(() => { _authRefreshInFlight = null; });
-        }
-        const refreshed = await _authRefreshInFlight;
-        if (refreshed) {
-          const retry = await _rawApiCall(action, params, method);
-          if (retry.status !== 401) {
-            _consecutive401 = 0;
-            if (retry.status >= 200 && retry.status < 300) {
-              try { _noteAuthOk(); } catch {}
-            }
-            return retry.data;
+    // [refresh token] Silent refresh via helper compartilhado ANTES do
+    // fallback de senha. Single-flight interno; re-hidrata do storage se
+    // preciso. Mesmo caminho usado agora pelas chamadas Rust e pelo WS.
+    try {
+      const refreshed = await ensureFreshBearer();
+      if (refreshed) {
+        const retry = await _rawApiCall(action, params, method);
+        if (retry.status !== 401) {
+          _consecutive401 = 0;
+          if (retry.status >= 200 && retry.status < 300) {
+            try { _noteAuthOk(); } catch {}
           }
+          return retry.data;
         }
-      } catch {}
-    }
+      }
+    } catch {}
 
     const creds = savedCredentials;
     if (creds?.email && creds?.password) {
@@ -2121,6 +2155,27 @@ function _markRustHealthy() { _rustDeadAt = 0; _rust401Streak = 0; }
 // token gets a fair shot at Rust again.
 export function _resetRustHealth() { _rustDeadAt = 0; _rust401Streak = 0; }
 
+// Raw Rust email fetch that self-heals an ORPHANED bearer. If the request
+// 401s, the in-memory access token was likely purged server-side; try a
+// silent refresh (ensureFreshBearer, single-flight over /auth_refresh) and,
+// if a fresh bearer is now in place, retry the fetch ONCE with new headers
+// BEFORE the caller marks Rust dead / falls back to PHP. This is what makes
+// mark_seen ("read" persistence) survive an orphan-bearer 401 instead of
+// silently reverting on the next refresh. Returns the (possibly retried)
+// Response so the existing `if (r.status === 401) _markRustDead()` line only
+// fires when the 401 is REAL (refresh failed or retry still 401).
+async function _rustFetchWithRefresh(url, init = {}) {
+  const mk = () => ({ ...init, headers: { ...getAuthHeaders(), ...(init.headers || {}) } });
+  let r = await fetch(url, mk());
+  if (r.status === 401) {
+    try {
+      const ok = await ensureFreshBearer();
+      if (ok) r = await fetch(url, mk()); // getAuthHeaders() now returns the fresh bearer
+    } catch {}
+  }
+  return r;
+}
+
 export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search = '', category = '', label = '', filter = '') {
   // Rust-first for everything except label/category (Rust 501 → PHP fallback).
   // Search operators (from/to/subject/is:/before/after/larger/smaller) are now
@@ -2153,7 +2208,7 @@ export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search 
         if (search) qs.set('search', search);
         if (filter) qs.set('filter', filter);
         const url = `${BASE_URL}/api/rust/email/inbox?${qs.toString()}`;
-        const r = await fetch(url, { headers: getAuthHeaders() });
+        const r = await _rustFetchWithRefresh(url);
         if (r.status === 401) _markRustDead();
         if (r.ok) {
           const j = await r.json();
@@ -2188,7 +2243,7 @@ export async function getMessage(uid, folder = 'INBOX') {
   if (!authToken || _isRustDead()) return apiCall('message', { uid, folder });
   try {
     const url = `${BASE_URL}/api/rust/email/message/${encodeURIComponent(uid)}?folder=${encodeURIComponent(folder)}&mark_seen=true`;
-    const r = await fetch(url, { headers: getAuthHeaders() });
+    const r = await _rustFetchWithRefresh(url);
     if (r.status === 401) _markRustDead();
     if (r.ok) {
       const j = await r.json();
@@ -2247,7 +2302,7 @@ export async function getFolders() {
   // Also skip when Rust recently 401'd (see _isRustDead cooldown comment).
   if (authToken && !_isRustDead()) {
     try {
-      const r = await fetch(`${BASE_URL}/api/rust/email/folders`, { headers: getAuthHeaders() });
+      const r = await _rustFetchWithRefresh(`${BASE_URL}/api/rust/email/folders`);
       if (r.status === 401) _markRustDead();
       if (r.ok) {
         const j = await r.json();
@@ -2374,7 +2429,12 @@ export async function markRead(uid, folder = 'INBOX') {
         credentials: 'include',
         keepalive: true,
       });
-      result = await res.json();
+      if (res.status === 401) {
+        // orphan bearer — apiCall roda o auth_refresh self-heal + retry
+        result = await apiCall('mark_read', { uid, folder }, 'POST');
+      } else {
+        result = await res.json();
+      }
     } catch {
       result = await apiCall('mark_read', { uid, folder }, 'POST');
     }

@@ -1299,6 +1299,7 @@ class MailWebSocket {
         this._authRejectStreak = 0;
         this._authRejectBackoff = 0;
         this._authReloginStopped = false;
+        this._orphanHealTried = false;
         this.userId = msg.user_id || msg.account_id;
         this.email = msg.email;
         // Seed lastPongTime so the ping-timeout watchdog has a valid baseline.
@@ -1390,6 +1391,42 @@ class MailWebSocket {
                   return;
                 }
                 if (refreshOk === false && !callActive) {
+                  // [orphan-bearer auto-heal] check_auth disse que o bearer está
+                  // morto (401): token purgado no servidor (token GC/órfão)
+                  // enquanto um refresh_token válido ainda vive no storage.
+                  // refreshAuthToken() só desliza um token VIVO — não ressuscita
+                  // um purgado. Antes de cair no backoff de 300s (que faz loop
+                  // eterno no mesmo bearer morto e prende o user em 'Conectando…'),
+                  // faz UMA troca real que MINTA um bearer novo via /auth_refresh.
+                  // Se vier um token diferente do que o servidor acabou de
+                  // rejeitar, reconecta com ele na hora — app se auto-cura sem
+                  // re-login.
+                  if (typeof apiMod.forceBearerRefresh === 'function' && !this._orphanHealTried) {
+                    this._orphanHealTried = true;
+                    apiMod.forceBearerRefresh().then((minted) => {
+                      if (this.destroyed) return;
+                      const newTok = apiMod.getAuthToken?.();
+                      if (minted && newTok && newTok !== this.token) {
+                        try { console.warn('[WS] orphan bearer healed via /auth_refresh — reconnecting with fresh token'); } catch {}
+                        this._orphanHealTried = false;
+                        this._authRejectStreak = 0;
+                        this._authRejectBackoff = 0;
+                        this._authFailStreak = 0;
+                        this._authErrorBackoff = 0;
+                        this.token = newTok;
+                        this.connect(newTok);
+                        return;
+                      }
+                      // Mint falhou / refresh_token revogado → mantém o backoff lento.
+                      this._authErrorBackoff = Math.min((this._authErrorBackoff || 30000) * 1.5, 300000);
+                      setTimeout(() => { if (!this.destroyed) this.connect(this.token); }, this._authErrorBackoff);
+                    }).catch(() => {
+                      if (this.destroyed) return;
+                      this._authErrorBackoff = Math.min((this._authErrorBackoff || 30000) * 1.5, 300000);
+                      setTimeout(() => { if (!this.destroyed) this.connect(this.token); }, this._authErrorBackoff);
+                    });
+                    return;
+                  }
                   try { console.warn('[WS] refreshAuthToken returned false — bearer revoked, slowing reconnect'); } catch {}
                   this._authErrorBackoff = Math.min((this._authErrorBackoff || 30000) * 1.5, 300000);
                   setTimeout(() => { if (!this.destroyed) this.connect(this.token); }, this._authErrorBackoff);
@@ -1417,6 +1454,31 @@ class MailWebSocket {
                 }
                 this._authRejectStreak = (this._authRejectStreak || 0) + 1;
                 if (this._authRejectStreak >= AUTH_REJECT_STOP) {
+                  // [orphan-bearer auto-heal] Antes de acionar o circuit-breaker
+                  // e forçar re-login, tenta UMA troca real de refresh_token que
+                  // minta um bearer NOVO via /auth_refresh (o check_auth do
+                  // refreshAuthToken não cura bearer purgado). Se vier um token
+                  // diferente do que o servidor insiste em rejeitar, reseta o
+                  // storm e reconecta com ele.
+                  if (typeof apiMod.forceBearerRefresh === 'function' && !this._orphanHealTried) {
+                    this._orphanHealTried = true;
+                    apiMod.forceBearerRefresh().then((minted) => {
+                      if (this.destroyed) return;
+                      const newTok = apiMod.getAuthToken?.();
+                      if (minted && newTok && newTok !== this.token) {
+                        try { console.warn('[WS] orphan bearer healed at storm-stop — reconnecting with fresh token'); } catch {}
+                        this._orphanHealTried = false;
+                        this._authRejectStreak = 0;
+                        this._authRejectBackoff = 0;
+                        this._authFailStreak = 0;
+                        this.token = newTok;
+                        this.connect(newTok);
+                        return;
+                      }
+                      this._enterReloginStopped('ws_auth_reject_storm');
+                    }).catch(() => { if (!this.destroyed) this._enterReloginStopped('ws_auth_reject_storm'); });
+                    return;
+                  }
                   // Refreshed token rejected AUTH_REJECT_STOP times in a row →
                   // the session is genuinely dead. Stop auto-reconnecting and
                   // force a real re-login. This is the storm circuit-breaker.

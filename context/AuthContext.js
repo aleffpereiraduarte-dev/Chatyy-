@@ -1738,6 +1738,7 @@ export function AuthProvider({ children }) {
   // users got stuck on an empty chat screen until they clicked Sair.
   useEffect(() => {
     let _handled = 0;
+    const _heal = { lastAt: 0, count: 0 }; // guarda anti-loop de ensureFreshBearer
     const handleAuthFailure = async () => {
       if (Date.now() - _handled < 1500) return; // debounce duplicate fires
       _handled = Date.now();
@@ -1790,6 +1791,23 @@ export function AuthProvider({ children }) {
             source: 'authcontext_signal',
           });
           api.resetAuthFailureSignal?.();
+          // [orphan-bearer auto-heal] Tenta trocar o bearer órfão por um
+          // fresco ANTES de ressuscitar o WS. Só assim ws.resurrect() levanta
+          // o _authReloginStopped (websocket.js exige token !== this.token).
+          // Gated por cooldown (2 tentativas / 30s) para não martelar
+          // /auth_refresh quando o bearer novo também é rejeitado.
+          let healed = false;
+          const now = Date.now();
+          if (now - _heal.lastAt > 30000) _heal.count = 0;
+          if (_heal.count < 2 && typeof api.ensureFreshBearer === 'function') {
+            _heal.lastAt = now; _heal.count += 1;
+            try {
+              healed = await Promise.race([
+                api.ensureFreshBearer({ reason: 'authfailure_grace' }).catch(() => false),
+                new Promise((r) => setTimeout(() => r(false), 6000)),
+              ]);
+            } catch { healed = false; }
+          }
           // [WAVE 43G 2026-05-21] Revive WS if it tombstoned itself. The
           // 90-day grace window is the most common path through this
           // handler — without resurrect, every silent token rejection
@@ -1797,9 +1815,9 @@ export function AuthProvider({ children }) {
           // dominant cause of the "logado mas msgs não chegam" report.
           try {
             const ws = require('../services/websocket').default;
-            if (ws?.resurrect) ws.resurrect('authcontext_refused_within_grace');
+            if (ws?.resurrect) ws.resurrect(healed ? 'authcontext_bearer_refreshed' : 'authcontext_refused_within_grace');
           } catch {}
-          console.warn('[auth] Auth-failure signal received but token <90d old — refusing logout');
+          console.warn('[auth] Auth-failure <90d — ' + (healed ? 'bearer refreshed, resurrecting WS' : 'refusing logout'));
           return;
         }
       } catch {}
@@ -1845,6 +1863,30 @@ export function AuthProvider({ children }) {
           return;
         }
       } catch {}
+      // [orphan-bearer auto-heal] Última chance antes de deslogar de fato.
+      // Converte um logout em recusa SOMENTE se o refresh render um bearer
+      // novo — nunca adiciona logout, nunca entra em loop (mesmo cooldown).
+      {
+        const now = Date.now();
+        if (now - _heal.lastAt > 30000) _heal.count = 0;
+        if (_heal.count < 2 && typeof api.ensureFreshBearer === 'function') {
+          _heal.lastAt = now; _heal.count += 1;
+          let healed = false;
+          try {
+            healed = await Promise.race([
+              api.ensureFreshBearer({ reason: 'authfailure_prelogout' }).catch(() => false),
+              new Promise((r) => setTimeout(() => r(false), 6000)),
+            ]);
+          } catch { healed = false; }
+          if (healed) {
+            api.recordLogoutAttempt?.('refused_bearer_refreshed', { source: 'authcontext_signal' });
+            api.resetAuthFailureSignal?.();
+            try { const ws = require('../services/websocket').default; if (ws?.resurrect) ws.resurrect('authcontext_bearer_refreshed'); } catch {}
+            console.warn('[auth] Pre-logout refresh succeeded — refusing logout');
+            return;
+          }
+        }
+      }
       console.warn('[auth] Token rejected — forcing logout');
       try { api.resetAuthFailureSignal?.(); } catch {}
       try { api.recordLogoutAttempt?.('signal_from_api', { source: 'authcontext_signal' }); } catch {}

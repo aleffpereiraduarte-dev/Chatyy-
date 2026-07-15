@@ -23,7 +23,11 @@ config.resolver.extraNodeModules = {
 const WEB_STUBS = new Set([
   '@livekit/react-native-webrtc',
   '@livekit/react-native',
-  'livekit-client',
+  // 'livekit-client' NÃO é stubbado — é o SDK WEB do LiveKit (JS puro, usa o
+  // WebRTC nativo do navegador). Stubbá-lo fazia o `new Room()` do pstnCall.js
+  // jogar "[web-stub] native-only module was called on web" ao ligar pela web
+  // (o número até discava via Vonage, mas o app não entrava na sala de áudio).
+  // Só os wrappers NATIVOS de WebRTC abaixo ficam stubbados na web.
   'react-native-webrtc',
   '@twilio/voice-sdk',
   '@telnyx/webrtc',

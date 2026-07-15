@@ -3216,13 +3216,23 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     // Give the initial render a frame to commit before we start firing
     // background requests. Also avoids a thundering-herd at login when
     // the list, inbox, and meetings all mount together.
+    // Web: prewarm ENXUTO. No layout 2-colunas (WhatsApp Web) a lista e a
+    // conversa ficam montadas juntas, então um prewarm de 50 convs rouba as
+    // vias de request e a conversa ABERTA demora a puxar histórico. Web tem
+    // IndexedDB (sessão transiente) — pré-cachear 50 convs rende pouco e custa
+    // muito. topN 10 + concorrência 2 + delay maior deixa a conversa aberta
+    // livre. Nativo mantém o cache offline agressivo (50).
+    const _web = Platform.OS === 'web';
     const kick = setTimeout(() => {
-      // WhatsApp parity: prewarm ALL conversations with last 50 msgs each so
-      // tapping any chat paints instantly from local cache, not just the top
-      // 10. Concurrency=3 keeps the hit on cold start bounded; the bulk of
-      // work happens 1-2s after chat list mount and never blocks UI.
-      prewarmConversationsCache(conversations, { topN: 50, perConv: 50, concurrency: 3 }).catch(() => {});
-    }, 1500);
+      // WhatsApp parity: prewarm conversas com últimas msgs pra abrir instantâneo
+      // do cache local. Concurrency baixa mantém o custo do cold start limitado;
+      // o grosso do trabalho acontece 1.5-3s após montar e nunca bloqueia a UI.
+      prewarmConversationsCache(conversations, {
+        topN: _web ? 10 : 50,
+        perConv: _web ? 40 : 50,
+        concurrency: _web ? 2 : 3,
+      }).catch(() => {});
+    }, _web ? 3000 : 1500);
     return () => clearTimeout(kick);
   }, [conversations]);
 
