@@ -3886,6 +3886,28 @@ extension CallViewController: RoomDelegate {
         NativeCallRoom.shared.trackSubscribed(participantId: identity,
                                               trackSid: "\(publication.sid)",
                                               kind: kind)
+        // [2026-07-15 media-truth connect] The outgoing CALLER flips to
+        // "Conectado" only via participantDidConnect (LK skips peers already
+        // in the room — the callee preconnects subscribe-only BEFORE answering,
+        // so it's present when the caller connects → callback never fires),
+        // the remoteAnsweredObserver (needs the WS call_accepted frame, which
+        // rides the now-dead chatyy_live_events path), or the incoming-only
+        // STAGE-A adopt. So the caller stayed on "Chamando…" forever even
+        // though media flowed (QA Lester: audio + camera work, screen still
+        // ringing). The FIRST subscribed remote track of ANY kind is genuine
+        // post-answer media-truth (the callee publishes nothing during the
+        // ring), so flip here — BEFORE the video-only guard so audio-only calls
+        // are covered too. Idempotent: setting session.status drives the
+        // statusObserver sink (→ callConnectedAt + stops the "Chamando…" dots
+        // timer); guarded so a later WS/participantDidConnect flip is a no-op,
+        // and stopRingbackTone is guarded by ringbackActive.
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.stopRingbackTone(reason: "didSubscribeTrack_mediaTruth")
+            if self.session.status != "Conectado" {
+                self.session.status = "Conectado"
+            }
+        }
         guard publication.kind == .video else { return }
         guard let track = publication.track as? VideoTrack else {
             print("[CallVC] didSubscribeTrack — video pub but track cast failed")
