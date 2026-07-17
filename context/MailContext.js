@@ -236,6 +236,12 @@ export function MailProvider({ children }) {
   // Undo state
   const [undoAction, setUndoAction] = useState(null);
   const undoTimerRef = useRef(null);
+  // Deferred undo-window action still waiting to hit the API. Kept outside
+  // the setTimeout closure so a second action / toast dismiss can FLUSH it
+  // instead of silently dropping it (clearTimeout alone lost the first
+  // delete/archive whenever two actions landed inside the same 5s window —
+  // the email reappeared on the next refresh).
+  const pendingActionRef = useRef(null);
 
   // Keep folder ref in sync
   useEffect(() => { folderRef.current = currentFolder; }, [currentFolder]);
@@ -834,12 +840,32 @@ export function MailProvider({ children }) {
     setUndoAction({ type, uids, removedEmails });
   }, []);
 
+  // Run the still-pending deferred action NOW (no-op when it already ran or
+  // was undone). Fire-and-forget: the fn carries its own failure/restore
+  // handling (see deleteEmail/archiveEmail).
+  const flushPendingAction = useCallback(() => {
+    const prev = pendingActionRef.current;
+    pendingActionRef.current = null;
+    if (undoTimerRef._visCleanup) { undoTimerRef._visCleanup(); undoTimerRef._visCleanup = null; }
+    if (prev) {
+      try {
+        const p = prev();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      } catch {}
+    }
+  }, []);
+
   const scheduleAction = useCallback((fn) => {
     clearTimeout(undoTimerRef.current);
+    // A previous action still inside its undo window is COMMITTED (the user
+    // didn't undo it), not cancelled — flush it before scheduling the new one.
+    flushPendingAction();
+    pendingActionRef.current = fn;
     const startTime = Date.now();
     let remaining = 5000;
 
     const runAction = async () => {
+      if (pendingActionRef.current === fn) pendingActionRef.current = null;
       if (undoTimerRef._visCleanup) { undoTimerRef._visCleanup(); undoTimerRef._visCleanup = null; }
       try { await fn(); } catch {}
       setUndoAction(null);
@@ -868,10 +894,12 @@ export function MailProvider({ children }) {
       // Store cleanup so executeUndo/dismissUndo can call it
       undoTimerRef._visCleanup = cleanup;
     }
-  }, []);
+  }, [flushPendingAction]);
 
   const executeUndo = useCallback(() => {
     clearTimeout(undoTimerRef.current);
+    // Undo = the deferred action must never run.
+    pendingActionRef.current = null;
     if (undoTimerRef._visCleanup) { undoTimerRef._visCleanup(); undoTimerRef._visCleanup = null; }
     if (undoAction?.removedEmails) {
       setEmails(prev => [...undoAction.removedEmails, ...prev]);
@@ -881,9 +909,13 @@ export function MailProvider({ children }) {
 
   const dismissUndo = useCallback(() => {
     clearTimeout(undoTimerRef.current);
-    if (undoTimerRef._visCleanup) { undoTimerRef._visCleanup(); undoTimerRef._visCleanup = null; }
+    // Dismiss (X button or the toast's own 5s auto-dismiss) accepts the
+    // action — commit it now. Before, this clearTimeout CANCELLED the API
+    // call while the rows stayed optimistically hidden (and the auto-dismiss
+    // even raced the action's own timer), so the email quietly came back.
+    flushPendingAction();
     setUndoAction(null);
-  }, []);
+  }, [flushPendingAction]);
 
   // --- WebSocket real-time ---
 
