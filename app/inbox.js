@@ -677,6 +677,17 @@ function InboxScreenInner() {
     kbStateRef.current = { emails, selectedEmail, currentFolder, selectMode, undoAction, showShortcuts, showSnooze };
   }, [emails, selectedEmail, currentFolder, selectMode, undoAction, showShortcuts, showSnooze]);
 
+  // Same ref trick for the HANDLERS: the keydown effect below mounts once
+  // ([]), so calling these functions directly would freeze their mount-time
+  // closures — deleteEmail/archiveEmail/starEmail close over currentFolder
+  // ('INBOX' forever → '#'/'e' act on the wrong mailbox) and executeUndo
+  // over undoAction (null forever → 'z' cancels the API without restoring
+  // the rows). No-deps effect runs after every render, keeping them fresh.
+  const kbHandlersRef = useRef({});
+  useEffect(() => {
+    kbHandlersRef.current = { openEmail, handleReply, handleArchive, handleDelete, handleStar, toggleSelect, executeUndo, clearSelection };
+  });
+
   useEffect(() => {
     if (Platform.OS !== 'web') return;
 
@@ -741,29 +752,30 @@ function InboxScreenInner() {
       }
 
       const { emails: em, selectedEmail: sel, currentFolder: cf, selectMode: sm, undoAction: ua, showShortcuts: ss, showSnooze: sn } = kbStateRef.current;
+      const H = kbHandlersRef.current;
       const idx = sel ? em.findIndex(x => x.uid === sel.uid) : -1;
 
       switch (e.key) {
         case 'j': // Next email
-          if (idx < em.length - 1 && isDesktop) openEmail(em[idx + 1].uid, cf);
+          if (idx < em.length - 1 && isDesktop) H.openEmail(em[idx + 1].uid, cf);
           break;
         case 'k': // Previous email
-          if (idx > 0 && isDesktop) openEmail(em[idx - 1].uid, cf);
+          if (idx > 0 && isDesktop) H.openEmail(em[idx - 1].uid, cf);
           break;
         case 'c':
           if (isDesktop) setComposeModal({});
           else router.push('/compose');
           break;
-        case 'r': if (sel) handleReply(sel); break;
-        case 'e': if (sel) handleArchive(sel); break;
-        case '#': if (sel) handleDelete(sel.uid); break;
-        case 's': if (sel) handleStar(sel); break;
-        case 'x': if (sel) toggleSelect(sel.uid); break;
+        case 'r': if (sel) H.handleReply(sel); break;
+        case 'e': if (sel) H.handleArchive(sel); break;
+        case '#': if (sel) H.handleDelete(sel.uid); break;
+        case 's': if (sel) H.handleStar(sel); break;
+        case 'x': if (sel) H.toggleSelect(sel.uid); break;
         case '/':
           e.preventDefault();
           document.querySelector('[data-search-input]')?.focus();
           break;
-        case 'z': if (ua) executeUndo(); break;
+        case 'z': if (ua) H.executeUndo(); break;
         case 'p': // Print
           if (sel && Platform.OS === 'web') {
             const esc = (s) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -788,7 +800,7 @@ function InboxScreenInner() {
         case 'Escape':
           if (ss) setShowShortcuts(false);
           else if (sn) { setShowSnooze(false); setSnoozeTarget(null); }
-          else if (sm) clearSelection();
+          else if (sm) H.clearSelection();
           else if (sel) setSelectedEmail(null);
           break;
       }

@@ -517,6 +517,9 @@ export default function ComposeScreen() {
   // autosave tick) can't re-persist the just-sent content as a draft —
   // which previously left the message showing in BOTH Sent AND Drafts.
   const sentRef = useRef(false);
+  // 'Descartar' confirmed → saveDraft/flushDraft become no-ops so the unmount
+  // flush can't re-save the draft the user just chose to throw away.
+  const discardedRef = useRef(false);
   const draftTimerRef = useRef(null);
   const draftSavedTimerRef = useRef(null);
   const contentChangedRef = useRef(false);
@@ -754,9 +757,9 @@ export default function ComposeScreen() {
   }, [to, cc, bcc, subject, body, attachments]);
 
   const saveDraft = useCallback(async () => {
-    // Message already sent → never re-persist its content as a draft
-    // (otherwise it shows up in Drafts as well as Sent).
-    if (sentRef.current) return;
+    // Message already sent (or compose discarded) → never re-persist its
+    // content as a draft (otherwise it shows up in Drafts as well as Sent).
+    if (sentRef.current || discardedRef.current) return;
     if (!contentChangedRef.current) return;
     // Never persist a completely empty compose as a draft. If we are
     // editing an existing draft that the user cleared to empty, delete it
@@ -831,7 +834,7 @@ export default function ComposeScreen() {
   // existing saveDraft (which early-returns when clean) actually writes.
   const flushDraft = useCallback(() => {
     try {
-      if (sentRef.current) return; // sent → don't resurrect as a draft
+      if (sentRef.current || discardedRef.current) return; // sent/discarded → don't resurrect as a draft
       if (isComposeEmpty()) return;
       contentChangedRef.current = true;
       // Fire-and-forget: on unmount/background the component may be gone before
@@ -870,6 +873,19 @@ export default function ComposeScreen() {
       // Clean up undo send timers on unmount to prevent sending after navigation
       if (undoSendRef.current) clearTimeout(undoSendRef.current);
       if (undoIntervalRef.current) clearInterval(undoIntervalRef.current);
+      // Leaving during the undo-send countdown: the message is already queued
+      // server-side and WILL transmit — it's sent, not a draft. Clearing the
+      // timer above killed finishSendSuccess, so flip the guard here (else the
+      // flush below duplicates the sent email into Drafts) and drop the
+      // autosaved draft the same way finishSendSuccess would have.
+      if (undoSendIdRef.current) {
+        sentRef.current = true;
+        if (draftUidRef.current) {
+          const staleUid = draftUidRef.current;
+          draftUidRef.current = null;
+          try { api.apiCall('draft_delete', { uid: staleUid }, 'POST').catch(() => {}); } catch {}
+        }
+      }
       // Final flush so an in-progress draft survives navigating away / unmount.
       try { flushDraftRef.current?.(); } catch {}
       try { _removeBeforeUnload?.(); } catch {}
@@ -904,11 +920,11 @@ export default function ComposeScreen() {
     const hasContent = body.trim() || attachments.length > 0 || (!isReply && !isForward && (to.length > 0 || subject.trim()));
     if (hasContent) {
       if (Platform.OS === 'web') {
-        if (window.confirm(t('compose.discardDraftConfirm'))) router.back();
+        if (window.confirm(t('compose.discardDraftConfirm'))) { discardedRef.current = true; router.back(); }
       } else {
         Alert.alert(t('compose.discard'), t('compose.discardDraftConfirm'), [
           { text: t('common.cancel'), style: 'cancel' },
-          { text: t('compose.discard'), style: 'destructive', onPress: () => router.back() },
+          { text: t('compose.discard'), style: 'destructive', onPress: () => { discardedRef.current = true; router.back(); } },
         ]);
       }
     } else {
