@@ -242,6 +242,26 @@ export function MailProvider({ children }) {
   // delete/archive whenever two actions landed inside the same 5s window —
   // the email reappeared on the next refresh).
   const pendingActionRef = useRef(null);
+  // Rows hidden optimistically while their delete/archive API call is still
+  // deferred inside the undo window (or the server hasn't caught up yet). The
+  // silent merge treats any server row missing from `prev` as a NEW arrival,
+  // so without this a background refresh (focus/WS/poll) inside the 5s undo
+  // window resurrected the just-deleted email. Keyed `folder:uid` (IMAP uids
+  // are per-mailbox) -> expiry ts.
+  const pendingRemovalRef = useRef(new Map());
+  const markPendingRemoval = useCallback((folder, uids) => {
+    // Long expiry on purpose: a hidden web tab pauses the undo timer, so the
+    // deferred action can outlive 5s. settlePendingRemoval shortens/clears it.
+    const exp = Date.now() + 600000;
+    uids.forEach(u => pendingRemovalRef.current.set(folder + ':' + String(u), exp));
+  }, []);
+  const settlePendingRemoval = useCallback((folder, uids, restored) => {
+    uids.forEach(u => {
+      const key = folder + ':' + String(u);
+      if (restored) pendingRemovalRef.current.delete(key);
+      else pendingRemovalRef.current.set(key, Date.now() + 30000); // IMAP lag grace
+    });
+  }, []);
 
   // Keep folder ref in sync
   useEffect(() => { folderRef.current = currentFolder; }, [currentFolder]);
@@ -318,7 +338,15 @@ export function MailProvider({ children }) {
     try {
       const r = await api.getInbox(f, pg, 20, q, category, label);
       if (r.success) {
-        const emailList = r.data?.emails || [];
+        let emailList = r.data?.emails || [];
+        // Drop rows whose removal is still pending/settling server-side so a
+        // background refresh can't resurrect a just-deleted/archived email.
+        const pendingRemoval = pendingRemovalRef.current;
+        if (pendingRemoval.size) {
+          const now = Date.now();
+          for (const [k, exp] of pendingRemoval) { if (exp <= now) pendingRemoval.delete(k); }
+          if (pendingRemoval.size) emailList = emailList.filter(e => !pendingRemoval.has(f + ':' + String(e.uid)));
+        }
 
         // Apply recentlyRead protection: force seen=true for UIDs the user just read
         const recentlyRead = recentlyReadRef.current;
@@ -643,14 +671,17 @@ export function MailProvider({ children }) {
       // Gmail-style: show a 5s Undo toast and DEFER the real API call so the
       // user can take it back. Same infra as bulkDelete. On failure, restore.
       showUndo('deleted', [uid], removed ? [removed] : []);
+      markPendingRemoval(f, [uid]);
       scheduleAction(async () => {
         try {
           const r = await api.deleteEmail(uid, f);
+          settlePendingRemoval(f, [uid], !r?.success);
           if (!r?.success) {
             if (removed) setEmails(prev => [removed, ...prev]);
             console.warn('deleteEmail failed:', r?.message);
           }
         } catch (e) {
+          settlePendingRemoval(f, [uid], true);
           if (removed) setEmails(prev => [removed, ...prev]);
           console.warn('deleteEmail error:', e);
         }
@@ -716,7 +747,11 @@ export function MailProvider({ children }) {
     clearSelection();
     if (selectedEmail && selectedUids.has(selectedEmail.uid)) setSelectedEmail(null);
     showUndo('deleted', uids, removed);
-    scheduleAction(() => api.bulkDelete(uids, currentFolder));
+    markPendingRemoval(currentFolder, uids);
+    scheduleAction(async () => {
+      try { await api.bulkDelete(uids, currentFolder); }
+      finally { settlePendingRemoval(currentFolder, uids, false); }
+    });
   }, [selectedUids, emails, currentFolder, selectedEmail]);
 
   const bulkArchive = useCallback(async () => {
@@ -727,7 +762,11 @@ export function MailProvider({ children }) {
     clearSelection();
     if (selectedEmail && selectedUids.has(selectedEmail.uid)) setSelectedEmail(null);
     showUndo('archived', uids, removed);
-    scheduleAction(() => api.bulkArchive(uids, currentFolder));
+    markPendingRemoval(currentFolder, uids);
+    scheduleAction(async () => {
+      try { await api.bulkArchive(uids, currentFolder); }
+      finally { settlePendingRemoval(currentFolder, uids, false); }
+    });
   }, [selectedUids, emails, currentFolder, selectedEmail]);
 
   const bulkMarkRead = useCallback(async () => {
@@ -808,13 +847,16 @@ export function MailProvider({ children }) {
     if (selectedEmail?.uid === uid) setSelectedEmail(null);
     // Gmail-style undo: toast + defer the real archive 5s so it can be taken back.
     showUndo('archived', [uid], removed ? [removed] : []);
+    markPendingRemoval(f, [uid]);
     scheduleAction(async () => {
       try {
         const r = await api.archiveEmail(uid, f);
+        settlePendingRemoval(f, [uid], !r?.success);
         if (!r?.success && removed) {
           setEmails(prev => [...prev, removed].sort((a, b) => b.uid - a.uid));
         }
       } catch {
+        settlePendingRemoval(f, [uid], true);
         if (removed) setEmails(prev => [...prev, removed].sort((a, b) => b.uid - a.uid));
       }
     });
@@ -901,6 +943,14 @@ export function MailProvider({ children }) {
     // Undo = the deferred action must never run.
     pendingActionRef.current = null;
     if (undoTimerRef._visCleanup) { undoTimerRef._visCleanup(); undoTimerRef._visCleanup = null; }
+    if (undoAction?.uids) {
+      // Un-mark pending removals so the restored rows survive the next merge
+      // (undoAction has no folder, so match by uid across all folder keys).
+      const undone = new Set(undoAction.uids.map(String));
+      for (const k of pendingRemovalRef.current.keys()) {
+        if (undone.has(k.slice(k.indexOf(':') + 1))) pendingRemovalRef.current.delete(k);
+      }
+    }
     if (undoAction?.removedEmails) {
       setEmails(prev => [...undoAction.removedEmails, ...prev]);
     }
