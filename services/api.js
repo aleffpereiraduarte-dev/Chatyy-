@@ -2331,6 +2331,35 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
   const undoDelay = Math.max(0, parseInt(opts.undoDelay, 10) || 0);
   // If attachments provided, use FormData instead of JSON
   if (attachments && attachments.length > 0) {
+    // Drive refs carry only an authenticated download URL — FormData cannot
+    // upload a remote https uri (web coerces the object to "[object Object]",
+    // native RN only attaches local file paths), so the email used to go out
+    // silently WITHOUT the attachment. Materialize the bytes first and fail
+    // the send loudly if that fails.
+    for (const att of attachments) {
+      if (!att || att._raw || !att.is_drive_ref || !att.uri) continue;
+      try {
+        if (Platform.OS === 'web') {
+          const h = {};
+          if (authToken) h['Authorization'] = `Bearer ${authToken}`;
+          const r = await fetch(att.uri, { headers: h, credentials: 'include' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          att._raw = await r.blob();
+        } else {
+          const FS = require('expo-file-system/legacy');
+          const safeName = String(att.name || 'file').replace(/[^\w.\-]+/g, '_');
+          const dest = FS.cacheDirectory + 'drive_att_' + Date.now() + '_' + safeName;
+          const h = {};
+          if (authToken) h['Authorization'] = `Bearer ${authToken}`;
+          if (sessionCookie) h['Cookie'] = sessionCookie;
+          const dl = await FS.downloadAsync(att.uri, dest, { headers: h });
+          if (!dl || dl.status !== 200) throw new Error('HTTP ' + (dl ? dl.status : '?'));
+          att.uri = dl.uri;
+        }
+      } catch (e) {
+        return { success: false, message: 'Falha ao baixar anexo do Drive: ' + (att.name || 'arquivo') };
+      }
+    }
     const formData = new FormData();
     formData.append('action', 'send');
     formData.append('to', to);

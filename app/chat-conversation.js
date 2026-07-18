@@ -16380,6 +16380,49 @@ function ChatConversationInner() {
     if (!msg) return;
     const isMine = msg.sender_email === user?.email;
 
+    // [outbox-cancel] A bubble still owned by the outbox (never confirmed by
+    // the server — tmp_ id, _pending/_queued/_failed) must be cancelled
+    // LOCALLY: api.chatDelete with a tmp_ id is a server no-op, and without
+    // purging the outbox row the sendWorker/replay would still DELIVER the
+    // "deleted" message on the next drain/reconnect.
+    const isUnsent = (msg._pending || msg._queued || msg._failed) &&
+      !(typeof msg.id === 'number' && msg.id > 0);
+    if (isUnsent) {
+      const cancelUnsent = async () => {
+        setSelectedMsg(null);
+        const cmi = String(msg.client_message_id || msg._client_id || '');
+        if (cmi) {
+          try { await messageOutbox.remove?.(cmi); } catch {}
+          try {
+            const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
+            await removeChatSendFromQueueByClientMsgId?.(cmi);
+          } catch {}
+        }
+        animateDeleteThenRemove(msgId);
+        try {
+          const { deleteCachedMessage: delCache } = require('../services/chatCache');
+          delCache?.(conversationId, msgId)?.catch?.(() => {});
+        } catch {}
+        try {
+          const SmartCache = require('../services/smartChatCache');
+          SmartCache.deleteCachedMessage?.(conversationId, msgId);
+        } catch {}
+        try {
+          const nativeDb = require('../services/db');
+          nativeDb.dbDeleteMessage?.(conversationId, msgId);
+        } catch {}
+      };
+      if (Platform.OS === 'web') {
+        if (window.confirm(t('chatConv.deleteForMe') || 'Apagar esta mensagem para você?')) cancelUnsent();
+      } else {
+        safeAlert(t('chat.deleteMessage'), t('chat.deleteConfirm'), [
+          { text: t('common.cancel'), style: 'cancel' },
+          { text: t('chatConv.deleteForMe') || 'Apagar para mim', style: 'destructive', onPress: cancelUnsent },
+        ]);
+      }
+      return;
+    }
+
     // Delete-for-everyone window — bumped to 1h in DMs (was 5 min, 2026-05-18)
     // so users have a more forgiving retraction window. Lines up with the
     // group-chat window and matches WhatsApp's extended retraction policy.

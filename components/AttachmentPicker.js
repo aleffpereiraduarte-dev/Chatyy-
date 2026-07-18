@@ -170,11 +170,12 @@ export default function AttachmentPicker({
     let added = 0;
     for (const f of picked) {
       if (attachments.length + added >= maxFiles) break;
-      // Build a "reference" attachment carrying the public Drive URL. The
-      // send pipeline already accepts attachment objects with `drive_url` so
-      // it can MIME-stitch them without re-uploading bytes.
+      // Build a "reference" attachment carrying the authenticated Drive
+      // download URL. sendEmail() materializes the bytes right before the
+      // multipart upload (the backend `send` only reads real attachment_N
+      // parts — it has no drive_url stitching).
       const id = String(f.id);
-      const downloadUrl = (BASE_URL || '') + '/api/files.php?action=drive_download&id=' + encodeURIComponent(id);
+      const downloadUrl = (BASE_URL || '') + '/api/email.php?action=drive_download&id=' + encodeURIComponent(id);
       const ref = {
         name: f.name || f.filename || 'file',
         size: Number(f.size || f.size_bytes || 0),
