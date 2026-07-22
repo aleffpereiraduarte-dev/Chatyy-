@@ -18,6 +18,18 @@ on:
         options:
           - 'production'
           - 'preview'
+  # [2026-07-22] Gatilho ESTREITO por arquivo dedicado — mesmo padrão já usado
+  # e confiável em ios-build-local.yml (.github/triggers/*.txt). NÃO reintroduz
+  # a corrida de 2026-05-07: aquela vinha dos paths AMPLOS abaixo (app/**,
+  # services/**), que disparavam em QUALQUER commit — inclusive o do dependabot,
+  # que republicava OTA velho por cima de fix novo. Este aqui só dispara quando
+  # alguém bumpa o arquivo de propósito. Serve de saída quando o eas-cli local
+  # está sem login (sessão ~/.expo expira) e o gh também não está autenticado —
+  # o EXPO_TOKEN vive como secret do repo, então o Actions publica sozinho.
+  push:
+    paths:
+      - '.github/triggers/ota-publish.txt'
+
   # Auto-OTA on push DISABLED 2026-05-07 — was racing with scripts/ship.sh ota
   # and re-publishing stale OTAs on top of fresh fixes (e.g. dependabot's
   # "fix(deps): regenerate package-lock" commit kept overriding new code,
