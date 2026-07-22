@@ -64,7 +64,23 @@ import AVFoundation
         // what breaks the earpiece route (audio stuck on loudspeaker). On the
         // second+ configureForCall we fall straight through to applyInitialRoute
         // below, which only flips overrideOutputAudioPort — safe at any time.
-        let needsCategory = lockQueue.sync { !categoryConfigured }
+        // [MIC MORTO 2026-07-22 "um escuta e o outro não"] O gate "uma vez por
+        // chamada" existe pra não quebrar a rota da earpiece (ver acima), MAS
+        // ele também impedia a recuperação quando OUTRO componente derrubava a
+        // sessão: expo-audio (ringtone/ringback/tom de fim) chamava
+        // setAudioMode sem `allowsRecording` → `.playback` + `mode .default`,
+        // ou seja, microfone morto e VPIO/AEC perdido, no exato instante do
+        // atender. Como o categoryConfigured já estava true, o AudioRouter
+        // NUNCA reconfigurava → a ligação inteira ficava sem uplink.
+        // Agora: se a sessão não estiver em .playAndRecord/.voiceChat, ela já
+        // está errada (rota quebrada de qualquer jeito), então reconfigurar é
+        // estritamente melhor. Se estiver correta, continuamos pulando —
+        // preservando a correção da earpiece de 2026-05-25.
+        let sessionIsWrong = session.category != .playAndRecord || session.mode != .voiceChat
+        if sessionIsWrong {
+            print("[AudioRouter] sessão fora do esperado (cat=\(session.category.rawValue) mode=\(session.mode.rawValue)) — reconfigurando pra salvar o microfone")
+        }
+        let needsCategory = lockQueue.sync { !categoryConfigured } || sessionIsWrong
         if needsCategory {
             do {
                 try session.setCategory(

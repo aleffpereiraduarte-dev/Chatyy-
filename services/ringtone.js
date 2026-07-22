@@ -223,7 +223,14 @@ export function startRingtone() {
             playsInSilentMode: true,
             interruptionMode: 'mixWithOthers',
             shouldPlayInBackground: true,
-            allowsRecording: false,
+            // [MIC MORTO 2026-07-22] era `false` → category .playback
+            // (AudioModule.swift:796) = SEM MICROFONE. O toque/ringback roda
+            // em paralelo com o AudioRouter nativo; se este setAudioMode
+            // chegasse depois do configureForCall, a sessão ficava .playback
+            // pelo resto da ligação (AudioRouter só configura UMA vez por
+            // chamada) → "o outro não me escuta". .playAndRecord toca o
+            // toque igual e mantém o caminho do mic vivo.
+            allowsRecording: true,
           });
         } catch {}
         if (generation !== ringtoneGeneration) return;
@@ -289,7 +296,14 @@ export function startCallingTone() {
             playsInSilentMode: true,
             interruptionMode: 'mixWithOthers',
             shouldPlayInBackground: true,
-            allowsRecording: false,
+            // [MIC MORTO 2026-07-22] era `false` → category .playback
+            // (AudioModule.swift:796) = SEM MICROFONE. O toque/ringback roda
+            // em paralelo com o AudioRouter nativo; se este setAudioMode
+            // chegasse depois do configureForCall, a sessão ficava .playback
+            // pelo resto da ligação (AudioRouter só configura UMA vez por
+            // chamada) → "o outro não me escuta". .playAndRecord toca o
+            // toque igual e mantém o caminho do mic vivo.
+            allowsRecording: true,
           });
         } catch {}
         if (generation !== ringtoneGeneration) return;
@@ -357,7 +371,10 @@ export function playEndTone() {
           playsInSilentMode: true,
           interruptionMode: 'mixWithOthers',
           shouldPlayInBackground: true,
-          allowsRecording: false,
+          // [MIC MORTO 2026-07-22] idem: o tom de encerramento não pode
+          // derrubar a sessão pra .playback (mataria o mic se ainda houver
+          // ligação ativa, ex.: alguém saindo de uma chamada em grupo).
+          allowsRecording: true,
         });
       } catch {}
 
@@ -442,26 +459,35 @@ export function stopRingtone() {
       nativePlayer.remove();
     } catch {}
     nativePlayer = null;
-    // Switch to doNotMix so the call audio session interrupts background music
-    try {
-      const { AudioModule } = require('expo-audio');
-      AudioModule.setAudioMode({
-        playsInSilentMode: true,
-        interruptionMode: 'doNotMix',
-        shouldPlayInBackground: true,
-      });
-    } catch {}
+    // [MIC MORTO 2026-07-22 "um escuta e o outro não"] iOS: NÃO mexer na
+    // AVAudioSession aqui. expo-audio.setAudioMode() sem `allowsRecording`
+    // usa o default FALSE (AudioRecords.swift:6) e faz
+    // `category = .playback` (AudioModule.swift:796) + `mode: .default`
+    // (L825) — ou seja, DESLIGA O MICROFONE e mata o VPIO (AEC de hardware).
+    // stopRingtone() roda exatamente no instante do ATENDER, então isso
+    // atropelava o .playAndRecord/.voiceChat que o AudioRouter (nativo)
+    // acabou de configurar → quem estava tocando o ringback ficava MUDO pro
+    // outro lado, mas continuava ouvindo (playback funciona). Corrida:
+    // às vezes ganha, às vezes perde = bug intermitente.
+    // O AudioRouter é o dono único da sessão na ligação e já usa .duckOthers,
+    // então este setAudioMode era redundante no iOS além de destrutivo.
+    if (Platform.OS !== 'ios') {
+      // Switch to doNotMix so the call audio session interrupts background music
+      try {
+        const { AudioModule } = require('expo-audio');
+        AudioModule.setAudioMode({
+          playsInSilentMode: true,
+          interruptionMode: 'doNotMix',
+          shouldPlayInBackground: true,
+        });
+      } catch {}
+    }
   }
   try { Vibration.cancel(); } catch {}
-  // Configure iOS audio session for WebRTC call — DoNotMix interrupts Spotify/Apple Music
-  if (Platform.OS === 'ios') {
-    try {
-      const { AudioModule } = require('expo-audio');
-      AudioModule.setAudioMode({
-        playsInSilentMode: true,
-        interruptionMode: 'doNotMix',
-        shouldPlayInBackground: true,
-      });
-    } catch (e) {}
-  }
+  // [MIC MORTO 2026-07-22] Bloco iOS REMOVIDO — mesma causa do comentário
+  // acima: este setAudioMode punha a sessão em `.playback` (sem microfone)
+  // bem na hora do atender. Quem manda na sessão durante a ligação é o
+  // AudioRouter nativo (.playAndRecord + .voiceChat + .duckOthers), que já
+  // interrompe Spotify/Apple Music. Não reintroduzir sem `allowsRecording:
+  // true` — e mesmo assim o setCategory derruba o mode .voiceChat (AEC).
 }

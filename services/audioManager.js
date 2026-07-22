@@ -57,6 +57,15 @@ export function stopAllAudio() {
         playsInSilentMode: true,
         interruptionMode: 'doNotMix',
         shouldPlayInBackground: true,
+        // [MIC MORTO 2026-07-22 "um escuta e o outro não"] SEM esta linha o
+        // expo-audio assume allowsRecording=false (AudioRecords.swift:6) e
+        // põe a AVAudioSession em `.playback` (AudioModule.swift:796) — sem
+        // microfone. stopAllAudio() roda no INÍCIO da ligação (silencia
+        // música/vídeo), então isso desligava o mic de quem estava ligando:
+        // ele ouvia o outro, o outro não ouvia ele. O fallback expo-av abaixo
+        // às vezes reparava (allowsRecordingIOS: true), o que deixava o bug
+        // intermitente e difícil de pegar.
+        allowsRecording: true,
       });
     } catch {}
     // expo-av fallback (in case expo-audio not available)
