@@ -1134,6 +1134,28 @@ function _countDownloadedBytes(fs, localPath) {
   } catch {}
 }
 
+// Truncation guard for the download paths. fs.downloadAsync resolves with
+// status 200 even when the socket dies mid-body (server restart / migration
+// cut the stream) — the partial JPEG then passes the size>0 check, is
+// registered in syncIndex and renders forever as a half-decoded/white photo
+// with no retry chip (partial JPEG "decodes" fine, so onError never fires).
+// When the server declared a Content-Length and the body isn't compressed,
+// the on-disk size must match it exactly; otherwise treat as corrupt.
+// Returns 0 ("don't enforce") when the header is absent or the response is
+// content-encoded (decoded bytes legitimately differ from the header).
+function _expectedBytesFromHeaders(headers) {
+  if (!headers) return 0;
+  let len = 0, enc = '';
+  try {
+    for (const k of Object.keys(headers)) {
+      const lk = String(k).toLowerCase();
+      if (lk === 'content-length') len = parseInt(headers[k], 10) || 0;
+      else if (lk === 'content-encoding') enc = String(headers[k] || '').toLowerCase();
+    }
+  } catch { return 0; }
+  return (enc && enc !== 'identity') ? 0 : len;
+}
+
 // Map external media-type names → matrix bucket. Accepts both the external
 // 'photo' / 'video' / 'document' singulars (per task spec) and the internal
 // plurals used by _bucketForUrl.
@@ -1417,6 +1439,11 @@ export async function cacheMedia(url, opts = {}) {
             try {
               const st = await fs.getInfoAsync(localPath);
               okSize = !!(st && st.exists && st.size > 0);
+              // Truncated 200 (stream cut mid-body): size>0 but short of the
+              // declared Content-Length → reject so the retry loop re-fetches
+              // instead of poisoning the cache with a half-white photo.
+              const _expected = _expectedBytesFromHeaders(download.headers);
+              if (okSize && _expected > 0 && st.size !== _expected) okSize = false;
             } catch { okSize = false; }
             if (okSize) {
               registerSyncKey(url, localPath);
@@ -1590,6 +1617,10 @@ export async function saveMediaPermanent(url, opts = {}) {
         try {
           const st = await fs.getInfoAsync(localPath);
           okSize = !!(st && st.exists && st.size > 0);
+          // Same truncation guard as cacheMedia above — a 200 whose body was
+          // cut mid-stream must not be registered as a valid permanent copy.
+          const _expected = _expectedBytesFromHeaders(download.headers);
+          if (okSize && _expected > 0 && st.size !== _expected) okSize = false;
         } catch { okSize = false; }
         if (okSize) {
           registerSyncKey(url, localPath);
