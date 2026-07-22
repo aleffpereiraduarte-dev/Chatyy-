@@ -415,6 +415,31 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
           next[i] = { ...next[i], _readStatus: 2 };
           break;
         }
+        case 'delivered': {
+          // Server coalesces a delivery-ack burst into ONE 'delivered' event
+          // carrying payload.message_ids[] (NO singular message_id — so the
+          // old `default: break` dropped it and ✓ → ✓✓ never flipped via a
+          // delta sync, only via the live WS `chat_delivered` handler). Mirror
+          // that batch handler (chat-conversation.js ~12042): flip every bubble
+          // in the set to delivered, but never downgrade one already read.
+          const dids = Array.isArray(ev?.payload?.message_ids)
+            ? ev.payload.message_ids.map(Number).filter(n => n > 0)
+            : [];
+          if (!dids.length) break;
+          const dset = new Set(dids);
+          for (let k = 0; k < next.length; k++) {
+            const kid = Number(next[k]?.id) || 0;
+            if (!kid || !dset.has(kid)) continue;
+            if (next[k].status === 'read' || next[k]._readStatus === 2) continue;
+            next[k] = {
+              ...next[k],
+              status: 'delivered',
+              _delivered: true,
+              delivered_at: next[k].delivered_at || ev.created_at,
+            };
+          }
+          break;
+        }
         // pin / unpin / member_join etc. — no-op for now; the visual
         // effect happens via other API fetches (chat_list, group_info).
         default: break;

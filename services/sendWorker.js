@@ -332,7 +332,12 @@ async function _uploadAndSendMedia(row) {
     }
 
     if (r && (r.success || r.message_id || r.data?.message_id)) {
-      const serverId = r.message_id || r.data?.message_id || r.data?.message?.id || r.message?.id || null;
+      // Trailing fallbacks r.data?.id / r.id cover the dedup (23505) response:
+      // chat_send returns the existing message ROW as {data:{id}} (no
+      // message_id key), so without these a race-deduplicated media send did
+      // markSent(cmi, null) — the optimistic bubble never got the canonical
+      // server id and could resurface as a ghost/duplicate.
+      const serverId = r.message_id || r.data?.message_id || r.data?.message?.id || r.message?.id || r.data?.id || r.id || null;
       await markSent(cmi, serverId);
       // Emit a WS-style local fan-out so any mounted chat screen swaps the
       // optimistic bubble for the server-canonical row. Same hook the
