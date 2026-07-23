@@ -10675,7 +10675,10 @@ function ChatConversationInner() {
                   const evMax2 = (c2.has_more && Array.isArray(c2.events) && c2.events.length)
                     ? c2.events.reduce((m, e) => Math.max(m, Number(e.pts) || 0), 0)
                     : 0;
-                  observePts(conversationId, (c2.has_more && evMax2 > 0) ? evMax2 : Number(c2.latest_pts));
+                  // has_more with an all-pts-less page (evMax2=0) must NOT fall
+                  // through to latest_pts — that jumps the gap. Passing 0 makes
+                  // observePts a no-op (mirror of chatSync.js `wm` guard).
+                  observePts(conversationId, c2.has_more ? evMax2 : Number(c2.latest_pts));
                 } catch {}
               }
             } catch {}
@@ -10714,7 +10717,9 @@ function ChatConversationInner() {
             const evMax = (c.has_more && Array.isArray(c.events) && c.events.length)
               ? c.events.reduce((m, e) => Math.max(m, Number(e.pts) || 0), 0)
               : 0;
-            observePts(conversationId, (c.has_more && evMax > 0) ? evMax : Number(c.latest_pts));
+            // has_more with evMax=0 must NOT fall through to latest_pts (gap
+            // skip); 0 makes observePts a no-op (mirror of chatSync.js).
+            observePts(conversationId, c.has_more ? evMax : Number(c.latest_pts));
           } catch {}
         }
         // needsFullReload = 2 consecutive pages of has_more for this conv.
@@ -11333,7 +11338,9 @@ function ChatConversationInner() {
               const evMax = (c.has_more && Array.isArray(c.events) && c.events.length)
                 ? c.events.reduce((m, e) => Math.max(m, Number(e.pts) || 0), 0)
                 : 0;
-              observePts(conversationId, (c.has_more && evMax > 0) ? evMax : Number(c.latest_pts));
+              // has_more with evMax=0 must NOT fall through to latest_pts (gap
+              // skip); 0 makes observePts a no-op (mirror of chatSync.js).
+              observePts(conversationId, c.has_more ? evMax : Number(c.latest_pts));
             }
             if (c.needsFullReload) loadMessages(false);
           } catch {}
@@ -12377,7 +12384,9 @@ function ChatConversationInner() {
                   const evMax = c.has_more
                     ? c.events.reduce((m, e) => Math.max(m, Number(e.pts) || 0), 0)
                     : 0;
-                  if (c.latest_pts) observePts(conversationId, (c.has_more && evMax > 0) ? evMax : c.latest_pts);
+                  // has_more with evMax=0 must NOT fall through to latest_pts
+                  // (gap skip); 0 = no-op in observePts (mirror of chatSync.js).
+                  if (c.latest_pts) observePts(conversationId, c.has_more ? evMax : Number(c.latest_pts));
                   // Reactions aren't carried in events yet — if any reaction
                   // event fired while we were offline, pull the affected
                   // messages fresh once so counts come in right. Also refetch

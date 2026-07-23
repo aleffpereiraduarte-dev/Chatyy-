@@ -912,6 +912,10 @@ export default function ComposeScreen() {
     const sid = undoSendIdRef.current;
     undoSendIdRef.current = null;
     if (sid) { try { api.cancelSend?.(sid); } catch {} }
+    // Undo means the message will NOT be sent — the compose content is live
+    // again, so re-arm the draft guards flipped when the send was queued.
+    sentRef.current = false;
+    contentChangedRef.current = true;
     setUndoCountdown(0);
     setSending(false);
   }, []);
@@ -1249,6 +1253,13 @@ export default function ComposeScreen() {
           const sid = r.data?.send_id || null;
           undoSendIdRef.current = sid;
           if (delay > 0 && sid) {
+            // The message is ALREADY queued server-side — it WILL transmit
+            // after `delay`s unless cancelled. Flip the sent guard now, not
+            // in finishSendSuccess: leaving the screen mid-countdown (Escape/
+            // back) ran the unmount flush with sentRef still false, which
+            // re-saved the compose as a draft → same email in Sent AND Drafts.
+            // cancelUndoSend() reverts this so Desfazer restores draft-ability.
+            sentRef.current = true;
             // Show the visual countdown; the backend transmits after `delay`s
             // unless cancelUndoSend() hits cancel_send(sid) first.
             setUndoCountdown(delay);

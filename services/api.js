@@ -1108,6 +1108,12 @@ const SWR_ALLOW = new Set([
 const EMAIL_MUTATION_ACTIONS = new Set([
   'delete', 'mark_read', 'mark_unread', 'move', 'star',
   'mark_not_spam', 'empty_trash', 'empty_spam',
+  // These also mutate the folder listing / flags / unread badge but were
+  // missing — on the PHP fallback path (Rust down) the 60s SWR cache would
+  // resurface the pre-mutation row (star reappears, badge stagnates) until
+  // the TTL elapsed. Mirror every mutating action here.
+  'unstar', 'bulk_mark_read', 'bulk_mark_unread', 'bulk_delete',
+  'bulk_archive', 'snooze', 'add_label', 'remove_label', 'report_spam',
 ]);
 
 // Persist SWR cache to sessionStorage on web so navigating back to the app

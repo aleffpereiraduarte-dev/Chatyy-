@@ -319,6 +319,15 @@ export function MailProvider({ children }) {
     }
     loadEmailsCtxRef.current = { folder: f, query: q };
 
+    // [account-epoch guard] Capture the active account NOW. A slow in-flight
+    // getInbox for account A can resolve AFTER the user switched to B —
+    // switchAccount doesn't abort in-flight requests. Without this guard, A's
+    // emails would paint over B's list AND get persisted into B's cache
+    // namespace (saveEmailsToCache/_nativeSaveEmails resolve the namespace at
+    // save time = B), poisoning B's cold starts forever. We re-check after the
+    // await and drop the stale response.
+    const _acctEpoch = api.getActiveAccountEmail?.() ?? '';
+
     // Show cached data INSTANTLY on non-silent first-page loads (no spinner if cache exists)
     if (!silent && pg === 1 && !q && !category && !label) {
       const cached = await getEmailsFromCache(f);
@@ -337,6 +346,10 @@ export function MailProvider({ children }) {
 
     try {
       const r = await api.getInbox(f, pg, 20, q, category, label);
+      // Account switched while this request was in flight → this is account A's
+      // data arriving after the user moved to B. Drop it: painting or caching
+      // it now would leak A into B and poison B's persisted cache namespace.
+      if ((api.getActiveAccountEmail?.() ?? '') !== _acctEpoch) return;
       if (r.success) {
         let emailList = r.data?.emails || [];
         // Drop rows whose removal is still pending/settling server-side so a

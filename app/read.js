@@ -211,9 +211,23 @@ export default function ReadScreen() {
     return () => { cancelled = true; };
   }, [email?.uid, folder]);
 
+  // In a multi-message thread the tapped message (emailData) is NOT always the
+  // opened message. Compose re-fetches getMessage(reply_uid, folder) and
+  // overrides to/cc/subject from THAT message — so if we hardcode the opened
+  // `uid`, tapping Reply on an older thread message replied to the wrong
+  // person quoting the wrong body. Target the tapped message's uid — but ONLY
+  // when it carries BOTH uid and folder (IMAP uids are per-mailbox, so using a
+  // tapped uid with the opened folder could fetch an unrelated message). When
+  // either is missing, fall back to the opened message unchanged.
+  const _replyTarget = (emailData) => {
+    const m = emailData || email;
+    if (m && m.uid != null && m.folder != null) return { uid: m.uid, folder: m.folder, msg: m };
+    return { uid, folder, msg: m };
+  };
+
   const handleReply = (emailData) => {
-    const replyEmail = emailData || email;
-    let url = `/compose?reply_uid=${uid}&folder=${encodeURIComponent(folder)}&to=${encodeURIComponent(replyEmail?.from || '')}&subject=${encodeURIComponent('Re: ' + (replyEmail?.subject || ''))}`;
+    const { uid: rUid, folder: rFolder, msg: replyEmail } = _replyTarget(emailData);
+    let url = `/compose?reply_uid=${rUid}&folder=${encodeURIComponent(rFolder)}&to=${encodeURIComponent(replyEmail?.from || '')}&subject=${encodeURIComponent('Re: ' + (replyEmail?.subject || ''))}`;
     if (replyEmail?.smartReply) {
       url += `&smart_reply=${encodeURIComponent(replyEmail.smartReply)}`;
     }
@@ -225,14 +239,15 @@ export default function ReadScreen() {
   };
 
   const handleReplyAll = (emailData) => {
-    const replyEmail = emailData || email;
+    const { uid: rUid, folder: rFolder, msg: replyEmail } = _replyTarget(emailData);
     const allRecipients = [replyEmail?.to, replyEmail?.cc].filter(Boolean).join(',');
-    let url = `/compose?reply_uid=${uid}&reply_all=1&folder=${encodeURIComponent(folder)}&to=${encodeURIComponent(replyEmail?.from || '')}&cc=${encodeURIComponent(allRecipients)}&subject=${encodeURIComponent('Re: ' + (replyEmail?.subject || ''))}`;
+    let url = `/compose?reply_uid=${rUid}&reply_all=1&folder=${encodeURIComponent(rFolder)}&to=${encodeURIComponent(replyEmail?.from || '')}&cc=${encodeURIComponent(allRecipients)}&subject=${encodeURIComponent('Re: ' + (replyEmail?.subject || ''))}`;
     router.replace(url);
   };
 
-  const handleForward = () => {
-    router.replace(`/compose?forward_uid=${uid}&folder=${encodeURIComponent(folder)}&subject=${encodeURIComponent('Fwd: ' + (email?.subject || ''))}`);
+  const handleForward = (emailData) => {
+    const { uid: rUid, folder: rFolder, msg: fwdEmail } = _replyTarget(emailData);
+    router.replace(`/compose?forward_uid=${rUid}&folder=${encodeURIComponent(rFolder)}&subject=${encodeURIComponent('Fwd: ' + (fwdEmail?.subject || ''))}`);
   };
 
   // Forward as attachment (round-6 gap-closer): drops the original .eml
