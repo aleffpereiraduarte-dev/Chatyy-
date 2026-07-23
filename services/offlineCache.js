@@ -36,7 +36,7 @@ function _msgHasBody(m) {
 (function _purgePoisonedMsgCacheOnce() {
   try {
     const VER_KEY = CACHE_PREFIX + 'msgcache_ver';
-    const CUR = '2'; // bump aqui sempre que precisar forçar nova limpeza
+    const CUR = '3'; // bump aqui sempre que precisar forçar nova limpeza
     if (getString(VER_KEY) === CUR) return;
     const keys = getAllKeys() || [];
     for (const k of keys) {
@@ -62,7 +62,13 @@ function _acctNS() {
   } catch { return '_noacct'; }
 }
 function _listKey(folder) { return CACHE_PREFIX + 'list_' + _acctNS() + '_' + folder; }
-function _msgKey(uid) { return CACHE_PREFIX + 'msg_' + _acctNS() + '_' + uid; }
+// IMAP uids are only unique PER MAILBOX — uid 42 exists in INBOX and in Sent
+// as different messages. Keying by uid alone served the wrong body on the
+// offline path whenever uids collided across folders, so the folder is part
+// of the key (and of the LRU index ids).
+function _msgId(uid, folder) { return (folder || 'INBOX') + '|' + uid; }
+function _msgKeyFromId(id) { return CACHE_PREFIX + 'msg_' + _acctNS() + '_' + id; }
+function _msgKey(uid, folder) { return _msgKeyFromId(_msgId(uid, folder)); }
 function _msgIndexKey() { return CACHE_PREFIX + 'msg_index_' + _acctNS(); }
 // Web IDB folder scoping: prefix the folder name so account A's INBOX blob in
 // IndexedDB can't be served to account B.
@@ -196,32 +202,33 @@ export async function getNotesFromCache() {
 
 // ─── Email Message Cache (individual read emails) ───
 
-export async function saveMessageToCache(uid, message) {
+export async function saveMessageToCache(uid, message, folder) {
   const indexKey = _msgIndexKey();
-  const msgKey = _msgKey(uid);
+  const id = _msgId(uid, folder);
+  const msgKey = _msgKeyFromId(id);
   // NÃO cachear corpo vazio — senão envenena e mostra "(sem conteúdo)" pra sempre.
   // Se já existir uma entrada (possivelmente envenenada), remove.
   if (!_msgHasBody(message)) {
     remove(msgKey);
     let idx = getJSON(indexKey) || [];
-    const filtered = idx.filter(u => u !== uid);
+    const filtered = idx.filter(u => u !== id);
     if (filtered.length !== idx.length) setJSON(indexKey, filtered);
     return;
   }
   setJSON(msgKey, message);
 
-  // Maintain LRU index (per-account)
+  // Maintain LRU index (per-account, ids are folder|uid)
   let index = getJSON(indexKey) || [];
-  index = [uid, ...index.filter(u => u !== uid)];
+  index = [id, ...index.filter(u => u !== id)];
   if (index.length > MAX_CACHED_MESSAGES) {
     const removed = index.splice(MAX_CACHED_MESSAGES);
-    for (const u of removed) remove(_msgKey(u));
+    for (const u of removed) remove(_msgKeyFromId(u));
   }
   setJSON(indexKey, index);
 }
 
-export async function getMessageFromCache(uid) {
-  const key = _msgKey(uid);
+export async function getMessageFromCache(uid, folder) {
+  const key = _msgKey(uid, folder);
   const m = getJSON(key);
   // Entrada SEM corpo é lixo (envenenamento legado) → trata como cache-miss e
   // remove, pra forçar rebusca do servidor (que sempre traz o corpo via PHP).

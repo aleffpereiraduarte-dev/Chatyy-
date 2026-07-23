@@ -622,13 +622,19 @@ export default function ComposeScreen() {
           if (params.reply_uid) {
             setTo(parseEmailsParam(orig.from));
 
-            // Reply All: add all recipients + original CC to CC field
+            // Reply All: add all recipients + original CC to CC field.
+            // The sender already goes in To (setTo above) — on lists/group
+            // mail the sender also appears in the original to/cc, so exclude
+            // them here or they receive the reply twice (To + Cc).
             if (params.reply_all) {
+              const fromLower = (String(orig.from || '').match(/<([^>]+)>/)?.[1] ||
+                String(orig.from || '')).trim().toLowerCase();
               const allRecipients = (orig.to || '').split(',')
                 .map(e => e.trim()).filter(Boolean)
                 .filter(e => {
                   const clean = e.replace(/<|>/g, '').toLowerCase();
-                  return user?.email && !clean.includes(user.email.toLowerCase());
+                  return user?.email && !clean.includes(user.email.toLowerCase()) &&
+                    !(fromLower && clean.includes(fromLower));
                 })
                 .map(email => ({ email: email.trim(), name: '' }));
 
@@ -636,7 +642,8 @@ export default function ComposeScreen() {
                 .map(e => e.trim()).filter(Boolean)
                 .filter(e => {
                   const clean = e.replace(/<|>/g, '').toLowerCase();
-                  return user?.email && !clean.includes(user.email.toLowerCase());
+                  return user?.email && !clean.includes(user.email.toLowerCase()) &&
+                    !(fromLower && clean.includes(fromLower));
                 })
                 .map(email => ({ email: email.trim(), name: '' }));
 

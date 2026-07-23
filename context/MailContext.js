@@ -20,6 +20,18 @@ import { getCached, setCache } from '../services/cache';
 
 // Native cache (iOS only) — synchronous SQLite read for instant inbox first paint.
 // Same module that powers chat list / chat messages / media URI cache.
+// Storage key for the recently-read set, namespaced by the ACTIVE account so
+// one identity's read-state can't bleed into another on a shared device
+// (the old global 'recentlyRead' key survived logout/switch). Resolved at
+// call time — not from a closure-captured `user` — so a stale capture can't
+// write under the previous account's key right after a switch.
+const rrStorageKey = () => {
+  try {
+    const e = api.getActiveAccountEmail && api.getActiveAccountEmail();
+    return 'recentlyRead:' + (e ? String(e).toLowerCase() : '_noacct');
+  } catch { return 'recentlyRead:_noacct'; }
+};
+
 const _NativeCache = (() => {
   if (Platform.OS !== 'ios') return null;
   try { return require('../modules/expo-chat-cache').default; } catch { return null; }
@@ -209,16 +221,22 @@ export function MailProvider({ children }) {
   const loadEmailsCtxRef = useRef({ folder: 'INBOX', query: '' });
   const [recentlyReadLoaded, setRecentlyReadLoaded] = useState(false);
 
-  // Load persisted recently-read UIDs on mount (survives app restart)
+  // Load persisted recently-read UIDs on mount (survives app restart).
+  // Keyed PER ACCOUNT: the old global 'recentlyRead' key survived logout, so
+  // after a restart under account B the uids read under account A painted B's
+  // unread emails as read on uid collision. Re-runs on account switch so the
+  // ref always holds the active account's set.
   useEffect(() => {
     (async () => {
       try {
+        recentlyReadRef.current = new Set();
+        const key = rrStorageKey();
         let stored;
         if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
-          stored = JSON.parse(localStorage.getItem('recentlyRead') || '{}');
+          stored = JSON.parse(localStorage.getItem(key) || '{}');
         } else {
           const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-          stored = JSON.parse(await AsyncStorage.getItem('recentlyRead') || '{}');
+          stored = JSON.parse(await AsyncStorage.getItem(key) || '{}');
         }
         const cutoff = Date.now() - 86400000; // 24 hours
         for (const [uid, ts] of Object.entries(stored)) {
@@ -227,7 +245,7 @@ export function MailProvider({ children }) {
       } catch {}
       setRecentlyReadLoaded(true);
     })();
-  }, []);
+  }, [user?.email]);
 
   // Selection state for bulk operations
   const [selectedUids, setSelectedUids] = useState(new Set());
@@ -478,7 +496,7 @@ export function MailProvider({ children }) {
     // network path below with the spinner still showing.
     let paintedFromCache = false;
     try {
-      const cached = await getMessageFromCache(uid);
+      const cached = await getMessageFromCache(uid, folder || currentFolder);
       if (cached && (cached.body_html || cached.body_text || cached.body)) {
         setSelectedEmail({ ...cached, seen: true, read: true });
         paintedFromCache = true;
@@ -511,11 +529,11 @@ export function MailProvider({ children }) {
         // message came back unseen (PHP fallback / offline stub that didn't
         // flag it), fall through to the full path that also POSTs to the server.
         markAsRead(uid, folder, r.data?.seen === true);
-        saveMessageToCache(uid, r.data).catch(() => {});
+        saveMessageToCache(uid, r.data, folder || currentFolder).catch(() => {});
       }
     } catch {
       // Fallback to cached message
-      const cached = await getMessageFromCache(uid);
+      const cached = await getMessageFromCache(uid, folder || currentFolder);
       if (cached) setSelectedEmail({ ...cached, seen: true, read: true });
     } finally {
       setLoadingMessage(false);
@@ -555,17 +573,18 @@ export function MailProvider({ children }) {
     try {
       const now = Date.now();
       const cutoff = now - 86400000;
+      const rrKey = rrStorageKey();
       if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
-        const stored = JSON.parse(localStorage.getItem('recentlyRead') || '{}');
+        const stored = JSON.parse(localStorage.getItem(rrKey) || '{}');
         stored[uidStr] = now;
         for (const k of Object.keys(stored)) { if (stored[k] < cutoff) delete stored[k]; }
-        localStorage.setItem('recentlyRead', JSON.stringify(stored));
+        localStorage.setItem(rrKey, JSON.stringify(stored));
       } else {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-        const stored = JSON.parse(await AsyncStorage.getItem('recentlyRead') || '{}');
+        const stored = JSON.parse(await AsyncStorage.getItem(rrKey) || '{}');
         stored[uidStr] = now;
         for (const k of Object.keys(stored)) { if (stored[k] < cutoff) delete stored[k]; }
-        await AsyncStorage.setItem('recentlyRead', JSON.stringify(stored));
+        await AsyncStorage.setItem(rrKey, JSON.stringify(stored));
       }
     } catch {}
     // Call the server — await so it completes before app might close.
