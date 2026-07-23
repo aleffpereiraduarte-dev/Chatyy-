@@ -617,6 +617,12 @@ export function MailProvider({ children }) {
       setPage(1);
       setSearch('');
       recentlyReadRef.current = new Set();
+      // Per-account caches: without these clears, changeFolder instant-paints
+      // the PREVIOUS account's remembered rows, and pendingRemoval/arrived
+      // windows filter or protect the new account's uids on collision.
+      folderRowsRef.current = new Map();
+      pendingRemovalRef.current = new Map();
+      recentlyArrivedRef.current = new Map();
       loadEmails('INBOX', 1, '');
     }
   }, [user?.email]);

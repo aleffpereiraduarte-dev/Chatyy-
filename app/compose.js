@@ -586,6 +586,13 @@ export default function ComposeScreen() {
       setTo(parseEmailsParam(params.to));
     }
 
+    // Follow-up chip ("Enviar follow-up") navigates without reply_uid — the
+    // suggested text only used to be consumed inside the reply branch below,
+    // so the compose opened empty and the AI suggestion was lost.
+    if (params.smart_reply && !params.reply_uid && !params.draft_uid) {
+      setBody(String(params.smart_reply));
+    }
+
     // Parse mailto: URL (web protocol handler: /compose?mailto=mailto:user@example.com?subject=Hello)
     if (params.mailto) {
       try {

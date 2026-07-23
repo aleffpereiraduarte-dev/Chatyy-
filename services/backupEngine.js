@@ -777,7 +777,8 @@ export class BackupEngine {
           _bdbg('upload.item.err', { id: item.asset?.id, file: item.filename, msg: String(err?.message || err).slice(0, 200), netErr: isNetErr(err) });
           if (isNetErr(err)) batchNetFails++;
           // 1 quick retry — but skip retry on network error (network is dead, don't waste time)
-          if (!isNetErr(err)) {
+          // e em quota cheia (507 grace_expired — retry só repete o 507)
+          if (!isNetErr(err) && !err?.quotaFull) {
             try {
               await new Promise(r => setTimeout(r, 800));
               await withDeadline(
@@ -900,6 +901,9 @@ export class BackupEngine {
           size: it.size || 0,
         }));
         const r = await api.driveInitUploadBatch(items);
+        // [quota 2026-07-23] Drive cheio: sem presign pra ninguém — sem este
+        // break o batcher rebate o mesmo lote 507 a cada ~200ms pra sempre.
+        if (r?.success === false && r?.data?.grace_expired) { this._aborted = true; break; }
         const results = r?.data?.results || [];
         for (let i = 0; i < window.length && i < results.length; i++) {
           const res = results[i];
@@ -976,6 +980,15 @@ export class BackupEngine {
         }
         if (this.onFileComplete) this.onFileComplete(item);
       } catch (err) {
+        // [quota 2026-07-23] Drive cheio: retry é inútil (cada tentativa custa
+        // 2-3 requests 507). _uploadItem já setou _aborted; o finally limpa.
+        if (err?.quotaFull) {
+          item.status = 'failed';
+          this.failed.push(item);
+          this.stats.failedFiles++;
+          if (this.onError) this.onError(err, item);
+          continue;
+        }
         item.retries++;
         const ext = getExt(item.filename);
         const isVid = item.asset?.mediaType === 'video' || isVideoExt(ext);
@@ -1322,6 +1335,16 @@ export class BackupEngine {
         // Fallback: try legacy presigned upload
         presigned = await api.getPresignedUpload(uploadFilename, mimeType);
       }
+    }
+
+    // [quota 2026-07-23] Drive cheio pós-grace (507 grace_expired): aborta a
+    // rodada inteira. Sem isso cada foto pendente vira init 507 + fallback
+    // fileUpload fadado a falhar + retries — tempestade de 624×507 em prod.
+    if (presigned?.success === false && presigned?.data?.grace_expired) {
+      this._aborted = true;
+      const qe = new Error('storage_quota_full');
+      qe.quotaFull = true;
+      throw qe;
     }
 
     // Handle server-side duplicate detection
