@@ -75,9 +75,11 @@ const _regexFallbackSanitize = (html, opts = {}) => {
     .replace(/<link[^>]*>/gi, '')
     .replace(/<base[^>]*>/gi, '')
     .replace(/<meta[^>]*>/gi, '')
-    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
-    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
-    .replace(/\son\w+\s*=[^\s>]*/gi, '')
+    // `[\s/]` (not just `\s`): browsers treat `/` as an attribute separator,
+    // so `<img/onerror=...>` carries a live handler with no whitespace at all.
+    .replace(/[\s/]on\w+\s*=\s*"[^"]*"/gi, ' ')
+    .replace(/[\s/]on\w+\s*=\s*'[^']*'/gi, ' ')
+    .replace(/[\s/]on\w+\s*=[^\s>]*/gi, ' ')
     .replace(/javascript\s*:/gi, '')
     .replace(/vbscript\s*:/gi, '')
     .replace(/data\s*:\s*text\/html/gi, '')
@@ -442,6 +444,9 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           'src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-blocked-src="' + src.replace(/"/g, '&quot;') + '"'
         );
       }
+      // Belt-and-braces: attrs are re-emitted verbatim below, so drop any
+      // inline handler that slipped past the upstream sanitizer.
+      newAttrs = newAttrs.replace(/[\s/]on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]*)/gi, ' ');
       return `<img${newAttrs}>`;
     });
     // Update detection on next tick to avoid mid-render setState warnings.
@@ -1267,7 +1272,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                     try {
                       const replySubject = (email.subject || '').startsWith('Re:') ? email.subject : `Re: ${email.subject || ''}`;
                       const dateStr = email.date || '';
-                      const quotedBody = `\n\n---------- ${t('reader.originalMessage')} ----------\n${t('reader.quotedFrom')}: ${email.from_name || email.from} <${email.from}>\n${t('reader.quotedDate')}: ${dateStr}\n${t('reader.quotedSubject')}: ${email.subject || ''}\n${t('reader.quotedTo')}: ${email.to || ''}\n\n${email.body_text || email.body || ''}`;
+                      const quotedBody = `\n\n---------- ${t('reader.originalMessage')} ----------\n${t('reader.quotedFrom')}: ${email.from_name || email.from} <${email.from}>\n${t('reader.quotedDate')}: ${dateStr}\n${t('reader.quotedSubject')}: ${email.subject || ''}\n${t('reader.quotedTo')}: ${email.to || ''}\n\n${email.body_text || email.body || email.body_html?.replace(/<[^>]+>/g, ' ') || ''}`;
                       const fullBody = inlineReplyText + quotedBody;
                       const result = await sendEmail(email.from, replySubject, fullBody, '', '', email.uid, folder || 'INBOX');
                       if (result.success) {
@@ -1310,7 +1315,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                   onPress={() => {
                     const replySubject = (email.subject || '').startsWith('Re:') ? email.subject : `Re: ${email.subject || ''}`;
                     const dateStr = email.date || '';
-                    const quotedBody = `\n\n---------- ${t('reader.originalMessage')} ----------\n${t('reader.quotedFrom')}: ${email.from_name || email.from} <${email.from}>\n${t('reader.quotedDate')}: ${dateStr}\n${t('reader.quotedSubject')}: ${email.subject || ''}\n${t('reader.quotedTo')}: ${email.to || ''}\n\n${email.body_text || email.body || ''}`;
+                    const quotedBody = `\n\n---------- ${t('reader.originalMessage')} ----------\n${t('reader.quotedFrom')}: ${email.from_name || email.from} <${email.from}>\n${t('reader.quotedDate')}: ${dateStr}\n${t('reader.quotedSubject')}: ${email.subject || ''}\n${t('reader.quotedTo')}: ${email.to || ''}\n\n${email.body_text || email.body || email.body_html?.replace(/<[^>]+>/g, ' ') || ''}`;
                     router.push({
                       pathname: '/compose',
                       params: {

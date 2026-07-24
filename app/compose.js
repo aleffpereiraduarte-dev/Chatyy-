@@ -93,6 +93,28 @@ function isValidRecipient(entry) {
   return true;
 }
 
+// Split an RFC address-list on commas OUTSIDE quoted display names and
+// <angle-addrs> — `"Silva, João" <j@x.com>` must stay ONE entry — and return
+// bare addr-specs only: the backend explodes to/cc on "," verbatim, so a chip
+// carrying a display name with a comma would corrupt the list again on send.
+function splitAddressList(str) {
+  const entries = [];
+  let cur = '', inQuote = false, inAngle = false;
+  for (const ch of String(str || '')) {
+    if (ch === '"' && !inAngle) inQuote = !inQuote;
+    else if (ch === '<' && !inQuote) inAngle = true;
+    else if (ch === '>' && !inQuote) inAngle = false;
+    if (ch === ',' && !inQuote && !inAngle) { entries.push(cur); cur = ''; continue; }
+    cur += ch;
+  }
+  entries.push(cur);
+  return entries
+    .map(e => e.trim())
+    .filter(Boolean)
+    .map(e => (e.match(/<([^>]+)>/)?.[1] || e).trim())
+    .filter(Boolean);
+}
+
 // Approximate UTF-8 byte length without relying on TextEncoder (RN web/native).
 function utf8ByteLength(str) {
   if (!str) return 0;
@@ -539,10 +561,7 @@ export default function ComposeScreen() {
   const parseEmailsParam = useCallback((val) => {
     if (!val) return [];
     const str = typeof val === 'string' ? val : String(val);
-    return str.split(',')
-      .map(e => e.trim())
-      .filter(Boolean)
-      .map(email => ({ email, name: '' }));
+    return splitAddressList(str).map(email => ({ email, name: '' }));
   }, []);
 
   // Load undo send delay
@@ -629,23 +648,21 @@ export default function ComposeScreen() {
             if (params.reply_all) {
               const fromLower = (String(orig.from || '').match(/<([^>]+)>/)?.[1] ||
                 String(orig.from || '')).trim().toLowerCase();
-              const allRecipients = (orig.to || '').split(',')
-                .map(e => e.trim()).filter(Boolean)
-                .filter(e => {
-                  const clean = e.replace(/<|>/g, '').toLowerCase();
-                  return user?.email && !clean.includes(user.email.toLowerCase()) &&
-                    !(fromLower && clean.includes(fromLower));
-                })
-                .map(email => ({ email: email.trim(), name: '' }));
+              // splitAddressList returns bare addr-specs, so compare by
+              // equality; an unknown own address must NOT empty the CC.
+              const notSelfOrSender = (e) => {
+                const clean = e.toLowerCase();
+                if (user?.email && clean === user.email.toLowerCase()) return false;
+                if (fromLower && clean === fromLower) return false;
+                return true;
+              };
+              const allRecipients = splitAddressList(orig.to)
+                .filter(notSelfOrSender)
+                .map(email => ({ email, name: '' }));
 
-              const origCc = (orig.cc || '').split(',')
-                .map(e => e.trim()).filter(Boolean)
-                .filter(e => {
-                  const clean = e.replace(/<|>/g, '').toLowerCase();
-                  return user?.email && !clean.includes(user.email.toLowerCase()) &&
-                    !(fromLower && clean.includes(fromLower));
-                })
-                .map(email => ({ email: email.trim(), name: '' }));
+              const origCc = splitAddressList(orig.cc)
+                .filter(notSelfOrSender)
+                .map(email => ({ email, name: '' }));
 
               const combined = [...allRecipients, ...origCc];
               if (combined.length > 0) {
