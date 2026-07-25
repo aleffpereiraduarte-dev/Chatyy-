@@ -2,7 +2,7 @@
 // Reuses the close-friends screen layout (app/close-friends.js). Reads the
 // global exclusion list from chat_privacy_get (`status_except`, array of
 // lowercase emails) and persists changes via chat_privacy_set { status_except }.
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, FlatList, Platform, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
@@ -20,6 +20,12 @@ export default function StatusExceptScreen() {
   const [excluded, setExcluded] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
+  // Last server-confirmed exclusion list + persist sequence for latest-wins.
+  // Without these, a failed chatPrivacySet left the UI showing the contact as
+  // hidden while the server never saved it — the user believes their status
+  // is hidden from someone and it isn't.
+  const savedRef = useRef(new Set());
+  const seqRef = useRef(0);
 
   useEffect(() => {
     (async () => {
@@ -29,7 +35,9 @@ export default function StatusExceptScreen() {
           api.chatContacts?.(),
         ]);
         if (pv?.success && pv.data && Array.isArray(pv.data.status_except)) {
-          setExcluded(new Set(pv.data.status_except.map(e => (e || '').toLowerCase())));
+          const initial = new Set(pv.data.status_except.map(e => (e || '').toLowerCase()));
+          savedRef.current = new Set(initial);
+          setExcluded(initial);
         }
         if (cs?.success) {
           const list = Array.isArray(cs.data) ? cs.data : (cs.data?.contacts || []);
@@ -42,9 +50,24 @@ export default function StatusExceptScreen() {
 
   // Persist the full list on every toggle. Backend caps at 200 server-side
   // and lowercases; we mirror the lowercase + '@' guard here to match.
-  const persist = useCallback((nextSet) => {
+  // Latest-wins: rapid toggles each send the FULL list, so only the newest
+  // in-flight request matters. On failure of the newest, revert the UI to the
+  // last server-confirmed set (apiCall resolves even on network failure, so
+  // the success flag is the only reliable signal).
+  const persist = useCallback(async (nextSet) => {
     const arr = Array.from(nextSet).filter(e => e && e.includes('@')).slice(0, 200);
-    try { api.chatPrivacySet?.({ status_except: arr }); } catch {}
+    const seq = ++seqRef.current;
+    let ok = false;
+    try {
+      const r = await api.chatPrivacySet?.({ status_except: arr });
+      ok = !!r?.success;
+    } catch {}
+    if (seq !== seqRef.current) return; // a newer persist superseded this one
+    if (ok) {
+      savedRef.current = new Set(arr);
+    } else {
+      setExcluded(new Set(savedRef.current));
+    }
   }, []);
 
   const toggle = useCallback((rawEmail) => {

@@ -119,11 +119,17 @@ function _readMMKVOnce() {
   _mmkvAttemptedForEmail = scopedKey;
   _mmkvPreloaded = null;
   try {
-    const { getString } = require('../services/mmkv');
+    const { getString, remove } = require('../services/mmkv');
     // Try scoped first, then legacy unscoped (one-time migration on read).
+    // The legacy key is deleted after the read: it belongs to whichever
+    // account was active on the old build, so leaving it around meant any
+    // OTHER account that logged in later inherited that snapshot on every
+    // cold start (cross-account status leak). One read, then gone — the
+    // scoped key gets written by the next successful fetch.
     let raw = getString(scopedKey);
     if (!raw && scopedKey !== 'chat_statuses') {
       raw = getString('chat_statuses');
+      if (raw) { try { remove('chat_statuses'); } catch {} }
     }
     if (raw) _mmkvPreloaded = JSON.parse(raw);
     if (__DEV__) {
@@ -204,39 +210,63 @@ function _fingerprint(mine, others) {
 //   2. split current user's groups into `mine` (flat) so the renderers can
 //      treat self differently (compose entry, no view tracking, etc.)
 //   3. lift owner email/name onto `others[i]` for quick lookup
+// Status TTL is 24h server-side. Stale rows occasionally slip through cached
+// responses (poll fired before the cleanup cron) and the home strip leaves
+// a "ghost" expired ring visible. Hard filter at normalize time — and also
+// over preload snapshots (MMKV/disk), which are already-normalized blobs from
+// a previous session and can be arbitrarily old.
+function _statusIsFresh(it) {
+  try {
+    // Prefer a server-provided expires_at when present — it's already the
+    // authoritative TTL boundary, no client-side age math needed.
+    if (it.expires_at) {
+      let exp = String(it.expires_at).replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
+      if (!/[zZ]|[+-]\d{2}:\d{2}$/.test(exp)) exp += 'Z';
+      const expMs = new Date(exp).getTime();
+      if (Number.isFinite(expMs)) return expMs >= Date.now();
+    }
+    // Backend stores some timestamps as `(now() AT TIME ZONE 'UTC')::text`
+    // with NO offset suffix; JS would parse those as LOCAL time and shift
+    // the perceived age (premature ghosting for users east of UTC). When
+    // there's no `Z` or `±HH:MM` offset, treat the string as UTC.
+    let iso = String(it.created_at || '').replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
+    if (iso && !/[zZ]|[+-]\d{2}:\d{2}$/.test(iso)) iso += 'Z';
+    const ms = new Date(iso).getTime();
+    return Number.isFinite(ms) ? ms >= Date.now() - 24 * 3600 * 1000 : true;
+  } catch { return true; }
+}
+
+// Drop expired items from an already-normalized snapshot ({groups,mine,others})
+// before painting it. Preserves shape: keys that were absent stay absent (the
+// old-format reconstruct branch keys off `snap.groups` being missing).
+function _filterFreshSnapshot(snap) {
+  if (!snap) return snap;
+  try {
+    const out = { ...snap };
+    if (Array.isArray(snap.groups)) {
+      out.groups = snap.groups
+        .map(g => ({ ...g, items: (g.items || []).filter(_statusIsFresh) }))
+        .filter(g => g.items.length > 0);
+    }
+    if (Array.isArray(snap.mine)) out.mine = snap.mine.filter(_statusIsFresh);
+    if (Array.isArray(snap.others)) {
+      out.others = snap.others
+        .map(o => ({ ...o, items: (o.items || []).filter(_statusIsFresh) }))
+        .filter(o => o.items.length > 0);
+    }
+    return out;
+  } catch { return snap; }
+}
+
 function _normalize(raw, currentEmail) {
   const groupsArr = Array.isArray(raw) ? raw : (raw?.statuses || []);
   const groups = [];
   const mine = [];
   const others = [];
   const me = String(currentEmail || '').toLowerCase();
-  // Status TTL is 24h server-side. Stale rows occasionally slip through cached
-  // responses (poll fired before the cleanup cron) and the home strip leaves
-  // a "ghost" expired ring visible. Hard filter at normalize time.
-  const _expiredCutoff = Date.now() - 24 * 3600 * 1000;
-  const _isFresh = (it) => {
-    try {
-      // Prefer a server-provided expires_at when present — it's already the
-      // authoritative TTL boundary, no client-side age math needed.
-      if (it.expires_at) {
-        let exp = String(it.expires_at).replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
-        if (!/[zZ]|[+-]\d{2}:\d{2}$/.test(exp)) exp += 'Z';
-        const expMs = new Date(exp).getTime();
-        if (Number.isFinite(expMs)) return expMs >= Date.now();
-      }
-      // Backend stores some timestamps as `(now() AT TIME ZONE 'UTC')::text`
-      // with NO offset suffix; JS would parse those as LOCAL time and shift
-      // the perceived age (premature ghosting for users east of UTC). When
-      // there's no `Z` or `±HH:MM` offset, treat the string as UTC.
-      let iso = String(it.created_at || '').replace(' ', 'T').replace(/([+-]\d{2})$/, '$1:00');
-      if (iso && !/[zZ]|[+-]\d{2}:\d{2}$/.test(iso)) iso += 'Z';
-      const ms = new Date(iso).getTime();
-      return Number.isFinite(ms) ? ms >= _expiredCutoff : true;
-    } catch { return true; }
-  };
   for (const _g of groupsArr) {
     const items = (_g.items || _g.statuses || [])
-      .filter(_isFresh)
+      .filter(_statusIsFresh)
       .map(it => ({
         ...it,
         // The full UI uses `bgColor` (camel); home reads `bg_color`. Provide both.
@@ -351,7 +381,7 @@ export default function useStatuses(currentEmail, opts = {}) {
     _liveStoreEmail = null;
   }
   const _preload = enabled
-    ? (_liveStore || _readMMKVOnce() || getCachedSync('statuses'))
+    ? _filterFreshSnapshot(_liveStore || _readMMKVOnce() || getCachedSync('statuses'))
     : null;
   const _hadPreload = !!(_preload && (
     (Array.isArray(_preload.mine) && _preload.mine.length) ||
@@ -402,7 +432,7 @@ export default function useStatuses(currentEmail, opts = {}) {
     let alive = true;
     (async () => {
       try {
-        const cached = await getCached('statuses');
+        const cached = _filterFreshSnapshot(await getCached('statuses'));
         if (!alive || !cached) return;
         // Only paint if the live fetch hasn't already won the race.
         if (fpRef.current) return;
