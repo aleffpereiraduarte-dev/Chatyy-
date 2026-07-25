@@ -211,14 +211,24 @@ function SliderStickerView({ sticker, statusId, ownStatus, alreadyVoted, onVoted
   const question = sticker?.question || (t ? t('status.sliderDefaultQuestion') : 'Qual o seu nível?');
   const stickerId = String(sticker?.id || '');
 
+  // The PanResponder is created ONCE (useRef), so its handlers keep
+  // first-render bindings forever: `value` was frozen at 50 — every vote hit
+  // the server as 50 no matter where the user dragged — and statusId/
+  // stickerId/submitted/trackWidth were equally stale (the component is
+  // mounted without a key, so navigating stories re-uses this instance and
+  // a vote could even land on the WRONG status). Mirror the live values into
+  // a ref the handlers read at call time.
+  const liveRef = useRef({});
+  liveRef.current = { value, submitted, trackWidth, ownStatus, statusId, stickerId };
+
   const pan = useRef(PanResponder.create({
-    onStartShouldSetPanResponder: () => !submitted && !ownStatus,
-    onMoveShouldSetPanResponder: () => !submitted && !ownStatus,
+    onStartShouldSetPanResponder: () => !liveRef.current.submitted && !liveRef.current.ownStatus,
+    onMoveShouldSetPanResponder: () => !liveRef.current.submitted && !liveRef.current.ownStatus,
     onPanResponderGrant: () => {
-      startValueRef.current = value;
+      startValueRef.current = liveRef.current.value;
     },
     onPanResponderMove: (_, g) => {
-      const tw = trackWidth || 220;
+      const tw = liveRef.current.trackWidth || 220;
       const next = Math.max(0, Math.min(100, Math.round(startValueRef.current + (g.dx / tw) * 100)));
       setValue(next);
     },
@@ -226,14 +236,18 @@ function SliderStickerView({ sticker, statusId, ownStatus, alreadyVoted, onVoted
       try {
         if (_Haptics) _Haptics.impactAsync(_Haptics.ImpactFeedbackStyle.Medium);
       } catch {}
+      const sent = liveRef.current.value;
       setSubmitted(true);
       try {
-        const r = await api.statusSliderVote(statusId, value, stickerId);
-        if (r?.success && typeof r?.data?.avg_value === 'number') {
-          setAvg(r.data.avg_value);
+        const r = await api.statusSliderVote(liveRef.current.statusId, sent, liveRef.current.stickerId);
+        if (r?.success) {
+          if (typeof r?.data?.avg_value === 'number') setAvg(r.data.avg_value);
+          try { onVoted?.(sent); } catch {}
+        } else {
+          // Failed vote must not stay "confirmed" — re-enable the slider.
+          setSubmitted(false);
         }
-        try { onVoted?.(value); } catch {}
-      } catch {}
+      } catch { setSubmitted(false); }
     },
   })).current;
 

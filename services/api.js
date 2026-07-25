@@ -6121,12 +6121,17 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress) {
   }
 }
 
-export async function chatUploadFile(conversationId, file, content = '', viewOnce = false, onProgress = null, msgType = null, externalSignal = null, silent = false) {
+export async function chatUploadFile(conversationId, file, content = '', viewOnce = false, onProgress = null, msgType = null, externalSignal = null, silent = false, clientMessageId = null) {
   const formData = new FormData();
   formData.append('action', 'chat_upload');
   formData.append('conversation_id', String(conversationId));
   if (content) formData.append('content', content);
   if (viewOnce) formData.append('view_once', '1');
+  // Stable per-logical-message id so a retry (outbox replay, Rust→PHP
+  // fallback after a lost chat_send response) dedups server-side on the
+  // UNIQUE(sender_email, client_message_id) index instead of inserting a
+  // second row + second blob.
+  if (clientMessageId) formData.append('client_message_id', String(clientMessageId));
   // Forward the message type (image/video/audio/file) so the backend doesn't
   // have to re-guess from extension and downgrade videos/audio to "file".
   if (msgType) formData.append('type', msgType);

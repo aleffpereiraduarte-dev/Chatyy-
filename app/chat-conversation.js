@@ -15079,11 +15079,14 @@ function ChatConversationInner() {
       // correctly signals work is still happening).
       if (!r?.success && !isAborted()) {
         if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
+        // msgId dedups against the Rust-path chat_send row: if chat_send
+        // succeeded but its response was lost, this PHP re-upload returns the
+        // existing row instead of landing a duplicate.
         r = await withUploadTimeout(api.chatUploadFile(conversationId, file, caption, forceViewOnce, (progress) => {
           if (mountedRef.current) {
             setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
           }
-        }, fileType, abortCtrl.signal));
+        }, fileType, abortCtrl.signal, false, msgId));
       }
 
       if (isAborted()) return;
@@ -15372,9 +15375,11 @@ function ChatConversationInner() {
         // output) as VIDEO because .webm is in the video-extension list. On the
         // other side the message bubble then tries to render a video player and
         // the recipient sees a black player for a voice note.
+        // audioMsgId = same cmi persisted to the outbox above, so a replay
+        // after a lost response dedups server-side instead of duplicating.
         r = await api.chatUploadFile(conversationId, filePayload, `Audio (${formatDuration(audioData.duration)})`, audioViewOnce, (progress) => {
           if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(progress * 100) }));
-        }, 'audio');
+        }, 'audio', null, false, audioMsgId);
       }
       // Null guard: if both the voice-session finalize and the fallback upload
       // returned undefined (e.g., a thrown error inside chatUploadFile that
@@ -15566,6 +15571,9 @@ function ChatConversationInner() {
           }
         },
         'video_note',
+        null,
+        false,
+        clientId, // outbox cmi — replay after lost response dedups server-side
       );
       if (r?.success && r.data) {
         const msg = r.data.message || r.data;

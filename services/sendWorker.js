@@ -319,7 +319,9 @@ async function _uploadAndSendMedia(row) {
         temp_id: p.temp_id || null,
       }, 'POST');
     } else if (api.chatUploadFile) {
-      // PHP fallback — single combined upload + chat_send.
+      // PHP fallback — single combined upload + chat_send. Pass cmi so a
+      // replay of this outbox row (response lost on a previous attempt)
+      // dedups server-side instead of landing a duplicate photo/blob.
       r = await api.chatUploadFile(
         p.conversation_id,
         filePayload,
@@ -328,6 +330,8 @@ async function _uploadAndSendMedia(row) {
         null,
         msgType,
         null,
+        false,
+        cmi,
       );
     }
 
