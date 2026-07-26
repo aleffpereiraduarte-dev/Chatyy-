@@ -1492,7 +1492,14 @@ export default function StoryViewer({
       // closure after the user already moved on.
       if (replyGraceTimerRef.current) { clearTimeout(replyGraceTimerRef.current); replyGraceTimerRef.current = null; }
     }
-  }, [visible, startIdx, stories?.length, caughtUpAnim]);
+    // Deps: groupIndex (not stories?.length) — the reset must fire on open,
+    // explicit startIdx change and group swap, but NOT when the stories array
+    // merely grows/shrinks mid-view (WS-arrived status, remote delete): that
+    // used to snap the viewer back to startIdx while the user was mid-group.
+    // Out-of-range idx after a shrink is handled by the render-side safeIdx
+    // clamp. groupIndex also covers same-length group swaps, which the old
+    // length dep silently missed.
+  }, [visible, startIdx, groupIndex, caughtUpAnim]);
 
   const advance = useCallback(() => {
     setIdx(prev => {

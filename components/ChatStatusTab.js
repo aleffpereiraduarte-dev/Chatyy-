@@ -3,7 +3,7 @@ import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
   Modal, TextInput, Image, Animated, Dimensions, KeyboardAvoidingView,
   ActivityIndicator, PanResponder, Pressable, Alert, StatusBar,
-  Linking, RefreshControl, FlatList,
+  Linking, RefreshControl, FlatList, AppState,
 } from 'react-native';
 import CachedImage from './CachedImage';
 import AvatarCircle from './AvatarCircle';
@@ -2041,7 +2041,10 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // the user staring at a black screen with a spinner. Stories pattern —
   // beats Instagram which just sits there.
   useEffect(() => {
-    if (Platform.OS === 'web' || !viewerVisible || !videoLoading) return;
+    // isPaused in the guard: a long-press (or app-background) pause must
+    // also hold the watchdog — otherwise the 5s timer advances the viewer
+    // out from under a paused user. Unpausing re-arms a fresh 5s window.
+    if (Platform.OS === 'web' || !viewerVisible || !videoLoading || isPaused) return;
     const item = viewerStatuses[viewerIndex];
     if (item?.type !== 'video') return;
     const t = setTimeout(() => {
@@ -2054,7 +2057,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       } catch {}
     }, 5000);
     return () => clearTimeout(t);
-  }, [viewerVisible, viewerIndex, viewerStatuses, videoLoading, advanceViewer]);
+  }, [viewerVisible, viewerIndex, viewerStatuses, videoLoading, advanceViewer, isPaused]);
 
   // Pre-cache the NEXT 2 videos to disk so when the user advances the
   // VideoView plays from a local file:// URI instead of streaming fresh from
@@ -2129,6 +2132,19 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const handlePressOut = useCallback(() => {
     if (isPaused) setIsPaused(false);
   }, [isPaused]);
+
+  // Backgrounding the app with the inline viewer open must pause the story:
+  // isPaused=true stops the advance timer (effect above) AND the music
+  // effect's playback. Without this the timer keeps burning through items
+  // and the music keeps playing while the app is in the switcher/background.
+  // Mirrors StoryViewer's AppState handler; resume on 'active'.
+  useEffect(() => {
+    if (!viewerVisible) return undefined;
+    const sub = AppState.addEventListener('change', (next) => {
+      setIsPaused(next !== 'active');
+    });
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, [viewerVisible]);
 
   // ─── Creator Logic ───
   const openCreator = useCallback((mode = 'text') => {
