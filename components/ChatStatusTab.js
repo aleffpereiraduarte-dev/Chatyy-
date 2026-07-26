@@ -2595,8 +2595,22 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       // MMKV/disk. The mirror useEffect feeds setMyStatuses on the next tick,
       // so we don't need the local setMyStatuses call anymore.
       try { hookRemoveStatus?.(statusId); } catch {}
+      // The fullscreen viewer renders from `viewerStatuses`, a snapshot taken
+      // at openViewer — hookRemoveStatus never reaches it, so deleting from
+      // inside the viewer left the dead story on screen (and re-pageable)
+      // until the viewer closed. Splice it out and clamp the index; empty
+      // group → close.
+      if (viewerVisible && viewerStatuses.some(s => s?.id === statusId)) {
+        const next = viewerStatuses.filter(s => s?.id !== statusId);
+        setViewerStatuses(next);
+        if (next.length === 0) {
+          closeViewerRef.current?.();
+        } else {
+          setViewerIndex(i => Math.min(i, next.length - 1));
+        }
+      }
     } catch {}
-  }, [hookRemoveStatus]);
+  }, [hookRemoveStatus, viewerVisible, viewerStatuses]);
 
   // Archive own status. Backend `status_archive` doesn't exist yet — when
   // present, we call it (best-effort, fire-and-forget) so the server keeps
