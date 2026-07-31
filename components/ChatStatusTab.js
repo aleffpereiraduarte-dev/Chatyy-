@@ -2096,7 +2096,10 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     const anim = Animated.timing(progressAnim, {
       toValue: 1,
       duration: dur,
-      useNativeDriver: true,
+      // false: progressAnim drives width via a '0%'..'100%' interpolate — a
+      // layout prop the native driver can't animate (RN only console.errors
+      // and the bar sits at 0% forever). StoryViewer's bar already uses false.
+      useNativeDriver: false,
     });
     animRef.current = anim;
     anim.start();
