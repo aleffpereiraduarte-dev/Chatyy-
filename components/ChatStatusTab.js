@@ -2107,7 +2107,14 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       if (timerRef.current) clearTimeout(timerRef.current);
       anim.stop();
     };
-  }, [viewerVisible, viewerIndex, viewerStatuses.length, isPaused, videoDurationMs]);
+    // viewerOwnerEmail is in the deps because swapping to another person's
+    // group changes NONE of the other values when both groups have the same
+    // item count (index 0->0, length 1->1, isPaused false->false): the effect
+    // never re-ran, so no timer and no progress animation were armed and the
+    // story sat frozen at 0% with auto-advance dead. Keep .length (not the
+    // array) — recordView rewrites viewerStatuses on every viewed item and
+    // would otherwise restart the timer mid-story.
+  }, [viewerVisible, viewerIndex, viewerStatuses.length, isPaused, videoDurationMs, viewerOwnerEmail]);
 
   // Tap left half = previous, right half = next
   const handleViewerTap = useCallback((evt) => {
@@ -2340,6 +2347,45 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // to loop the short clip back-and-forth.
   const handleCameraCapture = useCallback(async (capture) => {
     setCameraVisible(false);
+    // Gallery multi-select (up to 10) and the segment-stitch fallback both emit
+    // { multi: true, items: [...] } with no top-level uri, so the guard below
+    // used to swallow the whole selection without a word. The stitch fallback
+    // matters most: ffmpeg-kit was removed in May, so stitching ALWAYS fails
+    // and this is the only path multi-clip recordings can publish through —
+    // "Pronto" on 2+ clips lost footage that isn't in the gallery either.
+    // Mirrors the carousel branch ChatListTab already ships.
+    if (capture?.multi && Array.isArray(capture.items) && capture.items.length > 1) {
+      setPublishing(true);
+      try {
+        const carouselItems = [];
+        for (const it of capture.items) {
+          const isVideo = it.type === 'video';
+          const file = {
+            uri: it.uri,
+            name: isVideo ? 'status.mp4' : 'status.jpg',
+            type: isVideo ? 'video/mp4' : 'image/jpeg',
+          };
+          try {
+            const up = await api.statusUpload(file);
+            if (up?.success && up.data?.url) {
+              carouselItems.push({
+                media_url: up.data.url,
+                type: isVideo ? 'video' : 'image',
+                background: '#000000',
+              });
+            }
+          } catch (e) { console.warn('[carousel upload]', e?.message); }
+        }
+        if (carouselItems.length > 0 && api.statusCarouselPublish) {
+          const cr = await api.statusCarouselPublish(carouselItems, { privacy: 'all' });
+          if (cr?.success) loadStatuses();
+          else try { Alert.alert?.(t?.('common.error') || 'Erro', cr?.message || t?.('status.publishFailed') || 'Não foi possível publicar o status.'); } catch {}
+        } else {
+          try { Alert.alert?.(t?.('common.error') || 'Erro', t?.('status.publishFailed') || 'Não foi possível publicar o status.'); } catch {}
+        }
+      } finally { setPublishing(false); }
+      return;
+    }
     if (!capture?.uri) return;
     setPublishing(true);
     try {
