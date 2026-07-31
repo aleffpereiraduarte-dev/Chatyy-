@@ -49,6 +49,14 @@ export default function ReactionSwipeUp({
   const [hoverIdx, setHoverIdx] = useState(-1);
   const widthRef = useRef(0);
 
+  // The PanResponder below is created once (useRef), so its callbacks close
+  // over the FIRST render — `revealed`/`hoverIdx`/props would be frozen there
+  // and a swipe-up could never commit. Mirror SliderStickerView: synchronous
+  // refs for gesture state + a liveRef re-assigned every render for the rest.
+  const revealedRef = useRef(false);
+  const hoverIdxRef = useRef(-1);
+  const liveRef = useRef({});
+
   // Burst animation for the committed emoji — scales up fast then fades.
   const burstScale = useRef(new Animated.Value(0)).current;
   const burstOpacity = useRef(new Animated.Value(0)).current;
@@ -70,6 +78,8 @@ export default function ReactionSwipeUp({
       Animated.timing(opacity, { toValue: 0, duration: 140, useNativeDriver: true }),
       Animated.timing(translateY, { toValue: 0, duration: 140, useNativeDriver: true }),
     ]).start(() => {
+      revealedRef.current = false;
+      hoverIdxRef.current = -1;
       setRevealed(false);
       setHoverIdx(-1);
       onClose?.();
@@ -80,15 +90,18 @@ export default function ReactionSwipeUp({
     });
   }, [scale, opacity, translateY, emojis, onReact, onClose, fireBurst]);
 
+  liveRef.current = { emojis, onOpen, collapse };
+
   const panR = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, g) => g.dy < -8 && Math.abs(g.dy) > Math.abs(g.dx),
       onPanResponderGrant: () => {
-        onOpen?.();
+        liveRef.current.onOpen?.();
       },
       onPanResponderMove: (_, g) => {
         const up = Math.max(0, -g.dy);
-        if (up > OPEN_THRESHOLD && !revealed) {
+        if (up > OPEN_THRESHOLD && !revealedRef.current) {
+          revealedRef.current = true;
           setRevealed(true);
           Animated.parallel([
             Animated.spring(scale, { toValue: 1, friction: 5, tension: 80, useNativeDriver: true }),
@@ -97,23 +110,24 @@ export default function ReactionSwipeUp({
         }
         translateY.setValue(Math.min(0, g.dy / 2)); // rubber-band up
         // Figure out which emoji the finger is "over" — divide width by slots.
-        if (revealed && widthRef.current > 0) {
-          const count = emojis.length;
+        if (revealedRef.current && widthRef.current > 0) {
+          const count = liveRef.current.emojis.length;
           const slot = widthRef.current / count;
           const x = g.moveX;
           const idx = Math.max(0, Math.min(count - 1, Math.floor(x / slot)));
+          hoverIdxRef.current = idx;
           setHoverIdx(idx);
         }
       },
       onPanResponderRelease: (_, g) => {
         const up = Math.max(0, -g.dy);
-        if (up > COMMIT_THRESHOLD && hoverIdx >= 0) {
-          collapse(hoverIdx);
+        if (up > COMMIT_THRESHOLD && hoverIdxRef.current >= 0) {
+          liveRef.current.collapse(hoverIdxRef.current);
         } else {
-          collapse(-1);
+          liveRef.current.collapse(-1);
         }
       },
-      onPanResponderTerminate: () => collapse(-1),
+      onPanResponderTerminate: () => liveRef.current.collapse(-1),
     })
   ).current;
 
