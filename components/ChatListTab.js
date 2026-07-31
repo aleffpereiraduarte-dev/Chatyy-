@@ -2505,6 +2505,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                       artist: statusEditor.music.artist || '',
                       previewUrl: statusEditor.music.previewUrl || statusEditor.music.preview_url || statusEditor.music.url || '',
                       coverUrl: statusEditor.music.coverUrl || statusEditor.music.cover_url || statusEditor.music.artwork || '',
+                      startMs: statusEditor.music.startMs ?? statusEditor.music.start_ms ?? 0,
                     } : null;
                     const pubRes = await api.statusPublish(up.data.url, statusEditor.type === 'video' ? 'video' : 'image', '#000000', pubMusic, extraMeta);
                     setStatusEditor(null); setStatusCaption(''); setEditorFilterIdx(0);

@@ -2419,6 +2419,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
         artist: capture.music.artist || '',
         previewUrl: capture.music.previewUrl || capture.music.preview_url || capture.music.url || '',
         coverUrl: capture.music.coverUrl || capture.music.cover_url || capture.music.artwork || '',
+        startMs: capture.music.startMs ?? capture.music.start_ms ?? 0,
       } : null;
       // Long captured video → split into ≤30s back-to-back segments (WhatsApp).
       const parts = capture.type === 'video' ? await segmentVideoForStatus(file) : [file];
