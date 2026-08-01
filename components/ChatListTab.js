@@ -2334,9 +2334,22 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                       }
                     } catch (e) { console.warn('[carousel upload]', e?.message); }
                   }
+                  // [deep-20260801] Surface failures instead of swallowing
+                  // them: slides whose upload failed were silently omitted
+                  // and a failed/empty publish closed as if it had posted.
+                  // Mirrors the multi-capture branch ChatStatusTab ships.
                   if (carouselItems.length > 0 && api.statusCarouselPublish) {
-                    await api.statusCarouselPublish(carouselItems, { privacy: 'all' });
-                    load();
+                    const cr = await api.statusCarouselPublish(carouselItems, { privacy: 'all' });
+                    if (cr?.success) {
+                      load();
+                      if (carouselItems.length < payload.items.length) {
+                        safeAlert(t('common.error') || 'Erro', `${t('status.publishFailed') || 'Não foi possível publicar o status.'} (${payload.items.length - carouselItems.length}/${payload.items.length})`);
+                      }
+                    } else {
+                      safeAlert(t('common.error') || 'Erro', cr?.message || t('status.publishFailed') || 'Não foi possível publicar o status.');
+                    }
+                  } else {
+                    safeAlert(t('common.error') || 'Erro', t('status.publishFailed') || 'Não foi possível publicar o status.');
                   }
                 } finally { setStatusPublishing(false); }
                 return;
@@ -2508,6 +2521,16 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                       startMs: statusEditor.music.startMs ?? statusEditor.music.start_ms ?? 0,
                     } : null;
                     const pubRes = await api.statusPublish(up.data.url, statusEditor.type === 'video' ? 'video' : 'image', '#000000', pubMusic, extraMeta);
+                    // [deep-20260801] Only close the editor on a CONFIRMED
+                    // publish. This used to close unconditionally right here,
+                    // so a failed publish (rate-limit, 5xx, offline resolve
+                    // {success:false}) looked exactly like success and the
+                    // media/caption were gone. On failure keep the editor
+                    // open so the user can just tap send again.
+                    if (!pubRes?.success) {
+                      safeAlert(t('common.error') || 'Erro', pubRes?.message || t('status.publishFailed') || 'Não foi possível publicar o status.');
+                      return;
+                    }
                     setStatusEditor(null); setStatusCaption(''); setEditorFilterIdx(0);
                     // Optimistic insert — show the new status in the row
                     // immediately while the next load() refreshes from the
@@ -2548,8 +2571,14 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                     // INSERT has settled, then again 2s later as a safety net.
                     setTimeout(() => load(), 200);
                     setTimeout(() => load(), 2000);
+                  } else {
+                    // [deep-20260801] Upload failed — say so; the editor stays
+                    // open (media/caption preserved) for a retry.
+                    safeAlert(t('common.error') || 'Erro', up?.message || t('status.publishFailed') || 'Não foi possível publicar o status.');
                   }
-                } catch {} finally { setStatusPublishing(false); setStatusUploadPct(0); }
+                } catch {
+                  safeAlert(t('common.error') || 'Erro', t('status.publishFailed') || 'Não foi possível publicar o status.');
+                } finally { setStatusPublishing(false); setStatusUploadPct(0); }
               }}
               style={{ width:54, height:54, borderRadius:27, backgroundColor:'#7C3AED', alignItems:'center', justifyContent:'center', opacity: statusPublishing ? 0.6 : 1 }}
             >

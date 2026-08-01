@@ -1481,6 +1481,9 @@ export default function StoryViewer({
       mountAtRef.current = Date.now();
       setIdx(Math.min(Math.max(0, startIdx || 0), Math.max(0, (stories?.length || 1) - 1)));
       setPaused(false);
+      // [deep-20260801] Force the playback effect's per-item reset on (re)open
+      // — same idx/id as the previous session must still reset progress/fade.
+      lastItemKeyRef.current = null;
       setCaughtUp(false);
       caughtUpAnim.setValue(0);
       // Fresh viewer session — clear any leftover grace from a previous open.
@@ -1554,8 +1557,26 @@ export default function StoryViewer({
     });
   }, [onPrevGroup, groupIndex]);
 
+  // [deep-20260801] Per-item key so the playback effect can tell "new item on
+  // screen" (full reset: progress 0, crossfade, view receipt, precache) apart
+  // from a re-run caused by a pause toggle or a stories-array identity change
+  // (WS-arrived status, remote delete). Without it every long-press release
+  // re-ran the whole reset block: progress snapped to 0, the photo blinked
+  // (opacity 0 → fade), and the story replayed from the start. Cleared on
+  // open (effect above nulls it) so re-entering the viewer still resets.
+  const lastItemKeyRef = useRef(null);
+
   useEffect(() => {
     if (!visible) return;
+    // [deep-20260801] Self-heal idx after a shrink (remote delete of the last
+    // item while it's on screen): the render side clamps via safeIdx, but
+    // this effect read the RAW idx — `cur` came back undefined, no timer was
+    // armed, and the story shown by the clamp froze forever. Snap the state
+    // back into range and let the effect re-run against the real item.
+    if (stories && stories.length > 0 && idx > stories.length - 1) {
+      setIdx(stories.length - 1);
+      return;
+    }
     const cur = stories?.[idx];
     if (!cur) return;
     // [P1 2026-05-26] Placeholder items have no real media yet — the parent
@@ -1574,6 +1595,14 @@ export default function StoryViewer({
       itemOpacity.setValue(1);
       return;
     }
+    // [deep-20260801] Only run the per-item reset when the ITEM actually
+    // changed. Re-runs from `paused`/`stories` dep churn skip it, so a
+    // long-press release resumes instead of replaying from 0%.
+    const itemKey = `${groupIndex}:${idx}:${cur.id ?? ''}`;
+    const isNewItem = lastItemKeyRef.current !== itemKey;
+    let imageFadeFloor = null;
+    if (isNewItem) {
+    lastItemKeyRef.current = itemKey;
     progressRef.current.setValue(0);
     // Reset per-item state: crossfade in, image fade reset, video flags cleared.
     itemOpacity.setValue(0);
@@ -1594,7 +1623,7 @@ export default function StoryViewer({
     // disk-cached jpeg/webp. Doesn't fight the natural fade-in path: if
     // onLoad already triggered the animation, this is a no-op (value already
     // 1; Animated will short-circuit). Cancel on idx change to avoid leaks.
-    const imageFadeFloor = setTimeout(() => {
+    imageFadeFloor = setTimeout(() => {
       try { Animated.timing(imageFade, { toValue: 1, duration: 200, useNativeDriver: true }).start(); } catch {}
     }, 900);
     // [WAVE 93 2026-05-21] Skip placeholder items: their id looks like
@@ -1666,6 +1695,7 @@ export default function StoryViewer({
         }
       } catch {}
     }
+    } // end isNewItem — resets + view receipt + precache run once per item
     if (cur.type === 'video') return () => clearTimeout(imageFadeFloor);
     if (paused) return () => clearTimeout(imageFadeFloor);
     // [WAVE 79 2026-05-21] Placeholder items have no real media yet —
@@ -1685,11 +1715,24 @@ export default function StoryViewer({
     const _isVoiceStatus = (cur.type === 'voice' || cur.type === 'audio')
       || (!!cur.media_url && cur.type !== 'image' && cur.type !== 'video' && /\.(m4a|mp3|aac|wav|ogg|opus|webm)(\?|$)/i.test(String(cur.media_url)));
     const duration = _isVoiceStatus ? 30000 : (replyGraceRef.current ? Math.max(STORY_DURATION_MS, 5000) : STORY_DURATION_MS);
+    // [deep-20260801] Resume-aware: on a pause release (isNewItem=false) the
+    // bar sits wherever the cleanup stopped it — arm the timer for the
+    // REMAINING fraction only, so resume continues instead of stretching a
+    // full `duration` over the leftover sliver. New items start from the
+    // reset 0 above, so remaining === duration there. progress is JS-driven
+    // (useNativeDriver:false), so _value is accurate.
+    let _fromV = 0;
+    try {
+      const _pv = progressRef.current;
+      _fromV = Number(_pv?._value ?? _pv?.__getValue?.() ?? 0);
+      if (!Number.isFinite(_fromV)) _fromV = 0;
+      _fromV = Math.max(0, Math.min(1, _fromV));
+    } catch {}
     // Instagram-style ease-out so the bar fills crisp at the start and
     // glides into the seam — feels less mechanical than the linear ramp.
     animRef.current = Animated.timing(progressRef.current, {
       toValue: 1,
-      duration,
+      duration: Math.max(150, Math.round(duration * (1 - _fromV))),
       easing: Easing.out(Easing.cubic),
       useNativeDriver: false,
     });
@@ -1697,7 +1740,7 @@ export default function StoryViewer({
       if (finished) advance();
     });
     return () => { animRef.current?.stop?.(); clearTimeout(imageFadeFloor); };
-  }, [visible, idx, paused, stories, advance, onMarkViewed, itemOpacity, imageFade]);
+  }, [visible, idx, paused, stories, advance, onMarkViewed, itemOpacity, imageFade, groupIndex]);
 
   useEffect(() => {
     // [P0 2026-05-26] Guard the ARM step against a momentarily-empty
