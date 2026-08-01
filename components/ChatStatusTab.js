@@ -2518,12 +2518,15 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
             // Only the first segment carries caption / music / stickers; the
             // rest post as plain clips (privacy preserved so the whole set is
             // consistently visible). Single-clip posts keep the full meta.
-            const content = (isFirst && caption) ? uploadR.data.url + '\n' + caption : uploadR.data.url;
+            // Caption rides in meta.caption → api.statusPublish routes it to
+            // the content column; media_url must stay a clean URL (the legacy
+            // "URL\ncaption" concat broke playback wherever the viewer doesn't
+            // split('\n') — StoryViewer via chat strip / Profile).
             const meta = isFirst
-              ? extraMeta
+              ? ((caption) ? { ...extraMeta, caption } : extraMeta)
               : { privacy: extraMeta.privacy, except_emails: extraMeta.except_emails };
             const music = isFirst ? musicData : null;
-            const r = await api.statusPublish(content, statusType, '#000000', music, meta);
+            const r = await api.statusPublish(uploadR.data.url, statusType, '#000000', music, meta);
             if (r?.success) anySuccess = true;
             else if (!firstErr) firstErr = r?.message;
           } else if (!firstErr) {
