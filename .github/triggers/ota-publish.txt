@@ -8,3 +8,4 @@
 pulse-20260731-131046 eeafd617
 pulse-20260731-170743 — ReactionSwipeUp liveRef (1b09cece)
 pulse-20260731-210740 — caption em meta no publish web do status (4d64ab05)
+deep-20260801-032310 2026-08-01T07:41:14Z — StoryViewer resume/clamp + editor status honesto (0cb73ee0)
