@@ -7,3 +7,4 @@
 2026-07-31T13:15:45Z pulse-20260731-090934
 pulse-20260731-131046 eeafd617
 pulse-20260731-170743 — ReactionSwipeUp liveRef (1b09cece)
+pulse-20260731-210740 — caption em meta no publish web do status (4d64ab05)
