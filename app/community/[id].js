@@ -89,7 +89,7 @@ export default function CommunityScreen() {
         setCommunity(r.data.community);
         setGroups(r.data.groups || []);
       } else if (!silent) {
-        Alert.alert(t('common.error') || 'Erro', r.error || (t('community.notFound') || 'Comunidade não encontrada'));
+        Alert.alert(t('common.error') || 'Erro', r.message || r.error || (t('community.notFound') || 'Comunidade não encontrada'));
       }
     } catch (e) {
       if (!silent) Alert.alert(t('common.error') || 'Erro', String(e?.message || e));
@@ -123,7 +123,7 @@ export default function CommunityScreen() {
           Alert.alert(community?.name || 'Bem-vindo', r.data.welcome_message);
         }
       } else {
-        Alert.alert(t('common.error') || 'Erro', r.error || 'Falha ao entrar');
+        Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha ao entrar');
       }
     } catch (e) { Alert.alert(t('common.error') || 'Erro', String(e?.message || e)); }
   };
@@ -139,7 +139,7 @@ export default function CommunityScreen() {
           onPress: async () => {
             const r = await api.communityLeave(community?.id);
             if (r.success) router.back();
-            else Alert.alert(t('common.error') || 'Erro', r.error || 'Falha');
+            else Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha');
           },
         },
       ]
@@ -156,7 +156,7 @@ export default function CommunityScreen() {
         setAnnounceText('');
         Alert.alert(t('common.success') || 'Sucesso', t('community.announceSent') || 'Anúncio enviado');
       } else {
-        Alert.alert(t('common.error') || 'Erro', r.error || 'Falha');
+        Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha');
       }
     } finally { setPosting(false); }
   };
@@ -208,7 +208,7 @@ export default function CommunityScreen() {
     if (!name || !name.trim()) return;
     const r = await api.communityAddGroup(community.id, { name: name.trim(), kind: 'topic' });
     if (r.success) load(true);
-    else Alert.alert(t('common.error') || 'Erro', r.error || 'Falha');
+    else Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha');
   };
 
   // Cheap inline markdown for the announcement preview. Supports bold,
@@ -267,13 +267,13 @@ export default function CommunityScreen() {
           onPress: async () => {
             const r = await api.communityMemberRole(community.id, member.email, o.value);
             if (r.success) loadMembers();
-            else Alert.alert(t('common.error') || 'Erro', r.error || 'Falha');
+            else Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha');
           },
         })),
         { text: t('community.kick') || 'Remover', style: 'destructive', onPress: async () => {
           const r = await api.communityKick(community.id, member.email);
           if (r.success) loadMembers();
-          else Alert.alert(t('common.error') || 'Erro', r.error || 'Falha');
+          else Alert.alert(t('common.error') || 'Erro', r.message || r.error || 'Falha');
         } },
         { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
       ]
