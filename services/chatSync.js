@@ -208,6 +208,9 @@ export function syncConversations(convIds) {
  *   - reaction          → mark for refetch (reactions live in a side table;
  *                         worth a small refetch when one triggers)
  *   - read              → update _readStatus on the referenced message
+ *   - member_join /
+ *     member_leave      → append the hydrated "X joined/left" system message
+ *                         (same path as new_message)
  *
  * Unknown types are ignored — forward compatibility with server additions.
  */
@@ -230,7 +233,10 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
     for (const ev of events) {
       const mid = Number(ev?.payload?.message_id) || 0;
       if (!mid) continue;
-      if (ev.type === 'new_message') {
+      if (ev.type === 'new_message' || ev.type === 'member_join' || ev.type === 'member_leave') {
+        // member_join/member_leave carry the "X joined/left" sysmsg id and the
+        // server hydrates the row (pulse-20260802) — persist it like any
+        // message so the sysmsg survives a cold reopen.
         const hyd = hydratedMap.get(mid);
         if (hyd && hyd.conversation_id) {
           chatCache.cacheSingleMessage?.(hyd.conversation_id, hyd).catch?.(() => {});
@@ -288,6 +294,14 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
     for (const ev of events) {
       const mid = Number(ev?.payload?.message_id) || 0;
       switch (ev.type) {
+        // member_join / member_leave reference the "X joined/left" system
+        // message; before this they fell into the default no-op while the
+        // watermark advanced past them, so a device offline at join/leave
+        // time NEVER showed the sysmsg (permanent hole in fullHistorySync
+        // convs). The server hydrates their rows since pulse-20260802; an
+        // un-hydrated event (old server) still skips harmlessly below.
+        case 'member_join':
+        case 'member_leave':
         case 'new_message': {
           if (!mid) continue;
           const hydrated = hydratedMap.get(mid);
@@ -440,8 +454,8 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
           }
           break;
         }
-        // pin / unpin / member_join etc. — no-op for now; the visual
-        // effect happens via other API fetches (chat_list, group_info).
+        // pin / unpin etc. — no-op for now; the visual effect happens
+        // via other API fetches (chat_list, group_info).
         default: break;
       }
     }
