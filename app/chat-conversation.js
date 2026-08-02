@@ -17284,13 +17284,18 @@ function ChatConversationInner() {
   };
 
   const handleUpdateGroupName = async () => {
-    if (!editGroupName.trim() || editGroupName === conversationName) {
+    const newName = editGroupName.trim();
+    if (!newName || newName === conversationName) {
       setShowGroupInfo(false);
       return;
     }
     try {
-      await api.chatUpdate(conversationId, { name: editGroupName.trim() });
-      // Update local state - the name param comes from router
+      const r = await api.chatUpdate(conversationId, { name: newName });
+      if (!r?.success) {
+        safeAlert(t('common.error') || 'Error', r?.message || 'Falha ao renomear grupo');
+        return;
+      }
+      setConversationName(newName);
       setShowGroupInfo(false);
     } catch {}
   };
@@ -17331,7 +17336,10 @@ function ChatConversationInner() {
       const r = await api.chatUploadFile(conversationId, picked, '', false, null, 'image', null, true);
       const fileUrl = r?.data?.file_url || r?.data?.url || r?.data?.message?.file_url;
       if (!fileUrl) throw new Error('upload failed');
-      await api.chatUpdate(conversationId, { avatar_url: fileUrl });
+      // apiCall resolves { success:false } on failure — check the envelope
+      // before touching header state and the conversation cache.
+      const ur = await api.chatUpdate(conversationId, { avatar_url: fileUrl });
+      if (!ur?.success) throw new Error(ur?.message || 'avatar update rejected');
       // Cache bust: force ExpoImage to refetch by appending a cache-busting
       // querystring version of the URL in a local state. Without this the
       // new avatar doesn't show until the app is restarted — the previous
@@ -29720,14 +29728,13 @@ function ChatConversationInner() {
                   <TouchableOpacity
                     onPress={async () => {
                       const next = !adminOnlyMessages;
-                      setAdminOnlyMessages(next);
-                      // Persist via existing dedicated endpoint. Also try
-                      // to mirror via chat_group_admin so backends that
-                      // grow the unified flag path stay in sync — best
-                      // effort, ignored on failure.
+                      setAdminOnlyMessages(next); // optimistic
+                      // apiCall resolves { success:false } on failure (it
+                      // doesn't throw on native), so the rollback must check
+                      // the envelope — catch alone is dead code.
                       try {
-                        await api.chatGroupSetAdminOnly(conversationId, next);
-                        api.chatGroupAdmin(conversationId, { admin_only_post: next }).catch(() => {});
+                        const r = await api.chatGroupSetAdminOnly(conversationId, next);
+                        if (!r?.success) setAdminOnlyMessages(!next);
                       } catch {
                         setAdminOnlyMessages(!next);
                       }
