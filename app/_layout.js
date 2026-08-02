@@ -475,7 +475,14 @@ function useDeepLinking() {
           try {
             const api = await import('../services/api');
             const r = await api.chatGroupJoinViaLink(joinMatch[1]);
-            if (r?.success && r.data?.conversation_id) {
+            // Groups with "aprovar novos membros" answer success:true with a
+            // conversation_id but leave the user merely queued
+            // (pending_approval) — routing there opens a conversation they
+            // cannot read or post to. Send them to /j/<token>, which renders
+            // the pending state.
+            if (r?.success && r.data?.pending_approval) {
+              router.push('/j/' + joinMatch[1]);
+            } else if (r?.success && r.data?.conversation_id) {
               router.push('/chat-conversation?id=' + r.data.conversation_id + (r.data.name ? '&name=' + encodeURIComponent(r.data.name) : ''));
             }
           } catch {}

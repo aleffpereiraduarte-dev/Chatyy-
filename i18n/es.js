@@ -7707,6 +7707,7 @@ export default {
   'chat.installs': 'instalados',
   'chat.inviteBadToken': 'Invitación inválida',
   'chat.inviteFailed': 'Error al unirse al grupo',
+  'chat.invitePending': '¡Solicitud enviada! Un administrador debe aprobar tu entrada al grupo.',
   'chat.inviteLoginFirst': 'Inicia sesión para entrar al grupo',
   'chat.join': 'Entrar',
   'chat.largeFileBody': 'Hay archivos grandes (más de 25MB en total). Puede tardar en redes lentas. ¿Continuar?',

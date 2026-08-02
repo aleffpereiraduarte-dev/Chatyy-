@@ -7691,6 +7691,7 @@ export default {
   'chat.installs': 'installs',
   'chat.inviteBadToken': 'Invalid invite',
   'chat.inviteFailed': 'Failed to join group',
+  'chat.invitePending': 'Request sent! An admin has to approve you before you can join.',
   'chat.inviteLoginFirst': 'Sign in to join the group',
   'chat.join': 'Join',
   'chat.largeFileBody': 'There are large files (over 25MB total). It may be slow on weak connections. Continue?',

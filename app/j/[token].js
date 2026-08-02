@@ -17,7 +17,7 @@ export default function GroupJoinScreen() {
   const { t } = useLanguage();
   const { user, loading: authLoading } = useAuth();
 
-  const [status, setStatus] = useState('loading'); // loading | auth | error | done
+  const [status, setStatus] = useState('loading'); // loading | auth | error | pending | done
   const [err, setErr] = useState('');
 
   useEffect(() => {
@@ -31,6 +31,15 @@ export default function GroupJoinScreen() {
         // r.data.id and silently failed — every invite link landed on the
         // error screen. Accept both shapes for forward-compat.
         const convId = r?.data?.conversation_id || r?.data?.id;
+        // When the group requires admin approval the backend answers
+        // success:true WITH a conversation_id but only queues the request
+        // (pending_approval). Navigating there dropped the user into a
+        // conversation they are not a member of — every read 403s and sends
+        // fail — so the request has to be surfaced instead.
+        if (r?.success && r?.data?.pending_approval) {
+          setStatus('pending');
+          return;
+        }
         if (r?.success && convId) {
           router.replace({ pathname: '/chat-conversation', params: { id: String(convId), name: r.data.name || 'Grupo' } });
           return;
@@ -58,6 +67,19 @@ export default function GroupJoinScreen() {
               style={{ paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, backgroundColor: '#7C3AED' }}
             >
               <Text style={{ color: '#fff', fontWeight: '700' }}>{t?.('common.login') || 'Entrar'}</Text>
+            </TouchableOpacity>
+          </>
+        )}
+        {status === 'pending' && (
+          <>
+            <Text style={{ color: colors?.text, fontSize: 16, marginBottom: 16, textAlign: 'center' }}>
+              {t?.('chat.invitePending') || 'Pedido enviado! Um administrador precisa aprovar sua entrada no grupo.'}
+            </Text>
+            <TouchableOpacity
+              onPress={() => router.replace('/chat')}
+              style={{ paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, backgroundColor: colors?.primary }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700' }}>{t?.('common.close') || 'Fechar'}</Text>
             </TouchableOpacity>
           </>
         )}

@@ -606,6 +606,14 @@ const ConversationRow = React.memo(function ConversationRow({
     }
 
     if (lastMsg.type === 'system') {
+      // Tokenized system content: chat_leave writes "__sys.user_left__|<name>"
+      // so the client can localize it. Only the open-thread renderer
+      // (chat-conversation.js) knew how to decode it, so the raw token showed
+      // up verbatim in this preview row whenever a leave was the last event.
+      if (typeof content === 'string' && content.startsWith('__sys.user_left__|')) {
+        const leftName = content.split('|').slice(1).join('|');
+        content = (t('chatConv.userLeft') || '{name} saiu do grupo').replace('{name}', leftName);
+      }
       preview = content;
     } else if ((isGroup || isChannel) && (lastMsg.sender_email || '').toLowerCase() !== _me) {
       const sender = emailToDisplayName(lastMsg.sender_name || lastMsg.sender_email || '');
