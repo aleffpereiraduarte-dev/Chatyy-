@@ -548,6 +548,12 @@ export async function replayOfflineQueue(api) {
               false, // view_once disabled for voice
               null,
               'voice',
+              null,  // externalSignal
+              false, // silent
+              // cmi: without it the replay inserts a NULL client_message_id
+              // row and the server's partial UNIQUE dedup never fires —
+              // lost-response retries landed the voice note twice.
+              action.client_message_id || undefined,
             );
           } catch (uploadErr) {
             const m = String(uploadErr?.message || '');
@@ -623,6 +629,9 @@ export async function replayOfflineQueue(api) {
             !!action.view_once,
             null, // no progress callback in replay
             'audio',
+            null,  // externalSignal
+            false, // silent
+            action.client_message_id || undefined, // dedup vs the live-send row
           );
           if (r?.success && r.data) {
             const serverMsg = r.data.message || r.data;
@@ -680,6 +689,9 @@ export async function replayOfflineQueue(api) {
               !!action.view_once,
               null, // no progress callback in replay
               action.msg_type || undefined,
+              null,  // externalSignal
+              false, // silent
+              action.client_message_id || undefined, // dedup vs the live-send row
             );
           } catch (uploadErr) {
             // 404/410 = arquivo sumiu do device (user limpou cache, ou web

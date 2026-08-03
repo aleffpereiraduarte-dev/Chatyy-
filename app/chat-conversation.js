@@ -15044,7 +15044,10 @@ function ChatConversationInner() {
       // smoothly from 0 → 100% just like the chunked path.
       const fileSize = file.size || file.blob?.size || 0;
       let rustResult = null;
-      if (isAborted()) return;
+      // Cancel must BREAK (not return): the post-loop finally owns the cleanup
+      // (setUploading(false), abort/cancel refs, blob revoke). An early return
+      // skipped it and left `uploading` true forever — composer bricked.
+      if (isAborted()) break;
       if (api.rustChunkedUpload && fileSize > 1 * 1024 * 1024) {
         rustResult = await withUploadTimeout(api.rustChunkedUpload(file, user?.email, 'chat', (pct) => {
           if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(pct * 100) }));
@@ -15054,7 +15057,7 @@ function ChatConversationInner() {
           if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round(pct * 100) }));
         }));
       }
-      if (isAborted()) return;
+      if (isAborted()) break;
       if (rustResult?.success && rustResult.cdn_url) {
         // Rust uploaded to R2 — now tell PHP to create the message record.
         // IMPORTANT: backend chat_send needs file_size too, otherwise the
@@ -15089,7 +15092,7 @@ function ChatConversationInner() {
         }, fileType, abortCtrl.signal, false, msgId));
       }
 
-      if (isAborted()) return;
+      if (isAborted()) break;
       if (r?.success && r.data) {
         const msg = r.data.message || r.data;
         // Guard: malformed server response (empty data / null message) would
@@ -15098,7 +15101,7 @@ function ChatConversationInner() {
         if (!msg || typeof msg !== 'object' || !msg.id) {
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: false, _failed: true } : m));
           setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
-          return;
+          break;
         }
         // [#1188 fix] Preserve sender_email — server response for media
         // uploads can return null sender_email in envelope/sealed mode and
@@ -15171,9 +15174,10 @@ function ChatConversationInner() {
     } catch (e) {
       // Capture for retry decision. User-cancel handled outside the loop.
       if (userCancelledUploadsRef.current.has(tempId)) {
-        userCancelledUploadsRef.current.delete(tempId);
+        // Keep the tempId in the Set: the post-loop reads it as wasUserCancel
+        // (deleting here + break would requeue a cancelled upload offline).
         setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
-        return;
+        break;
       }
       lastError = e;
       console.warn(`[ChatUpload] Attempt ${uploadAttempt} exception:`, e?.message || e);
@@ -15423,6 +15427,9 @@ function ChatConversationInner() {
             duration: audioData.duration,
             temp_id: tempId,
             view_once: audioViewOnce ? 1 : 0,
+            // Same cmi as the live send (9th arg above) so a lost-response
+            // retry dedups against the row the server may already have.
+            client_message_id: audioMsgId,
           });
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
         } catch {
@@ -15443,6 +15450,8 @@ function ChatConversationInner() {
           audio_type: audioData.type,
           duration: audioData.duration,
           temp_id: tempId,
+          view_once: audioViewOnce ? 1 : 0, // was silently dropped on this path
+          client_message_id: audioMsgId,
         });
         setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _queued: true, _uploading: false } : m));
       } catch {
