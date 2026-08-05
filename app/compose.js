@@ -1275,12 +1275,23 @@ export default function ComposeScreen() {
               }
             }
           } catch (e) {
+            // Fail CLOSED: the user asked for encryption, so a failure here
+            // must abort the send — falling through would ship the full body
+            // in plaintext.
             console.warn('PGP encrypt failed', e);
+            setError(t('compose.errorPgpEncrypt') || 'Falha ao criptografar (PGP). O email NÃO foi enviado — tente de novo ou desligue o PGP.');
+            sendingGuardRef.current = false;
+            setSending(false);
+            return;
           }
         }
         // Confidential mode: stash the real body server-side and replace
         // the email body with a "view confidential" link before sending.
         if (confidential) {
+          // Flag pattern (not a return inside the try) so BOTH failure shapes
+          // — throw and non-success response — abort instead of leaking the
+          // real body into a normal email.
+          let confidentialOk = false;
           try {
             const cr = await api.confidentialCreate?.({
               recipient: toStr,
@@ -1297,8 +1308,15 @@ export default function ComposeScreen() {
                 <p style="margin:0 0 14px 0;color:#374151">${(t('compose.confidentialNote') || 'Este email expira em {n} dias.').replace('{n}', expDays)}</p>
                 <a href="${cr.data.view_url}" style="display:inline-block;padding:10px 18px;background:#7C3AED;color:#fff;text-decoration:none;border-radius:8px;font-weight:600">${t('compose.confidentialView') || 'Visualizar email confidencial'}</a>
               </div>`;
+              confidentialOk = true;
             }
           } catch {}
+          if (!confidentialOk) {
+            setError(t('compose.errorConfidential') || 'Falha ao criar o email confidencial. O email NÃO foi enviado — tente de novo ou desligue o modo confidencial.');
+            sendingGuardRef.current = false;
+            setSending(false);
+            return;
+          }
         }
         const r = await sendEmail(toStr, sendSubject, finalBody, ccStr, bccStr, params.reply_uid || null, params.folder || 'INBOX', sendAttachments, { trackOpens, fromAlias, undoDelay: delay });
         if (r && r.success) {
@@ -1347,6 +1365,13 @@ export default function ComposeScreen() {
   };
 
   const handleScheduleSend = async (isoDateString) => {
+    // schedule_send não passa pelo pipeline PGP/confidential do doSend —
+    // agendar com um dos toggles ligados enviaria o corpo em plaintext.
+    // Bloqueia até o backend suportar (fail closed).
+    if (pgpEncrypt || confidential) {
+      setError(t('compose.errorScheduleProtected') || 'Agendamento não suporta PGP/confidencial. Envie agora ou desligue o recurso.');
+      return;
+    }
     // Commit typed-but-unchipped recipients, then wait one tick so the
     // value refs pick up the flushed state (same 60ms settle doSend gets
     // via handleSend's setTimeout) — this path never flushed even To.
