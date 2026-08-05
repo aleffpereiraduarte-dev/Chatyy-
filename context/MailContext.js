@@ -858,9 +858,20 @@ export function MailProvider({ children }) {
     if (selectedEmail && selectedUids.has(selectedEmail.uid)) setSelectedEmail(null);
     showUndo('deleted', uids, removed);
     markPendingRemoval(currentFolder, uids);
+    const folder = currentFolder;
     scheduleAction(async () => {
-      try { await api.bulkDelete(uids, currentFolder); }
-      finally { settlePendingRemoval(currentFolder, uids, false); }
+      try {
+        const r = await api.bulkDelete(uids, folder);
+        settlePendingRemoval(folder, uids, !r?.success);
+        if (!r?.success) {
+          if (removed.length) setEmails(prev => [...removed, ...prev]);
+          console.warn('bulkDelete failed:', r?.message);
+        }
+      } catch (e) {
+        settlePendingRemoval(folder, uids, true);
+        if (removed.length) setEmails(prev => [...removed, ...prev]);
+        console.warn('bulkDelete error:', e);
+      }
     });
   }, [selectedUids, emails, currentFolder, selectedEmail]);
 
@@ -873,9 +884,20 @@ export function MailProvider({ children }) {
     if (selectedEmail && selectedUids.has(selectedEmail.uid)) setSelectedEmail(null);
     showUndo('archived', uids, removed);
     markPendingRemoval(currentFolder, uids);
+    const folder = currentFolder;
     scheduleAction(async () => {
-      try { await api.bulkArchive(uids, currentFolder); }
-      finally { settlePendingRemoval(currentFolder, uids, false); }
+      try {
+        const r = await api.bulkArchive(uids, folder);
+        settlePendingRemoval(folder, uids, !r?.success);
+        if (!r?.success) {
+          if (removed.length) setEmails(prev => [...removed, ...prev]);
+          console.warn('bulkArchive failed:', r?.message);
+        }
+      } catch (e) {
+        settlePendingRemoval(folder, uids, true);
+        if (removed.length) setEmails(prev => [...removed, ...prev]);
+        console.warn('bulkArchive error:', e);
+      }
     });
   }, [selectedUids, emails, currentFolder, selectedEmail]);
 
