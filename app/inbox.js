@@ -95,7 +95,7 @@ function InboxScreenInner() {
     emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
     page, total, search,
     loadFolders, loadEmails, openEmail, changeFolder, refresh, silentRefresh, doSearch,
-    deleteEmail, setSelectedEmail, setPage,
+    deleteEmail, setSelectedEmail, setPage, markAsUnread,
     starEmail: ctxStarEmail, archiveEmail: ctxArchiveEmail,
     // Selection
     selectedUids, selectMode, toggleSelect, selectAll, clearSelection,
@@ -1762,7 +1762,10 @@ function InboxScreenInner() {
           selectMode={selectMode}
           selectedUids={selectedUids}
           onToggleSelect={toggleSelect}
-          onSelectAll={selectAll}
+          // Scope select-all to the rendered (filtered) list — the bare
+          // context fn selected the whole folder, so a filtered tab (e.g.
+          // "Não lidas") bulk-deleted invisible emails. [deep-20260805]
+          onSelectAll={() => selectAll(filteredEmails)}
           onClearSelection={clearSelection}
           // Bulk
           onBulkDelete={bulkDelete}
@@ -1807,8 +1810,10 @@ function InboxScreenInner() {
               onReportSpam={handleReportSpam}
               onReportHam={handleReportHam}
               onMarkUnread={async (e) => {
-                const { markUnread } = await import('../services/api');
-                await markUnread(e.uid, currentFolder);
+                // Context markAsUnread clears the recentlyRead protection —
+                // a raw api.markUnread call was reverted to "read" on the
+                // next silent merge. [deep-20260805-032549]
+                await markAsUnread(e.uid, currentFolder);
                 setSelectedEmail(null);
                 refresh();
               }}
@@ -1839,8 +1844,7 @@ function InboxScreenInner() {
                   onReportSpam={handleReportSpam}
                   onReportHam={handleReportHam}
                   onMarkUnread={async (e) => {
-                    const { markUnread } = await import('../services/api');
-                    await markUnread(e.uid, currentFolder);
+                    await markAsUnread(e.uid, currentFolder);
                     setSelectedEmail(null);
                     refresh();
                   }}
@@ -2107,7 +2111,7 @@ function InboxScreenInner() {
           onSpam: handleReportSpam,
           onMute: handleMuteToggle,
           onMarkRead: async (e) => { const { markRead } = await import('../services/api'); await markRead(e.uid, currentFolder); refresh(); try { (await import('../services/pushNotifications')).refreshBadgeCount?.(); } catch {} },
-          onMarkUnread: async (e) => { const { markUnread } = await import('../services/api'); await markUnread(e.uid, currentFolder); refresh(); },
+          onMarkUnread: async (e) => { await markAsUnread(e.uid, currentFolder); refresh(); },
           onMoveTo: (e) => setMoveToTarget(e),
         }}
       />

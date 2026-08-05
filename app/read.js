@@ -24,7 +24,7 @@ export default function ReadScreen() {
   // payload and shows the suggested message preview + a "Send follow-up"
   // button that hops to /compose with the suggestion pre-filled.
   const [followupSuggestion, setFollowupSuggestion] = useState(null); // {days, suggested_message, urgency}
-  const { refresh, markAsRead, deleteEmail: ctxDelete, archiveEmail: ctxArchive, snoozeEmail: ctxSnooze } = useMail();
+  const { refresh, markAsRead, markAsUnread, deleteEmail: ctxDelete, archiveEmail: ctxArchive, snoozeEmail: ctxSnooze } = useMail();
   const [showSnooze, setShowSnooze] = useState(false);
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
@@ -509,8 +509,10 @@ export default function ReadScreen() {
           onReportSpam={handleReportSpam}
           onReportHam={handleReportHam}
           onMarkUnread={async (e) => {
-            const { markUnread } = await import('../services/api');
-            await markUnread(uid, folder);
+            // Context markAsUnread clears the recentlyRead protection —
+            // a raw api.markUnread call was reverted to "read" on the
+            // next silent merge. [deep-20260805-032549]
+            await markAsUnread(uid, folder);
             refresh();
             router.back();
           }}

@@ -519,6 +519,12 @@ export default function ComposeScreen() {
   const [undoCountdown, setUndoCountdown] = useState(0);
   const undoSendRef = useRef(null);
   const undoSendIdRef = useRef(null); // server send_id for backend-side cancel
+  // Synchronous re-entry guard for doSend: `sending` only flips inside doSend,
+  // so taps during the AI checks (or the 60ms setTimeout window) each scheduled
+  // their own doSend — same email sent twice, and the undo send_id of the first
+  // was overwritten. A ref is set in the same tick, closing both windows across
+  // all entry points (handleSend, handleSendAnyway, leak modal, Ctrl+Enter).
+  const sendingGuardRef = useRef(false);
   const undoIntervalRef = useRef(null);
   const undoDelayRef = useRef(5);
 
@@ -948,6 +954,7 @@ export default function ComposeScreen() {
     sentRef.current = false;
     contentChangedRef.current = true;
     setUndoCountdown(0);
+    sendingGuardRef.current = false;
     setSending(false);
   }, []);
 
@@ -1138,6 +1145,7 @@ export default function ComposeScreen() {
   }, []);
 
   const doSend = () => {
+    if (sendingGuardRef.current) return;
     const currentTo = toValueRef.current;
     if (currentTo.length === 0) { setError(t('compose.errorRecipient')); return; }
     if (!body.trim() && !subject.trim()) { setError(t('compose.errorEmpty')); return; }
@@ -1165,6 +1173,9 @@ export default function ComposeScreen() {
 
     const delay = undoDelayRef.current;
     setError('');
+    // Arm the guard only after validation passes, so an early-return above
+    // (missing recipient etc.) never leaves the Send button dead.
+    sendingGuardRef.current = true;
     setSending(true);
 
     const sendTo = toValueRef.current;
@@ -1312,10 +1323,12 @@ export default function ComposeScreen() {
           }
         } else {
           setError((r && r.message) || t('compose.errorSend'));
+          sendingGuardRef.current = false;
           setSending(false);
         }
       } catch (e) {
         setError(t('compose.errorConnection'));
+        sendingGuardRef.current = false;
         setSending(false);
       }
     })();

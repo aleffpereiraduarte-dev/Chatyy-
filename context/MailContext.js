@@ -624,6 +624,73 @@ export function MailProvider({ children }) {
     // persisted storage on load (24h cutoff) and the ref is cleared on unmount.
   }, [currentFolder]);
 
+  // Drop uids from the recentlyRead protection (ref + persisted store).
+  // recentlyRead exists to stop stale server data from reverting a READ email
+  // to unread — but the same protection made "mark as unread" impossible to
+  // keep: the user had read the email, so every silent merge forced seen=true
+  // back within one poll (and for up to 24h via the persisted key).
+  const forgetRecentlyRead = useCallback(async (uids) => {
+    const strs = uids.map(String);
+    for (const s of strs) recentlyReadRef.current.delete(s);
+    try {
+      const rrKey = rrStorageKey();
+      if (Platform.OS === 'web' && typeof localStorage !== 'undefined') {
+        const stored = JSON.parse(localStorage.getItem(rrKey) || '{}');
+        for (const s of strs) delete stored[s];
+        localStorage.setItem(rrKey, JSON.stringify(stored));
+      } else {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        const stored = JSON.parse(await AsyncStorage.getItem(rrKey) || '{}');
+        for (const s of strs) delete stored[s];
+        await AsyncStorage.setItem(rrKey, JSON.stringify(stored));
+      }
+    } catch {}
+  }, []);
+
+  const markAsUnread = useCallback(async (uid, folder) => {
+    const uidStr = String(uid);
+    const targetFolder = folder || currentFolder;
+    await forgetRecentlyRead([uidStr]);
+    // Optimistic flip + folder badge increment — mirror of markAsRead. The
+    // merge's "once read always read" clause keys off existing.seen, so the
+    // optimistic seen=false here is what lets the server's unread state win
+    // on the next refresh.
+    let wasSeen = false;
+    setEmails(prev => prev.map(e => {
+      if (String(e.uid) !== uidStr) return e;
+      if (!e.seen) return e; // already unread — no change, no increment
+      wasSeen = true;
+      return { ...e, seen: false };
+    }));
+    if (wasSeen) {
+      setFolders(prev => prev.map(f => {
+        if (f.name !== targetFolder) return f;
+        const cur = (f.unread ?? f.unseen ?? 0) | 0;
+        const next = cur + 1;
+        return { ...f, unread: next, unseen: next };
+      }));
+    }
+    try {
+      const r = await api.markUnread(uid, targetFolder);
+      if (!r?.success) {
+        console.warn('markUnread failed for uid', uid, r?.message);
+        if (wasSeen) {
+          setEmails(prev => prev.map(e =>
+            String(e.uid) === uidStr ? { ...e, seen: true } : e
+          ));
+          setFolders(prev => prev.map(f => {
+            if (f.name !== targetFolder) return f;
+            const cur = (f.unread ?? f.unseen ?? 0) | 0;
+            const next = Math.max(0, cur - 1);
+            return { ...f, unread: next, unseen: next };
+          }));
+        }
+      }
+    } catch (e) {
+      console.warn('markUnread error for uid', uid, e);
+    }
+  }, [currentFolder, forgetRecentlyRead]);
+
   // Reset and reload when user changes (account switch)
   const prevUserRef = useRef(user?.email);
   useEffect(() => {
@@ -766,8 +833,13 @@ export function MailProvider({ children }) {
     });
   }, []);
 
-  const selectAll = useCallback(() => {
-    const all = new Set(emails.map(e => e.uid));
+  // Accepts an optional list so callers can scope "select all" to what is
+  // actually rendered (filtered tab). Without it, select-all in a filtered
+  // view silently selected — and bulk-deleted — emails outside the filter
+  // that never appeared on screen. [deep-20260805-032549]
+  const selectAll = useCallback((list) => {
+    const src = Array.isArray(list) ? list : emails;
+    const all = new Set(src.map(e => e.uid));
     setSelectedUids(all);
     setSelectMode(true);
   }, [emails]);
@@ -816,10 +888,13 @@ export function MailProvider({ children }) {
 
   const bulkMarkUnread = useCallback(async () => {
     const uids = Array.from(selectedUids);
+    // Without this the recentlyRead protection reverted every uid back to
+    // seen=true on the next silent merge (for up to 24h, persisted).
+    forgetRecentlyRead(uids).catch(() => {});
     setEmails(prev => prev.map(e => selectedUids.has(e.uid) ? { ...e, seen: false } : e));
     clearSelection();
     try { await api.bulkMarkUnread(uids, currentFolder); } catch (e) { console.warn('bulkMarkUnread error:', e); }
-  }, [selectedUids, currentFolder]);
+  }, [selectedUids, currentFolder, forgetRecentlyRead]);
 
   // --- Labels ---
 
@@ -1292,7 +1367,7 @@ export function MailProvider({ children }) {
     emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
     page, total, search, wsStatus,
     loadFolders, loadEmails, openEmail, changeFolder, refresh, silentRefresh, doSearch,
-    deleteEmail, moveEmail, setPage, setSelectedEmail, markAsRead,
+    deleteEmail, moveEmail, setPage, setSelectedEmail, markAsRead, markAsUnread,
     starEmail, archiveEmail,
     // Selection
     selectedUids, selectMode, toggleSelect, selectAll, clearSelection,
@@ -1312,7 +1387,7 @@ export function MailProvider({ children }) {
     emails, folders, currentFolder, selectedEmail, loadingList, loadingMessage,
     page, total, search, wsStatus,
     loadFolders, loadEmails, openEmail, changeFolder, refresh, silentRefresh, doSearch,
-    deleteEmail, moveEmail, setPage, setSelectedEmail, markAsRead,
+    deleteEmail, moveEmail, setPage, setSelectedEmail, markAsRead, markAsUnread,
     starEmail, archiveEmail,
     selectedUids, selectMode, toggleSelect, selectAll, clearSelection,
     bulkDelete, bulkArchive, bulkMarkRead, bulkMarkUnread,
