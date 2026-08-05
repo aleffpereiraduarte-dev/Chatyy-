@@ -531,6 +531,14 @@ export default function ComposeScreen() {
   // --- Refs ---
   const toRef = useRef(null);
   const toValueRef = useRef(to);
+  // Cc/Bcc mirror the To pattern: component refs so send paths can flush()
+  // typed-but-unchipped text, value refs so doSend (which fires on a 60ms
+  // timeout / after async AI checks) reads the post-flush list instead of
+  // the stale closure — without both, a typed Cc was silently dropped.
+  const ccRef = useRef(null);
+  const bccRef = useRef(null);
+  const ccValueRef = useRef(cc);
+  const bccValueRef = useRef(bcc);
 
   // --- Draft auto-save ---
   const [draftSaved, setDraftSaved] = useState(false);
@@ -859,6 +867,8 @@ export default function ComposeScreen() {
   }, [subject, to, cc, bcc, body, contactsToString, isComposeEmpty]);
 
   useEffect(() => { toValueRef.current = to; }, [to]);
+  useEffect(() => { ccValueRef.current = cc; }, [cc]);
+  useEffect(() => { bccValueRef.current = bcc; }, [bcc]);
   useEffect(() => { contentChangedRef.current = true; }, [to, cc, bcc, subject, body]);
 
   const saveDraftRef = useRef(saveDraft);
@@ -1089,6 +1099,8 @@ export default function ComposeScreen() {
     // disparar várias chamadas simultâneas em taps rápidos.
     if (sending) return;
     toRef.current?.flush();
+    ccRef.current?.flush();
+    bccRef.current?.flush();
     const plainBody = (body || '').replace(/<[^>]+>/g, ' ').trim();
     const hash = subject + '|' + plainBody;
     if (plainBody.length > 10 && hash !== toneCheckedHash) {
@@ -1153,7 +1165,7 @@ export default function ComposeScreen() {
     // ── Recipient validation (Gmail/RFC length + format) ──
     // Flag the first invalid/over-length address across To/Cc/Bcc and block
     // send so we never hand a malformed addr-spec to the backend.
-    const allRecipients = [...currentTo, ...cc, ...bcc];
+    const allRecipients = [...currentTo, ...ccValueRef.current, ...bccValueRef.current];
     const bad = allRecipients.find(c => !isValidRecipient(c?.email));
     if (bad) {
       setError(t('compose.errorInvalidRecipient', { email: (bad.email || '').slice(0, 80) }));
@@ -1179,8 +1191,8 @@ export default function ComposeScreen() {
     setSending(true);
 
     const sendTo = toValueRef.current;
-    const sendCc = [...cc];
-    const sendBcc = [...bcc];
+    const sendCc = [...ccValueRef.current];
+    const sendBcc = [...bccValueRef.current];
     const sendSubject = subject;
     // Build final body: user's reply + quoted original
     let sendBody = body;
@@ -1335,7 +1347,17 @@ export default function ComposeScreen() {
   };
 
   const handleScheduleSend = async (isoDateString) => {
-    if (to.length === 0) { setError(t('compose.errorRecipient')); return; }
+    // Commit typed-but-unchipped recipients, then wait one tick so the
+    // value refs pick up the flushed state (same 60ms settle doSend gets
+    // via handleSend's setTimeout) — this path never flushed even To.
+    toRef.current?.flush();
+    ccRef.current?.flush();
+    bccRef.current?.flush();
+    await new Promise(res => setTimeout(res, 60));
+    const schedTo = toValueRef.current;
+    const schedCc = ccValueRef.current;
+    const schedBcc = bccValueRef.current;
+    if (schedTo.length === 0) { setError(t('compose.errorRecipient')); return; }
     if (!body.trim() && !subject.trim()) { setError(t('compose.errorEmpty')); return; }
     setError('');
     setSending(true);
@@ -1350,8 +1372,8 @@ export default function ComposeScreen() {
         sendBody = body + `<br/><br/>${qh}<blockquote style="border-left:3px solid #dadce0;padding-left:16px;margin:8px 0 0 0;color:#5f6368">${quotedHtml}</blockquote>`;
       }
       const r = await api.apiCall('schedule_send', {
-        to: contactsToString(to), subject, body: sendBody,
-        cc: contactsToString(cc), bcc: contactsToString(bcc),
+        to: contactsToString(schedTo), subject, body: sendBody,
+        cc: contactsToString(schedCc), bcc: contactsToString(schedBcc),
         send_at: isoDateString,
         attachments,
       }, 'POST');
@@ -2003,12 +2025,12 @@ export default function ComposeScreen() {
 
               {showCc && (
                 <View style={[s.replyFieldRow, { borderBottomColor: colors.borderLight, zIndex: 20 }]}>
-                  <ContactAutocomplete value={cc} onChange={setCc} placeholder="cc@email.com" label="Cc" />
+                  <ContactAutocomplete ref={ccRef} value={cc} onChange={setCc} placeholder="cc@email.com" label="Cc" />
                 </View>
               )}
               {showBcc && (
                 <View style={[s.replyFieldRow, { borderBottomColor: colors.borderLight, zIndex: 10 }]}>
-                  <ContactAutocomplete value={bcc} onChange={setBcc} placeholder="bcc@email.com" label="Bcc" />
+                  <ContactAutocomplete ref={bccRef} value={bcc} onChange={setBcc} placeholder="bcc@email.com" label="Bcc" />
                 </View>
               )}
 
@@ -2163,12 +2185,12 @@ export default function ComposeScreen() {
 
             {showCc && (
               <View style={[s.contactFieldRow, { borderBottomColor: colors.borderLight, zIndex: 20 }]}>
-                <ContactAutocomplete value={cc} onChange={setCc} placeholder="cc@email.com" label="Cc" />
+                <ContactAutocomplete ref={ccRef} value={cc} onChange={setCc} placeholder="cc@email.com" label="Cc" />
               </View>
             )}
             {showBcc && (
               <View style={[s.contactFieldRow, { borderBottomColor: colors.borderLight, zIndex: 10 }]}>
-                <ContactAutocomplete value={bcc} onChange={setBcc} placeholder="bcc@email.com" label="Bcc" />
+                <ContactAutocomplete ref={bccRef} value={bcc} onChange={setBcc} placeholder="bcc@email.com" label="Bcc" />
               </View>
             )}
 

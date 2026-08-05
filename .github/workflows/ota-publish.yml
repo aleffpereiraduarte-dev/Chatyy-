@@ -70,8 +70,13 @@ jobs:
       - name: Install npm deps
         run: npm ci --no-audit --no-fund
 
+      # [2026-08-05] Pinned. eas-cli@latest picked up 21.5.0 (released
+      # 2026-08-03T19:12Z) and the very next two publishes failed at the
+      # "Publish OTA" step after ~6min (auth OK, bundle OK) — last green
+      # publish (2026-08-03T07:54Z) ran on 21.4.0. Pin to the known-good
+      # version; bump deliberately after testing, not via @latest drift.
       - name: Set up EAS CLI
-        run: npm install -g eas-cli@latest
+        run: npm install -g eas-cli@21.4.0
 
       - name: Verify EAS auth
         env:
@@ -128,4 +133,9 @@ jobs:
             exit 0
           fi
           # Real failure (auth, syntax, etc.) — actually go red.
+          # Surface the tail of the eas output as a check-run annotation:
+          # annotations are readable via the public API (no gh auth needed),
+          # unlike step logs — this is how the prod server diagnoses red runs.
+          TAIL=$(echo "$OUT" | tail -6 | tr '\n' '|' | cut -c1-900)
+          echo "::error::eas update failed (exit $STATUS): $TAIL"
           exit "$STATUS"
