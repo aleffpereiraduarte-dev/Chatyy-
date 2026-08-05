@@ -258,7 +258,7 @@ jobs:
 
       - name: Upload submit.log on failure
         if: ${{ always() && steps.play_submit.outcome == 'failure' && hashFiles('submit.log') != '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: play-submit-log-${{ steps.bump.outputs.build }}
           path: ./submit.log
@@ -271,7 +271,7 @@ jobs:
       - name: Upload .aab as artifact
         # Always run, even if submit failed — we want the AAB recoverable.
         if: always() && hashFiles('build.aab') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: chatyy-android-${{ steps.bump.outputs.build }}
           path: ./build.aab
