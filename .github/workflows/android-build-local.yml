@@ -49,7 +49,7 @@ jobs:
           fi
           echo "EXPO_TOKEN is set. OK."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Need full history so the bump-commit step can rebase.
           fetch-depth: 0
