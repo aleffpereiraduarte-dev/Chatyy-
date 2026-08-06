@@ -285,7 +285,7 @@ export function ScheduledMessagesModal({ visible, onClose, messages, onCancel, c
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     <IconClock size={12} color={colors.primary} />
                     <Text style={{ fontSize: 12, color: colors.primary }}>
-                      {new Date(sm.scheduled_at + 'Z').toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      {new Date(/[zZ]$|[+-]\d\d:?\d\d$/.test(String(sm.scheduled_at)) ? sm.scheduled_at : sm.scheduled_at + 'Z').toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                     </Text>
                   </View>
                   <TouchableOpacity

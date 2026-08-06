@@ -680,10 +680,14 @@ function _hydrate(row) {
     payload_raw: row.payload,
     state: row.state,
     attempts: row.attempts | 0,
-    next_retry_at: row.next_retry_at | 0,
+    // Timestamps are epoch-ms (~1.79e12): `| 0` truncates through ToInt32
+    // (mod 2^32, signed) into garbage, so every backoff comparison read a
+    // bogus value — retry storms burned MAX_ATTEMPTS in seconds and offline
+    // media went permanent-failed instead of sending on reconnect.
+    next_retry_at: Number(row.next_retry_at) || 0,
     seq: row.seq | 0,
-    created_at: row.created_at | 0,
-    updated_at: row.updated_at | 0,
+    created_at: Number(row.created_at) || 0,
+    updated_at: Number(row.updated_at) || 0,
     last_error: row.last_error || null,
     server_id: row.server_id || null,
   };

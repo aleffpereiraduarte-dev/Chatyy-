@@ -153,7 +153,10 @@ async function _drainAllConversations() {
     // higher-seq row of the same conversation (strict FIFO).
     if (_inflight.has(conv) || startedThisPass.has(conv)) continue;
     if (row.state !== 'queued') continue;       // skip sending/failed-waiting
-    if ((row.next_retry_at | 0) > now) {
+    // Number(), not `| 0`: epoch-ms overflows ToInt32 and the comparison was
+    // never true — backoff was dead and failed rows burned all attempts at
+    // poke() speed (pair fix with messageOutbox._hydrate).
+    if ((Number(row.next_retry_at) || 0) > now) {
       // [#bugfix FIFO] This is the LOWEST-seq pending row for this conv
       // (rows arrive ordered conv ASC, seq ASC) and it's still in backoff.
       // BLOCK the whole conversation this pass — otherwise a newer

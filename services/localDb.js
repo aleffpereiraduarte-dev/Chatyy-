@@ -961,7 +961,7 @@ export async function deleteMessage(id) {
   }
 }
 
-export async function updateMessage(id, updates) {
+export async function updateMessage(id, updates, opts = null) {
   if (Platform.OS === 'web' || !id) return;
   try {
     await _ensureDb();
@@ -976,7 +976,17 @@ export async function updateMessage(id, updates) {
     }
     if (!sets.length) return;
     vals.push(id);
-    await db.runAsync(`UPDATE messages SET ${sets.join(', ')} WHERE id = ?`, ...vals);
+    // opts.senderNot: refuse the update when the row was sent by this email —
+    // used by the read-receipt mirror so a 'read' event whose watermark is the
+    // reader's OWN message can't stamp read_at on it (false purple tick on
+    // cold open). NULL sender rows are skipped too, same as the server's
+    // `sender_email <> reader` predicate.
+    let where = 'WHERE id = ?';
+    if (opts?.senderNot) {
+      where += ' AND LOWER(sender_email) <> LOWER(?)';
+      vals.push(String(opts.senderNot));
+    }
+    await db.runAsync(`UPDATE messages SET ${sets.join(', ')} ${where}`, ...vals);
   } catch (e) {
     console.warn('[localDb] updateMessage:', e?.message);
   }

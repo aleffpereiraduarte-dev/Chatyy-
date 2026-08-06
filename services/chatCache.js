@@ -518,9 +518,9 @@ export async function deleteCachedMessage(conversationId, messageId) {
 }
 
 // Update a message in cache
-export async function updateCachedMessage(conversationId, messageId, updates) {
+export async function updateCachedMessage(conversationId, messageId, updates, opts = null) {
   if (isNative && isDbReady()) {
-    try { await dbUpdateMessage(messageId, updates); } catch {}
+    try { await dbUpdateMessage(messageId, updates, opts); } catch {}
   }
 
   const key = `chat_msgs_${conversationId}`;
@@ -528,6 +528,12 @@ export async function updateCachedMessage(conversationId, messageId, updates) {
     const msgs = _readMessages(key);
     const idx = msgs.findIndex(m => m.id === messageId);
     if (idx !== -1) {
+      // opts.senderNot mirrors the SQLite guard (see localDb.updateMessage):
+      // never apply this update onto a row sent by that email.
+      if (opts?.senderNot &&
+          String(msgs[idx].sender_email || '').toLowerCase() === String(opts.senderNot).toLowerCase()) {
+        return;
+      }
       msgs[idx] = { ...msgs[idx], ...updates };
       _writeMessages(key, msgs);
     }

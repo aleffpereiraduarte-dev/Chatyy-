@@ -265,8 +265,16 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
         // the synchronous cold-load renderer. convId may be absent on a read
         // event — the SQLite path keys by message id regardless, so this still
         // persists; convId only feeds the MMKV mirror key when present.
+        //
+        // senderNot guard: the watermark id can be the reader's OWN last
+        // message (chat_read falls back to MAX(id) of the conv), and our own
+        // read event echoes back to us via chat_sync — without the guard the
+        // mirror stamped read_at on our own bubble (false purple on cold
+        // open). Actor missing → skip rather than stamp unguarded.
         const convId = ev?.payload?.conversation_id;
-        chatCache.updateCachedMessage?.(convId, mid, { read_at: ev.created_at, _readStatus: 2 }).catch?.(() => {});
+        if (ev?.actor) {
+          chatCache.updateCachedMessage?.(convId, mid, { read_at: ev.created_at, _readStatus: 2 }, { senderNot: ev.actor }).catch?.(() => {});
+        }
       }
     }
   } catch (e) {
@@ -424,9 +432,30 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
           break;
         }
         case 'read': {
-          if (!mid || !indexById.has(mid)) continue;
-          const i = indexById.get(mid);
-          next[i] = { ...next[i], _readStatus: 2 };
+          // Watermark fold, mirror of the server's chat_read UPDATE: every
+          // message with id <= mid NOT sent by the reader is now read. The
+          // old form set only `_readStatus` on the single watermark row — a
+          // field the enrichment memo in chat-conversation recomputes and
+          // overwrites, so a read that arrived via delta sync never painted
+          // the blue tick until a full refetch (same class as the fixed
+          // 'delivered' case below).
+          //
+          // The actor guard is load-bearing: mid can be the reader's OWN
+          // last message (chat_read falls back to MAX(id) of the conv) and
+          // our own read event echoes back to us — without the guard we'd
+          // stamp read_at on our own bubbles and fake a blue tick the peer
+          // never produced. Actor missing → do nothing (the old write was
+          // inert anyway). read_at only feeds the tick in non-group convs
+          // (renderer rule), so group semantics stay server-driven.
+          if (!mid || !ev?.actor) break;
+          const actor = String(ev.actor).toLowerCase();
+          for (let k = 0; k < next.length; k++) {
+            const kid = Number(next[k]?.id) || 0;
+            if (!kid || kid > mid) continue;
+            if (String(next[k]?.sender_email || '').toLowerCase() === actor) continue;
+            if (next[k].read_at) continue;
+            next[k] = { ...next[k], read_at: ev.created_at, _readStatus: 2 };
+          }
           break;
         }
         case 'delivered': {
