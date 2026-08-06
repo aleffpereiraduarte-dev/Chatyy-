@@ -24,7 +24,7 @@ export default function ReadScreen() {
   // payload and shows the suggested message preview + a "Send follow-up"
   // button that hops to /compose with the suggestion pre-filled.
   const [followupSuggestion, setFollowupSuggestion] = useState(null); // {days, suggested_message, urgency}
-  const { refresh, markAsRead, markAsUnread, deleteEmail: ctxDelete, archiveEmail: ctxArchive, snoozeEmail: ctxSnooze } = useMail();
+  const { emails, refresh, markAsRead, markAsUnread, deleteEmail: ctxDelete, archiveEmail: ctxArchive, snoozeEmail: ctxSnooze } = useMail();
   const [showSnooze, setShowSnooze] = useState(false);
   const { colors, isDark } = useTheme();
   const { t } = useLanguage();
@@ -60,7 +60,11 @@ export default function ReadScreen() {
 
   const navigateToEmail = (targetUid) => {
     if (!targetUid) return;
-    router.replace(`/read?uid=${targetUid}&folder=${encodeURIComponent(folder)}`);
+    // uid do param chega como string; uid da lista pode ser number
+    const idx = emails.findIndex(e => String(e.uid) === String(targetUid));
+    const p = idx > 0 ? emails[idx - 1].uid : '';
+    const n = (idx >= 0 && idx < emails.length - 1) ? emails[idx + 1].uid : '';
+    router.replace(`/read?uid=${targetUid}&folder=${encodeURIComponent(folder)}&prevUid=${p}&nextUid=${n}`);
   };
 
   // Keyboard shortcuts (web only)

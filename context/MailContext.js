@@ -211,6 +211,12 @@ export function MailProvider({ children }) {
   // handler, so a silent refresh doesn't DROP a just-arrived email when the
   // server's IMAP page-1 view hasn't indexed it yet (list flicker fix).
   const recentlyArrivedRef = useRef(new Map());
+  // Track recent star/unstar toggles (uid -> {flagged, ts}) so a refresh
+  // painting stale server data (in-flight request, Rust page cache, PG index
+  // waiting on the reconcile cron) doesn't revert the optimistic toggle.
+  // In-memory only, 150s window — after that the server wins, so a change
+  // made on another device can't get stuck here.
+  const recentlyFlaggedRef = useRef(new Map());
   // In-memory Map<folder, rows[]> retaining each folder's last rows across
   // switches, so changeFolder can paint instantly instead of showing the
   // previous folder's rows under the new header (instant folder switch fix).
@@ -386,6 +392,17 @@ export function MailProvider({ children }) {
             recentlyRead.has(String(e.uid)) && !e.seen ? { ...e, seen: true } : e
           );
 
+        // Recently-flagged protection (mirrors recentlyRead, but keeps the
+        // toggle DIRECTION so both star and unstar are covered).
+        const recentFlags = recentlyFlaggedRef.current;
+        const flagCutoff = Date.now() - 150000;
+        for (const [k, v] of recentFlags) { if (v.ts < flagCutoff) recentFlags.delete(k); }
+        const applyRecentFlags = (list) =>
+          recentFlags.size === 0 ? list : list.map(e => {
+            const rf = recentFlags.get(String(e.uid));
+            return rf && e.flagged !== rf.flagged ? { ...e, flagged: rf.flagged } : e;
+          });
+
         if (pg > 1) {
           // Pagination (infinite scroll / pager "next"): APPEND this page and
           // dedupe by uid instead of REPLACING the list. Previously loadEmails
@@ -393,7 +410,7 @@ export function MailProvider({ children }) {
           // the list appeared to reset — infinite scroll was effectively dead.
           setEmails(prev => {
             const seen = new Set(prev.map(e => String(e.uid)));
-            const additions = applyRecentlyRead(emailList).filter(e => !seen.has(String(e.uid)));
+            const additions = applyRecentFlags(applyRecentlyRead(emailList)).filter(e => !seen.has(String(e.uid)));
             return additions.length ? [...prev, ...additions] : prev;
           });
         } else if (silent) {
@@ -417,12 +434,13 @@ export function MailProvider({ children }) {
               }
               // NEVER revert seen from true to false - once read, always read
               const mergedSeen = existing.seen ? true : (e.seen || recentlyRead.has(String(e.uid)));
-              const mergedFlagged = e.flagged; // server is authoritative for flags
+              const rf = recentFlags.get(String(e.uid));
+              const mergedFlagged = rf ? rf.flagged : e.flagged;
               if (existing.seen === mergedSeen && existing.flagged === mergedFlagged &&
                   existing.subject === e.subject && JSON.stringify(existing.labels) === JSON.stringify(e.labels)) {
                 return existing; // Same ref = no re-render for this row
               }
-              return { ...e, seen: mergedSeen };
+              return { ...e, seen: mergedSeen, flagged: mergedFlagged };
             });
             // UNION merge (FIX: "últimos emails somem depois aparecem"). The
             // server's page-1 is authoritative for the *content* of the rows it
@@ -455,7 +473,7 @@ export function MailProvider({ children }) {
           });
         } else {
           // Non-silent load: replace all, but still protect recently-read emails
-          setEmails(applyRecentlyRead(emailList));
+          setEmails(applyRecentFlags(applyRecentlyRead(emailList)));
         }
         setTotal(r.data?.total || 0);
         // Update label unread counts from server
@@ -709,6 +727,7 @@ export function MailProvider({ children }) {
       folderRowsRef.current = new Map();
       pendingRemovalRef.current = new Map();
       recentlyArrivedRef.current = new Map();
+      recentlyFlaggedRef.current = new Map();
       loadEmails('INBOX', 1, '');
     }
   }, [user?.email]);
@@ -947,6 +966,7 @@ export function MailProvider({ children }) {
     if (!email) return;
     const wasStarred = email.flagged;
     // Optimistic toggle
+    recentlyFlaggedRef.current.set(String(uid), { flagged: !wasStarred, ts: Date.now() });
     setEmails(prev => prev.map(e => e.uid === uid ? { ...e, flagged: !wasStarred } : e));
     if (selectedEmail?.uid === uid) {
       setSelectedEmail(prev => prev ? { ...prev, flagged: !wasStarred } : prev);
@@ -957,12 +977,14 @@ export function MailProvider({ children }) {
         : await api.starEmail(uid, currentFolder);
       if (!r?.success) {
         // Revert
+        recentlyFlaggedRef.current.delete(String(uid));
         setEmails(prev => prev.map(e => e.uid === uid ? { ...e, flagged: wasStarred } : e));
         if (selectedEmail?.uid === uid) {
           setSelectedEmail(prev => prev ? { ...prev, flagged: wasStarred } : prev);
         }
       }
     } catch {
+      recentlyFlaggedRef.current.delete(String(uid));
       setEmails(prev => prev.map(e => e.uid === uid ? { ...e, flagged: wasStarred } : e));
       if (selectedEmail?.uid === uid) {
         setSelectedEmail(prev => prev ? { ...prev, flagged: wasStarred } : prev);
@@ -1014,7 +1036,7 @@ export function MailProvider({ children }) {
   // --- Undo system ---
 
   const showUndo = useCallback((type, uids, removedEmails) => {
-    setUndoAction({ type, uids, removedEmails });
+    setUndoAction({ type, uids, removedEmails, folder: folderRef.current });
   }, []);
 
   // Run the still-pending deferred action NOW (no-op when it already ran or
@@ -1080,14 +1102,23 @@ export function MailProvider({ children }) {
     if (undoTimerRef._visCleanup) { undoTimerRef._visCleanup(); undoTimerRef._visCleanup = null; }
     if (undoAction?.uids) {
       // Un-mark pending removals so the restored rows survive the next merge
-      // (undoAction has no folder, so match by uid across all folder keys).
+      // (match by uid across all folder keys — un-hiding is safe cross-folder).
       const undone = new Set(undoAction.uids.map(String));
       for (const k of pendingRemovalRef.current.keys()) {
         if (undone.has(k.slice(k.indexOf(':') + 1))) pendingRemovalRef.current.delete(k);
       }
     }
     if (undoAction?.removedEmails) {
-      setEmails(prev => [...undoAction.removedEmails, ...prev]);
+      // Restore rows into the folder they were removed from — the visible
+      // list may be a different folder by now (the toast survives folder
+      // switches). The server was never touched, so a wrong-list prepend
+      // would plant ghost rows that the union-merge keeps alive.
+      if (!undoAction.folder || undoAction.folder === folderRef.current) {
+        setEmails(prev => [...undoAction.removedEmails, ...prev]);
+      } else {
+        const rows = folderRowsRef.current.get(undoAction.folder);
+        if (rows) folderRowsRef.current.set(undoAction.folder, [...undoAction.removedEmails, ...rows]);
+      }
     }
     setUndoAction(null);
   }, [undoAction]);
