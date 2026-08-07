@@ -2172,10 +2172,16 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // isPaused=true stops the advance timer (effect above) AND the music
   // effect's playback. Without this the timer keeps burning through items
   // and the music keeps playing while the app is in the switcher/background.
-  // Mirrors StoryViewer's AppState handler; resume on 'active'.
+  // Mirrors StoryViewer's AppState handler; resume on 'active' — EXCEPT when
+  // the reply input is focused (typing-pause owns that state, same guard as
+  // StoryViewer's replyFocused). Without it, background→active with the
+  // keyboard open un-pauses the timer, the story advances mid-typing and the
+  // reply lands on the WRONG status/contact.
+  const replyFocusedRef = useRef(false);
   useEffect(() => {
     if (!viewerVisible) return undefined;
     const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active' && replyFocusedRef.current) return;
       setIsPaused(next !== 'active');
     });
     return () => { try { sub?.remove?.(); } catch {} };
@@ -4103,11 +4109,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     onSubmitEditing={() => handleStatusReply()}
                     editable={!sendingReply}
                     onFocus={() => {
+                      replyFocusedRef.current = true;
                       setIsPaused(true);
                       if (timerRef.current) clearTimeout(timerRef.current);
                       if (animRef.current) animRef.current.stop();
                     }}
-                    onBlur={() => setIsPaused(false)}
+                    onBlur={() => { replyFocusedRef.current = false; setIsPaused(false); }}
                   />
                 </View>
                 {viewerReply.trim().length > 0 && (

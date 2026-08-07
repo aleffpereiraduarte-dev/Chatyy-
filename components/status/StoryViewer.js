@@ -1273,6 +1273,13 @@ export default function StoryViewer({
   // don't fight each other (mixing dx + dy on the same frame looks janky).
   // Set in onMoveShouldSetPanResponder, cleared on release/terminate.
   const gestureAxisRef = useRef(null); // 'h' | 'v' | null
+  // Group-nav props are frozen inside the once-created PanResponder below
+  // (same first-render-binding trap the slider's liveRef solves above): on a
+  // cold mount they're still the null/0 defaults so the horizontal gesture is
+  // never claimed; on a warm reuse a stale groupIndex navigates to the wrong
+  // group. Mirror them into a ref the handlers read at gesture time.
+  const groupNavRef = useRef({});
+  groupNavRef.current = { groupIndex, groupCount, onNextGroup, onPrevGroup };
   const panResponder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponder: (evt, gs) => {
@@ -1281,8 +1288,9 @@ export default function StoryViewer({
         // AND we're not already at the edge). Threshold 12px + dx > dy*1.5
         // so a slight diagonal still feels like horizontal intent.
         if (Math.abs(gs.dx) > 12 && Math.abs(gs.dx) > Math.abs(gs.dy) * 1.5) {
-          const canNext = gs.dx < 0 && onNextGroup && groupIndex < groupCount - 1;
-          const canPrev = gs.dx > 0 && onPrevGroup && groupIndex > 0;
+          const gn = groupNavRef.current;
+          const canNext = gs.dx < 0 && gn.onNextGroup && gn.groupIndex < gn.groupCount - 1;
+          const canPrev = gs.dx > 0 && gn.onPrevGroup && gn.groupIndex > 0;
           if (canNext || canPrev) { gestureAxisRef.current = 'h'; return true; }
           return false;
         }
@@ -1307,8 +1315,9 @@ export default function StoryViewer({
       onPanResponderMove: (_evt, gs) => {
         if (gestureAxisRef.current === 'h') {
           // Horizontal parallax — only honor in the direction with a target.
-          const canNext = gs.dx < 0 && onNextGroup && groupIndex < groupCount - 1;
-          const canPrev = gs.dx > 0 && onPrevGroup && groupIndex > 0;
+          const gn = groupNavRef.current;
+          const canNext = gs.dx < 0 && gn.onNextGroup && gn.groupIndex < gn.groupCount - 1;
+          const canPrev = gs.dx > 0 && gn.onPrevGroup && gn.groupIndex > 0;
           if (canNext || canPrev) dragX.setValue(gs.dx);
           return;
         }
@@ -1319,11 +1328,12 @@ export default function StoryViewer({
       onPanResponderRelease: (_evt, gs) => {
         if (gestureAxisRef.current === 'h') {
           // Horizontal commit — > 60px OR fling-fast → fire group nav.
+          const gn = groupNavRef.current;
           const threshold = 60;
           const fling = Math.abs(gs.vx) > 0.6;
           gestureAxisRef.current = null;
           if (gs.dx < -threshold || (gs.dx < 0 && fling)) {
-            if (onNextGroup && groupIndex < groupCount - 1) {
+            if (gn.onNextGroup && gn.groupIndex < gn.groupCount - 1) {
               if (_Haptics && Platform.OS !== 'web') {
                 try { _Haptics.impactAsync(_Haptics.ImpactFeedbackStyle.Light); } catch {}
               }
@@ -1332,20 +1342,20 @@ export default function StoryViewer({
               Animated.timing(dragX, { toValue: -winW, duration: 180, useNativeDriver: true })
                 .start(() => {
                   dragX.setValue(0);
-                  try { onNextGroup(); } catch {}
+                  try { groupNavRef.current.onNextGroup(); } catch {}
                 });
               setPaused(false);
               return;
             }
           } else if (gs.dx > threshold || (gs.dx > 0 && fling)) {
-            if (onPrevGroup && groupIndex > 0) {
+            if (gn.onPrevGroup && gn.groupIndex > 0) {
               if (_Haptics && Platform.OS !== 'web') {
                 try { _Haptics.impactAsync(_Haptics.ImpactFeedbackStyle.Light); } catch {}
               }
               Animated.timing(dragX, { toValue: winW, duration: 180, useNativeDriver: true })
                 .start(() => {
                   dragX.setValue(0);
-                  try { onPrevGroup(); } catch {}
+                  try { groupNavRef.current.onPrevGroup(); } catch {}
                 });
               setPaused(false);
               return;
@@ -1728,6 +1738,17 @@ export default function StoryViewer({
       if (!Number.isFinite(_fromV)) _fromV = 0;
       _fromV = Math.max(0, Math.min(1, _fromV));
     } catch {}
+    // Reply grace — the max(STORY_DURATION_MS, 5000) floor above is a no-op
+    // (both sides are 5000ms): what actually shortens the window is the
+    // bar's leftover fraction. Clamp it so the resume leg lasts ≥4.5s and
+    // snap the bar back so the visual matches the timer.
+    if (!_isVoiceStatus && replyGraceRef.current) {
+      const _graceCap = Math.max(0, 1 - 4500 / duration);
+      if (_fromV > _graceCap) {
+        _fromV = _graceCap;
+        try { progressRef.current?.setValue?.(_fromV); } catch {}
+      }
+    }
     // Instagram-style ease-out so the bar fills crisp at the start and
     // glides into the seam — feels less mechanical than the linear ramp.
     animRef.current = Animated.timing(progressRef.current, {
