@@ -187,15 +187,21 @@ function NativeAudioPlayer({ url }) {
 //
 //   2) Fall back to expo-av's <Video> if expo-video fails to load — keeps native
 //      playback working on older bundles where expo-video isn't shipped.
-function StatusVideoPlayer({ url, posterUrl, onDuration, onLoaded, onError }) {
-  if (Platform.OS === 'web' || !url) return null;
-  // Try expo-video first (SDK 55+).
-  try {
-    const { useVideoPlayer, VideoView } = require('expo-video');
-    const Inner = ({ uri }) => {
-      const player = useVideoPlayer(uri, (p) => {
-        try { p.loop = true; p.muted = false; p.play(); } catch {}
-      });
+// HOISTED to module level (mirrors StoryViewer.js StatusVideoPlayer): the old
+// inline `const Inner = ...` minted a fresh component type every parent
+// re-render, so React unmounted/remounted VideoView+player — each setState in
+// the viewer (recordView, cacheTick, onDuration) restarted the video from 0,
+// and long-press "pause" actually restarted it playing.
+const StatusVideoInner = React.memo(function StatusVideoInner({ mod, uri, posterUrl, paused, onDuration, onLoaded, onError }) {
+  const { useVideoPlayer, VideoView } = mod;
+  const player = useVideoPlayer(uri, (p) => {
+    try { p.loop = true; p.muted = false; p.play(); } catch {}
+  });
+  // Pause/resume in lockstep with the viewer's long-press state
+  // (mirrors StoryViewer.js:368-371).
+  useEffect(() => {
+    try { if (paused) player?.pause?.(); else player?.play?.(); } catch {}
+  }, [player, paused]);
       // Report duration as soon as the player reaches readyToPlay so the
       // progress bar can match the real video length instead of the
       // hardcoded 5s default. Fires once per uri.
@@ -246,8 +252,27 @@ function StatusVideoPlayer({ url, posterUrl, onDuration, onLoaded, onError }) {
           <VideoView player={player} style={{ flex: 1, backgroundColor: 'transparent' }} contentFit="contain" nativeControls={false} />
         </View>
       );
-    };
-    return <Inner uri={url} />;
+});
+
+function StatusVideoPlayer({ url, posterUrl, paused, onDuration, onLoaded, onError }) {
+  if (Platform.OS === 'web' || !url) return null;
+  // Try expo-video first (SDK 55+). require() stays inside try so older
+  // binaries without expo-video fall through to expo-av below.
+  try {
+    const mod = require('expo-video');
+    if (mod?.useVideoPlayer && mod?.VideoView) {
+      return (
+        <StatusVideoInner
+          mod={mod}
+          uri={url}
+          posterUrl={posterUrl}
+          paused={paused}
+          onDuration={onDuration}
+          onLoaded={onLoaded}
+          onError={onError}
+        />
+      );
+    }
   } catch {}
   // Fallback: expo-av (older binaries).
   try {
@@ -265,7 +290,7 @@ function StatusVideoPlayer({ url, posterUrl, onDuration, onLoaded, onError }) {
           source={{ uri: url }}
           style={{ flex: 1, backgroundColor: 'transparent' }}
           resizeMode="contain"
-          shouldPlay
+          shouldPlay={!paused}
           isLooping
           useNativeControls={false}
           onLoad={(s) => {
@@ -2171,6 +2196,22 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     setTextFontStyle('normal');
     setStatusPrivacy('all');
     setTextBgColor(TEXT_BG_COLORS[Math.floor(Math.random() * TEXT_BG_COLORS.length)]);
+    // Reset decorations too — only the X button used to clear these, so
+    // closing via publish-success or Android back leaked the previous
+    // status' stickers/drawings/filter into the next one (republishing
+    // them in extraMeta, mention stickers re-pushing included). openCreator
+    // is the single entry point, so resetting here covers every path.
+    setStickers([]);
+    setTextOverlays([]);
+    setDrawPaths([]);
+    setPhotoFilter('normal');
+    setTextAnimation('none');
+    setCrossPostFeed(false);
+    setExceptEmails([]);
+    setDrawMode(false);
+    setShowStickerPicker(false);
+    setShowAddTextInput(false);
+    resetHistory();
     // Instagram-style camera mode (native only)
     if (mode === 'camera' && Platform.OS !== 'web') {
       setCameraVisible(true);
@@ -2381,7 +2422,13 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
         }
         if (carouselItems.length > 0 && api.statusCarouselPublish) {
           const cr = await api.statusCarouselPublish(carouselItems, { privacy: 'all' });
-          if (cr?.success) loadStatuses();
+          if (cr?.success) {
+            loadStatuses();
+            // Partial publish (some uploads failed) — say so, like ChatListTab.
+            if (carouselItems.length < capture.items.length) {
+              try { Alert.alert?.(t?.('common.error') || 'Erro', `${t?.('status.publishFailed') || 'Não foi possível publicar o status.'} (${capture.items.length - carouselItems.length}/${capture.items.length})`); } catch {}
+            }
+          }
           else try { Alert.alert?.(t?.('common.error') || 'Erro', cr?.message || t?.('status.publishFailed') || 'Não foi possível publicar o status.'); } catch {}
         } else {
           try { Alert.alert?.(t?.('common.error') || 'Erro', t?.('status.publishFailed') || 'Não foi possível publicar o status.'); } catch {}
@@ -2641,20 +2688,30 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
         }));
 
       if (!items.length) {
-        console.warn('[Status] carousel: no items uploaded');
+        // All uploads failed — the user picked up to 10 items and nothing
+        // posted; console-only left them believing it had (mirrors the
+        // honest handling ChatListTab and the camera multi branch ship).
+        try { Alert.alert?.(t?.('common.error') || 'Erro', t?.('status.uploadFailed') || 'Falha no upload.'); } catch {}
         return;
       }
 
       // Single-item carousels still publish, but we could also fall back
       // to the classic status_publish path. Kept unified for simplicity.
-      await api.statusCarouselPublish?.(items, { privacy: statusPrivacy !== 'all' ? statusPrivacy : 'all' });
-      loadStatuses();
+      const cr = await api.statusCarouselPublish?.(items, { privacy: statusPrivacy !== 'all' ? statusPrivacy : 'all' });
+      if (cr?.success) {
+        loadStatuses();
+        if (items.length < assets.length) {
+          try { Alert.alert?.(t?.('common.error') || 'Erro', `${t?.('status.publishFailed') || 'Não foi possível publicar o status.'} (${assets.length - items.length}/${assets.length})`); } catch {}
+        }
+      } else {
+        try { Alert.alert?.(t?.('common.error') || 'Erro', cr?.message || t?.('status.publishFailed') || 'Não foi possível publicar o status.'); } catch {}
+      }
     } catch (e) {
       console.warn('[Status] carousel publish failed:', e?.message);
     } finally {
       setPublishing(false);
     }
-  }, [publishing, statusPrivacy, loadStatuses]);
+  }, [publishing, statusPrivacy, loadStatuses, t]);
 
   const deleteMyStatus = useCallback(async (statusId) => {
     try {
@@ -3800,6 +3857,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                           }
                           return fullUrl;
                         })()}
+                        paused={isPaused}
                         onDuration={(ms) => { if (ms > 0) setVideoDurationMs(ms); }}
                         onLoaded={() => setVideoLoading(false)}
                         onError={() => { setVideoError(true); setVideoLoading(false); }}
@@ -4807,7 +4865,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               styles.creatorHeader,
               { paddingTop: Platform.OS === 'android' ? insets.top + 8 : (insets.top || 54) },
             ]}>
-              <TouchableOpacity onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); setPhotoFilter('normal'); setStickers([]); setShowStickerPicker(false); setTextOverlays([]); setShowAddTextInput(false); setDrawMode(false); setDrawPaths([]); resetHistory(); setExceptEmails([]); setExceptPickerVisible(false); }} style={styles.creatorCloseBtn}>
+              <TouchableOpacity onPress={() => { setCreatorVisible(false); setMusicPickerVisible(false); setPhotoFilter('normal'); setStickers([]); setShowStickerPicker(false); setTextOverlays([]); setShowAddTextInput(false); setDrawMode(false); setDrawPaths([]); resetHistory(); setExceptEmails([]); setExceptPickerVisible(false); setTextAnimation('none'); setCrossPostFeed(false); }} style={styles.creatorCloseBtn}>
                 <IconX size={26} color="#fff" />
               </TouchableOpacity>
 

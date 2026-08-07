@@ -3566,6 +3566,54 @@ export default function Profile({
   //   3) "Ver foto" → opens story viewer pointing at a synthetic avatar item
   const handleAvatarCameraCapture = useCallback(async (capture) => {
     setStatusCameraOpen(false);
+    // Multi-clip recording (ffmpeg stitch fallback) and multi-select gallery
+    // emit {multi:true, items} with no top-level uri. ChatListTab and
+    // ChatStatusTab already ship this branch; this was the third forgotten
+    // callsite (same story as the capture.music fix below) — the guard under
+    // it silently discarded every multi payload from the avatar flow.
+    if (capture?.multi && Array.isArray(capture.items) && capture.items.length > 1) {
+      setStatusPublishing(true);
+      try {
+        const carouselItems = [];
+        for (const it of capture.items) {
+          const isVideo = it.type === 'video';
+          const file = {
+            uri: it.uri,
+            name: isVideo ? 'status.mp4' : 'status.jpg',
+            type: isVideo ? 'video/mp4' : 'image/jpeg',
+          };
+          try {
+            const up = await api.statusUpload?.(file);
+            if (up?.success && up.data?.url) {
+              carouselItems.push({
+                media_url: up.data.url,
+                type: isVideo ? 'video' : 'image',
+                background: '#000000',
+              });
+            }
+          } catch (e) { console.warn('[avatar carousel upload]', e?.message); }
+        }
+        if (carouselItems.length > 0 && api.statusCarouselPublish) {
+          const cr = await api.statusCarouselPublish(carouselItems, { privacy: 'all' });
+          if (cr?.success) {
+            invalidateProfileCache(fetchKey);
+            setRetryCounter(c => c + 1);
+            if (carouselItems.length < capture.items.length) {
+              Alert.alert(t?.('common.error') || 'Erro', `${t?.('status.publishFailed') || 'Não foi possível publicar o status.'} (${capture.items.length - carouselItems.length}/${capture.items.length})`);
+            }
+          } else {
+            Alert.alert(t?.('common.error') || 'Erro', cr?.message || t?.('status.publishFailed') || 'Não foi possível publicar o status.');
+          }
+        } else {
+          Alert.alert(t?.('common.error') || 'Erro', t?.('status.publishFailed') || 'Não foi possível publicar o status.');
+        }
+      } catch (e) {
+        Alert.alert(t?.('common.error') || 'Erro', e?.message || 'Falhou');
+      } finally {
+        setStatusPublishing(false);
+      }
+      return;
+    }
     if (!capture?.uri) return;
     setStatusPublishing(true);
     try {
