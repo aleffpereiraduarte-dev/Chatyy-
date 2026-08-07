@@ -1,3 +1,2 @@
-2026-08-05T17:17:12Z
-pulse-20260805-211113: setas read.js + undo folder + star race (recentlyFlaggedRef)
-20260806T075412Z
+2026-08-07T13:12:37Z
+pulse-20260807-090957: re-dispara publish pos-reabilitacao da conta Expo (drena fde5d8ce..9f5d7a6a)
