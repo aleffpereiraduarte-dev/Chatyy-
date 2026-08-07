@@ -5390,8 +5390,14 @@ export function statusManifestPrefetch() {
   } catch {}
 }
 
-export async function statusView(statusId) {
-  return apiCall('status_view', { status_id: statusId }, 'POST');
+export async function statusView(statusId, completed) {
+  // `completed:true` = playback reached the end of the bar (natural finish,
+  // not tap-skip). Backend UPDATEs chat_status_views.completed idempotently;
+  // omitted entirely on the plain view receipt so old-shape calls are byte-
+  // identical to before.
+  const params = { status_id: statusId };
+  if (completed) params.completed = true;
+  return apiCall('status_view', params, 'POST');
 }
 
 // Cheap existence check — verifies the status row is still in

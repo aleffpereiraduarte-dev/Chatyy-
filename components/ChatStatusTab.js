@@ -1947,6 +1947,33 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   // Keep the ref in sync so closeViewer (declared earlier) can flush.
   recordViewRef.current = recordView;
 
+  // Completion receipt — fires once per status when the bar reaches 100%
+  // NATURALLY (auto-advance timer), never on tap-skip or the video watchdog.
+  // Pairs with the backend `completed` writer on status_view (deep-20260807);
+  // without a sender every owner's completion_rate read 0%. Separate from
+  // recordView because its `item.viewed` guard already tripped by the time
+  // playback ends (the viewerIndex effect records the view on entry).
+  const completedIdsRef = useRef(new Set());
+  const recordCompleted = useCallback((idx) => {
+    const item = viewerStatuses[idx];
+    if (!item || item._placeholder || String(item.id).startsWith('__manifest_')) return;
+    const _id = item.id;
+    if (!_id || completedIdsRef.current.has(_id)) return;
+    completedIdsRef.current.add(_id);
+    const _queueCompleted = () => {
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        queueOfflineAction({ type: 'status_view', params: { status_id: _id, completed: true } });
+      } catch {}
+    };
+    api.statusView(_id, true).then((r) => {
+      if (r && r.success === false
+          && !/not_found|already|duplicate|invalid|permission|forbidden|expired/i.test(String(r.message || r.error || ''))) {
+        _queueCompleted();
+      }
+    }).catch(_queueCompleted);
+  }, [viewerStatuses]);
+
   // Fire the view receipt whenever the visible item changes (viewer open OR
   // viewerIndex step). Mirrors StoryViewer's idx effect (~1019) so the receipt
   // no longer depends on advanceViewer running — quick close / single-item
@@ -1956,8 +1983,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     recordView(viewerIndex);
   }, [viewerVisible, viewerIndex, recordView]);
 
-  const advanceViewer = useCallback(() => {
+  const advanceViewer = useCallback((natural) => {
     recordView(viewerIndex);
+    // `natural === true` only from the auto-advance timer (bar hit 100%) —
+    // tap-to-next and the stalled-video watchdog call advanceViewer() bare.
+    if (natural === true) recordCompleted(viewerIndex);
 
     if (viewerIndex < viewerStatuses.length - 1) {
       setViewerIndex((prev) => prev + 1);
@@ -1965,7 +1995,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       // Move to next person's statuses instead of closing
       goToNextPerson();
     }
-  }, [viewerStatuses, viewerIndex, goToNextPerson, recordView]);
+  }, [viewerStatuses, viewerIndex, goToNextPerson, recordView, recordCompleted]);
 
   const goBackViewer = useCallback(() => {
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -2129,7 +2159,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     animRef.current = anim;
     anim.start();
 
-    timerRef.current = setTimeout(advanceViewer, dur);
+    timerRef.current = setTimeout(() => advanceViewer(true), dur);
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);

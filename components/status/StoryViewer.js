@@ -493,7 +493,7 @@ const StatusVideoPlayer = React.memo(function StatusVideoPlayer({
 const StoryMedia = React.memo(function StoryMedia({
   cur, isText, isVideo, isImage, mediaUrl,
   t, paused, videoMuted, videoError, imageError, imageRetry, imageFade,
-  advance, onVideoError, onVideoReady, onVideoProgress, setVideoError, setImageError, setImageRetry,
+  advance, advanceNatural, onVideoError, onVideoReady, onVideoProgress, setVideoError, setImageError, setImageRetry,
   boomerangRef, boomerangStateRef,
 }) {
     if (isText) {
@@ -607,9 +607,9 @@ const StoryMedia = React.memo(function StoryMedia({
               playsInline
               muted={videoMuted}
               loop={isBoomerang}
-              onEnded={isBoomerang ? undefined : advance}
+              onEnded={isBoomerang ? undefined : advanceNatural}
               onError={() => setVideoError(true)}
-              onLoadedMetadata={isBoomerang ? (() => setTimeout(advance, boomerangLoopDurationMs)) : undefined}
+              onLoadedMetadata={isBoomerang ? (() => setTimeout(advanceNatural, boomerangLoopDurationMs)) : undefined}
               style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', backgroundColor: 'transparent' }}
             />
           </View>
@@ -634,7 +634,7 @@ const StoryMedia = React.memo(function StoryMedia({
               liveMuted={videoMuted}
               poster={PosterOverlay}
               paused={paused}
-              onEnd={advance}
+              onEnd={advanceNatural}
               onError={onVideoError}
               onReady={onVideoReady}
               onProgress={onVideoProgress}
@@ -651,9 +651,9 @@ const StoryMedia = React.memo(function StoryMedia({
             resizeMode="contain"
             shouldPlay={!paused}
             isLooping={isBoomerang}
-            onLoad={isBoomerang ? (() => setTimeout(advance, boomerangLoopDurationMs)) : undefined}
+            onLoad={isBoomerang ? (() => setTimeout(advanceNatural, boomerangLoopDurationMs)) : undefined}
             onPlaybackStatusUpdate={(s) => {
-              if (!isBoomerang) { if (s?.didJustFinish) advance(); return; }
+              if (!isBoomerang) { if (s?.didJustFinish) advanceNatural(); return; }
               try {
                 if (s?.didJustFinish && boomerangRef?.current?.setPositionAsync) {
                   boomerangStateRef.current.reversing = !boomerangStateRef.current.reversing;
@@ -1022,6 +1022,10 @@ export default function StoryViewer({
   // dismiss that left users wondering "did I tap something wrong?".
   const [caughtUp, setCaughtUp] = useState(false);
   const caughtUpAnim = useRef(new Animated.Value(0)).current;
+  // Pending 1.4s auto-close armed when the overlay shows. Without the ref the
+  // timeout fired into rewinds and brand-new sessions (viewer reopened within
+  // 1.4s closed itself on top of fresh stories).
+  const caughtUpTimerRef = useRef(null);
   // Save-to-gallery — transient "Salvo na galeria" toast confirms the save
   // worked. Auto-clears after 1.8s. `saving` blocks re-taps while the file
   // is being copied so we don't fire MediaLibrary twice on a slow flush.
@@ -1496,6 +1500,8 @@ export default function StoryViewer({
       lastItemKeyRef.current = null;
       setCaughtUp(false);
       caughtUpAnim.setValue(0);
+      // A close armed in a previous session must not fire into this one.
+      if (caughtUpTimerRef.current) { clearTimeout(caughtUpTimerRef.current); caughtUpTimerRef.current = null; }
       // Fresh viewer session — clear any leftover grace from a previous open.
       replyGraceRef.current = false;
       if (replyGraceTimerRef.current) { clearTimeout(replyGraceTimerRef.current); replyGraceTimerRef.current = null; }
@@ -1504,6 +1510,7 @@ export default function StoryViewer({
       // Modal closed — kill the grace timer so it can't fire against a stale
       // closure after the user already moved on.
       if (replyGraceTimerRef.current) { clearTimeout(replyGraceTimerRef.current); replyGraceTimerRef.current = null; }
+      if (caughtUpTimerRef.current) { clearTimeout(caughtUpTimerRef.current); caughtUpTimerRef.current = null; }
     }
     // Deps: groupIndex (not stories?.length) — the reset must fire on open,
     // explicit startIdx change and group swap, but NOT when the stories array
@@ -1514,8 +1521,45 @@ export default function StoryViewer({
     // length dep silently missed.
   }, [visible, startIdx, groupIndex, caughtUpAnim]);
 
-  const advance = useCallback(() => {
+  // Unmount safety net for the caught-up auto-close — the visible-effect
+  // branches only cover open/close transitions, not the component dying.
+  useEffect(() => () => {
+    if (caughtUpTimerRef.current) { clearTimeout(caughtUpTimerRef.current); caughtUpTimerRef.current = null; }
+  }, []);
+
+  // Completion receipt — fires once per status when playback reaches the end
+  // NATURALLY (timer finished / video ended), never on tap-skip. Pairs with
+  // the backend `completed` writer on status_view (deep-20260807): without
+  // this sender every owner's completion_rate read 0% / exit_rate 100%.
+  // Deduped per id so rewinds/replays don't refire; queued offline with the
+  // same transient/hard-error split as the view receipt above.
+  const completedIdsRef = useRef(new Set());
+  const markCompleted = useCallback((item) => {
+    const _id = item?.id;
+    if (!_id || item._placeholder || String(_id).startsWith('__manifest_') || completedIdsRef.current.has(_id)) return;
+    completedIdsRef.current.add(_id);
+    const _queueCompleted = () => {
+      try {
+        const { queueOfflineAction } = require('../../services/offlineCache');
+        queueOfflineAction({ type: 'status_view', params: { status_id: _id, completed: true } });
+      } catch {}
+    };
+    try {
+      Promise.resolve(api.statusView?.(_id, true)).then((r) => {
+        if (r && r.success === false
+            && !/not_found|already|duplicate|invalid|permission|forbidden|expired/i.test(String(r.message || r.error || ''))) {
+          _queueCompleted();
+        }
+      }).catch(_queueCompleted);
+    } catch {}
+  }, []);
+
+  const advance = useCallback((natural) => {
     setIdx(prev => {
+      // `natural === true` only at real end-of-playback call sites (timer
+      // finished, video onEnd/onEnded/didJustFinish, boomerang loop timeout)
+      // — tap-to-skip and PanResponder paths call advance() bare.
+      if (natural === true) markCompleted(storiesRef.current?.[prev] ?? stories?.[prev]);
       if (prev < (stories?.length || 0) - 1) return prev + 1;
       // Last item of THIS group finished — if there's a next group, jump to
       // it. Caller handles the swap via stories prop change + startIdx=0.
@@ -1533,11 +1577,17 @@ export default function StoryViewer({
         setCaughtUp(true);
         caughtUpAnim.setValue(0);
         Animated.timing(caughtUpAnim, { toValue: 1, duration: 220, useNativeDriver: true }).start();
-        setTimeout(() => { onClose?.(); }, 1400);
+        if (caughtUpTimerRef.current) clearTimeout(caughtUpTimerRef.current);
+        caughtUpTimerRef.current = setTimeout(() => { caughtUpTimerRef.current = null; onClose?.(); }, 1400);
       }
       return prev;
     });
-  }, [stories, onClose, caughtUp, caughtUpAnim, onNextGroup, groupIndex, groupCount]);
+  }, [stories, onClose, caughtUp, caughtUpAnim, onNextGroup, groupIndex, groupCount, markCompleted]);
+
+  // Stable natural-end wrapper handed to StoryMedia → video end handlers.
+  // Passing an inline arrow instead would churn StatusVideoPlayer's memo +
+  // its [player, loop, onEnd] listener effect on every parent render.
+  const advanceNatural = useCallback(() => advance(true), [advance]);
 
   // Stable callbacks handed to the hoisted StatusVideoPlayer so React.memo can
   // skip re-renders on progress ticks. onError clears the spinner + flips the
@@ -1555,6 +1605,12 @@ export default function StoryViewer({
   // Backward navigation: at item 0, if there's a previous group, jump to it.
   // Otherwise stay put (current behavior). Boundary haptic mirrors `advance`.
   const goPrev = useCallback(() => {
+    // Rewinding past the "caught up" overlay: abort the pending auto-close AND
+    // hide the overlay — cancelling only the timer left a black curtain over
+    // the story the user just rewound to.
+    if (caughtUpTimerRef.current) { clearTimeout(caughtUpTimerRef.current); caughtUpTimerRef.current = null; }
+    setCaughtUp(false);
+    caughtUpAnim.setValue(0);
     setIdx(prev => {
       if (prev > 0) return prev - 1;
       if (onPrevGroup && groupIndex > 0) {
@@ -1758,7 +1814,7 @@ export default function StoryViewer({
       useNativeDriver: false,
     });
     animRef.current.start(({ finished }) => {
-      if (finished) advance();
+      if (finished) advance(true);
     });
     return () => { animRef.current?.stop?.(); clearTimeout(imageFadeFloor); };
   }, [visible, idx, paused, stories, advance, onMarkViewed, itemOpacity, imageFade, groupIndex]);
@@ -1927,6 +1983,7 @@ export default function StoryViewer({
       imageRetry={imageRetry}
       imageFade={imageFade}
       advance={advance}
+      advanceNatural={advanceNatural}
       onVideoError={_onVideoError}
       onVideoReady={_onVideoReady}
       onVideoProgress={_onVideoProgress}

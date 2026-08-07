@@ -1134,7 +1134,7 @@ export async function replayOfflineQueue(api) {
           const p = action.params || {};
           if (!p.status_id) break;
           try {
-            const r = await api.statusView(p.status_id);
+            const r = await api.statusView(p.status_id, !!p.completed);
             if (r && r.success === false) {
               const msg = String(r.message || r.error || '');
               const isHardError = /not_found|already|duplicate|invalid|permission|forbidden|expired/i.test(msg);
