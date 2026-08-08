@@ -200,6 +200,12 @@ export default function ChatNewScreen() {
   const [broadcastComposeList, setBroadcastComposeList] = useState(null);
   const [broadcastComposeText, setBroadcastComposeText] = useState('');
   const [broadcastSending, setBroadcastSending] = useState(false);
+  // Idempotency key for the blast — created at first press and held across
+  // thrown-error retries (modal stays open in .catch) so a timeout-then-retry
+  // dedups server-side instead of re-delivering every leg. Cleared whenever
+  // the compose session ends (send resolved or modal dismissed): reusing it
+  // for a NEW text would make the server dedup-drop the new message.
+  const broadcastCmiRef = useRef(null);
 
   // QR modal
   const [showQrModal, setShowQrModal] = useState(false);
@@ -2368,7 +2374,7 @@ export default function ChatNewScreen() {
                 {broadcastComposeList?.name || (t('chat.broadcastList') || 'Lista de transmissão')}
               </Text>
               <TouchableOpacity
-                onPress={() => { if (!broadcastSending) setBroadcastComposeList(null); }}
+                onPress={() => { if (!broadcastSending) { setBroadcastComposeList(null); broadcastCmiRef.current = null; } }}
                 style={{ padding: 8 }}
               >
                 <IconX size={22} color={colors.text} />
@@ -2395,10 +2401,16 @@ export default function ChatNewScreen() {
                 if (!bl || !v) return;
                 const count = (bl.recipients || []).length;
                 setBroadcastSending(true);
-                api.chatBroadcastSend(bl.id, v).then(r => {
+                if (!broadcastCmiRef.current) {
+                  broadcastCmiRef.current = 'bcast_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+                }
+                api.chatBroadcastSend(bl.id, v, 'text', '', '', '', broadcastCmiRef.current).then(r => {
                   setBroadcastSending(false);
                   setBroadcastComposeList(null);
                   setBroadcastComposeText('');
+                  // Session over either way (the modal closes and the text is
+                  // cleared even on failure) — next compose is a new blast.
+                  broadcastCmiRef.current = null;
                   if (r?.success) {
                     safeAlert(
                       t('chat.broadcastSent') || 'Enviado',

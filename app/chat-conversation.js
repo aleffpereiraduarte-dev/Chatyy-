@@ -15365,6 +15365,10 @@ function ChatConversationInner() {
           duration: audioData.duration,
           mime: audioData.voiceSessionMime || 'audio/webm',
           waveform: Array.isArray(audioData.waveform) ? audioData.waveform.slice(0, 64) : null,
+          // Same cmi as the chat_upload fallback below — if this finalize
+          // succeeds server-side but the response is lost, the fallback
+          // dedups against the finalize row instead of landing the audio twice.
+          clientMessageId: audioMsgId,
         });
       }
       if (!r || !r.success) {

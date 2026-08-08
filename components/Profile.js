@@ -3574,6 +3574,15 @@ export default function Profile({
     if (capture?.multi && Array.isArray(capture.items) && capture.items.length > 1) {
       setStatusPublishing(true);
       try {
+        // Picked song used to be dropped on every multi-clip publish —
+        // statusCarouselPublish rides it on the first slide (backend pair).
+        const multiMusic = capture.music ? {
+          title: capture.music.title || capture.music.name || '',
+          artist: capture.music.artist || '',
+          previewUrl: capture.music.previewUrl || capture.music.preview_url || capture.music.url || '',
+          coverUrl: capture.music.coverUrl || capture.music.cover_url || capture.music.artwork || '',
+          startMs: capture.music.startMs ?? capture.music.start_ms ?? 0,
+        } : null;
         const carouselItems = [];
         for (const it of capture.items) {
           const isVideo = it.type === 'video';
@@ -3594,7 +3603,7 @@ export default function Profile({
           } catch (e) { console.warn('[avatar carousel upload]', e?.message); }
         }
         if (carouselItems.length > 0 && api.statusCarouselPublish) {
-          const cr = await api.statusCarouselPublish(carouselItems, { privacy: 'all' });
+          const cr = await api.statusCarouselPublish(carouselItems, { privacy: 'all', music: multiMusic });
           if (cr?.success) {
             invalidateProfileCache(fetchKey);
             setRetryCounter(c => c + 1);

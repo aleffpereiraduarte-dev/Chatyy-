@@ -2323,6 +2323,15 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               if (payload?.multi && Array.isArray(payload.items) && payload.items.length > 1) {
                 setStatusPublishing(true);
                 try {
+                  // Picked song used to be dropped on every multi-clip publish —
+                  // statusCarouselPublish rides it on the first slide (backend pair).
+                  const multiMusic = payload.music ? {
+                    title: payload.music.title || payload.music.name || '',
+                    artist: payload.music.artist || '',
+                    previewUrl: payload.music.previewUrl || payload.music.preview_url || payload.music.url || '',
+                    coverUrl: payload.music.coverUrl || payload.music.cover_url || payload.music.artwork || '',
+                    startMs: payload.music.startMs ?? payload.music.start_ms ?? 0,
+                  } : null;
                   const carouselItems = [];
                   for (const it of payload.items) {
                     const isVideo = it.type === 'video';
@@ -2347,7 +2356,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                   // and a failed/empty publish closed as if it had posted.
                   // Mirrors the multi-capture branch ChatStatusTab ships.
                   if (carouselItems.length > 0 && api.statusCarouselPublish) {
-                    const cr = await api.statusCarouselPublish(carouselItems, { privacy: 'all' });
+                    const cr = await api.statusCarouselPublish(carouselItems, { privacy: 'all', music: multiMusic });
                     if (cr?.success) {
                       load();
                       if (carouselItems.length < payload.items.length) {

@@ -2449,6 +2449,35 @@ export async function deleteEmail(uid, folder = 'INBOX') {
   return apiCall('delete', { uid, folder }, 'POST');
 }
 
+// draftSave — draft_save that survives tab close on web. The compose
+// beforeunload flush used to go through apiCall's plain fetch, which the
+// browser kills on unload — everything typed since the last autosave tick
+// was lost. keepalive lets the request outlive the page (same pattern as
+// markRead below). Guards:
+// - navigator.onLine: apiCall has an offline gate; a raw keepalive fetch
+//   doesn't, and compose re-arms its dirty flag on failure — without this
+//   an offline session would spam a doomed fetch every autosave tick.
+// - ~60 KB body: browsers cap keepalive payloads at 64 KB — bigger drafts
+//   take the normal path (nothing saved on unload, same as before this fix).
+export async function draftSave(params) {
+  if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.onLine !== false) {
+    try {
+      const bodyStr = JSON.stringify({ action: 'draft_save', ...params });
+      if (bodyStr.length < 60000) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+        if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
+        const res = await fetch(`${API_URL}?action=draft_save`, {
+          method: 'POST', headers, body: bodyStr, credentials: 'include', keepalive: true,
+        });
+        // 401 = orphan bearer — fall through to apiCall's auth_refresh self-heal
+        if (res.status !== 401) return await res.json();
+      }
+    } catch {}
+  }
+  return apiCall('draft_save', params, 'POST');
+}
+
 export async function markRead(uid, folder = 'INBOX') {
   // Use keepalive fetch so the request completes even if the user closes the tab
   let result;
@@ -4096,12 +4125,17 @@ export async function chatVoiceSessionChunk(sessionId, chunkIndex, chunkBlob) {
   try { return await resp.json(); } catch { return { success: false, message: 'parse_failed' }; }
 }
 
-export async function chatVoiceSessionFinalize(sessionId, { duration = 0, mime = 'audio/webm', waveform = null } = {}) {
+export async function chatVoiceSessionFinalize(sessionId, { duration = 0, mime = 'audio/webm', waveform = null, clientMessageId = '' } = {}) {
+  // clientMessageId = the SAME cmi the chat_upload fallback sends. The
+  // finalize row carries it so that when a finalize response is lost and the
+  // client falls back to multipart upload, the server's UNIQUE(sender, cmi)
+  // dedup returns the existing row instead of landing the voice note twice.
   return apiCall('chat_voice_session_finalize', {
     session_id: sessionId,
     duration: Math.max(0, Math.round(duration || 0)),
     mime,
     waveform,
+    ...(clientMessageId ? { client_message_id: clientMessageId } : {}),
   }, 'POST');
 }
 
@@ -5481,8 +5515,21 @@ export async function statusMutedList() {
 // statusCarouselPublish — bundle N already-uploaded media items into one
 // multi-slide story. Items must be { type, media_url, content?, caption?,
 // filter?, stickers?, text_overlays?, text_animation?, font_style? }.
-export async function statusCarouselPublish(items, { privacy = 'all' } = {}) {
-  return apiCall('status_carousel_publish', { items, privacy }, 'POST');
+// `music` (same shape statusPublish takes: {title, artist, previewUrl,
+// coverUrl, startMs}) rides on the carousel's first slide server-side —
+// without it every multi-clip recording dropped the picked song.
+export async function statusCarouselPublish(items, { privacy = 'all', music = null } = {}) {
+  const params = { items, privacy };
+  if (music) {
+    params.music_title = music.title || '';
+    params.music_artist = music.artist || '';
+    params.music_preview_url = music.previewUrl || '';
+    params.music_cover_url = music.coverUrl || '';
+    if (music.startMs != null && Number.isFinite(Number(music.startMs))) {
+      params.music_start_ms = Math.max(0, Math.round(Number(music.startMs)));
+    }
+  }
+  return apiCall('status_carousel_publish', params, 'POST');
 }
 
 // statusReact — private emoji reaction on a story. The author is the only
@@ -6284,8 +6331,13 @@ export async function chatBroadcastUpdate(broadcastId, name, members) {
 export async function chatBroadcastDelete(broadcastId) {
   return apiCall('chat_broadcast_delete', { broadcast_id: broadcastId }, 'POST');
 }
-export async function chatBroadcastSend(broadcastId, content, type = 'text', fileUrl = '', fileName = '', fileSize = '') {
-  return apiCall('chat_broadcast_send', { broadcast_id: broadcastId, id: broadcastId, content, type, file_url: fileUrl, file_name: fileName, file_size: fileSize }, 'POST');
+export async function chatBroadcastSend(broadcastId, content, type = 'text', fileUrl = '', fileName = '', fileSize = '', clientMessageId = '') {
+  const params = { broadcast_id: broadcastId, id: broadcastId, content, type, file_url: fileUrl, file_name: fileName, file_size: fileSize };
+  // Idempotency key: server stamps cmi+'_'+cid on each fan-out leg so a
+  // retry of the whole blast dedups already-delivered legs instead of
+  // duplicating them. Must stay STABLE across retries of the same blast.
+  if (clientMessageId) params.client_message_id = clientMessageId;
+  return apiCall('chat_broadcast_send', params, 'POST');
 }
 
 // Channels

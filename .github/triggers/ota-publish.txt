@@ -1,2 +1,2 @@
-2026-08-07T13:12:37Z
-pulse-20260807-090957: re-dispara publish pos-reabilitacao da conta Expo (drena fde5d8ce..9f5d7a6a)
+2026-08-08T07:42:10Z
+deep-20260808-032502: voice/broadcast cmi dedup + musica carrossel + draft keepalive (drena fde5d8ce..HEAD, 10 commits presos)

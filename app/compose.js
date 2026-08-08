@@ -559,6 +559,15 @@ export default function ComposeScreen() {
   const draftTimerRef = useRef(null);
   const draftSavedTimerRef = useRef(null);
   const contentChangedRef = useRef(false);
+  // Reentrance guard: the beforeunload/background flush can fire while an
+  // autosave tick's draft_save is still in flight — two concurrent saves hit
+  // the backend's append-then-delete race and leave a DUPLICATE draft.
+  const draftSavingRef = useRef(false);
+  // Consecutive draft_save failures. Failures re-arm the dirty flag so typed
+  // content isn't silently dropped, but after 3 strikes we stop retrying on
+  // the timer (next keystroke re-arms via the content-change effect) —
+  // precedent: the storage-quota retry storm, pulse-20260723.
+  const draftSaveFailsRef = useRef(0);
   const mountedRef = useIsMounted();
 
   // --- Animated values ---
@@ -805,6 +814,9 @@ export default function ComposeScreen() {
     // Message already sent (or compose discarded) → never re-persist its
     // content as a draft (otherwise it shows up in Drafts as well as Sent).
     if (sentRef.current || discardedRef.current) return;
+    // Save already in flight → skip WITHOUT consuming the dirty flag; the
+    // next tick (or the in-flight save itself) picks the content up.
+    if (draftSavingRef.current) return;
     if (!contentChangedRef.current) return;
     // Never persist a completely empty compose as a draft. If we are
     // editing an existing draft that the user cleared to empty, delete it
@@ -845,12 +857,25 @@ export default function ComposeScreen() {
     }
     contentChangedRef.current = false;
     setDraftStatus('saving');
+    draftSavingRef.current = true;
     try {
-      const r = await api.apiCall('draft_save', {
+      // api.draftSave = keepalive fetch on web so the beforeunload flush
+      // actually completes after the tab closes (plain apiCall was killed
+      // by the browser and everything since the last tick was lost).
+      const r = await api.draftSave({
         subject, to: contactsToString(to), cc: contactsToString(cc),
         bcc: contactsToString(bcc), body,
         draft_uid: draftUidRef.current || undefined,
-      }, 'POST');
+      });
+      if (r?.success) {
+        draftSaveFailsRef.current = 0;
+      } else {
+        // Failure consumed the dirty flag above — re-arm it so the content
+        // is retried next tick instead of silently never saved (3-strike
+        // backoff: see draftSaveFailsRef).
+        draftSaveFailsRef.current += 1;
+        if (draftSaveFailsRef.current < 3) contentChangedRef.current = true;
+      }
       if (!mountedRef.current) return;
       if (r.success && r.data?.draft_uid) draftUidRef.current = r.data.draft_uid;
       setDraftSaved(true);
@@ -862,7 +887,11 @@ export default function ComposeScreen() {
       if (draftSavedTimerRef.current) clearTimeout(draftSavedTimerRef.current);
       draftSavedTimerRef.current = setTimeout(() => setDraftSaved(false), 2000);
     } catch {
+      draftSaveFailsRef.current += 1;
+      if (draftSaveFailsRef.current < 3) contentChangedRef.current = true;
       if (mountedRef.current) setDraftStatus('error');
+    } finally {
+      draftSavingRef.current = false;
     }
   }, [subject, to, cc, bcc, body, contactsToString, isComposeEmpty]);
 
