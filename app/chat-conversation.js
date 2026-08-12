@@ -15129,6 +15129,9 @@ function ChatConversationInner() {
           return swapped;
         }));
         setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+        // Clear the durable pending row now that the server owns the message —
+        // otherwise outboxDrainer re-posts this media as a ghost every tick.
+        removePendingMessage(conversationId, tempId).catch(() => {});
         // [receipt-sync media 2026-06-04] Re-echo to the chat list with the
         // REAL numeric server id. The list's chat_read/message_read watermark
         // guards compare against Number(last_message.id) — with the tempId
@@ -15400,6 +15403,9 @@ function ChatConversationInner() {
         // [#1188 fix] Preserve sender_email on the audio swap so the bubble
         // doesn't flip to incoming when server returns an envelope-mode synth.
         setMessages(prev => prev.map(m => m.id === tempId ? { ...msg, _pending: false, sender_email: msg.sender_email || m.sender_email || currentEmail } : m));
+        // Clear the durable pending row now that the server owns the message —
+        // otherwise outboxDrainer re-posts this audio as a ghost every tick.
+        removePendingMessage(conversationId, tempId).catch(() => {});
         // Relay via WS for instant delivery
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, msg, tempId, getMemberEmails()); } catch {}
         // Task #886 — adopt the just-recorded local audio as the cached copy
@@ -15599,6 +15605,9 @@ function ChatConversationInner() {
         // render it round too.
         const noteMsg = { ...msg, type: 'video_note' };
         setMessages(prev => prev.map(m => m.id === tempId ? { ...noteMsg, _pending: false, sender_email: noteMsg.sender_email || m.sender_email || currentEmail } : m));
+        // Clear the durable pending row now that the server owns the message —
+        // otherwise outboxDrainer re-posts this note as a ghost every tick.
+        removePendingMessage(conversationId, tempId).catch(() => {});
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, noteMsg, tempId, getMemberEmails()); } catch {}
       } else {
         // Queue for auto-retry on reconnect (parity with photo/audio) — before

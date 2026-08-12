@@ -100,6 +100,14 @@ async function drainOnce(reason = 'manual') {
       if (p.next_retry_at && p.next_retry_at > now) continue;
       // Order: don't overtake an earlier message that just failed in this drain.
       if (blockedConvIds.has(p.conversation_id)) continue;
+      // Media rows: replaying without the uploaded file_url inserts a fileless
+      // message under the SAME client_message_id — the real chat_upload then
+      // hits the 23505 dedup, unlinks the blob it just uploaded and returns the
+      // broken row (irreversible media loss). Only replay media when we hold a
+      // server-side URL; local-only rows wait for the upload path (TTL reaps).
+      const fu = String(p.file_url || '');
+      const fuRemote = /^https?:\/\//i.test(fu) || fu.indexOf('/data/') === 0;
+      if (['image', 'video', 'audio', 'voice', 'video_note', 'file'].includes(p.type) && !fuRemote) continue;
       try {
         const clientId = p.client_message_id || p.temp_id;
         const r = await api.chatSend(
@@ -108,7 +116,7 @@ async function drainOnce(reason = 'manual') {
           p.type || 'text',
           p.reply_to_id || null,
           p.mentions || null,
-          null,
+          fuRemote ? fu : null,
           p.temp_id,
           clientId,
         );
