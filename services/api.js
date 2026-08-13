@@ -5518,8 +5518,14 @@ export async function statusMutedList() {
 // `music` (same shape statusPublish takes: {title, artist, previewUrl,
 // coverUrl, startMs}) rides on the carousel's first slide server-side —
 // without it every multi-clip recording dropped the picked song.
-export async function statusCarouselPublish(items, { privacy = 'all', music = null } = {}) {
+export async function statusCarouselPublish(items, { privacy = 'all', music = null, exceptEmails = null } = {}) {
   const params = { items, privacy };
+  // [deep-20260813] privacy='except' is enforced server-side EXCLUSIVELY via
+  // meta.except_emails — without shipping the list, 'except' filtered nobody
+  // and the excluded contacts saw the carousel.
+  if (privacy === 'except' && Array.isArray(exceptEmails) && exceptEmails.length > 0) {
+    params.except_emails = exceptEmails;
+  }
   if (music) {
     params.music_title = music.title || '';
     params.music_artist = music.artist || '';

@@ -1268,20 +1268,31 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       const statusType = item.type || 'text';
       const statusLabel = `\u27A1\uFE0F ${t?.('status.forwardedStatus') || 'Status encaminhado'}`;
 
-      if (statusType === 'image' && item.content) {
-        const imgUrl = (item.content || '').split('\n')[0];
-        const fullUrl = imgUrl.startsWith('/') ? BASE_URL + imgUrl : imgUrl;
-        const caption = (item.content || '').includes('\n') ? (item.content || '').split('\n').slice(1).join('\n') : '';
-        const msg = caption ? `${statusLabel}\n${caption}` : statusLabel;
+      // [deep-20260813] This handler still assumed the LEGACY 'URL\ncaption'
+      // packing inside item.content — but current statuses carry media in
+      // media_url and ONLY the caption in content (the rest of this file
+      // already reads `(it.media_url || it.content)`). With the old shape
+      // checks, a captioned image forwarded the caption TEXT as the file_url
+      // (broken bubble) and a caption-less media item fell through to the
+      // text branch as an empty quote. Prefer media_url, keep content-packing
+      // as the legacy fallback, and resolve /data/ paths via the CDN (they
+      // only exist on media.chatyy.com.br, so BASE_URL + path can 404).
+      const fwdRaw = ((item.media_url || item.content || '')).split('\n')[0];
+      const fwdHasMedia = /^(\/|https?:\/\/)/.test(fwdRaw);
+      const fwdCaption = item.media_url
+        ? (item.content || '').trim()
+        : ((item.content || '').includes('\n') ? (item.content || '').split('\n').slice(1).join('\n') : '');
+
+      if (statusType === 'image' && fwdHasMedia) {
+        const fullUrl = resolveStatusMedia(fwdRaw);
+        const msg = fwdCaption ? `${statusLabel}\n${fwdCaption}` : statusLabel;
         await chatSend(conv.id, msg, 'image', null, null, fullUrl);
-      } else if (statusType === 'video' && item.content) {
-        const vidUrl = (item.content || '').split('\n')[0];
-        const fullUrl = vidUrl.startsWith('/') ? BASE_URL + vidUrl : vidUrl;
+      } else if (statusType === 'video' && fwdHasMedia) {
         // [WA-parity 2026-05-31] Preserve the caption on video forward — the
         // image branch above already carries it, but video dropped everything
         // after the URL (sent only the label). WhatsApp forwards media + caption.
-        const vcaption = (item.content || '').includes('\n') ? (item.content || '').split('\n').slice(1).join('\n') : '';
-        const vmsg = vcaption ? `${statusLabel}\n${vcaption}` : statusLabel;
+        const fullUrl = resolveStatusMedia(fwdRaw);
+        const vmsg = fwdCaption ? `${statusLabel}\n${fwdCaption}` : statusLabel;
         await chatSend(conv.id, vmsg, 'video', null, null, fullUrl);
       } else {
         const statusPreview = (item.content || '').substring(0, 200);
@@ -1515,13 +1526,17 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
         if (!convId) throw new Error('No conversation');
         const statusType = currentItem?.type || 'text';
         const statusLabel = `↩️ ${t?.('status.replyToStatus') || 'Respondeu ao seu status'}`;
-        if (statusType === 'image' && currentItem?.content) {
-          const imgUrl = (currentItem.content || '').split('\n')[0];
-          const fullUrl = imgUrl.startsWith('/') ? BASE_URL + imgUrl : imgUrl;
+        // [deep-20260813] Same media_url-vs-legacy-content shape fix as
+        // handleForwardToConversation above: current statuses carry media in
+        // media_url (content is only the caption), so keying off content sent
+        // caption text as the file_url or dropped the media entirely.
+        const rplRaw = ((currentItem?.media_url || currentItem?.content || '')).split('\n')[0];
+        const rplHasMedia = /^(\/|https?:\/\/)/.test(rplRaw);
+        if (statusType === 'image' && rplHasMedia) {
+          const fullUrl = resolveStatusMedia(rplRaw);
           await chatSend(convId, `${statusLabel}: ${text}`, 'image', null, null, fullUrl);
-        } else if (statusType === 'video' && currentItem?.content) {
-          const vidUrl = (currentItem.content || '').split('\n')[0];
-          const fullUrl = vidUrl.startsWith('/') ? BASE_URL + vidUrl : vidUrl;
+        } else if (statusType === 'video' && rplHasMedia) {
+          const fullUrl = resolveStatusMedia(rplRaw);
           await chatSend(convId, `${statusLabel}: ${text}`, 'video', null, null, fullUrl);
         } else {
           const statusPreview = (currentItem?.content || '').substring(0, 80);
@@ -1879,6 +1894,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     }
   }, [currentGroupIndex, allStatusGroups, progressAnim, closeViewer]);
 
+  // [deep-20260813] Replay signal for the boundary case below: tap-back on the
+  // very first story of the first group changes NO state, but handleViewerTap
+  // has already killed the timer + animation — without a dep flip the timer
+  // effect never re-arms and the viewer freezes (auto-advance dead, bar stuck).
+  const [replayNonce, setReplayNonce] = useState(0);
+
   // Switch to previous person's statuses
   const goToPrevPerson = useCallback(() => {
     const prevIdx = currentGroupIndex - 1;
@@ -1893,6 +1914,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       setIsPaused(false);
       stopStatusAudio();
       progressAnim.setValue(0);
+    } else {
+      // Already at the first group: replay the current item (Instagram
+      // behavior) instead of leaving the viewer frozen with a dead timer.
+      progressAnim.setValue(0);
+      setReplayNonce(n => n + 1);
     }
   }, [currentGroupIndex, allStatusGroups, progressAnim]);
 
@@ -2171,8 +2197,9 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     // never re-ran, so no timer and no progress animation were armed and the
     // story sat frozen at 0% with auto-advance dead. Keep .length (not the
     // array) — recordView rewrites viewerStatuses on every viewed item and
-    // would otherwise restart the timer mid-story.
-  }, [viewerVisible, viewerIndex, viewerStatuses.length, isPaused, videoDurationMs, viewerOwnerEmail]);
+    // would otherwise restart the timer mid-story. replayNonce re-arms the
+    // timer on the first-story tap-back boundary (see goToPrevPerson).
+  }, [viewerVisible, viewerIndex, viewerStatuses.length, isPaused, videoDurationMs, viewerOwnerEmail, replayNonce]);
 
   // Tap left half = previous, right half = next
   const handleViewerTap = useCallback((evt) => {
@@ -2467,7 +2494,14 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
           } catch (e) { console.warn('[carousel upload]', e?.message); }
         }
         if (carouselItems.length > 0 && api.statusCarouselPublish) {
-          const cr = await api.statusCarouselPublish(carouselItems, { privacy: 'all', music: multiMusic });
+          // [deep-20260813] Was hardcoded { privacy: 'all' } — a multi-clip
+          // capture silently discarded the composer's picked privacy
+          // (close_friends/except) and published to everyone.
+          const cr = await api.statusCarouselPublish(carouselItems, {
+            privacy: statusPrivacy !== 'all' ? statusPrivacy : 'all',
+            music: multiMusic,
+            exceptEmails: (statusPrivacy === 'except' && exceptEmails.length > 0) ? exceptEmails : null,
+          });
           if (cr?.success) {
             loadStatuses();
             // Partial publish (some uploads failed) — say so, like ChatListTab.
@@ -2545,7 +2579,9 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     } finally {
       setPublishing(false);
     }
-  }, [loadStatuses]);
+    // statusPrivacy/exceptEmails: the multi-clip carousel branch now honors
+    // the composer privacy instead of hardcoding 'all' (deep-20260813).
+  }, [loadStatuses, statusPrivacy, exceptEmails, t]);
 
   const publishStatus = useCallback(async () => {
     if (publishing) return;
@@ -2743,7 +2779,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
       // Single-item carousels still publish, but we could also fall back
       // to the classic status_publish path. Kept unified for simplicity.
-      const cr = await api.statusCarouselPublish?.(items, { privacy: statusPrivacy !== 'all' ? statusPrivacy : 'all' });
+      // [deep-20260813] Ship the exclusion list — 'except' is enforced
+      // server-side only via meta.except_emails; privacy alone filters nobody.
+      const cr = await api.statusCarouselPublish?.(items, {
+        privacy: statusPrivacy !== 'all' ? statusPrivacy : 'all',
+        exceptEmails: (statusPrivacy === 'except' && exceptEmails.length > 0) ? exceptEmails : null,
+      });
       if (cr?.success) {
         loadStatuses();
         if (items.length < assets.length) {
@@ -2757,7 +2798,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     } finally {
       setPublishing(false);
     }
-  }, [publishing, statusPrivacy, loadStatuses, t]);
+  }, [publishing, statusPrivacy, exceptEmails, loadStatuses, t]);
 
   const deleteMyStatus = useCallback(async (statusId) => {
     try {
