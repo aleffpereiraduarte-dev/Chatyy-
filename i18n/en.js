@@ -7144,6 +7144,7 @@ export default {
   // Multi-language status
   'status.translate': 'Translate',
   'status.original': 'See original',
+  'status.voiceStatus': 'Voice message',
 
   // Phone signup
   'signupPhone.countryLabel': 'Country',

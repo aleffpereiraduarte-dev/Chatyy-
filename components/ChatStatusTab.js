@@ -2054,7 +2054,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     const item = viewerStatuses[viewerIndex];
     if (!item) return undefined;
     const isVideo = item.type === 'video';
-    const musicUrl = !isVideo ? (item.music_preview_url || '') : '';
+    // Voice/audio status: the recording itself IS the audio track — play the
+    // media_url through the same music pipeline (StoryViewer does the same via
+    // StatusMusicPlayer url={isVoice ? mediaUrl : music_preview_url}).
+    const isVoice = item.type === 'voice' || item.type === 'audio';
+    const voiceUrl = isVoice ? resolveStatusMedia(((item.media_url || item.content || '')).split('\n')[0]) : '';
+    const musicUrl = isVoice ? voiceUrl : (!isVideo ? (item.music_preview_url || '') : '');
     if (!musicUrl || isPaused) return undefined;
     // playStatusAudio: web → HTMLAudio; native → sets _nativeAudioUrl which
     // the registered callback pipes into setNativeAudioSrc → <NativeAudioPlayer>
@@ -2171,7 +2176,10 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
     const item = viewerStatuses[viewerIndex];
     const isVid = item?.type === 'video';
-    const dur = isVid && videoDurationMs > 0 ? videoDurationMs : STATUS_DURATION;
+    // Voice/audio statuses hold 30s so the recorded note isn't cut off by the
+    // 5s image cadence (mirrors StoryViewer's _isVoiceStatus duration floor).
+    const isVoiceItem = item?.type === 'voice' || item?.type === 'audio';
+    const dur = isVid && videoDurationMs > 0 ? videoDurationMs : (isVoiceItem ? 30000 : STATUS_DURATION);
 
     progressAnim.setValue(0);
     const anim = Animated.timing(progressAnim, {
@@ -4070,6 +4078,37 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     );
                   })()}
                 </View>
+              ) : (currentViewerItem?.type === 'voice' || currentViewerItem?.type === 'audio') ? (
+                // Voice-only status: mic disc + static waveform canvas (audio
+                // itself plays via the music effect above). Mirrors
+                // StoryViewer's VoiceStatusMedia; without this branch the
+                // ternary fell to null = silent black screen.
+                (() => {
+                  const rawBg = currentViewerItem?.bgColor || currentViewerItem?.background || currentViewerItem?.bg_color;
+                  const bg = (rawBg && /^#|rgb/.test(String(rawBg))) ? rawBg : '#7C3AED';
+                  const bars = [10, 18, 26, 16, 30, 22, 34, 20, 28, 14, 24, 32, 18, 26, 12, 22, 30, 16, 24, 20];
+                  const caption = (currentViewerItem?.content || '').trim();
+                  return (
+                    <View style={{ flex: 1, width: '100%', backgroundColor: bg, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+                      <View style={{ width: 108, height: 108, borderRadius: 54, backgroundColor: 'rgba(255,255,255,0.16)', alignItems: 'center', justifyContent: 'center', marginBottom: 26 }}>
+                        <View style={{ width: 84, height: 84, borderRadius: 42, backgroundColor: 'rgba(255,255,255,0.22)', alignItems: 'center', justifyContent: 'center' }}>
+                          <IconMic size={40} color="#fff" />
+                        </View>
+                      </View>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, height: 40 }}>
+                        {bars.map((h, i) => (
+                          <View key={i} style={{ width: 4, height: h, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.85)' }} />
+                        ))}
+                      </View>
+                      <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 14, fontWeight: '600', marginTop: 24, letterSpacing: 0.3 }}>
+                        {t('status.voiceStatus') || 'Mensagem de voz'}
+                      </Text>
+                      {!!caption && (
+                        <Text style={{ color: '#fff', fontSize: 16, fontWeight: '500', marginTop: 12, textAlign: 'center' }} numberOfLines={3}>{caption}</Text>
+                      )}
+                    </View>
+                  );
+                })()
               ) : null}
 
               {/* Music overlay — shows song title + artist when status has music */}

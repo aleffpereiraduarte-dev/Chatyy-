@@ -7229,6 +7229,7 @@ export default {
   // Multi-language status
   'status.translate': 'Traduzir',
   'status.original': 'Ver original',
+  'status.voiceStatus': 'Mensagem de voz',
 
   // Status caught-up empty state (last screen after viewing all)
   'status.caughtUp': 'Tudo em dia',

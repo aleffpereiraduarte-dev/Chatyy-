@@ -29332,7 +29332,12 @@ function ChatConversationInner() {
                     // Navigate to the contact picker in pick-mode; one-tap
                     // on a contact there calls chatAddMember + returns here.
                     setShowGroupInfo(false);
-                    router.push({ pathname: '/chat-new', params: { addMemberToConv: String(conversationId) } });
+                    // Carry type+name so the picker can restore them on its
+                    // replace back — with only `id`, the screen remounted as
+                    // type='direct' (params.type fallback): header peek broke,
+                    // @mentions died and the call button dialed the first
+                    // roster member as a 1:1 call.
+                    router.push({ pathname: '/chat-new', params: { addMemberToConv: String(conversationId), addMemberConvType: conversationType, addMemberConvName: conversationName || '' } });
                   }}
                   style={{ flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 }}
                 >

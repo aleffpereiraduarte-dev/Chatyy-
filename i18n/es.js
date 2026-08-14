@@ -7160,6 +7160,7 @@ export default {
   // Multi-language status
   'status.translate': 'Traducir',
   'status.original': 'Ver original',
+  'status.voiceStatus': 'Mensaje de voz',
 
   // Registro por teléfono
   'signupPhone.countryLabel': 'País',

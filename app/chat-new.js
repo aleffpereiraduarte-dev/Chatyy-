@@ -808,7 +808,11 @@ export default function ChatNewScreen() {
         try {
           const r = await api.chatAddMember(addMemberConvId, contact.email);
           if (r?.success) {
-            router.replace({ pathname: '/chat-conversation', params: { id: String(addMemberConvId) } });
+            // Restore type+name on the way back — replacing with only `id`
+            // remounted the group as type='direct' (chat-conversation falls
+            // back to 'direct' when params.type is absent). 'group' fallback:
+            // pick-mode only ever starts from the group/channel info modal.
+            router.replace({ pathname: '/chat-conversation', params: { id: String(addMemberConvId), type: pageParams.addMemberConvType || 'group', name: pageParams.addMemberConvName || '' } });
           } else {
             safeAlert(t('common.error') || 'Erro', r?.message || 'Falha ao adicionar');
           }
