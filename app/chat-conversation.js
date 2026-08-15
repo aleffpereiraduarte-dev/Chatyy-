@@ -17781,7 +17781,13 @@ function ChatConversationInner() {
   const handleSaveMedia = async (msg) => {
     setSelectedMsg(null);
     if (!msg) return;
-    const url = msg.file_url || msg.content;
+    let url = msg.file_url || msg.content;
+    // Server rows often carry a relative file_url (/data/chat-files/...) — the
+    // same shape the fallbacks below resolve. Resolve it here too instead of
+    // rejecting the save outright.
+    if (typeof url === 'string' && url.startsWith('/') && !url.startsWith('//')) {
+      url = `https://chatyy.com.br${url}`;
+    }
     if (!url || typeof url !== 'string' || !/^https?:\/\//i.test(url)) {
       safeAlert(t('common.error') || 'Erro', t('chatConv.saveMediaError') || 'Nenhuma mídia para salvar');
       return;

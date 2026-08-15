@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, Modal, Image, ActivityIndicator,
   Platform, StyleSheet,
@@ -205,6 +205,9 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(false);
   const [viewerItem, setViewerItem] = useState(null);
+  // Guards against a slow request for a previous tab resolving after the user
+  // switched tabs (stale response would overwrite the active tab's items).
+  const loadSeqRef = useRef(0);
 
   const tabLabels = {
     image: t?.('chat.photos') || 'Fotos',
@@ -218,11 +221,14 @@ export default function MediaGallery({ visible, onClose, conversationId, colors,
   }, [visible, activeTab, conversationId]);
 
   const loadMedia = async (type) => {
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const r = await api.chatMediaGallery(conversationId, type);
+      if (seq !== loadSeqRef.current) return;
       setItems(r.success ? (r.data?.items || []) : []);
     } catch (e) {
+      if (seq !== loadSeqRef.current) return;
       console.warn('MediaGallery loadMedia error:', e);
       setItems([]);
     }
