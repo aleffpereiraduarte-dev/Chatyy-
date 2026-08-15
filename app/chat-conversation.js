@@ -59,7 +59,7 @@ import ChatMedia from '../components/ChatMedia';
 import AvatarCircle from '../components/AvatarCircle';
 import AvatarLightbox from '../components/AvatarLightbox';
 import OngoingCallChip from '../components/OngoingCallChip';
-import { registerAudioPlayer, stopAllAudio } from '../services/audioManager';
+import { registerAudioPlayer, stopAllAudio, stopOtherAudio } from '../services/audioManager';
 import { getCachedAudioUri } from '../services/audioCache';
 import Profile from '../components/Profile';
 import { MentionAutocomplete, isMentioning, insertMention, isUserMentioned } from '../components/MentionInput';
@@ -3128,6 +3128,9 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
           if (intervalRef.current) clearInterval(intervalRef.current);
           return;
         }
+        // Single-audio rule: pause any other voice note before this one
+        // starts (own stopPlayback excepted — it's the registered fn).
+        stopOtherAudio(stopPlayback);
         if (!soundRef.current) {
           const playUri = await resolvePlayUri();
           if (!isMountedRef.current) return;
@@ -3219,6 +3222,8 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
         if (intervalRef.current) clearInterval(intervalRef.current);
         return;
       }
+      // Single-audio rule (native): pause any other voice note first.
+      stopOtherAudio(stopPlayback);
       if (!soundRef.current) {
         const playUri = await resolvePlayUri();
         if (!isMountedRef.current) return;
@@ -15226,28 +15231,30 @@ function ChatConversationInner() {
             _errMsg.includes('init_failed') ||
             /\b50[023]\b|\b504\b|\b429\b/.test(_errMsg)
           );
-          // Persist falha pra retry automático quando net voltar. Áudio + texto
-          // já tinham essa rede de proteção (handleSendAudio L11541, handleSend
-          // L10546); foto/video ficavam só como _failed e morriam se o user
-          // fechasse o app antes de tocar no balão vermelho. Agora replay-
-          // OfflineQueue (próximo foreground / OfflineNotice / reconnect)
-          // dispara o upload de novo via case 'chat_file_upload'.
-          try {
-            const { queueOfflineAction } = require('../services/offlineCache');
-            await queueOfflineAction({
-              type: 'chat_file_upload',
-              conversation_id: conversationId,
-              uri: file?.uri || localUri,
-              name: file?.name || '',
-              file_type: file?.type || '',
-              msg_type: fileType,
-              client_message_id: msgId,
-              temp_id: tempId,
-              caption: caption || '',
-              view_once: forceViewOnce ? 1 : 0,
-            });
-          } catch {}
           if (_isNetwork) {
+            // Persist falha pra retry automático quando net voltar. Áudio + texto
+            // já tinham essa rede de proteção (handleSendAudio L11541, handleSend
+            // L10546); foto/video ficavam só como _failed e morriam se o user
+            // fechasse o app antes de tocar no balão vermelho. Agora replay-
+            // OfflineQueue (próximo foreground / OfflineNotice / reconnect)
+            // dispara o upload de novo via case 'chat_file_upload'.
+            // SÓ falha transiente entra na fila — hard reject (413/415/403)
+            // re-uploadaria o arquivo inteiro a cada replay pra falhar igual.
+            try {
+              const { queueOfflineAction } = require('../services/offlineCache');
+              await queueOfflineAction({
+                type: 'chat_file_upload',
+                conversation_id: conversationId,
+                uri: file?.uri || localUri,
+                name: file?.name || '',
+                file_type: file?.type || '',
+                msg_type: fileType,
+                client_message_id: msgId,
+                temp_id: tempId,
+                caption: caption || '',
+                view_once: forceViewOnce ? 1 : 0,
+              });
+            } catch {}
             // Silent offline path — bubble keeps the WhatsApp ⏱ clock icon
             // (MediaStatusFooter: _pending && !_failed). When the device
             // reconnects, NetInfo listener in OfflineNotice triggers

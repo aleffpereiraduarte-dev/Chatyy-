@@ -24,6 +24,21 @@ export function registerMediaPlayer(stopFn) {
   return () => _mediaPlayers.delete(stopFn);
 }
 
+// Stop every registered voice player EXCEPT the caller's own stop fn.
+// Called by AudioPlayer right before starting playback so two voice notes
+// never play on top of each other (WhatsApp parity). Deliberately does NOT
+// touch media players, ringtone, or the audio session — those belong to
+// stopAllAudio()'s call-start path (which flips allowsRecording on).
+export function stopOtherAudio(exceptFn) {
+  _players.forEach(fn => {
+    if (fn === exceptFn) return;
+    try {
+      const r = fn();
+      if (r && typeof r.catch === 'function') r.catch(() => {});
+    } catch {}
+  });
+}
+
 export function stopAllAudio() {
   // Stop all registered players (expo-av, expo-audio instances)
   // stopFn pode retornar Promise — engole rejection pra evitar unhandled.

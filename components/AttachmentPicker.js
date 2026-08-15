@@ -61,8 +61,12 @@ export default function AttachmentPicker({
 
   // ── Validation ────────────────────────────────────────────────────────
 
-  const validate = useCallback((file) => {
-    if (attachments.length >= maxFiles) {
+  // `batch` = files already accepted in the SAME picker session. The
+  // `attachments` prop is frozen for the whole loop (parent state hasn't
+  // re-rendered yet), so without it a multi-select bypasses maxFiles and
+  // the duplicate check.
+  const validate = useCallback((file, batch = []) => {
+    if (attachments.length + batch.length >= maxFiles) {
       setError(t('attachment.maxFiles', { count: maxFiles }));
       return false;
     }
@@ -71,7 +75,8 @@ export default function AttachmentPicker({
       return false;
     }
     // reject duplicates by name + size
-    if (attachments.some(a => a.name === file.name && a.size === file.size)) {
+    if (attachments.some(a => a.name === file.name && a.size === file.size) ||
+        batch.some(a => a.name === file.name && a.size === file.size)) {
       setError(t('attachment.duplicate', { name: file.name }));
       return false;
     }
@@ -84,6 +89,7 @@ export default function AttachmentPicker({
   const handleWebFiles = useCallback((e) => {
     const fileList = e.target.files;
     if (!fileList) return;
+    const batch = [];
     for (let i = 0; i < fileList.length; i++) {
       const raw = fileList[i];
       const objUrl = URL.createObjectURL(raw);
@@ -95,8 +101,9 @@ export default function AttachmentPicker({
         uri: objUrl,
         _raw: raw,  // keep the original File object for FormData uploads
       };
-      if (validate(file)) {
+      if (validate(file, batch)) {
         onAdd && onAdd(file);
+        batch.push(file);
       }
     }
     // reset so re-selecting the same file triggers onChange again
@@ -123,6 +130,7 @@ export default function AttachmentPicker({
       });
       if (result.canceled) return;
       const assets = result.assets || (result.uri ? [result] : []);
+      const batch = [];
       assets.forEach((asset) => {
         const file = {
           name: asset.name,
@@ -130,8 +138,9 @@ export default function AttachmentPicker({
           type: asset.mimeType || asset.type || 'application/octet-stream',
           uri: asset.uri,
         };
-        if (validate(file)) {
+        if (validate(file, batch)) {
           onAdd && onAdd(file);
+          batch.push(file);
         }
       });
     } catch (err) {
@@ -167,9 +176,9 @@ export default function AttachmentPicker({
 
   const confirmDriveSelection = useCallback(() => {
     const picked = driveFiles.filter(f => driveSelection[String(f.id)]);
-    let added = 0;
+    const batch = [];
     for (const f of picked) {
-      if (attachments.length + added >= maxFiles) break;
+      if (attachments.length + batch.length >= maxFiles) break;
       // Build a "reference" attachment carrying the authenticated Drive
       // download URL. sendEmail() materializes the bytes right before the
       // multipart upload (the backend `send` only reads real attachment_N
@@ -186,9 +195,9 @@ export default function AttachmentPicker({
         uri: downloadUrl,
         is_drive_ref: true,
       };
-      if (validate(ref)) {
+      if (validate(ref, batch)) {
         onAdd && onAdd(ref);
-        added++;
+        batch.push(ref);
       }
     }
     setShowDrive(false);
