@@ -3630,6 +3630,7 @@ export default {
   'chatConv.members': 'Members',
   'chatConv.leaveGroup': 'Leave group',
   'chatConv.leaveGroupConfirm': 'Are you sure you want to leave this group?',
+  'chatConv.leaveGroupError': 'Could not leave the group. Please try again.',
   'chatConv.leave': 'Leave',
   'chatConv.removeMember': 'Remove member',
   'chatConv.removeMemberConfirm': 'Remove {name} from the group?',

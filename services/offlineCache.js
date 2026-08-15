@@ -433,8 +433,15 @@ export async function removeFromQueue(actionId) {
 export async function removeChatSendFromQueueByClientMsgId(clientMsgId) {
   if (!clientMsgId) return;
   const queue = getJSON(QUEUE_KEY) || [];
+  // Match every send-shaped action for this message, not just chat_send —
+  // failed media queues as chat_file_upload/chat_audio_upload with the same
+  // client_message_id, and leaving those behind meant a photo/audio the user
+  // explicitly deleted ("Limpar") re-uploaded and re-posted on the next
+  // replayOfflineQueue (the ghost class the delete handlers purge everywhere
+  // else). cmi is unique per message, so type doesn't disambiguate anything.
+  const SEND_TYPES = ['chat_send', 'chat_file_upload', 'chat_audio_upload'];
   const filtered = queue.filter(a =>
-    !(a?.type === 'chat_send' && a?.client_message_id === clientMsgId)
+    !(SEND_TYPES.includes(a?.type) && a?.client_message_id === clientMsgId)
   );
   if (filtered.length !== queue.length) setJSON(QUEUE_KEY, filtered);
 }

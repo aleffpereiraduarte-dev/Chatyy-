@@ -3653,6 +3653,7 @@ export default {
   'chatConv.members': 'Membros',
   'chatConv.leaveGroup': 'Sair do grupo',
   'chatConv.leaveGroupConfirm': 'Tem certeza que deseja sair deste grupo?',
+  'chatConv.leaveGroupError': 'Não foi possível sair do grupo. Tente novamente.',
   'chatConv.leave': 'Sair',
   'chatConv.removeMember': 'Remover membro',
   'chatConv.removeMemberConfirm': 'Remover {name} do grupo?',

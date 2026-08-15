@@ -17408,8 +17408,12 @@ function ChatConversationInner() {
       if (r.success) {
         setShowGroupInfo(false);
         router.back();
+      } else {
+        safeAlert(t('common.error') || 'Erro', r?.message || t('chatConv.leaveGroupError') || 'Não foi possível sair do grupo');
       }
-    } catch {}
+    } catch (e) {
+      safeAlert(t('common.error') || 'Erro', String(e?.message || t('chatConv.leaveGroupError') || 'Não foi possível sair do grupo'));
+    }
   };
 
   const handleGenerateInviteLink = async (regenerate = false) => {
@@ -26055,8 +26059,13 @@ function ChatConversationInner() {
 
       {/* Multi-Select Toolbar removed — actions moved into the selection header at top */}
 
-      {/* Channel: only admins can send */}
-      {conversationType === 'channel' && !members.find(m => m.email === currentEmail && m.role === 'admin') ? (
+      {/* Channel: only admins can send. Groups with admin-only mode get the
+          same banner — before this, a non-admin member kept a live composer
+          and every send died on the backend 403 (admin_only) with no feedback.
+          Group check requires the member row to be loaded (fail-open while
+          members === []), so the composer never hides during initial load. */}
+      {(conversationType === 'channel' && !members.find(m => m.email === currentEmail && m.role === 'admin')) ||
+       (conversationType === 'group' && adminOnlyMessages && members.some(m => m.email === currentEmail && m.role !== 'admin')) ? (
         <View style={{ paddingVertical: 14, paddingHorizontal: 20, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border, alignItems: 'center' }}>
           <Text style={{ color: colors.textTertiary, fontSize: 14 }}>{t('chat.onlyAdmins')}</Text>
         </View>
@@ -26068,7 +26077,8 @@ function ChatConversationInner() {
           native module crash, undefined URI) crashed the whole chat-conversation
           tree. ErrorBoundary catches the render error and shows a friendly fallback
           with a "Cancelar" button so the user can recover without restarting the app. */}
-      {(conversationType !== 'channel' || members.find(m => m.email === currentEmail && m.role === 'admin')) && (isRecording ? (
+      {(conversationType !== 'channel' || members.find(m => m.email === currentEmail && m.role === 'admin')) &&
+       !(conversationType === 'group' && adminOnlyMessages && members.some(m => m.email === currentEmail && m.role !== 'admin')) && (isRecording ? (
         <View style={{ paddingBottom: keyboardHeight > 0 ? 0 : Math.max(insets.bottom, Spacing.sm) }}>
           <ErrorBoundary onReset={() => setIsRecording(false)}>
             <AudioRecorder
