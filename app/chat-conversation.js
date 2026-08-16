@@ -8936,6 +8936,43 @@ function ChatConversationInner() {
   const membersRef = useRef([]);
   useEffect(() => { membersRef.current = members; }, [members]);
   const getMemberEmails = useCallback(() => membersRef.current.map(m => m.email).filter(Boolean), []);
+  // [deep-20260816-032528] `members` was only set on open/local actions — a
+  // member removed by an admin on ANOTHER device stayed in membersRef, so the
+  // client-side relay (getMemberEmails → relayChatMessage) kept delivering new
+  // messages straight to the REMOVED member until remount. Fold the
+  // member_join/member_leave sync events into the roster: leave prunes locally
+  // (the privacy-critical direction, no network); join does one throttled
+  // authoritative refetch (member rows carry name/avatar/role the event lacks).
+  const rosterRefetchAtRef = useRef(0);
+  const applyRosterEvents = useCallback((events) => {
+    if (!Array.isArray(events) || !events.length) return;
+    let gone = null; let joined = false;
+    for (const ev of events) {
+      if (!ev) continue;
+      if (ev.type === 'member_leave') {
+        // Kick carries payload.removed_email; a voluntary chat_leave only
+        // identifies the leaver as the event actor.
+        const em = String(ev.payload?.removed_email || ev.actor || '').toLowerCase();
+        if (em) { if (!gone) gone = new Set(); gone.add(em); }
+      } else if (ev.type === 'member_join') { joined = true; }
+    }
+    if (gone) {
+      setMembers(prev => {
+        if (!Array.isArray(prev) || !prev.length) return prev;
+        const next = prev.filter(m => !gone.has(String(m?.email || '').toLowerCase()));
+        return next.length === prev.length ? prev : next;
+      });
+    }
+    if (joined) {
+      const now = Date.now();
+      if (now - rosterRefetchAtRef.current > 5000) {
+        rosterRefetchAtRef.current = now;
+        api.chatMembers(conversationId).then(r => {
+          if (mountedRef.current && r?.success && Array.isArray(r.data?.members)) setMembers(r.data.members);
+        }).catch(() => {});
+      }
+    }
+  }, [conversationId]);
   const [editGroupName, setEditGroupName] = useState('');
 
   // Screen context for One AI — uses refs to avoid TDZ in minified bundle.
@@ -10668,6 +10705,7 @@ function ChatConversationInner() {
               const c2 = r2?.[0];
               if (c2 && Array.isArray(c2.events) && c2.events.length > 0 && mountedRef.current) {
                 applyEvents2(c2.events, null, setMessages, c2.messages || []);
+                applyRosterEvents(c2.events);
               }
               if (c2 && Number(c2.latest_pts) > 0) {
                 try {
@@ -10708,6 +10746,7 @@ function ChatConversationInner() {
         }
         if (c && Array.isArray(c.events) && c.events.length > 0) {
           applyEvents(c.events, null, setMessages, c.messages || []);
+          applyRosterEvents(c.events);
         }
         // Advance the pts watermark so the next sync only fetches truly
         // new events. Without this the initial sync would re-pull the
@@ -11333,6 +11372,7 @@ function ChatConversationInner() {
             if (!c || c.denied) return;
             if (Array.isArray(c.events) && c.events.length > 0) {
               applyEvents(c.events, null, setMessages, c.messages || []);
+              applyRosterEvents(c.events);
             }
             // [2026-07-02 watermark P1] has_more ⇒ the server truncated the page;
             // jumping the watermark to latest_pts would permanently skip every
@@ -12382,6 +12422,7 @@ function ChatConversationInner() {
                 const c = results?.[0];
                 if (c && Array.isArray(c.events) && c.events.length > 0) {
                   applyEvents(c.events, null, setMessages, c.messages || []);
+                  applyRosterEvents(c.events);
                   // [2026-07-02 watermark P1] has_more ⇒ the page was truncated;
                   // advancing to latest_pts would skip the un-returned tail
                   // forever. Advance only to the max pts actually received, and
@@ -14957,8 +14998,12 @@ function ChatConversationInner() {
       // already <800KB AND NOT HEIC (HEIC must always transcode — recipients
       // on Android/Chrome can't decode it, so the bubble shows blank).
       const _isHeic = /\.heic$|\.heif$/i.test(file.name || file.uri || '') || /heic|heif/i.test(file.type || '');
+      // [deep-20260816-032528] GIF is excluded: ImageManipulator emits a
+      // single JPEG frame, which froze animated GIFs sent from the native
+      // picker (>800KB ones). GIF carries no EXIF, so nothing is lost.
+      const _isGifFile = /\.gif$/i.test(file.name || file.uri || '') || /image\/gif/i.test(file.type || '');
       const _shouldCompress = Platform.OS !== 'web' && fileType === 'image' && file.uri && uploadAttempt === 1
-        && (_isHeic || (file.size || 0) > 800 * 1024);
+        && !_isGifFile && (_isHeic || (file.size || 0) > 800 * 1024);
       if (_shouldCompress) {
         try {
           const ImageManipulator = require('expo-image-manipulator');
@@ -28556,7 +28601,13 @@ function ChatConversationInner() {
             } catch { return true; }
           })();
           const kickoff = async (f, cap, stripExif) => {
-            if (Platform.OS === 'web' && isImage(f) && f.blob) {
+            // [deep-20260816-032528] GIFs must NEVER go through the canvas /
+            // ImageManipulator re-encode: both output a single JPEG frame, so
+            // an animated GIF arrived as a frozen still (with .gif name/type
+            // wrapping JPEG bytes on web). GIF has no EXIF/GPS chunk, so
+            // skipping the strip pass loses nothing.
+            const _isGif = /\.gif$/i.test(f.name || f.uri || '') || /image\/gif/i.test(f.type || '');
+            if (Platform.OS === 'web' && isImage(f) && f.blob && !_isGif) {
               try {
                 // Adaptive compression: cellular drops quality and dimensions
                 // to keep upload time bounded; wifi uses default. HD mode
@@ -28589,7 +28640,7 @@ function ChatConversationInner() {
             // non-HEIC). Re-encode through ImageManipulator drops EXIF.
             // HEIC + >800KB cases are already re-encoded inside
             // uploadAndSendFile so EXIF gets stripped there for free.
-            if (stripExif && Platform.OS !== 'web' && isImage(f) && f.uri) {
+            if (stripExif && Platform.OS !== 'web' && isImage(f) && f.uri && !_isGif) {
               try {
                 const fSize = f.size || 0;
                 const _isHeic = /\.heic$|\.heif$/i.test(f.name || f.uri || '') || /heic|heif/i.test(f.type || '');
