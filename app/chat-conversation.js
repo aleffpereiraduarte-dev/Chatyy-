@@ -5341,10 +5341,25 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
     setActiveIdx(i);
   };
 
-  const handleSendPress = () => {
+  const handleSendPress = async () => {
     // Hand the whole (possibly-edited, possibly-pruned) batch to the parent
     // so it can fire one uploadAndSendFile per file with the shared batch id.
-    const outFiles = files.map((f, i) => edits[i] ? { ...f, uri: edits[i] } : f);
+    // Web: kickoff() and every uploader prefer f._raw/f.blob over f.uri, so a
+    // stale original blob would silently discard a crop/rotate — rebuild the
+    // blob from the edited uri (data:/blob: URLs are fetchable in-browser).
+    // Native keeps blob=null, so the edited uri already wins there.
+    const outFiles = await Promise.all(files.map(async (f, i) => {
+      if (!edits[i]) return f;
+      const out = { ...f, uri: edits[i], _raw: null };
+      if (Platform.OS === 'web' && (f.blob || f._raw)) {
+        try {
+          out.blob = await fetch(edits[i]).then(r => r.blob());
+          out.size = out.blob.size;
+          out.type = out.blob.type || f.type;
+        } catch (_) {}
+      }
+      return out;
+    }));
     // Flush the active buffer into the map, then build a per-index caption
     // array aligned to `files` so each photo sends with its own legend.
     const finalCaps = { ...captions, [activeIdx]: caption };

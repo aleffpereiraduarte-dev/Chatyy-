@@ -183,46 +183,53 @@ export default function HighlightEditSheet({
   }, [highlight, onUpdated, T]);
 
   const removeItem = useCallback((statusId) => {
+    const doRemove = async () => {
+      try {
+        const r = await api.statusHighlightRemoveStatus?.(highlight.id, statusId);
+        if (r?.success) {
+          setItems(prev => {
+            const next = prev.filter(x => Number(x.id) !== Number(statusId));
+            const cached = _hlCache.get(highlight.id);
+            if (cached) _hlCache.set(highlight.id, { ...cached, items: next });
+            return next;
+          });
+        }
+      } catch {}
+    };
+    // react-native-web's Alert is a no-op stub, so button callbacks never fire
+    // — on web this made remove/delete completely dead. Same guard as the
+    // archive flow in ChatStatusTab.
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(T('profile.highlightRemoveTitle', 'Remover deste destaque?'))) doRemove();
+      return;
+    }
     Alert.alert(
       T('profile.highlightRemoveTitle', 'Remover deste destaque?'),
       T('profile.highlightRemoveHint', 'O status original continua no seu perfil.'),
       [
         { text: T('common.cancel', 'Cancelar'), style: 'cancel' },
-        {
-          text: T('common.remove', 'Remover'), style: 'destructive',
-          onPress: async () => {
-            try {
-              const r = await api.statusHighlightRemoveStatus?.(highlight.id, statusId);
-              if (r?.success) {
-                setItems(prev => {
-                  const next = prev.filter(x => Number(x.id) !== Number(statusId));
-                  const cached = _hlCache.get(highlight.id);
-                  if (cached) _hlCache.set(highlight.id, { ...cached, items: next });
-                  return next;
-                });
-              }
-            } catch {}
-          },
-        },
+        { text: T('common.remove', 'Remover'), style: 'destructive', onPress: doRemove },
       ]
     );
   }, [highlight, T]);
 
   const deleteHighlight = useCallback(() => {
+    const doDelete = async () => {
+      try { await api.statusHighlightDelete?.(highlight.id); } catch {}
+      _hlCache.delete(highlight.id);
+      onDeleted?.(highlight.id);
+      onClose?.();
+    };
+    if (Platform.OS === 'web') {
+      if (typeof window !== 'undefined' && window.confirm(T('profile.deleteHighlightTitle', 'Apagar destaque?'))) doDelete();
+      return;
+    }
     Alert.alert(
       T('profile.deleteHighlightTitle', 'Apagar destaque?'),
       T('profile.deleteHighlightHint', 'Os status originais não são afetados.'),
       [
         { text: T('common.cancel', 'Cancelar'), style: 'cancel' },
-        {
-          text: T('common.delete', 'Apagar'), style: 'destructive',
-          onPress: async () => {
-            try { await api.statusHighlightDelete?.(highlight.id); } catch {}
-            _hlCache.delete(highlight.id);
-            onDeleted?.(highlight.id);
-            onClose?.();
-          },
-        },
+        { text: T('common.delete', 'Apagar'), style: 'destructive', onPress: doDelete },
       ]
     );
   }, [highlight, onDeleted, onClose, T]);

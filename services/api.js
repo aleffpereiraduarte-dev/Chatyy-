@@ -5924,10 +5924,15 @@ export async function rustUpload(file, userEmail, context = 'chat', externalSign
  * If connection drops, resumes from last chunk.
  * Returns same format as rustUpload.
  */
-export async function rustChunkedUpload(file, userEmail, context = 'chat', onProgress = null, _externalSignal = null) {
+export async function rustChunkedUpload(file, userEmail, context = 'chat', onProgress = null, externalSignal = null) {
   if ((await _probeRustUpload()) === false) return { success: false, error: 'unavailable' };
   const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+  // aborted:true (instead of null) keeps the caller's !isAborted() gate as the
+  // only thing standing between a user cancel and the full-file PHP fallback.
+  const _abortedResult = () => ({ success: false, error: 'aborted', aborted: true });
+  const _isAborted = () => !!(externalSignal && externalSignal.aborted);
   try {
+    if (_isAborted()) return _abortedResult();
     // Get file as blob
     let blob;
     if (file._raw instanceof Blob || file._raw instanceof File) {
@@ -5938,18 +5943,21 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
       blob = file;
     } else if (Platform.OS === 'web' && file.uri && typeof file.uri === 'string') {
       // Web fallback: fetch the blob URL into a real Blob
-      try { blob = await fetch(file.uri).then(r => r.blob()); } catch { return rustUpload(file, userEmail, context); }
+      try { blob = await fetch(file.uri).then(r => r.blob()); } catch { return rustUpload(file, userEmail, context, externalSignal, onProgress); }
     } else if (file.uri && Platform.OS !== 'web') {
       // Native — read the file via expo-file-system in chunks (no blob support).
-      return await rustChunkedUploadNative(file, userEmail, context, onProgress);
+      return await rustChunkedUploadNative(file, userEmail, context, onProgress, externalSignal);
     } else {
-      return rustUpload(file, userEmail, context);
+      return rustUpload(file, userEmail, context, externalSignal, onProgress);
     }
 
     const totalSize = blob.size || file.size || 0;
     if (totalSize < CHUNK_SIZE * 2) {
-      // Small file — use direct upload instead
-      return rustUpload(file, userEmail, context);
+      // Small file — use direct upload instead. Forward signal + onProgress:
+      // without them every 1–10MB web upload had a frozen 0% bar and an
+      // uncancellable transfer (rustUpload only wires XHR progress/abort when
+      // given them).
+      return rustUpload(file, userEmail, context, externalSignal, onProgress);
     }
 
     const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
@@ -5980,6 +5988,7 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
 
     // 3. Upload chunks
     for (let i = startChunk; i < totalChunks; i++) {
+      if (_isAborted()) return _abortedResult();
       const start = i * CHUNK_SIZE;
       const end = Math.min(start + CHUNK_SIZE, totalSize);
       const chunk = blob.slice(start, end);
@@ -5993,11 +6002,13 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
         method: 'POST',
         headers: { 'Authorization': `Bearer ${authToken}` },
         body: formData,
+        signal: externalSignal || undefined,
       });
       if (!resp.ok) throw new Error(`Chunk ${i} failed: ${resp.status}`);
 
       if (onProgress) onProgress((i + 1) / totalChunks);
     }
+    if (_isAborted()) return _abortedResult();
 
     // 4. Complete
     const completeResp = await fetch(`${BASE_URL}/api/rust/upload/complete`, {
@@ -6007,6 +6018,7 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
     });
     return await completeResp.json();
   } catch (e) {
+    if (_isAborted()) return _abortedResult(); // AbortError mid-chunk is a cancel, not a failure
     console.warn('[ChunkedUpload] Failed:', e.message);
     return null;
   }
@@ -6017,7 +6029,7 @@ export async function rustChunkedUpload(file, userEmail, context = 'chat', onPro
  * Each chunk is a separate small POST, so iOS NSURLSession's idle-timeout doesn't
  * kill big uploads. Used by photo backup for files > 3 MB.
  */
-async function rustChunkedUploadNative(file, userEmail, context, onProgress) {
+async function rustChunkedUploadNative(file, userEmail, context, onProgress, externalSignal = null) {
   const CHUNK_SIZE = 1 * 1024 * 1024; // 1 MB chunks — small enough to finish in <14s on 3 Mbps wifi
   try {
     // BUG fix: expo-file-system/legacy is the only one that exposes cacheDirectory
@@ -6036,7 +6048,7 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress) {
 
     // If small enough, use direct upload
     if (totalSize <= CHUNK_SIZE * 2) {
-      return rustUpload(file, userEmail, context);
+      return rustUpload(file, userEmail, context, externalSignal, onProgress);
     }
 
     const totalChunks = Math.ceil(totalSize / CHUNK_SIZE);
@@ -6077,7 +6089,7 @@ async function rustChunkedUploadNative(file, userEmail, context, onProgress) {
 
     const uploadChunk = async (i) => {
       if (aborted) return;
-      if (file._abortRef && file._abortRef.aborted) { aborted = true; return; }
+      if ((file._abortRef && file._abortRef.aborted) || (externalSignal && externalSignal.aborted)) { aborted = true; return; }
       const start = i * CHUNK_SIZE;
       const len = Math.min(CHUNK_SIZE, totalSize - start);
       const tmpPath = tmpDir + `c_${uploadId}_${i}.bin`;
