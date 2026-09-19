@@ -7028,6 +7028,7 @@ export default {
   'status.highlights': 'Destacados',
   'status.newHighlight': 'Nuevo destacado',
   'status.highlightName': 'Nombre del destacado',
+  'status.highlightAddFailed': 'No se pudo guardar en el destacado. Inténtalo de nuevo.',
   'status.chooseHighlight': 'Elegir destacado',
 
   'compose.trackOpens': 'Confirmación de lectura',

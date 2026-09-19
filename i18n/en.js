@@ -7012,6 +7012,7 @@ export default {
   'status.highlights': 'Highlights',
   'status.newHighlight': 'New highlight',
   'status.highlightName': 'Highlight name',
+  'status.highlightAddFailed': 'Could not save to the highlight. Please try again.',
   'status.chooseHighlight': 'Choose highlight',
 
   'compose.trackOpens': 'Read receipt',

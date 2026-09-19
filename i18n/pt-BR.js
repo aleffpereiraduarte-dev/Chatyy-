@@ -7089,6 +7089,7 @@ export default {
   'status.highlights': 'Destaques',
   'status.newHighlight': 'Novo destaque',
   'status.highlightName': 'Nome do destaque',
+  'status.highlightAddFailed': 'Não foi possível salvar no destaque. Tente novamente.',
   'status.chooseHighlight': 'Escolher destaque',
 
   // Read-receipts (Confirmar leitura)

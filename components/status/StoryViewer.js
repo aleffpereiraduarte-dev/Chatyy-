@@ -493,7 +493,7 @@ const StatusVideoPlayer = React.memo(function StatusVideoPlayer({
 const StoryMedia = React.memo(function StoryMedia({
   cur, isText, isVideo, isImage, mediaUrl,
   t, paused, videoMuted, videoError, imageError, imageRetry, imageFade,
-  advance, advanceNatural, onVideoError, onVideoReady, onVideoProgress, setVideoError, setImageError, setImageRetry,
+  advance, advanceNatural, scheduleBoomerangAdvance, onVideoError, onVideoReady, onVideoProgress, setVideoError, setImageError, setImageRetry,
   boomerangRef, boomerangStateRef,
 }) {
     if (isText) {
@@ -609,7 +609,7 @@ const StoryMedia = React.memo(function StoryMedia({
               loop={isBoomerang}
               onEnded={isBoomerang ? undefined : advanceNatural}
               onError={() => setVideoError(true)}
-              onLoadedMetadata={isBoomerang ? (() => setTimeout(advanceNatural, boomerangLoopDurationMs)) : undefined}
+              onLoadedMetadata={isBoomerang ? (() => scheduleBoomerangAdvance?.(boomerangLoopDurationMs)) : undefined}
               style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', objectFit: 'contain', backgroundColor: 'transparent' }}
             />
           </View>
@@ -651,7 +651,7 @@ const StoryMedia = React.memo(function StoryMedia({
             resizeMode="contain"
             shouldPlay={!paused}
             isLooping={isBoomerang}
-            onLoad={isBoomerang ? (() => setTimeout(advanceNatural, boomerangLoopDurationMs)) : undefined}
+            onLoad={isBoomerang ? (() => scheduleBoomerangAdvance?.(boomerangLoopDurationMs)) : undefined}
             onPlaybackStatusUpdate={(s) => {
               if (!isBoomerang) { if (s?.didJustFinish) advanceNatural(); return; }
               try {
@@ -1589,6 +1589,26 @@ export default function StoryViewer({
   // its [player, loop, onEnd] listener effect on every parent render.
   const advanceNatural = useCallback(() => advance(true), [advance]);
 
+  // Boomerang auto-advance used a bare setTimeout minted inside
+  // onLoad/onLoadedMetadata — if the user tapped past the boomerang before
+  // the 7s fired, the orphan timer advanced (and marked completed) whatever
+  // story was on screen by then. Single self-replacing timer, cleared when
+  // the on-screen item/group changes or the viewer closes.
+  const boomerangAdvTimerRef = useRef(null);
+  const scheduleBoomerangAdvance = useCallback((ms) => {
+    if (boomerangAdvTimerRef.current) clearTimeout(boomerangAdvTimerRef.current);
+    boomerangAdvTimerRef.current = setTimeout(() => {
+      boomerangAdvTimerRef.current = null;
+      advanceNatural();
+    }, ms);
+  }, [advanceNatural]);
+  useEffect(() => () => {
+    if (boomerangAdvTimerRef.current) {
+      clearTimeout(boomerangAdvTimerRef.current);
+      boomerangAdvTimerRef.current = null;
+    }
+  }, [idx, groupIndex, visible]);
+
   // Stable callbacks handed to the hoisted StatusVideoPlayer so React.memo can
   // skip re-renders on progress ticks. onError clears the spinner + flips the
   // fail card; onReady hides the spinner once the first frame decodes.
@@ -1984,6 +2004,7 @@ export default function StoryViewer({
       imageFade={imageFade}
       advance={advance}
       advanceNatural={advanceNatural}
+      scheduleBoomerangAdvance={scheduleBoomerangAdvance}
       onVideoError={_onVideoError}
       onVideoReady={_onVideoReady}
       onVideoProgress={_onVideoProgress}

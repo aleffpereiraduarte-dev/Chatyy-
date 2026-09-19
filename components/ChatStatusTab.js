@@ -1108,12 +1108,20 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const addToHighlight = useCallback(async (highlightId) => {
     if (!highlightSheet?.statusId || !highlightId || highlightSaving) return;
     setHighlightSaving(true);
-    try { await api.statusHighlightAddStatus?.(highlightId, highlightSheet.statusId); }
-    catch {} finally {
-      setHighlightSaving(false);
-      setHighlightSheet(null);
-    }
-  }, [highlightSheet, highlightSaving]);
+    let ok = false;
+    try {
+      const r = await api.statusHighlightAddStatus?.(highlightId, highlightSheet.statusId);
+      ok = !!r?.success;
+    } catch {}
+    setHighlightSaving(false);
+    if (ok) { setHighlightSheet(null); return; }
+    // Keep the sheet open on failure — closing it read as "saved" while the
+    // highlight silently never got the status (apiCall resolves with
+    // success:false on network failure, so the catch alone never fired).
+    const failMsg = t?.('status.highlightAddFailed') || 'Não foi possível salvar no destaque. Tente novamente.';
+    if (Platform.OS === 'web') { try { window.alert(failMsg); } catch {} }
+    else { try { Alert.alert('', failMsg); } catch {} }
+  }, [highlightSheet, highlightSaving, t]);
   const createHighlight = useCallback(async () => {
     const name = newHighlightName.trim();
     if (!name || !highlightSheet?.statusId || highlightSaving) return;
@@ -1798,7 +1806,16 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       : null;
     const allGroups = [];
     if (myGroup) allGroups.push(myGroup);
-    contactStatuses.forEach(g => allGroups.push(g));
+    // Muted contacts stay OUT of the swipe/auto-advance carousel — otherwise
+    // finishing an audible contact's stories chained into "Silenciados" and
+    // recordView marked them seen (collapsing their ring) without the user
+    // ever asking. Exception: the tapped group itself, so opening a muted
+    // user from the Silenciados section still works.
+    const tappedLc = String(statusGroup.ownerEmail || '').toLowerCase();
+    contactStatuses.forEach(g => {
+      if ((g.muted || g.is_muted) && String(g.ownerEmail || '').toLowerCase() !== tappedLc) return;
+      allGroups.push(g);
+    });
     setAllStatusGroups(allGroups);
 
     // Find index of the tapped group
