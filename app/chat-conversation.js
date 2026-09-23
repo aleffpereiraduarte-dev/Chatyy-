@@ -11535,7 +11535,15 @@ function ChatConversationInner() {
           let msg = processIncoming([raw])?.[0];
           if (!msg) return;
           _addRecvId(idKey);
-          if (cidKey) _addRecvId(cidKey);
+          // [FIX 2026-08-09 tick azul não aparece] Só o broadcast CANÔNICO (id
+          // numérico) pode reivindicar o cidKey. Se o relay otimista (id 'tmp_')
+          // marcasse o cid, o broadcast canônico seguinte batia no early-return
+          // (`_recvIdSet.has(cidKey)`) ANTES do upgrade tmp_→numérico → a linha
+          // ficava com id 'tmp_' pra sempre → markReadUpTo/onViewable (que exigem
+          // id numérico) nunca disparavam → recibo de leitura nunca subia → tick
+          // azul nunca chegava. Deixando o tmp_ NÃO marcar o cid, o canônico passa,
+          // faz o upgrade, e AÍ marca o cid (dedup segue firme daí pra frente).
+          if (cidKey && !String(raw.id ?? '').startsWith('tmp_')) _addRecvId(cidKey);
           setMessages(prev => {
             // Stronger id dedup: compare as strings so "123" vs 123 type
             // mismatch between chat_sync/WS paths doesn't slip through and
@@ -12158,8 +12166,13 @@ function ChatConversationInner() {
       const unsubMsgRead = mailWs.on('message_read', (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
-        const peerEmail = data?.read_by || data?.email;
-        if (!peerEmail || peerEmail === currentEmail) return;
+        // [FIX 2026-08-09] normaliza casing — o resto do código (presence/typing)
+        // lowercaseia; aqui era `===` cru → se o servidor emitir email com casing
+        // diferente, o filtro do próprio email falha (tick azul falso) ou cria
+        // linha duplicada de receipt e bagunça o maxReadId.
+        const peerEmail = (data?.read_by || data?.email || '').toLowerCase();
+        const _myEmail = (currentEmail || '').toLowerCase();
+        if (!peerEmail || peerEmail === _myEmail) return;
         // [receipt-sync media 2026-06-04] Coerce to Number — ids that ride a
         // relay/cache hop can arrive as strings, and a string watermark made
         // both this flip AND the maxReadId render fallback silently no-op.
@@ -12170,16 +12183,16 @@ function ChatConversationInner() {
         }
         if (!newId) return;
         setReadReceipts(prev => {
-          const existing = prev.find(rr => rr.email === peerEmail);
+          const existing = prev.find(rr => (rr.email || '').toLowerCase() === peerEmail);
           if (existing) {
             if ((existing.last_read_id || 0) >= newId) return prev;
-            return prev.map(rr => rr.email === peerEmail ? { ...rr, last_read_id: newId } : rr);
+            return prev.map(rr => (rr.email || '').toLowerCase() === peerEmail ? { ...rr, last_read_id: newId } : rr);
           }
           return [...prev, { email: peerEmail, last_read_id: newId }];
         });
         const isGroup = conversationType === 'group';
         setMessages(prev => prev.map(m =>
-          m.sender_email === currentEmail && Number.isFinite(Number(m.id)) && Number(m.id) > 0 && Number(m.id) <= newId
+          (m.sender_email || '').toLowerCase() === _myEmail && Number.isFinite(Number(m.id)) && Number(m.id) > 0 && Number(m.id) <= newId
             ? (isGroup
                 ? (!m._delivered ? { ...m, _delivered: true } : m)
                 : (!m._read ? { ...m, status: 'read', _read: true, _delivered: true } : m))

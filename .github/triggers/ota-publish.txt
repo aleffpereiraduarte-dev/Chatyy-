@@ -1,2 +1,1 @@
-2026-08-08T07:42:10Z
-deep-20260808-032502: voice/broadcast cmi dedup + musica carrossel + draft keepalive (drena fde5d8ce..HEAD, 10 commits presos)
+2026-09-23T23:50:52Z
