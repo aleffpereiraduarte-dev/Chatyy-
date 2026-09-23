@@ -687,6 +687,22 @@ export async function replayOfflineQueue(api) {
             name: action.name || 'file',
             type: action.file_type || '',
           };
+          // Web: chatUploadFile only sends a real Blob when file.blob exists —
+          // appending {uri,name,type} to a browser FormData coerces it to the
+          // string "[object Object]", the server rejects it with a message the
+          // hard-error regex never matches, and the action retries forever
+          // (blocking this conversation's queued sends on every pass). Try to
+          // re-hydrate the blob: URI; a dead blob (revoked/reload) is a hard
+          // error → dropped from the queue + red-bubble re-attach.
+          if (Platform.OS === 'web') {
+            try {
+              filePayload.blob = await fetch(action.uri).then(resp => resp.blob());
+            } catch {
+              const e = new Error('blob_lost');
+              e.isHardError = true;
+              throw e;
+            }
+          }
           let r;
           try {
             r = await api.chatUploadFile(

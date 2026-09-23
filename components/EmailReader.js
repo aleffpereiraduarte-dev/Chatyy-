@@ -64,34 +64,44 @@ if (Platform.OS === 'web' && DOMPurify?.addHook) {
 // data:text/html, data:application/*) so a malicious quoted body can never
 // run code or load an executable data: payload via img/src or href.
 const _regexFallbackSanitize = (html, opts = {}) => {
-  let out = html
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
-    .replace(/<embed[\s\S]*?\/?>/gi, '')
-    .replace(/<object[\s\S]*?<\/object>/gi, '')
-    .replace(/<form[\s\S]*?<\/form>/gi, '')
-    .replace(/<svg[\s\S]*?<\/svg>/gi, '')
-    .replace(/<math[\s\S]*?<\/math>/gi, '')
-    .replace(/<link[^>]*>/gi, '')
-    .replace(/<base[^>]*>/gi, '')
-    .replace(/<meta[^>]*>/gi, '')
-    // `[\s/]` (not just `\s`): browsers treat `/` as an attribute separator,
-    // so `<img/onerror=...>` carries a live handler with no whitespace at all.
-    .replace(/[\s/]on\w+\s*=\s*"[^"]*"/gi, ' ')
-    .replace(/[\s/]on\w+\s*=\s*'[^']*'/gi, ' ')
-    .replace(/[\s/]on\w+\s*=[^\s>]*/gi, ' ')
-    .replace(/javascript\s*:/gi, '')
-    .replace(/vbscript\s*:/gi, '')
-    .replace(/data\s*:\s*text\/html/gi, '')
-    .replace(/data\s*:\s*application\//gi, '');
-  // <style> is preserved on native (opts.keepStyle): the email body renders in
-  // an ISOLATED WebView/HtmlView, so its CSS cannot leak into the app UI — and
-  // stripping it collapsed styled HTML emails (newsletters/transactional) into
-  // unstyled "broken" blocks. On web (inline DOM render) we still strip it to
-  // avoid CSS leaking into the app chrome. javascript:/vbscript: inside the
-  // style block were already neutralized above.
-  if (!opts.keepStyle) out = out.replace(/<style[\s\S]*?<\/style>/gi, '');
-  return out;
+  // Fixed-point loop: a single pass lets nested payloads RECONSTRUCT a live
+  // tag or scheme once the inner match is removed (<scr<script>x</script>ipt>
+  // collapses to <script> AFTER the pass that was supposed to kill it). Re-run
+  // until the output stabilizes; if it never does (cap 10), fail closed by
+  // escaping everything rather than shipping half-sanitized markup.
+  let out = html;
+  for (let i = 0; i < 10; i++) {
+    const prev = out;
+    out = out
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<iframe[\s\S]*?<\/iframe>/gi, '')
+      .replace(/<embed[\s\S]*?\/?>/gi, '')
+      .replace(/<object[\s\S]*?<\/object>/gi, '')
+      .replace(/<form[\s\S]*?<\/form>/gi, '')
+      .replace(/<svg[\s\S]*?<\/svg>/gi, '')
+      .replace(/<math[\s\S]*?<\/math>/gi, '')
+      .replace(/<link[^>]*>/gi, '')
+      .replace(/<base[^>]*>/gi, '')
+      .replace(/<meta[^>]*>/gi, '')
+      // `[\s/]` (not just `\s`): browsers treat `/` as an attribute separator,
+      // so `<img/onerror=...>` carries a live handler with no whitespace at all.
+      .replace(/[\s/]on\w+\s*=\s*"[^"]*"/gi, ' ')
+      .replace(/[\s/]on\w+\s*=\s*'[^']*'/gi, ' ')
+      .replace(/[\s/]on\w+\s*=[^\s>]*/gi, ' ')
+      .replace(/javascript\s*:/gi, '')
+      .replace(/vbscript\s*:/gi, '')
+      .replace(/data\s*:\s*text\/html/gi, '')
+      .replace(/data\s*:\s*application\//gi, '');
+    // <style> is preserved on native (opts.keepStyle): the email body renders in
+    // an ISOLATED WebView/HtmlView, so its CSS cannot leak into the app UI — and
+    // stripping it collapsed styled HTML emails (newsletters/transactional) into
+    // unstyled "broken" blocks. On web (inline DOM render) we still strip it to
+    // avoid CSS leaking into the app chrome. javascript:/vbscript: inside the
+    // style block were already neutralized above.
+    if (!opts.keepStyle) out = out.replace(/<style[\s\S]*?<\/style>/gi, '');
+    if (out === prev) return out;
+  }
+  return String(html).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 };
 
 const sanitizeHtml = (html) => {

@@ -728,6 +728,15 @@ export function MailProvider({ children }) {
       pendingRemovalRef.current = new Map();
       recentlyArrivedRef.current = new Map();
       recentlyFlaggedRef.current = new Map();
+      // DROP (never flush) a pending undo-window action from the previous
+      // account: the deferred closure holds uid+folder from account A, but
+      // apiCall signs with the module-level token — which is account B's by
+      // the time the 5s timer fires, so it would delete B's email on a
+      // colliding IMAP uid. Dropping just resurfaces A's email on next load.
+      clearTimeout(undoTimerRef.current);
+      pendingActionRef.current = null;
+      if (undoTimerRef._visCleanup) { undoTimerRef._visCleanup(); undoTimerRef._visCleanup = null; }
+      setUndoAction(null);
       loadEmails('INBOX', 1, '');
     }
   }, [user?.email]);

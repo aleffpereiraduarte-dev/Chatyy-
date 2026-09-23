@@ -19,20 +19,32 @@ if (Platform.OS === 'web') {
 // bodies can never run code if the proper sanitizer is missing.
 function _safeFallbackSanitize(html) {
   if (!html || typeof html !== 'string') return '';
-  return html
-    .replace(/<\s*script\b[^>]*>[\s\S]*?<\s*\/\s*script\s*>/gi, '')
-    .replace(/<\s*(iframe|object|embed|base|meta|link|form|input|textarea|style)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
-    .replace(/<\s*(iframe|object|embed|base|meta|link|form|input|textarea|style)\b[^>]*\/?>/gi, '')
-    .replace(/\son\w+\s*=\s*"[^"]*"/gi, '')
-    .replace(/\son\w+\s*=\s*'[^']*'/gi, '')
-    .replace(/\son\w+\s*=\s*[^\s>]*/gi, '')
-    .replace(/javascript:/gi, '')
-    .replace(/vbscript:/gi, '')
-    .replace(/data:text\/html/gi, '')
-    .replace(/data:application\//gi, '');
+  // Fixed-point loop (mirrors EmailReader._regexFallbackSanitize): single-pass
+  // regex stripping lets nested payloads reconstruct a live tag after the
+  // inner match is removed. Re-run until stable; cap 10 → fail closed.
+  let out = html;
+  for (let i = 0; i < 10; i++) {
+    const prev = out;
+    out = out
+      .replace(/<\s*script\b[^>]*>[\s\S]*?<\s*\/\s*script\s*>/gi, '')
+      .replace(/<\s*(iframe|object|embed|base|meta|link|form|input|textarea|style)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+      .replace(/<\s*(iframe|object|embed|base|meta|link|form|input|textarea|style)\b[^>]*\/?>/gi, '')
+      // `[\s/]`: `/` is an attribute separator — `<img/onerror=...>` fires.
+      .replace(/[\s/]on\w+\s*=\s*"[^"]*"/gi, ' ')
+      .replace(/[\s/]on\w+\s*=\s*'[^']*'/gi, ' ')
+      .replace(/[\s/]on\w+\s*=\s*[^\s>]*/gi, ' ')
+      .replace(/javascript:/gi, '')
+      .replace(/vbscript:/gi, '')
+      .replace(/data:text\/html/gi, '')
+      .replace(/data:application\//gi, '');
+    if (out === prev) return out;
+  }
+  return String(html).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 function sanitizeQuotedHtml(html) {
-  if (Platform.OS !== 'web') return html;
+  // Native included: the quoted body lands in the RichTextEditor's
+  // contentEditable WebView (JS + bridge live) — returning it raw was a
+  // stored-XSS hole identical to the reader's, just in the compose editor.
   if (DOMPurify?.sanitize) return DOMPurify.sanitize(html);
   return _safeFallbackSanitize(html);
 }

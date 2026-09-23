@@ -1007,6 +1007,12 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   const progressAnim = useRef(new Animated.Value(0)).current;
   const timerRef = useRef(null);
   const animRef = useRef(null);
+  // Elapsed-tracking for pause/resume: how much of the CURRENT item's window
+  // already played (accumulated across pause legs), and which item it belongs
+  // to. Lets the timer effect resume with the remaining duration instead of
+  // restarting the full window from zero on every unpause.
+  const timerElapsedRef = useRef(0);
+  const timerItemKeyRef = useRef('');
   const viewerOpacity = useRef(new Animated.Value(0)).current;
 
   // Viewers modal state
@@ -2189,7 +2195,14 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
   }, [viewerVisible, viewerIndex, viewerStatuses, allStatusGroups, currentGroupIndex]);
 
   useEffect(() => {
-    if (!viewerVisible || viewerStatuses.length === 0 || isPaused) return;
+    if (!viewerVisible || viewerStatuses.length === 0) {
+      // Closed (or emptied): drop any carried elapsed so reopening the same
+      // person/index starts the story window from zero.
+      timerItemKeyRef.current = '';
+      timerElapsedRef.current = 0;
+      return;
+    }
+    if (isPaused) return;
 
     const item = viewerStatuses[viewerIndex];
     const isVid = item?.type === 'video';
@@ -2198,10 +2211,23 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     const isVoiceItem = item?.type === 'voice' || item?.type === 'audio';
     const dur = isVid && videoDurationMs > 0 ? videoDurationMs : (isVoiceItem ? 30000 : STATUS_DURATION);
 
-    progressAnim.setValue(0);
+    // Same identity as the deps that mean "different story window" — any of
+    // these changing resets elapsed to 0; a pure isPaused flip preserves it,
+    // so unpausing resumes with the REMAINING time instead of restarting the
+    // full window (P2: bar jumped back to 0% and a video's advance timer
+    // desynced from playback on every long-press release).
+    const itemKey = `${viewerOwnerEmail}|${viewerIndex}|${viewerStatuses.length}|${replayNonce}|${videoDurationMs}`;
+    if (timerItemKeyRef.current !== itemKey) {
+      timerItemKeyRef.current = itemKey;
+      timerElapsedRef.current = 0;
+    }
+    const played = Math.min(Math.max(timerElapsedRef.current, 0), dur);
+    const remaining = Math.max(dur - played, 250); // resume always gets a beat
+
+    progressAnim.setValue(played / dur);
     const anim = Animated.timing(progressAnim, {
       toValue: 1,
-      duration: dur,
+      duration: remaining,
       // false: progressAnim drives width via a '0%'..'100%' interpolate — a
       // layout prop the native driver can't animate (RN only console.errors
       // and the bar sits at 0% forever). StoryViewer's bar already uses false.
@@ -2210,11 +2236,15 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     animRef.current = anim;
     anim.start();
 
-    timerRef.current = setTimeout(() => advanceViewer(true), dur);
+    timerRef.current = setTimeout(() => advanceViewer(true), remaining);
 
+    const legStartedAt = Date.now();
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       anim.stop();
+      // Accumulate how long this leg ran. On item change the key check above
+      // resets it; on pause it carries into the resume leg.
+      timerElapsedRef.current += Date.now() - legStartedAt;
     };
     // viewerOwnerEmail is in the deps because swapping to another person's
     // group changes NONE of the other values when both groups have the same

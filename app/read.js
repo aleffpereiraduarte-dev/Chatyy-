@@ -403,7 +403,10 @@ export default function ReadScreen() {
       {((email.cc && String(email.cc).trim()) || (email.to && String(email.to).split(',').filter(s => s.trim()).length > 1)) ? (
         <ActionBarButton icon={IconReplyAll} label={t('reader.replyAll')} color={colors.textSecondary} onPress={() => handleReplyAll(email)} accessibilityLabel={t('reader.replyAll')} />
       ) : null}
-      <ActionBarButton icon={IconForward} label={t('reader.forward')} color={colors.textSecondary} onPress={handleForward} accessibilityLabel={t('reader.forward')} />
+      {/* Wrap: a bare handler ref receives the press EVENT as `emailData`,
+          which _replyTarget mistakes for a message (truthy, no uid) — the
+          compose then opens with subject "Fwd: " and no context. */}
+      <ActionBarButton icon={IconForward} label={t('reader.forward')} color={colors.textSecondary} onPress={() => handleForward(email)} accessibilityLabel={t('reader.forward')} />
       <ActionBarButton icon={IconClock} label={t('reader.snooze')} color={colors.textSecondary} onPress={handleSnooze} accessibilityLabel={t('reader.snooze')} />
       <ActionBarButton icon={IconArchive} label={t('reader.archive')} color={colors.textSecondary} onPress={handleArchive} accessibilityLabel={t('reader.archive')} />
       <ActionBarButton icon={IconTrash} label={t('reader.delete')} color={colors.error} onPress={handleDelete} accessibilityLabel={t('reader.delete')} />

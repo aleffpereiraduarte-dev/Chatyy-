@@ -11223,6 +11223,11 @@ function ChatConversationInner() {
     for (const m of messages) {
       if (!m || !MEDIA_TYPES.has(m.type)) continue;
       if (!m.file_url) continue;
+      // View-once must never land on disk via backfill — cacheMedia has no
+      // view-once guard on this path (only prefetchIncomingMessageMedia does)
+      // and a cached copy survives the open/expiry that deletes it serverside.
+      // ViewOnceMessage fetches on demand through its own path.
+      if (m.is_view_once || m.isViewOnce || m.view_once) continue;
       if (m._localUri && typeof m._localUri === 'string' && m._localUri.startsWith('file://')) continue;
       if (m.local_path && typeof m.local_path === 'string' && m.local_path.startsWith('file://')) continue;
       candidates.push(m);
