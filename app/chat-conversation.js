@@ -15225,7 +15225,9 @@ function ChatConversationInner() {
         // Persist to local cache so the sender's other sessions (and this
         // device after restart) have the media available offline — WhatsApp
         // keeps everything you sent locally too.
-        if (msg.file_url && ['image', 'video', 'audio', 'voice', 'gif', 'sticker', 'file'].includes(msg.type)) {
+        // View-once nunca vai pro cache permanente — a cópia local do sender
+        // sobreviveria ao open/expiry do servidor.
+        if (msg.file_url && !forceViewOnce && ['image', 'video', 'audio', 'voice', 'gif', 'sticker', 'file'].includes(msg.type)) {
           try {
             const remoteUrl = api.getMediaUrl(msg.file_url);
             saveMediaPermanent(remoteUrl).then(localUri => {

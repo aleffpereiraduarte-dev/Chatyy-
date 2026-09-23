@@ -1149,8 +1149,10 @@ export function MailProvider({ children }) {
     // login (handlers nunca registravam) e crashava se o require do mailWs
     // tivesse falhado.
     if (!mailWs) return;
-    const token = authRef.current;
-    if (!token) return;
+    // Sem gate de token aqui: registrar handler não exige auth (o socket só
+    // emite eventos depois de conectado/autenticado) e o gate lia authRef
+    // ANTES do effect de conexão (abaixo) escrever — no login/cold-start os
+    // handlers nunca registravam até o usuário trocar de pasta/buscar.
 
     // Handle new email arrival
     const offNew = mailWs.on('new_email', (data) => {

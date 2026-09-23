@@ -2023,6 +2023,8 @@ export function clearAuthToken() {
   // responses from the account that just logged out.
   try { _swrCache.clear(); } catch {}
   try { if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(_SWR_PERSIST_KEY); } catch {}
+  // Download tokens are account-scoped credentials — drop them with the auth.
+  try { _dlTokenCache.clear(); _dlTokenInflight.clear(); } catch {}
 }
 
 // Awaitable variant: doLogout MUST await this on native so SecureStore
@@ -2051,6 +2053,8 @@ export async function clearAuthTokenAsync() {
   try { await _writeAsyncStorage(TOKEN_FALLBACK_KEY, null); } catch {}
   try { _swrCache.clear(); } catch {}
   try { if (typeof sessionStorage !== 'undefined') sessionStorage.removeItem(_SWR_PERSIST_KEY); } catch {}
+  // Download tokens are account-scoped credentials — drop them with the auth.
+  try { _dlTokenCache.clear(); _dlTokenInflight.clear(); } catch {}
 }
 
 // Awaitable variant of setActiveAccountEmail — same race-window fix as
@@ -2822,7 +2826,11 @@ const _dlTokenInflight = new Set();
 const _DL_TOKEN_TTL_MS = 4 * 60 * 1000; // assume ~5min server TTL, refresh early
 
 function _dlTokenKey(uid, folder, part) {
-  return `${uid}:${folder}:${part}`;
+  // Conta ativa na key: uid IMAP é por-mailbox, então `uid:folder:part`
+  // colide entre contas — e o backend NÃO re-checa a sessão quando `dt`
+  // está presente, então após switchAccount um dt ainda fresco da conta
+  // anterior servia os bytes do anexo DELA pra conta nova.
+  return `${getActiveAccountEmail() || ''}:${uid}:${folder}:${part}`;
 }
 
 async function _prefetchAttachmentDlToken(uid, folder, part) {
