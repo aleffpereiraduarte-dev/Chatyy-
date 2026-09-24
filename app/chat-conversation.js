@@ -2413,6 +2413,10 @@ function ReactionButton({ emoji, onPress, index, isPlus, colors, isDark, isActiv
 // Module-level so it survives component re-renders (per-screen resets of the
 // set would defeat deduping as the user scrolls fast).
 const _prefetchedURLs = new Set();
+// [FLUIDEZ 2026-08-09] resolve o prefetch do expo-image UMA vez no load do módulo
+// em vez de require() por chamada no caminho quente do scroll.
+let _expoImagePrefetch = null;
+try { _expoImagePrefetch = require('expo-image').Image?.prefetch?.bind(require('expo-image').Image); } catch {}
 
 const REACTION_ICON_MAP = {
   thumbsup: IconThumbsUp, heart: IconHeart, laugh: IconLaughFace,
@@ -19159,6 +19163,27 @@ function ChatConversationInner() {
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 30, minimumViewTime: 50 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }) => {
     if (!viewableItems || viewableItems.length === 0) return;
+    // [FLUIDEZ 2026-08-09] Prefetch movido pra CÁ (antes era no renderItem, que
+    // picotava o scroll). Dispara só quando a visibilidade muda — 1×, não por
+    // render. Pré-aquece as próximas ~5 imagens além do maior índice visível.
+    try {
+      let maxIdx = -1;
+      for (const v of viewableItems) { if (typeof v?.index === 'number' && v.index > maxIdx) maxIdx = v.index; }
+      if (maxIdx >= 0) {
+        const list = messagesRef.current;
+        let budget = 4;
+        for (let i = maxIdx + 1; i < Math.min(maxIdx + 6, list.length) && budget > 0; i++) {
+          const mm = list[i];
+          if (!mm?.file_url || (mm.type !== 'image' && mm.type !== 'video')) continue;
+          const absURL = mm.file_url.startsWith('http') ? mm.file_url : `https://chatyy.com.br${mm.file_url}`;
+          if (_prefetchedURLs.has(absURL)) continue;
+          _prefetchedURLs.add(absURL); budget--;
+          if (Platform.OS === 'ios' || Platform.OS === 'android') { try { _expoImagePrefetch?.(absURL); } catch {} }
+          else if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.Image === 'function') { try { const img = new window.Image(); img.src = absURL; } catch {} }
+        }
+        if (_prefetchedURLs.size > 300) { let n = 0; for (const k of _prefetchedURLs) { _prefetchedURLs.delete(k); if (++n >= 100) break; } }
+      }
+    } catch {}
     // [QA 20260703-120403] The pill overlays the TOP of the viewport, so it
     // must label the OLDEST visible message — viewableItems[0] is usually the
     // NEWEST (inverted list) and the array order isn't guaranteed anyway (see
@@ -24203,48 +24228,13 @@ function ChatConversationInner() {
   // Intentionally has no dependencies: renderMessageRef always points at
   // the latest renderMessage closure, and messagesRef gives prefetch access
   // to the current list without causing memoizedRenderItem to be recreated.
-  const memoizedRenderItem = useCallback(({ item, index }) => {
-    // Prefetch next image/video URLs, bounded + deduped. The previous
-    // unthrottled version walked 10 rows ahead on EVERY renderItem call
-    // and scheduled a new requestAnimationFrame each time — at scroll
-    // speed this ballooned memory and network pressure (OOM risk on
-    // large groups). Now we dedupe through a module-level Set and cap
-    // total prefetches per paint.
-    const msgList = messagesRef.current;
-    if (index < msgList.length - 1) {
-      const rAF = (typeof requestAnimationFrame !== 'undefined') ? requestAnimationFrame : ((fn) => setTimeout(fn, 16));
-      rAF(() => {
-        // Bail if the screen unmounted between scheduling and firing —
-        // otherwise the prefetch loop keeps hitting memory/network for a
-        // component React has already torn down.
-        if (!mountedRef.current) return;
-        const list = messagesRef.current;
-        let budget = 4; // max new prefetches scheduled from this row
-        for (let i = index + 1; i < Math.min(index + 6, list.length) && budget > 0; i++) {
-          const mm = list[i];
-          if (!mm?.file_url) continue;
-          if (mm.type !== 'image' && mm.type !== 'video') continue;
-          const absURL = mm.file_url.startsWith('http') ? mm.file_url : `https://chatyy.com.br${mm.file_url}`;
-          if (_prefetchedURLs.has(absURL)) continue;
-          _prefetchedURLs.add(absURL);
-          budget--;
-          if (Platform.OS === 'ios' || Platform.OS === 'android') {
-            try {
-              const ImageMod = require('expo-image').Image;
-              ImageMod?.prefetch?.(absURL);
-            } catch {}
-          } else if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.Image === 'function') {
-            try { const img = new window.Image(); img.src = absURL; } catch {}
-          }
-        }
-        // Keep the set bounded so it doesn't grow forever
-        if (_prefetchedURLs.size > 300) {
-          const toDrop = _prefetchedURLs.size - 200;
-          let n = 0;
-          for (const k of _prefetchedURLs) { _prefetchedURLs.delete(k); if (++n >= toDrop) break; }
-        }
-      });
-    }
+  const memoizedRenderItem = useCallback(({ item }) => {
+    // [FLUIDEZ 2026-08-09] O prefetch de imagem foi REMOVIDO daqui. Antes ele
+    // agendava um requestAnimationFrame + varria 6 linhas à frente A CADA
+    // renderItem — durante fling isso disparava por linha renderizada,
+    // socando main-thread + rede no meio do gesto = rolagem picotada. Agora o
+    // prefetch acontece no onViewableItemsChanged (dispara só quando um item
+    // fica visível, não a cada render). renderItem volta a ser barato: só a row.
     return <MemoizedMessageRow item={item} renderRef={renderMessageRef} />;
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
