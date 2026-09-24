@@ -998,8 +998,14 @@ class MailWebSocket {
     //                   exactly where the user notices "só aparece quando
     //                   saio e volto")
     //   • idle/bg     → 5s ping / 12s timeout (NAT keepalive + list self-heal)
-    const interval = (this._callActive || this._chatActive) ? 8000 : PING_INTERVAL;
-    const timeout = this._callActive ? 15000 : (this._chatActive ? 10000 : PING_TIMEOUT);
+    // [2026-09-24] Chat-active detecção mais rápida: ping 8s→5s + timeout 10s→8s.
+    // Com interval < timeout a checagem "sem pong" dispara ~10s em vez de ~16s
+    // (o interval de 8s antes só reavaliava a cada 8s → o gap de 10s só era pego
+    // no tick de 16s). Um gap de pong > 8s com o usuário ATIVO na conversa em
+    // foreground = socket morto de verdade (rádio caiu), então reconectar é o
+    // certo; false-positive é raro nesse cenário. Call-active e idle inalterados.
+    const interval = this._callActive ? 8000 : (this._chatActive ? 5000 : PING_INTERVAL);
+    const timeout = this._callActive ? 15000 : (this._chatActive ? 8000 : PING_TIMEOUT);
     this.pingTimer = setInterval(() => {
       // Check socket health first
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
