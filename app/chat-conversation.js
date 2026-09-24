@@ -11484,13 +11484,18 @@ function ChatConversationInner() {
       let _lastPollAt = Date.now();
       const safetyPoll = setInterval(() => {
         const inbound = mailWs?.lastInboundAt || 0;
-        const looksZombie = (Date.now() - inbound) > 9000;
-        const gap = looksZombie ? 2500 : 5000;
+        // [2026-09-24 "demora sincronizar"] Detecta o socket quieto MAIS cedo (6s
+        // em vez de 9s) e faz catch-up mais rápido: 3.5s normal / 2s quando quieto
+        // (era 5s / 2.5s). O sync é pts-based (~O(0) quando não há nada novo) e roda
+        // só pra a conversa ABERTA, então o custo extra é desprezível e a mensagem
+        // aparece bem mais rápido quando o WS morre silencioso (zumbi de rede móvel).
+        const looksZombie = (Date.now() - inbound) > 6000;
+        const gap = looksZombie ? 2000 : 3500;
         if (Date.now() - _lastPollAt >= gap) {
           _lastPollAt = Date.now();
           runDeltaSync();
         }
-      }, 2500);
+      }, 2000);
       wsUnsubs.push(() => clearInterval(safetyPoll));
 
       // First-paint perf: defer the catch-up sync 1.5s after mount so it
