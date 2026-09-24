@@ -136,74 +136,61 @@ export default function ReadScreen() {
       }
       return r;
     };
-    Promise.all([
-      _fetchMessageWithRetry(),
-      _withTimeout(getThread(uid, folder).catch(() => null), 'thread'),
-    ]).then(([msgResult, threadResult]) => {
-      if (cancelled) return;
+    // [2026-09-24 "abrir email demora MUITO"] DESACOPLA o getThread do render do
+    // conteúdo. get_thread bate no PHP via Cloudflare e leva 0.8-5s; o Promise.all
+    // antigo segurava o CORPO do email refém dele (era ESSE o "demora muito muito").
+    // Agora: o email aparece assim que o corpo (Rust, ~0.5s) chega e o skeleton
+    // some NA HORA; a thread carrega em paralelo e preenche depois, sem travar.
+    const msgPromise = _fetchMessageWithRetry().then((msgResult) => {
+      if (cancelled) return null;
       networkResolved = true;
-      // Persiste o corpo fresco no cache → próxima abertura (ou volta) é instantânea.
       if (msgResult?.success && msgResult.data) {
+        // Persiste no cache → próxima abertura (ou volta) é instantânea.
         saveMessageToCache(uid, msgResult.data, folder).catch(() => {});
-      }
-      // Sempre seta email/thread baseado no resultado atual — antes deixava
-      // estado anterior "vazar" ao falhar carga ou ao trocar de uid.
-      // Optimistic local seen=true so EmailReader header reflects "read"
-      // even before the IMAP flag round-trips back. Bug user (WAVE 94):
-      // "no email quando abrir ele já deve mostrar que eu já vi o email" —
-      // sem isso o reader podia render com o styling de unread por uns
-      // ms entre fetch e markAsRead, e em alguns paths o seen ficava
-      // false até reload.
-      if (msgResult?.success) {
+        // Optimistic seen=true pro header não piscar "não lido".
         setEmail({ ...msgResult.data, seen: true, read: true });
-      } else {
-        // Rede falhou: NÃO apaga o que o cache-first já mostrou — só cai pra
-        // null (tela de erro) se realmente não havia nada em mãos.
-        setEmail(prev => prev || null);
-      }
-      if (msgResult?.success) {
-        // Only mark on server when actually unread — saves a no-op IMAP
-        // round-trip on already-read emails and keeps the IMAP server from
-        // being hammered when the user navigates with j/k between read msgs.
-        // The MailContext markAsRead also does optimistic inbox row update
-        // (seen=true) + persists to recentlyRead so the inbox doesn't revert
-        // when user navigates back. Always call so inbox list updates even
-        // if Rust path already flipped the IMAP flag silently.
-        const wasUnread = msgResult.data && msgResult.data.seen === false;
+        const wasUnread = msgResult.data.seen === false;
         markAsRead(uid, folder);
         if (wasUnread) {
-          // Refresh app-icon badge so the unread count drops immediately
-          // when the user opens a thread (lockscreen + home-screen badge).
           import('../services/pushNotifications').then(m => m.refreshBadgeCount?.()).catch(() => {});
         }
-      }
-      if (threadResult?.success && threadResult.data?.length > 1) {
-        // ThreadView derives its header subject from thread[0].subject. Some
-        // thread payloads carry only per-message bodies without the root
-        // subject/sender, leaving the thread header blank. Backfill from the
-        // loaded message (msgResult.data) so the header is never empty.
-        const opened = msgResult?.data;
-        const rootSubject = opened?.subject;
-        const rootFrom = opened?.from;
-        const normalized = threadResult.data.map((m, i) => {
-          let mm = i === 0
-            ? { ...m, subject: m?.subject || rootSubject || '', from: m?.from || rootFrom || '' }
-            : m;
-          // [2026-06-15] get_thread só traz cabeçalhos (sem corpo) → ThreadView
-          // mostrava "(sem conteúdo)". A mensagem que o usuário ABRIU já teve o
-          // corpo buscado aqui (msgResult.data) — mescla nela pra renderizar na
-          // hora, sem re-fetch. As outras mensagens da thread o ThreadView busca
-          // lazy ao expandir.
-          if (opened && Number(mm.uid) === Number(uid) && !(mm.body_html || mm.body_text || mm.body)) {
-            mm = { ...mm, body_html: opened.body_html, body_text: opened.body_text, body: opened.body, attachments: opened.attachments };
-          }
-          return mm;
-        });
-        setThread(normalized);
       } else {
-        setThread(null);
+        // Rede falhou: NÃO apaga o que o cache-first já mostrou.
+        setEmail(prev => prev || null);
       }
-    }).finally(() => { if (!cancelled) setLoading(false); });
+      // Email pronto → para o skeleton AGORA, sem esperar a thread.
+      if (!cancelled) setLoading(false);
+      return msgResult;
+    }).catch(() => { if (!cancelled) setLoading(false); return null; });
+
+    // Thread carrega INDEPENDENTE (nunca trava o email) e SÓ pra emails que fazem
+    // parte de uma conversa (têm References/In-Reply-To). Email avulso — a maioria —
+    // pula a chamada get_thread (PHP lento via CF) de vez: menos latência de fundo
+    // e menos carga no PHP. Email avulso já daria thread de tamanho 1 (setThread null).
+    msgPromise.then(async (msgResult) => {
+      if (cancelled) return;
+      const hdrs = (msgResult?.data?.headers) || {};
+      const hget = (k) => hdrs[k] || hdrs[k.toLowerCase()] || hdrs[k.toUpperCase()];
+      const isThreaded = !!(hget('References') || hget('In-Reply-To'));
+      if (!isThreaded) { if (!cancelled) setThread(null); return; }
+      const threadResult = await _withTimeout(getThread(uid, folder).catch(() => null), 'thread');
+      if (cancelled) return;
+      if (!(threadResult?.success && threadResult.data?.length > 1)) { setThread(null); return; }
+      const opened = msgResult?.data;
+      const rootSubject = opened?.subject;
+      const rootFrom = opened?.from;
+      const normalized = threadResult.data.map((m, i) => {
+        let mm = i === 0
+          ? { ...m, subject: m?.subject || rootSubject || '', from: m?.from || rootFrom || '' }
+          : m;
+        // get_thread só traz cabeçalhos; mescla o corpo da msg aberta em thread[0].
+        if (opened && Number(mm.uid) === Number(uid) && !(mm.body_html || mm.body_text || mm.body)) {
+          mm = { ...mm, body_html: opened.body_html, body_text: opened.body_text, body: opened.body, attachments: opened.attachments };
+        }
+        return mm;
+      });
+      if (!cancelled) setThread(normalized);
+    });
 
     return () => { cancelled = true; };
   }, [uid, folder]);
