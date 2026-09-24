@@ -27,7 +27,7 @@ import {
 } from '../Icons';
 
 const LIVE_RED = '#dc2626';
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 
 function humanizeCount(n) {
   const v = Number(n) || 0;

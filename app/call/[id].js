@@ -137,7 +137,7 @@ export default function CallLinkLobbyScreen() {
   if (status === 'loading' || status === 'joining') {
     return (
       <Center>
-        <ActivityIndicator size="large" color={colors?.primary || '#7C3AED'} />
+        <ActivityIndicator size="large" color={colors?.primary || '#A582F7'} />
         <Text style={{ color: sub, marginTop: 16, fontSize: 14 }}>
           {status === 'joining'
             ? (t?.('calls.callLinkJoining') || 'Entrando na chamada…')
@@ -155,7 +155,7 @@ export default function CallLinkLobbyScreen() {
         </Text>
         <TouchableOpacity
           onPress={() => router.replace({ pathname: '/login', params: { redirect: `/call/${linkId}` } })}
-          style={{ paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, backgroundColor: '#7C3AED' }}
+          style={{ paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, backgroundColor: '#A582F7' }}
         >
           <Text style={{ color: '#fff', fontWeight: '700' }}>{t?.('common.login') || 'Entrar'}</Text>
         </TouchableOpacity>
@@ -222,7 +222,7 @@ export default function CallLinkLobbyScreen() {
         style={{
           flexDirection: 'row', alignItems: 'center', gap: 8,
           marginTop: 32, paddingHorizontal: 32, paddingVertical: 14,
-          borderRadius: 28, backgroundColor: '#7C3AED',
+          borderRadius: 28, backgroundColor: '#A582F7',
         }}
       >
         {isVideo ? <IconVideo size={20} color="#fff" /> : <IconPhone size={20} color="#fff" />}

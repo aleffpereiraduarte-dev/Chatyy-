@@ -48,7 +48,7 @@ function hImpact() {
   try { Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle?.Medium); } catch {}
 }
 
-const BRAND_PURPLE = '#7C3AED';
+const BRAND_PURPLE = '#A582F7';
 const MAX_FANOUT = 16; // backend caps fan-out at 16/request
 
 const IconSearch = ({ size = 16, color = '#9CA3AF' }) => (

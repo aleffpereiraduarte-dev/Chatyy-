@@ -53,7 +53,7 @@ function IconBroadcastGlyph({ size = 18, color = '#fff' }) {
 
 // Tiny "on Chatyy" badge — purple circle with a check, signals that the
 // row is a registered Chatyy user. Rendered inline next to the contact name.
-function IconChatyyOnChat({ size = 14, color = '#7C3AED' }) {
+function IconChatyyOnChat({ size = 14, color = '#A582F7' }) {
   return (
     <_BSvg width={size} height={size} viewBox="0 0 24 24" fill={color}>
       <_BPath d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1.5 14.2l-4-4 1.4-1.4 2.6 2.6 6.6-6.6L18.5 8l-8 8.2z" />
@@ -1175,7 +1175,7 @@ export default function ChatNewScreen() {
                 {channel.name || handleStr}
               </Text>
               {handleStr ? (
-                <Text style={{ fontSize: 12, color: '#7C3AED', fontWeight: '600' }} numberOfLines={1}>
+                <Text style={{ fontSize: 12, color: '#A582F7', fontWeight: '600' }} numberOfLines={1}>
                   {handleStr}
                 </Text>
               ) : null}
@@ -1191,7 +1191,7 @@ export default function ChatNewScreen() {
           </View>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[sty.inviteBtn, { backgroundColor: '#7C3AED' }]}
+          style={[sty.inviteBtn, { backgroundColor: '#A582F7' }]}
           onPress={() => handleJoinChannel(channel)}
           disabled={joiningChannelId === channel.id}
           activeOpacity={0.7}
@@ -1217,7 +1217,7 @@ export default function ChatNewScreen() {
       <View style={{ paddingTop: 6, paddingBottom: 8 }}>
         <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
           <View style={sty.sectionAccentLine} />
-          <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>
+          <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#A582F7' }]}>
             {t('chat.trendingTopicsTitle') || 'Tópicos populares'}
           </Text>
         </View>
@@ -1242,7 +1242,7 @@ export default function ChatNewScreen() {
                 accessibilityRole="button"
                 accessibilityLabel={'#' + tag}
               >
-                <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '700' }}>
+                <Text style={{ color: '#A582F7', fontSize: 13, fontWeight: '700' }}>
                   {'#' + tag}
                 </Text>
               </TouchableOpacity>
@@ -1259,7 +1259,7 @@ export default function ChatNewScreen() {
       <View style={{ paddingTop: 4, paddingBottom: 8 }}>
         <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
           <View style={sty.sectionAccentLine} />
-          <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>
+          <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#A582F7' }]}>
             {t('chat.discoverChannelsTitle') || 'Descobrir canais'}
           </Text>
         </View>
@@ -1278,7 +1278,7 @@ export default function ChatNewScreen() {
                 style={[
                   sty.discoverChip,
                   active
-                    ? { backgroundColor: '#7C3AED', borderColor: '#7C3AED' }
+                    ? { backgroundColor: '#A582F7', borderColor: '#A582F7' }
                     : { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7', borderColor: colors.border },
                 ]}
                 activeOpacity={0.7}
@@ -1374,7 +1374,7 @@ export default function ChatNewScreen() {
     if (item._isInvitePlaceholder) {
       return (
         <View style={[sty.contactRow, { borderBottomColor: colors.border, paddingVertical: 16 }]}>
-          <View style={[sty.quickActionIcon, { backgroundColor: '#7C3AED', marginRight: 12 }]}>
+          <View style={[sty.quickActionIcon, { backgroundColor: '#A582F7', marginRight: 12 }]}>
             <IconUserPlus size={18} color="#fff" />
           </View>
           <View style={{ flex: 1 }}>
@@ -1382,7 +1382,7 @@ export default function ChatNewScreen() {
             <Text style={[sty.contactSub, { color: colors.textTertiary }]}>{t('chat.inviteFriendDesc')}</Text>
           </View>
           <InvitePill
-            style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#7C3AED' }]}
+            style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#A582F7' }]}
             onPress={() => setShowInviteInput(true)}
             accessibilityLabel={t('chat.invite')}
           >
@@ -1406,7 +1406,7 @@ export default function ChatNewScreen() {
               text={item.name || item.phone || '?'}
               highlight={searchText}
               style={[sty.contactName, { color: colors.text }]}
-              highlightStyle={{ backgroundColor: '#7C3AED30', fontWeight: '700' }}
+              highlightStyle={{ backgroundColor: '#A582F730', fontWeight: '700' }}
             />
             <Text style={[sty.contactSub, { color: colors.textTertiary }]} numberOfLines={1}>
               {item.email || item.phone || ''}
@@ -1443,7 +1443,7 @@ export default function ChatNewScreen() {
             };
             return (
               <InvitePill
-                style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#7C3AED' }]}
+                style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#A582F7' }]}
                 onPress={onTap}
                 onLongPress={onHold}
                 disabled={invitingEmail === item.email}
@@ -1481,14 +1481,14 @@ export default function ChatNewScreen() {
               text={item.name && !item.name.includes('@') ? item.name : prettifyHandle(item.email || item.name || '')}
               highlight={searchText}
               style={[sty.contactName, { color: colors.text, fontWeight: '700', flexShrink: 1 }]}
-              highlightStyle={{ backgroundColor: '#7C3AED30', fontWeight: '700' }}
+              highlightStyle={{ backgroundColor: '#A582F730', fontWeight: '700' }}
             />
             {/* Tiny Chatyy badge — purple check circle SVG, signals registered user.
                 Less noisy than a pill, more affirmative than nothing. Wrapped in a
                 flexShrink:0 View so the long name (flexShrink:1) truncates instead
                 of pushing this icon off-screen / onto the checkbox. */}
             <View style={{ flexShrink: 0 }}>
-              <IconChatyyOnChat size={13} color="#7C3AED" />
+              <IconChatyyOnChat size={13} color="#A582F7" />
             </View>
             {/* "NOVO" badge — WhatsApp-style pill for contacts that just joined
                 Chatyy (last 7d via _justJoined flag, populated by friend_suggestions
@@ -1496,7 +1496,7 @@ export default function ChatNewScreen() {
                 without screaming. */}
             {item._justJoined && (
               <View style={{
-                backgroundColor: '#7C3AED',
+                backgroundColor: '#A582F7',
                 paddingHorizontal: 6,
                 paddingVertical: 2,
                 borderRadius: 8,
@@ -1514,10 +1514,10 @@ export default function ChatNewScreen() {
               text={item.email}
               highlight={searchText}
               style={[sty.contactSub, { color: colors.textTertiary, flexShrink: 1 }]}
-              highlightStyle={{ backgroundColor: '#7C3AED30' }}
+              highlightStyle={{ backgroundColor: '#A582F730' }}
             />
             {item.username ? (
-              <Text style={{ fontSize: 12, color: '#7C3AED', fontWeight: '600', flexShrink: 0 }} numberOfLines={1}>@{item.username}</Text>
+              <Text style={{ fontSize: 12, color: '#A582F7', fontWeight: '600', flexShrink: 0 }} numberOfLines={1}>@{item.username}</Text>
             ) : null}
           </View>
           {item.about ? (
@@ -1619,7 +1619,7 @@ export default function ChatNewScreen() {
       {/* Mode Toggle */}
       <View style={[sty.toggleRow, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
         <TouchableOpacity
-          style={[sty.toggleBtn, mode === 'direct' && [sty.toggleBtnActive, { backgroundColor: '#7C3AED' }]]}
+          style={[sty.toggleBtn, mode === 'direct' && [sty.toggleBtnActive, { backgroundColor: '#A582F7' }]]}
           onPress={() => { setMode('direct'); setSelectedMembers([]); }}
         >
           <IconMessageSquare size={15} color={mode === 'direct' ? '#fff' : colors.textSecondary} />
@@ -1628,7 +1628,7 @@ export default function ChatNewScreen() {
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[sty.toggleBtn, mode === 'group' && [sty.toggleBtnActive, { backgroundColor: '#7C3AED' }]]}
+          style={[sty.toggleBtn, mode === 'group' && [sty.toggleBtnActive, { backgroundColor: '#A582F7' }]]}
           onPress={() => setMode('group')}
         >
           <IconUsers size={15} color={mode === 'group' ? '#fff' : colors.textSecondary} />
@@ -1637,7 +1637,7 @@ export default function ChatNewScreen() {
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[sty.toggleBtn, mode === 'channel' && [sty.toggleBtnActive, { backgroundColor: '#7C3AED' }]]}
+          style={[sty.toggleBtn, mode === 'channel' && [sty.toggleBtnActive, { backgroundColor: '#A582F7' }]]}
           onPress={() => setMode('channel')}
         >
           <Text style={{ fontSize: 13, marginRight: 3 }}>{'#'}</Text>
@@ -1707,12 +1707,12 @@ export default function ChatNewScreen() {
             borderWidth: 1.5,
             borderColor: searchBorderAnim.interpolate({
               inputRange: [0, 1],
-              outputRange: ['transparent', '#7C3AED'],
+              outputRange: ['transparent', '#A582F7'],
             }),
           },
         ]}
       >
-        <IconSearch size={18} color={searchFocused ? '#7C3AED' : colors.textTertiary} />
+        <IconSearch size={18} color={searchFocused ? '#A582F7' : colors.textTertiary} />
         <TextInput
           style={[sty.searchInput, { color: colors.text }]}
           placeholder={t('chat.searchOrType')}
@@ -1768,7 +1768,7 @@ export default function ChatNewScreen() {
                 <View style={{ paddingTop: 4, paddingBottom: 8 }}>
                   <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
                     <View style={sty.sectionAccentLine} />
-                    <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>
+                    <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#A582F7' }]}>
                       {t('chat.discoverChannelsTitle') || 'Descobrir canais'}
                     </Text>
                   </View>
@@ -1785,7 +1785,7 @@ export default function ChatNewScreen() {
                 digits.length === (searchText || '').replace(/[\s+()\-.]/g, '').length;
               return (
                 <View style={sty.emptyResults}>
-                  <IllustrationSearch size={148} color="#7C3AED" style={{ opacity: 0.95, marginBottom: 8 }} />
+                  <IllustrationSearch size={148} color="#A582F7" style={{ opacity: 0.95, marginBottom: 8 }} />
                   <Text style={[sty.emptyTitle, { color: colors.text }]}>
                     {isPhoneQuery
                       ? (t('chat.phoneNotOnChatyy') || 'Este número ainda não usa o Chatyy')
@@ -1798,7 +1798,7 @@ export default function ChatNewScreen() {
                   </Text>
                   {isPhoneQuery && (
                     <TouchableOpacity
-                      style={[sty.emptyActionBtn, { backgroundColor: '#7C3AED', marginTop: 16 }]}
+                      style={[sty.emptyActionBtn, { backgroundColor: '#A582F7', marginTop: 16 }]}
                       onPress={() => handleInviteShare({ phone: searchText.trim() })}
                     >
                       <IconUserPlus size={16} color="#fff" />
@@ -1819,7 +1819,7 @@ export default function ChatNewScreen() {
                         </TouchableOpacity>
                       )}
                       <TouchableOpacity
-                        style={[sty.emptyActionBtn, { backgroundColor: '#7C3AED' }]}
+                        style={[sty.emptyActionBtn, { backgroundColor: '#A582F7' }]}
                         onPress={() => handleInviteByEmail(searchText.trim())}
                       >
                         <IconUserPlus size={16} color="#fff" />
@@ -1848,7 +1848,7 @@ export default function ChatNewScreen() {
                 if (section._letterBucket) {
                   return (
                     <View style={[sty.letterHeader, { backgroundColor: isDark ? '#0d0d0d' : '#fafafc' }]}>
-                      <Text style={[sty.letterHeaderText, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>
+                      <Text style={[sty.letterHeaderText, { color: isDark ? '#A78BFA' : '#A582F7' }]}>
                         {section.title}
                       </Text>
                     </View>
@@ -1859,7 +1859,7 @@ export default function ChatNewScreen() {
                     <View style={sty.sectionAccentLine} />
                     {/* Brand subtle in dark mode (rgba), full brand in light. Matches
                         the polish spec for "uppercase letter-spacing 0.5 brand subtle". */}
-                    <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>{section.title}</Text>
+                    <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#A582F7' }]}>{section.title}</Text>
                   </View>
                 );
               }}
@@ -1894,7 +1894,7 @@ export default function ChatNewScreen() {
                     >
                       <View style={{
                         width: 40, height: 40, borderRadius: 20,
-                        backgroundColor: '#7C3AED',
+                        backgroundColor: '#A582F7',
                         alignItems: 'center', justifyContent: 'center',
                       }}>
                         <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>C</Text>
@@ -1945,7 +1945,7 @@ export default function ChatNewScreen() {
                     <View style={sty.recentSection}>
                       <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingBottom: 4 }]}>
                         <View style={sty.sectionAccentLine} />
-                        <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>
+                        <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#A582F7' }]}>
                           {t('chat.recentContacts')}
                         </Text>
                       </View>
@@ -1971,7 +1971,7 @@ export default function ChatNewScreen() {
                     <View style={{ paddingHorizontal: Spacing.md, marginTop: 6, marginBottom: 4 }}>
                       <View style={[sty.sectionHeader, { backgroundColor: 'transparent', paddingHorizontal: 0, paddingBottom: 6 }]}>
                         <View style={sty.sectionAccentLine} />
-                        <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#7C3AED' }]}>
+                        <Text style={[sty.sectionTitle, { color: isDark ? '#A78BFA' : '#A582F7' }]}>
                           {t('chat.broadcastList') || 'Listas de transmissão'}
                         </Text>
                       </View>
@@ -1984,7 +1984,7 @@ export default function ChatNewScreen() {
                           backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7',
                         }}
                       >
-                        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center' }}>
+                        <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#A582F7', alignItems: 'center', justifyContent: 'center' }}>
                           <IconBroadcastGlyph size={20} color="#fff" />
                         </View>
                         <View style={{ flex: 1 }}>
@@ -2059,8 +2059,8 @@ export default function ChatNewScreen() {
                               paddingVertical: 10, gap: 12,
                             }}
                           >
-                            <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#7C3AED' + '22', alignItems: 'center', justifyContent: 'center' }}>
-                              <IconBroadcastGlyph size={18} color="#7C3AED" />
+                            <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#A582F7' + '22', alignItems: 'center', justifyContent: 'center' }}>
+                              <IconBroadcastGlyph size={18} color="#A582F7" />
                             </View>
                             <View style={{ flex: 1 }}>
                               <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>
@@ -2106,7 +2106,7 @@ export default function ChatNewScreen() {
                       onPress={() => setShowInviteInput(!showInviteInput)}
                       activeOpacity={0.7}
                     >
-                      <View style={[sty.quickActionIcon, { backgroundColor: '#7C3AED' }]}>
+                      <View style={[sty.quickActionIcon, { backgroundColor: '#A582F7' }]}>
                         <IconMail size={18} color="#fff" />
                       </View>
                       <View style={{ flex: 1 }}>
@@ -2128,7 +2128,7 @@ export default function ChatNewScreen() {
                           autoCapitalize="none"
                         />
                         <TouchableOpacity
-                          style={[sty.inviteSendBtn, { backgroundColor: inviteEmail.includes('@') ? '#7C3AED' : colors.border }]}
+                          style={[sty.inviteSendBtn, { backgroundColor: inviteEmail.includes('@') ? '#A582F7' : colors.border }]}
                           disabled={!inviteEmail.includes('@') || !!invitingEmail}
                           onPress={() => {
                             handleInviteByEmail(inviteEmail.trim());
@@ -2285,7 +2285,7 @@ export default function ChatNewScreen() {
 
                 <View style={{ flexDirection: 'row', gap: 12, marginTop: 20 }}>
                   <TouchableOpacity
-                    style={[sty.qrActionBtn, { backgroundColor: '#7C3AED' }]}
+                    style={[sty.qrActionBtn, { backgroundColor: '#A582F7' }]}
                     onPress={handleQrScan}
                   >
                     <IconSearch size={18} color="#fff" />
@@ -2341,7 +2341,7 @@ export default function ChatNewScreen() {
                   </>
                 )}
                 <TouchableOpacity
-                  style={[sty.qrActionBtn, { backgroundColor: '#7C3AED', marginTop: 16, alignSelf: 'stretch' }]}
+                  style={[sty.qrActionBtn, { backgroundColor: '#A582F7', marginTop: 16, alignSelf: 'stretch' }]}
                   onPress={() => setQrMode('show')}
                 >
                   <Text style={{ color: '#fff', fontWeight: '600' }}>{t('chat.qrShowMine')}</Text>
@@ -2397,7 +2397,7 @@ export default function ChatNewScreen() {
               autoFocus
             />
             <TouchableOpacity
-              style={[sty.qrActionBtn, { backgroundColor: '#7C3AED', marginTop: 16, alignSelf: 'stretch', opacity: (broadcastSending || !broadcastComposeText.trim()) ? 0.5 : 1 }]}
+              style={[sty.qrActionBtn, { backgroundColor: '#A582F7', marginTop: 16, alignSelf: 'stretch', opacity: (broadcastSending || !broadcastComposeText.trim()) ? 0.5 : 1 }]}
               disabled={broadcastSending || !broadcastComposeText.trim()}
               onPress={() => {
                 const bl = broadcastComposeList;
@@ -2460,7 +2460,7 @@ const sty = StyleSheet.create({
       default: {},
     }),
     elevation: 3,
-    shadowColor: '#7C3AED',
+    shadowColor: '#A582F7',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 6,
@@ -2516,7 +2516,7 @@ const sty = StyleSheet.create({
   searchClearBtn: { padding: 4 },
   searchClearCircle: {
     width: 20, height: 20, borderRadius: 10,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     alignItems: 'center', justifyContent: 'center',
   },
   addEmailRow: {
@@ -2534,12 +2534,12 @@ const sty = StyleSheet.create({
   onlineDot: {
     position: 'absolute', bottom: 2, right: 2,
     width: 14, height: 14, borderRadius: 7,
-    backgroundColor: '#7C3AED', borderWidth: 2,
+    backgroundColor: '#A582F7', borderWidth: 2,
   },
   onlineDotSmall: {
     position: 'absolute', bottom: 0, right: 0,
     width: 12, height: 12, borderRadius: 6,
-    backgroundColor: '#7C3AED', borderWidth: 2,
+    backgroundColor: '#A582F7', borderWidth: 2,
   },
 
   // Quick actions
@@ -2551,7 +2551,7 @@ const sty = StyleSheet.create({
   },
   quickActionIcon: {
     width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
   },
   quickActionTitle: { fontSize: 16, fontWeight: '500' },
   quickActionSub: { fontSize: 13, marginTop: 2 },
@@ -2605,13 +2605,13 @@ const sty = StyleSheet.create({
   inviteBtn: {
     paddingHorizontal: 14, height: 32, justifyContent: 'center', alignItems: 'center',
     borderRadius: 14,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     ...Platform.select({
       web: { boxShadow: '0 1px 3px rgba(124,58,237,0.3)' },
       default: {},
     }),
     elevation: 2,
-    shadowColor: '#7C3AED',
+    shadowColor: '#A582F7',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.3,
     shadowRadius: 3,
@@ -2663,7 +2663,7 @@ const sty = StyleSheet.create({
   sectionAccentLine: {
     width: 0, height: 0,
   },
-  sectionTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, color: '#7C3AED' },
+  sectionTitle: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8, color: '#A582F7' },
   // WhatsApp-style single-letter mini header for A-Z grouping. Slimmer
   // than the full sectionHeader so the on-Chatyy list doesn't feel
   // chopped up — just a tiny brand-colored letter pinned at the top
@@ -2677,13 +2677,13 @@ const sty = StyleSheet.create({
   createBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 10, height: 50, borderRadius: 25,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     ...Platform.select({
       web: { boxShadow: '0 3px 12px rgba(124,58,237,0.3)' },
       default: {},
     }),
     elevation: 4,
-    shadowColor: '#7C3AED',
+    shadowColor: '#A582F7',
     shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -2736,7 +2736,7 @@ const sty = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   qrScanFrame: {
-    width: 200, height: 200, borderWidth: 2, borderColor: '#7C3AED',
+    width: 200, height: 200, borderWidth: 2, borderColor: '#A582F7',
     borderRadius: 16, backgroundColor: 'transparent',
   },
   qrActionBtn: {

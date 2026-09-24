@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useRef, useEffect } from 'react';
+import React, { createContext, useContext, useState, useRef, useEffect, useCallback, useMemo } from 'react';
 
 const PhotosContext = createContext(null);
 
@@ -13,14 +13,16 @@ export function PhotosProvider({ children }) {
   // Wrap setters to also cache values. Persiste 0/null pra não retornar
   // valor antigo após reset/clear; .catch externo evita unhandled rejection
   // no import dinâmico.
-  const setBackedUpTotal = (val) => {
+  // [2026-09-24 perf] setters em useCallback (estáveis) para o value memoizado
+  // abaixo não recriar a cada render.
+  const setBackedUpTotal = useCallback((val) => {
     _setBackedUpTotal(val);
     import('../services/cache').then(c => c.setCache('photos_backed_up_total', val, 7776000000)).catch(() => {});
-  };
-  const setStorageInfo = (val) => {
+  }, []);
+  const setStorageInfo = useCallback((val) => {
     _setStorageInfo(val);
     import('../services/cache').then(c => c.setCache('drive_storage_info', val, 7776000000)).catch(() => {});
-  };
+  }, []);
 
   // Load cached values on mount (instant) - photos render from cache immediately
   useEffect(() => {
@@ -58,19 +60,22 @@ export function PhotosProvider({ children }) {
   const [albums, setAlbums] = useState([]);
   const loadedRef = useRef(false); // true after first load
 
+  const value = useMemo(() => ({
+    devicePhotos, setDevicePhotos,
+    cloudPhotos, setCloudPhotos,
+    deviceTotalCount, setDeviceTotalCount,
+    backedUpTotal, setBackedUpTotal,
+    storageInfo, setStorageInfo,
+    backupStatus, setBackupStatus,
+    backupEnabled, setBackupEnabled,
+    lastBackupDate, setLastBackupDate,
+    albums, setAlbums,
+    loadedRef,
+  }), [devicePhotos, cloudPhotos, deviceTotalCount, backedUpTotal, storageInfo,
+       backupStatus, backupEnabled, lastBackupDate, albums,
+       setBackedUpTotal, setStorageInfo]);
   return (
-    <PhotosContext.Provider value={{
-      devicePhotos, setDevicePhotos,
-      cloudPhotos, setCloudPhotos,
-      deviceTotalCount, setDeviceTotalCount,
-      backedUpTotal, setBackedUpTotal,
-      storageInfo, setStorageInfo,
-      backupStatus, setBackupStatus,
-      backupEnabled, setBackupEnabled,
-      lastBackupDate, setLastBackupDate,
-      albums, setAlbums,
-      loadedRef,
-    }}>
+    <PhotosContext.Provider value={value}>
       {children}
     </PhotosContext.Provider>
   );

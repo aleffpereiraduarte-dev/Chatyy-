@@ -31,7 +31,7 @@ async function getVideoThumbnail(uri) {
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const MAX_WIDTH = 600;
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const MAX_CAPTION = 2200;
 const MAX_MEDIA = 10;
 

@@ -16,7 +16,7 @@ const RECENT_SEARCHES_KEY = '@onemundo_recent_searches';
 const MAX_RECENT = 5;
 
 // Brand accent for operator pills (consistent with global search overlay).
-const BRAND = '#7C3AED';
+const BRAND = '#A582F7';
 
 // --- Search operator definitions ---
 const OPERATORS = [

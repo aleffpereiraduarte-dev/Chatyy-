@@ -21,7 +21,7 @@ import AvatarCircle from './AvatarCircle';
 import Svg, { Path, Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import * as api from '../services/api';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const ACCENT_DARK = '#5B21B6';
 
 // Cover gradient overlay (top-to-bottom dark fade) for header readability

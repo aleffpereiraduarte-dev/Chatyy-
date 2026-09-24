@@ -445,13 +445,13 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                             paddingVertical: 12,
                             borderRadius: 22,
                             borderWidth: 1.5,
-                            borderColor: inf ? '#7C3AED90' : colors.primary + '50',
-                            backgroundColor: inf ? '#7C3AED15' : colors.primary + '10',
+                            borderColor: inf ? '#A582F790' : colors.primary + '50',
+                            backgroundColor: inf ? '#A582F715' : colors.primary + '10',
                             alignItems: 'center',
                             opacity: sending ? 0.5 : 1,
                           }}
                         >
-                          <Text style={{ color: inf ? '#7C3AED' : colors.primary, fontSize: 14, fontWeight: '700' }}>
+                          <Text style={{ color: inf ? '#A582F7' : colors.primary, fontSize: 14, fontWeight: '700' }}>
                             {inf ? '∞ ' : ''}{d.label}
                           </Text>
                         </TouchableOpacity>
@@ -523,12 +523,12 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                         paddingVertical: 10,
                         borderRadius: 18,
                         borderWidth: 1.5,
-                        borderColor: active ? (inf ? '#7C3AED' : colors.primary) : colors.border + '60',
-                        backgroundColor: active ? (inf ? '#7C3AED15' : colors.primary + '15') : 'transparent',
+                        borderColor: active ? (inf ? '#A582F7' : colors.primary) : colors.border + '60',
+                        backgroundColor: active ? (inf ? '#A582F715' : colors.primary + '15') : 'transparent',
                         alignItems: 'center',
                       }}
                     >
-                      <Text style={{ color: active ? (inf ? '#7C3AED' : colors.primary) : colors.textSecondary, fontSize: 13, fontWeight: '700' }}>
+                      <Text style={{ color: active ? (inf ? '#A582F7' : colors.primary) : colors.textSecondary, fontSize: 13, fontWeight: '700' }}>
                         {inf ? '∞ ' : ''}{d.label}
                       </Text>
                     </TouchableOpacity>
@@ -560,7 +560,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                   helps adoption since users worry about who sees their
                   pin. Snap-Map 2026-05-18: "Sempre" mode gets a stronger
                   warning because there's no auto-expiry. */}
-              <Text style={{ fontSize: 11, color: liveConfirm.unlimited ? '#7C3AED' : colors.textSecondary, lineHeight: 16, marginBottom: 16, fontWeight: liveConfirm.unlimited ? '600' : '400' }}>
+              <Text style={{ fontSize: 11, color: liveConfirm.unlimited ? '#A582F7' : colors.textSecondary, lineHeight: 16, marginBottom: 16, fontWeight: liveConfirm.unlimited ? '600' : '400' }}>
                 {liveConfirm.unlimited
                   ? (t?.('chatConv.livePrivacyUnlimited') || 'Sempre ativo: sua localização continua sendo compartilhada até você desligar manualmente. Toque na bolha para parar.')
                   : (t?.('chatConv.livePrivacyNote') || 'Apenas pessoas desta conversa veem sua localização. Você pode parar a qualquer momento.')}

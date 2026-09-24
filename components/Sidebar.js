@@ -28,15 +28,15 @@ const FOLDER_ICONS = {
 
 // Colorful folder icon colors
 const FOLDER_COLORS = {
-  INBOX: '#7C3AED',
+  INBOX: '#A582F7',
   Sent: '#10b981',
   Drafts: '#f59e0b',
   Trash: '#ef4444',
-  Spam: '#8b5cf6',
+  Spam: '#A582F7',
   Archive: '#6b7280',
   Flagged: '#f59e0b',
   Snoozed: '#A78BFA',
-  Junk: '#8b5cf6',
+  Junk: '#A582F7',
 };
 
 const FOLDER_BG_COLORS = {
@@ -357,12 +357,12 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
   if (collapsed) {
     const quickItems = [
       { label: t('sidebar.inbox'), icon: IconInbox, route: '/inbox', onPress: () => onFolderPress('INBOX') },
-      { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', color: '#7C3AED', badge: chatUnread },
+      { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', color: '#A582F7', badge: chatUnread },
       { label: t('sidebar.meetings'), icon: IconFilm, route: '/meetings', color: '#ef4444' },
       { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar', color: '#4285f4' },
       { label: 'Cloud', icon: IconFolder, route: '/drive', color: '#f59e0b' },
       { label: t('photos.title'), icon: IconCamera, route: '/photos', color: '#e11d48' },
-      { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts', color: '#8b5cf6' },
+      { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts', color: '#A582F7' },
       { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#4285f4' },
       { label: t('sidebar.notes'), icon: IconStickyNote, route: '/notes', color: '#f59e0b' },
       { label: 'One', icon: IconZap, route: '/one', color: '#A78BFA' },
@@ -443,7 +443,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         // visíveis sempre, duplicando o que o Apps drawer (chat tab) já oferece.
         // Reclamação do usuário: "abre todas as funções de novo no menu lateral".
         const primary = [
-          { label: t('sidebar.search') || 'Buscar', icon: IconSearch, route: '__search__', color: '#7C3AED' },
+          { label: t('sidebar.search') || 'Buscar', icon: IconSearch, route: '__search__', color: '#A582F7' },
           { label: t('notifications.title') || 'Notificações', icon: IconBell, route: '__notifications__', color: '#f59e0b', badge: notifsUnread },
           { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
         ];
@@ -459,14 +459,14 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           // Saved Messages — Telegram-style "chat with yourself" with
           // dedicated screen (tabs, search, schedule reminders). Floppy-
           // disk feel uses IconBookmark since the codebase already ships it.
-          { label: t('chat.savedMessages') || 'Mensagens Salvas', icon: IconBookmark, route: '/saved-messages', color: '#7C3AED' },
+          { label: t('chat.savedMessages') || 'Mensagens Salvas', icon: IconBookmark, route: '/saved-messages', color: '#A582F7' },
           // Lives salvas — replays of broadcasts the user saved (CF Stream
           // VOD). WAVE 99 (2026-05-21): user reported "salvo em lives mas
           // onde tá essa opção?" — the only discoverable entry points were
           // the Profile "Lives" tab and the end-card CTA after a broadcast.
           // Surfacing it in the sidebar More section gives a permanent
           // navigation target so the host can find their replays anytime.
-          { label: t('sidebar.livesSaved') || 'Lives salvas', icon: IconPlay, route: '/lives-saved', color: '#7C3AED' },
+          { label: t('sidebar.livesSaved') || 'Lives salvas', icon: IconPlay, route: '/lives-saved', color: '#A582F7' },
           // Snap-Map / Friends-on-a-Map — Snapchat-style "where are my
           // friends" screen. Pin-icon is overloaded for "live location"
           // semantics already; the green color (matches the live-share
@@ -905,7 +905,7 @@ const s = StyleSheet.create({
         transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
         cursor: 'pointer',
         boxShadow: '0 4px 14px rgba(124,58,237,0.28)',
-        backgroundColor: '#7C3AED',
+        backgroundColor: '#A582F7',
       },
       default: {},
     }),
@@ -1018,7 +1018,7 @@ const s = StyleSheet.create({
     ...(Platform.OS === 'web' ? {
       cursor: 'pointer',
       boxShadow: '0 4px 12px rgba(124,58,237,0.28)',
-      backgroundColor: '#7C3AED',
+      backgroundColor: '#A582F7',
       transition: 'transform 0.15s ease, box-shadow 0.15s ease',
     } : {}),
   },

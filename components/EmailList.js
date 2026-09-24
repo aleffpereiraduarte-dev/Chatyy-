@@ -9,6 +9,7 @@ import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import EmailRow from './EmailRow';
 import EmptyState from './EmptyState';
 import { EmailSkeleton } from './SkeletonLoader';
+import { prefetchMessage } from '../services/api';
 import {
   IconRefresh, IconChevronLeft, IconChevronRight,
   IconCheckbox, IconCheckboxChecked, IconTrash, IconArchive,
@@ -96,6 +97,26 @@ export default function EmailList({
   const { t } = useLanguage();
   const insets = useSafeAreaInsets();
   const dragRef = useRef({ active: false });
+
+  // [2026-09-24 abrir-rápido mobile] Prefetch do corpo dos emails VISÍVEIS (só
+  // mobile — a web já aquece no hover). Faz o toque abrir INSTANTÂNEO (read.js lê
+  // cache-first). Refs ESTÁVEIS: o React Native proíbe trocar
+  // onViewableItemsChanged/viewabilityConfig entre renders. O folder atual entra
+  // por ref pra não capturar valor velho no callback estável.
+  const folderRef = useRef(currentFolder);
+  folderRef.current = currentFolder;
+  const onViewablePrefetch = useRef(({ viewableItems }) => {
+    if (Platform.OS === 'web') return;
+    for (const v of viewableItems) {
+      const it = v.item;
+      if (!it || it._sectionHeader || !it.uid) continue;
+      // dedupe (2min) + cap de concorrência (3) vivem dentro de prefetchMessage
+      prefetchMessage(it.uid, folderRef.current);
+    }
+  });
+  // minimumViewTime 250ms: só conta como "visível" o item onde a rolagem PAROU
+  // — rolagem rápida não dispara prefetch (protege o IMAP/Dovecot).
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60, minimumViewTime: 250 });
 
   // Drag-to-select: global mouseup listener
   useEffect(() => {
@@ -291,6 +312,8 @@ export default function EmailList({
             if (onLoadMore && !endOfList && !loadingMore && !loading) onLoadMore();
           }}
           onEndReachedThreshold={0.4}
+          onViewableItemsChanged={onViewablePrefetch.current}
+          viewabilityConfig={viewabilityConfig.current}
           ListFooterComponent={loadingMore ? (
             <View style={{ paddingVertical: 16, alignItems: 'center' }}>
               <ActivityIndicator size="small" color={colors.primary} />

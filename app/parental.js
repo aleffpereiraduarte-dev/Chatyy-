@@ -16,14 +16,14 @@ import useIsMounted from '../hooks/useIsMounted';
 import * as haptics from '../services/haptics';
 import ErrorBoundary from '../components/ErrorBoundary';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const STEPS = ['info', 'document', 'verifying', 'credentials'];
 
 // Step gradient configs
 const STEP_GRADIENTS = {
-  0: { web: 'linear-gradient(145deg, #4F46E5 0%, #7C3AED 40%, #A78BFA 100%)', native: '#7C3AED' },
+  0: { web: 'linear-gradient(145deg, #4F46E5 0%, #A582F7 40%, #A78BFA 100%)', native: '#A582F7' },
   1: { web: 'linear-gradient(145deg, #059669 0%, #10B981 40%, #34D399 100%)', native: '#10B981' },
-  2: { web: 'linear-gradient(145deg, #7C3AED 0%, #9333EA 40%, #C084FC 100%)', native: '#9333EA' },
+  2: { web: 'linear-gradient(145deg, #A582F7 0%, #9333EA 40%, #C084FC 100%)', native: '#9333EA' },
   3: { web: 'linear-gradient(145deg, #D97706 0%, #F59E0B 40%, #FBBF24 100%)', native: '#F59E0B' },
 };
 
@@ -32,7 +32,7 @@ const AGE_ICON = (age) => {
   if (age <= 7) return <IconUser size={16} color="#EC4899" />;
   if (age <= 9) return <IconUser size={16} color="#3B82F6" />;
   if (age <= 11) return <IconStar size={16} color="#F59E0B" />;
-  return <IconStar size={16} color="#8b5cf6" />;
+  return <IconStar size={16} color="#A582F7" />;
 };
 
 // Mascot frames for animation (icon components)
@@ -473,7 +473,7 @@ function ParentalScreenInner() {
   const relationships = [
     { key: 'mae', label: t('parental.relMom'), emoji: <IconUser size={24} color="#EC4899" />, color: '#EC4899' },
     { key: 'pai', label: t('parental.relDad'), emoji: <IconUser size={24} color="#3B82F6" />, color: '#3B82F6' },
-    { key: 'tutor', label: t('parental.relGuardian'), emoji: <IconHome size={24} color="#8B5CF6" />, color: '#8B5CF6' },
+    { key: 'tutor', label: t('parental.relGuardian'), emoji: <IconHome size={24} color="#A582F7" />, color: '#A582F7' },
   ];
 
   const genders = [
@@ -599,7 +599,7 @@ function ParentalScreenInner() {
     active: { color: '#22c55e', label: t('parental.active'), icon: <IconCheck size={24} color="#22c55e" /> },
     suspended: { color: '#ef4444', label: t('parental.suspended'), icon: <IconAlertCircle size={24} color="#ef4444" /> },
     revoked: { color: '#6b7280', label: t('parental.revoked'), icon: <IconX size={24} color="#6b7280" /> },
-    graduated: { color: '#8b5cf6', label: t('parental.graduated'), icon: <IconStar size={24} color="#8b5cf6" /> },
+    graduated: { color: '#A582F7', label: t('parental.graduated'), icon: <IconStar size={24} color="#A582F7" /> },
   };
 
   const formatLastActive = (dateStr) => {
@@ -641,11 +641,11 @@ function ParentalScreenInner() {
   // the same child always gets the same colors across sessions.
   const childGradient = (email) => {
     const palettes = [
-      ['#7C3AED', '#EC4899'], // purple → pink
+      ['#A582F7', '#EC4899'], // purple → pink
       ['#3B82F6', '#06B6D4'], // blue → cyan
       ['#10B981', '#84CC16'], // green → lime
       ['#F59E0B', '#EF4444'], // amber → red
-      ['#8B5CF6', '#3B82F6'], // violet → blue
+      ['#A582F7', '#3B82F6'], // violet → blue
     ];
     let h = 0;
     for (let i = 0; i < (email || '').length; i++) h = (h * 31 + email.charCodeAt(i)) | 0;
@@ -766,7 +766,7 @@ function ParentalScreenInner() {
   }, [t]);
 
   // ─── Confetti Overlay ───
-  const CONFETTI_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FED766', '#7C3AED', '#F472B6', '#34D399', '#FB923C'];
+  const CONFETTI_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FED766', '#A582F7', '#F472B6', '#34D399', '#FB923C'];
   const renderConfetti = () => {
     if (!showConfetti) return null;
     return (
@@ -848,7 +848,7 @@ function ParentalScreenInner() {
           {(() => {
             const icons = [IconShield, IconUser, IconStar, IconHeart, IconSparkles, IconSmile];
             const Ico = icons[mascotFrame % icons.length];
-            return <Ico size={44} color="#7C3AED" />;
+            return <Ico size={44} color="#A582F7" />;
           })()}
         </View>
       </Animated.View>
@@ -867,7 +867,7 @@ function ParentalScreenInner() {
       <View style={s.fieldGroup}>
         <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{t('parental.childFullName')}</Text>
         <View style={[s.inputWrap, { backgroundColor: isDark ? '#1a2332' : '#f8f9fb', borderColor: isDark ? '#2d3748' : '#e2e8f0' }]}>
-          <View style={{ marginRight: 12 }}><IconUser size={20} color="#7C3AED" /></View>
+          <View style={{ marginRight: 12 }}><IconUser size={20} color="#A582F7" /></View>
           <TextInput
             ref={nameInputRef}
             style={[s.input, { color: colors.text }]}
@@ -1151,8 +1151,8 @@ function ParentalScreenInner() {
                 onPress={() => pickDocument(false)}
                 activeOpacity={0.7}
               >
-                <View style={[s.docBtnIconWrap, { backgroundColor: '#8B5CF6' + '15' }]}>
-                  <IconImage size={24} color="#8B5CF6" />
+                <View style={[s.docBtnIconWrap, { backgroundColor: '#A582F7' + '15' }]}>
+                  <IconImage size={24} color="#A582F7" />
                 </View>
                 <Text style={[s.docBtnText, { color: colors.text }]}>{t('parental.gallery')}</Text>
                 <Text style={[s.docBtnSub, { color: colors.textSecondary }]}>{t('parental.selectPhoto')}</Text>
@@ -1328,7 +1328,7 @@ function ParentalScreenInner() {
               onPress={() => setQuickSetup(p => ({ ...p, bedtime: !p.bedtime }))}
               activeOpacity={0.7}
             >
-              <View style={s.setupEmojiWrap}><IconMoon size={24} color="#7C3AED" /></View>
+              <View style={s.setupEmojiWrap}><IconMoon size={24} color="#A582F7" /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupBedtime')}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{presets.bedtimeStart} - {presets.bedtimeEnd}</Text>
@@ -1431,33 +1431,33 @@ function ParentalScreenInner() {
 
             <TouchableOpacity
               style={[s.setupOption, {
-                backgroundColor: quickSetup.filterProfanity ? '#8b5cf6' + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
-                borderColor: quickSetup.filterProfanity ? '#8b5cf6' : (isDark ? '#2d3748' : '#e2e8f0'),
+                backgroundColor: quickSetup.filterProfanity ? '#A582F7' + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
+                borderColor: quickSetup.filterProfanity ? '#A582F7' : (isDark ? '#2d3748' : '#e2e8f0'),
               }]}
               onPress={() => setQuickSetup(p => ({ ...p, filterProfanity: !p.filterProfanity }))}
               activeOpacity={0.7}
             >
-              <View style={s.setupEmojiWrap}><IconMessageSquare size={24} color="#8b5cf6" /></View>
+              <View style={s.setupEmojiWrap}><IconMessageSquare size={24} color="#A582F7" /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.filterProfanity') || 'Filter profanity'}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.filterProfanityDesc') || 'Block bad language'}</Text>
               </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.filterProfanity ? '#8b5cf6' : (isDark ? '#374151' : '#d1d5db') }]}>
+              <View style={[s.setupToggle, { backgroundColor: quickSetup.filterProfanity ? '#A582F7' : (isDark ? '#374151' : '#d1d5db') }]}>
                 <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.filterProfanity ? 16 : 0 }] }]} />
               </View>
             </TouchableOpacity>
 
             {/* One-tap recommended */}
             <TouchableOpacity
-              style={[s.recommendedBtn, { backgroundColor: '#7C3AED' + '12', borderColor: '#7C3AED' + '40' }]}
+              style={[s.recommendedBtn, { backgroundColor: '#A582F7' + '12', borderColor: '#A582F7' + '40' }]}
               onPress={() => {
                 setQuickSetup({ bedtime: true, contacts: true, screenTime: true, safeSearch: true, filterAdult: true, filterViolence: true, filterProfanity: true });
                 if (Platform.OS !== 'web') try { Vibration.vibrate(30); } catch {}
               }}
               activeOpacity={0.7}
             >
-              <IconSparkles size={18} color="#7C3AED" />
-              <Text style={[s.recommendedText, { color: '#7C3AED' }]}>{t('parental.applyRecommended')}</Text>
+              <IconSparkles size={18} color="#A582F7" />
+              <Text style={[s.recommendedText, { color: '#A582F7' }]}>{t('parental.applyRecommended')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -1609,7 +1609,7 @@ function ParentalScreenInner() {
         {/* Bedtime active banner — countdown updates via `now` heartbeat */}
         {isActive && bedtime.active && (
           <View style={[s.bedtimeBanner, { backgroundColor: isDark ? '#1e1b3a' : '#ede9fe', borderTopColor: isDark ? '#2d3748' : '#ddd6fe' }]}>
-            <IconMoon size={16} color="#7C3AED" />
+            <IconMoon size={16} color="#A582F7" />
             <Text style={[s.bedtimeText, { color: isDark ? '#c4b5fd' : '#5b21b6' }]} numberOfLines={1}>
               {t('parental.bedtimeActive') || 'Em modo noturno até'} {bedtime.endLabel}
               {bedtime.minsLeft > 0 ? ` · ${bedtime.minsLeft} min` : ''}
@@ -1637,9 +1637,9 @@ function ParentalScreenInner() {
         )}
 
         {isGraduated && (
-          <View style={[s.graduatedBanner, { backgroundColor: '#8b5cf610', borderTopColor: isDark ? '#2d3748' : '#e8ecf0' }]}>
-            <IconStar size={14} color="#8b5cf6" />
-            <Text style={[s.graduatedText, { color: '#8b5cf6' }]}>{t('parental.turnedThirteen')}</Text>
+          <View style={[s.graduatedBanner, { backgroundColor: '#A582F710', borderTopColor: isDark ? '#2d3748' : '#e8ecf0' }]}>
+            <IconStar size={14} color="#A582F7" />
+            <Text style={[s.graduatedText, { color: '#A582F7' }]}>{t('parental.turnedThirteen')}</Text>
           </View>
         )}
 
@@ -1730,7 +1730,7 @@ function ParentalScreenInner() {
               <Animated.View style={{ transform: [{ scale: bounceAnim }] }}>
                 <TouchableOpacity
                   style={[s.nextBtn, {
-                    backgroundColor: canNext ? (step === 0 ? '#7C3AED' : ACCENT) : (isDark ? '#2d3748' : '#e2e8f0'),
+                    backgroundColor: canNext ? (step === 0 ? '#A582F7' : ACCENT) : (isDark ? '#2d3748' : '#e2e8f0'),
                   }]}
                   onPress={handleNextStep}
                   disabled={!canNext || creating}
@@ -1944,7 +1944,7 @@ function ParentalScreenInner() {
     { key: 'screenTime', label: t('parental.screenTime'), icon: IconBarChart, color: '#3b82f6', emoji: <IconClock size={24} color="#3b82f6" /> },
     { key: 'lock', label: t('parental.lockDevice'), icon: IconShield, color: '#ef4444', emoji: <IconShield size={24} color="#ef4444" /> },
     { key: 'message', label: t('parental.sendMessage'), icon: IconMessageSquare, color: '#22c55e', emoji: <IconMessageSquare size={24} color="#22c55e" /> },
-    { key: 'summary', label: t('parental.aiSummary'), icon: IconBarChart, color: '#8b5cf6', emoji: <IconSparkles size={24} color="#8b5cf6" /> },
+    { key: 'summary', label: t('parental.aiSummary'), icon: IconBarChart, color: '#A582F7', emoji: <IconSparkles size={24} color="#A582F7" /> },
   ];
 
   const handleQuickAction = (action, child) => {
@@ -2161,7 +2161,7 @@ const s = StyleSheet.create({
 
   // Mascot
   mascotWrap: { alignItems: 'center', marginBottom: 4 },
-  mascotCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#7C3AED15', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#7C3AED30' },
+  mascotCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#A582F715', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#A582F730' },
   mascotEmoji: { fontSize: 32 },
 
   // Shield
@@ -2417,7 +2417,7 @@ const s = StyleSheet.create({
   heroBlob: { position: 'absolute', width: 110, height: 110, borderRadius: 55 },
   heroBlob2: { top: 8, left: 14, width: 80, height: 80, borderRadius: 40 },
   heroBlob3: { bottom: 10, right: 16, width: 70, height: 70, borderRadius: 35 },
-  heroIconCenter: { width: 96, height: 96, borderRadius: 48, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 12 },
+  heroIconCenter: { width: 96, height: 96, borderRadius: 48, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: '#A582F7', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 12 },
 
   // Skeleton loader (initial load, no cache)
   skeletonCard: { flexDirection: 'row', alignItems: 'center', padding: 18, gap: 14, borderRadius: 22, borderWidth: 1.5 },

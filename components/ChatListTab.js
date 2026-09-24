@@ -5,8 +5,14 @@ import {
   Animated, PanResponder, Platform, LayoutAnimation, UIManager, Image,
   KeyboardAvoidingView, Pressable, Dimensions, AppState,
 } from 'react-native';
-// FlatList only (FlashList crashes iOS)
-const ListComponent = FlatList;
+// [2026-09-24 PILOTO FlashList v2] Religando o motor de lista NATIVO (FlashList
+// 2.0.2, reescrito pra New Architecture) SÓ na lista de conversas — teste no
+// TestFlight. FlashList v1 travava no iOS SDK55 (por isso todas as listas
+// voltaram pro FlatList); a v2 é New-Arch-native e deve estar estável. As props
+// só-de-FlatList abaixo (windowSize, maxToRenderPerBatch, removeClippedSubviews)
+// o FlashList ignora sem quebrar. Se travar/regredir → voltar `= FlatList`.
+const { FlashList } = require('@shopify/flash-list');
+const ListComponent = FlashList;
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as api from '../services/api';
 import { useConfirm } from './ConfirmModal';
@@ -63,7 +69,7 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const ACCENT2 = '#6D28D9';
 const ACCENT_GLOW = 'rgba(124,58,237,0.35)';
 const SWIPE_THRESHOLD = 40; // lowered from 60 for better responsiveness
@@ -254,7 +260,7 @@ function TypingDotsInline({ color }) {
       {dots.map((d, i) => (
         <Animated.View key={i} style={{
           width: 6, height: 6, borderRadius: 3,
-          backgroundColor: color || '#7C3AED',
+          backgroundColor: color || '#A582F7',
           opacity: d.opacity,
           transform: [{ scale: d.scale }],
         }} />
@@ -790,7 +796,7 @@ const ConversationRow = React.memo(function ConversationRow({
   // ── Status checkmarks (WhatsApp parity: blue on read, gray on delivered/sent) ──
   // [2026-05-21] User explicit request: "quando ver fica azul" — matches
   // the thread's own AnimatedCheckStatus (#53BDEB). Was Chatyy brand purple
-  // (#7C3AED) but the user expects WhatsApp blue.
+  // (#A582F7) but the user expects WhatsApp blue.
   // Now delegates to ListReceiptIcon, which crossfades gray→blue + pulses on
   // delivered→read instead of hard-swapping the icons (keyed by statusType).
   const renderStatusIcon = () => {
@@ -908,7 +914,7 @@ const ConversationRow = React.memo(function ConversationRow({
                   ? { borderRadius: 28, boxShadow: `0 0 0 2px rgba(124,58,237,0.55), 0 2px 10px rgba(124,58,237,0.3)` }
                   : {
                       borderRadius: 28,
-                      shadowColor: '#7C3AED',
+                      shadowColor: '#A582F7',
                       shadowOffset: { width: 0, height: 0 },
                       shadowOpacity: 0.55,
                       shadowRadius: 5,
@@ -941,7 +947,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 position: 'absolute', top: -6, left: -4, right: -4,
                 backgroundColor: isDark ? '#2d1b69' : '#ede9fe',
                 borderRadius: 10, paddingHorizontal: 5, paddingVertical: 2,
-                borderWidth: 1, borderColor: isDark ? '#7C3AED' : '#c4b5fd',
+                borderWidth: 1, borderColor: isDark ? '#A582F7' : '#c4b5fd',
                 zIndex: 5, alignItems: 'center',
               }}>
                 <Text style={{ fontSize: 8, color: isDark ? '#c4b5fd' : '#6d28d9', fontWeight: '700' }} numberOfLines={1}>
@@ -1156,7 +1162,7 @@ const ConversationRow = React.memo(function ConversationRow({
   return (
     <View style={s.swipeContainer}>
       <Animated.View style={[s.swipeActionsLeft, { opacity: leftOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#8B5CF6' }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#A582F7' }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
           <IconVolume2 size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{t('chat.mute') || 'Mute'}</Text>
         </TouchableOpacity>
@@ -2128,7 +2134,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                 <Text style={{ color: colors.text, fontWeight: '600' }}>{t('common.cancel') || 'Cancelar'}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={saveNote} disabled={savingNote || !noteText.trim()}
-                style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#7C3AED', alignItems: 'center', opacity: (!noteText.trim() || savingNote) ? 0.5 : 1 }}>
+                style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#A582F7', alignItems: 'center', opacity: (!noteText.trim() || savingNote) ? 0.5 : 1 }}>
                 <Text style={{ color: '#fff', fontWeight: '700' }}>{savingNote ? '...' : (t('common.save') || 'Salvar')}</Text>
               </TouchableOpacity>
             </View>
@@ -2146,7 +2152,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               {t('status.createStatus') || 'Criar status'}
             </Text>
             {[
-              { key:'text',   icon:'T',  color:'#7C3AED', label: t('status.typeText')  || 'Texto' },
+              { key:'text',   icon:'T',  color:'#A582F7', label: t('status.typeText')  || 'Texto' },
               { key:'camera', icon:'📷', color:'#10B981', label: t('status.typeCamera') || 'Câmera' },
             ].map(opt => (
               <TouchableOpacity
@@ -2597,7 +2603,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                   safeAlert(t('common.error') || 'Erro', t('status.publishFailed') || 'Não foi possível publicar o status.');
                 } finally { setStatusPublishing(false); setStatusUploadPct(0); }
               }}
-              style={{ width:54, height:54, borderRadius:27, backgroundColor:'#7C3AED', alignItems:'center', justifyContent:'center', opacity: statusPublishing ? 0.6 : 1 }}
+              style={{ width:54, height:54, borderRadius:27, backgroundColor:'#A582F7', alignItems:'center', justifyContent:'center', opacity: statusPublishing ? 0.6 : 1 }}
             >
               {statusPublishing ? <ActivityIndicator color="#fff" /> : <Text style={{ color:'#fff', fontSize:22, fontWeight:'700' }}>→</Text>}
             </TouchableOpacity>
@@ -2623,7 +2629,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                   pct={statusUploadPct || 0}
                   size={120}
                   strokeWidth={4}
-                  color="#7C3AED"
+                  color="#A582F7"
                   inset={5}
                   style={{ position: 'absolute' }}
                 />
@@ -5456,7 +5462,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               backgroundColor: active ? 'rgba(255,255,255,0.28)' : (isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.12)'),
             },
           ]}>
-            <Text style={[s.chipBadgeText, { color: active ? '#fff' : '#7C3AED' }]}>{count > 99 ? '99+' : count}</Text>
+            <Text style={[s.chipBadgeText, { color: active ? '#fff' : '#A582F7' }]}>{count > 99 ? '99+' : count}</Text>
           </View>
         ) : null}
       </TouchableOpacity>
@@ -5602,7 +5608,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               {pinnedEditMode && !pinnedHintSeen ? (
                 <Text
                   numberOfLines={1}
-                  style={{ fontSize: 11, fontWeight: '600', color: isDark ? 'rgba(255,255,255,0.7)' : '#7C3AED', flexShrink: 1 }}
+                  style={{ fontSize: 11, fontWeight: '600', color: isDark ? 'rgba(255,255,255,0.7)' : '#A582F7', flexShrink: 1 }}
                 >
                   {t?.('chat.tapToResize') || 'Toque pra mudar tamanho'}
                 </Text>
@@ -5639,7 +5645,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
                   <Path
                     d="M16.475 5.408l2.117 2.117M14.69 7.193l-9.39 9.39a1.5 1.5 0 00-.421.815l-.5 2.5a.5.5 0 00.59.59l2.5-.5a1.5 1.5 0 00.815-.42l9.39-9.39M14.69 7.193l1.785-1.785a1.5 1.5 0 012.117 0l0 0a1.5 1.5 0 010 2.117l-1.785 1.785M14.69 7.193l2.117 2.117"
-                    stroke={isDark ? '#A78BFA' : '#7C3AED'}
+                    stroke={isDark ? '#A78BFA' : '#A582F7'}
                     strokeWidth={1.8}
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -5657,7 +5663,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 style={{
                   paddingHorizontal: 14, height: 32, borderRadius: 16,
                   flexDirection: 'row', alignItems: 'center', gap: 6,
-                  backgroundColor: '#7C3AED',
+                  backgroundColor: '#A582F7',
                   ...(Platform.OS === 'web' ? { cursor: 'pointer', userSelect: 'none' } : {}),
                 }}
                 accessibilityLabel={t?.('common.done') || 'Concluir'}
@@ -5814,7 +5820,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                         <View style={{
                           position: 'absolute', left: 0, top: 0,
                           width: itemSizePx, height: itemSizePx, borderRadius: itemSizePx / 2,
-                          borderWidth: 3, borderColor: '#7C3AED',
+                          borderWidth: 3, borderColor: '#A582F7',
                         }} />
                       )}
                     </View>
@@ -5850,7 +5856,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             esfumado blob — this is a thin-stroke SVG sized to match the caps).
             Tinted brand purple so the PINNED group feels like a first-class
             section, WhatsApp/Telegram-style. */}
-        <IconPin size={11} color={isDark ? '#A78BFA' : '#7C3AED'} />
+        <IconPin size={11} color={isDark ? '#A78BFA' : '#A582F7'} />
         <Text style={[s.sectionLabelText, { color: isDark ? 'rgba(167,139,250,0.85)' : 'rgba(124,58,237,0.85)' }]}>
           {(() => { const v = t('chat.pinned'); return v && v !== 'chat.pinned' ? v : 'FIXADAS'; })()}
         </Text>
@@ -6057,7 +6063,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 : (t?.('chat.secretCodeOff') || 'Defina um código para ocultar esta pasta')}
             </Text>
           </View>
-          <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '700' }}>
+          <Text style={{ color: '#A582F7', fontSize: 13, fontWeight: '700' }}>
             {secretCode ? (t?.('common.edit') || 'Editar') : (t?.('common.set') || 'Definir')}
           </Text>
         </TouchableOpacity>
@@ -6156,7 +6162,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             borderBottomWidth: StyleSheet.hairlineWidth,
             borderBottomColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.14)',
           }}>
-          <ActivityIndicator size="small" color={isDark ? 'rgba(180,150,255,0.85)' : '#7C3AED'} />
+          <ActivityIndicator size="small" color={isDark ? 'rgba(180,150,255,0.85)' : '#A582F7'} />
           <Text style={{ flex: 1, fontSize: 11.5, color: isDark ? 'rgba(200,180,255,0.85)' : '#6D28D9', fontWeight: '500' }}>
             {t?.('chat.syncing') || 'Sincronizando...'}
           </Text>
@@ -6236,7 +6242,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 backgroundColor: isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.14)',
                 borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1,
               }}>
-                <Text style={{ color: '#7C3AED', fontSize: 9, fontWeight: '800', letterSpacing: 0.6 }}>AI</Text>
+                <Text style={{ color: '#A582F7', fontSize: 9, fontWeight: '800', letterSpacing: 0.6 }}>AI</Text>
               </View>
             </View>
             <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
@@ -6334,7 +6340,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       {renderPinnedLabel()}
       {(searchQuery || '').trim().length >= 2 && filteredConversations.length > 0 && (
         <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#a78bfa' : '#7C3AED', letterSpacing: 0.3 }}>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#a78bfa' : '#A582F7', letterSpacing: 0.3 }}>
             CONVERSAS
           </Text>
         </View>
@@ -6349,10 +6355,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     return (
       <View style={{ paddingTop: 8 }}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#a78bfa' : '#7C3AED', letterSpacing: 0.3 }}>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#a78bfa' : '#A582F7', letterSpacing: 0.3 }}>
             MENSAGENS
           </Text>
-          {searchingMessages && <ActivityIndicator size="small" color={isDark ? '#a78bfa' : '#7C3AED'} />}
+          {searchingMessages && <ActivityIndicator size="small" color={isDark ? '#a78bfa' : '#A582F7'} />}
         </View>
         {messageHits.length === 0 && !searchingMessages && (
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
@@ -6398,7 +6404,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 backgroundColor: isDark ? 'rgba(167,139,250,0.18)' : 'rgba(124,58,237,0.1)',
                 alignItems: 'center', justifyContent: 'center',
               }}>
-                <IconSearch size={18} color={isDark ? '#a78bfa' : '#7C3AED'} />
+                <IconSearch size={18} color={isDark ? '#a78bfa' : '#A582F7'} />
               </View>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -6769,7 +6775,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 <TouchableOpacity
                   disabled={!secretCodeInput.trim()}
                   onPress={async () => { const c = secretCodeInput.trim(); if (!c) return; await persistSecretCode(c); setSecretCodeModalVisible(false); }}
-                  style={{ paddingVertical: 11, paddingHorizontal: 18, borderRadius: 10, backgroundColor: secretCodeInput.trim() ? '#7C3AED' : 'rgba(124,58,237,0.4)' }}
+                  style={{ paddingVertical: 11, paddingHorizontal: 18, borderRadius: 10, backgroundColor: secretCodeInput.trim() ? '#A582F7' : 'rgba(124,58,237,0.4)' }}
                 >
                   <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{t?.('common.save') || 'Salvar'}</Text>
                 </TouchableOpacity>
@@ -7241,8 +7247,8 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
 // a single bubble built from `last_message` if nothing is cached yet.
 function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isDark, t, onOpen, loading, typingUsers, presencesRef }) {
   const cardBg = isDark ? '#0b141a' : '#efeae2';
-  const headerBg = isDark ? '#1f2c33' : '#7C3AED';
-  const ownBubble = '#7C3AED';
+  const headerBg = isDark ? '#1f2c33' : '#A582F7';
+  const ownBubble = '#A582F7';
   const peerBubble = isDark ? '#202c33' : '#ffffff';
   const ownText = '#ffffff';
   const peerText = isDark ? '#e9edef' : '#0f172a';
@@ -7508,7 +7514,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
               const bubbleBg = isOwn ? ownBubble : peerBubble;
               const txtCol = isOwn ? ownText : peerText;
               const subTxt = isOwn ? 'rgba(255,255,255,0.75)' : meta;
-              const replyAccent = isOwn ? 'rgba(255,255,255,0.7)' : '#7C3AED';
+              const replyAccent = isOwn ? 'rgba(255,255,255,0.7)' : '#A582F7';
               // Mirror the list-row formatter: strip markdown pairs, decode
               // JSON-encoded payloads (call_card / location / contact /
               // attachment), short-circuit known typed messages, and finally
@@ -7629,7 +7635,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
                   ...(isDark ? {} : (isOwn ? {} : { borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(0,0,0,0.05)' })),
                 }}>
                   {senderLabel ? (
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#7C3AED', marginBottom: 1, paddingHorizontal: hasThumb ? 6 : 0 }} numberOfLines={1}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#A582F7', marginBottom: 1, paddingHorizontal: hasThumb ? 6 : 0 }} numberOfLines={1}>
                       {senderLabel}
                     </Text>
                   ) : null}
@@ -7809,10 +7815,10 @@ const s = StyleSheet.create({
     flexShrink: 0,
   },
   chipActive: {
-    backgroundColor: '#7C3AED',
-    borderColor: '#7C3AED',
+    backgroundColor: '#A582F7',
+    borderColor: '#A582F7',
     ...Platform.select({
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.34, shadowRadius: 9 },
+      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.34, shadowRadius: 9 },
       android: { elevation: 4 },
       web: { boxShadow: '0 3px 12px rgba(124,58,237,0.36)' },
     }),
@@ -7968,14 +7974,14 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 7,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
   },
   // [beauty 2026-05-31] One soft, tasteful shadow — no glow stack. Calmed from a
   // heavier purple bloom (0.38 / 0 2px 7px 0.4) to a single gentle lift so the
   // pill reads as a clean colored count, not a glowing blob.
   unreadBadgeShadow: {
     ...Platform.select({
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.22, shadowRadius: 3 },
+      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.22, shadowRadius: 3 },
       android: { elevation: 2 },
       web: { boxShadow: '0 1px 4px rgba(124,58,237,0.28)' },
       default: {},
@@ -8106,7 +8112,7 @@ const s = StyleSheet.create({
     paddingVertical: 15,
     borderRadius: 999,
     ...Platform.select({
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.32, shadowRadius: 12 },
+      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.32, shadowRadius: 12 },
       android: { elevation: 4 },
       web: { boxShadow: `0 6px 18px rgba(124,58,237,0.34)`, transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease' },
     }),
@@ -8126,9 +8132,9 @@ const s = StyleSheet.create({
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     ...Platform.select({
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 14 },
+      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 14 },
       android: { elevation: 6 },
       web: {
         boxShadow: '0 8px 22px rgba(124,58,237,0.42)',

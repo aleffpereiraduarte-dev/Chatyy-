@@ -11,7 +11,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import * as api from '../services/api';
 import ErrorBoundary from '../components/ErrorBoundary';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 
 const FILTERS = [
   { key: 'today',  labelKey: 'parental.filterToday', fallback: 'Hoje' },

@@ -26,7 +26,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconSearch, IconCamera, IconChevronUp } from './Icons';
 import ReelsViewer from './ReelsViewer';
 
-const BRAND = '#7C3AED';
+const BRAND = '#A582F7';
 const HINT_KEY = '@chatyy:reels_hint_seen_v1';
 const { height: SCREEN_H } = Dimensions.get('window');
 

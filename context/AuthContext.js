@@ -2017,7 +2017,7 @@ function CloudRestorePrompt() {
           </Text>
           {busy ? (
             <View style={{ alignItems: 'center', paddingVertical: 16 }}>
-              <ActivityIndicator size="large" color="#7C3AED" />
+              <ActivityIndicator size="large" color="#A582F7" />
               {!!progressMsg && (
                 <Text style={{ marginTop: 12, fontSize: 13, color: '#666' }}>{progressMsg}</Text>
               )}
@@ -2043,7 +2043,7 @@ function CloudRestorePrompt() {
                   flex: 1,
                   paddingVertical: 12,
                   borderRadius: 12,
-                  backgroundColor: '#7C3AED',
+                  backgroundColor: '#A582F7',
                   alignItems: 'center',
                   opacity: pressed ? 0.85 : 1,
                 })}

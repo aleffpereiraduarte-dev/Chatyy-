@@ -121,7 +121,7 @@ export default function ChatEmptyState({ type = 'no-chats', title, subtitle, act
   const { colors } = useTheme();
   const cfg = TYPES[type] || TYPES['no-chats'];
   const Illustration = cfg.Comp;
-  const accent = colors.primary || '#7C3AED';
+  const accent = colors.primary || '#A582F7';
   const fadeIn = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {

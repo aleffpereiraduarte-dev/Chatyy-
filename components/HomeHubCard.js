@@ -88,7 +88,7 @@ function Glyph({ kind, color }) {
 }
 
 const TILES = [
-  { kind: 'ai', route: '/one', c1: '#A78BFA', c2: '#7C3AED', key: 'home.hub.ai', fallback: 'One' },
+  { kind: 'ai', route: '/one', c1: '#A78BFA', c2: '#A582F7', key: 'home.hub.ai', fallback: 'One' },
   { kind: 'email', route: '/inbox', c1: '#60A5FA', c2: '#2563EB', key: 'home.hub.email', fallback: 'E-mail' },
   { kind: 'calendar', route: '/calendar', c1: '#34D399', c2: '#059669', key: 'home.hub.calendar', fallback: 'Agenda' },
   { kind: 'drive', route: '/drive', c1: '#FBBF24', c2: '#D97706', key: 'home.hub.drive', fallback: 'Drive' },

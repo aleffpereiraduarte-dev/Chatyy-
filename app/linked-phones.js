@@ -209,8 +209,8 @@ export default function LinkedPhones() {
         key={`${display}-${i}`}
         style={[s.row, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}
       >
-        <View style={[s.iconWrap, { backgroundColor: isDark ? '#7C3AED22' : '#7C3AED14' }]}>
-          <IconPhone size={18} color="#7C3AED" />
+        <View style={[s.iconWrap, { backgroundColor: isDark ? '#A582F722' : '#A582F714' }]}>
+          <IconPhone size={18} color="#A582F7" />
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text style={[s.rowPhone, { color: colors.text }]} numberOfLines={1}>{display}</Text>
@@ -268,7 +268,7 @@ export default function LinkedPhones() {
 
         <PressableScale
           onPress={() => setAddOpen(true)}
-          style={[s.addBtn, { backgroundColor: '#7C3AED' }]}
+          style={[s.addBtn, { backgroundColor: '#A582F7' }]}
           activeOpacity={0.85}
         >
           <IconPlus size={18} color="#fff" />
@@ -320,7 +320,7 @@ export default function LinkedPhones() {
                   <TouchableOpacity
                     onPress={submitAdd}
                     disabled={busy}
-                    style={[s.cta, { backgroundColor: '#7C3AED', opacity: busy ? 0.6 : 1 }]}
+                    style={[s.cta, { backgroundColor: '#A582F7', opacity: busy ? 0.6 : 1 }]}
                   >
                     {busy ? <ActivityIndicator color="#fff" /> : <Text style={s.ctaText}>{t('common.continue') || 'Continuar'}</Text>}
                   </TouchableOpacity>
@@ -346,7 +346,7 @@ export default function LinkedPhones() {
                   <TouchableOpacity
                     onPress={submitOtp}
                     disabled={busy || code.length !== 6}
-                    style={[s.cta, { backgroundColor: '#7C3AED', opacity: (busy || code.length !== 6) ? 0.6 : 1 }]}
+                    style={[s.cta, { backgroundColor: '#A582F7', opacity: (busy || code.length !== 6) ? 0.6 : 1 }]}
                   >
                     {busy ? <ActivityIndicator color="#fff" /> : <Text style={s.ctaText}>{t('common.verify') || 'Verificar'}</Text>}
                   </TouchableOpacity>

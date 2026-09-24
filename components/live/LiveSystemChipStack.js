@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import AvatarCircle from '../AvatarCircle';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 
 function Chip({ item, onDismiss }) {
   const anim = useRef(new Animated.Value(0)).current;

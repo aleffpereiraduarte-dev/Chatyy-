@@ -145,8 +145,8 @@ export default function StatusExceptScreen() {
                 </View>
                 <View style={{
                   width: 26, height: 26, borderRadius: 13,
-                  borderWidth: 2, borderColor: isIn ? (colors.primary || '#7C3AED') : colors.border,
-                  backgroundColor: isIn ? (colors.primary || '#7C3AED') : 'transparent',
+                  borderWidth: 2, borderColor: isIn ? (colors.primary || '#A582F7') : colors.border,
+                  backgroundColor: isIn ? (colors.primary || '#A582F7') : 'transparent',
                   alignItems: 'center', justifyContent: 'center',
                 }}>
                   {isIn && <IconCheck size={15} color="#fff" strokeWidth={3} />}

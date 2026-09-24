@@ -33,8 +33,8 @@ import {
 import AvatarCircle from '../components/AvatarCircle';
 import { formatCount as formatViewers } from '../components/AnimatedViewerCount';
 
-// Brand purple from constants/theme.js (primary = #7C3AED).
-const BRAND_PURPLE = '#7C3AED';
+// Brand purple from constants/theme.js (primary = #A582F7).
+const BRAND_PURPLE = '#A582F7';
 const BRAND_PURPLE_DARK = '#5B21B6';
 const BRAND_PURPLE_LIGHT = '#A78BFA';
 

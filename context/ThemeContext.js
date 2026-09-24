@@ -36,7 +36,7 @@ export const DENSITY_CONFIG = {
 };
 
 export const ACCENT_PRESETS = [
-  { key: 'purple', hex: '#7C3AED' },
+  { key: 'purple', hex: '#A582F7' },
   { key: 'blue',   hex: '#3B82F6' },
   { key: 'green',  hex: '#10B981' },
   { key: 'orange', hex: '#F59E0B' },
@@ -59,7 +59,7 @@ export function ThemeProvider({ children }) {
   const [themeMode, setThemeModeState] = useState('system');
   const [density, setDensityState] = useState('comfortable');
   const [inboxType, setInboxTypeState] = useState('default');
-  const [accentColor, setAccentColorState] = useState('#7C3AED');
+  const [accentColor, setAccentColorState] = useState('#A582F7');
   const systemScheme = useColorScheme();
 
   // Load saved theme, density, inboxType

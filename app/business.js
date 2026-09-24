@@ -56,7 +56,7 @@ const CATEGORIES = [
 // ─── Label colors (WhatsApp Business style) ───
 const LABEL_COLORS = [
   '#ef4444', '#f97316', '#eab308', '#22c55e',
-  '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6',
+  '#3b82f6', '#A582F7', '#ec4899', '#14b8a6',
 ];
 
 const LABEL_DEFAULTS = [
@@ -298,7 +298,7 @@ function ProfileTab({ colors, isDark, user }) {
 
         {/* Stats */}
         <View style={styles.statsRow}>
-          <StatCard label="Produtos" value={profile?.product_count ?? '—'} color="#8b5cf6" colors={colors} />
+          <StatCard label="Produtos" value={profile?.product_count ?? '—'} color="#A582F7" colors={colors} />
           <StatCard label="Pedidos" value={profile?.order_count ?? '—'} color={ACCENT} colors={colors} />
           <StatCard label="Avaliação" value={profile?.rating ? `${profile.rating}★` : '—'} color="#f59e0b" colors={colors} />
         </View>

@@ -12,7 +12,7 @@ import BrandFab from './BrandFab';
 import Svg, { Path, Rect, Circle } from 'react-native-svg';
 import * as api from '../services/api';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 
 function IconCommunity({ size = 24, color = '#666' }) {
   return (

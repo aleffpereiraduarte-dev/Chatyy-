@@ -215,7 +215,7 @@ function hashColor(name) {
 // initials reads as ONE Chatyy identity instead of random hues. Replaces
 // the flat `hashColor()` fill that made avatars look generic/repeated.
 const AVATAR_GRADIENTS = [
-  ['#A78BFA', '#7C3AED'], // brand violet
+  ['#A78BFA', '#A582F7'], // brand violet
   ['#818CF8', '#4F46E5'], // indigo
   ['#60A5FA', '#2563EB'], // blue
   ['#38BDF8', '#0284C7'], // sky
@@ -394,7 +394,7 @@ function _GroupCollage({ members, size, style }) {
   );
 }
 
-function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#7C3AED', showStatus = false, members, onPress }) {
+function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#A582F7', showStatus = false, members, onPress }) {
   const [imgError, setImgError] = useState(false);
   const [version, setVersion] = useState(() => getAvatarVersion(email));
   // Holds the file:// URI from avatarCache once a background download

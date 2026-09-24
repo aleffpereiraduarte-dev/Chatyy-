@@ -171,7 +171,7 @@ export default function ShareReceiveScreen() {
           <Text style={{ color: colors.text, fontSize: 16, marginBottom: 12, textAlign: 'center' }}>
             {t('share.loginFirst') || 'Faça login no Chatyy pra compartilhar'}
           </Text>
-          <TouchableOpacity onPress={() => router.replace('/login')} style={{ paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12, backgroundColor: '#7C3AED' }}>
+          <TouchableOpacity onPress={() => router.replace('/login')} style={{ paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12, backgroundColor: '#A582F7' }}>
             <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.login') || 'Entrar'}</Text>
           </TouchableOpacity>
         </View>
@@ -289,7 +289,7 @@ export default function ShareReceiveScreen() {
 
           {loading ? (
             <View style={{ paddingVertical: 30, alignItems: 'center' }}>
-              <ActivityIndicator size="small" color="#7C3AED" />
+              <ActivityIndicator size="small" color="#A582F7" />
             </View>
           ) : loadError ? (
             <View style={{ paddingVertical: 14, paddingHorizontal: 16, borderRadius: 12, backgroundColor: isDark ? 'rgba(239,68,68,0.12)' : '#fee2e2' }}>
@@ -297,7 +297,7 @@ export default function ShareReceiveScreen() {
                 {t('share.chatsLoadFailed') || 'Não consegui carregar suas conversas agora. Usa as ações rápidas acima.'}
               </Text>
               <TouchableOpacity onPress={() => { setLoading(true); loadChats(); }} activeOpacity={0.7} style={{ marginTop: 10, alignSelf: 'flex-start' }}>
-                <Text style={{ color: '#7C3AED', fontWeight: '700', fontSize: 13 }}>
+                <Text style={{ color: '#A582F7', fontWeight: '700', fontSize: 13 }}>
                   {t('common.retry') || 'Tentar novamente'}
                 </Text>
               </TouchableOpacity>

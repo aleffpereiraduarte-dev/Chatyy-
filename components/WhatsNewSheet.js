@@ -32,7 +32,7 @@ const STORAGE_KEY = 'chatyy_whatsnew_v2_5_0';
 const VERSION_KEY = 'chatyy_last_seen_version';
 const CURRENT_VERSION = '2.5.0';
 
-const BRAND_PURPLE = '#7C3AED';
+const BRAND_PURPLE = '#A582F7';
 const BRAND_PURPLE_DARK = '#5B21B6';
 const BRAND_PINK = '#EC4899';
 
@@ -104,7 +104,7 @@ function buildTiles(t) {
       title: tx('whatsnew.communities.title', 'Comunidades'),
       desc: tx('whatsnew.communities.desc', 'Junte-se a milhares de pessoas em grupos públicos.'),
       ctaRoute: '/community/discover',
-      gradient: ['#7C3AED', '#A855F7'],
+      gradient: ['#A582F7', '#A855F7'],
     },
     {
       key: 'saved',
@@ -145,7 +145,7 @@ function buildTiles(t) {
       title: tx('whatsnew.privacy.title', 'Privacidade avançada'),
       desc: tx('whatsnew.privacy.desc', 'Sealed sender, mensagens que somem e tradução de conversas.'),
       ctaRoute: '/settings',
-      gradient: ['#6366F1', '#8B5CF6'],
+      gradient: ['#6366F1', '#A582F7'],
     },
     {
       key: 'broadcast',
@@ -189,7 +189,7 @@ function ConfettiBurst({ size = 120 }) {
   // Pure RN — render colored dots arranged in a radial burst. No SVG
   // dependency beyond what Icons.js already pulls in.
   const pieces = useMemo(() => {
-    const colors = ['#F59E0B', '#EC4899', '#7C3AED', '#10B981', '#3B82F6', '#F97316', '#EF4444'];
+    const colors = ['#F59E0B', '#EC4899', '#A582F7', '#10B981', '#3B82F6', '#F97316', '#EF4444'];
     return Array.from({ length: 18 }).map((_, i) => {
       const angle = (i / 18) * Math.PI * 2;
       const r = 36 + (i % 3) * 10;

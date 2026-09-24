@@ -1360,8 +1360,8 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
             )}
             {isMeetingEvent && (
               <View style={styles.eventMeta}>
-                <IconVideo size={13} color="#7C3AED" />
-                <Text style={[styles.eventMetaText, { color: '#7C3AED', fontWeight: '600' }]}>{t ? t('calendar.meetingEvent') : 'Video Meeting'}</Text>
+                <IconVideo size={13} color="#A582F7" />
+                <Text style={[styles.eventMetaText, { color: '#A582F7', fontWeight: '600' }]}>{t ? t('calendar.meetingEvent') : 'Video Meeting'}</Text>
               </View>
             )}
           </View>
@@ -2560,7 +2560,7 @@ function CalendarScreenInner() {
           try {
             targetCalId = await ExpoCalendar.createCalendarAsync({
               title: 'Chatyy',
-              color: '#7C3AED',
+              color: '#A582F7',
               entityType: ExpoCalendar.EntityTypes.EVENT,
               source: defaultSource,
               name: 'Chatyy',
@@ -2756,9 +2756,9 @@ function CalendarScreenInner() {
           ? {
               background: isDark
                 ? 'linear-gradient(140deg, #1a0a2e 0%, #2a0e3a 55%, #3a1148 100%)'
-                : 'linear-gradient(135deg, #6D28D9 0%, #8B5CF6 55%, #DB2777 100%)',
+                : 'linear-gradient(135deg, #6D28D9 0%, #A582F7 55%, #DB2777 100%)',
             }
-          : { backgroundColor: isDark ? '#1a0a2e' : '#7C3AED' },
+          : { backgroundColor: isDark ? '#1a0a2e' : '#A582F7' },
       ]}>
         {/* Row 1 — top bar */}
         <View style={styles.headerTopRow}>
@@ -3279,7 +3279,7 @@ const styles = StyleSheet.create({
     }),
   },
   todayPillText: {
-    color: '#7C3AED', fontSize: FontSize.xs, fontWeight: '800', letterSpacing: 0.3, textTransform: 'uppercase',
+    color: '#A582F7', fontSize: FontSize.xs, fontWeight: '800', letterSpacing: 0.3, textTransform: 'uppercase',
   },
   // Segmented view toggle — Mês / Semana / Agenda
   viewSegmentRow: {
@@ -3309,7 +3309,7 @@ const styles = StyleSheet.create({
     }),
   },
   viewSegmentText: { color: 'rgba(255,255,255,0.85)', fontSize: FontSize.xs + 1, fontWeight: '700', letterSpacing: 0.1 },
-  viewSegmentTextActive: { color: '#7C3AED' },
+  viewSegmentTextActive: { color: '#A582F7' },
   // Timezones toggle (ghost pill on the right of the segment row)
   tzGhostBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
@@ -3344,7 +3344,7 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.85)', fontSize: FontSize.xs, fontWeight: '700',
     textTransform: 'uppercase', letterSpacing: 0.6,
   },
-  weekStripTextToday: { color: '#7C3AED' },
+  weekStripTextToday: { color: '#A582F7' },
   headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
   // Mini-FAB inside header — same brand-accented style as the floating FABs
   // in Inbox/Chat (purple gradient orb + soft glow), so the "novo evento"
@@ -3537,7 +3537,7 @@ const styles = StyleSheet.create({
   calBadgeText: { fontSize: FontSize.xs, fontWeight: '600' },
   joinMeetingBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: '#7C3AED', borderRadius: 8,
+    backgroundColor: '#A582F7', borderRadius: 8,
     paddingHorizontal: 10, paddingVertical: 6,
     marginTop: 6,
   },

@@ -157,7 +157,7 @@ function PackCard({ pack, onPress, onInstall, onUninstall, installed, installing
           {installed && (
             <View style={{
               position: 'absolute', top: 8, left: 8,
-              backgroundColor: '#7C3AED',
+              backgroundColor: '#A582F7',
               borderRadius: 10, width: 20, height: 20,
               alignItems: 'center', justifyContent: 'center',
             }}>
@@ -181,20 +181,20 @@ function PackCard({ pack, onPress, onInstall, onUninstall, installed, installing
             disabled={installing}
             style={{
               marginTop: 8, borderRadius: 999, paddingVertical: 7, paddingHorizontal: 12,
-              backgroundColor: installed ? 'transparent' : '#7C3AED',
+              backgroundColor: installed ? 'transparent' : '#A582F7',
               borderWidth: installed ? 1.5 : 0,
-              borderColor: installed ? '#7C3AED' : 'transparent',
+              borderColor: installed ? '#A582F7' : 'transparent',
               alignItems: 'center', justifyContent: 'center',
               flexDirection: 'row', gap: 4,
             }}
             activeOpacity={0.75}
           >
             {installing ? (
-              <ActivityIndicator size={12} color={installed ? '#7C3AED' : '#fff'} />
+              <ActivityIndicator size={12} color={installed ? '#A582F7' : '#fff'} />
             ) : installed ? (
               <>
-                <IconCheck size={12} color="#7C3AED" />
-                <Text style={{ fontSize: 11, fontWeight: '700', color: '#7C3AED' }}>
+                <IconCheck size={12} color="#A582F7" />
+                <Text style={{ fontSize: 11, fontWeight: '700', color: '#A582F7' }}>
                   Instalado
                 </Text>
               </>
@@ -906,8 +906,8 @@ function HeroPackCard({ pack, onPress, colors, installed }) {
       style={{
         marginHorizontal: 16, marginTop: 14, marginBottom: 4,
         borderRadius: 20, overflow: 'hidden',
-        backgroundColor: '#7C3AED',
-        shadowColor: '#7C3AED', shadowOpacity: 0.25,
+        backgroundColor: '#A582F7',
+        shadowColor: '#A582F7', shadowOpacity: 0.25,
         shadowRadius: 14, shadowOffset: { width: 0, height: 6 },
         elevation: 6,
       }}
@@ -988,15 +988,15 @@ function HeroPackCard({ pack, onPress, colors, installed }) {
         }}>
           {installed ? (
             <>
-              <IconCheck size={13} color="#7C3AED" />
-              <Text style={{ fontSize: 12, fontWeight: '800', color: '#7C3AED' }}>
+              <IconCheck size={13} color="#A582F7" />
+              <Text style={{ fontSize: 12, fontWeight: '800', color: '#A582F7' }}>
                 Instalado · ver pack
               </Text>
             </>
           ) : (
             <>
-              <IconPlus size={13} color="#7C3AED" />
-              <Text style={{ fontSize: 12, fontWeight: '800', color: '#7C3AED' }}>
+              <IconPlus size={13} color="#A582F7" />
+              <Text style={{ fontSize: 12, fontWeight: '800', color: '#A582F7' }}>
                 Ver pack
               </Text>
             </>
@@ -1036,7 +1036,7 @@ function FeaturedSection({ packs, onPackPress, colors }) {
               width: 130, borderRadius: 16, overflow: 'hidden',
               backgroundColor: colors.surface,
               borderWidth: 1, borderColor: colors.border,
-              shadowColor: '#7C3AED', shadowOpacity: 0.1,
+              shadowColor: '#A582F7', shadowOpacity: 0.1,
               shadowRadius: 8, shadowOffset: { width: 0, height: 2 },
               elevation: 2,
             }}
@@ -1528,9 +1528,9 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
                   style={{
                     position: 'absolute', bottom: 20, right: 20,
                     width: 56, height: 56, borderRadius: 28,
-                    backgroundColor: '#7C3AED',
+                    backgroundColor: '#A582F7',
                     alignItems: 'center', justifyContent: 'center',
-                    shadowColor: '#7C3AED', shadowOpacity: 0.45,
+                    shadowColor: '#A582F7', shadowOpacity: 0.45,
                     shadowRadius: 12, shadowOffset: { width: 0, height: 6 },
                     elevation: 8,
                   }}
@@ -1596,7 +1596,7 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
                           }}>
                             <Text style={{
                               fontSize: 18, fontWeight: '800',
-                              color: index < 3 ? '#7C3AED' : colors.textTertiary,
+                              color: index < 3 ? '#A582F7' : colors.textTertiary,
                             }}>
                               {index + 1}
                             </Text>
@@ -1631,14 +1631,14 @@ export default function StickerStore({ visible, onClose, colors, t, userEmail })
                             disabled={installingId === item.id}
                             style={{
                               borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6,
-                              backgroundColor: installed ? 'transparent' : '#7C3AED',
+                              backgroundColor: installed ? 'transparent' : '#A582F7',
                               borderWidth: installed ? 1.5 : 0,
-                              borderColor: '#7C3AED',
+                              borderColor: '#A582F7',
                             }}
                           >
                             <Text style={{
                               fontSize: 11, fontWeight: '800',
-                              color: installed ? '#7C3AED' : '#fff',
+                              color: installed ? '#A582F7' : '#fff',
                             }}>
                               {installed ? 'Instalado' : 'Adicionar'}
                             </Text>

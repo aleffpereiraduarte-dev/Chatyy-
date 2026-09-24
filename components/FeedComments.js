@@ -11,7 +11,7 @@ import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline, IconMic, IconP
 import ModalHeader from './ModalHeader';
 import * as api from '../services/api';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SHEET_HEIGHT = Math.min(SCREEN_HEIGHT * 0.75, 700);
 
@@ -182,11 +182,11 @@ const CommentItem = memo(function CommentItem({
                   accessibilityRole="button"
                 >
                   {voicePlaying
-                    ? <IconPause size={14} color="#7C3AED" />
-                    : <IconPlay size={14} color="#7C3AED" />}
+                    ? <IconPause size={14} color="#A582F7" />
+                    : <IconPlay size={14} color="#A582F7" />}
                   <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 14 }}>
                     {[5,9,7,11,6,10,8,12,7,9,5].map((h, i) => (
-                      <View key={i} style={{ width: 2, height: h, borderRadius: 1, backgroundColor: '#7C3AED', opacity: 0.6 }} />
+                      <View key={i} style={{ width: 2, height: h, borderRadius: 1, backgroundColor: '#A582F7', opacity: 0.6 }} />
                     ))}
                   </View>
                 </Pressable>

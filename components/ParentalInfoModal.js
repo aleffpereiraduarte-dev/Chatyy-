@@ -101,7 +101,7 @@ export default function ParentalInfoModal({ visible, onClose, onStartCreate }) {
 
   const greenAccent = '#16a34a';
   const blueAccent = colors.primary;
-  const purpleAccent = '#7c3aed';
+  const purpleAccent = '#A582F7';
   const orangeAccent = '#ea580c';
   const tealAccent = '#0d9488';
 

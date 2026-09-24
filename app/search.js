@@ -12,7 +12,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import FadeSlideIn from '../components/FadeSlideIn';
 import * as api from '../services/api';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 
 // Unified search screen — Pessoas / Hashtags / Sons / Lives. Each tab calls
 // the matching backend endpoint (search_users, trending_hashtags + feed
@@ -254,7 +254,7 @@ export default function SearchScreen() {
                 <Image source={{ uri: s.image_url || s.artwork_url }} style={{ width: 46, height: 46, borderRadius: 8 }} />
               ) : (
                 <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)', borderRadius: 8 }]}>
-                  <IconMusic size={20} color="#7C3AED" />
+                  <IconMusic size={20} color="#A582F7" />
                 </View>
               )}
               <View style={styles.rowText}>

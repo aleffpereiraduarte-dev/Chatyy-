@@ -28,7 +28,7 @@ const BUBBLE_EFFECTS = [
 ];
 
 const SCREEN_EFFECTS = [
-  { id: 'echo',          labelKey: 'effects.echo',         label: 'Echo',          color: '#7C3AED' },
+  { id: 'echo',          labelKey: 'effects.echo',         label: 'Echo',          color: '#A582F7' },
   { id: 'spotlight',     labelKey: 'effects.spotlight',    label: 'Spotlight',     color: '#F59E0B' },
   { id: 'balloons',      labelKey: 'effects.balloons',     label: 'Balloons',      color: '#EF4444' },
   { id: 'confetti',      labelKey: 'effects.confetti',     label: 'Confetti',      color: '#10B981' },
@@ -132,7 +132,7 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
   const subText = isDark ? '#9ca3af' : '#64748b';
   const tileBg = isDark ? '#2c2c2e' : '#f3f4f6';
   const tileBorder = isDark ? '#3a3a3c' : '#e5e7eb';
-  const bubbleColor = '#7C3AED';
+  const bubbleColor = '#A582F7';
 
   const tx = (k, fb) => (typeof t === 'function' ? (t(k) || fb) : fb);
 
@@ -196,7 +196,7 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
           <View style={{ flex: 1, justifyContent: 'flex-end', paddingHorizontal: 18, paddingBottom: 120 }}>
             <View style={{
               alignSelf: 'flex-end', maxWidth: '82%',
-              backgroundColor: '#7C3AED',
+              backgroundColor: '#A582F7',
               paddingHorizontal: 14, paddingVertical: 10,
               borderRadius: 20, borderBottomRightRadius: 6,
             }}>
@@ -217,7 +217,7 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
               onPress={() => { onPick(previewEffect); setPreviewEffect(null); }}
               activeOpacity={0.9}
               style={{
-                flex: 1, backgroundColor: '#7C3AED',
+                flex: 1, backgroundColor: '#A582F7',
                 paddingVertical: 14, borderRadius: 14, alignItems: 'center',
                 flexDirection: 'row', justifyContent: 'center', gap: 8,
               }}
@@ -270,7 +270,7 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
               <BubbleEffectPreview
                 effect={previewBubble}
                 active={visible}
-                color="#7C3AED"
+                color="#A582F7"
                 label={previewBubbleText}
               />
             </View>
@@ -292,7 +292,7 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
               onPress={() => { onPick(previewBubble); setPreviewBubble(null); }}
               activeOpacity={0.9}
               style={{
-                flex: 1, backgroundColor: '#7C3AED',
+                flex: 1, backgroundColor: '#A582F7',
                 paddingVertical: 14, borderRadius: 14, alignItems: 'center',
                 flexDirection: 'row', justifyContent: 'center', gap: 8,
               }}

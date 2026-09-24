@@ -632,7 +632,7 @@ export default function VoicemailRecorder() {
                 don't intercept the preview row buttons. */}
             <View pointerEvents="none" style={{ position: 'absolute', top: '40%', left: 0, right: 0, alignItems: 'center', justifyContent: 'center' }}>
               {confettiAnims.map((dot, i) => {
-                const colorRing = ['#7c3aed', '#10B981', '#fbbf24', '#EC4899', '#3B82F6', '#EF4444'];
+                const colorRing = ['#A582F7', '#10B981', '#fbbf24', '#EC4899', '#3B82F6', '#EF4444'];
                 return (
                   <Animated.View
                     key={i}
@@ -669,7 +669,7 @@ export default function VoicemailRecorder() {
 
         {phase === 'sending' && (
           <>
-            <ActivityIndicator size="large" color={colors.primary || '#7c3aed'} />
+            <ActivityIndicator size="large" color={colors.primary || '#A582F7'} />
             <Text style={[styles.bodyText, { marginTop: 16 }]}>{t('voicemail.sending') || 'Enviando…'}</Text>
           </>
         )}
@@ -726,7 +726,7 @@ function makeStyles(colors) {
     waveRow: { flexDirection: 'row', alignItems: 'center', height: 40, marginTop: 12, marginBottom: 4 },
     micButton: {
       width: 96, height: 96, borderRadius: 48,
-      backgroundColor: colors.primary || '#7c3aed',
+      backgroundColor: colors.primary || '#A582F7',
       alignItems: 'center', justifyContent: 'center',
       shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 12, shadowOffset: { width: 0, height: 6 },
       elevation: 6,
@@ -739,8 +739,8 @@ function makeStyles(colors) {
       paddingVertical: 12, paddingHorizontal: 20, borderRadius: 24,
       backgroundColor: colors.surface || 'rgba(255,255,255,0.08)',
     },
-    playBtn: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary || '#7c3aed', paddingHorizontal: 0, paddingVertical: 0 },
-    sendBtn: { backgroundColor: colors.primary || '#7c3aed' },
+    playBtn: { width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.primary || '#A582F7', paddingHorizontal: 0, paddingVertical: 0 },
+    sendBtn: { backgroundColor: colors.primary || '#A582F7' },
     previewBtnText: { color: colors.text || '#fff', fontSize: 16, fontWeight: '600' },
     dismissBtn: { paddingVertical: 18, alignItems: 'center' },
     dismissText: { color: colors.textTertiary || 'rgba(255,255,255,0.5)', fontSize: 14 },

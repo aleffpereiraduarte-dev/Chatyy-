@@ -136,7 +136,7 @@ export async function startBackgroundLocationUpdates() {
       foregroundService: {
         notificationTitle: 'Chatyy compartilhando localização',
         notificationBody: 'Seu amigo pode ver onde você está. Toque para parar.',
-        notificationColor: '#7c3aed',
+        notificationColor: '#A582F7',
         killServiceOnDestroy: false,
       },
       pausesUpdatesAutomatically: false, // iOS: keep firing on slow walks

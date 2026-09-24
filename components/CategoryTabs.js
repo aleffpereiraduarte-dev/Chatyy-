@@ -10,8 +10,8 @@ const CATEGORIES = [
   // "Importantes" — driven by the AI importance classifier (level === 'high')
   // OR a flagged message. Sits second so users see prioritized work first.
   { key: 'important', i18nKey: 'inbox.tabImportant', icon: IconStarFilled, color: '#f59e0b' },
-  { key: 'primary', i18nKey: 'category.primary', icon: IconInbox, color: '#7C3AED' },
-  { key: 'social', i18nKey: 'category.social', icon: IconUsers, color: '#8b5cf6' },
+  { key: 'primary', i18nKey: 'category.primary', icon: IconInbox, color: '#A582F7' },
+  { key: 'social', i18nKey: 'category.social', icon: IconUsers, color: '#A582F7' },
   { key: 'promotions', i18nKey: 'category.promotions', icon: IconTag, color: '#10b981' },
   { key: 'updates', i18nKey: 'category.updates', icon: IconBell, color: '#3b82f6' },
 ];

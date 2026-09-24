@@ -353,7 +353,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
             <Text style={{ color: colors?.textSecondary || '#666', fontSize: 13, marginBottom: 16 }}>
               {t?.('videoNote.installCamera') || 'Native camera module not available on this build.'}
             </Text>
-            <TouchableOpacity onPress={onClose} style={[s.btn, { backgroundColor: '#7C3AED' }]}>
+            <TouchableOpacity onPress={onClose} style={[s.btn, { backgroundColor: '#A582F7' }]}>
               <Text style={{ color: '#fff', fontWeight: '700' }}>{t?.('common.close') || 'Close'}</Text>
             </TouchableOpacity>
           </View>
@@ -541,7 +541,7 @@ export default function VideoNoteRecorder({ visible, onClose, onComplete, colors
                     ? '#EF4444'
                     : recording
                       ? '#EF4444'
-                      : '#7C3AED',
+                      : '#A582F7',
                 },
               ]}
               accessibilityLabel={
@@ -670,7 +670,7 @@ const s = StyleSheet.create({
     width: 110,
     height: 110,
     borderRadius: 55,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     top: -12,
   },
   triggerInner: {

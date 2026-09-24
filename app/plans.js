@@ -128,11 +128,11 @@ function OneAIShowcase({ colors, isDark, t }) {
   }, [showAll]);
 
   const AI_DEMOS = [
-    { Icon: IconMessageSquare, color: '#7C3AED', title: 'WhatsApp', desc: t('plans.aiWhatsapp') },
+    { Icon: IconMessageSquare, color: '#A582F7', title: 'WhatsApp', desc: t('plans.aiWhatsapp') },
     { Icon: IconPhone, color: '#A78BFA', title: t('plans.cancel').includes('Cancelar') ? 'Liga\u00E7\u00F5es' : 'Calls', desc: t('plans.aiCalls') },
     { Icon: IconMail, color: '#ef4444', title: 'Emails', desc: t('plans.aiEmails') },
     { Icon: IconCalendar, color: '#f59e0b', title: t('plans.cancel').includes('Cancelar') ? 'Agenda' : 'Calendar', desc: t('plans.cancel').includes('Cancelar') ? 'Gerencia compromissos' : 'Manages appointments' },
-    { Icon: IconBell, color: '#8b5cf6', title: t('plans.cancel').includes('Cancelar') ? 'Lembretes' : 'Reminders', desc: t('plans.cancel').includes('Cancelar') ? 'Avisa na hora certa' : 'Alerts at the right time' },
+    { Icon: IconBell, color: '#A582F7', title: t('plans.cancel').includes('Cancelar') ? 'Lembretes' : 'Reminders', desc: t('plans.cancel').includes('Cancelar') ? 'Avisa na hora certa' : 'Alerts at the right time' },
     { Icon: IconFileText, color: '#06b6d4', title: t('plans.cancel').includes('Cancelar') ? 'Documentos' : 'Documents', desc: t('plans.cancel').includes('Cancelar') ? 'Cria textos e planilhas' : 'Creates docs & sheets' },
   ];
 
@@ -213,9 +213,9 @@ function OneAIShowcase({ colors, isDark, t }) {
               height: 3,
               borderRadius: 1.5,
               opacity: glowAnim,
-              backgroundColor: '#8b5cf6',
+              backgroundColor: '#A582F7',
               ...(Platform.OS === 'web' ? {
-                backgroundImage: 'linear-gradient(90deg, #A78BFA, #c4b5fd, #8b5cf6)',
+                backgroundImage: 'linear-gradient(90deg, #A78BFA, #c4b5fd, #A582F7)',
               } : {}),
             }} />
           </View>
@@ -260,10 +260,10 @@ function OneAIShowcase({ colors, isDark, t }) {
         onPress={() => setShowAll(!showAll)}
         activeOpacity={0.7}
       >
-        <Text style={{ color: '#8b5cf6', fontSize: 13, fontWeight: '600' }}>
+        <Text style={{ color: '#A582F7', fontSize: 13, fontWeight: '600' }}>
           {showAll ? t('plans.collapseFeatures') : t('plans.viewAllFeatures')}
         </Text>
-        {showAll ? <IconChevronUp size={14} color="#8b5cf6" /> : <IconChevronDown size={14} color="#8b5cf6" />}
+        {showAll ? <IconChevronUp size={14} color="#A582F7" /> : <IconChevronDown size={14} color="#A582F7" />}
       </TouchableOpacity>
 
       {/* Expanded list */}
@@ -287,7 +287,7 @@ function OneAIShowcase({ colors, isDark, t }) {
                 alignItems: 'center', justifyContent: 'center',
                 marginRight: 12,
               }}>
-                <IconCheck size={12} color="#8b5cf6" />
+                <IconCheck size={12} color="#A582F7" />
               </View>
               <Text style={{ color: colors.text, fontSize: 14, flex: 1, textTransform: 'capitalize' }}>
                 {action}
@@ -1419,14 +1419,14 @@ export default function PlansScreen() {
   const AMBER = isDark ? '#fbbf24' : '#d97706';
   const RED = isDark ? '#f87171' : '#dc2626';
 
-  const AI_PURPLE = isDark ? '#a78bfa' : '#7C3AED';
+  const AI_PURPLE = isDark ? '#a78bfa' : '#A582F7';
 
   // Storage tier selector — modern chips
   const StorageSelector = ({ options, selected, onSelect, accentColor, basePriceCents }) => {
     const total = basePriceCents + selected.extra;
     const gradientBg = accentColor === FAMILY_COLOR
       ? 'linear-gradient(135deg, #f59e0b, #f97316)'
-      : 'linear-gradient(135deg, #A78BFA, #8b5cf6)';
+      : 'linear-gradient(135deg, #A78BFA, #A582F7)';
     return (
       <View style={{ marginTop: 20, marginBottom: 4 }}>
         <Text style={{ color: colors.text, fontSize: 13, fontWeight: '700', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.8 }}>
@@ -1510,10 +1510,10 @@ export default function PlansScreen() {
     if (lower.includes('recuperar') || lower.includes('recover') || lower.includes('apagad')) return { Icon: IconRefresh, color: '#A78BFA' };
     if (lower.includes('arquivo') || lower.includes('file') || lower.includes('mb')) return { Icon: IconPaperclip, color: '#f59e0b' };
     if (lower.includes('proteg') || lower.includes('safe') || lower.includes('segur') || lower.includes('perca') || lower.includes('lose')) return { Icon: IconShield, color: '#10b981' };
-    if (lower.includes('dispositivo') || lower.includes('device')) return { Icon: IconSmartphone, color: '#8b5cf6' };
+    if (lower.includes('dispositivo') || lower.includes('device')) return { Icon: IconSmartphone, color: '#A582F7' };
     if (lower.includes('suporte') || lower.includes('support') || lower.includes('priorit')) return { Icon: IconStar, color: '#f59e0b' };
     if (lower.includes('pessoa') || lower.includes('people') || lower.includes('membr') || lower.includes('familia') || lower.includes('family')) return { Icon: IconUsers, color: '#f97316' };
-    if (lower.includes('ai') || lower.includes('assistente') || lower.includes('assistant')) return { Icon: IconSparkles, color: '#8b5cf6' };
+    if (lower.includes('ai') || lower.includes('assistente') || lower.includes('assistant')) return { Icon: IconSparkles, color: '#A582F7' };
     if (lower.includes('foto') || lower.includes('photo') || lower.includes('video')) return { Icon: IconImage, color: '#06b6d4' };
     if (lower.includes('gerenciar') || lower.includes('manage') || lower.includes('gestionar')) return { Icon: IconSettings, color: '#64748b' };
     if (lower.includes('compartilh') || lower.includes('shared')) return { Icon: IconLink, color: '#A78BFA' };
@@ -1900,7 +1900,7 @@ export default function PlansScreen() {
             <View style={{
               position: 'absolute', top: 0, left: 0, right: 0, height: 4,
               backgroundColor: PLUS_COLOR,
-              ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #4f46e5, #A78BFA, #8b5cf6, #a78bfa)' } : {}),
+              ...(Platform.OS === 'web' ? { backgroundImage: 'linear-gradient(90deg, #4f46e5, #A78BFA, #A582F7, #a78bfa)' } : {}),
             }} />
 
             {/* "Mais popular" badge — recomenda Plus como entry-tier
@@ -2073,7 +2073,7 @@ export default function PlansScreen() {
                   paddingHorizontal: 20,
                   backgroundColor: PLUS_COLOR,
                   ...(Platform.OS === 'web' ? {
-                    backgroundImage: 'linear-gradient(135deg, #4f46e5, #A78BFA, #8b5cf6)',
+                    backgroundImage: 'linear-gradient(135deg, #4f46e5, #A78BFA, #A582F7)',
                     boxShadow: '0 6px 24px rgba(99, 102, 241, 0.35), 0 2px 8px rgba(99, 102, 241, 0.2)',
                     transition: 'all 0.3s ease',
                   } : {}),
@@ -2727,7 +2727,7 @@ export default function PlansScreen() {
             {[
               { Icon: IconCheck, text: t('plans.trustCancel'), color: '#10b981', bg: isDark ? 'rgba(16, 185, 129, 0.08)' : 'rgba(16, 185, 129, 0.06)' },
               { Icon: IconShield, text: t('plans.trustData'), color: '#A78BFA', bg: isDark ? 'rgba(167, 139, 250, 0.08)' : 'rgba(167, 139, 250, 0.06)' },
-              { Icon: IconMessageSquare, text: t('plans.trustSupport'), color: '#8b5cf6', bg: isDark ? 'rgba(139, 92, 246, 0.08)' : 'rgba(139, 92, 246, 0.06)' },
+              { Icon: IconMessageSquare, text: t('plans.trustSupport'), color: '#A582F7', bg: isDark ? 'rgba(139, 92, 246, 0.08)' : 'rgba(139, 92, 246, 0.06)' },
             ].map((badge, i) => (
               <View key={i} style={{
                 flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -2746,7 +2746,7 @@ export default function PlansScreen() {
           <View style={{ alignItems: 'center', marginBottom: 24, marginTop: 8 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               <View style={{ flexDirection: 'row' }}>
-                {['#A78BFA', '#8b5cf6', '#A78BFA', '#10b981'].map((c, i) => (
+                {['#A78BFA', '#A582F7', '#A78BFA', '#10b981'].map((c, i) => (
                   <View key={i} style={{
                     width: 28, height: 28, borderRadius: 14,
                     backgroundColor: c, alignItems: 'center', justifyContent: 'center',
@@ -3449,7 +3449,7 @@ const s = StyleSheet.create({
   },
   planGradientStrip: {
     position: 'absolute', top: 0, left: 0, right: 0, height: 4, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    ...(Platform.OS === 'web' ? { background: 'linear-gradient(90deg, #5B21B6, #7C3AED, #A855F7, #ec4899)' } : {}),
+    ...(Platform.OS === 'web' ? { background: 'linear-gradient(90deg, #5B21B6, #A582F7, #A855F7, #ec4899)' } : {}),
   },
   planHeader: { gap: 8 },
   planName: { fontSize: 30, fontWeight: '800', letterSpacing: -0.8 },
@@ -3464,9 +3464,9 @@ const s = StyleSheet.create({
     height: 58, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
     marginTop: 28,
     ...Platform.select({
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 16 },
+      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 16 },
       android: { elevation: 8 },
-      web: { boxShadow: '0 6px 24px rgba(124,58,237,0.35), 0 2px 8px rgba(124,58,237,0.15)', background: 'linear-gradient(135deg, #5B21B6, #7C3AED, #8B5CF6)', transition: 'transform 0.2s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease' },
+      web: { boxShadow: '0 6px 24px rgba(124,58,237,0.35), 0 2px 8px rgba(124,58,237,0.15)', background: 'linear-gradient(135deg, #5B21B6, #A582F7, #A582F7)', transition: 'transform 0.2s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease' },
     }),
   },
   subscribeBtnText: { color: '#fff', fontSize: 17, fontWeight: '800', letterSpacing: 0.3 },
@@ -3486,7 +3486,7 @@ const s = StyleSheet.create({
   storageBarBg: { height: 6, borderRadius: 3, overflow: 'hidden' },
   storageBarFill: {
     height: 6, borderRadius: 3,
-    ...(Platform.OS === 'web' ? { background: 'linear-gradient(90deg, #5B21B6, #7C3AED, #A855F7)', transition: 'width 0.6s cubic-bezier(0.4,0,0.2,1)' } : {}),
+    ...(Platform.OS === 'web' ? { background: 'linear-gradient(90deg, #5B21B6, #A582F7, #A855F7)', transition: 'width 0.6s cubic-bezier(0.4,0,0.2,1)' } : {}),
   },
   memberRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12 },
   storageWarning: {
@@ -3565,7 +3565,7 @@ const s = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: '#4F46E5', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 16 },
       android: { elevation: 8 },
-      web: { boxShadow: '0 6px 24px rgba(79,70,229,0.3)', background: 'linear-gradient(135deg, #4F46E5, #7C3AED)', transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
+      web: { boxShadow: '0 6px 24px rgba(79,70,229,0.3)', background: 'linear-gradient(135deg, #4F46E5, #A582F7)', transition: 'transform 0.15s ease, box-shadow 0.15s ease' },
     }),
   },
   modalBtn: {

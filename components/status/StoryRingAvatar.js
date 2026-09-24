@@ -11,7 +11,7 @@
 //     primitive without losing the bigger 86px variant
 //
 // Wave 4 modernization (2026-05-06): solid ring now paints an Instagram-style
-// linear gradient (#7C3AED → #C084FC) when there's an unviewed story, plus a
+// linear gradient (#A582F7 → #C084FC) when there's an unviewed story, plus a
 // gentle scale-pulse (1.0 → 1.025 → 1.0, native driver) for that "live" feel.
 // Once allViewed flips true, both effects collapse to the dim grey static ring.
 //
@@ -37,7 +37,7 @@ export default function StoryRingAvatar({
   email,
   size = 54,
   ringStyle = 'solid',
-  ringColor = '#7C3AED',
+  ringColor = '#A582F7',
   dimmedColor,
   allViewed = false,
   itemsViewed = null,    // bool[] — drives per-segment dimming when ringStyle='segmented'

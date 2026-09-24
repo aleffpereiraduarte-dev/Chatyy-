@@ -158,9 +158,14 @@ function EmailRow({
   const nativeDriver = Platform.OS !== 'web';
 
   // Entrance animation: staggered fade-in based on index (capped at 400ms total)
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const entranceAnim = useRef(new Animated.Value(0)).current;
+  // [2026-09-24] No WEB a tela de inbox re-monta ao navegar → cada EmailRow
+  // re-montava e re-disparava a animação de entrada (opacity 0→1 + slide),
+  // fazendo a lista inteira "piscar" toda vez. No web as linhas já nascem
+  // visíveis (sem fade). No mobile mantém a entrada suave/escalonada.
+  const fadeAnim = useRef(new Animated.Value(Platform.OS === 'web' ? 1 : 0)).current;
+  const entranceAnim = useRef(new Animated.Value(Platform.OS === 'web' ? 1 : 0)).current;
   useEffect(() => {
+    if (Platform.OS === 'web') return;
     const delay = Math.min((index || 0) * 30, 400);
     fadeIn(fadeAnim, 280, delay).start();
     Animated.timing(entranceAnim, {
@@ -296,9 +301,22 @@ function EmailRow({
     }
   }, [email, onContextMenu]);
 
+  // [2026-09-24 velocidade web] Prefetch do corpo do email ao passar o mouse
+  // (com 90ms de atraso pra não disparar em passagem rápida). Baixa o corpo SEM
+  // marcar como lido e aquece o cache → o clique abre INSTANTÂNEO. Best-effort.
+  const hoverPrefetchTimer = useRef(null);
   const webHover = Platform.OS === 'web' ? {
-    onMouseEnter: () => setHovered(true),
-    onMouseLeave: () => setHovered(false),
+    onMouseEnter: () => {
+      setHovered(true);
+      if (hoverPrefetchTimer.current) clearTimeout(hoverPrefetchTimer.current);
+      hoverPrefetchTimer.current = setTimeout(() => {
+        try { require('../services/api').prefetchMessageWeb?.(email.uid, currentFolder || 'INBOX'); } catch {}
+      }, 90);
+    },
+    onMouseLeave: () => {
+      setHovered(false);
+      if (hoverPrefetchTimer.current) { clearTimeout(hoverPrefetchTimer.current); hoverPrefetchTimer.current = null; }
+    },
   } : {};
 
   const row = (

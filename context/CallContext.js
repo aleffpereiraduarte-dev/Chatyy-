@@ -9,7 +9,7 @@
  *  - endCall()       clears call state
  *  - getCallDuration() returns elapsed seconds
  */
-import React, { createContext, useContext, useState, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useState, useRef, useCallback, useMemo } from 'react';
 import { Platform } from 'react-native';
 
 const CallContext = createContext(null);
@@ -82,14 +82,16 @@ export function CallProvider({ children }) {
     return Math.floor((Date.now() - startTimeRef.current.getTime()) / 1000);
   }, []);
 
-  const value = {
+  // [2026-09-24 perf] Memoizado — evita recriar o value a cada render e
+  // re-renderizar CallStatusBar/ActiveCallBar/call.js sem necessidade.
+  const value = useMemo(() => ({
     isInCall: !!callData,
     callData,
     callStartTime,
     startCall,
     endCall,
     getCallDuration,
-  };
+  }), [callData, callStartTime, startCall, endCall, getCallDuration]);
 
   return (
     <CallContext.Provider value={value}>

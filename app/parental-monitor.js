@@ -12,7 +12,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import { getCached, setCache } from '../services/cache';
 import useIsMounted from '../hooks/useIsMounted';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const TIME_LIMITS = [
   { value: 30, label: '30 min' },
   { value: 60, label: '1h' },
@@ -438,7 +438,7 @@ function ParentalMonitorScreenInner() {
   const appsBreakdown = useMemo(() => {
     const f = todayData?.feature_usage || weekData?.feature_usage || screenTime?.feature_usage || {};
     return [
-      { key: 'chat',   label: 'Chat',     value: f.chat ?? f.messages ?? screenTime?.today_minutes ?? 0, color: '#7C3AED', Icon: IconMessageSquare },
+      { key: 'chat',   label: 'Chat',     value: f.chat ?? f.messages ?? screenTime?.today_minutes ?? 0, color: '#A582F7', Icon: IconMessageSquare },
       { key: 'status', label: 'Status',   value: f.status ?? 0,    color: '#22c55e', Icon: IconImage },
       { key: 'reels',  label: 'Reels',    value: f.reels ?? 0,     color: '#ec4899', Icon: IconVideo },
       { key: 'feed',   label: 'Feed',     value: f.feed ?? 0,      color: '#f59e0b', Icon: IconHeart },
@@ -945,7 +945,7 @@ function ParentalMonitorScreenInner() {
         <SettingRow icon={<IconAlertTriangle size={18} color="#f59e0b" />} label={t('parental.filterViolence') || 'Block violence'} colors={colors}
           right={<Switch value={restrictions.filter_violence === true} onValueChange={(v) => updateRestriction('filter_violence', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.filter_violence === true ? ACCENT : '#f4f3f4'} />} />
         <View style={[s.divider, { backgroundColor: isDark ? '#334155' : '#f1f5f9' }]} />
-        <SettingRow icon={<IconFilter size={18} color="#8b5cf6" />} label={t('parental.filterProfanity') || 'Filter profanity'} colors={colors}
+        <SettingRow icon={<IconFilter size={18} color="#A582F7" />} label={t('parental.filterProfanity') || 'Filter profanity'} colors={colors}
           right={<Switch value={restrictions.filter_profanity === true} onValueChange={(v) => updateRestriction('filter_profanity', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.filter_profanity === true ? ACCENT : '#f4f3f4'} />} />
         <View style={[s.divider, { backgroundColor: isDark ? '#334155' : '#f1f5f9' }]} />
         <SettingRow icon={<IconEye size={18} color="#A78BFA" />} label={t('parental.safeSearch') || 'Safe search'} colors={colors}
@@ -1099,7 +1099,7 @@ function activityIconFor(type) {
     case 'message_sent':
     case 'message_received':
     case 'chat_message':
-      return { Icon: IconMessageSquare, color: '#7C3AED', label: type === 'message_received' ? 'Recebeu mensagem' : 'Mensagem' };
+      return { Icon: IconMessageSquare, color: '#A582F7', label: type === 'message_received' ? 'Recebeu mensagem' : 'Mensagem' };
     case 'call_outgoing': return { Icon: IconPhone, color: '#22c55e', label: 'Ligação' };
     case 'call_incoming': return { Icon: IconPhone, color: '#3b82f6', label: 'Chamada recebida' };
     case 'call_missed':   return { Icon: IconPhoneOff, color: '#ef4444', label: 'Chamada perdida' };

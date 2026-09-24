@@ -5,7 +5,7 @@ import { IconSparkles, IconX } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
 import useIsMounted from '../hooks/useIsMounted';
 
-const BRAND = '#7C3AED';
+const BRAND = '#A582F7';
 // Secondary gradient stop — pairs with brand for the "AI gradient" header.
 const BRAND_2 = '#EC4899';
 

@@ -73,7 +73,7 @@ export default function VideoTrimTool({ videoUri, onDone, onCancel, t }) {
       <View style={{ backgroundColor: 'rgba(0,0,0,0.9)', padding: 16, gap: 12 }}>
         {/* Play/pause + time */}
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-          <TouchableOpacity onPress={togglePlay} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center' }}>
+          <TouchableOpacity onPress={togglePlay} style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#A582F7', alignItems: 'center', justifyContent: 'center' }}>
             <Text style={{ color: '#fff', fontSize: 18 }}>{playing ? '⏸' : '▶'}</Text>
           </TouchableOpacity>
           <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
@@ -96,7 +96,7 @@ export default function VideoTrimTool({ videoUri, onDone, onCancel, t }) {
                   const v = parseFloat(e.target.value);
                   if (v < end - 0.5) { setStart(v); if (videoRef.current) videoRef.current.currentTime = v; }
                 }}
-                style={{ width: '100%', accentColor: '#7C3AED' }}
+                style={{ width: '100%', accentColor: '#A582F7' }}
               />
             </View>
             <View>
@@ -111,7 +111,7 @@ export default function VideoTrimTool({ videoUri, onDone, onCancel, t }) {
                   const v = parseFloat(e.target.value);
                   if (v > start + 0.5) setEnd(v);
                 }}
-                style={{ width: '100%', accentColor: '#7C3AED' }}
+                style={{ width: '100%', accentColor: '#A582F7' }}
               />
             </View>
           </View>
@@ -122,7 +122,7 @@ export default function VideoTrimTool({ videoUri, onDone, onCancel, t }) {
           <TouchableOpacity onPress={onCancel} style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center' }}>
             <Text style={{ color: '#fff', fontWeight: '600' }}>{t?.('common.cancel') || 'Cancelar'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleDone} style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#7C3AED', alignItems: 'center' }}>
+          <TouchableOpacity onPress={handleDone} style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#A582F7', alignItems: 'center' }}>
             <Text style={{ color: '#fff', fontWeight: '700' }}>{t?.('common.done') || 'Pronto'}</Text>
           </TouchableOpacity>
         </View>

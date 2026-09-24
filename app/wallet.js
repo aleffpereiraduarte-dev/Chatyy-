@@ -45,7 +45,7 @@ import { WALLET_ENABLED } from '../constants/featureFlags';
 // ---- Palette -----------------------------------------------------------
 
 const PURPLE_DEEP = '#5B21B6';
-const PURPLE      = '#7C3AED';
+const PURPLE      = '#A582F7';
 const PURPLE_SOFT = '#A855F7';
 const GREEN       = '#10B981';
 const RED         = '#EF4444';

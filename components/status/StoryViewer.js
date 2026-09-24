@@ -858,7 +858,7 @@ try { _expoAudio = require('expo-audio'); } catch {}
 // a static waveform + label. The audio itself is driven by StatusMusicPlayer;
 // this only paints the canvas (StoryMedia handles image/video/text).
 function VoiceStatusMedia({ caption, bgColor, t }) {
-  const bg = (bgColor && /^#|rgb/.test(String(bgColor))) ? bgColor : '#7C3AED';
+  const bg = (bgColor && /^#|rgb/.test(String(bgColor))) ? bgColor : '#A582F7';
   const bars = [10, 18, 26, 16, 30, 22, 34, 20, 28, 14, 24, 32, 18, 26, 12, 22, 30, 16, 24, 20];
   return (
     <View style={{ flex: 1, backgroundColor: bg, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
@@ -2051,7 +2051,7 @@ export default function StoryViewer({
             // so finished + in-progress segments read as one consistent brand
             // surface (vs the prior solid white that looked disconnected).
             <View style={{ width: '100%', height: '100%', flexDirection: 'row' }}>
-              <View style={{ flex: 1, backgroundColor: '#7C3AED' }} />
+              <View style={{ flex: 1, backgroundColor: '#A582F7' }} />
               <View style={{ flex: 1, backgroundColor: '#A855F7' }} />
               <View style={{ flex: 1, backgroundColor: '#EC4899' }} />
             </View>
@@ -2071,7 +2071,7 @@ export default function StoryViewer({
               {/* Brand gradient (purple → pink) — three stacked color steps
                   approximate a linear-gradient cheaply. Pink trailing edge
                   carries a soft glow via shadowColor on the parent. */}
-              <View style={{ flex: 1, backgroundColor: '#7C3AED' }} />
+              <View style={{ flex: 1, backgroundColor: '#A582F7' }} />
               <View style={{ flex: 1, backgroundColor: '#A855F7' }} />
               <View style={{ flex: 1, backgroundColor: '#EC4899' }} />
             </Animated.View>
@@ -2675,7 +2675,7 @@ export default function StoryViewer({
               </Text>
               <View style={{
                 width: 22, height: 22, borderRadius: 11,
-                backgroundColor: '#7C3AED',
+                backgroundColor: '#A582F7',
                 alignItems: 'center', justifyContent: 'center',
               }}>
                 <IconArrowRight size={13} color="#fff" />
@@ -3216,12 +3216,12 @@ export default function StoryViewer({
                       }}
                       style={{
                         width: 34, height: 34, borderRadius: 17,
-                        backgroundColor: '#7C3AED',
+                        backgroundColor: '#A582F7',
                         alignItems: 'center', justifyContent: 'center',
                         opacity: replying ? 0.6 : 1,
                         // Soft brand glow so the send affordance pops against
                         // the translucent reply field (WhatsApp/IG parity).
-                        shadowColor: '#7C3AED', shadowOpacity: 0.55, shadowRadius: 8,
+                        shadowColor: '#A582F7', shadowOpacity: 0.55, shadowRadius: 8,
                         shadowOffset: { width: 0, height: 2 }, elevation: 5,
                       }}
                       accessibilityLabel={t?.('common.send') || 'Enviar'}
@@ -3251,7 +3251,7 @@ export default function StoryViewer({
             <Animated.View style={{
               width: 88, height: 88, borderRadius: 44,
               backgroundColor: 'rgba(124,58,237,0.18)',
-              borderWidth: 2, borderColor: '#7C3AED',
+              borderWidth: 2, borderColor: '#A582F7',
               alignItems: 'center', justifyContent: 'center', marginBottom: 18,
               transform: [{ scale: caughtUpAnim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
             }}>
@@ -3300,7 +3300,7 @@ export default function StoryViewer({
               </View>
               {viewersLoading ? (
                 <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color="#7C3AED" />
+                  <ActivityIndicator size="small" color="#A582F7" />
                 </View>
               ) : viewersList.length === 0 ? (
                 <View style={{ paddingVertical: 32, alignItems: 'center' }}>

@@ -63,7 +63,7 @@ export function MentionAutocomplete({ inputText, members, currentEmail, visible,
                 onPress={() => onSelect(item)}
                 activeOpacity={0.7}
               >
-                <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: isEveryone ? '#7C3AED' : '#1a73e8', alignItems: 'center', justifyContent: 'center' }}>
+                <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: isEveryone ? '#A582F7' : '#1a73e8', alignItems: 'center', justifyContent: 'center' }}>
                   <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{isEveryone ? '@' : 'A'}</Text>
                 </View>
                 <View style={styles.itemText}>
@@ -181,7 +181,7 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   adminBadge: {
-    backgroundColor: '#7C3AED20',
+    backgroundColor: '#A582F720',
     borderRadius: 8,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -189,7 +189,7 @@ const styles = StyleSheet.create({
   adminText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#7C3AED',
+    color: '#A582F7',
   },
 });
 

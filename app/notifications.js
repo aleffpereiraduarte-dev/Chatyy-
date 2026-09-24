@@ -21,7 +21,7 @@ import * as api from '../services/api';
 import { swr, getCachedSync, setCache, userScopedKey } from '../services/cache';
 
 // Brand color (Chatyy purple)
-const BRAND = '#7C3AED';
+const BRAND = '#A582F7';
 
 // [WAVE 100] Module-scope live store — survives unmount/remount in the same
 // JS runtime (e.g. user opens /notifications, navigates to /inbox, comes

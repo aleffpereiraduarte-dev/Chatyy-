@@ -19,7 +19,7 @@ import {
 import { IconSend, IconHeart, IconSmile, IconGiftBox } from '../Icons';
 
 const LIVE_RED = '#dc2626';
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 
 const LiveCommentInput = forwardRef(function LiveCommentInput({
   value,

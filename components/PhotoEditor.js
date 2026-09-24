@@ -105,7 +105,7 @@ function IconSun({ size = 22, color = '#fff' }) {
 
 // Brand color (Chatyy purple). Sourced once so we can use it inline as a
 // gradient stop / pill background without pulling theme on every paint.
-const BRAND = '#7C3AED';
+const BRAND = '#A582F7';
 const BRAND_DARK = '#5B21B6';
 
 // Tab order matches the design brief: Filtros first (most-used color path),
@@ -1610,7 +1610,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                     onPress={() => setShowStickerStore(true)}
                     style={[s.stickerPackPill, { backgroundColor: 'rgba(124,58,237,0.22)' }]}
                   >
-                    <Text style={[s.stickerPackLabel, { color: '#7C3AED', fontWeight: '700' }]}>
+                    <Text style={[s.stickerPackLabel, { color: '#A582F7', fontWeight: '700' }]}>
                       + Loja
                     </Text>
                   </TouchableOpacity>
@@ -1730,7 +1730,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                           onPress={() => _runAi(b.k)}
                           style={{
                             paddingHorizontal: 14, paddingVertical: 10,
-                            borderRadius: 18, backgroundColor: aiBusyMode === b.k ? '#7C3AED' : 'rgba(255,255,255,0.08)',
+                            borderRadius: 18, backgroundColor: aiBusyMode === b.k ? '#A582F7' : 'rgba(255,255,255,0.08)',
                             opacity: aiBusyMode && aiBusyMode !== b.k ? 0.5 : 1,
                           }}
                         >
@@ -1765,7 +1765,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                         <Text numberOfLines={1} style={{ color: '#bbb', fontSize: 11, marginTop: 2 }}>{aiResultUrl}</Text>
                         <TouchableOpacity
                           onPress={() => { onSave?.({ uri: aiResultUrl, ai_enhanced: true }); }}
-                          style={{ marginTop: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, backgroundColor: '#7C3AED', alignSelf: 'flex-start' }}
+                          style={{ marginTop: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, backgroundColor: '#A582F7', alignSelf: 'flex-start' }}
                         >
                           <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>Usar resultado</Text>
                         </TouchableOpacity>
@@ -2365,7 +2365,7 @@ const s = StyleSheet.create({
   sliderFill: {
     position: 'absolute',
     height: '100%',
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     borderRadius: 2,
   },
   sliderKnob: {
@@ -2414,7 +2414,7 @@ const s = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2515,7 +2515,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 8,
     borderRadius: 18,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
   },
   blurAddBtnLabel: {
     color: '#fff',

@@ -32,7 +32,7 @@ export default function ProfileLegacyRedirect() {
   return (
     // [beauty2 2026-05-31] redirect loader: larger brand-purple spinner, theme bg
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors?.background, padding: 24 }}>
-      <ActivityIndicator size="large" color="#7C3AED" />
+      <ActivityIndicator size="large" color="#A582F7" />
     </View>
   );
 }

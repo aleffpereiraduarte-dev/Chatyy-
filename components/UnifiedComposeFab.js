@@ -133,7 +133,7 @@ export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail
           slotHeight={70}
           icon={IconMail}
           label={t?.('compose.email') || 'Email'}
-          color="#7C3AED"
+          color="#A582F7"
           colors={colors}
           onPress={() => go('/compose')}
         />
@@ -177,11 +177,11 @@ export default function UnifiedComposeFab({ router, colors, isDark, t, userEmail
           activeOpacity={0.85}
           style={{
             width: 56, height: 56, borderRadius: 28,
-            backgroundColor: '#7C3AED',
+            backgroundColor: '#A582F7',
             alignItems: 'center', justifyContent: 'center',
             ...(Platform.OS === 'web'
               ? { boxShadow: '0 8px 24px rgba(124,58,237,0.45)' }
-              : { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 14, elevation: 8 }),
+              : { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 14, elevation: 8 }),
           }}
           accessibilityLabel={open ? (t?.('common.close') || 'Fechar') : (t?.('compose.new') || 'Novo')}
           accessibilityRole="button"

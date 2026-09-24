@@ -259,7 +259,7 @@ export default function CompanionQRScreen() {
 
   return (
     <View style={[s.root, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      <View style={[s.header, { backgroundColor: isDark ? '#1a1a2e' : '#7C3AED', paddingTop: 10 }]}>
+      <View style={[s.header, { backgroundColor: isDark ? '#1a1a2e' : '#A582F7', paddingTop: 10 }]}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>
@@ -269,7 +269,7 @@ export default function CompanionQRScreen() {
       <View style={s.body}>
         {status === 'loading' ? (
           <View style={s.loadingBox}>
-            <ActivityIndicator color="#7C3AED" size="large" />
+            <ActivityIndicator color="#A582F7" size="large" />
           </View>
         ) : status === 'approved' ? (
           <View style={s.approvedBox}>
@@ -291,7 +291,7 @@ export default function CompanionQRScreen() {
                 keeps running on the singleton WS. */}
             {bootstrapProgress && !bootstrapDone && (
               <View style={s.bootstrapBox}>
-                <ActivityIndicator color="#7C3AED" size="small" />
+                <ActivityIndicator color="#A582F7" size="small" />
                 <View style={{ flex: 1 }}>
                   <Text style={[s.bootstrapTitle, { color: colors.text }]}>
                     {t?.('pair.bootstrapping') || 'Sincronizando histórico...'}
@@ -315,7 +315,7 @@ export default function CompanionQRScreen() {
               </View>
             )}
 
-            <TouchableOpacity onPress={() => router.back()} style={[s.cta, { backgroundColor: '#7C3AED' }]}>
+            <TouchableOpacity onPress={() => router.back()} style={[s.cta, { backgroundColor: '#A582F7' }]}>
               <Text style={s.ctaText}>{t?.('common.done') || 'OK'}</Text>
             </TouchableOpacity>
           </View>
@@ -325,14 +325,14 @@ export default function CompanionQRScreen() {
               {t?.('common.error') || 'Erro'}
             </Text>
             <Text style={[s.approvedSub, { color: colors.secondaryText }]}>{error || ''}</Text>
-            <TouchableOpacity onPress={mint} style={[s.cta, { backgroundColor: '#7C3AED' }]}>
+            <TouchableOpacity onPress={mint} style={[s.cta, { backgroundColor: '#A582F7' }]}>
               <Text style={s.ctaText}>{t?.('common.retry') || 'Tentar novamente'}</Text>
             </TouchableOpacity>
           </View>
         ) : (
           <>
             <View style={[s.iconBox, { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)' }]}>
-              <IconSmartphone size={32} color="#7C3AED" />
+              <IconSmartphone size={32} color="#A582F7" />
             </View>
             <Text style={[s.heroTitle, { color: colors.text }]}>
               {t?.('devices.companionHero') || 'Mostre este QR no outro celular'}
@@ -350,7 +350,7 @@ export default function CompanionQRScreen() {
             </Text>
 
             <TouchableOpacity onPress={() => router.back()} style={[s.cta, s.cancelCta]}>
-              <Text style={[s.ctaText, { color: '#7C3AED' }]}>
+              <Text style={[s.ctaText, { color: '#A582F7' }]}>
                 {t?.('common.cancel') || 'Cancelar'}
               </Text>
             </TouchableOpacity>
@@ -374,7 +374,7 @@ const s = StyleSheet.create({
   heroSub: { fontSize: 13, textAlign: 'center', lineHeight: 18, paddingHorizontal: 12 },
   qrWrap: { alignItems: 'center', marginTop: 12 },
   cta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14, paddingHorizontal: 32, borderRadius: 12, marginTop: 24, alignSelf: 'stretch' },
-  cancelCta: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#7C3AED' },
+  cancelCta: { backgroundColor: 'transparent', borderWidth: 1, borderColor: '#A582F7' },
   ctaText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   approvedBox: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 },
   approvedTitle: { fontSize: 20, fontWeight: '700', textAlign: 'center' },

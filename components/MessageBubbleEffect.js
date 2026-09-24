@@ -248,7 +248,7 @@ export default function MessageBubbleEffect({ effect, messageId, isOwn, children
 // sender's preview matches the recipient pixel-for-pixel. Loops: play once,
 // rest, reset, repeat. `active=false` stops the loop (sheet closed / tab
 // switched away) so we don't burn Animated cycles behind a closed sheet.
-export function BubbleEffectPreview({ effect, active = true, color = '#7C3AED', label = 'Olá' }) {
+export function BubbleEffectPreview({ effect, active = true, color = '#A582F7', label = 'Olá' }) {
   const validEffect = effect && BUBBLE_EFFECTS.has(effect) ? effect : null;
   const anim = useBubbleEffectAnim(validEffect === 'invisible-ink' ? null : validEffect);
   const { scale, tx, ty, rot, opacity, shockwave, ripple1, ripple2, localShake, play, reset } = anim;

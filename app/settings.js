@@ -433,7 +433,7 @@ function SettingsScreenInner() {
   const [languageAuto, setLanguageAuto] = useState(false);
   const [dataSaver, setDataSaver] = useState(false);
   const [bubbleShape, setBubbleShape] = useState('rounded'); // 'rounded' | 'square' | 'classic'
-  const [notifLedColor, setNotifLedColor] = useState('#7C3AED');
+  const [notifLedColor, setNotifLedColor] = useState('#A582F7');
   const [mediaRoaming, setMediaRoaming] = useState(false);
   // [gap C3 2026-05-20] WhatsApp parity — "Usar menos dados em chamadas".
   // Caps video at 200kbps / 15fps / 360p with 2-layer simulcast (180p+360p).
@@ -450,7 +450,7 @@ function SettingsScreenInner() {
   // Default = Chatyy purple (was WhatsApp green '#075E54'). Stored as a
   // hex so chat-conversation.js renders it correctly — gradient swatches
   // below are previews; the dominant hex is what we actually persist.
-  const [wallpaperDefault, setWallpaperDefault] = useState('#7C3AED');
+  const [wallpaperDefault, setWallpaperDefault] = useState('#A582F7');
   // Modal state
   const [aboutOpen, setAboutOpen] = useState(false);
   const [backupKeyOpen, setBackupKeyOpen] = useState(false);
@@ -1830,6 +1830,23 @@ function SettingsScreenInner() {
             </View>
             <IconChevronRight size={18} color={colors.textTertiary} />
           </TouchableOpacity>
+
+          {/* [2026-09-24] Bia — assistente de IA (memória/personalização) */}
+          <TouchableOpacity
+            style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
+            onPress={() => router.push('/bia-settings')}
+            accessibilityRole="button"
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>
+                {t('settings.bia') || 'Bia — Assistente de IA'}
+              </Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.biaDesc') || 'Ensine seu tom e assinatura pra ela escrever na sua voz'}
+              </Text>
+            </View>
+            <IconChevronRight size={18} color={colors.textTertiary} />
+          </TouchableOpacity>
         </View>
         )}
 
@@ -2295,7 +2312,7 @@ function SettingsScreenInner() {
           {/* Swatch grid with labeled colors. Six brand-aligned options. */}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14, justifyContent: 'flex-start' }}>
             {[
-              { c: '#7C3AED', label: t('settings.led.c1') || 'Roxo' },
+              { c: '#A582F7', label: t('settings.led.c1') || 'Roxo' },
               { c: '#3B82F6', label: t('settings.led.c2') || 'Azul' },
               { c: '#10B981', label: t('settings.led.c3') || 'Verde' },
               { c: '#EF4444', label: t('settings.led.c4') || 'Vermelho' },
@@ -2363,7 +2380,7 @@ function SettingsScreenInner() {
               hex (compatible with chat-conversation.js render path). */}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: Spacing.md }}>
             {[
-              { id: '#7C3AED', from: '#A855F7', to: '#6D28D9', label: t('settings.wallpaperDefault.p1') || 'Roxo Chatyy' },
+              { id: '#A582F7', from: '#A855F7', to: '#6D28D9', label: t('settings.wallpaperDefault.p1') || 'Roxo Chatyy' },
               { id: '#DB2777', from: '#F472B6', to: '#BE185D', label: t('settings.wallpaperDefault.p2') || 'Rosa' },
               { id: '#F59E0B', from: '#FBBF24', to: '#D97706', label: t('settings.wallpaperDefault.p3') || 'Pôr-do-sol' },
               { id: '#0EA5E9', from: '#38BDF8', to: '#0369A1', label: t('settings.wallpaperDefault.p4') || 'Oceano' },
@@ -2725,7 +2742,7 @@ function SettingsScreenInner() {
             >
               <View style={s.settingInfo}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <IconShield size={20} color="#7C3AED" />
+                  <IconShield size={20} color="#A582F7" />
                   <Text style={[s.settingLabel, { color: colors.text, fontWeight: '700' }]}>Família</Text>
                 </View>
                 <Text style={[s.settingDesc, { color: colors.textTertiary }]}>Compartilhe plano, álbum, calendário e mais com a família</Text>
@@ -2740,7 +2757,7 @@ function SettingsScreenInner() {
             >
               <View style={s.settingInfo}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <IconShield size={20} color="#7C3AED" />
+                  <IconShield size={20} color="#A582F7" />
                   <Text style={[s.settingLabel, { color: colors.text, fontWeight: '700' }]}>Controle Parental</Text>
                 </View>
                 <Text style={[s.settingDesc, { color: colors.textTertiary }]}>Crie contas monitoradas para seus filhos</Text>
@@ -5281,8 +5298,8 @@ const s = StyleSheet.create({
   saveBtn: {
     borderRadius: 22, paddingVertical: Spacing.sm + 2, paddingHorizontal: Spacing.lg + 2,
     ...Platform.select({
-      web: { background: 'linear-gradient(135deg, #7C3AED 0%, #A855F7 100%)', boxShadow: '0 4px 12px rgba(124,58,237,0.3)' },
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 8 },
+      web: { background: 'linear-gradient(135deg, #A582F7 0%, #A855F7 100%)', boxShadow: '0 4px 12px rgba(124,58,237,0.3)' },
+      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 8 },
       android: { elevation: 2 },
     }),
   },

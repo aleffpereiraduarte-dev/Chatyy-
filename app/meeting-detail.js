@@ -21,7 +21,7 @@ import {
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const ACCENT_DARK = '#5B21B6';
 const ACCENT_DEEP = '#3B0F75';
 

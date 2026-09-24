@@ -41,7 +41,7 @@ function IconSend({ size = 18, color = '#fff' }) {
   );
 }
 
-function IconCamera({ size = 20, color = '#8b5cf6' }) {
+function IconCamera({ size = 20, color = '#A582F7' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
@@ -96,11 +96,11 @@ function IconParent({ size = 18, color = '#fff' }) {
 // ─── Category Config ───
 
 const CATEGORIES = [
-  { key: 'matematica', emoji: '\uD83D\uDD22', color: '#8b5cf6', gradient: ['#7c3aed', '#a78bfa'], i18nKey: 'kids.categories.math' },
+  { key: 'matematica', emoji: '\uD83D\uDD22', color: '#A582F7', gradient: ['#A582F7', '#a78bfa'], i18nKey: 'kids.categories.math' },
   { key: 'portugues', emoji: '\uD83D\uDCDA', color: '#ec4899', gradient: ['#db2777', '#f9a8d4'], i18nKey: 'kids.categories.portuguese' },
   { key: 'ciencias', emoji: '\uD83D\uDD2C', color: '#10b981', gradient: ['#059669', '#6ee7b7'], i18nKey: 'kids.categories.science' },
   { key: 'historia', emoji: '\uD83C\uDFDB\uFE0F', color: '#f59e0b', gradient: ['#d97706', '#fcd34d'], i18nKey: 'kids.categories.history' },
-  { key: 'ingles', emoji: '\uD83C\uDF0D', color: '#A78BFA', gradient: ['#7C3AED', '#93c5fd'], i18nKey: 'kids.categories.english' },
+  { key: 'ingles', emoji: '\uD83C\uDF0D', color: '#A78BFA', gradient: ['#A582F7', '#93c5fd'], i18nKey: 'kids.categories.english' },
   { key: 'artes', emoji: '\uD83C\uDFA8', color: '#f43f5e', gradient: ['#e11d48', '#fda4af'], i18nKey: 'kids.categories.art' },
   { key: 'musica', emoji: '\uD83C\uDFB5', color: '#06b6d4', gradient: ['#0891b2', '#67e8f9'], i18nKey: 'kids.categories.music' },
   { key: 'geografia', emoji: '\uD83C\uDF0E', color: '#84cc16', gradient: ['#65a30d', '#bef264'], i18nKey: 'kids.categories.geography' },
@@ -125,7 +125,7 @@ function TypingDots() {
   return (
     <View style={{ flexDirection: 'row', gap: 6, paddingVertical: 8 }}>
       {[dot1, dot2, dot3].map((dot, i) => (
-        <Animated.View key={i} style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#8b5cf6',
+        <Animated.View key={i} style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#A582F7',
           opacity: dot.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }),
           transform: [{ scale: dot.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.3] }) }],
         }} />
@@ -153,7 +153,7 @@ function BounceIn({ children, delay = 0 }) {
 function AvatarIcon({ size = 36 }) {
   return (
     <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: '#ede9fe', alignItems: 'center', justifyContent: 'center' }}>
-      <IconGraduationCap size={size * 0.55} color="#7c3aed" />
+      <IconGraduationCap size={size * 0.55} color="#A582F7" />
     </View>
   );
 }
@@ -274,7 +274,7 @@ export default function KidsLearnTab() {
           isUser ? s.userBubble : s.aiBubble,
           {
             backgroundColor: isUser
-              ? (Platform.OS === 'web' ? 'linear-gradient(135deg, #8b5cf6, #a855f7)' : '#8b5cf6')
+              ? (Platform.OS === 'web' ? 'linear-gradient(135deg, #A582F7, #a855f7)' : '#A582F7')
               : (isDark ? '#2d1b4e' : '#fff'),
             ...(Platform.OS === 'web' && !isUser ? { boxShadow: '0 4px 16px rgba(139,92,246,0.12)' } : {}),
           },
@@ -283,10 +283,10 @@ export default function KidsLearnTab() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
               <AvatarIcon size={36} />
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 15, fontWeight: '800', color: '#8b5cf6' }}>{t('kids.teacherOne')}</Text>
+                <Text style={{ fontSize: 15, fontWeight: '800', color: '#A582F7' }}>{t('kids.teacherOne')}</Text>
                 {level > 1 && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                    <Text style={{ fontSize: 11, color: '#7c3aed', fontWeight: '700' }}>Lv.{level}</Text>
+                    <Text style={{ fontSize: 11, color: '#A582F7', fontWeight: '700' }}>Lv.{level}</Text>
                     <StarProgress stars={Math.min(stars, 5)} maxStars={5} size={12} />
                   </View>
                 )}
@@ -384,7 +384,7 @@ export default function KidsLearnTab() {
           <View style={[s.bubble, s.aiBubble, { backgroundColor: isDark ? '#2d1b4e' : '#fff' }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
               <AvatarIcon size={36} />
-              <Text style={{ fontSize: 15, fontWeight: '800', color: '#8b5cf6' }}>{t('kids.teacherOne')}</Text>
+              <Text style={{ fontSize: 15, fontWeight: '800', color: '#A582F7' }}>{t('kids.teacherOne')}</Text>
             </View>
             <TypingDots />
           </View>
@@ -504,7 +504,7 @@ export default function KidsLearnTab() {
               if (!r.canceled && r.assets?.[0]) sendMessage(input.trim() || 'Me ajuda com esse dever de casa!');
             } catch {}
           }} activeOpacity={0.7} accessibilityLabel="Photo" accessibilityRole="button">
-            <IconCamera size={24} color={isDark ? '#a78bfa' : '#8b5cf6'} />
+            <IconCamera size={24} color={isDark ? '#a78bfa' : '#A582F7'} />
           </TouchableOpacity>
         )}
         <TextInput
@@ -516,7 +516,7 @@ export default function KidsLearnTab() {
         />
         <TouchableOpacity
           style={[s.sendBtn, {
-            backgroundColor: input.trim() && !loading ? '#8b5cf6' : (isDark ? '#2d1b4e' : '#e9d5ff'),
+            backgroundColor: input.trim() && !loading ? '#A582F7' : (isDark ? '#2d1b4e' : '#e9d5ff'),
             ...(input.trim() && !loading && Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(139,92,246,0.35)' } : {}),
           }]}
           onPress={() => sendMessage(input)} disabled={!input.trim() || loading} activeOpacity={0.7}

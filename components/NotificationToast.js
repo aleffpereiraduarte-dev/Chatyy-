@@ -26,13 +26,13 @@ function getNotificationType(data) {
 const TYPE_ACCENTS = {
   email: { light: '#2563eb', dark: '#60a5fa' },
   chat: { light: '#10b981', dark: '#34d399' },
-  meeting: { light: '#8b5cf6', dark: '#c084fc' },
+  meeting: { light: '#A582F7', dark: '#c084fc' },
   live: { light: '#dc2626', dark: '#f87171' },
 };
 
 // Avatar color from name
 function getAvatarColor(name) {
-  const colors = ['#2563eb', '#16a34a', '#dc2626', '#f59e0b', '#8b5cf6', '#ea580c', '#0d9488', '#e11d48'];
+  const colors = ['#2563eb', '#16a34a', '#dc2626', '#f59e0b', '#A582F7', '#ea580c', '#0d9488', '#e11d48'];
   let hash = 0;
   for (let i = 0; i < (name || '').length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return colors[Math.abs(hash) % colors.length];
@@ -58,7 +58,7 @@ function getUrgencyStyle(data, isDark) {
 const CATEGORY_STYLES = {
   action_required: { key: 'toast.categoryAction', color: '#dc2626', bg: '#fef2f2' },
   finance: { key: 'toast.categoryFinance', color: '#d97706', bg: '#fffbeb' },
-  calendar: { key: 'toast.categoryCalendar', color: '#7C3AED', bg: '#f5f3ff' },
+  calendar: { key: 'toast.categoryCalendar', color: '#A582F7', bg: '#f5f3ff' },
   security: { key: 'toast.categorySecurity', color: '#dc2626', bg: '#fef2f2' },
   shipping: { key: 'toast.categoryShipping', color: '#0d9488', bg: '#f0fdfa' },
   work: { key: 'toast.categoryWork', color: '#2563eb', bg: '#eff6ff' },
@@ -482,7 +482,7 @@ export default function NotificationToast({ notification, onDismiss }) {
                   paddingVertical: 1,
                   borderRadius: 4,
                 }}>
-                  <Text style={{ fontSize: 9, fontWeight: '700', color: '#8b5cf6', letterSpacing: 0.3 }}>AI</Text>
+                  <Text style={{ fontSize: 9, fontWeight: '700', color: '#A582F7', letterSpacing: 0.3 }}>AI</Text>
                 </View>
               )}
               <Text style={{
@@ -641,7 +641,7 @@ export default function NotificationToast({ notification, onDismiss }) {
               outputRange: ['0%', '100%'],
             }),
             ...(Platform.OS === 'web' && data.urgency !== 'high' ? {
-              backgroundImage: 'linear-gradient(90deg, #A78BFA 0%, #7C3AED 100%)',
+              backgroundImage: 'linear-gradient(90deg, #A78BFA 0%, #A582F7 100%)',
               backgroundColor: 'transparent',
             } : {}),
           }}

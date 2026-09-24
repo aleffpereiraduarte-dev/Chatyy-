@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native
 import { Spacing, BorderRadius, FontSize } from '../constants/theme';
 import { IconSparkles } from './Icons';
 
-const BRAND = '#7C3AED';
+const BRAND = '#A582F7';
 const DEBOUNCE_MS = 1500;
 const MIN_CHARS = 25;
 

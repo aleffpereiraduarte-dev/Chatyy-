@@ -1347,7 +1347,7 @@ export default function ComposeScreen() {
               finalBody = `<div style="padding:18px;border:1px solid #e5e7eb;border-radius:12px;font-family:system-ui;background:#f9fafb">
                 <p style="margin:0 0 10px 0;font-weight:600">${t('compose.confidential') || 'Email confidencial'}</p>
                 <p style="margin:0 0 14px 0;color:#374151">${(t('compose.confidentialNote') || 'Este email expira em {n} dias.').replace('{n}', expDays)}</p>
-                <a href="${cr.data.view_url}" style="display:inline-block;padding:10px 18px;background:#7C3AED;color:#fff;text-decoration:none;border-radius:8px;font-weight:600">${t('compose.confidentialView') || 'Visualizar email confidencial'}</a>
+                <a href="${cr.data.view_url}" style="display:inline-block;padding:10px 18px;background:#A582F7;color:#fff;text-decoration:none;border-radius:8px;font-weight:600">${t('compose.confidentialView') || 'Visualizar email confidencial'}</a>
               </div>`;
               confidentialOk = true;
             }
@@ -1796,7 +1796,7 @@ export default function ComposeScreen() {
                 const r = await api.apiCall('meet_create', { title: subject || t('compose.defaultMeetTitle') }, 'POST');
                 if (r.success && r.data?.room_id) {
                   const meetUrl = `https://chatyy.com.br/meet/room.html?id=${r.data.room_id}`; // Keep chatyy.com.br - this URL goes in the email body for recipients to click
-                  const meetBlock = `\n\n<div style="background:#F5F3FF;border:1px solid #DDD6FE;border-radius:12px;padding:16px;margin:8px 0"><strong style="font-size:15px">Chatyy Meet</strong><br/><p style="margin:8px 0;color:#64748b;font-size:13px">${t('compose.meetJoinLabel')}</p><a href="${meetUrl}" style="color:#7C3AED;font-weight:600">${meetUrl}</a></div>\n`;
+                  const meetBlock = `\n\n<div style="background:#F5F3FF;border:1px solid #DDD6FE;border-radius:12px;padding:16px;margin:8px 0"><strong style="font-size:15px">Chatyy Meet</strong><br/><p style="margin:8px 0;color:#64748b;font-size:13px">${t('compose.meetJoinLabel')}</p><a href="${meetUrl}" style="color:#A582F7;font-weight:600">${meetUrl}</a></div>\n`;
                   setBody(prev => prev + meetBlock);
                 }
               } catch {}
@@ -1996,7 +1996,7 @@ export default function ComposeScreen() {
       <KeyboardAvoidingView style={[s.flex, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={[s.container, { paddingTop: insets.top }]}>
           {/* Header — purple gradient, white iconography */}
-          <View style={[s.header, Platform.OS !== 'web' && { backgroundColor: '#7C3AED' }]}>
+          <View style={[s.header, Platform.OS !== 'web' && { backgroundColor: '#A582F7' }]}>
             <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
               <IconArrowLeft size={20} color="#fff" />
             </TouchableOpacity>
@@ -2169,7 +2169,7 @@ export default function ComposeScreen() {
     <KeyboardAvoidingView style={[s.flex, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <View style={[s.container, { paddingTop: insets.top }]}>
         {/* ── Modern Header — purple gradient, white iconography ── */}
-        <View style={[s.header, { flex: undefined, marginLeft: 0 }, Platform.OS !== 'web' && { backgroundColor: '#7C3AED' }]}>
+        <View style={[s.header, { flex: undefined, marginLeft: 0 }, Platform.OS !== 'web' && { backgroundColor: '#A582F7' }]}>
           <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
             <IconX size={20} color="#fff" />
           </TouchableOpacity>
@@ -2282,7 +2282,7 @@ export default function ComposeScreen() {
                 ...Platform.select({
                   web: { boxShadow: '0 2px 14px rgba(124,58,237,0.06), 0 0 0 1px rgba(124,58,237,0.04)' },
                   default: {
-                    shadowColor: '#7C3AED', shadowOpacity: 0.08, shadowRadius: 10,
+                    shadowColor: '#A582F7', shadowOpacity: 0.08, shadowRadius: 10,
                     shadowOffset: { width: 0, height: 3 }, elevation: 2,
                   },
                 }),
@@ -2450,7 +2450,7 @@ const s = StyleSheet.create({
   container: { flex: 1 },
 
   // ── Header ──
-  // Brand: purple gradient (#5B21B6 → #7C3AED) — moment-of-intent screen
+  // Brand: purple gradient (#5B21B6 → #A582F7) — moment-of-intent screen
   // deserves a confident, on-brand hero. Web uses CSS linear-gradient; native
   // falls back to solid colors.primary applied inline (see header JSX) plus a
   // subtle elevation so the bar floats above scroll content.
@@ -2460,7 +2460,7 @@ const s = StyleSheet.create({
     borderBottomWidth: 0,
     ...Platform.select({
       web: {
-        background: 'linear-gradient(135deg, #5B21B6 0%, #7C3AED 100%)',
+        background: 'linear-gradient(135deg, #5B21B6 0%, #A582F7 100%)',
         boxShadow: '0 2px 12px rgba(91, 33, 182, 0.25)',
       },
       default: {
@@ -2502,7 +2502,7 @@ const s = StyleSheet.create({
       },
       default: {
         elevation: 6,
-        shadowColor: '#7C3AED',
+        shadowColor: '#A582F7',
         shadowOpacity: 0.25,
         shadowRadius: 12,
         shadowOffset: { width: 0, height: 4 },
@@ -2737,7 +2737,7 @@ const s = StyleSheet.create({
     borderWidth: 1,
     ...Platform.select({
       web: { boxShadow: '0 0 0 3px rgba(124,58,237,0.08), 0 2px 6px rgba(124,58,237,0.18)' },
-      default: { shadowColor: '#7C3AED', shadowOpacity: 0.18, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
+      default: { shadowColor: '#A582F7', shadowOpacity: 0.18, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
     }),
   },
   toolBtnText: { fontSize: 12, fontWeight: '600', letterSpacing: 0.2 },

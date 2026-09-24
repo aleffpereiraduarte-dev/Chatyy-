@@ -160,7 +160,7 @@ export default function WebcamCapture({ visible, onClose, onCapture, colors, t }
           <TouchableOpacity
             key={m}
             onPress={() => !recording && setMode(m)}
-            style={{ paddingHorizontal: 18, paddingVertical: 8, borderRadius: 16, backgroundColor: mode === m ? '#7C3AED' : 'transparent' }}
+            style={{ paddingHorizontal: 18, paddingVertical: 8, borderRadius: 16, backgroundColor: mode === m ? '#A582F7' : 'transparent' }}
           >
             <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>
               {m === 'photo' ? (t?.('chatConv.photo') || 'Foto') : (t?.('chatConv.video') || 'Vídeo')}
@@ -189,7 +189,7 @@ export default function WebcamCapture({ visible, onClose, onCapture, colors, t }
             width: 76, height: 76, borderRadius: 38,
             backgroundColor: recording ? '#DC2626' : '#fff',
             alignItems: 'center', justifyContent: 'center',
-            borderWidth: 4, borderColor: '#7C3AED',
+            borderWidth: 4, borderColor: '#A582F7',
           }}
         >
           {mode === 'video' && (

@@ -14,7 +14,7 @@ const TABS = ['image', 'video', 'audio', 'file'];
 // the active-pill, empty-state circle, list icons and accents are all the
 // brand color. Per-type is still distinguishable via the icon (Image/Film/
 // Music/FileText), not via clashing hues.
-const BRAND = '#7C3AED';
+const BRAND = '#A582F7';
 const BRAND_SOFT = 'rgba(124,58,237,0.12)';
 const TAB_THEME = {
   image: { color: BRAND, soft: BRAND_SOFT, Icon: IconImage },

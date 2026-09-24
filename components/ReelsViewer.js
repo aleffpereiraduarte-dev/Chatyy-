@@ -253,7 +253,7 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
   );
 });
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const DOUBLE_TAP_DELAY = 300;
 const BASE_URL = 'https://chatyy.com.br';
 const isWeb = Platform.OS === 'web';
@@ -982,7 +982,7 @@ function SpeedPickerSheet({ visible, current, onSelect, onClose, t }) {
                       {s}×{s === 1 ? `  (${t?.('common.default') || 'Padrão'})` : ''}
                     </Text>
                     {active ? (
-                      <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#7C3AED' }} />
+                      <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#A582F7' }} />
                     ) : null}
                   </TouchableOpacity>
                 );
@@ -1991,7 +1991,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         >
           <View style={{
             paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
-            backgroundColor: playbackRate === 1 ? 'rgba(255,255,255,0.15)' : '#7C3AED',
+            backgroundColor: playbackRate === 1 ? 'rgba(255,255,255,0.15)' : '#A582F7',
             minWidth: 36, alignItems: 'center',
           }}>
             <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
@@ -3257,10 +3257,10 @@ const styles = StyleSheet.create({
   // and react-native-svg <LinearGradient> on a 3px bar isn't worth it).
   progressFill: {
     height: '100%',
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     borderRadius: 1.5,
     ...(isWeb ? {
-      backgroundImage: 'linear-gradient(90deg, #7C3AED 0%, #EC4899 100%)',
+      backgroundImage: 'linear-gradient(90deg, #A582F7 0%, #EC4899 100%)',
       boxShadow: '0 0 8px rgba(236,72,153,0.55), 0 0 14px rgba(124,58,237,0.4)',
     } : {}),
   },

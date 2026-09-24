@@ -163,7 +163,7 @@ export async function start({ id, title, total = 0, body, onCancel }) {
           // expo-notifications maps `progress` to NotificationCompat
           //  .setProgress(max, current, indeterminate). 0/0/true = spinner.
           progress: total > 0 ? { max: total, current: 0, indeterminate: false } : { max: 0, current: 0, indeterminate: true },
-          color: '#7C3AED',
+          color: '#A582F7',
           priority: Notifications.AndroidNotificationPriority?.LOW || 'low',
         } : {}),
         // iOS: passive interruption so we don't ping the user every tick.
@@ -217,7 +217,7 @@ export async function update(id, { current = 0, total, bodySuffix } = {}) {
           progress: effTotal > 0
             ? { max: effTotal, current, indeterminate: false }
             : { max: 0, current: 0, indeterminate: true },
-          color: '#7C3AED',
+          color: '#A582F7',
           priority: Notifications.AndroidNotificationPriority?.LOW || 'low',
         } : {}),
         ...(Platform.OS === 'ios' ? { interruptionLevel: 'passive' } : {}),

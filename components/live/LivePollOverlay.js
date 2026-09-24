@@ -144,7 +144,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   pollBadge: {
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 8,

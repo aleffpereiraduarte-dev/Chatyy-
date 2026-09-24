@@ -172,7 +172,7 @@ export default function PWAPrompts({ colors, isDark, t }) {
     : (t?.('pwa.installCta') || 'Instalar');
   const onAccept = isUpdate ? acceptUpdate : acceptInstall;
   const onDismiss = isUpdate ? dismissUpdate : dismissInstall;
-  const accent = isUpdate ? '#10b981' : '#7C3AED';
+  const accent = isUpdate ? '#10b981' : '#A582F7';
 
   const translateY = slideAnim.interpolate({ inputRange: [0, 1], outputRange: [80, 0] });
 

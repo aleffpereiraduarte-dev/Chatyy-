@@ -21,7 +21,7 @@ import {
 } from './Icons';
 
 // Spotlight-style brand accent — used everywhere the focus needs to pop.
-const BRAND = '#7C3AED';
+const BRAND = '#A582F7';
 const RECENT_KEY = '@chatyy_global_recent_searches';
 const MAX_RECENT = 6;
 // Per-section preview cap. Anything beyond shows "Ver todos →".
@@ -207,7 +207,7 @@ function applyFilter(results, filterId) {
 }
 
 function FilterChip({ label, active, onPress, colors }) {
-  const brand = colors?.primary || '#7C3AED';
+  const brand = colors?.primary || '#A582F7';
   return (
     <TouchableOpacity
       onPress={onPress}

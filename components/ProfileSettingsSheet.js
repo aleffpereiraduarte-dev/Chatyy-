@@ -36,7 +36,7 @@ import { useBiometric } from '../context/BiometricContext';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { WALLET_ENABLED, MONETIZATION_ENABLED } from '../constants/featureFlags';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 
 // ─── Shared building blocks ──────────────────────────────────────────
 // Row — iconTint is the brand colour for the icon glyph + a 14% bg tint
@@ -199,7 +199,7 @@ function AccentColorRow({ colors, t }) {
 //  • Logout/Delete pushed to bottom with strong 6px divider on top
 //
 // Section colour palette (kept inline so tweaks live next to the rows):
-const ICON_PURPLE = '#7C3AED';
+const ICON_PURPLE = '#A582F7';
 const ICON_RED    = '#ef4444';
 const ICON_AMBER  = '#f59e0b';
 const ICON_BLUE   = '#3b82f6';
@@ -290,7 +290,7 @@ function PlusUpsellCard({ colors, onPress, t }) {
         backgroundColor: 'rgba(124,58,237,0.12)',
         alignItems: 'center', justifyContent: 'center',
       }}>
-        <IconSparkles size={16} color="#7C3AED" />
+        <IconSparkles size={16} color="#A582F7" />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 14, fontWeight: '600', color: colors?.text || '#111' }} numberOfLines={1}>
@@ -510,7 +510,7 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
                 }}>
                   <View style={{
                     minWidth: 22, paddingHorizontal: 6, height: 20,
-                    borderRadius: 10, backgroundColor: '#7C3AED',
+                    borderRadius: 10, backgroundColor: '#A582F7',
                     alignItems: 'center', justifyContent: 'center',
                   }}>
                     <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{r.badge}</Text>
@@ -697,7 +697,7 @@ function DevicesScreen({ colors, t, onClose, onLogout }) {
   const deviceVisual = (s) => {
     const label = (s.device_label || s.user_agent || '').toLowerCase();
     if (label.includes('iphone') || label.includes('ipad') || label.includes('darwin') || label.includes('cfnetwork')) {
-      return { Icon: IconSmartphone, tint: '#7C3AED', bg: '#7C3AED18' };
+      return { Icon: IconSmartphone, tint: '#A582F7', bg: '#A582F718' };
     }
     if (label.includes('android')) {
       return { Icon: IconSmartphone, tint: '#10b981', bg: '#10b98118' };

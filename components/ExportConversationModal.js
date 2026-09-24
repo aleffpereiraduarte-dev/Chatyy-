@@ -26,7 +26,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconPackage, IconFileText, IconImage, IconX, IconCalendar, IconAlertCircle } from './Icons';
 import * as api from '../services/api';
 
-const PURPLE = '#7C3AED';
+const PURPLE = '#A582F7';
 
 // Resolve the absolute origin for a server-relative export URL. Mirrors the
 // logic the old inline modal used so behavior stays identical.

@@ -413,7 +413,7 @@ export default function BackupScreen() {
   });
   const groupedKeys = Object.keys(grouped);
 
-  const ACCENT = isDark ? '#A78BFA' : '#7C3AED';
+  const ACCENT = isDark ? '#A78BFA' : '#A582F7';
 
   // Loading state handled inline - no full-screen spinner
 
@@ -452,8 +452,8 @@ export default function BackupScreen() {
               {t('backup.upgradePrompt')}
             </Text>
           )}
-          <View style={{ marginTop: 16, padding: 16, borderRadius: 12, backgroundColor: (colors.primary || '#7C3AED') + '12' }}>
-            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.primary || '#7C3AED' }}>
+          <View style={{ marginTop: 16, padding: 16, borderRadius: 12, backgroundColor: (colors.primary || '#A582F7') + '12' }}>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.primary || '#A582F7' }}>
               {t?.('backup.freeTier') || '100 GB grátis'}
             </Text>
             <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 4 }}>

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback } from 'react';
+import { createContext, useContext, useState, useCallback, useMemo } from 'react';
 
 const SignupContext = createContext(null);
 
@@ -42,8 +42,10 @@ export function SignupProvider({ children }) {
     ? `${data.username}@${data.domain}`
     : '';
 
+  const value = useMemo(() => ({ data, update, reset, fullName, email }),
+    [data, update, reset, fullName, email]);
   return (
-    <SignupContext.Provider value={{ data, update, reset, fullName, email }}>
+    <SignupContext.Provider value={value}>
       {children}
     </SignupContext.Provider>
   );

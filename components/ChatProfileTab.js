@@ -23,7 +23,7 @@ import {
 import { CallerIdVerifyContent } from './ChatCallsTab';
 
 // ─── Kids Profile SVG Icons (no emojis) ───
-function KidsIconShieldUser({ size = 18, color = '#8b5cf6' }) {
+function KidsIconShieldUser({ size = 18, color = '#A582F7' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -43,7 +43,7 @@ function KidsIconSOS({ size = 24, color = '#fff' }) {
   );
 }
 
-function KidsIconFamily({ size = 20, color = '#8b5cf6' }) {
+function KidsIconFamily({ size = 20, color = '#A582F7' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <SvgCircle cx="9" cy="7" r="3" />
@@ -54,7 +54,7 @@ function KidsIconFamily({ size = 20, color = '#8b5cf6' }) {
   );
 }
 
-function KidsIconMailPerm({ size = 18, color = '#8b5cf6' }) {
+function KidsIconMailPerm({ size = 18, color = '#A582F7' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Rect x="2" y="4" width="20" height="16" rx="2" />
@@ -63,7 +63,7 @@ function KidsIconMailPerm({ size = 18, color = '#8b5cf6' }) {
   );
 }
 
-function KidsIconTrashPerm({ size = 18, color = '#8b5cf6' }) {
+function KidsIconTrashPerm({ size = 18, color = '#A582F7' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
@@ -71,7 +71,7 @@ function KidsIconTrashPerm({ size = 18, color = '#8b5cf6' }) {
   );
 }
 
-function KidsIconKeyPerm({ size = 18, color = '#8b5cf6' }) {
+function KidsIconKeyPerm({ size = 18, color = '#A582F7' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
@@ -79,7 +79,7 @@ function KidsIconKeyPerm({ size = 18, color = '#8b5cf6' }) {
   );
 }
 
-function KidsIconMoon({ size = 18, color = '#8b5cf6' }) {
+function KidsIconMoon({ size = 18, color = '#A582F7' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
@@ -103,7 +103,7 @@ function KidsIconXCircle({ size = 14, color = '#ef4444' }) {
   );
 }
 
-function KidsIconShieldProtected({ size = 20, color = '#8b5cf6' }) {
+function KidsIconShieldProtected({ size = 20, color = '#A582F7' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -121,7 +121,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useBiometric } from '../context/BiometricContext';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 
 // Brand pill with press scale 0.97 (spring). Used for "Editar perfil" hero
 // CTA and similar tactile buttons in the profile tab.
@@ -149,7 +149,7 @@ function PressablePill({ onPress, style, children, accessibilityLabel, disabled 
 
 // Device-type SVG (web / mobile / desktop) for the Linked Devices row
 // subtitle. Stroke-style icons matching Icons.js conventions.
-function IconDeviceWeb({ size = 14, color = '#7C3AED' }) {
+function IconDeviceWeb({ size = 14, color = '#A582F7' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Rect x="2" y="3" width="20" height="14" rx="2" />
@@ -158,7 +158,7 @@ function IconDeviceWeb({ size = 14, color = '#7C3AED' }) {
     </Svg>
   );
 }
-function IconDeviceMobile({ size = 14, color = '#7C3AED' }) {
+function IconDeviceMobile({ size = 14, color = '#A582F7' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Rect x="6" y="2" width="12" height="20" rx="2" />
@@ -810,8 +810,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
           {/* Profile card with gradient */}
           <View style={{ margin: 16, borderRadius: 24, overflow: 'hidden', backgroundColor: isDark ? '#2d1b4e' : '#fff',
-            ...Platform.select({ ios: { shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 12 }, android: { elevation: 4 }, web: { boxShadow: '0 4px 20px rgba(139,92,246,0.1)' } }) }}>
-            <View style={{ height: 100, backgroundColor: '#A78BFA', ...(Platform.OS === 'web' ? { background: 'linear-gradient(135deg, #A78BFA, #8b5cf6, #ec4899)' } : {}) }} />
+            ...Platform.select({ ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 12 }, android: { elevation: 4 }, web: { boxShadow: '0 4px 20px rgba(139,92,246,0.1)' } }) }}>
+            <View style={{ height: 100, backgroundColor: '#A78BFA', ...(Platform.OS === 'web' ? { background: 'linear-gradient(135deg, #A78BFA, #A582F7, #ec4899)' } : {}) }} />
             <View style={{ alignItems: 'center', marginTop: -48 }}>
               <View style={{ borderWidth: 4, borderColor: isDark ? '#2d1b4e' : '#fff', borderRadius: 52 }}>
                 <AvatarCircle name={name} email={currentEmail} size={96} />
@@ -820,8 +820,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <View style={{ alignItems: 'center', padding: 16 }}>
               <Text style={{ fontSize: 22, fontWeight: '800', color: isDark ? '#e9d5ff' : '#1e1b4b' }}>{name}</Text>
               <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: isDark ? 'rgba(139,92,246,0.15)' : '#ede9fe', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 }}>
-                <KidsIconShieldUser size={14} color="#8b5cf6" />
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#8b5cf6' }}>Chatyy Kids</Text>
+                <KidsIconShieldUser size={14} color="#A582F7" />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#A582F7' }}>Chatyy Kids</Text>
               </View>
             </View>
           </View>
@@ -867,28 +867,28 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           {/* Parent info */}
           {parentEmail ? (
             <View style={{ marginHorizontal: 16, marginTop: 12, borderRadius: 20, padding: 16, backgroundColor: isDark ? '#1e1145' : '#fff', flexDirection: 'row', alignItems: 'center', gap: 14,
-              ...Platform.select({ ios: { shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 12px rgba(139,92,246,0.06)' } }) }}>
+              ...Platform.select({ ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 12px rgba(139,92,246,0.06)' } }) }}>
               <View style={{ width: 40, height: 40, borderRadius: 14, backgroundColor: isDark ? 'rgba(139,92,246,0.15)' : '#ede9fe', alignItems: 'center', justifyContent: 'center' }}>
-                <KidsIconFamily size={20} color="#8b5cf6" />
+                <KidsIconFamily size={20} color="#A582F7" />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 12, fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Responsavel</Text>
                 <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#e9d5ff' : '#1e1b4b', marginTop: 2 }}>{parentEmail}</Text>
               </View>
-              <IconShield size={20} color="#8b5cf6" />
+              <IconShield size={20} color="#A582F7" />
             </View>
           ) : null}
 
           {/* Restrictions */}
           <View style={{ marginHorizontal: 16, marginTop: 12, borderRadius: 20, overflow: 'hidden', backgroundColor: isDark ? '#1e1145' : '#fff',
-            ...Platform.select({ ios: { shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 12px rgba(139,92,246,0.06)' } }) }}>
+            ...Platform.select({ ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 12px rgba(139,92,246,0.06)' } }) }}>
             <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 }}>
               <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Permissoes</Text>
             </View>
             {PERM_ITEMS.map((item, idx) => (
               <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: idx > 0 ? 0.5 : 0, borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
                 <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(139,92,246,0.12)' : '#f3e8ff', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-                  <item.Icon size={16} color={isDark ? '#a78bfa' : '#8b5cf6'} />
+                  <item.Icon size={16} color={isDark ? '#a78bfa' : '#A582F7'} />
                 </View>
                 <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#e9d5ff' : '#1e1b4b' }}>{item.label}</Text>
                 <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: item.allowed ? (isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7') : (isDark ? 'rgba(239,68,68,0.15)' : '#fee2e2'), alignItems: 'center', justifyContent: 'center' }}>
@@ -899,16 +899,16 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             {restrictions.bedtime_start && (
               <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 0.5, borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
                 <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(139,92,246,0.12)' : '#f3e8ff', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-                  <KidsIconMoon size={16} color={isDark ? '#a78bfa' : '#8b5cf6'} />
+                  <KidsIconMoon size={16} color={isDark ? '#a78bfa' : '#A582F7'} />
                 </View>
                 <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#e9d5ff' : '#1e1b4b' }}>Hora de dormir</Text>
-                <Text style={{ fontSize: 13, fontWeight: '600', color: '#8b5cf6' }}>{restrictions.bedtime_start} - {restrictions.bedtime_end}</Text>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#A582F7' }}>{restrictions.bedtime_start} - {restrictions.bedtime_end}</Text>
               </View>
             )}
           </View>
 
           <View style={{ alignItems: 'center', marginTop: 24 }}>
-            <KidsIconShieldProtected size={28} color={isDark ? '#A78BFA' : '#8b5cf6'} />
+            <KidsIconShieldProtected size={28} color={isDark ? '#A78BFA' : '#A582F7'} />
             <Text style={{ fontSize: 13, color: '#9ca3af', textAlign: 'center', marginTop: 8, fontWeight: '500' }}>Sua conta e protegida pelo seu responsavel</Text>
           </View>
 
@@ -1151,7 +1151,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               activeOpacity={0.7}
             >
               <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ede9fe' }]}>
-                <IconSparkles size={14} color="#7C3AED" />
+                <IconSparkles size={14} color="#A582F7" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('bots.title') || 'Bots'}</Text>
               <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
@@ -2612,7 +2612,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             title={t?.('config.account') || 'Conta'}
             subtitle={t?.('config.accountDesc') || 'Seguranca, alterar senha, excluir conta'}
             colors={colors} isDark={isDark} onPress={() => setSubScreen('account')} />
-          <SettingItem icon={<IconLock size={18} color="#8b5cf6" />} iconBg={isDark ? 'rgba(139,92,246,0.1)' : '#ede9fe'}
+          <SettingItem icon={<IconLock size={18} color="#A582F7" />} iconBg={isDark ? 'rgba(139,92,246,0.1)' : '#ede9fe'}
             title={t?.('config.privacy') || 'Privacidade'}
             subtitle={t?.('config.privacyDesc') || 'Visto por ultimo, foto de perfil, recado'}
             colors={colors} isDark={isDark} onPress={() => setSubScreen('privacy')} />

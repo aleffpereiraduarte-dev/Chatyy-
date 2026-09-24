@@ -43,7 +43,7 @@ import Svg, { Path as SvgPath, Circle as SvgCircle } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import { useLanguage } from '../context/LanguageContext';
 
-const BRAND_PURPLE = '#7C3AED';
+const BRAND_PURPLE = '#A582F7';
 const DANGER = '#EF4444';
 const SUCCESS = '#10B981';
 const MUTED_COLOR = '#9CA3AF';

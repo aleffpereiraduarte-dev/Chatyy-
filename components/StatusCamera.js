@@ -157,7 +157,7 @@ const SPEED_LABELS = { 0.3: '0.3x', 0.5: '0.5x', 1: '1x', 2: '2x', 3: '3x' };
 
 // Brand purple gradient — applied via tinted ring layers around record button
 const BRAND_PURPLE = '#5B21B6';
-const BRAND_PURPLE_LIGHT = '#7C3AED';
+const BRAND_PURPLE_LIGHT = '#A582F7';
 const BRAND_PINK = '#EC4899';
 
 // Max video duration (TikTok-style 60s cap)

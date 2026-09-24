@@ -33,7 +33,7 @@ export default function HighlightShareSheet({
   const txt = c.text || (isDark ? '#fff' : '#000');
   const sub = c.textSecondary || (isDark ? '#999' : '#666');
   const border = c.border || (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
-  const accent = '#7C3AED';
+  const accent = '#A582F7';
 
   const [copied, setCopied] = useState(false);
   const url = highlight?.id ? `${PUBLIC_BASE}${highlight.id}` : '';

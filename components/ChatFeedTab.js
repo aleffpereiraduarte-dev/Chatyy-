@@ -25,7 +25,7 @@ import StoryRingAvatar from './status/StoryRingAvatar';
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const useNative = Platform.OS !== 'web';
 
@@ -184,7 +184,7 @@ function TrendingHashtagsRail({ colors, isDark, t, router }) {
               borderColor: 'rgba(124,58,237,0.32)',
             }}
           >
-            <Text style={{ color: '#7C3AED', fontSize: 13, fontWeight: '600' }}>
+            <Text style={{ color: '#A582F7', fontSize: 13, fontWeight: '600' }}>
               #{row.hashtag} <Text style={{ color: colors.textSecondary, fontWeight: '500' }}>· {row.uses}</Text>
             </Text>
           </TouchableOpacity>
@@ -1558,8 +1558,8 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            tintColor="#7C3AED"
-            colors={['#7C3AED', '#5B21B6']}
+            tintColor="#A582F7"
+            colors={['#A582F7', '#5B21B6']}
             progressBackgroundColor={isDark ? '#1f1b2e' : '#fff'}
           />
         }
@@ -1665,7 +1665,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 16,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
@@ -1956,7 +1956,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   followButton: {
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     paddingHorizontal: 18,
     paddingVertical: 9,
     borderRadius: 10,

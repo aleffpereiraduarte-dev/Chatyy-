@@ -354,15 +354,27 @@ export function MailProvider({ children }) {
 
     // Show cached data INSTANTLY on non-silent first-page loads (no spinner if cache exists)
     if (!silent && pg === 1 && !q && !category && !label) {
-      const cached = await getEmailsFromCache(f);
-      if (cached && cached.length > 0) {
-        setEmails(cached);
-        setTotal(cached.length);
-        // Don't show loading spinner — we have cached data visible
-        // Fetch fresh data silently in background
+      // [2026-09-24 fix "Yesterday→Today pisca"] Se JÁ temos linhas em memória
+      // desta sessão pra esta pasta (changeFolder acabou de pintá-las via
+      // folderRowsRef), NÃO sobrescrever com o cache de DISCO — ele pode estar
+      // mais velho (ex: sem os emails de hoje), o que fazia a lista pintar
+      // "Yesterday" no topo e só depois "atualizar" pra "Today" (o flash que o
+      // user via ao clicar em Inbox). Mantemos as linhas em memória e só
+      // buscamos fresco em silêncio. Cold start (sem memória) segue no cache.
+      const remembered = folderRowsRef.current.get(f);
+      if (remembered && remembered.length > 0) {
         silent = true;
       } else {
-        setLoadingList(true);
+        const cached = await getEmailsFromCache(f);
+        if (cached && cached.length > 0) {
+          setEmails(cached);
+          setTotal(cached.length);
+          // Don't show loading spinner — we have cached data visible
+          // Fetch fresh data silently in background
+          silent = true;
+        } else {
+          setLoadingList(true);
+        }
       }
     } else if (!silent) {
       setLoadingList(true);

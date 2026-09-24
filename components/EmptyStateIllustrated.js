@@ -6,7 +6,7 @@ import { useLanguage } from '../context/LanguageContext';
 
 // ---------- Illustrations ----------
 
-function ChatsIllustration({ color = '#7C3AED' }) {
+function ChatsIllustration({ color = '#A582F7' }) {
   // Two outlined speech bubbles, primary purple
   return (
     <Svg width={120} height={120} viewBox="0 0 120 120" fill="none">
@@ -32,7 +32,7 @@ function ChatsIllustration({ color = '#7C3AED' }) {
   );
 }
 
-function CallsIllustration({ color = '#7C3AED' }) {
+function CallsIllustration({ color = '#A582F7' }) {
   // Phone handset with sound waves
   return (
     <Svg width={120} height={120} viewBox="0 0 120 120" fill="none">
@@ -51,13 +51,13 @@ function CallsIllustration({ color = '#7C3AED' }) {
   );
 }
 
-function StatusIllustration({ color = '#7C3AED' }) {
+function StatusIllustration({ color = '#A582F7' }) {
   // Gradient ring with camera in center
   return (
     <Svg width={120} height={120} viewBox="0 0 120 120" fill="none">
       <Defs>
         <LinearGradient id="statusRing" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor="#7C3AED" />
+          <Stop offset="0" stopColor="#A582F7" />
           <Stop offset="0.5" stopColor="#EC4899" />
           <Stop offset="1" stopColor="#F59E0B" />
         </LinearGradient>
@@ -77,7 +77,7 @@ function StatusIllustration({ color = '#7C3AED' }) {
   );
 }
 
-function NotificationsIllustration({ color = '#7C3AED' }) {
+function NotificationsIllustration({ color = '#A582F7' }) {
   // Bell with sleeping Z's
   return (
     <Svg width={120} height={120} viewBox="0 0 120 120" fill="none">
@@ -118,7 +118,7 @@ function NotificationsIllustration({ color = '#7C3AED' }) {
   );
 }
 
-function SearchIllustration({ color = '#7C3AED' }) {
+function SearchIllustration({ color = '#A582F7' }) {
   // Magnifier with sparkle
   return (
     <Svg width={120} height={120} viewBox="0 0 120 120" fill="none">
@@ -135,7 +135,7 @@ function SearchIllustration({ color = '#7C3AED' }) {
   );
 }
 
-function FilesIllustration({ color = '#7C3AED' }) {
+function FilesIllustration({ color = '#A582F7' }) {
   // Folder with floating documents
   return (
     <Svg width={120} height={120} viewBox="0 0 120 120" fill="none">
@@ -155,7 +155,7 @@ function FilesIllustration({ color = '#7C3AED' }) {
   );
 }
 
-function ContactsIllustration({ color = '#7C3AED' }) {
+function ContactsIllustration({ color = '#A582F7' }) {
   // Two connected silhouettes
   return (
     <Svg width={120} height={120} viewBox="0 0 120 120" fill="none">
@@ -258,7 +258,7 @@ export default function EmptyStateIllustrated({
     outputRange: [-4, 4],
   });
 
-  const primary = colors?.primary || '#7C3AED';
+  const primary = colors?.primary || '#A582F7';
 
   return (
     <Animated.View

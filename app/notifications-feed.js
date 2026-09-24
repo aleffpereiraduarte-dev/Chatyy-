@@ -34,7 +34,7 @@ import {
   IconSparkles, IconBell, IconCheck,
 } from '../components/Icons';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 
 function timeAgo(iso, t) {
   if (!iso) return '';

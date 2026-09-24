@@ -4521,9 +4521,9 @@ function CallScreenInner() {
               <SvgStop offset="1" stopColor="#050509" stopOpacity="1" />
             </SvgLinearGradient>
             <SvgRadialGradient id="callBackdropGlow" cx="50%" cy="34%" r="62%">
-              <SvgStop offset="0" stopColor="#7C3AED" stopOpacity="0.20" />
-              <SvgStop offset="0.55" stopColor="#7C3AED" stopOpacity="0.05" />
-              <SvgStop offset="1" stopColor="#7C3AED" stopOpacity="0" />
+              <SvgStop offset="0" stopColor="#A582F7" stopOpacity="0.20" />
+              <SvgStop offset="0.55" stopColor="#A582F7" stopOpacity="0.05" />
+              <SvgStop offset="1" stopColor="#A582F7" stopOpacity="0" />
             </SvgRadialGradient>
           </SvgDefs>
           <SvgRect x="0" y="0" width="100%" height="100%" fill="url(#callBackdropV)" />
@@ -5140,7 +5140,7 @@ function CallScreenInner() {
                 activeOpacity={0.7}
               >
                 <View style={[styles.recordSheetIcon, onHold && styles.recordSheetIconActive]}>
-                  {onHold ? <IconPlay size={20} color="#fff" /> : <IconPause size={20} color="#7C3AED" />}
+                  {onHold ? <IconPlay size={20} color="#fff" /> : <IconPause size={20} color="#A582F7" />}
                 </View>
                 <Text style={styles.recordSheetLabel}>{onHold ? (t('call.unhold') || 'Retomar') : (t('call.hold') || 'Espera')}</Text>
               </TouchableOpacity>
@@ -5174,7 +5174,7 @@ function CallScreenInner() {
             >
               <View style={[styles.recordSheetIcon, { backgroundColor: 'rgba(124, 58, 237, 0.18)' }]}>
                 <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-                  <SvgPath d="M3 12h3l3-9 4 18 3-9h5" stroke="#7C3AED" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                  <SvgPath d="M3 12h3l3-9 4 18 3-9h5" stroke="#A582F7" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
                 </Svg>
               </View>
               <Text style={styles.recordSheetLabel}>
@@ -5661,7 +5661,7 @@ function CallScreenInner() {
             borderRadius: 18, backgroundColor: 'rgba(20,20,28,0.92)',
             alignItems: 'center', maxWidth: 320,
           }}>
-            <ActivityIndicator size="large" color="#7C3AED" />
+            <ActivityIndicator size="large" color="#A582F7" />
             <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginTop: 14 }}>
               {t('call.connecting') || 'Conectando...'}
             </Text>
@@ -6010,7 +6010,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  micPermBtnPrimary: { backgroundColor: '#7C3AED' },
+  micPermBtnPrimary: { backgroundColor: '#A582F7' },
   micPermBtnPrimaryText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   micPermBtnSecondary: { backgroundColor: 'rgba(255,255,255,0.10)' },
   micPermBtnSecondaryText: { color: '#fff', fontSize: 14, fontWeight: '600' },
@@ -6021,7 +6021,7 @@ const styles = StyleSheet.create({
     borderRadius: 999, padding: 7,
     borderWidth: 1, borderColor: 'rgba(196,181,253,0.18)',
     backgroundColor: 'rgba(124,58,237,0.06)',
-    shadowColor: '#7C3AED', shadowOpacity: 0.4, shadowRadius: 34, shadowOffset: { width: 0, height: 0 }, elevation: 12,
+    shadowColor: '#A582F7', shadowOpacity: 0.4, shadowRadius: 34, shadowOffset: { width: 0, height: 0 }, elevation: 12,
   },
   centerName: { color: '#fff', fontSize: 31, fontWeight: '700', marginTop: 30, textAlign: 'center', letterSpacing: -0.6 },
   centerStatus: { color: 'rgba(255,255,255,0.62)', fontSize: 14.5, marginTop: 9, fontWeight: '500', letterSpacing: 0.2, fontVariant: ['tabular-nums'] },
@@ -6029,8 +6029,8 @@ const styles = StyleSheet.create({
   reconnectContainer: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', gap: 12, marginTop: 26, paddingHorizontal: 16 },
   reconnectBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#7C3AED', paddingHorizontal: 22, paddingVertical: 13, borderRadius: 30,
-    shadowColor: '#7C3AED', shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 6,
+    backgroundColor: '#A582F7', paddingHorizontal: 22, paddingVertical: 13, borderRadius: 30,
+    shadowColor: '#A582F7', shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 6,
   },
   reconnectBtnText: { color: '#fff', fontSize: 15.5, fontWeight: '700', letterSpacing: -0.2 },
   reconnectEndBtn: {
@@ -6147,9 +6147,9 @@ const styles = StyleSheet.create({
   },
   videoRequestIconCircle: {
     width: 64, height: 64, borderRadius: 32,
-    backgroundColor: '#7c3aed',
+    backgroundColor: '#A582F7',
     alignItems: 'center', justifyContent: 'center', marginBottom: 14,
-    shadowColor: '#7c3aed', shadowOpacity: 0.45, shadowRadius: 18, shadowOffset: { width: 0, height: 6 },
+    shadowColor: '#A582F7', shadowOpacity: 0.45, shadowRadius: 18, shadowOffset: { width: 0, height: 6 },
   },
   videoRequestTitle: { color: '#fff', fontSize: 17, fontWeight: '700', marginBottom: 6, textAlign: 'center', letterSpacing: -0.2 },
   videoRequestSubtitle: { color: 'rgba(255,255,255,0.6)', fontSize: 13, textAlign: 'center', marginBottom: 22, lineHeight: 18 },

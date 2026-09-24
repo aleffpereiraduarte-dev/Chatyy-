@@ -12,7 +12,7 @@ import { IconArrowLeft, IconSearch, IconX } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import Svg, { Path, Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const isWeb = Platform.OS === 'web';
 
 // SVG category icons (no emoji per UI rule)

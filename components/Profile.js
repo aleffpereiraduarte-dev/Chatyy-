@@ -235,7 +235,7 @@ const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors,
           borderRadius: 999, // pill
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: isPrimary ? '#7C3AED' : 'transparent',
+          backgroundColor: isPrimary ? '#A582F7' : 'transparent',
           borderWidth: isPrimary ? 0 : 1,
           borderColor: isPrimary ? 'transparent' : outlineColor,
         }}
@@ -388,7 +388,7 @@ const ActionButton = memo(function ActionButton({ icon: Icon, label, onPress, co
     >
       <View style={{
         width: 44, height: 44, borderRadius: 22,
-        backgroundColor: isPrimary ? '#7C3AED' : (colors?.surface || '#f4f4f4'),
+        backgroundColor: isPrimary ? '#A582F7' : (colors?.surface || '#f4f4f4'),
         alignItems: 'center', justifyContent: 'center',
       }}>
         <Icon size={20} color={isPrimary ? '#fff' : (colors?.text || '#111')} />
@@ -485,7 +485,7 @@ const EmptyGridIllustration = memo(function EmptyGridIllustration({ isDark, size
       {/* Small "plus" hint inside accent tile */}
       <_SvgPath
         d="M35 78 V92 M28 85 H42"
-        stroke={isDark ? '#C084FC' : '#7C3AED'}
+        stroke={isDark ? '#C084FC' : '#A582F7'}
         strokeWidth="2.4"
         strokeLinecap="round"
       />
@@ -701,7 +701,7 @@ function AnimatedTabBar({ tabs, activeKey, onChange, colors }) {
             height: 2.5,
             transform: [{ translateX: indicatorX }],
             opacity: indicatorOpacity,
-            backgroundColor: '#7C3AED',
+            backgroundColor: '#A582F7',
             borderTopLeftRadius: 2,
             borderTopRightRadius: 2,
           }}
@@ -1662,7 +1662,7 @@ export default function Profile({
               {/* Gradient-style ring (two concentric views to avoid adding a lib) */}
               <View style={{
                 width: 68, height: 68, borderRadius: 34, padding: 2,
-                backgroundColor: '#7C3AED',
+                backgroundColor: '#A582F7',
               }}>
                 <View style={{
                   width: '100%', height: '100%', borderRadius: 32, padding: 2,
@@ -1890,7 +1890,7 @@ export default function Profile({
                     // a linha já arquivada — referenciável pelo destaque mas
                     // invisível no status_list/manifest. Reproduz na adição de
                     // status existentes ao destaque (abaixo) também.
-                    const pub = await api.statusPublish(url, 'image', '#7C3AED', null, { highlight_only: true });
+                    const pub = await api.statusPublish(url, 'image', '#A582F7', null, { highlight_only: true });
                     const sid = pub?.id || pub?.data?.id || pub?.status_id;
                     if (sid) {
                       statusIds.push(sid);
@@ -1960,7 +1960,7 @@ export default function Profile({
               alignItems: 'center', justifyContent: 'center',
               backgroundColor: isDark ? 'rgba(167,139,250,0.10)' : 'rgba(124,58,237,0.07)',
             }}>
-              <IconPlus size={28} color={isDark ? '#C4B5FD' : '#7C3AED'} strokeWidth={2.2} />
+              <IconPlus size={28} color={isDark ? '#C4B5FD' : '#A582F7'} strokeWidth={2.2} />
             </View>
             <Text style={{ fontSize: 12, color: colors?.text, marginTop: 6, fontWeight: '600', letterSpacing: 0.1 }} numberOfLines={1}>
               {t?.('profile.newHighlight') || 'Novo'}
@@ -1983,7 +1983,7 @@ export default function Profile({
                 <_Svg width={RING} height={RING} style={{ position: 'absolute', top: 0, left: 0 }}>
                   <_SvgDefs>
                     <_SvgLinearGradient id={`hlRing_${h.id}`} x1="0" y1="0" x2="1" y2="1">
-                      <_SvgStop offset="0" stopColor="#7C3AED" />
+                      <_SvgStop offset="0" stopColor="#A582F7" />
                       <_SvgStop offset="0.5" stopColor="#EC4899" />
                       <_SvgStop offset="1" stopColor="#F97316" />
                     </_SvgLinearGradient>
@@ -2074,7 +2074,7 @@ export default function Profile({
                 // it covers this border; if SVG isn't available the user still
                 // sees a purple ring (no silent visual regression).
                 borderWidth: _Svg ? 0 : 2,
-                borderColor: '#7C3AED',
+                borderColor: '#A582F7',
                 backgroundColor: tone,
               }}>
                 {renderHighlightRing()}
@@ -2085,7 +2085,7 @@ export default function Profile({
                         ? <_ExpoImage source={{ uri: cover }} style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2 }} contentFit="cover" cachePolicy="memory-disk" />
                         : <Image source={{ uri: cover }} style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2 }} resizeMode="cover" />)
                 ) : (
-                  <View style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2, backgroundColor: '#7C3AED22' }} />
+                  <View style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2, backgroundColor: '#A582F722' }} />
                 )}
               </View>
               <Text style={{ fontSize: 12, color: colors?.text, marginTop: 6, fontWeight: '500', maxWidth: SIZE + 8, letterSpacing: 0.1 }} numberOfLines={1}>
@@ -2263,7 +2263,7 @@ export default function Profile({
                     <_SvgDefs>
                       <_SvgLinearGradient id="profileAvatarHalo" x1="0" y1="0" x2="1" y2="1">
                         <_SvgStop offset="0" stopColor="#5B21B6" />
-                        <_SvgStop offset="0.55" stopColor="#7C3AED" />
+                        <_SvgStop offset="0.55" stopColor="#A582F7" />
                         <_SvgStop offset="1" stopColor="#EC4899" />
                       </_SvgLinearGradient>
                     </_SvgDefs>
@@ -2282,7 +2282,7 @@ export default function Profile({
                 <View style={{
                   position: 'absolute', top: 0, left: 0,
                   width: HALO_SIZE, height: HALO_SIZE, borderRadius: HALO_SIZE / 2,
-                  borderWidth: 3, borderColor: '#7C3AED',
+                  borderWidth: 3, borderColor: '#A582F7',
                 }} />
               );
             };
@@ -2441,8 +2441,8 @@ export default function Profile({
           )}
           {!!identity.website && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }}>
-              <IconLink size={13} color="#7C3AED" />
-              <Text style={{ fontSize: 13, color: '#7C3AED', fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
+              <IconLink size={13} color="#A582F7" />
+              <Text style={{ fontSize: 13, color: '#A582F7', fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
                 {identity.website}
               </Text>
             </View>
@@ -2485,10 +2485,10 @@ export default function Profile({
                     accessibilityRole="link"
                     accessibilityLabel={label}
                   >
-                    <IconLink size={13} color={isDark ? '#C4B5FD' : '#7C3AED'} />
+                    <IconLink size={13} color={isDark ? '#C4B5FD' : '#A582F7'} />
                     <Text
                       numberOfLines={1}
-                      style={{ fontSize: 13, color: isDark ? '#C4B5FD' : '#7C3AED', fontWeight: '600', maxWidth: 180 }}
+                      style={{ fontSize: 13, color: isDark ? '#C4B5FD' : '#A582F7', fontWeight: '600', maxWidth: 180 }}
                     >
                       {label}
                     </Text>
@@ -2829,7 +2829,7 @@ export default function Profile({
         if (livesLoading && lives.length === 0) {
           return (
             <View style={{ paddingVertical: 60, alignItems: 'center' }}>
-              <ActivityIndicator color="#7C3AED" />
+              <ActivityIndicator color="#A582F7" />
             </View>
           );
         }
@@ -2911,10 +2911,10 @@ export default function Profile({
               >
                 <View style={{
                   width: 28, height: 28, borderRadius: 14, marginTop: 2,
-                  backgroundColor: e.from_me ? '#7C3AED22' : (colors?.surface || '#f3f4f6'),
+                  backgroundColor: e.from_me ? '#A582F722' : (colors?.surface || '#f3f4f6'),
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  <IconMail size={14} color={e.from_me ? '#7C3AED' : (colors?.text || '#111')} />
+                  <IconMail size={14} color={e.from_me ? '#A582F7' : (colors?.text || '#111')} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 14, color: colors?.text, fontWeight: '600' }} numberOfLines={1}>
@@ -2979,7 +2979,7 @@ export default function Profile({
           onPress={() => { setErr(null); setErrStatus(0); setLoading(true); setRetryCounter(c => c + 1); }}
           style={{
             paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12,
-            backgroundColor: '#7C3AED',
+            backgroundColor: '#A582F7',
           }}
           accessibilityRole="button"
         >
@@ -3527,7 +3527,7 @@ export default function Profile({
                   setNicknameValue(val);
                 } catch {}
               }}
-              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: '#7C3AED' }}
+              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: '#A582F7' }}
             >
               <Text style={{ fontSize: 15, color: '#fff', fontWeight: '600' }}>{t?.('common.save') || 'Salvar'}</Text>
             </TouchableOpacity>
@@ -3800,7 +3800,7 @@ export default function Profile({
         web: { boxShadow: '0 4px 12px rgba(0,0,0,0.18)' },
       }),
     }}>
-      <ActivityIndicator size="small" color="#7C3AED" />
+      <ActivityIndicator size="small" color="#A582F7" />
       <Text style={{ fontSize: 14, color: colors?.text, fontWeight: '500' }}>
         {t?.('status.publishing') || 'Publicando…'}
       </Text>

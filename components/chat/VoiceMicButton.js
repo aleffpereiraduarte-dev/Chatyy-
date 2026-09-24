@@ -37,7 +37,7 @@ const haptic = (kind = 'medium') => {
   } catch {}
 };
 
-const BRAND = '#7C3AED';
+const BRAND = '#A582F7';
 
 /**
  * @param {object} props

@@ -657,7 +657,7 @@ function DustMote({ x, y, delay, size }) {
 // so the ripple feels organic instead of uniform.
 function Echo() {
   const COPIES = 14;
-  const PURPLES = ['#7C3AED', '#8B5CF6', '#A78BFA', '#9333EA', '#6D28D9'];
+  const PURPLES = ['#A582F7', '#A582F7', '#A78BFA', '#9333EA', '#6D28D9'];
   const copies = useRef(
     Array.from({ length: COPIES }).map((_, i) => ({
       v: new Animated.Value(0),

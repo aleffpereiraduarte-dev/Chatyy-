@@ -9,7 +9,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconSparkles, IconX } from './Icons';
 
-const BRAND = '#7C3AED';
+const BRAND = '#A582F7';
 const BRAND_PINK = '#EC4899';
 
 const TONES = [

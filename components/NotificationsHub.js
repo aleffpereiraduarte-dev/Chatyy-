@@ -45,7 +45,7 @@ import {
 } from './Icons';
 
 // Brand color (Chatyy purple)
-const BRAND = '#7C3AED';
+const BRAND = '#A582F7';
 
 // 4-segment Instagram-style tab bar
 const TABS = [

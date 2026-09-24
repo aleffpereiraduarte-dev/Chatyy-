@@ -2199,8 +2199,12 @@ export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search 
   // just falls through to the existing Rust/PHP IMAP substring search below,
   // so search is never worse than before — only smarter when Meili answers.
   const _q = (search || '').trim();
-  const _hasOperator = /\b(from|to|subject|is|before|after|larger|smaller|has|label|in|filename|cc|bcc):/i.test(_q);
-  if (_q.length >= 2 && !_hasOperator && !needsPHP && !filter && page === 1 && authToken) {
+  // [2026-09-23] Meili agora entende is:/has:/from:/to:/subject: (traduzidos pra
+  // filtro no backend search_emails). Só desviamos pro IMAP os operadores que o
+  // Meili ainda NÃO faz (data/tamanho/label/pasta/anexo-por-nome/cc/bcc). Assim a
+  // busca "de:fulano is:unread" fica no caminho rápido em vez do IMAP lento.
+  const _hasUnsupportedOp = /\b(larger|smaller|label|in|filename|cc|bcc):/i.test(_q);
+  if (_q.length >= 2 && !_hasUnsupportedOp && !needsPHP && !filter && page === 1 && authToken) {
     try {
       const mr = await apiCall('search_emails', { q: _q, folder });
       if (mr?.success && Array.isArray(mr?.data?.emails) && mr.data.emails.length > 0) {
@@ -2247,12 +2251,16 @@ export async function getInbox(folder = 'INBOX', page = 1, perPage = 20, search 
   return apiCall('inbox', params);
 }
 
-export async function getMessage(uid, folder = 'INBOX') {
+export async function getMessage(uid, folder = 'INBOX', opts = {}) {
   // Rust email-api first, PHP fallback. Rust returns the exact same shape the app expects
   // plus extras (html/text/attachments) — we wrap into the legacy response shape.
-  if (!authToken || _isRustDead()) return apiCall('message', { uid, folder });
+  // [2026-09-24] opts.markSeen:false → prefetch no hover (web) que NÃO marca o email
+  // como lido; nesse modo NÃO caímos no PHP (que marcaria seen / é mais pesado):
+  // retornamos null e o clique real busca normalmente.
+  const _markSeen = opts.markSeen !== false;
+  if (!authToken || _isRustDead()) return _markSeen ? apiCall('message', { uid, folder }) : null;
   try {
-    const url = `${BASE_URL}/api/rust/email/message/${encodeURIComponent(uid)}?folder=${encodeURIComponent(folder)}&mark_seen=true`;
+    const url = `${BASE_URL}/api/rust/email/message/${encodeURIComponent(uid)}?folder=${encodeURIComponent(folder)}&mark_seen=${_markSeen}`;
     const r = await _rustFetchWithRefresh(url);
     if (r.status === 401) _markRustDead();
     if (r.ok) {
@@ -2270,7 +2278,7 @@ export async function getMessage(uid, folder = 'INBOX') {
         const _rustText = (d.text || '').trim();
         const _rustHasAtt = Array.isArray(d.attachments) && d.attachments.length > 0;
         if (!_rustHtml && !_rustText && !_rustHasAtt) {
-          return apiCall('message', { uid, folder });
+          return _markSeen ? apiCall('message', { uid, folder }) : null;
         }
         return {
           success: true,
@@ -2301,7 +2309,70 @@ export async function getMessage(uid, folder = 'INBOX') {
       }
     }
   } catch (_) {}
-  return apiCall('message', { uid, folder });
+  return _markSeen ? apiCall('message', { uid, folder }) : null;
+}
+
+// [2026-09-24 velocidade web] Prefetch do corpo do email no HOVER (desktop web):
+// baixa o corpo SEM marcar como lido e guarda no mesmo cache que o openEmail lê
+// (getMessageFromCache) → o clique abre INSTANTÂNEO. Guardas: só web, só com
+// bearer, dedupe por uid, e nunca marca seen. Falha silenciosa (é só otimização).
+const _msgPrefetchInflight = new Set();
+const _msgPrefetchDone = new Map(); // key -> ts (evita refetch em hovers repetidos)
+export async function prefetchMessageWeb(uid, folder = 'INBOX') {
+  try {
+    if (Platform.OS !== 'web') return;
+    if (!uid || !authToken || _isRustDead()) return;
+    const key = `${folder}:${uid}`;
+    if (_msgPrefetchInflight.has(key)) return;
+    const last = _msgPrefetchDone.get(key);
+    if (last && (Date.now() - last) < 120000) return; // já aquecido há <2min
+    _msgPrefetchInflight.add(key);
+    const r = await getMessage(uid, folder, { markSeen: false });
+    if (r && r.success && r.data) {
+      const { saveMessageToCache } = await import('./offlineCache');
+      saveMessageToCache(uid, r.data, folder).catch(() => {});
+      _msgPrefetchDone.set(key, Date.now());
+    }
+  } catch (_) {
+    /* prefetch é best-effort — nunca propaga erro */
+  } finally {
+    _msgPrefetchInflight.delete(`${folder}:${uid}`);
+  }
+}
+
+// [2026-09-24 abrir-rápido mobile] Prefetch do corpo do email em QUALQUER
+// plataforma (o hover acima é só web; no celular não há hover). A lista de
+// emails aquece os itens VISÍVEIS (via onViewableItemsChanged do EmailList) →
+// o toque abre INSTANTÂNEO porque read.js lê cache-first. Guardas: markSeen:false
+// (NUNCA marca lido — o app marca seen no toque real via markRead), dedupe por
+// uid (janela 2min), e CAP GLOBAL de concorrência pra rolagem rápida não abrir
+// dezenas de fetches IMAP ao mesmo tempo (protege o Dovecot).
+let _prefetchActive = 0;
+const _PREFETCH_MAX = 3;
+export async function prefetchMessage(uid, folder = 'INBOX') {
+  try {
+    if (!uid || !authToken || _isRustDead()) return;
+    if (_prefetchActive >= _PREFETCH_MAX) return; // cheio — deixa o próximo hover/scroll pegar
+    const key = `${folder}:${uid}`;
+    if (_msgPrefetchInflight.has(key)) return;
+    const last = _msgPrefetchDone.get(key);
+    if (last && (Date.now() - last) < 120000) return; // aquecido há <2min
+    _msgPrefetchInflight.add(key);
+    _prefetchActive++;
+    try {
+      const r = await getMessage(uid, folder, { markSeen: false });
+      if (r && r.success && r.data) {
+        const { saveMessageToCache } = await import('./offlineCache');
+        await saveMessageToCache(uid, r.data, folder).catch(() => {});
+        _msgPrefetchDone.set(key, Date.now());
+      }
+    } finally {
+      _prefetchActive--;
+      _msgPrefetchInflight.delete(key);
+    }
+  } catch (_) {
+    /* best-effort */
+  }
 }
 
 export async function getFolders() {
@@ -5285,7 +5356,7 @@ export async function e2eePreKeyCount() {
 }
 
 // Status (WhatsApp-style stories)
-export async function statusPublish(content, type = 'text', bgColor = '#7C3AED', musicData = null, extraMeta = {}) {
+export async function statusPublish(content, type = 'text', bgColor = '#A582F7', musicData = null, extraMeta = {}) {
   // Historical callers pass the uploaded media URL as `content` for image/
   // video types. Backend has a dedicated `media_url` column — sending the
   // URL as `content` left media_url empty and the profile/chat viewers
@@ -8937,6 +9008,11 @@ export async function searchDeezerMusic(query) {
 // ============================================================
 export async function searchUsers(query) { return apiCall('search_users', { q: query }); }
 export async function searchGlobal(query) { return apiCall('search_global', { q: query }); }
+
+// [2026-09-24] Memória/personalização da Bia (assistente de IA).
+export async function aiMemoryGet() { return apiCall('ai_memory', { sub_action: 'get' }, 'POST'); }
+export async function aiMemorySet(key, value) { return apiCall('ai_memory', { sub_action: 'set', key, value }, 'POST'); }
+export async function aiMemoryLearnStyle() { return apiCall('ai_memory', { sub_action: 'learn_style' }, 'POST'); }
 
 // Unified notifications hub (emails + chat mentions + follows + likes + comments)
 export async function notificationsFeed() { return apiCall('notifications_feed'); }

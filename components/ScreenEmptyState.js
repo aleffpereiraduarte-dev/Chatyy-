@@ -29,7 +29,7 @@ import Svg, { Path, Circle, Rect, Defs, LinearGradient, RadialGradient, Stop, G,
 import { useTheme } from '../context/ThemeContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 
-const AC = '#7C3AED'; // brand accent
+const AC = '#A582F7'; // brand accent
 
 /* ---------------------------------------------------------------- glyphs --- */
 // Each glyph is a single stroked icon drawn on a 96×96 canvas, centered inside

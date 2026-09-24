@@ -71,7 +71,7 @@ function getGreeting(t) {
   return t('one.goodEvening');
 }
 
-const ACCENT = '#7C3AED'; // Chatyy purple
+const ACCENT = '#A582F7'; // Chatyy purple
 const ACCENT_DARK = '#6D28D9'; // Chatyy dark purple
 const ACCENT_HEADER = '#6D28D9'; // Chatyy header dark
 const USER_BUBBLE = '#EDE9FE'; // Chatyy sent bubble (light)
@@ -424,8 +424,8 @@ function PulsingMicDot({ isDark }) {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     Animated.loop(Animated.sequence([
-      Animated.timing(pulseAnim, { toValue: 1.5, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-      Animated.timing(pulseAnim, { toValue: 1, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+      Animated.timing(pulseAnim, { toValue: 1.5, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(pulseAnim, { toValue: 1, duration: 600, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
     ])).start();
   }, []);
 
@@ -454,7 +454,7 @@ function SpeakingWaveform() {
         Animated.timing(bar, {
           toValue: randomHeight(),
           duration: randomDuration(),
-          useNativeDriver: false,
+          useNativeDriver: true,
         }).start(() => animate());
       }
       const t = setTimeout(() => animate(), i * 30);
@@ -500,12 +500,12 @@ function ListeningRipples() {
         Animated.sequence([
           Animated.delay(i * 400),
           Animated.parallel([
-            Animated.timing(ring.scale, { toValue: 2.2, duration: 1600, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
-            Animated.timing(ring.opacity, { toValue: 0, duration: 1600, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
+            Animated.timing(ring.scale, { toValue: 2.2, duration: 1600, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+            Animated.timing(ring.opacity, { toValue: 0, duration: 1600, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
           ]),
           Animated.parallel([
-            Animated.timing(ring.scale, { toValue: 1, duration: 0, useNativeDriver: false }),
-            Animated.timing(ring.opacity, { toValue: 0.5, duration: 0, useNativeDriver: false }),
+            Animated.timing(ring.scale, { toValue: 1, duration: 0, useNativeDriver: true }),
+            Animated.timing(ring.opacity, { toValue: 0.5, duration: 0, useNativeDriver: true }),
           ]),
         ])
       );
@@ -532,7 +532,7 @@ function OrbitingDots() {
   const rotation = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     Animated.loop(
-      Animated.timing(rotation, { toValue: 1, duration: 2000, easing: Easing.linear, useNativeDriver: false })
+      Animated.timing(rotation, { toValue: 1, duration: 2000, easing: Easing.linear, useNativeDriver: true })
     ).start();
     return () => rotation.stopAnimation();
   }, []);
@@ -669,7 +669,7 @@ function VoiceOrb({ voiceState }) {
   // of clashing.
   const halo = hue.interpolate({
     inputRange: [0, 1, 2, 3],
-    outputRange: ['#c026d3', '#7C3AED', '#06b6d4', '#a855f7'],
+    outputRange: ['#c026d3', '#A582F7', '#06b6d4', '#a855f7'],
   });
   const core = hue.interpolate({
     inputRange: [0, 1, 2, 3],
@@ -677,7 +677,7 @@ function VoiceOrb({ voiceState }) {
   });
   const ringOuter = hue.interpolate({
     inputRange: [0, 1, 2, 3],
-    outputRange: ['#7C3AED', '#06b6d4', '#a855f7', '#c026d3'],
+    outputRange: ['#A582F7', '#06b6d4', '#a855f7', '#c026d3'],
   });
 
   return (
@@ -751,15 +751,15 @@ function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, o
   const livePulse = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     const loop = Animated.loop(Animated.sequence([
-      Animated.timing(livePulse, { toValue: 0.35, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-      Animated.timing(livePulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+      Animated.timing(livePulse, { toValue: 0.35, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(livePulse, { toValue: 1, duration: 900, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
     ]));
     loop.start();
     return () => loop.stop();
   }, []);
 
   useEffect(() => {
-    Animated.timing(fadeAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
+    Animated.timing(fadeAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
   }, []);
 
   // Silence timeout hints
@@ -786,7 +786,7 @@ function VoiceConversationOverlay({ isDark, colors, t, voiceState, transcript, o
   }, [transcript]);
 
   const handleStop = useCallback(() => {
-    Animated.timing(fadeAnim, { toValue: 0, duration: 250, easing: Easing.in(Easing.cubic), useNativeDriver: false })
+    Animated.timing(fadeAnim, { toValue: 0, duration: 250, easing: Easing.in(Easing.cubic), useNativeDriver: true })
       .start(() => { if (onStop) onStop(); });
   }, [onStop, fadeAnim]);
 
@@ -905,15 +905,15 @@ function RotatingText({ isDark }) {
       timeout = setTimeout(() => {
         // Fade out + slide up
         Animated.parallel([
-          Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: false }),
-          Animated.timing(slideAnim, { toValue: -20, duration: 300, useNativeDriver: false }),
+          Animated.timing(fadeAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
+          Animated.timing(slideAnim, { toValue: -20, duration: 300, useNativeDriver: true }),
         ]).start(() => {
           setIndex(prev => (prev + 1) % ROTATING_PHRASES.length);
           slideAnim.setValue(20);
           // Fade in + slide from below
           Animated.parallel([
-            Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: false }),
-            Animated.timing(slideAnim, { toValue: 0, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
+            Animated.timing(fadeAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
+            Animated.timing(slideAnim, { toValue: 0, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
           ]).start();
         });
       }, delay);
@@ -1084,8 +1084,8 @@ function QuickActionsBar({ onSend, colors, isDark, t }) {
             } : undefined}
             activeOpacity={0.7}
           >
-            <Icon size={13} color={a.custom ? '#7C3AED' : (isDark ? '#8696a0' : '#667781')} />
-            <Text style={[st.quickActionText, { color: a.custom ? '#7C3AED' : (isDark ? '#8696a0' : '#667781') }]} numberOfLines={1}>{a.label}</Text>
+            <Icon size={13} color={a.custom ? '#A582F7' : (isDark ? '#8696a0' : '#667781')} />
+            <Text style={[st.quickActionText, { color: a.custom ? '#A582F7' : (isDark ? '#8696a0' : '#667781') }]} numberOfLines={1}>{a.label}</Text>
           </TouchableOpacity>
         );
       })}
@@ -1206,8 +1206,8 @@ function TypingDots({ isDark }) {
   useEffect(() => {
     const animateDot = (dot, delay) => Animated.loop(Animated.sequence([
       Animated.delay(delay),
-      Animated.timing(dot, { toValue: 1, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
-      Animated.timing(dot, { toValue: 0.3, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: false }),
+      Animated.timing(dot, { toValue: 1, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
+      Animated.timing(dot, { toValue: 0.3, duration: 400, easing: Easing.inOut(Easing.ease), useNativeDriver: true }),
     ]));
     const a1 = animateDot(dot1, 0);
     const a2 = animateDot(dot2, 200);
@@ -1322,8 +1322,8 @@ function StreamingCursor({ isDark }) {
   const blink = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     Animated.loop(Animated.sequence([
-      Animated.timing(blink, { toValue: 0, duration: 500, useNativeDriver: false }),
-      Animated.timing(blink, { toValue: 1, duration: 500, useNativeDriver: false }),
+      Animated.timing(blink, { toValue: 0, duration: 500, useNativeDriver: true }),
+      Animated.timing(blink, { toValue: 1, duration: 500, useNativeDriver: true }),
     ])).start();
   }, [blink]);
   return (
@@ -1345,8 +1345,8 @@ function ToolTypingIndicator({ toolName, isDark, t }) {
   useEffect(() => {
     const wave = (v, delay) => Animated.loop(Animated.sequence([
       Animated.delay(delay),
-      Animated.spring(v, { toValue: 1, tension: 220, friction: 8, useNativeDriver: false }),
-      Animated.spring(v, { toValue: 0, tension: 220, friction: 10, useNativeDriver: false }),
+      Animated.spring(v, { toValue: 1, tension: 220, friction: 8, useNativeDriver: true }),
+      Animated.spring(v, { toValue: 0, tension: 220, friction: 10, useNativeDriver: true }),
       Animated.delay(360),
     ]));
     const a1 = wave(dot1, 0); const a2 = wave(dot2, 140); const a3 = wave(dot3, 280);
@@ -1381,8 +1381,8 @@ function InlineStreamingDots({ isDark }) {
   useEffect(() => {
     const anim = (v, delay) => Animated.loop(Animated.sequence([
       Animated.delay(delay),
-      Animated.timing(v, { toValue: 1, duration: 380, useNativeDriver: false }),
-      Animated.timing(v, { toValue: 0.3, duration: 380, useNativeDriver: false }),
+      Animated.timing(v, { toValue: 1, duration: 380, useNativeDriver: true }),
+      Animated.timing(v, { toValue: 0.3, duration: 380, useNativeDriver: true }),
     ]));
     const a1 = anim(d1, 0); const a2 = anim(d2, 160); const a3 = anim(d3, 320);
     a1.start(); a2.start(); a3.start();
@@ -1510,8 +1510,8 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
   const slideAnim = useRef(new Animated.Value(8)).current;
   useEffect(() => {
     Animated.parallel([
-      Animated.timing(fadeAnim, { toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
-      Animated.timing(slideAnim, { toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
+      Animated.timing(fadeAnim, { toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(slideAnim, { toValue: 0, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
     ]).start();
   }, []);
 
@@ -3636,7 +3636,7 @@ export default function OneScreen() {
         )}
       </View>
 
-      {/* Input — rounded 24pt pill, multi-line, plus + mic left, send right (purple #7C3AED filled circle) */}
+      {/* Input — rounded 24pt pill, multi-line, plus + mic left, send right (purple #A582F7 filled circle) */}
       <View style={[st.inputAreaClean, {
         paddingBottom: Math.max(insets.bottom, 8),
         backgroundColor: canvasBg,

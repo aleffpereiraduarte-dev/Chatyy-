@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { IconUserPlus, IconCheck } from '../Icons';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 
 export default function LiveJoinPill({
   joinRequested = false,

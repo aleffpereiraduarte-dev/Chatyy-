@@ -158,7 +158,7 @@ export default function ProfileQRScreen() {
 
       <View style={[s.tabs, { borderColor: colors.borderLight }]}>
         <TouchableOpacity
-          style={[s.tab, mode === 'show' && { backgroundColor: '#7C3AED' }]}
+          style={[s.tab, mode === 'show' && { backgroundColor: '#A582F7' }]}
           onPress={() => setMode('show')}
         >
           <Text style={[s.tabText, { color: mode === 'show' ? '#fff' : colors.text }]}>
@@ -166,7 +166,7 @@ export default function ProfileQRScreen() {
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.tab, mode === 'scan' && { backgroundColor: '#7C3AED' }]}
+          style={[s.tab, mode === 'scan' && { backgroundColor: '#A582F7' }]}
           onPress={() => { setMode('scan'); setScanned(false); }}
         >
           <Text style={[s.tabText, { color: mode === 'scan' ? '#fff' : colors.text }]}>
@@ -198,7 +198,7 @@ export default function ProfileQRScreen() {
               {t('profile.qrHint') || 'Outros usuários podem escanear pra te adicionar'}
             </Text>
 
-            <TouchableOpacity onPress={handleShare} style={[s.cta, { backgroundColor: '#7C3AED' }]}>
+            <TouchableOpacity onPress={handleShare} style={[s.cta, { backgroundColor: '#A582F7' }]}>
               <IconShare size={18} color="#fff" />
               <Text style={s.ctaText}>{t('profile.shareQr') || 'Compartilhar QR'}</Text>
             </TouchableOpacity>
@@ -206,10 +206,10 @@ export default function ProfileQRScreen() {
             {/* [WA-parity 2026-05-31] Share a public https profile link */}
             <TouchableOpacity
               onPress={handleShareLink}
-              style={[s.cta, s.ctaSecondary, { borderColor: '#7C3AED', marginTop: 12 }]}
+              style={[s.cta, s.ctaSecondary, { borderColor: '#A582F7', marginTop: 12 }]}
             >
-              <IconShare size={18} color="#7C3AED" />
-              <Text style={[s.ctaText, { color: '#7C3AED' }]}>{t('profile.shareLink') || 'Compartilhar link'}</Text>
+              <IconShare size={18} color="#A582F7" />
+              <Text style={[s.ctaText, { color: '#A582F7' }]}>{t('profile.shareLink') || 'Compartilhar link'}</Text>
             </TouchableOpacity>
           </>
         ) : (
@@ -231,7 +231,7 @@ export default function ProfileQRScreen() {
                   <Text style={[s.hint, { color: colors.textSecondary, marginTop: 12 }]}>
                     {t('profile.qrCameraNeeded') || 'Permissão de câmera necessária'}
                   </Text>
-                  <TouchableOpacity onPress={requestPermission} style={[s.cta, { backgroundColor: '#7C3AED' }]}>
+                  <TouchableOpacity onPress={requestPermission} style={[s.cta, { backgroundColor: '#A582F7' }]}>
                     <Text style={s.ctaText}>{t('profile.grantCamera') || 'Permitir câmera'}</Text>
                   </TouchableOpacity>
                 </View>

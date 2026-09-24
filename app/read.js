@@ -3,6 +3,7 @@ import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet, Platform, 
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getMessage, deleteEmail as apiDelete, starEmail, unstarEmail, addLabel, removeLabel, getThread, archiveEmail, aiFollowupReminder } from '../services/api';
+import { getMessageFromCache, saveMessageToCache } from '../services/offlineCache';
 import { useMail } from '../context/MailContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -96,6 +97,19 @@ export default function ReadScreen() {
   useEffect(() => {
     if (!uid) { router.back(); return; }
     let cancelled = false;
+    let networkResolved = false;
+
+    // [2026-09-24 abrir-rápido mobile] CACHE-FIRST: se o corpo já está no cache
+    // local (prefetch da lista OU abertura anterior nesta sessão), renderiza NA
+    // HORA e só depois atualiza em segundo plano com a versão da rede. Antes o
+    // mobile SEMPRE mostrava o skeleton até a rede responder, mesmo com o email
+    // já em mãos. `setEmail(prev => prev || cached)` garante que a rede, se
+    // chegar primeiro, ganha (nunca sobrescreve fresco por cache velho).
+    getMessageFromCache(uid, folder).then(cached => {
+      if (cancelled || networkResolved || !cached) return;
+      setEmail(prev => prev || { ...cached, seen: true, read: true });
+      setLoading(false);
+    }).catch(() => {});
 
     // Load the single message first, then try to get thread
     // [WAVE 122] 25s hard timeout so a hung IMAP fetch / dead-network
@@ -127,6 +141,11 @@ export default function ReadScreen() {
       _withTimeout(getThread(uid, folder).catch(() => null), 'thread'),
     ]).then(([msgResult, threadResult]) => {
       if (cancelled) return;
+      networkResolved = true;
+      // Persiste o corpo fresco no cache → próxima abertura (ou volta) é instantânea.
+      if (msgResult?.success && msgResult.data) {
+        saveMessageToCache(uid, msgResult.data, folder).catch(() => {});
+      }
       // Sempre seta email/thread baseado no resultado atual — antes deixava
       // estado anterior "vazar" ao falhar carga ou ao trocar de uid.
       // Optimistic local seen=true so EmailReader header reflects "read"
@@ -138,7 +157,9 @@ export default function ReadScreen() {
       if (msgResult?.success) {
         setEmail({ ...msgResult.data, seen: true, read: true });
       } else {
-        setEmail(null);
+        // Rede falhou: NÃO apaga o que o cache-first já mostrou — só cai pra
+        // null (tela de erro) se realmente não havia nada em mãos.
+        setEmail(prev => prev || null);
       }
       if (msgResult?.success) {
         // Only mark on server when actually unread — saves a no-op IMAP
@@ -588,15 +609,15 @@ const s = StyleSheet.create({
   loader: { marginTop: 60 },
   progressBar: {
     height: 3,
-    // Brand purple instead of #7C3AED blue — matches the tab bar glow,
+    // Brand purple instead of #A582F7 blue — matches the tab bar glow,
     // send button, and chat header pulse so the reading-progress strip
     // reads as part of the app instead of a foreign accent.
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     ...Platform.select({
       web: {
         transformOrigin: 'left',
         transition: 'opacity 0.3s ease',
-        background: 'linear-gradient(90deg, #7C3AED 0%, #a78bfa 100%)',
+        background: 'linear-gradient(90deg, #A582F7 0%, #a78bfa 100%)',
       },
       default: {},
     }),

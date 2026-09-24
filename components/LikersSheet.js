@@ -16,7 +16,7 @@ import AvatarCircle from './AvatarCircle';
 import { IconX } from './Icons';
 import * as api from '../services/api';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 
 export default function LikersSheet({
   visible, postId, totalCount, colors, isDark, t, onClose, router,

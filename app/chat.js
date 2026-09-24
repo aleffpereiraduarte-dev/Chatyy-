@@ -160,7 +160,7 @@ export default function ChatScreenWrapper() {
   );
 }
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const ACCENT_DARK = '#6D28D9';
 const ACCENT_GLOW = 'rgba(124,58,237,0.35)';
 const ACCENT2 = '#6D28D9';
@@ -522,8 +522,8 @@ function ChatHub() {
 
     // Premium crossfade: fast fade out, spring fade in
     Animated.sequence([
-      Animated.timing(contentOpacity, { toValue: 0, duration: 60, useNativeDriver: false }),
-      Animated.spring(contentOpacity, { toValue: 1, useNativeDriver: false, tension: 100, friction: 18 }),
+      Animated.timing(contentOpacity, { toValue: 0, duration: 60, useNativeDriver: true }),
+      Animated.spring(contentOpacity, { toValue: 1, useNativeDriver: true, tension: 100, friction: 18 }),
     ]).start();
 
     setActiveTab(tab);
@@ -816,7 +816,7 @@ function ChatHub() {
     ? (Platform.OS === 'web'
       ? { background: 'linear-gradient(135deg, #6366f1 0%, #a855f7 40%, #ec4899 100%)' }
       : { backgroundColor: isDark ? '#3b1d6e' : '#6366f1' })
-    : { backgroundColor: isDark ? '#111111' : '#7C3AED' };
+    : { backgroundColor: isDark ? '#111111' : '#A582F7' };
 
   const glassTabBar = {
     backgroundColor: isDark ? '#0a0a0a' : '#ffffff',
@@ -916,7 +916,7 @@ function ChatHub() {
                   activeOpacity={0.6}
                   style={{ paddingHorizontal: 8, paddingVertical: 4, marginRight: 4, borderRadius: 12, backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)' }}
                 >
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#7C3AED' }}>{t('common.searchAll') || 'Tudo'}</Text>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#A582F7' }}>{t('common.searchAll') || 'Tudo'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} style={styles.searchCloseBtn}>
                   <IconClose size={16} color={isDark ? '#6b7280' : '#9ca3af'} />
@@ -1087,7 +1087,7 @@ function ChatHub() {
         {isKids ? (
           <>
             <TabBarItem
-              icon={(active) => <IconChatsTab size={25} color={active ? '#8b5cf6' : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
+              icon={(active) => <IconChatsTab size={25} color={active ? '#A582F7' : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
               label={t('kids.chat') || 'Chats'}
               active={activeTab === 'chats'}
               onPress={() => handleTabPress('chats')}
@@ -1392,7 +1392,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
     {
       title: t('apps.communication') || 'Comunicação',
       items: [
-        { key: 'channels', label: t('channel.title') || 'Channels',      ic: I(IconBell, '#7C3AED'),     action: onOpenChannels },
+        { key: 'channels', label: t('channel.title') || 'Channels',      ic: I(IconBell, '#A582F7'),     action: onOpenChannels },
         { key: 'communities', label: t('community.title') || 'Communities', ic: I(IconUsers, '#10b981'),   action: onOpenCommunities },
         { key: 'snapmap',  label: t('snapmap.tile') || t('snapmap.sidebar') || 'Mapa de Amigos', ic: I(IconMapPin, '#22c55e'), route: '/snap-map' },
       ],
@@ -1403,7 +1403,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
         { key: 'email',    label: t('sidebar.inbox') || 'Email',        ic: I(IconMail, '#ef4444'),      route: '/inbox' },
         { key: 'calendar', label: t('sidebar.calendar') || 'Agenda',    ic: I(IconCalendar, '#10b981'),  route: '/calendar' },
         { key: 'meet',     label: t('sidebar.meetings') || 'Meet',      ic: I(IconFilm, '#3b82f6'),      route: '/meetings' },
-        { key: 'contacts', label: t('sidebar.contacts') || 'Contatos',  ic: I(IconUsers, '#8b5cf6'),     route: '/contacts' },
+        { key: 'contacts', label: t('sidebar.contacts') || 'Contatos',  ic: I(IconUsers, '#A582F7'),     route: '/contacts' },
         { key: 'files',    label: t('sidebar.files') || 'Arquivos',     ic: I(IconFolder, '#f59e0b'),    route: '/files' },
         { key: 'docs',     label: t('sidebar.documents') || 'Docs',     ic: I(IconFileText, '#4285f4'),  route: '/documentos' },
         { key: 'notes',    label: t('sidebar.notes') || 'Notas',        ic: I(IconStickyNote, '#eab308'), route: '/notes' },
@@ -1431,7 +1431,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
         // "Carteira" tile dropped from the Apps drawer; the wallet screen
         // itself redirects to /chat now, so leaving the tile would just
         // bounce users. Spread keeps it gone from sort/search arrays too.
-        ...(WALLET_ENABLED ? [{ key: 'wallet', label: t('apps.wallet') || 'Carteira', ic: I(IconCreditCard, '#7C3AED'), route: '/wallet' }] : []),
+        ...(WALLET_ENABLED ? [{ key: 'wallet', label: t('apps.wallet') || 'Carteira', ic: I(IconCreditCard, '#A582F7'), route: '/wallet' }] : []),
         { key: 'settings',      label: t('sidebar.settings') || 'Configurações', ic: I(IconSettings, '#475569'), action: () => { onClose(); try { router.push('/settings'); } catch (e) { console.warn('[chat] router.push failed:', e); } } },
         { key: 'notifications', label: t('sidebar.notifications') || 'Alertas',  ic: I(IconBell, '#f97316'),     route: '/notifications' },
         { key: 'backup',        label: t('sidebar.backup') || 'Backup',          ic: I(IconShield, '#0ea5e9'),   route: '/backup' },
@@ -1570,7 +1570,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                 <Text style={{
                   fontSize: 11,
                   fontWeight: '700',
-                  color: isDark ? 'rgba(124,58,237,0.78)' : '#7C3AED',
+                  color: isDark ? 'rgba(124,58,237,0.78)' : '#A582F7',
                   letterSpacing: 0.5,
                   textTransform: 'uppercase',
                   marginBottom: 12,
@@ -1640,7 +1640,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
 // ── Desktop sidebar tab item with hover ──
 function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark, badge, dot }) {
   const [hovered, setHovered] = useState(false);
-  const color = active ? '#7C3AED' : 'rgba(255,255,255,0.6)';
+  const color = active ? '#A582F7' : 'rgba(255,255,255,0.6)';
   const isWeb = Platform.OS === 'web';
 
   return (
@@ -1655,7 +1655,7 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
           : hovered
             ? (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.025)')
             : 'transparent',
-        borderLeftColor: active ? '#7C3AED' : 'transparent',
+        borderLeftColor: active ? '#A582F7' : 'transparent',
         cursor: 'pointer',
         ...(isWeb ? { transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)' } : {}),
       }]}
@@ -1726,8 +1726,8 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
   useEffect(() => {
     if (active) {
       Animated.sequence([
-        Animated.spring(bounceAnim, { toValue: -3, useNativeDriver: false, tension: 400, friction: 10 }),
-        Animated.spring(bounceAnim, { toValue: 0, useNativeDriver: false, tension: 260, friction: 14 }),
+        Animated.spring(bounceAnim, { toValue: -3, useNativeDriver: true, tension: 400, friction: 10 }),
+        Animated.spring(bounceAnim, { toValue: 0, useNativeDriver: true, tension: 260, friction: 14 }),
       ]).start();
     }
     Animated.timing(glowAnim, {
@@ -1738,10 +1738,10 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
   }, [active]);
 
   const handlePressIn = () => {
-    Animated.spring(scaleAnim, { toValue: 0.9, useNativeDriver: false, tension: 400, friction: 28 }).start();
+    Animated.spring(scaleAnim, { toValue: 0.9, useNativeDriver: true, tension: 400, friction: 28 }).start();
   };
   const handlePressOut = () => {
-    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: false, tension: 260, friction: 14 }).start();
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 260, friction: 14 }).start();
   };
 
   return (

@@ -73,7 +73,7 @@ export default function StarredMessagesScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      <View style={[styles.header, { backgroundColor: isDark ? '#1a1a2e' : '#7C3AED', paddingTop: 10 }]}>
+      <View style={[styles.header, { backgroundColor: isDark ? '#1a1a2e' : '#A582F7', paddingTop: 10 }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>
@@ -81,7 +81,7 @@ export default function StarredMessagesScreen() {
       </View>
 
       {/* Tab switcher — Salvas | Favoritas */}
-      <View style={[styles.tabBar, { backgroundColor: isDark ? '#1a1a2e' : '#7C3AED' }]}>
+      <View style={[styles.tabBar, { backgroundColor: isDark ? '#1a1a2e' : '#A582F7' }]}>
         <TouchableOpacity
           style={[styles.tab, tab === 'saved' && { borderBottomColor: tabAccent }]}
           onPress={() => setTab('saved')}
@@ -115,7 +115,7 @@ export default function StarredMessagesScreen() {
             activeOpacity={0.85}
             style={[styles.savedCard, { backgroundColor: isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.06)', borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(124,58,237,0.18)' }]}
           >
-            <View style={[styles.savedIcon, { backgroundColor: '#7C3AED' }]}>
+            <View style={[styles.savedIcon, { backgroundColor: '#A582F7' }]}>
               <IconBookmark size={22} color="#fff" />
             </View>
             <View style={styles.savedCardBody}>
@@ -131,7 +131,7 @@ export default function StarredMessagesScreen() {
         </View>
       ) : loading ? (
         <View style={styles.loading}>
-          <ActivityIndicator color="#7C3AED" size="large" />
+          <ActivityIndicator color="#A582F7" size="large" />
         </View>
       ) : messages.length === 0 ? (
         <View style={styles.empty}>

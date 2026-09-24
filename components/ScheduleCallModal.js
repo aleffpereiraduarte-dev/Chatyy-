@@ -568,7 +568,7 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? {
       boxShadow: '0 6px 18px rgba(124,58,237,0.32)',
     } : Platform.OS === 'ios' ? {
-      shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 14,
+      shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 14,
     } : { elevation: 5 }),
   },
   ctaText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '700', letterSpacing: 0.2 },

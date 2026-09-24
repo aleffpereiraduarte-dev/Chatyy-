@@ -40,7 +40,7 @@ function BounceIn({ children, delay = 0 }) {
 }
 
 const CATEGORIES = [
-  { key: 'math', emoji: '\uD83D\uDD22', color: '#8b5cf6', videos: [
+  { key: 'math', emoji: '\uD83D\uDD22', color: '#A582F7', videos: [
     { title: 'Como fazer conta de dividir', duration: '5 min', url: 'https://youtube.com/results?search_query=como+dividir+para+criancas' },
     { title: 'O que sao fracoes', duration: '7 min', url: 'https://youtube.com/results?search_query=fracoes+para+criancas+explicacao' },
     { title: 'Tabuada divertida', duration: '4 min', url: 'https://youtube.com/results?search_query=tabuada+divertida+criancas' },
@@ -192,11 +192,11 @@ function KidsLearnScreenInner() {
         {/* AI Tutor - large card with playful design */}
         <View style={[s.tutorCard, {
           backgroundColor: isDark ? '#1e1145' : '#fff',
-          borderColor: '#8b5cf640',
+          borderColor: '#A582F740',
           ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(139,92,246,0.1)' } : {}),
         }]}>
           <View style={s.tutorHeader}>
-            <View style={{ width: 52, height: 52, borderRadius: 18, backgroundColor: '#8b5cf620', alignItems: 'center', justifyContent: 'center' }}>
+            <View style={{ width: 52, height: 52, borderRadius: 18, backgroundColor: '#A582F720', alignItems: 'center', justifyContent: 'center' }}>
               <Text style={{ fontSize: 30 }}>{'\uD83C\uDF93'}</Text>
             </View>
             <View style={{ flex: 1, marginLeft: 14 }}>
@@ -220,7 +220,7 @@ function KidsLearnScreenInner() {
             />
             <TouchableOpacity
               style={[s.tutorSendBtn, {
-                backgroundColor: question.trim() ? '#8b5cf6' : (isDark ? '#2d1b4e' : '#e9d5ff'),
+                backgroundColor: question.trim() ? '#A582F7' : (isDark ? '#2d1b4e' : '#e9d5ff'),
                 ...(question.trim() && Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(139,92,246,0.3)' } : {}),
               }]}
               onPress={askTutor}

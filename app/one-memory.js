@@ -18,7 +18,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { BASE_URL, getAuthHeaders } from '../services/api';
 import { IconArrowLeft, IconTrash, IconSparkles } from '../components/Icons';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 
 function safeAlert(title, message, buttons) {
   if (Platform.OS === 'web') {

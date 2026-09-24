@@ -82,7 +82,7 @@ try {
 // mounts and schedules a LayoutAnimation. Android is left untouched.
 import '../services/disableLayoutAnimationIOS';
 import React, { Suspense } from "react";
-import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated, InteractionManager } from 'react-native';
+import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated, InteractionManager, useColorScheme as _useColorScheme } from 'react-native';
 // ─── Sentry crash reporting ───
 import { initSentry } from '../services/sentry';
 import { installCrashReporter, reportStep, setReporterIdentity } from '../services/crashReporter';
@@ -1414,6 +1414,12 @@ function ShareIntentWatcher() {
 export default function RootLayout() {
   const [toastNotif, setToastNotif] = useState(null);
   const [otaToast, setOtaToast] = useState(null);
+  // [2026-09-24 sem flash entre telas] Fundo do navegador pintado com a cor do
+  // tema do SO. Sem isto o native-stack transita sobre fundo branco → "pisca"
+  // (pior no modo escuro). Segue o esquema do sistema (themeMode padrão é
+  // 'system'); usa useColorScheme direto pq RootLayout está acima do ThemeProvider.
+  const _osScheme = _useColorScheme();
+  const _navBg = _osScheme === 'dark' ? '#0d0d0d' : '#ffffff';
   // Cache-ready gate: services/mmkv.js hydrates the in-memory cache from
   // AsyncStorage asynchronously at module load. Before that finishes,
   // SmartCache.getCachedMessagesSync / getCachedConversationsSync return
@@ -1484,7 +1490,7 @@ export default function RootLayout() {
                     top: Platform.OS === 'ios' ? 54 : 24,
                     left: 16, right: 16,
                     backgroundColor: otaToast.kind === 'success' ? '#16a34a'
-                                   : otaToast.kind === 'info' ? '#7C3AED'
+                                   : otaToast.kind === 'info' ? '#A582F7'
                                    : 'rgba(30,30,30,0.95)',
                     borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16,
                     flexDirection: 'row', alignItems: 'center', gap: 10,
@@ -1512,6 +1518,9 @@ export default function RootLayout() {
                   headerShown: false,
                   animation: 'fade',
                   animationDuration: 150,
+                  // [2026-09-24] Pinta o fundo do container de cada tela com a cor
+                  // do tema → elimina o flash branco durante a transição.
+                  contentStyle: { backgroundColor: _navBg },
                   ...(Platform.OS !== 'web' ? {
                     customAnimationOnGesture: true,
                     fullScreenGestureEnabled: true,
@@ -1529,6 +1538,7 @@ export default function RootLayout() {
                   <Stack.Screen name="read" options={{ presentation: 'modal', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="profile" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
                   <Stack.Screen name="settings" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
+                  <Stack.Screen name="bia-settings" options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="feed/[id]" options={{ headerShown: false, animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="search" options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 150 }} />

@@ -47,7 +47,7 @@ const ACTION_META = {
   password_change:        { tier: 'important', bucket: 'sensitive', Icon: IconLock,           tint: '#f59e0b' },
   twofa_enabled:          { tier: 'important', bucket: 'sensitive', Icon: IconShield,         tint: '#10b981' },
   twofa_disabled:         { tier: 'critical',  bucket: 'sensitive', Icon: IconShield,         tint: '#dc2626' },
-  device_linked:          { tier: 'important', bucket: 'sensitive', Icon: IconSmartphone,     tint: '#7C3AED' },
+  device_linked:          { tier: 'important', bucket: 'sensitive', Icon: IconSmartphone,     tint: '#A582F7' },
   device_revoked:         { tier: 'important', bucket: 'sensitive', Icon: IconSmartphone,     tint: '#f59e0b' },
   chat_delete:            { tier: 'routine',   bucket: 'routine',   Icon: IconTrash,          tint: '#94a3b8' },
   message_delete_for_all: { tier: 'routine',   bucket: 'routine',   Icon: IconMessageSquare,  tint: '#94a3b8' },
@@ -111,7 +111,7 @@ function dayBucket(unixSec, t) {
 function deviceVisualForUA(ua) {
   const label = (ua || '').toLowerCase();
   if (label.includes('iphone') || label.includes('ipad') || label.includes('darwin') || label.includes('cfnetwork')) {
-    return { Icon: IconSmartphone, tint: '#7C3AED', bg: '#7C3AED18' };
+    return { Icon: IconSmartphone, tint: '#A582F7', bg: '#A582F718' };
   }
   if (label.includes('android')) {
     return { Icon: IconSmartphone, tint: '#10b981', bg: '#10b98118' };

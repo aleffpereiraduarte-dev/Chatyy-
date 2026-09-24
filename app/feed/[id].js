@@ -104,7 +104,7 @@ export default function FeedPostPublic() {
   if (loading) {
     return (
       <View style={[styles.wrap, { backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' }]}>
-        <ActivityIndicator size="large" color="#7C3AED" />
+        <ActivityIndicator size="large" color="#A582F7" />
       </View>
     );
   }
@@ -114,7 +114,7 @@ export default function FeedPostPublic() {
       <View style={[styles.wrap, { backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center', padding: 24 }]}>
         <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>Post não disponível</Text>
         <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 8, textAlign: 'center' }}>{error || 'Este post foi removido ou não pode ser exibido.'}</Text>
-        <TouchableOpacity onPress={goApp} style={{ marginTop: 24, paddingHorizontal: 24, paddingVertical: 12, backgroundColor: '#7C3AED', borderRadius: 10 }}>
+        <TouchableOpacity onPress={goApp} style={{ marginTop: 24, paddingHorizontal: 24, paddingVertical: 12, backgroundColor: '#A582F7', borderRadius: 10 }}>
           <Text style={{ color: '#fff', fontWeight: '700' }}>Ir pro Chatyy</Text>
         </TouchableOpacity>
       </View>
@@ -130,7 +130,7 @@ export default function FeedPostPublic() {
       {/* Top bar */}
       <View style={[styles.topbar, { borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={goApp} style={styles.brandRow} activeOpacity={0.8}>
-          <Text style={[styles.brand, { color: '#7C3AED' }]}>Chatyy</Text>
+          <Text style={[styles.brand, { color: '#A582F7' }]}>Chatyy</Text>
           <Text style={{ fontSize: 12, color: colors.textSecondary, marginLeft: 8 }}>Tudo está aqui</Text>
         </TouchableOpacity>
         {!user?.email && (
@@ -243,7 +243,7 @@ const styles = StyleSheet.create({
   },
   brandRow: { flexDirection: 'row', alignItems: 'baseline' },
   brand: { fontSize: 20, fontWeight: '800', letterSpacing: 0.3 },
-  loginBtn: { paddingHorizontal: 18, paddingVertical: 8, backgroundColor: '#7C3AED', borderRadius: 8 },
+  loginBtn: { paddingHorizontal: 18, paddingVertical: 8, backgroundColor: '#A582F7', borderRadius: 8 },
   loginBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
   authorRow: { flexDirection: 'row', alignItems: 'center', padding: 14 },
   authorName: { fontSize: 15, fontWeight: '700' },
@@ -256,7 +256,7 @@ const styles = StyleSheet.create({
   ctaSubtitle: { fontSize: 13, marginTop: 6, textAlign: 'center' },
   ctaBtn: {
     marginTop: 14, paddingHorizontal: 28, paddingVertical: 12,
-    backgroundColor: '#7C3AED', borderRadius: 10,
+    backgroundColor: '#A582F7', borderRadius: 10,
   },
   ctaBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   storesRow: { flexDirection: 'row', gap: 10, marginTop: 14, flexWrap: 'wrap', justifyContent: 'center' },

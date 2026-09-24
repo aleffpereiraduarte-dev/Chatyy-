@@ -55,12 +55,12 @@ import { canNavigateNow } from '../services/navGuard';
 const MUTED_UIDS_KEY = '@onemundo_muted_uids';
 
 const SIDE_PANEL_ROUTES = {
-  '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#7C3AED' },
+  '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#A582F7' },
   '/calendar': { key: 'calendar', icon: IconCalendar, label: 'sidebar.calendar', color: '#4285f4' },
   '/drive': { key: 'drive', icon: IconFolder, label: 'Chatyy Cloud', color: '#f59e0b' },
   '/meetings': { key: 'meetings', icon: IconFilm, label: 'sidebar.meetings', color: '#ef4444' },
   '/documentos': { key: 'documentos', icon: IconGlobe, label: 'sidebar.documents', color: '#4285f4' },
-  '/contacts': { key: 'contacts', icon: IconUser, label: 'sidebar.contacts', color: '#8b5cf6' },
+  '/contacts': { key: 'contacts', icon: IconUser, label: 'sidebar.contacts', color: '#A582F7' },
   '/one': { key: 'one', icon: IconZap, label: 'One', color: '#A78BFA' },
   '/photos': { key: 'photos', icon: IconImage, label: 'photos.title', color: '#e11d48' },
   '/backup': { key: 'backup', icon: IconArchive, label: 'Backup', color: '#f59e0b' },
@@ -1303,7 +1303,7 @@ function InboxScreenInner() {
       <Animated.View style={[
         s.header,
         { ...(Platform.OS === 'web'
-            ? { background: isDark ? 'linear-gradient(180deg, #1a0a2e 0%, #0a0a0a 100%)' : 'linear-gradient(180deg, #5B21B6 0%, #7C3AED 100%)' }
+            ? { background: isDark ? 'linear-gradient(180deg, #1a0a2e 0%, #0a0a0a 100%)' : 'linear-gradient(180deg, #5B21B6 0%, #A582F7 100%)' }
             : { backgroundColor: isDark ? '#0d0a14' : '#6D28D9' }),
           borderBottomColor: 'transparent',
           borderBottomWidth: 0,
@@ -1500,7 +1500,7 @@ function InboxScreenInner() {
                 <Text style={[s.dropActionLabel, { color: colors.text }]}>{t('menu.settings')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.dropActionBtn} onPress={() => { try { console.log('[FAMILIA-DIAG][inbox][tap_familia_menu]'); } catch {} setShowMenu(false); router.push('/parental'); }}>
-                <IconShield size={20} color="#7C3AED" />
+                <IconShield size={20} color="#A582F7" />
                 <Text style={[s.dropActionLabel, { color: colors.text }]}>{t('menu.family') || 'Família'}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.dropActionBtn} onPress={() => { toggle(); }}>
@@ -1725,7 +1725,11 @@ function InboxScreenInner() {
         ) : null}
 
         {/* Email List — hidden when an email is open in split mode, OR when 2 side panels are open (no room) */}
-        <Animated.View style={[{ flex: 1 }, ((sidePanels.length > 0 && selectedEmail) || sidePanels.length >= 2) && { display: 'none' }, {
+        {/* [2026-09-24] No WEB a tela re-monta ao clicar em Inbox, o que re-disparava
+            a animação de entrada (opacity 0→1 + slide) → a lista de emails "piscava"
+            toda vez. No web mostramos a lista direto (sem fade/slide de entrada). No
+            mobile a entrada suave continua. */}
+        <Animated.View style={[{ flex: 1 }, ((sidePanels.length > 0 && selectedEmail) || sidePanels.length >= 2) && { display: 'none' }, Platform.OS === 'web' ? null : {
           opacity: listAnim,
           transform: [
             { translateY: listAnim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) },
@@ -1956,7 +1960,7 @@ function InboxScreenInner() {
         <BrandFab
           style={{ position: 'absolute', right: 20, bottom: insets.bottom + 24 }}
           size={56}
-          color="#7C3AED"
+          color="#A582F7"
           onPress={() => router.push('/compose')}
           accessibilityLabel={t('compose.new') || 'Nova mensagem'}
         >
@@ -2047,7 +2051,7 @@ function InboxScreenInner() {
                   <Text style={{ color: colors.textSecondary, fontWeight: '600' }}>{t('common.cancel') || 'Cancel'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: switchLoginLoading ? '#1a3a2a' : '#7C3AED' }}
+                  style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: switchLoginLoading ? '#1a3a2a' : '#A582F7' }}
                   disabled={switchLoginLoading || !switchLoginPassword.trim()}
                   onPress={async () => {
                     if (!switchLoginPassword.trim()) return;
@@ -2502,11 +2506,11 @@ const s = StyleSheet.create({
       web: {
         boxShadow: '0 8px 28px rgba(124, 58, 237, 0.45), 0 2px 8px rgba(124, 58, 237, 0.2), 0 0 0 4px rgba(124, 58, 237, 0.08)',
         transition: 'box-shadow 0.3s ease, transform 0.2s ease',
-        background: 'linear-gradient(135deg, #7C3AED 0%, #A78BFA 100%)',
+        background: 'linear-gradient(135deg, #A582F7 0%, #A78BFA 100%)',
       },
       default: {
         elevation: 14,
-        shadowColor: '#7C3AED',
+        shadowColor: '#A582F7',
         shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.45,
         shadowRadius: 18,

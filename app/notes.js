@@ -43,7 +43,7 @@ const NOTE_COLORS = [
 
 // Tag colors for visual pills
 const TAG_COLORS = [
-  '#7C3AED', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#c026d3', '#4f46e5',
+  '#A582F7', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#c026d3', '#4f46e5',
 ];
 
 // Dark mode equivalents for note colors
@@ -2503,7 +2503,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
   const [showFormatBar, setShowFormatBar] = useState(false);
 
   const contentInputRef = useRef(null);
-  const BRAND = '#7C3AED';
+  const BRAND = '#A582F7';
 
   // Tick savedAgo every 5s for the pill text
   useEffect(() => {
@@ -2782,7 +2782,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
       const q = line.match(/^>\s+(.*)$/);
       if (q) {
         return (
-          <View key={i} style={[editorStyles.quoteBlock, { borderLeftColor: '#7C3AED' }]}>
+          <View key={i} style={[editorStyles.quoteBlock, { borderLeftColor: '#A582F7' }]}>
             <Text style={[editorStyles.quoteText, { color: textColor }]}>{q[1]}</Text>
           </View>
         );

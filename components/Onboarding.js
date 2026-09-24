@@ -12,7 +12,7 @@ import {
 } from './Icons';
 
 const ONBOARDING_KEY = '@chatyy_onboarding_done';
-const BRAND = '#7C3AED';
+const BRAND = '#A582F7';
 
 // React Native invariant: a regular FlatList cannot use `onScroll` with
 // `useNativeDriver: true`. The list MUST be wrapped via
@@ -39,7 +39,7 @@ const SLIDES = [
     titleKey: 'onboarding.slideReelsTitle',
     descKey: 'onboarding.slideReelsDesc',
     blob1: '#EC4899',
-    blob2: '#7C3AED',
+    blob2: '#A582F7',
     blob3: '#F472B6',
   },
   {
@@ -49,14 +49,14 @@ const SLIDES = [
     descKey: 'onboarding.slideEmailDesc',
     blob1: '#6366F1',
     blob2: '#A78BFA',
-    blob3: '#7C3AED',
+    blob3: '#A582F7',
   },
   {
     key: 'privacy',
     Icon: IconShield,
     titleKey: 'onboarding.slidePrivacyTitle',
     descKey: 'onboarding.slidePrivacyDesc',
-    blob1: '#7C3AED',
+    blob1: '#A582F7',
     blob2: '#6366F1',
     blob3: '#A78BFA',
   },
@@ -270,7 +270,7 @@ export default function Onboarding({ onDone }) {
     <View style={[styles.container, { backgroundColor: baseBg }]}>
       {/* Animated gradient mesh background — purple → pink → indigo */}
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-        <Blob color="#7C3AED" size={420} top={-120} left={-120} delay={0} />
+        <Blob color="#A582F7" size={420} top={-120} left={-120} delay={0} />
         <Blob color="#EC4899" size={360} top={120} right={-140} delay={1200} />
         <Blob color="#6366F1" size={500} bottom={-180} left={-80} delay={2400} />
         <Blob color="#A78BFA" size={300} bottom={140} right={-60} delay={1800} />

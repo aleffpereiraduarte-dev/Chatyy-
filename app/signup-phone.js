@@ -776,7 +776,7 @@ export default function SignupPhone() {
         <Text style={[styles.brand, {
           color: colors.primary,
           ...(Platform.OS === 'web' ? {
-            backgroundImage: 'linear-gradient(135deg, #5B21B6 0%, #7C3AED 60%, #A78BFA 100%)',
+            backgroundImage: 'linear-gradient(135deg, #5B21B6 0%, #A582F7 60%, #A78BFA 100%)',
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
@@ -1847,7 +1847,7 @@ const styles = StyleSheet.create({
         boxShadow: '0 10px 26px rgba(124,58,237,0.35), 0 2px 6px rgba(124,58,237,0.20)',
         transition: 'transform 140ms ease, box-shadow 140ms ease',
       },
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 14 },
+      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 14 },
       android: { elevation: 6 },
     }),
   },

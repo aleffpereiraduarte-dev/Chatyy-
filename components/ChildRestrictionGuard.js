@@ -245,7 +245,7 @@ function ConfettiDots() {
       x: Math.random() * 100,
       y: Math.random() * 100,
       size: 6 + Math.random() * 10,
-      color: ['#8b5cf6', '#ec4899', '#fbbf24', '#10b981', '#A78BFA', '#f43f5e', '#06b6d4'][i % 7],
+      color: ['#A582F7', '#ec4899', '#fbbf24', '#10b981', '#A78BFA', '#f43f5e', '#06b6d4'][i % 7],
       anim: new Animated.Value(0),
     }))
   ).current;
@@ -475,7 +475,7 @@ export default function ChildRestrictionGuard({ children }) {
       { label: 'Chat sem restricoes', Icon: IconMessageCircle, color: '#10b981' },
       { label: 'Feed e Status', Icon: IconLayout, color: '#ec4899' },
       { label: 'Drive e Documentos', Icon: IconFolder, color: '#f59e0b' },
-      { label: 'Lives e Stories', Icon: IconVideo, color: '#8b5cf6' },
+      { label: 'Lives e Stories', Icon: IconVideo, color: '#A582F7' },
     ];
 
     return (
@@ -557,7 +557,7 @@ export default function ChildRestrictionGuard({ children }) {
       <Animated.View style={[sty.bedtime, { opacity: fadeAnim, backgroundColor: '#1e1b4b' }]}>
         <Animated.View style={{ alignItems: 'center', zIndex: 1, transform: [{ scale: bounceAnim }] }}>
           <View style={{ width: 110, height: 110, borderRadius: 55, backgroundColor: 'rgba(167,139,250,0.18)', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
-            <IconLock size={64} color="#7C3AED" />
+            <IconLock size={64} color="#A582F7" />
           </View>
           <Text style={[sty.bedTitle, { color: '#fff' }]}>
             {t('kids.restriction.locked') || 'App pausado pelos pais'}
@@ -753,7 +753,7 @@ const sty = StyleSheet.create({
   gradText: { fontSize: 16, color: '#e9d5ff', lineHeight: 24, textAlign: 'center' },
   gradItem: { fontSize: 17, color: '#fff', fontWeight: '600' },
   gradBtn: {
-    marginTop: 28, backgroundColor: '#8b5cf6', paddingHorizontal: 36, paddingVertical: 16, borderRadius: 20,
+    marginTop: 28, backgroundColor: '#A582F7', paddingHorizontal: 36, paddingVertical: 16, borderRadius: 20,
     flexDirection: 'row', alignItems: 'center', gap: 10,
     minHeight: 56,
     ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(139,92,246,0.5)' } : {}),

@@ -51,7 +51,7 @@ const REQUEST_TYPES = [
   { key: 'new_contact', emoji: '👥', color: '#10b981', name: 'Aprovar novo contato',    desc: 'Adicionar um amigo novo' },
   { key: 'new_app',     emoji: '📱', color: '#A78BFA', name: 'Liberar novo app',        desc: 'Usar um app que está bloqueado' },
   { key: 'help',        emoji: '🆘', color: '#ef4444', name: 'Preciso de ajuda',        desc: 'Mandar alerta importante' },
-  { key: 'other',       emoji: '💬', color: '#8b5cf6', name: 'Outro pedido',            desc: 'Escrever do seu jeito' },
+  { key: 'other',       emoji: '💬', color: '#A582F7', name: 'Outro pedido',            desc: 'Escrever do seu jeito' },
 ];
 
 export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
@@ -124,7 +124,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
         }}>
           {/* Gradient header */}
           <View style={[styles.header, Platform.OS === 'web'
-            ? { background: 'linear-gradient(135deg, #10b981 0%, #A78BFA 60%, #8b5cf6 100%)' }
+            ? { background: 'linear-gradient(135deg, #10b981 0%, #A78BFA 60%, #A582F7 100%)' }
             : { backgroundColor: '#A78BFA' },
           ]}>
             <View style={{ flex: 1 }}>
@@ -172,7 +172,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
               borderBottomWidth: 1, borderBottomColor: isDark ? '#2d1b4e' : '#f3e8ff',
             }}>
               <TouchableOpacity onPress={() => setHistoryOpen(false)} accessibilityRole="button" accessibilityLabel="Voltar">
-                <IconBack size={20} color={isDark ? '#A78BFA' : '#7C3AED'} />
+                <IconBack size={20} color={isDark ? '#A78BFA' : '#A582F7'} />
               </TouchableOpacity>
               <Text style={{ fontSize: 15, fontWeight: '800', color: isDark ? '#e9d5ff' : '#1e1b4b' }}>
                 {t?.('kids.askParent.history') || 'Pedidos anteriores'}
@@ -227,7 +227,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                     >
                       <View style={{
                         width: 38, height: 38, borderRadius: 12,
-                        backgroundColor: (matchType?.color || '#8b5cf6') + '25',
+                        backgroundColor: (matchType?.color || '#A582F7') + '25',
                         alignItems: 'center', justifyContent: 'center',
                       }}>
                         <Text style={{ fontSize: 20 }}>{matchType?.emoji || '💬'}</Text>
@@ -405,8 +405,8 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                 accessibilityRole="button"
                 accessibilityLabel={t?.('kids.askParent.history') || 'Ver pedidos anteriores'}
               >
-                <IconClock size={14} color={isDark ? '#A78BFA' : '#7C3AED'} />
-                <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#A78BFA' : '#7C3AED' }}>
+                <IconClock size={14} color={isDark ? '#A78BFA' : '#A582F7'} />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#A78BFA' : '#A582F7' }}>
                   {t?.('kids.askParent.history') || 'Ver pedidos anteriores'}
                 </Text>
               </TouchableOpacity>
@@ -420,10 +420,10 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                   onPress={handleSend}
                   activeOpacity={0.85}
                   style={{
-                    backgroundColor: activeType?.color || '#8b5cf6',
+                    backgroundColor: activeType?.color || '#A582F7',
                     opacity: ((!type || sending || (type === 'new_contact' && !contactEmail.trim()) || (type === 'new_app' && !appName.trim())) ? 0.5 : 1),
                     borderRadius: 18, paddingVertical: 16, alignItems: 'center',
-                    ...(Platform.OS === 'web' ? { boxShadow: `0 6px 18px ${activeType?.color || '#8b5cf6'}55` } : {}),
+                    ...(Platform.OS === 'web' ? { boxShadow: `0 6px 18px ${activeType?.color || '#A582F7'}55` } : {}),
                   }}
                 >
                   {sending

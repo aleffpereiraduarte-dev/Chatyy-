@@ -133,7 +133,7 @@ function Row({
       </View>
       {showVerMais ? (
         <TouchableOpacity onPress={() => setExpanded(true)} style={{ marginTop: 4 }} accessibilityRole="button">
-          <Text style={{ fontSize: 13, color: '#7C3AED', fontWeight: '600' }}>Ver mais</Text>
+          <Text style={{ fontSize: 13, color: '#A582F7', fontWeight: '600' }}>Ver mais</Text>
         </TouchableOpacity>
       ) : null}
       {showCounter && multiline && maxLength ? (
@@ -557,12 +557,12 @@ export default function ProfileEditSheet({
               <TouchableOpacity onPress={handleSave} disabled={saving || !dirty} activeOpacity={0.75}>
                 {saving ? (
                   <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-                    <ActivityIndicator size="small" color="#7C3AED" />
+                    <ActivityIndicator size="small" color="#A582F7" />
                   </View>
                 ) : (
                   <View style={{
                     paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18,
-                    backgroundColor: headerCanSave ? '#7C3AED' : 'transparent',
+                    backgroundColor: headerCanSave ? '#A582F7' : 'transparent',
                     ...(headerCanSave && Platform.OS === 'web'
                       ? { boxShadow: '0 2px 10px rgba(124,58,237,0.45)' }
                       : {}),
@@ -681,7 +681,7 @@ export default function ProfileEditSheet({
                   <View style={{
                     position: 'absolute', right: 6, bottom: 6,
                     width: 28, height: 28, borderRadius: 14,
-                    backgroundColor: '#7C3AED',
+                    backgroundColor: '#A582F7',
                     alignItems: 'center', justifyContent: 'center',
                     borderWidth: 2, borderColor: colors?.background || '#fff',
                     ...(Platform.OS === 'web' ? { boxShadow: '0 2px 6px rgba(124,58,237,0.45)' } : {}),
@@ -695,7 +695,7 @@ export default function ProfileEditSheet({
                   style={{ marginTop: 14, paddingVertical: 4, paddingHorizontal: 8 }}
                   activeOpacity={0.6}
                 >
-                  <Text style={{ fontSize: 15, color: '#7C3AED', fontWeight: '600' }}>
+                  <Text style={{ fontSize: 15, color: '#A582F7', fontWeight: '600' }}>
                     {t?.('profile.changePhoto') || 'Trocar foto'}
                   </Text>
                 </TouchableOpacity>
@@ -865,8 +865,8 @@ export default function ProfileEditSheet({
                   }}
                   accessibilityRole="button"
                 >
-                  <IconPlus size={16} color="#7C3AED" />
-                  <Text style={{ fontSize: 14, color: '#7C3AED', fontWeight: '600' }}>
+                  <IconPlus size={16} color="#A582F7" />
+                  <Text style={{ fontSize: 14, color: '#A582F7', fontWeight: '600' }}>
                     {t?.('profile.addLink') || 'Adicionar link'}
                   </Text>
                 </TouchableOpacity>
@@ -894,7 +894,7 @@ export default function ProfileEditSheet({
                   hint: t?.('profile.accountTypeBusinessHint') || 'Categoria + contato + métricas comerciais.' },
               ].map((opt) => {
                 const selected = accountType === opt.key;
-                const accent = opt.key === 'creator' ? '#9333EA' : opt.key === 'business' ? '#2563EB' : '#7C3AED';
+                const accent = opt.key === 'creator' ? '#9333EA' : opt.key === 'business' ? '#2563EB' : '#A582F7';
                 return (
                   <TouchableOpacity
                     key={opt.key}
@@ -1028,7 +1028,7 @@ export default function ProfileEditSheet({
                   onPress={confirmAvatarUpload}
                   style={{
                     flex: 1, paddingVertical: 14, borderRadius: 14,
-                    backgroundColor: '#7C3AED',
+                    backgroundColor: '#A582F7',
                     alignItems: 'center', justifyContent: 'center',
                     ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(124,58,237,0.45)' } : {}),
                   }}

@@ -38,10 +38,10 @@ const isWeb = Platform.OS === 'web';
 
 const FILE_TYPE_COLORS = {
   image:        { accent: '#f59e0b', bg: '#fffbeb', bgDark: '#451a03', icon: '#d97706' },
-  video:        { accent: '#8b5cf6', bg: '#f5f3ff', bgDark: '#2e1065', icon: '#7C3AED' },
+  video:        { accent: '#A582F7', bg: '#f5f3ff', bgDark: '#2e1065', icon: '#A582F7' },
   audio:        { accent: '#A78BFA', bg: '#eef2ff', bgDark: '#1e1b4b', icon: '#4f46e5' },
   pdf:          { accent: '#dc2626', bg: '#fef2f2', bgDark: '#450a0a', icon: '#dc2626' },
-  document:     { accent: '#7C3AED', bg: '#F5F3FF', bgDark: '#172554', icon: '#7C3AED' },
+  document:     { accent: '#A582F7', bg: '#F5F3FF', bgDark: '#172554', icon: '#A582F7' },
   spreadsheet:  { accent: '#16a34a', bg: '#f0fdf4', bgDark: '#052e16', icon: '#16a34a' },
   presentation: { accent: '#d97706', bg: '#fffbeb', bgDark: '#451a03', icon: '#d97706' },
   archive:      { accent: '#64748b', bg: '#f8fafc', bgDark: '#1e293b', icon: '#64748b' },
@@ -49,11 +49,11 @@ const FILE_TYPE_COLORS = {
 };
 
 const FOLDER_COLORS = [
-  '#7C3AED', '#8b5cf6', '#16a34a', '#f59e0b', '#dc2626', '#A78BFA', '#0891b2', '#ea580c',
+  '#A582F7', '#A582F7', '#16a34a', '#f59e0b', '#dc2626', '#A78BFA', '#0891b2', '#ea580c',
 ];
 
 function getFolderColor(folderId) {
-  if (!folderId) return '#7C3AED';
+  if (!folderId) return '#A582F7';
   const hash = typeof folderId === 'number' ? folderId : String(folderId).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
   return FOLDER_COLORS[hash % FOLDER_COLORS.length];
 }
@@ -555,14 +555,14 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
       <View style={[styles.storageTrack, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
         <View style={{ flexDirection: 'row', height: '100%' }}>
           {drivePct > 0 && (
-            <Animated.View style={[styles.storageFillDrive, { width: driveWidth, backgroundColor: percent < 80 ? '#7C3AED' : fillColor }]}>
+            <Animated.View style={[styles.storageFillDrive, { width: driveWidth, backgroundColor: percent < 80 ? '#A582F7' : fillColor }]}>
               <View style={[
                 styles.storageFillGradient,
                 isWeb
                   ? { background: percent < 80
-                      ? 'linear-gradient(90deg, #A78BFA 0%, #7C3AED 100%)'
+                      ? 'linear-gradient(90deg, #A78BFA 0%, #A582F7 100%)'
                       : `linear-gradient(90deg, ${fillColor}, ${fillColor}cc)` }
-                  : { backgroundColor: percent < 80 ? '#7C3AED' : fillColor },
+                  : { backgroundColor: percent < 80 ? '#A582F7' : fillColor },
               ]} />
             </Animated.View>
           )}
@@ -673,21 +673,21 @@ export default function FilesScreenWrapper() {
 // Brand-purple folder + upload arrow illustration. Used by FilesEmptyState
 // instead of the generic Icon so the empty state reads as a designed moment,
 // not a glyph stamp.
-function FilesEmptyIllustration({ tone = '#7C3AED' }) {
+function FilesEmptyIllustration({ tone = '#A582F7' }) {
   return (
     <Svg width={140} height={120} viewBox="0 0 140 120" fill="none">
       <Defs>
         <SvgLinearGradient id="folderGrad" x1="0" y1="0" x2="0" y2="1">
           <Stop offset="0" stopColor="#A78BFA" stopOpacity="0.95" />
-          <Stop offset="1" stopColor="#7C3AED" stopOpacity="1" />
+          <Stop offset="1" stopColor="#A582F7" stopOpacity="1" />
         </SvgLinearGradient>
         <SvgLinearGradient id="folderTab" x1="0" y1="0" x2="0" y2="1">
           <Stop offset="0" stopColor="#C4B5FD" stopOpacity="1" />
-          <Stop offset="1" stopColor="#8B5CF6" stopOpacity="1" />
+          <Stop offset="1" stopColor="#A582F7" stopOpacity="1" />
         </SvgLinearGradient>
       </Defs>
       {/* Soft halo */}
-      <SvgCircle cx="70" cy="62" r="50" fill="#7C3AED" fillOpacity="0.08" />
+      <SvgCircle cx="70" cy="62" r="50" fill="#A582F7" fillOpacity="0.08" />
       {/* Folder tab */}
       <Path
         d="M28 38 H58 L66 46 H112 V52 H28 Z"
@@ -709,7 +709,7 @@ function FilesEmptyIllustration({ tone = '#7C3AED' }) {
       {/* Sparkle dots */}
       <SvgCircle cx="116" cy="40" r="3" fill="#A78BFA" />
       <SvgCircle cx="22" cy="74" r="2" fill="#C4B5FD" />
-      <SvgCircle cx="124" cy="86" r="2.5" fill="#7C3AED" fillOpacity="0.7" />
+      <SvgCircle cx="124" cy="86" r="2.5" fill="#A582F7" fillOpacity="0.7" />
     </Svg>
   );
 }
@@ -758,10 +758,10 @@ function FilesEmptyState({ tab, isDark, colors, t, onUpload, onNewFolder, search
 
 function SmartAlbumChips({ activeAlbum, onSelect, albumCounts, colors, isDark, t }) {
   const albums = [
-    { key: 'all', label: t('files.albumAll'), icon: IconImage, color: '#7C3AED', count: null },
+    { key: 'all', label: t('files.albumAll'), icon: IconImage, color: '#A582F7', count: null },
     { key: 'recent', label: t('files.albumRecent'), icon: IconClock, color: '#f59e0b', count: albumCounts?.recent },
     { key: 'starred', label: t('files.albumFavorites'), icon: IconStarFilled, color: '#f59e0b', count: albumCounts?.starred },
-    { key: 'video', label: t('files.albumVideos'), icon: IconFilm, color: '#8b5cf6', count: albumCounts?.videos },
+    { key: 'video', label: t('files.albumVideos'), icon: IconFilm, color: '#A582F7', count: albumCounts?.videos },
   ];
 
   return (
@@ -818,8 +818,8 @@ function FilterChips({ activeFilter, onSelect, colors, isDark, t }) {
   const filters = [
     { key: 'all', label: t('files.filterAll') },
     { key: 'images', label: t('files.filterImages'), icon: IconImage, color: '#f59e0b' },
-    { key: 'videos', label: t('files.filterVideos'), icon: IconFilm, color: '#8b5cf6' },
-    { key: 'documents', label: t('files.filterDocuments'), icon: IconFileText, color: '#7C3AED' },
+    { key: 'videos', label: t('files.filterVideos'), icon: IconFilm, color: '#A582F7' },
+    { key: 'documents', label: t('files.filterDocuments'), icon: IconFileText, color: '#A582F7' },
     { key: 'audio', label: t('files.filterAudio'), icon: IconMusic, color: '#A78BFA' },
   ];
 
@@ -2429,7 +2429,7 @@ function FilesScreenInner() {
           ...(isWeb
             ? { background: isDark
                 ? 'linear-gradient(180deg, #1a0a2e 0%, #0a0a0a 100%)'
-                : 'linear-gradient(180deg, #5B21B6 0%, #7C3AED 100%)' }
+                : 'linear-gradient(180deg, #5B21B6 0%, #A582F7 100%)' }
             : { backgroundColor: isDark ? '#0d0a14' : '#6D28D9' }),
           borderBottomColor: 'transparent',
           borderBottomWidth: 0,
@@ -2596,7 +2596,7 @@ function FilesScreenInner() {
             <IconUpload size={18} color="#16a34a" />
           </TouchableOpacity>
           <TouchableOpacity onPress={handleBulkMove} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(124,58,237,0.16)' : '#f5f3ff' }]} accessibilityLabel={t('files.moveTo')}>
-            <IconFolder size={18} color="#7C3AED" />
+            <IconFolder size={18} color="#A582F7" />
           </TouchableOpacity>
           <TouchableOpacity onPress={handleBulkDelete} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(220,38,38,0.12)' : '#fef2f2' }]} accessibilityLabel={t('files.delete')}>
             <IconTrash size={18} color={colors.error} />
@@ -2868,14 +2868,14 @@ function FilesScreenInner() {
             style={[
               styles.fab,
               styles.fabPrimary,
-              // Brand purple gradient on web; native uses solid #7C3AED tone
+              // Brand purple gradient on web; native uses solid #A582F7 tone
               // (LinearGradient não importado — keeps tree clean).
               isWeb
-                ? { background: 'linear-gradient(135deg, #5B21B6 0%, #7C3AED 50%, #A78BFA 100%)' }
-                : { backgroundColor: '#7C3AED' },
+                ? { background: 'linear-gradient(135deg, #5B21B6 0%, #A582F7 50%, #A78BFA 100%)' }
+                : { backgroundColor: '#A582F7' },
               Shadow.float,
               // Brand-tinted shadow so the FAB feels like a branded action.
-              { shadowColor: '#7C3AED', shadowOpacity: 0.35, shadowRadius: 12 },
+              { shadowColor: '#A582F7', shadowOpacity: 0.35, shadowRadius: 12 },
             ]}
             onPress={() => { triggerHaptic('light'); handleUpload(); }}
             onPressIn={() => Animated.spring(uploadFabScale, { toValue: 0.94, useNativeDriver: true, friction: 6, tension: 180 }).start()}
@@ -2925,14 +2925,14 @@ function FilesScreenInner() {
             {actionMenu?.type === 'folder' && (
               <>
                 <TouchableOpacity style={styles.actionItem} onPress={() => { setActionMenu(null); setRenameModal({ id: actionMenu.item.id, type: 'folder', name: actionMenu.item.name }); }}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#7C3AED18' : '#F5F3FF' }]}>
-                    <IconEdit size={18} color="#7C3AED" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#A582F718' : '#F5F3FF' }]}>
+                    <IconEdit size={18} color="#A582F7" />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.rename')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actionItem} onPress={() => openMoveModal(actionMenu.item.id)}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#8b5cf618' : '#f5f3ff' }]}>
-                    <IconFolder size={18} color="#8b5cf6" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#A582F718' : '#f5f3ff' }]}>
+                    <IconFolder size={18} color="#A582F7" />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.moveTo')}</Text>
                 </TouchableOpacity>
@@ -2992,10 +2992,10 @@ function FilesScreenInner() {
                             setViewerIndex(0);
                           }
                         }}>
-                          <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#7C3AED18' : '#F5F3FF' }]}>
-                            <IconEye size={18} color="#7C3AED" />
+                          <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#A582F718' : '#F5F3FF' }]}>
+                            <IconEye size={18} color="#A582F7" />
                           </View>
-                          <Text style={[styles.actionItemText, { color: '#7C3AED', fontWeight: '600' }]}>{t('drive.preview') || 'Visualizar'}</Text>
+                          <Text style={[styles.actionItemText, { color: '#A582F7', fontWeight: '600' }]}>{t('drive.preview') || 'Visualizar'}</Text>
                         </TouchableOpacity>
                       )}
                       {(isEditableDoc || isEditableSheet) && (
@@ -3021,14 +3021,14 @@ function FilesScreenInner() {
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.download')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actionItem} onPress={() => { setActionMenu(null); setRenameModal({ id: actionMenu.item.id, type: 'file', name: actionMenu.item.original_name }); }}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#7C3AED18' : '#F5F3FF' }]}>
-                    <IconEdit size={18} color="#7C3AED" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#A582F718' : '#F5F3FF' }]}>
+                    <IconEdit size={18} color="#A582F7" />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.rename')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actionItem} onPress={() => openMoveModal(actionMenu.item.id)}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#8b5cf618' : '#f5f3ff' }]}>
-                    <IconFolder size={18} color="#8b5cf6" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#A582F718' : '#f5f3ff' }]}>
+                    <IconFolder size={18} color="#A582F7" />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.moveTo')}</Text>
                 </TouchableOpacity>
@@ -3056,8 +3056,8 @@ function FilesScreenInner() {
                     setVersionsModal({ file_id: fid, name: fname, versions: [] });
                   }
                 }}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#7c3aed18' : '#f5f3ff' }]}>
-                    <IconClock size={18} color="#7c3aed" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#A582F718' : '#f5f3ff' }]}>
+                    <IconClock size={18} color="#A582F7" />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.versionHistory') || 'Histórico de versões'}</Text>
                 </TouchableOpacity>
@@ -3224,8 +3224,8 @@ function FilesScreenInner() {
                 const label = (t && t('files.versionN', { n: v.version_num })) || `Versão ${v.version_num}`;
                 return (
                   <View key={(v.id || 'cur') + ':' + idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: idx < (versionsModal.versions.length - 1) ? 1 : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
-                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: v.is_current ? '#7c3aed22' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'), alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
-                      <IconClock size={16} color={v.is_current ? '#7c3aed' : colors.textSecondary} />
+                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: v.is_current ? '#A582F722' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'), alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                      <IconClock size={16} color={v.is_current ? '#A582F7' : colors.textSecondary} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }}>
@@ -3237,7 +3237,7 @@ function FilesScreenInner() {
                     </View>
                     {!v.is_current && (
                       <TouchableOpacity
-                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#7c3aed' }}
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#A582F7' }}
                         onPress={async () => {
                           try {
                             const r = await api.apiCall('file_version_restore', { file_id: versionsModal.file_id, version_id: v.id }, 'POST');

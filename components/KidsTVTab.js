@@ -55,7 +55,7 @@ function IconClock({ size = 14, color = '#fff' }) {
 
 // ─── Category Pills ───
 const TV_CATEGORIES = [
-  { key: 'all', emoji: '\uD83C\uDF1F', color: '#8b5cf6', i18nKey: null },
+  { key: 'all', emoji: '\uD83C\uDF1F', color: '#A582F7', i18nKey: null },
   { key: 'cartoons', emoji: '\uD83C\uDFA8', color: '#ec4899', i18nKey: 'kids.categories.cartoons' },
   { key: 'educational', emoji: '\uD83D\uDCDA', color: '#10b981', i18nKey: 'kids.categories.educational' },
   { key: 'music', emoji: '\uD83C\uDFB5', color: '#A78BFA', i18nKey: 'kids.categories.music' },
@@ -81,8 +81,8 @@ function ChannelIcon({ name, emoji, color, size = 60 }) {
   return (
     <View style={{
       width: size, height: size, borderRadius: size * 0.35,
-      backgroundColor: color || '#8b5cf6', alignItems: 'center', justifyContent: 'center',
-      ...(Platform.OS === 'web' ? { boxShadow: `0 4px 12px ${(color || '#8b5cf6')}40` } : {}),
+      backgroundColor: color || '#A582F7', alignItems: 'center', justifyContent: 'center',
+      ...(Platform.OS === 'web' ? { boxShadow: `0 4px 12px ${(color || '#A582F7')}40` } : {}),
     }}>
       <Text style={{ fontSize: size * 0.35, fontWeight: '800', color: '#fff' }}>{emoji || letter}</Text>
     </View>
@@ -120,7 +120,7 @@ function WatchTimeBadge({ minutes }) {
 }
 
 // Channel color palette
-const CHANNEL_COLORS = ['#8b5cf6', '#ec4899', '#10b981', '#f59e0b', '#A78BFA', '#f43f5e', '#06b6d4', '#84cc16'];
+const CHANNEL_COLORS = ['#A582F7', '#ec4899', '#10b981', '#f59e0b', '#A78BFA', '#f43f5e', '#06b6d4', '#84cc16'];
 
 export default function KidsTVTab() {
   const { colors, isDark } = useTheme();
@@ -217,7 +217,7 @@ export default function KidsTVTab() {
           </View>
         </View>
         {loadingVideos ? (
-          <View style={st.center}><ActivityIndicator size="large" color="#8b5cf6" /></View>
+          <View style={st.center}><ActivityIndicator size="large" color="#A582F7" /></View>
         ) : (
           <FlatList data={videos} keyExtractor={item => item.id} contentContainerStyle={{ padding: 14 }}
             renderItem={({ item, index }) => (
@@ -268,7 +268,7 @@ export default function KidsTVTab() {
       </View>
 
       {loading ? (
-        <View style={st.center}><ActivityIndicator size="large" color="#8b5cf6" /></View>
+        <View style={st.center}><ActivityIndicator size="large" color="#A582F7" /></View>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 80 }}>
           {/* Category pills */}
@@ -301,7 +301,7 @@ export default function KidsTVTab() {
           {featured.length > 0 && (
             <View style={{ marginTop: 4 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 18, marginBottom: 14 }}>
-                <IconStar size={18} color={isDark ? '#a78bfa' : '#8b5cf6'} />
+                <IconStar size={18} color={isDark ? '#a78bfa' : '#A582F7'} />
                 <Text style={[st.sectionTitle, { color: textColor, marginBottom: 0, paddingHorizontal: 0 }]}>{t('kids.featured')}</Text>
               </View>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 14 }}>
@@ -382,7 +382,7 @@ const st = StyleSheet.create({
   featCard: {
     width: 240, borderRadius: 20, overflow: 'hidden',
     ...Platform.select({
-      ios: { shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.15, shadowRadius: 12 },
+      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.15, shadowRadius: 12 },
       android: { elevation: 5 },
       web: { boxShadow: '0 6px 20px rgba(139,92,246,0.12)' },
     }),
@@ -394,7 +394,7 @@ const st = StyleSheet.create({
   channelCard: {
     width: (SCREEN_W - 42) / 2, borderRadius: 24, padding: 18, alignItems: 'center',
     ...Platform.select({
-      ios: { shadowColor: '#8b5cf6', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 12 },
+      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 12 },
       android: { elevation: 4 },
       web: { boxShadow: '0 6px 20px rgba(139,92,246,0.1)' },
     }),

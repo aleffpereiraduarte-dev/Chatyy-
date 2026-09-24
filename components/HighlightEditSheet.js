@@ -67,7 +67,7 @@ export default function HighlightEditSheet({
   const txt = c.text || (isDark ? '#fff' : '#000');
   const sub = c.textSecondary || (isDark ? '#999' : '#666');
   const border = c.border || (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
-  const accent = '#7C3AED';
+  const accent = '#A582F7';
 
   // Pull data when sheet opens. The 3 endpoints run in PARALLEL (Promise.all)
   // so the slowest one — not their sum — gates the spinner. A per-id cache
@@ -311,7 +311,7 @@ export default function HighlightEditSheet({
 
           {/* Title row */}
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 14, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: border, gap: 12 }}>
-            <View style={{ width: 56, height: 56, borderRadius: 28, overflow: 'hidden', backgroundColor: '#7C3AED22', borderWidth: 1.5, borderColor: border }}>
+            <View style={{ width: 56, height: 56, borderRadius: 28, overflow: 'hidden', backgroundColor: '#A582F722', borderWidth: 1.5, borderColor: border }}>
               {coverUrl ? (
                 WEB
                   ? <img src={resolveMedia(coverUrl)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />

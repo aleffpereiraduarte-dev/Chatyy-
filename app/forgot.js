@@ -859,7 +859,7 @@ const s = StyleSheet.create({
         boxShadow: '0 2px 6px rgba(37,99,235,0.35), 0 6px 20px rgba(37,99,235,0.2)',
       },
       default: {
-        shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 },
+        shadowColor: '#A582F7', shadowOffset: { width: 0, height: 3 },
         shadowOpacity: 0.35, shadowRadius: 10, elevation: 6,
       },
     }),

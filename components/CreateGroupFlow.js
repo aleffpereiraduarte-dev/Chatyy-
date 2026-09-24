@@ -13,7 +13,7 @@ import { IconArrowLeft, IconSearch, IconX, IconUsers, IconCheck, IconPlus } from
 import AvatarCircle from './AvatarCircle';
 import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const isWeb = Platform.OS === 'web';
 
 function IconCamera({ size = 24, color = '#666' }) {

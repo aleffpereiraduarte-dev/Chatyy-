@@ -539,7 +539,7 @@ export default function ChangePhone() {
                 {/* Confetti dots */}
                 <View style={{ position: 'absolute', top: 50, alignSelf: 'center' }}>
                   {confettiAnims.map((a, i) => {
-                    const palette = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
+                    const palette = ['#22c55e', '#3b82f6', '#f59e0b', '#ef4444', '#A582F7', '#06b6d4'];
                     const c = palette[i % palette.length];
                     return (
                       <Animated.View

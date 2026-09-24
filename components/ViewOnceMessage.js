@@ -293,7 +293,7 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
   const safeColors = {
     surface: '#fff',
     border: '#e0e0e0',
-    primary: '#7C3AED',
+    primary: '#A582F7',
     textTertiary: '#999',
     textSecondary: '#666',
     text: '#000',
@@ -731,7 +731,7 @@ const fs = StyleSheet.create({
   errorBox: { padding: 24, alignItems: 'center', justifyContent: 'center' },
   errorOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.85)', padding: 24, gap: 16 },
   errorText: { color: '#fff', fontSize: 16, textAlign: 'center' },
-  errorBtn: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 22, backgroundColor: '#7C3AED' },
+  errorBtn: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 22, backgroundColor: '#A582F7' },
   errorBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   bottomHint: {
     position: 'absolute', bottom: 32, left: 16, right: 16,

@@ -32,7 +32,7 @@ import {
 } from 'react-native';
 import { IconSparkles } from '../Icons';
 
-const BRAND = '#7C3AED';
+const BRAND = '#A582F7';
 
 export default function SmartRepliesBar({ conversationId, lastIncomingId, onPick, colors, t }) {
   const [replies, setReplies] = useState([]);

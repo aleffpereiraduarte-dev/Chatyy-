@@ -18,7 +18,7 @@ function IconPaperclip({ size = 22, color = '#666' }) {
   );
 }
 
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const ACCENT_DARK = '#5B21B6';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -46,11 +46,11 @@ function formatCount(n) {
 function CardCoverFallback({ seed = 0 }) {
   // Six brand-harmonized gradients seeded by channel id parity
   const palettes = [
-    ['#7C3AED', '#5B21B6'],
+    ['#A582F7', '#5B21B6'],
     ['#9333EA', '#6D28D9'],
     ['#A855F7', '#7E22CE'],
-    ['#8B5CF6', '#4C1D95'],
-    ['#C084FC', '#7C3AED'],
+    ['#A582F7', '#4C1D95'],
+    ['#C084FC', '#A582F7'],
     ['#A78BFA', '#5B21B6'],
   ];
   const [a, b] = palettes[Math.abs(seed) % palettes.length];

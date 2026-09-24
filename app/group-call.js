@@ -50,7 +50,7 @@ let Clipboard = null;
 try { Clipboard = require('expo-clipboard'); } catch {}
 
 // Brand purple — keep in sync with theme/Colors.brand.
-const BRAND_PURPLE = '#7C3AED';
+const BRAND_PURPLE = '#A582F7';
 // Active-speaker ring — calm emerald green (Meet/WhatsApp style). Clear
 // active indication without the gaudy amber flash.
 const SPEAKER_RING = '#34d399';

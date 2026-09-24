@@ -73,7 +73,7 @@ function PulsingCreateButton({ onPress, idle, children }) {
           pointerEvents="none"
           style={{
             position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
-            borderRadius: 24, borderWidth: 2, borderColor: '#7C3AED',
+            borderRadius: 24, borderWidth: 2, borderColor: '#A582F7',
             opacity: ring.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }),
             transform: [{ scale: ring.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1.55] }) }],
           }}
@@ -305,7 +305,7 @@ export default function BotsScreen() {
           <StaggeredRow index={index}>
           <View style={{ backgroundColor: colors.surface, padding: 14, borderRadius: 14, marginBottom: 10, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center' }}>
+              <View style={{ width: 44, height: 44, borderRadius: 22, backgroundColor: '#A582F7', alignItems: 'center', justifyContent: 'center' }}>
                 {/* Bot avatar mark — composed of Views (no emoji) */}
                 <View style={{ width: 22, height: 22, borderRadius: 6, borderWidth: 2, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
                   <View style={{ flexDirection: 'row', gap: 4, marginBottom: 3 }}>
@@ -338,9 +338,9 @@ export default function BotsScreen() {
                 {cmds.slice(0, 8).map((cmd, idx) => (
                   <View key={idx} style={{
                     paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
-                    backgroundColor: '#7C3AED22',
+                    backgroundColor: '#A582F722',
                   }}>
-                    <Text style={{ fontSize: 11, color: '#7C3AED', fontWeight: '700' }}>
+                    <Text style={{ fontSize: 11, color: '#A582F7', fontWeight: '700' }}>
                       /{String(cmd).replace(/^\//, '')}
                     </Text>
                   </View>

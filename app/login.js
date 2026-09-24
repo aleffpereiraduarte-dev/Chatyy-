@@ -1714,7 +1714,7 @@ export default function LoginScreen() {
                     ? '0 2px 8px rgba(0,0,0,0.30), 0 18px 60px rgba(0,0,0,0.40)'
                     : '0 1px 2px rgba(60,64,67,0.06), 0 6px 20px rgba(124,58,237,0.07), 0 24px 64px rgba(60,64,67,0.10)',
                 } : {
-                  shadowColor: '#7C3AED',
+                  shadowColor: '#A582F7',
                   shadowOffset: { width: 0, height: 6 },
                   shadowOpacity: 0.08,
                   shadowRadius: 18,
@@ -1792,15 +1792,15 @@ export default function LoginScreen() {
                           than animate it. */}
                       <View style={{
                         width: 92, height: 92, borderRadius: 46,
-                        backgroundColor: '#7c3aed',
+                        backgroundColor: '#A582F7',
                         alignItems: 'center', justifyContent: 'center',
                         overflow: 'hidden',
                         ...(Platform.OS === 'web' ? {
                           // Degradê diagonal → esfera com profundidade (WhatsApp-grade).
-                          backgroundImage: 'linear-gradient(145deg, #8B5CF6 0%, #7C3AED 48%, #5B21B6 100%)',
+                          backgroundImage: 'linear-gradient(145deg, #A582F7 0%, #A582F7 48%, #5B21B6 100%)',
                           boxShadow: '0 16px 40px rgba(124,58,237,0.48), inset 0 1px 0 rgba(255,255,255,0.28)',
                         } : Platform.select({
-                          ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.45, shadowRadius: 16 },
+                          ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.45, shadowRadius: 16 },
                           android: { elevation: 10 },
                         })),
                       }}>
@@ -1842,13 +1842,13 @@ export default function LoginScreen() {
                         color: colors.primary, marginTop: 14,
                         letterSpacing: -1.1,
                         ...(Platform.OS === 'web' ? {
-                          backgroundImage: 'linear-gradient(135deg, #5B21B6 0%, #7C3AED 60%, #A78BFA 100%)',
+                          backgroundImage: 'linear-gradient(135deg, #5B21B6 0%, #A582F7 60%, #A78BFA 100%)',
                           WebkitBackgroundClip: 'text',
                           WebkitTextFillColor: 'transparent',
                           backgroundClip: 'text',
                           textShadow: '0 4px 18px rgba(124,58,237,0.32)',
                         } : Platform.select({
-                          ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 10 },
+                          ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 10 },
                           android: {},
                         })),
                       }}>
@@ -2107,10 +2107,10 @@ export default function LoginScreen() {
                                   // (presença premium WhatsApp-grade). Desabilitado
                                   // fica cinza chapado de propósito (não "quase pronto").
                                   ...(!_disabled ? (Platform.OS === 'web' ? {
-                                    backgroundImage: 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)',
+                                    backgroundImage: 'linear-gradient(135deg, #A582F7 0%, #6D28D9 100%)',
                                     boxShadow: '0 8px 22px rgba(124,58,237,0.34), 0 2px 6px rgba(124,58,237,0.18)',
                                   } : Platform.select({
-                                    ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
+                                    ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
                                     android: { elevation: 6 },
                                   })) : {}),
                                 }]}
@@ -3388,7 +3388,7 @@ const s = StyleSheet.create({
         boxShadow: '0 8px 22px rgba(124,58,237,0.35), 0 2px 6px rgba(124,58,237,0.20)',
         transition: 'transform 140ms ease, box-shadow 140ms ease',
       },
-      ios: { shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 14 },
+      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 14 },
       android: { elevation: 6 },
     }),
   },

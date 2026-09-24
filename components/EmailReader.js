@@ -819,7 +819,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           sending → done states. */}
       {unsubscribeInfo && (
         <View style={{ marginHorizontal: 16, marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 10,
-                       backgroundColor: '#f3e8ff', borderLeftWidth: 4, borderLeftColor: '#7c3aed',
+                       backgroundColor: '#f3e8ff', borderLeftWidth: 4, borderLeftColor: '#A582F7',
                        padding: 12, borderRadius: 8 }}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontWeight: '700', color: '#5b21b6', fontSize: 13 }}>
@@ -832,7 +832,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           <TouchableOpacity
             onPress={handleUnsubscribe}
             disabled={unsubscribeState === 'sending' || unsubscribeState === 'done'}
-            style={{ backgroundColor: unsubscribeState === 'done' ? '#a78bfa' : '#7c3aed',
+            style={{ backgroundColor: unsubscribeState === 'done' ? '#a78bfa' : '#A582F7',
                      paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8,
                      opacity: unsubscribeState === 'sending' ? 0.6 : 1 }}
             accessibilityLabel={t('reader.unsubscribe') || 'Descadastrar'}
@@ -957,7 +957,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
       <View style={s.senderRow}>
         <View style={[
           s.senderAvatarRing,
-          { borderColor: (colors.primary || '#7C3AED') + '33', shadowColor: colors.primary || '#7C3AED' },
+          { borderColor: (colors.primary || '#A582F7') + '33', shadowColor: colors.primary || '#A582F7' },
         ]}>
           <AvatarCircle name={email.from_name || email.from} email={email.from} size={40} />
         </View>
@@ -1453,11 +1453,11 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             }}
           >
             {actionItemsLoading ? (
-              <Text style={{ color: '#7C3AED', fontWeight: '600', fontSize: 12 }}>...</Text>
+              <Text style={{ color: '#A582F7', fontWeight: '600', fontSize: 12 }}>...</Text>
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <IconSparkles size={12} color="#7C3AED" />
-                <Text style={{ color: '#7C3AED', fontWeight: '600', fontSize: 12 }}>Tarefas</Text>
+                <IconSparkles size={12} color="#A582F7" />
+                <Text style={{ color: '#A582F7', fontWeight: '600', fontSize: 12 }}>Tarefas</Text>
               </View>
             )}
           </TouchableOpacity>

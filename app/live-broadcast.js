@@ -4729,7 +4729,7 @@ export default function LiveBroadcastScreen() {
           activeOpacity={0.85}
           style={{
             position: 'absolute', top: insets.top + 100, right: 16,
-            backgroundColor: '#7C3AED', borderRadius: 16,
+            backgroundColor: '#A582F7', borderRadius: 16,
             paddingHorizontal: 12, paddingVertical: 8,
             flexDirection: 'row', alignItems: 'center', gap: 6,
             zIndex: 30,
@@ -4897,7 +4897,7 @@ export default function LiveBroadcastScreen() {
                 keyExtractor={(item) => item.email}
                 renderItem={({ item }) => (
                   <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' }}>
-                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#A582F7', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
                       <Text style={{ color: '#fff', fontWeight: '700' }}>{(item.name || '?').slice(0, 1).toUpperCase()}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
@@ -4965,14 +4965,14 @@ export default function LiveBroadcastScreen() {
                     style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' }}
                     activeOpacity={0.7}
                   >
-                    <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: '#7C3AED', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                    <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: '#A582F7', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
                       <Text style={{ color: '#fff', fontWeight: '700' }}>{(item.name || '?').slice(0, 1).toUpperCase()}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }} numberOfLines={1}>{item.name}</Text>
                       <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12 }} numberOfLines={1}>{item.email}</Text>
                     </View>
-                    <View style={{ width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: selected ? '#7C3AED' : 'rgba(255,255,255,0.3)', backgroundColor: selected ? '#7C3AED' : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+                    <View style={{ width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: selected ? '#A582F7' : 'rgba(255,255,255,0.3)', backgroundColor: selected ? '#A582F7' : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
                       {selected ? <IconCheck size={12} color="#fff" /> : null}
                     </View>
                   </TouchableOpacity>
@@ -5362,14 +5362,14 @@ const liveSheetStyles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomColor: 'rgba(255,255,255,0.06)', borderBottomWidth: 1 },
   rowLabel: { color: '#fff', fontSize: 15, fontWeight: '500' },
   toggle: { width: 42, height: 24, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.18)', padding: 2 },
-  toggleOn: { backgroundColor: '#7C3AED' },
+  toggleOn: { backgroundColor: '#A582F7' },
   knob: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff' },
   knobOn: { transform: [{ translateX: 18 }] },
-  closeBtn: { marginTop: 16, backgroundColor: '#7C3AED', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  closeBtn: { marginTop: 16, backgroundColor: '#A582F7', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   closeText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
   filterChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.07)', borderWidth: 1, borderColor: 'transparent' },
-  filterChipActive: { backgroundColor: 'rgba(124,58,237,0.32)', borderColor: '#7C3AED' },
+  filterChipActive: { backgroundColor: 'rgba(124,58,237,0.32)', borderColor: '#A582F7' },
   filterSwatch: { width: 14, height: 14, borderRadius: 7, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
   filterLabel: { color: 'rgba(255,255,255,0.85)', fontSize: 13 },
 });
@@ -6276,7 +6276,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: 22,
@@ -6309,7 +6309,7 @@ const styles = StyleSheet.create({
   },
   composerSendBtn: {
     width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     alignItems: 'center', justifyContent: 'center',
   },
   composerIconBtn: {
@@ -6441,7 +6441,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   endModalToggleOn: {
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
   },
   endModalToggleKnob: {
     width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff',
@@ -6944,13 +6944,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: '#7C3AED',
+    backgroundColor: '#A582F7',
     paddingVertical: 16,
     paddingHorizontal: 18,
     borderRadius: 16,
     marginTop: 12,
     marginHorizontal: 4,
-    shadowColor: '#7C3AED',
+    shadowColor: '#A582F7',
     shadowOpacity: 0.45,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },

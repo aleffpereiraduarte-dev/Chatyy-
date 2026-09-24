@@ -6,7 +6,7 @@ export const Colors = {
   // Why: primaryLight was a leftover blue (#dbeafe) from the old palette while
   // primary is purple. Harmonized to violet (#EDE9FE) so tinted backgrounds
   // (badges, chips, focus glows) finally match the brand identity.
-  primary: '#7C3AED',
+  primary: '#A582F7',
   primaryLight: '#EDE9FE',
   primaryDark: '#5B21B6',
   primaryContainer: '#EDE9FE',
@@ -49,13 +49,13 @@ export const Colors = {
 
   // Email states
   unreadBg: '#F5F3FF',
-  unreadAccent: '#7C3AED',
+  unreadAccent: '#A582F7',
   selectedBg: '#EDE9FE',
   starColor: '#f59e0b',
   starEmpty: '#d1d5db',
 
   // Compose — solid primary
-  composeBg: '#7C3AED',
+  composeBg: '#A582F7',
   composeText: '#ffffff',
 
   // Sidebar
@@ -66,10 +66,10 @@ export const Colors = {
 
   // Avatar
   avatarBg: '#A78BFA',
-  avatarColors: ['#7C3AED', '#16a34a', '#dc2626', '#f59e0b', '#A78BFA', '#8b5cf6', '#ea580c', '#0d9488'],
+  avatarColors: ['#A582F7', '#16a34a', '#dc2626', '#f59e0b', '#A78BFA', '#8b5cf6', '#ea580c', '#0d9488'],
 
   // Chat — Cosmic Purple (2026 refined)
-  chatPrimary: '#7C3AED',
+  chatPrimary: '#A582F7',
   chatBubbleOwn: '#EDE9FE',
   chatBubbleOwnBorder: 'rgba(124,58,237,0.08)',
   chatBubbleOther: '#FFFFFF',
@@ -87,10 +87,10 @@ export const Colors = {
   toastBg: '#1e293b',
   toastText: '#f8fafc',
   checkboxColor: '#64748b',
-  selectedCheckbox: '#7C3AED',
-  focusBorder: '#7C3AED',
+  selectedCheckbox: '#A582F7',
+  focusBorder: '#A582F7',
   bulkToolbarBg: '#F5F3FF',
-  gradientStart: '#7C3AED',
+  gradientStart: '#A582F7',
   gradientEnd: '#A78BFA',
   loginPanelBg: '#F5F3FF',
 
@@ -101,28 +101,28 @@ export const Colors = {
   secondary: '#10b981',
   secondaryLight: '#d1fae5',
   secondaryDark: '#059669',
-  tertiary: '#8b5cf6',
+  tertiary: '#A582F7',
   tertiaryLight: '#ede9fe',
-  tertiaryDark: '#7c3aed',
+  tertiaryDark: '#A582F7',
 
   // Brand colors
-  brandPrimary: '#7C3AED',
+  brandPrimary: '#A582F7',
   brandSecondary: '#10b981',
   brandAccent: '#f59e0b',
   brandDanger: '#ef4444',
 
   // Folder colors
-  folderInbox: '#7C3AED',
+  folderInbox: '#A582F7',
   folderSent: '#10b981',
   folderDrafts: '#f59e0b',
   folderTrash: '#ef4444',
-  folderSpam: '#8b5cf6',
+  folderSpam: '#A582F7',
   folderArchive: '#6b7280',
   folderFlagged: '#f59e0b',
   folderSnoozed: '#6366f1',
 
   // Storage gradient
-  storageGradientStart: '#7C3AED',
+  storageGradientStart: '#A582F7',
   storageGradientMid: '#A78BFA',
   storageGradientEnd: '#ec4899',
 
@@ -136,7 +136,7 @@ export const Colors = {
   meetBtnBg: 'rgba(255, 255, 255, 0.12)',
   meetBtnActive: '#dc2626',
   meetEndCall: '#dc2626',
-  meetScreenShare: '#7C3AED',
+  meetScreenShare: '#A582F7',
   meetHandRaised: '#f59e0b',
 
   // Connection status
@@ -154,14 +154,14 @@ export const Colors = {
   authCardShadow: 'rgba(0, 0, 0, 0.08)',
   authInputBg: 'transparent',
   authInputBorder: '#dadce0',
-  authInputFocusBorder: '#7C3AED',
+  authInputFocusBorder: '#A582F7',
   authInputFocusGlow: 'rgba(124, 58, 237, 0.08)',
   authLabelColor: '#5f6368',
-  authLabelFloatColor: '#7C3AED',
+  authLabelFloatColor: '#A582F7',
   authDividerColor: '#e2e8f0',
   authFooterText: '#94a3b8',
   authFooterLink: '#64748b',
-  authBtnGradientStart: '#7C3AED',
+  authBtnGradientStart: '#A582F7',
   authBtnGradientEnd: '#5B21B6',
   authSecondaryBtn: 'rgba(124, 58, 237, 0.04)',
   authSecondaryBtnBorder: '#EDE9FE',
@@ -169,7 +169,7 @@ export const Colors = {
   authAccentGlow: 'rgba(124, 58, 237, 0.08)',
   authAccentLine: 'rgba(124, 58, 237, 0.15)',
   authStepDoneBg: '#10b981',
-  authStepActiveBg: '#7C3AED',
+  authStepActiveBg: '#A582F7',
   authStepPendingBg: '#cbd5e1',
   authStepConnector: '#e2e8f0',
   authStepConnectorDone: '#10b981',
@@ -177,7 +177,7 @@ export const Colors = {
   authChipBg: '#F5F3FF',
   authChipBorder: '#DDD6FE',
   authLeftPanelBg: '#F5F3FF',
-  authLeftPanelAccent: '#7C3AED',
+  authLeftPanelAccent: '#A582F7',
   authGridColor: 'rgba(124, 58, 237, 0.04)',
 };
 
@@ -342,7 +342,7 @@ export const DarkColors = {
   authFooterText: '#475569',
   authFooterLink: '#64748b',
   authBtnGradientStart: '#A78BFA',
-  authBtnGradientEnd: '#7C3AED',
+  authBtnGradientEnd: '#A582F7',
   authSecondaryBtn: 'rgba(167, 139, 250, 0.06)',
   authSecondaryBtnBorder: 'rgba(167, 139, 250, 0.2)',
   authSecondaryBtnHover: 'rgba(167, 139, 250, 0.12)',
@@ -490,7 +490,7 @@ export const Shadow = {
   },
   // Premium floating shadow for FABs and elevated elements
   float: {
-    shadowColor: '#7C3AED',
+    shadowColor: '#A582F7',
     shadowOffset: { width: 0, height: 8 },
     shadowOpacity: 0.18,
     shadowRadius: 20,
@@ -522,7 +522,7 @@ export const Shadow = {
   },
   // Premium purple glow for send/CTA buttons
   purpleGlow: {
-    shadowColor: '#7C3AED',
+    shadowColor: '#A582F7',
     shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.35,
     shadowRadius: 16,
@@ -607,33 +607,33 @@ export const GlassCard = {
 
 // Gradient presets (2026 refined)
 export const Gradients = {
-  primary: ['#7C3AED', '#A78BFA'],
+  primary: ['#A582F7', '#A78BFA'],
   primarySoft: ['#EDE9FE', '#DDD6FE'],
-  accent: ['#A78BFA', '#8b5cf6'],
+  accent: ['#A78BFA', '#A582F7'],
   success: ['#10b981', '#34d399'],
   danger: ['#ef4444', '#f87171'],
   warning: ['#f59e0b', '#fbbf24'],
   sunset: ['#f59e0b', '#ef4444'],
   ocean: ['#0ea5e9', '#06b6d4'],
-  purple: ['#8b5cf6', '#ec4899'],
+  purple: ['#A582F7', '#ec4899'],
   dark: ['#0f172a', '#1e293b'],
   star: ['#f59e0b', '#fbbf24'],
-  unreadDot: ['#7C3AED', '#A78BFA'],
+  unreadDot: ['#A582F7', '#A78BFA'],
   statusRing: ['#f09433', '#e6683c', '#dc2743', '#cc2366', '#bc1888', '#8a3ab9', '#4c68d7', '#6db3f2'],
   gold: ['#d4a744', '#f5d780', '#d4a744'],
-  chatSend: ['#7C3AED', '#6D28D9'],
-  primaryButton: ['#7C3AED', '#5B21B6'],
+  chatSend: ['#A582F7', '#6D28D9'],
+  primaryButton: ['#A582F7', '#5B21B6'],
   // Premium header — deeper, richer purple
-  header: ['#5B21B6', '#7C3AED'],
+  header: ['#5B21B6', '#A582F7'],
   headerDark: ['#1a0a2e', '#2e1065'],
   // Premium tab indicator
-  tabIndicator: ['#7C3AED', '#A78BFA'],
+  tabIndicator: ['#A582F7', '#A78BFA'],
   // Chat bubble glow (own)
   bubbleGlow: ['rgba(124,58,237,0.15)', 'rgba(124,58,237,0)'],
   // Modern send button with depth
-  sendButton: ['#8B5CF6', '#7C3AED', '#6D28D9'],
+  sendButton: ['#A582F7', '#A582F7', '#6D28D9'],
   // Premium badge
-  premiumBadge: ['#7C3AED', '#A855F7'],
+  premiumBadge: ['#A582F7', '#A855F7'],
 };
 
 // Animation timing constants

@@ -154,7 +154,7 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const WS_URL = Platform.OS === 'web' ? 'wss://chatyy.com.br/ws' : 'wss://ws.chatyy.com.br/ws';
 const MAX_HEARTS = 20;
 const LIVE_RED = '#dc2626';
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 // Cloudflare Stream HLS manifests can take 20-60s after the host hits "go live"
 // for the first segment to land — manifest 404 / empty playlist during that
 // window is NOT fatal, just "warm-up in progress". We retry quietly until the

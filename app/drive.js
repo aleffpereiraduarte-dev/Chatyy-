@@ -100,7 +100,7 @@ function getFileIcon(iconType, size, color) {
     case 'video': return <IconFilm size={size} color={color} />;
     case 'audio': return <IconMusic size={size} color={color} />;
     case 'pdf': return <IconFileText size={size} color="#dc2626" />;
-    case 'document': return <IconFileText size={size} color="#7C3AED" />;
+    case 'document': return <IconFileText size={size} color="#A582F7" />;
     case 'spreadsheet': return <IconFileText size={size} color="#16a34a" />;
     case 'presentation': return <IconFileText size={size} color="#d97706" />;
     case 'archive': return <IconArchive size={size} color={color} />;
@@ -132,11 +132,11 @@ function getFileTypeBadge(item) {
   if (!ext || item.is_folder) return null;
   const badges = {
     pdf: { label: 'PDF', bg: '#dc2626' },
-    doc: { label: 'DOC', bg: '#7C3AED' }, docx: { label: 'DOC', bg: '#7C3AED' },
+    doc: { label: 'DOC', bg: '#A582F7' }, docx: { label: 'DOC', bg: '#A582F7' },
     xls: { label: 'XLS', bg: '#16a34a' }, xlsx: { label: 'XLS', bg: '#16a34a' }, csv: { label: 'CSV', bg: '#16a34a' },
     ppt: { label: 'PPT', bg: '#d97706' }, pptx: { label: 'PPT', bg: '#d97706' },
     zip: { label: 'ZIP', bg: '#6b7280' }, rar: { label: 'RAR', bg: '#6b7280' }, '7z': { label: '7Z', bg: '#6b7280' },
-    mp3: { label: 'MP3', bg: '#7C3AED' }, wav: { label: 'WAV', bg: '#7C3AED' }, ogg: { label: 'OGG', bg: '#7C3AED' },
+    mp3: { label: 'MP3', bg: '#A582F7' }, wav: { label: 'WAV', bg: '#A582F7' }, ogg: { label: 'OGG', bg: '#A582F7' },
     mp4: { label: 'MP4', bg: '#db2777' }, mov: { label: 'MOV', bg: '#db2777' }, avi: { label: 'AVI', bg: '#db2777' },
     png: { label: 'PNG', bg: '#0891b2' }, jpg: { label: 'JPG', bg: '#0891b2' }, jpeg: { label: 'JPG', bg: '#0891b2' },
     gif: { label: 'GIF', bg: '#0891b2' }, webp: { label: 'WEBP', bg: '#0891b2' }, svg: { label: 'SVG', bg: '#0891b2' },
@@ -1117,7 +1117,7 @@ function DriveScreenInner() {
   const storageUsedBytes = storageInfo?.total_used || storageInfo?.used_bytes || 0;
   const storageTotalBytes = storageInfo?.quota || storageInfo?.plan_quota || (STORAGE_LIMIT_GB * 1024 * 1024 * 1024);
   const storagePercent = Math.min((storageUsedBytes / storageTotalBytes) * 100, 100);
-  const storageColor = storagePercent > 90 ? '#dc2626' : storagePercent > 70 ? '#f59e0b' : '#7C3AED';
+  const storageColor = storagePercent > 90 ? '#dc2626' : storagePercent > 70 ? '#f59e0b' : '#A582F7';
 
   // ============================================================
   // RENDER HELPERS
@@ -1130,10 +1130,10 @@ function DriveScreenInner() {
     const chatBytes = storageInfo?.chat_used || 0;
     const feedBytes = storageInfo?.feed_used || 0;
     const segments = [
-      { label: 'Cloud', bytes: driveBytes, color: '#7C3AED' },
+      { label: 'Cloud', bytes: driveBytes, color: '#A582F7' },
       { label: 'Email', bytes: emailBytes, color: '#16a34a' },
       { label: 'Chat', bytes: chatBytes, color: '#f59e0b' },
-      { label: 'Feed', bytes: feedBytes, color: '#8b5cf6' },
+      { label: 'Feed', bytes: feedBytes, color: '#A582F7' },
     ].filter(s => s.bytes > 0);
 
     return (
@@ -1219,7 +1219,7 @@ function DriveScreenInner() {
                 <TouchableOpacity
                   style={[
                     { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-                    isBcDropTarget && { backgroundColor: '#7C3AED' },
+                    isBcDropTarget && { backgroundColor: '#A582F7' },
                   ]}
                   onPress={() => navigateToBreadcrumb(i)}
                 >
@@ -1275,7 +1275,7 @@ function DriveScreenInner() {
         e.dataTransfer.effectAllowed = 'move';
         setDraggingItem(item);
         const ghost = document.createElement('div');
-        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#7C3AED;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
+        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#A582F7;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
         ghost.textContent = dragIds.length > 1 ? `${dragIds.length} itens` : item.name;
         document.body.appendChild(ghost);
         e.dataTransfer.setDragImage(ghost, 0, 0);
@@ -1306,7 +1306,7 @@ function DriveScreenInner() {
         style={[
           styles.listItem,
           { backgroundColor: isSelected ? (isDark ? colors.selectedBg : '#EDE9FE') : 'transparent', borderBottomColor: colors.border },
-          isDragTarget && { backgroundColor: isDark ? '#1e3a5f' : '#DDD6FE', borderColor: '#7C3AED', borderWidth: 2, borderRadius: 8 },
+          isDragTarget && { backgroundColor: isDark ? '#1e3a5f' : '#DDD6FE', borderColor: '#A582F7', borderWidth: 2, borderRadius: 8 },
           isFocused && !isSelected && { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' },
         ]}
         onPress={(e) => { setFocusedIndex(index); handleItemPress(item, e); }}
@@ -1371,7 +1371,7 @@ function DriveScreenInner() {
         e.dataTransfer.effectAllowed = 'move';
         setDraggingItem(item);
         const ghost = document.createElement('div');
-        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#7C3AED;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
+        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#A582F7;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
         ghost.textContent = dragIds.length > 1 ? `${dragIds.length} itens` : item.name;
         document.body.appendChild(ghost);
         e.dataTransfer.setDragImage(ghost, 0, 0);
@@ -1419,7 +1419,7 @@ function DriveScreenInner() {
               ...(isDark ? { backgroundColor: colors.surfaceVariant } : { backgroundColor: '#f8fafc' }),
               transform: [{ translateY: -1 }],
             },
-            isDragTarget && { borderColor: '#7C3AED', borderWidth: 2, backgroundColor: isDark ? '#1e3a5f' : '#DDD6FE' },
+            isDragTarget && { borderColor: '#A582F7', borderWidth: 2, backgroundColor: isDark ? '#1e3a5f' : '#DDD6FE' },
             isFocused && !isSelected && !isDragTarget && { borderColor: colors.primary, borderWidth: 2 },
             Platform.OS === 'web' && { transition: 'all 0.15s ease' },
           ]}
@@ -1638,7 +1638,7 @@ function DriveScreenInner() {
           } catch {}
         },
       },
-      canPreview && { label: t('drive.preview'), icon: <IconEye size={18} color={colors.primary || '#7C3AED'} />, onPress: () => {
+      canPreview && { label: t('drive.preview'), icon: <IconEye size={18} color={colors.primary || '#A582F7'} />, onPress: () => {
         setContextMenu(null);
         // Always use the in-app FileViewer modal — never open preview.html in a new tab
         setPreviewFile(item);
@@ -1844,10 +1844,10 @@ function DriveScreenInner() {
     const freeBytes = storageTotalBytes - storageUsedBytes;
 
     const segments = [
-      { label: 'Cloud', bytes: driveBytes, color: '#7C3AED' },
+      { label: 'Cloud', bytes: driveBytes, color: '#A582F7' },
       { label: 'Email', bytes: emailBytes, color: '#16a34a' },
       { label: 'Chat', bytes: chatBytes, color: '#f59e0b' },
-      { label: 'Feed', bytes: feedBytes, color: '#8b5cf6' },
+      { label: 'Feed', bytes: feedBytes, color: '#A582F7' },
     ].filter(s => s.bytes > 0);
 
     return (
@@ -2040,7 +2040,7 @@ function DriveScreenInner() {
           <View style={[styles.fabMenu, { backgroundColor: colors.surface, borderColor: colors.border, ...Shadow.xl }]}>
             <TouchableOpacity style={styles.fabMenuItem} onPress={handleUploadFile}>
               <View style={[styles.fabMenuIcon, { backgroundColor: '#EDE9FE' }]}>
-                <IconUpload size={18} color="#7C3AED" />
+                <IconUpload size={18} color="#A582F7" />
               </View>
               <Text style={[styles.fabMenuText, { color: colors.text }]}>{t('drive.uploadFile')}</Text>
             </TouchableOpacity>
@@ -2505,7 +2505,7 @@ function DriveScreenInner() {
             return (
               <View style={{
                 position: 'absolute', left: mx, top: my, width: mw, height: mh,
-                backgroundColor: 'rgba(124, 58, 237, 0.15)', borderWidth: 1, borderColor: '#7C3AED',
+                backgroundColor: 'rgba(124, 58, 237, 0.15)', borderWidth: 1, borderColor: '#A582F7',
                 borderRadius: 2, pointerEvents: 'none', zIndex: 999,
               }} />
             );

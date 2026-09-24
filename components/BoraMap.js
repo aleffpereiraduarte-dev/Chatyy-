@@ -88,7 +88,7 @@ export function boraStaticMapUrl(lat, lng, zoom = 15, w = 280, h = 160, retina =
  *
  * @param {{lat:number,lng:number,zoom?:number,interactive?:boolean,markerColor?:string}} opts
  */
-export function boraMapHtml({ lat, lng, zoom = 15, interactive = true, markerColor = '#7C3AED' } = {}) {
+export function boraMapHtml({ lat, lng, zoom = 15, interactive = true, markerColor = '#A582F7' } = {}) {
   const la = Number(lat) || 0;
   const lo = Number(lng) || 0;
   const styleUrl = boraStyleUrl(lo, la);

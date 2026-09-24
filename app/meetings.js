@@ -24,7 +24,7 @@ import {
 } from '../components/Icons';
 
 const MEET_BASE = 'https://chatyy.com.br/meet/';
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 const ACCENT_DARK = '#6D28D9';
 const AMBER = '#F59E0B';
 const LIVE_RED = '#EF4444';
@@ -450,15 +450,15 @@ function MeetingsScreenInner() {
     }
   };
 
-  const handleJoin = (meeting) => {
+  const handleJoin = useCallback((meeting) => {
     if (meeting.room_id) router.push('/meet/' + meeting.room_id);
-  };
+  }, [router]);
 
-  const handleCardPress = (meeting) => {
+  const handleCardPress = useCallback((meeting) => {
     router.push(`/meeting-detail?id=${meeting.id}&room_id=${meeting.room_id}`);
-  };
+  }, [router]);
 
-  const handleCopyLink = async (meeting) => {
+  const handleCopyLink = useCallback(async (meeting) => {
     const url = MEET_BASE + meeting.room_id;
     try {
       if (Clipboard?.setStringAsync) {
@@ -470,7 +470,7 @@ function MeetingsScreenInner() {
       if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
       copiedTimerRef.current = setTimeout(() => setCopiedId(null), 2000);
     } catch {}
-  };
+  }, [router]);
 
   // Counts pulled from existing state. We have to compute against the live list:
   //  - "today" → not past and isToday
@@ -522,7 +522,7 @@ function MeetingsScreenInner() {
     };
   }, [meetings, tab, apiTab]);
 
-  const renderItem = ({ item, _highlightAmber }) => (
+  const renderItem = useCallback(({ item, _highlightAmber }) => (
     <MeetingCard
       meeting={item}
       colors={colors}
@@ -533,7 +533,7 @@ function MeetingsScreenInner() {
       onJoin={() => handleJoin(item)}
       onCopy={() => handleCopyLink(item)}
     />
-  );
+  ), [colors, isDark, t, handleCardPress, handleJoin, handleCopyLink]);
 
   // Section header pill
   const SectionHeader = ({ label, color, count }) => (
@@ -716,7 +716,7 @@ function MeetingsScreenInner() {
         <FlatList
           data={otherMeetings}
           keyExtractor={(item) => String(item.id)}
-          renderItem={({ item }) => renderItem({ item })}
+          renderItem={renderItem}
           ListHeaderComponent={ListHeader}
           ListEmptyComponent={otherMeetings.length === 0 && !showHero && !showSoon ? renderEmpty : null}
           contentContainerStyle={[styles.list, (otherMeetings.length === 0 && !showHero && !showSoon) && styles.listEmpty]}

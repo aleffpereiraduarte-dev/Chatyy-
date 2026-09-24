@@ -7,7 +7,7 @@ import AvatarCircle from './AvatarCircle';
 import { IconSend } from './Icons';
 
 const MAX_VISIBLE = 100;
-const ACCENT = '#7C3AED';
+const ACCENT = '#A582F7';
 
 // Generate consistent color from name string
 function nameColor(name) {

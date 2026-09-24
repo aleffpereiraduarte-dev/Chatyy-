@@ -49,7 +49,7 @@ const EYE_TOP_FRAC = 0.39; // top of eye relative to avatar height
 // a clean "closed eyes" look. When scaleY=0.05 the eyes are essentially
 // open (we keep a 0.05 floor so the layer never disappears entirely —
 // Android occasionally relayouts a 0-height view with a flash).
-const EYELID_COLOR = '#7C3AED';
+const EYELID_COLOR = '#A582F7';
 
 // Random delay between 4s and 8s. Phase-offsetting blinks so two visible
 // avatars don't blink in lockstep.
@@ -114,7 +114,7 @@ export default function ChatyyOneAvatar({ size = 48, style, blink = true }) {
           height: size,
           borderRadius: size / 2,
           overflow: 'hidden',
-          backgroundColor: '#7C3AED',
+          backgroundColor: '#A582F7',
         },
         style,
       ]}

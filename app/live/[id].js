@@ -29,7 +29,7 @@ export default function LiveDeepLinkEntry() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }}>
-      <ActivityIndicator size="large" color="#7C3AED" />
+      <ActivityIndicator size="large" color="#A582F7" />
     </View>
   );
 }

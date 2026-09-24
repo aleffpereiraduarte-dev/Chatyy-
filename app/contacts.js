@@ -1134,7 +1134,7 @@ function ContactsScreenInner() {
     <View style={[s.sectionHeader, { backgroundColor: colors.background }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         {section.key === 'on_chatyy' && (
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#7C3AED' }} />
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#A582F7' }} />
         )}
         <Text style={[s.sectionHeaderText, { color: section.key === 'on_chatyy' ? '#16a34a' : colors.textTertiary, fontWeight: '700' }]}>
           {section.title} ({section.data.length})
@@ -1471,6 +1471,7 @@ function ContactsScreenInner() {
           keyExtractor={myKeyExtractor}
           renderItem={renderMyContactItem}
           renderSectionHeader={renderSectionHeader}
+          removeClippedSubviews={Platform.OS !== 'web'}
           stickySectionHeadersEnabled
           ListHeaderComponent={
             <>
@@ -1517,11 +1518,11 @@ function ContactsScreenInner() {
                 {/* Invite button at bottom */}
                 <TouchableOpacity
                   onPress={handleShareInvite}
-                  style={[s.inviteBtn, { borderColor: '#7C3AED' }]}
+                  style={[s.inviteBtn, { borderColor: '#A582F7' }]}
                   activeOpacity={0.7}
                 >
-                  <IconPlus size={14} color="#7C3AED" />
-                  <Text style={[s.inviteBtnText, { color: '#7C3AED' }]}>{t('contacts.shareInviteLink') || 'Share invite link'}</Text>
+                  <IconPlus size={14} color="#A582F7" />
+                  <Text style={[s.inviteBtnText, { color: '#A582F7' }]}>{t('contacts.shareInviteLink') || 'Share invite link'}</Text>
                 </TouchableOpacity>
               </>
             }
@@ -2017,7 +2018,7 @@ const s = StyleSheet.create({
   saveBtn: {
     borderRadius: 24, paddingVertical: 14, alignItems: 'center', marginTop: Spacing.md,
     ...Platform.select({
-      web: { background: 'linear-gradient(135deg, #7C3AED 0%, #A78BFA 100%)', boxShadow: '0 4px 14px rgba(37,99,235,0.3)', cursor: 'pointer' },
+      web: { background: 'linear-gradient(135deg, #A582F7 0%, #A78BFA 100%)', boxShadow: '0 4px 14px rgba(37,99,235,0.3)', cursor: 'pointer' },
       default: {},
     }),
   },
