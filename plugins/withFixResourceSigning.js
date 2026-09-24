@@ -27,7 +27,14 @@ const INJECT_BODY = `
         target.build_configurations.each do |config|
           config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
           config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+          config.build_settings['CODE_SIGN_IDENTITY'] = ''
           config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''
+          # [FIX 2026-08-09 EAS Build cloud] Xcode 14+ no EAS ainda exige um TEAM
+          # nos resource bundles mesmo com CODE_SIGNING_ALLOWED=NO em certos pods.
+          # Setar o DEVELOPMENT_TEAM satisfaz o requisito literal do erro
+          # XCODE_RESOURCE_BUNDLE_CODE_SIGNING_ERROR. Os builds antigos passavam
+          # por xcodebuild direto (Mac/GitHub) e não batiam nisso.
+          config.build_settings['DEVELOPMENT_TEAM'] = 'XN9XN27QCE'
         end
       end
     end
