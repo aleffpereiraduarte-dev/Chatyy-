@@ -10,6 +10,14 @@ import {
 // Reads messages directly from SQLite via expo-chat-cache, on the same thread
 // that lays out the cells. No JS bridge in the scroll path = no flicker.
 import { NativeModules } from 'react-native';
+// [2026-09-24 nível-WhatsApp] Motor de lista NATIVO na lista de MENSAGENS.
+// FlashList v2 (New-Arch) reciclando as células no lado nativo — o mesmo motor
+// já provado no ChatListTab/email/feed. Suporta `inverted` +
+// `maintainVisibleContentPosition`. As props só-de-FlatList (windowSize,
+// maxToRenderPerBatch, updateCellsBatchingPeriod, removeClippedSubviews,
+// initialNumToRender, onScrollToIndexFailed) o FlashList ignora sem quebrar.
+// Se o scroll invertido regredir → trocar `<FlashList` de volta por `<FlatList`.
+const { FlashList: _MsgFlashList } = require('@shopify/flash-list');
 // Native chat view (iOS Swift UICollectionView) — handles all message
 // rendering on iOS for 60fps scroll + WhatsApp-grade polish. Includes
 // inline interactive MKMapView for location, real cells for poll/meetup/
@@ -25600,7 +25608,7 @@ function ChatConversationInner() {
             )}
           </View>
         )}
-        <FlatList
+        <_MsgFlashList
           ref={flatListRef}
           data={flatListData}
           inverted
