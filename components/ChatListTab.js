@@ -7645,7 +7645,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
                       backgroundColor: isDark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)',
                       marginBottom: 3,
                     }}>
-                      <Image source={{ uri: thumbUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                      <CachedImage source={{ uri: thumbUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
                       {(m.type === 'video') && (
                         <View style={{
                           position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
