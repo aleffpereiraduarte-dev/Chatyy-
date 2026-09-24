@@ -1,7 +1,13 @@
 import { useRef, useEffect, useMemo, useCallback } from 'react';
 import { View, FlatList, Text, TouchableOpacity, ActivityIndicator, RefreshControl, StyleSheet, Platform, Alert } from 'react-native';
-// FlatList only (FlashList crashes iOS SDK55)
-const ListComponent = FlatList;
+// [2026-09-24 nível-WhatsApp] Motor de lista NATIVO (FlashList v2). O v1 travava
+// no iOS SDK55 (por isso as listas voltaram pro FlatList); a v2 é New-Arch-native
+// (newArchEnabled=true) e já roda estável no ChatListTab. As props só-de-FlatList
+// abaixo (windowSize/maxToRenderPerBatch/removeClippedSubviews/initialNumToRender)
+// o FlashList ignora sem quebrar. estimatedItemSize já definido. Se regredir/travar
+// → voltar `const ListComponent = FlatList;`.
+const { FlashList } = require('@shopify/flash-list');
+const ListComponent = FlashList;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme, DENSITY_CONFIG } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';

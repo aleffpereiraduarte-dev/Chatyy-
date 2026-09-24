@@ -4,8 +4,11 @@ import {
   ActivityIndicator, Platform, Dimensions, ScrollView, Animated, TextInput,
   Image, Modal,
 } from 'react-native';
-// FlatList only (FlashList crashes iOS)
-const ListComponent = FlatList;
+// [2026-09-24 nível-WhatsApp] Motor de lista NATIVO (FlashList v2, New-Arch). O v1
+// travava no iOS SDK55; a v2 auto-mede altura variável (posts do feed) e já roda
+// estável no ChatListTab. Se regredir/travar → voltar `const ListComponent = FlatList;`.
+const { FlashList } = require('@shopify/flash-list');
+const ListComponent = FlashList;
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLocalSearchParams } from 'expo-router';
 import AvatarCircle, { bumpAvatarCache } from './AvatarCircle';
