@@ -22,19 +22,23 @@ const HOOK_MARKER = '# --- withFixResourceSigning (merged) ---';
 // since we insert inside the existing `post_install do |installer|` block).
 const INJECT_BODY = `
     ${HOOK_MARKER}
-    installer.pods_project.targets.each do |target|
-      if target.respond_to?(:product_type) && target.product_type == 'com.apple.product-type.bundle'
-        target.build_configurations.each do |config|
-          config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
-          config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
-          config.build_settings['CODE_SIGN_IDENTITY'] = ''
-          config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''
-          # [FIX 2026-08-09 EAS Build cloud] Xcode 14+ no EAS ainda exige um TEAM
-          # nos resource bundles mesmo com CODE_SIGNING_ALLOWED=NO em certos pods.
-          # Setar o DEVELOPMENT_TEAM satisfaz o requisito literal do erro
-          # XCODE_RESOURCE_BUNDLE_CODE_SIGNING_ERROR. Os builds antigos passavam
-          # por xcodebuild direto (Mac/GitHub) e não batiam nisso.
-          config.build_settings['DEVELOPMENT_TEAM'] = 'XN9XN27QCE'
+    # [FIX 2026-08-09] O CocoaPods do SDK 55 usa generate_multiple_pod_projects,
+    # então os resource bundles NÃO estão em installer.pods_project.targets (esse
+    # fica quase vazio) e sim em installer.generated_projects. O loop antigo só
+    # olhava pods_project → não pegava o bundle que quebrava o build no EAS
+    # (XCODE_RESOURCE_BUNDLE_CODE_SIGNING_ERROR). Agora cobrimos TODOS os projetos.
+    __fix_projs = [installer.pods_project].compact
+    __fix_projs += installer.generated_projects if installer.respond_to?(:generated_projects)
+    __fix_projs.each do |proj|
+      proj.targets.each do |target|
+        if target.respond_to?(:product_type) && target.product_type == 'com.apple.product-type.bundle'
+          target.build_configurations.each do |config|
+            config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
+            config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
+            config.build_settings['CODE_SIGN_IDENTITY'] = ''
+            config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = ''
+            config.build_settings['DEVELOPMENT_TEAM'] = 'XN9XN27QCE'
+          end
         end
       end
     end
