@@ -25608,7 +25608,7 @@ function ChatConversationInner() {
             )}
           </View>
         )}
-        <_MsgFlashList
+        <FlatList
           ref={flatListRef}
           data={flatListData}
           inverted
