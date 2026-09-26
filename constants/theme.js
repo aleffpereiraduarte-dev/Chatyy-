@@ -190,14 +190,15 @@ export const DarkColors = {
   onPrimary: '#1F1147',
   onPrimaryContainer: '#DDD6FE',
 
-  // Background / Surface — true OLED black with layered depth
-  background: '#000000',
-  surface: '#0d0d0d',
-  surfaceVariant: '#1a1a1a',
-  surfaceHover: '#141414',
-  surfaceElevated: '#1a1a1a',
-  surfaceGlass: 'rgba(13, 13, 13, 0.80)',
-  surfaceGlassBorder: 'rgba(255, 255, 255, 0.06)',
+  // Background / Surface — 2026: near-black com viés violeta + elevação em camadas
+  // (o #000 chapado achatava a hierarquia; camadas com tinta roxa dão profundidade).
+  background: '#08070d',
+  surface: '#141221',
+  surfaceVariant: '#1c1930',
+  surfaceHover: '#1a1728',
+  surfaceElevated: '#1c1930',
+  surfaceGlass: 'rgba(20, 18, 33, 0.78)',
+  surfaceGlassBorder: 'rgba(255, 255, 255, 0.08)',
 
   // Header dark
   headerBg: 'rgba(13, 13, 13, 0.97)',
@@ -248,15 +249,15 @@ export const DarkColors = {
   avatarBg: '#A78BFA',
   avatarColors: ['#A78BFA', '#4ade80', '#f87171', '#fbbf24', '#C4B5FD', '#c084fc', '#fb923c', '#2dd4bf'],
 
-  // Chat — Cosmic Purple Dark (2026 refined)
+  // Chat — Cosmic Purple Dark (2026: bolhas matte, tail-less, sem glow)
   chatPrimary: '#A78BFA',
-  chatBubbleOwn: '#4C1D95',
-  chatBubbleOwnBorder: 'rgba(167,139,250,0.12)',
-  chatBubbleOther: '#1E1A2E',
-  chatBubbleOtherBorder: 'rgba(255,255,255,0.04)',
-  chatBackground: '#0E0A18',
-  chatInputBg: '#1a1625',
-  chatInputBorder: 'rgba(255,255,255,0.06)',
+  chatBubbleOwn: '#2b1d59',
+  chatBubbleOwnBorder: 'rgba(158,123,255,0.30)',
+  chatBubbleOther: '#1c1930',
+  chatBubbleOtherBorder: 'rgba(255,255,255,0.08)',
+  chatBackground: '#0a0812',
+  chatInputBg: '#141221',
+  chatInputBorder: 'rgba(255,255,255,0.08)',
 
   // Overlay
   overlay: 'rgba(0, 0, 0, 0.6)',
@@ -377,8 +378,8 @@ export const Spacing = {
 // Celular menor → fontes proporcionalmente menores (cabem sem cortar/quebrar);
 // celular grande/tablet → um tiquinho maiores. Web fica em 1 (sem mudança).
 export const FontSize = {
-  xs: scaleSize(11),
-  sm: scaleSize(12),
+  xs: scaleSize(12),
+  sm: scaleSize(13),
   md: scaleSize(13),
   base: scaleSize(14),
   lg: scaleSize(15),
@@ -423,13 +424,13 @@ export const Motion = {
 // ── Chat bubble system ────────────────────────────────────────────────
 // WhatsApp-style geometry, pulled out so every bubble in the app matches.
 export const ChatBubble = {
-  radius: 14,        // standard bubble corner
-  tailRadius: 4,     // pointy corner (the one nearest the sender)
-  gap: 2,            // between consecutive messages from same sender
+  radius: 20,        // 2026: cantos arredondados uniformes
+  tailRadius: 20,    // tail-less (sem canto pontudo) — visual matte/flat
+  gap: 3,            // between consecutive messages from same sender
   gapGroup: 8,       // between speaker changes
-  paddingX: 12,
-  paddingY: 8,
-  maxWidth: '78%',   // never consume full row width
+  paddingX: 13,
+  paddingY: 9,
+  maxWidth: '80%',
 };
 
 // ── Haptic helper — never throws on web, single import point ──────────
@@ -488,20 +489,21 @@ export const Shadow = {
     shadowRadius: 12,
     elevation: 6,
   },
-  // Premium floating shadow for FABs and elevated elements
+  // 2026: elevação neutra suave (era glow roxo pesado 0.18). Reservamos o brilho
+  // de marca só pro CTA principal (purpleGlow), o resto usa profundidade discreta.
   float: {
-    shadowColor: '#A582F7',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 20,
+    shadowColor: '#0f0a1f',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.28,
+    shadowRadius: 22,
     elevation: 8,
   },
-  // Soft inner glow effect
+  // Soft inner glow effect (bem sutil agora)
   glow: {
     shadowColor: '#A78BFA',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
+    shadowOpacity: 0.08,
+    shadowRadius: 14,
     elevation: 0,
   },
   // Premium card hover lift
@@ -520,21 +522,21 @@ export const Shadow = {
     shadowRadius: 6,
     elevation: 2,
   },
-  // Premium purple glow for send/CTA buttons
+  // O ÚNICO brilho de marca — send/CTA principal (era 0.35 neon → 0.20 elegante)
   purpleGlow: {
-    shadowColor: '#A582F7',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.35,
-    shadowRadius: 16,
+    shadowColor: '#6d28d9',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.20,
+    shadowRadius: 18,
     elevation: 8,
   },
-  // Soft bubble shadow
+  // 2026: bolhas matte — sombra por-bolha quase nula (a borda dá a separação)
   bubble: {
     shadowColor: '#0f172a',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
-    elevation: 1,
+    shadowOpacity: 0.02,
+    shadowRadius: 2,
+    elevation: 0,
   },
   // Header shadow — subtle depth
   header: {
@@ -549,7 +551,7 @@ export const Shadow = {
 // Glassmorphism presets for dark mode surfaces
 export const Glass = {
   surface: {
-    backgroundColor: 'rgba(13, 13, 13, 0.80)',
+    backgroundColor: 'rgba(20, 18, 33, 0.78)',
     ...(Platform.OS === 'web' ? {
       backdropFilter: 'blur(24px) saturate(200%)',
       WebkitBackdropFilter: 'blur(24px) saturate(200%)',
