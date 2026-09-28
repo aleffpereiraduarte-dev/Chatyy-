@@ -25,11 +25,16 @@ const CONV_KEY = 'chat_convs_v2';
 const INDEX_KEY = 'chat_index_v2';
 const MIGRATION_FLAG = 'chat_migrate_v2_done';
 
-const MAX_MSGS_PER_CONV = 200;       // persisted cap (bumped from 50 — LRU evicts under 5MB budget)
-const MAX_MEMORY_MSGS = 500;         // in-memory scroll window (bumped from 200)
+// [2026-09-28] Bump grande p/ o celular guardar MUITO mais localmente, mais perto
+// do WhatsApp (histórico offline). Antes: 200 msgs/conv, teto 5MB. Agora: 1500
+// msgs/conv, teto 40MB. Assim rolar pra cima raramente rebusca do servidor — abre
+// tudo instantâneo do disco. (Pra histórico infinito 100% igual WhatsApp o ideal é
+// SQLite local nativo — projeto maior; isto já cobre a esmagadora maioria dos casos.)
+const MAX_MSGS_PER_CONV = 1500;      // persisted cap por conversa (era 200)
+const MAX_MEMORY_MSGS = 1000;        // in-memory scroll window (era 500)
 const FLUSH_DEBOUNCE_MS = 500;
-const TOTAL_BYTE_BUDGET = 5 * 1024 * 1024;  // 5 MB (unchanged — LRU handles eviction)
-const EVICT_DOWN_TO = 4.5 * 1024 * 1024;    // hysteresis
+const TOTAL_BYTE_BUDGET = 40 * 1024 * 1024;  // 40 MB (era 5MB — LRU ainda protege)
+const EVICT_DOWN_TO = 36 * 1024 * 1024;    // hysteresis (~90% do teto)
 
 // ─── In-memory authoritative state ─────────────────────────────────────────
 const _msgs = new Map();  // convId → Message[]
@@ -174,7 +179,7 @@ function _scheduleFlush(convId) {
 function _flushOne(convId) {
   try {
     const arr = _msgs.get(convId) || [];
-    // Only persist confirmed (numeric-id) messages, capped to 50 newest.
+    // Only persist confirmed (numeric-id) messages, capped to MAX_MSGS_PER_CONV newest.
     const persistable = arr.filter(m => _isPersistableId(m.id)).slice(-MAX_MSGS_PER_CONV);
     if (persistable.length === 0) {
       remove(MSG_KEY_PREFIX + convId);

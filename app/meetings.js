@@ -24,6 +24,11 @@ import {
 } from '../components/Icons';
 
 const MEET_BASE = 'https://chatyy.com.br/meet/';
+// Design-2026: these hex constants are kept ONLY as static fallback defaults
+// inside StyleSheet.create() below (no hook access there / dead "empty" combo
+// styles no longer rendered). Every actual render-time usage in this file now
+// pulls the live color from `colors` (colors.primary/primaryDark/warning/error)
+// so dark mode resolves correctly — see the theme map in BRIEFING.md.
 const ACCENT = '#A582F7';
 const ACCENT_DARK = '#6D28D9';
 const AMBER = '#F59E0B';
@@ -143,7 +148,7 @@ function LivePulseDot({ color = LIVE_RED, size = 8 }) {
 function RsvpBadge({ rsvp, colors, t }) {
   if (!rsvp || rsvp === 'pending') return null;
   const map = {
-    accepted: { bg: ACCENT + '20', color: ACCENT, label: t('meetings.rsvpAccepted') },
+    accepted: { bg: colors.primary + '20', color: colors.primary, label: t('meetings.rsvpAccepted') },
     declined: { bg: colors.error + '20', color: colors.error, label: t('meetings.rsvpDeclined') },
     tentative: { bg: colors.warning + '20', color: colors.warning, label: t('meetings.rsvpTentative') },
   };
@@ -194,9 +199,9 @@ function HeroLiveCard({ meeting, colors, isDark, onPress, onJoin, t }) {
     <TouchableOpacity
       activeOpacity={0.92}
       onPress={onPress}
-      style={[styles.heroCard, { shadowColor: ACCENT }]}
+      style={[styles.heroCard, { shadowColor: colors.primary }]}
     >
-      <View style={[styles.heroBg, { backgroundColor: ACCENT }]} />
+      <View style={[styles.heroBg, { backgroundColor: colors.primary }]} />
       <View style={styles.heroHighlight} pointerEvents="none" />
       <View style={[styles.heroOverlay, { backgroundColor: isDark ? 'rgba(0,0,0,0.18)' : 'rgba(255,255,255,0.04)' }]} />
       <View style={styles.heroContent}>
@@ -220,8 +225,8 @@ function HeroLiveCard({ meeting, colors, isDark, onPress, onJoin, t }) {
           onPress={onJoin}
           style={styles.heroJoinBtn}
         >
-          <IconVideo size={18} color={ACCENT} />
-          <Text style={styles.heroJoinText}>{t('meetings.join')}</Text>
+          <IconVideo size={18} color={colors.primary} />
+          <Text style={[styles.heroJoinText, { color: colors.primary }]}>{t('meetings.join')}</Text>
         </TouchableOpacity>
       </View>
     </TouchableOpacity>
@@ -243,15 +248,15 @@ function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t, high
   const duration = formatDuration(meeting, t);
 
   const borderStyle = live
-    ? { borderLeftWidth: 3, borderLeftColor: LIVE_RED }
+    ? { borderLeftWidth: 3, borderLeftColor: colors.error }
     : highlightAmber
-      ? { borderLeftWidth: 3, borderLeftColor: AMBER }
+      ? { borderLeftWidth: 3, borderLeftColor: colors.warning }
       : null;
 
   return (
     <TouchableOpacity
       style={[styles.card,
-        { backgroundColor: colors.surface, shadowColor: isDark ? '#000' : '#94a3b8' },
+        { backgroundColor: colors.surface, shadowColor: isDark ? colors.shadow : '#94a3b8' },
         borderStyle]}
       onPress={onPress}
       activeOpacity={0.7}
@@ -260,18 +265,18 @@ function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t, high
         <AvatarStack meeting={meeting} colors={colors} />
         <View style={styles.cardTopRight}>
           {live ? (
-            <View style={[styles.liveBadge, { backgroundColor: LIVE_RED + '18' }]}>
-              <LivePulseDot color={LIVE_RED} size={7} />
-              <Text style={[styles.liveText, { color: LIVE_RED }]}>{t('meetings.live')}</Text>
+            <View style={[styles.liveBadge, { backgroundColor: colors.error + '18' }]}>
+              <LivePulseDot color={colors.error} size={7} />
+              <Text style={[styles.liveText, { color: colors.error }]}>{t('meetings.live')}</Text>
             </View>
           ) : (
-            <View style={[styles.timePill, { backgroundColor: (highlightAmber ? AMBER : ACCENT) + '14' }]}>
-              <IconClock size={11} color={highlightAmber ? AMBER : ACCENT} />
-              <Text style={[styles.timePillText, { color: highlightAmber ? AMBER : ACCENT }]} numberOfLines={1} ellipsizeMode="tail">{timeLabel}</Text>
+            <View style={[styles.timePill, { backgroundColor: (highlightAmber ? colors.warning : colors.primary) + '14' }]}>
+              <IconClock size={11} color={highlightAmber ? colors.warning : colors.primary} />
+              <Text style={[styles.timePillText, { color: highlightAmber ? colors.warning : colors.primary }]} numberOfLines={1} ellipsizeMode="tail">{timeLabel}</Text>
             </View>
           )}
           <TouchableOpacity onPress={onCopy} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            style={[styles.copyBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]}>
+            style={[styles.copyBtn, { backgroundColor: colors.surfaceVariant }]}>
             <IconLink size={14} color={colors.textTertiary} />
           </TouchableOpacity>
         </View>
@@ -283,7 +288,7 @@ function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t, high
 
       <View style={styles.cardMeta}>
         {duration && (
-          <View style={[styles.durationPill, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]}>
+          <View style={[styles.durationPill, { backgroundColor: colors.surfaceVariant }]}>
             <IconClock size={11} color={colors.textSecondary} />
             <Text style={[styles.durationPillText, { color: colors.textSecondary }]}>{duration}</Text>
           </View>
@@ -307,16 +312,16 @@ function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t, high
         ) : <View />}
         {live || joinable ? (
           <TouchableOpacity
-            style={[styles.joinBtn, { backgroundColor: ACCENT }]}
+            style={[styles.joinBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }]}
             onPress={onJoin}
             activeOpacity={0.8}
           >
-            <IconVideo size={15} color="#fff" />
+            <IconVideo size={15} color={colors.onPrimary || '#fff'} />
             <Text style={styles.joinBtnText}>{t('meetings.join')}</Text>
           </TouchableOpacity>
         ) : (
           <TouchableOpacity
-            style={[styles.recapBtn, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]}
+            style={[styles.recapBtn, { backgroundColor: colors.surfaceVariant }]}
             onPress={onPress}
             activeOpacity={0.7}
           >
@@ -340,8 +345,8 @@ class MeetingsErrorBoundary extends React.Component {
     if (this.state.error) {
       return (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 }}>{this.props.errorLabel || 'Erro'}</Text>
-          <Text style={{ fontSize: 13, color: '#666', textAlign: 'center' }}>{this.props.errorBody || 'Algo deu errado'}</Text>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: this.props.errorColor || '#dc2626', marginBottom: 12 }}>{this.props.errorLabel || 'Erro'}</Text>
+          <Text style={{ fontSize: 13, color: this.props.bodyColor || '#666', textAlign: 'center' }}>{this.props.errorBody || 'Algo deu errado'}</Text>
         </View>
       );
     }
@@ -351,10 +356,13 @@ class MeetingsErrorBoundary extends React.Component {
 
 function MeetingsErrorBoundaryWithI18n({ children }) {
   const { t } = useLanguage();
+  const { colors } = useTheme();
   return (
     <MeetingsErrorBoundary
       errorLabel={t('common.error') || 'Erro'}
       errorBody={t('common.somethingWentWrong') || 'Algo deu errado'}
+      errorColor={colors.error}
+      bodyColor={colors.textSecondary}
     >
       {children}
     </MeetingsErrorBoundary>
@@ -552,7 +560,7 @@ function MeetingsScreenInner() {
     return (
       <ScreenEmptyState
         kind="meetings"
-        accent={ACCENT}
+        accent={colors.primary}
         title={t('meetings.empty')}
         subtitle={isPast ? t('meetings.emptyPast') : t('meetings.emptyUpcoming')}
         cta={isPast ? null : { label: t('meetings.scheduleCta'), icon: 'calendar', onPress: () => router.push('/meeting-create') }}
@@ -582,7 +590,7 @@ function MeetingsScreenInner() {
         <View>
           <SectionHeader
             label={t?.('_locale')?.startsWith('pt') ? 'Acontecendo agora' : 'Happening now'}
-            color={LIVE_RED}
+            color={colors.error}
             count={liveMeetings.length}
           />
           {liveMeetings.map((m) => (
@@ -602,7 +610,7 @@ function MeetingsScreenInner() {
         <View>
           <SectionHeader
             label={t?.('_locale')?.startsWith('pt') ? 'Em 1h' : 'In 1 hour'}
-            color={AMBER}
+            color={colors.warning}
             count={soonMeetings.length}
           />
           {soonMeetings.map((m) => (
@@ -626,7 +634,7 @@ function MeetingsScreenInner() {
             label={tab === 'past'
               ? (t?.('_locale')?.startsWith('pt') ? 'Anteriores' : 'Past')
               : (t?.('_locale')?.startsWith('pt') ? 'Mais reuniões' : 'More meetings')}
-            color={ACCENT}
+            color={colors.primary}
           />
         </View>
       )}
@@ -647,8 +655,8 @@ function MeetingsScreenInner() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* Gradient header */}
-      <View style={[styles.header, { backgroundColor: ACCENT }]}>
-        <View style={[styles.headerGradientOverlay, { backgroundColor: ACCENT_DARK }]} />
+      <View style={[styles.header, { backgroundColor: colors.primary }]}>
+        <View style={[styles.headerGradientOverlay, { backgroundColor: colors.primaryDark }]} />
         <View style={styles.headerRow}>
           <TouchableOpacity
             onPress={() => {
@@ -669,8 +677,8 @@ function MeetingsScreenInner() {
             accessibilityLabel={t('meetings.scheduleCta')}
             accessibilityRole="button"
           >
-            <IconPlus size={14} color={ACCENT} />
-            <Text style={styles.headerCtaText} numberOfLines={1}>
+            <IconPlus size={14} color={colors.primary} />
+            <Text style={[styles.headerCtaText, { color: colors.primary }]} numberOfLines={1}>
               {t?.('_locale')?.startsWith('pt') ? 'Criar' : (t?.('_locale')?.startsWith('es') ? 'Crear' : 'Create')}
             </Text>
           </TouchableOpacity>
@@ -678,7 +686,7 @@ function MeetingsScreenInner() {
       </View>
 
       {/* Segmented tabs */}
-      <View style={[styles.tabBar, { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' }]}>
+      <View style={[styles.tabBar, { backgroundColor: colors.surfaceVariant }]}>
         {TAB_KEYS.map((key) => {
           const active = tab === key;
           const cnt = tabCounts[key];
@@ -686,7 +694,7 @@ function MeetingsScreenInner() {
             <TouchableOpacity
               key={key}
               style={[styles.tab,
-                active && { backgroundColor: ACCENT, shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 3 }]}
+                active && { backgroundColor: colors.primary, shadowColor: colors.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 3 }]}
               onPress={() => setTab(key)}
               activeOpacity={0.7}
             >
@@ -704,7 +712,7 @@ function MeetingsScreenInner() {
       {/* Copied toast */}
       {copiedId && (
         <View style={[styles.toast, { backgroundColor: isDark ? colors.surface : colors.text }]}>
-          <IconCheck size={14} color={isDark ? ACCENT : colors.background} />
+          <IconCheck size={14} color={isDark ? colors.primary : colors.background} />
           <Text style={[styles.toastText, { color: isDark ? colors.text : colors.background }]}>{t('meetings.linkCopied')}</Text>
         </View>
       )}
@@ -721,7 +729,7 @@ function MeetingsScreenInner() {
           ListEmptyComponent={otherMeetings.length === 0 && !showHero && !showSoon ? renderEmpty : null}
           contentContainerStyle={[styles.list, (otherMeetings.length === 0 && !showHero && !showSoon) && styles.listEmpty]}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />
           }
         />
       )}
@@ -729,15 +737,15 @@ function MeetingsScreenInner() {
       {/* FAB row */}
       <View style={[styles.fabRow, { paddingBottom: insets.bottom + Spacing.md }]}>
         <TouchableOpacity
-          style={[styles.fab, styles.fabSecondary, { backgroundColor: colors.surface, borderColor: colors.border, shadowColor: isDark ? '#000' : '#94a3b8' }]}
+          style={[styles.fab, styles.fabSecondary, { backgroundColor: colors.surface, borderColor: colors.border, shadowColor: isDark ? colors.shadow : '#94a3b8' }]}
           onPress={() => router.push('/meeting-create')}
           activeOpacity={0.7}
         >
-          <IconCalendar size={20} color={ACCENT} />
-          <Text style={[styles.fabText, { color: ACCENT }]}>{t('meetings.schedule')}</Text>
+          <IconCalendar size={20} color={colors.primary} />
+          <Text style={[styles.fabText, { color: colors.primary }]}>{t('meetings.schedule')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.fab, styles.fabPrimary, { backgroundColor: ACCENT }]}
+          style={[styles.fab, styles.fabPrimary, { backgroundColor: colors.primary, shadowColor: colors.primary }]}
           onPress={handleInstantMeeting}
           disabled={creating}
           activeOpacity={0.8}

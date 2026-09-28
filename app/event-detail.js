@@ -32,6 +32,11 @@ function describeRecurrence(rule, t) {
 
 const PRESET_COLORS = ['#4285F4', '#EA4335', '#34A853', '#FBBC05', '#8E24AA', '#F4511E', '#0097A7', '#616161'];
 
+// Approx height of the fixed header row (back/edit buttons ~40 + paddingVertical
+// Spacing.sm*2) that stays visible above the edit form — kept clear of the
+// keyboard on iOS via keyboardVerticalOffset below.
+const HEADER_HEIGHT = 56;
+
 const REMINDER_OPTIONS = [
   { value: 'none', mins: 0 },
   { value: '5min', mins: 5 },
@@ -102,6 +107,7 @@ function RsvpStatusBadge({ status, colors, t }) {
 // Edit Event Screen (inline, not modal)
 // ============================================================
 function EditEventView({ event, onSave, onCancel, colors, t }) {
+  const insets = useSafeAreaInsets();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
@@ -269,12 +275,17 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
   };
 
   return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 80 }} keyboardShouldPersistTaps="handled">
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
+    >
+    <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 80 + insets.bottom }} keyboardShouldPersistTaps="handled">
       {/* Synced event hint — edits will be pushed to the device calendar too */}
       {isSynced && (
-        <View style={[styles.syncWarning, { backgroundColor: '#EDE9FE', borderColor: '#93c5fd' }]}>
-          <IconSmartphone size={16} color="#5B21B6" />
-          <Text style={[styles.syncWarningText, { color: '#5B21B6' }]}>
+        <View style={[styles.syncWarning, { backgroundColor: colors.primaryLight, borderColor: colors.primary + '40' }]}>
+          <IconSmartphone size={16} color={colors.primaryDark} />
+          <Text style={[styles.syncWarningText, { color: colors.primaryDark }]}>
             {t('eventDetail.syncedEditInfo') || 'Suas alterações serão sincronizadas com o calendário do celular.'}
           </Text>
         </View>
@@ -551,6 +562,7 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
         </TouchableOpacity>
       </View>
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -568,8 +580,8 @@ class EventDetailErrorBoundary extends React.Component {
     if (this.state.error) {
       return (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 }}>{this.props.errorLabel || 'Erro no evento'}</Text>
-          <Text style={{ fontSize: 13, color: '#666', textAlign: 'center' }}>{this.props.errorBody || 'Tente novamente'}</Text>
+          <Text style={{ fontSize: 18, fontWeight: '700', color: this.props.errorColor || '#dc2626', marginBottom: 12 }}>{this.props.errorLabel || 'Erro no evento'}</Text>
+          <Text style={{ fontSize: 13, color: this.props.bodyColor || '#666', textAlign: 'center' }}>{this.props.errorBody || 'Tente novamente'}</Text>
         </View>
       );
     }
@@ -579,10 +591,13 @@ class EventDetailErrorBoundary extends React.Component {
 
 function EventDetailErrorBoundaryWithI18n({ children }) {
   const { t } = useLanguage();
+  const { colors } = useTheme();
   return (
     <EventDetailErrorBoundary
       errorLabel={t('eventDetail.error') || 'Erro no evento'}
       errorBody={t('eventDetail.tryAgain') || 'Tente novamente'}
+      errorColor={colors.error}
+      bodyColor={colors.textSecondary}
     >
       {children}
     </EventDetailErrorBoundary>

@@ -3,6 +3,7 @@ import { View, StyleSheet, Dimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth, isChildAccount } from '../context/AuthContext';
 import AnimatedSplash from '../components/AnimatedSplash';
+import { Colors } from '../constants/theme';
 
 export default function Index() {
   const { user, loading } = useAuth();
@@ -39,5 +40,5 @@ export default function Index() {
 }
 
 const s = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F7F7FA' },
+  container: { flex: 1, backgroundColor: Colors.background },
 });

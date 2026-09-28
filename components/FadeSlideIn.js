@@ -19,8 +19,8 @@
 //
 // Props:
 //   • delay    — ms before the animation starts (default 0). Use for stagger.
-//   • distance — px it slides up from (default 14). 0 = fade only.
-//   • duration — fade duration ms (default 420, matches ScreenEmptyState).
+//   • distance — px it slides up from (default 10 — CLEAN 2026: subtle). 0 = fade only.
+//   • duration — fade duration ms (default 220 — CLEAN 2026: quick, light entrance).
 //   • style    — extra style on the wrapper (it's a plain Animated.View).
 //
 // RN Animated only (no Reanimated) → ships via OTA. useNativeDriver:true so
@@ -31,8 +31,8 @@ import { Animated, Easing } from 'react-native';
 export default function FadeSlideIn({
   children,
   delay = 0,
-  distance = 14,
-  duration = 420,
+  distance = 10,
+  duration = 220,
   style,
 }) {
   const fade = useRef(new Animated.Value(0)).current;

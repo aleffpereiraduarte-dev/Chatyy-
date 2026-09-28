@@ -33,6 +33,11 @@ const DURATION_VALUES = [
 
 const FREQUENCIES = ['none', 'daily', 'weekly', 'biweekly', 'monthly', 'custom'];
 
+// Approx height of the fixed header row below (backBtn 36 + paddingVertical
+// Spacing.md*2) — used to keep the focused input/submit button clear of the
+// keyboard on iOS (see KeyboardAvoidingView below).
+const HEADER_HEIGHT = 60;
+
 function formatDateTime(date) {
   if (!date) return '';
   const d = new Date(date);
@@ -274,7 +279,11 @@ export default function MeetingCreateScreen() {
   const s = styles(colors);
 
   return (
-    <KeyboardAvoidingView style={[s.container, { paddingTop: insets.top }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      style={[s.container, { paddingTop: insets.top }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
+    >
       {/* Header */}
       <View style={s.header}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={12}>
@@ -503,7 +512,7 @@ export default function MeetingCreateScreen() {
           )}
         </TouchableOpacity>
 
-        <View style={{ height: Spacing.xxxl }} />
+        <View style={{ height: Spacing.xxxl + insets.bottom }} />
       </ScrollView>
 
       {/* Success Modal */}

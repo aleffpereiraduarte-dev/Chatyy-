@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, TextInput, StyleSheet, Platform, ActivityIndicator, Alert, TouchableOpacity, AppState, Linking } from 'react-native';
+import { View, Text, TextInput, StyleSheet, Platform, ActivityIndicator, Alert, TouchableOpacity, AppState, Linking, KeyboardAvoidingView } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../context/AuthContext';
 import { useLanguage } from '../../context/LanguageContext';
+import { useTheme } from '../../context/ThemeContext';
 import * as api from '../../services/api';
 import MeetControls from '../../components/MeetControls';
 import MeetChatPanel from '../../components/MeetChatPanel';
@@ -46,6 +47,7 @@ export default function MeetScreen() {
   const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { colors } = useTheme();
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -861,34 +863,40 @@ export default function MeetScreen() {
   // ─── Password prompt ───
   if (needsPassword) {
     return (
-      <View style={s.centered}>
-        <Text style={s.lobbyText}>{t('meetScreen.passwordRequired')}</Text>
-        <TextInput
-          style={s.passwordInput}
-          value={passwordInput}
-          onChangeText={(v) => { setPasswordInput(v); if (passwordError) setPasswordError(''); }}
-          placeholder={t('meetScreen.passwordPlaceholder')}
-          placeholderTextColor="#64748b"
-          secureTextEntry
-          autoFocus
-          accessibilityLabel={t('meet.passwordLabel') || 'Senha da sala'}
-          onSubmitEditing={() => { setLoading(true); attemptJoin(passwordInput); }}
-        />
-        {passwordError ? (
-          <Text style={{ color: '#ef4444', fontSize: 13, marginTop: 8, textAlign: 'center' }}>
-            {passwordError}
-          </Text>
-        ) : null}
-        <TouchableOpacity
-          onPress={() => { setLoading(true); attemptJoin(passwordInput); }}
-          style={[s.lobbyBackBtn, { backgroundColor: '#3b82f6' }]}
-        >
-          <Text style={[s.lobbyBackText, { color: '#fff' }]}>{t('meetScreen.enter')}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.back()} style={s.lobbyBackBtn}>
-          <Text style={s.lobbyBackText}>{t('common.cancel')}</Text>
-        </TouchableOpacity>
-      </View>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+      >
+        <View style={[s.centered, { backgroundColor: colors.meetBg }]}>
+          <Text style={[s.lobbyText, { color: colors.meetText }]}>{t('meetScreen.passwordRequired')}</Text>
+          <TextInput
+            style={[s.passwordInput, { borderColor: colors.meetBorder, color: colors.meetText }]}
+            value={passwordInput}
+            onChangeText={(v) => { setPasswordInput(v); if (passwordError) setPasswordError(''); }}
+            placeholder={t('meetScreen.passwordPlaceholder')}
+            placeholderTextColor="#64748b"
+            secureTextEntry
+            autoFocus
+            accessibilityLabel={t('meet.passwordLabel') || 'Senha da sala'}
+            onSubmitEditing={() => { setLoading(true); attemptJoin(passwordInput); }}
+          />
+          {passwordError ? (
+            <Text style={{ color: '#ef4444', fontSize: 13, marginTop: 8, textAlign: 'center' }}>
+              {passwordError}
+            </Text>
+          ) : null}
+          <TouchableOpacity
+            onPress={() => { setLoading(true); attemptJoin(passwordInput); }}
+            style={[s.lobbyBackBtn, { backgroundColor: '#3b82f6' }]}
+          >
+            <Text style={[s.lobbyBackText, { color: '#fff' }]}>{t('meetScreen.enter')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => router.back()} style={[s.lobbyBackBtn, { backgroundColor: colors.meetBtnBg }]}>
+            <Text style={[s.lobbyBackText, { color: colors.meetTextSecondary }]}>{t('common.cancel')}</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
     );
   }
 
@@ -900,7 +908,7 @@ export default function MeetScreen() {
       : (audioPermissionDenied ? 'meet.permissionDeniedBodyAudio' : 'meet.permissionDeniedBodyVideo');
     const warning = '#f59e0b';
     return (
-      <View style={[s.centered, { paddingHorizontal: 32 }]}>
+      <View style={[s.centered, { backgroundColor: colors.meetBg, paddingHorizontal: 32 }]}>
         <View style={{
           width: 80, height: 80, borderRadius: 40,
           backgroundColor: warning + '15',
@@ -910,10 +918,10 @@ export default function MeetScreen() {
             ? <IconVideoOff size={36} color={warning} />
             : <IconMicOff size={36} color={warning} />}
         </View>
-        <Text style={{ fontSize: 18, fontWeight: '700', color: '#fff', marginBottom: 8, textAlign: 'center' }}>
+        <Text style={{ fontSize: 18, fontWeight: '700', color: colors.meetText, marginBottom: 8, textAlign: 'center' }}>
           {t('meet.permissionDeniedTitle')}
         </Text>
-        <Text style={{ fontSize: 14, color: '#94a3b8', textAlign: 'center', marginBottom: 20, maxWidth: 320, lineHeight: 20 }}>
+        <Text style={{ fontSize: 14, color: colors.meetTextSecondary, textAlign: 'center', marginBottom: 20, maxWidth: 320, lineHeight: 20 }}>
           {t(bodyKey)}
         </Text>
         <TouchableOpacity
@@ -922,8 +930,8 @@ export default function MeetScreen() {
         >
           <Text style={{ color: '#fff', fontWeight: '600' }}>{t('meet.openSettings')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => router.back()} style={[s.lobbyBackBtn, { marginTop: 12 }]}>
-          <Text style={s.lobbyBackText}>{t('common.cancel')}</Text>
+        <TouchableOpacity onPress={() => router.back()} style={[s.lobbyBackBtn, { backgroundColor: colors.meetBtnBg, marginTop: 12 }]}>
+          <Text style={[s.lobbyBackText, { color: colors.meetTextSecondary }]}>{t('common.cancel')}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -932,9 +940,9 @@ export default function MeetScreen() {
   // ─── Loading ───
   if (loading) {
     return (
-      <View style={s.centered}>
+      <View style={[s.centered, { backgroundColor: colors.meetBg }]}>
         <ActivityIndicator size="large" color="#3b82f6" />
-        <Text style={s.statusText}>{t('meetScreen.connecting')}</Text>
+        <Text style={[s.statusText, { color: colors.meetTextSecondary }]}>{t('meetScreen.connecting')}</Text>
       </View>
     );
   }
@@ -942,11 +950,11 @@ export default function MeetScreen() {
   // ─── Lobby waiting ───
   if (lobbyWaiting) {
     return (
-      <View style={s.centered}>
+      <View style={[s.centered, { backgroundColor: colors.meetBg }]}>
         <ActivityIndicator size="large" color="#3b82f6" />
-        <Text style={s.lobbyText}>{t('meetScreen.lobbyWaiting')}</Text>
-        <TouchableOpacity onPress={() => router.back()} style={s.lobbyBackBtn}>
-          <Text style={s.lobbyBackText}>{t('common.cancel')}</Text>
+        <Text style={[s.lobbyText, { color: colors.meetText }]}>{t('meetScreen.lobbyWaiting')}</Text>
+        <TouchableOpacity onPress={() => router.back()} style={[s.lobbyBackBtn, { backgroundColor: colors.meetBtnBg }]}>
+          <Text style={[s.lobbyBackText, { color: colors.meetTextSecondary }]}>{t('common.cancel')}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -955,9 +963,9 @@ export default function MeetScreen() {
   // ─── Error ───
   if (error && !ended) {
     return (
-      <View style={s.centered}>
-        <Text style={s.errorText}>{error}</Text>
-        <Text style={s.statusText} onPress={() => router.back()}>{t('meetScreen.goBack')}</Text>
+      <View style={[s.centered, { backgroundColor: colors.meetBg }]}>
+        <Text style={[s.errorText, { color: colors.meetEndCall }]}>{error}</Text>
+        <Text style={[s.statusText, { color: colors.meetTextSecondary }]} onPress={() => router.back()}>{t('meetScreen.goBack')}</Text>
       </View>
     );
   }
@@ -965,8 +973,8 @@ export default function MeetScreen() {
   // ─── Ended ───
   if (ended) {
     return (
-      <View style={s.centered}>
-        <Text style={s.endedText}>{t('meetScreen.ended')}</Text>
+      <View style={[s.centered, { backgroundColor: colors.meetBg }]}>
+        <Text style={[s.endedText, { color: colors.meetText }]}>{t('meetScreen.ended')}</Text>
       </View>
     );
   }
@@ -982,7 +990,7 @@ export default function MeetScreen() {
   // ─── Screen sharing banner ───
   const ScreenShareBanner = screenSharing ? (
     <TouchableOpacity
-      style={s.screenShareBanner}
+      style={[s.screenShareBanner, { backgroundColor: colors.meetScreenShare }]}
       onPress={Platform.OS === 'web' ? _stopScreenShareWeb : () => { injectJS('window.meetController.stopScreenShare()'); setScreenSharing(false); }}
       activeOpacity={0.8}
       accessibilityLabel={t('meetScreen.stopSharing')}
@@ -990,7 +998,7 @@ export default function MeetScreen() {
     >
       <IconScreenShare size={16} color="#fff" />
       <Text style={s.screenShareBannerText}>{t('meetScreen.youAreSharing')}</Text>
-      <View style={s.stopShareBtn}>
+      <View style={[s.stopShareBtn, { backgroundColor: colors.meetBtnBg }]}>
         <Text style={s.stopShareBtnText}>{t('meetScreen.stopSharing')}</Text>
       </View>
     </TouchableOpacity>
@@ -1000,15 +1008,15 @@ export default function MeetScreen() {
   const isGroupCall = participantCount > 2;
   const gridLabel = layoutLabel(participantCount, t);
   const TitleBar = (meetingTitle || isGroupCall) ? (
-    <View style={s.titleBar}>
+    <View style={[s.titleBar, { backgroundColor: colors.meetSurfaceSolid }]}>
       {meetingTitle ? (
-        <Text style={s.titleText} numberOfLines={1}>{meetingTitle}</Text>
+        <Text style={[s.titleText, { color: colors.meetText }]} numberOfLines={1}>{meetingTitle}</Text>
       ) : (
-        <Text style={s.titleText} numberOfLines={1}>
+        <Text style={[s.titleText, { color: colors.meetText }]} numberOfLines={1}>
           {isGroupCall ? (t('meetScreen.groupCall') || 'Chamada em grupo') : ''}
         </Text>
       )}
-      {roomLocked && <IconLock size={14} color="#e2e8f0" style={{ marginLeft: 8 }} />}
+      {roomLocked && <IconLock size={14} color={colors.meetText} style={{ marginLeft: 8 }} />}
     </View>
   ) : null;
 
@@ -1016,12 +1024,12 @@ export default function MeetScreen() {
   const ParticipantBadge = (
     <TouchableOpacity
       onPress={handleToggleParticipants}
-      style={s.participantBadge}
+      style={[s.participantBadge, { backgroundColor: colors.meetSurface, borderColor: colors.meetBorder }]}
       accessibilityLabel={t('meetScreen.participantsLabel') || 'Participants'}
       accessibilityRole="button"
     >
-      <IconUsers size={13} color="#fff" />
-      <Text style={s.participantBadgeText}>{participantCount}</Text>
+      <IconUsers size={13} color={colors.meetText} />
+      <Text style={[s.participantBadgeText, { color: colors.meetText }]}>{participantCount}</Text>
       {gridLabel && (
         <Text style={s.participantBadgeGrid}>{gridLabel}</Text>
       )}
@@ -1123,14 +1131,14 @@ export default function MeetScreen() {
   // ─── Web: iframe ───
   if (Platform.OS === 'web') {
     return (
-      <View style={s.container}>
+      <View style={[s.container, { backgroundColor: colors.meetBg }]}>
         {TitleBar}
         {RecordingBanner}
         {ScreenShareBanner}
         <iframe
           ref={iframeRef}
           src={meetUrl}
-          style={{ width: '100%', flex: 1, border: 'none', background: '#111827' }}
+          style={{ width: '100%', flex: 1, border: 'none', background: colors.meetBg }}
           allow="camera; microphone; display-capture; autoplay"
         />
         {panels}
@@ -1141,14 +1149,14 @@ export default function MeetScreen() {
   // ─── Mobile: WebView ───
   if (!WebView) {
     return (
-      <View style={s.centered}>
-        <Text style={s.errorText}>WebView not available</Text>
+      <View style={[s.centered, { backgroundColor: colors.meetBg }]}>
+        <Text style={[s.errorText, { color: colors.meetEndCall }]}>WebView not available</Text>
       </View>
     );
   }
 
   return (
-    <View style={[s.container, { paddingTop: insets.top }]}>
+    <View style={[s.container, { backgroundColor: colors.meetBg, paddingTop: insets.top }]}>
       {TitleBar}
       {ParticipantBadge}
       {RecordingBanner}
@@ -1163,7 +1171,7 @@ export default function MeetScreen() {
         javaScriptEnabled={true}
         domStorageEnabled={true}
         originWhitelist={['*']}
-        style={{ flex: 1, backgroundColor: '#111827' }}
+        style={{ flex: 1, backgroundColor: colors.meetBg }}
       />
       {panels}
     </View>

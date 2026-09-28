@@ -447,16 +447,16 @@ export default function ReadScreen() {
   const followupChip = followupSuggestion ? (
     <View style={{
       flexDirection: 'row', alignItems: 'center', gap: 10,
-      backgroundColor: '#fef3c7', borderColor: '#f59e0b',
+      backgroundColor: colors.warningBg, borderColor: colors.warning,
       borderWidth: 1, borderLeftWidth: 4, borderRadius: 10,
       marginHorizontal: 12, marginTop: 8, padding: 12,
     }}>
       <View style={{ flex: 1 }}>
-        <Text style={{ fontWeight: '700', color: '#92400e', fontSize: 13 }}>
+        <Text style={{ fontWeight: '700', color: colors.warning, fontSize: 13 }}>
           {(t('read.followupTitle') || 'Aguardando resposta há {n} dias — Enviar follow-up?').replace('{n}', String(followupSuggestion.days))}
         </Text>
         {!!followupSuggestion.suggested_message && (
-          <Text numberOfLines={2} style={{ color: '#92400e', fontSize: 12, marginTop: 4 }}>
+          <Text numberOfLines={2} style={{ color: colors.warning, fontSize: 12, marginTop: 4 }}>
             {followupSuggestion.suggested_message}
           </Text>
         )}
@@ -471,7 +471,7 @@ export default function ReadScreen() {
           });
           router.replace('/compose?' + params.toString());
         }}
-        style={{ backgroundColor: '#f59e0b', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+        style={{ backgroundColor: colors.warning, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
         accessibilityLabel={t('read.followupSend') || 'Enviar follow-up'}
         accessibilityRole="button"
       >

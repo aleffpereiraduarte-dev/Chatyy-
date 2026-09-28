@@ -195,7 +195,7 @@ export default function SignupUsername() {
     done:   t('signupUsername.subDone')   || 'Sua conta foi criada — bora conversar',
   }[step];
 
-  const _hairline = isDark ? '#2a2d31' : '#e5e7eb';
+  const _hairline = colors.border;
 
   return (
     <KeyboardAvoidingView
@@ -224,7 +224,7 @@ export default function SignupUsername() {
                   flex: 1,
                   height: 3,
                   borderRadius: 2,
-                  backgroundColor: idx <= cur ? colors.primary : (isDark ? '#3A3A3A' : '#DBDBDB'),
+                  backgroundColor: idx <= cur ? colors.primary : (colors.border),
                 }}
               />
             ));
@@ -275,8 +275,8 @@ export default function SignupUsername() {
 
             {step === 'handle' && (() => {
               const _isFocused = focused === 'handle';
-              const _bottomColor = usernameAvailable === false ? '#ef4444'
-                : usernameAvailable === true ? '#22c55e'
+              const _bottomColor = usernameAvailable === false ? colors.error
+                : usernameAvailable === true ? colors.success
                 : (_isFocused ? colors.primary : _hairline);
               const _bottomWidth = (_isFocused || usernameAvailable !== null) ? 2 : StyleSheet.hairlineWidth;
               return (
@@ -293,7 +293,7 @@ export default function SignupUsername() {
                         flex: 1, fontSize: 16, paddingVertical: 14, color: colors.text,
                       }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
                       placeholder="seu.username"
-                      placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                      placeholderTextColor={colors.textTertiary}
                       value={username}
                       onChangeText={(v) => setUsername(v.toLowerCase().replace(/[^a-z0-9._]/g, '').slice(0, 20))}
                       autoCapitalize="none"
@@ -308,10 +308,10 @@ export default function SignupUsername() {
                       <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 6 }} />
                     ) : usernameAvailable === true ? (
                       <Animated.View style={{ marginLeft: 6, transform: [{ scale: checkScale }] }}>
-                        <IconCheckCircle size={18} color="#22c55e" />
+                        <IconCheckCircle size={18} color={colors.success} />
                       </Animated.View>
                     ) : usernameAvailable === false ? (
-                      <View style={{ marginLeft: 6 }}><IconAlertTriangle size={18} color="#ef4444" /></View>
+                      <View style={{ marginLeft: 6 }}><IconAlertTriangle size={18} color={colors.error} /></View>
                     ) : null}
                   </View>
 
@@ -341,7 +341,7 @@ export default function SignupUsername() {
                   {(() => {
                     const _isFocusedPwd = focused === 'password';
                     const _pwdValid = password.length >= 8;
-                    const _bottomColorP = _pwdValid ? '#22c55e' : (_isFocusedPwd ? colors.primary : _hairline);
+                    const _bottomColorP = _pwdValid ? colors.success : (_isFocusedPwd ? colors.primary : _hairline);
                     const _bottomWidthP = (_isFocusedPwd || _pwdValid) ? 2 : StyleSheet.hairlineWidth;
                     return (
                       <View style={{ marginTop: 18 }}>
@@ -357,7 +357,7 @@ export default function SignupUsername() {
                               flex: 1, fontSize: 16, paddingVertical: 14, color: colors.text,
                             }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
                             placeholder={t('signupUsername.passwordPlaceholder') || 'Mínimo 8 caracteres'}
-                            placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                            placeholderTextColor={colors.textTertiary}
                             value={password}
                             onChangeText={setPassword}
                             autoCapitalize="none"
@@ -375,7 +375,7 @@ export default function SignupUsername() {
                           >
                             {showPassword ? <IconEyeOff size={18} color={colors.textSecondary} /> : <IconEye size={18} color={colors.textSecondary} />}
                           </TouchableOpacity>
-                          {_pwdValid && <IconCheckCircle size={18} color="#22c55e" style={{ marginLeft: 4 }} />}
+                          {_pwdValid && <IconCheckCircle size={18} color={colors.success} style={{ marginLeft: 4 }} />}
                         </View>
                         <Text style={[styles.hint, { color: colors.textTertiary, marginTop: 8 }]}>
                           {t('signupUsername.passwordHint') || 'Use pra entrar pelo email também (IMAP / web). Guarde com carinho.'}
@@ -400,7 +400,7 @@ export default function SignupUsername() {
                       fontSize: 16, paddingVertical: 14, color: colors.text,
                     }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
                     placeholder={t('signupPhone.firstName') || 'Nome'}
-                    placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                    placeholderTextColor={colors.textTertiary}
                     value={name}
                     onChangeText={(v) => { setName(v); if (error) setError(''); }}
                     autoCapitalize="words"
@@ -423,18 +423,18 @@ export default function SignupUsername() {
                     <Animated.View style={{
                       position: 'absolute',
                       width: 124, height: 124, borderRadius: 62,
-                      backgroundColor: 'rgba(34, 197, 94, 0.15)',
+                      backgroundColor: `${colors.success}26`,
                       opacity: doneScale,
                       transform: [{ scale: doneScale.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
                     }} />
                     <Animated.View style={{
                       width: 96, height: 96, borderRadius: 48,
-                      backgroundColor: '#22c55e',
+                      backgroundColor: colors.success,
                       alignItems: 'center', justifyContent: 'center',
                       transform: [{ scale: doneScale }],
-                      shadowColor: '#22c55e', shadowOffset: { width: 0, height: 10 },
+                      shadowColor: colors.success, shadowOffset: { width: 0, height: 10 },
                       shadowOpacity: 0.45, shadowRadius: 22, elevation: 12,
-                      ...(Platform.OS === 'web' ? { boxShadow: '0 14px 32px rgba(34,197,94,0.45), inset 0 1px 0 rgba(255,255,255,0.25)' } : {}),
+                      ...(Platform.OS === 'web' ? { boxShadow: `0 14px 32px ${colors.success}73, inset 0 1px 0 rgba(255,255,255,0.25)` } : {}),
                     }}>
                       <IconCheck size={56} color="#fff" strokeWidth={3} />
                     </Animated.View>
@@ -457,7 +457,7 @@ export default function SignupUsername() {
             })()}
 
             {!!error && step !== 'done' && (
-              <Text style={{ color: '#ef4444', fontSize: 13, marginTop: 12, textAlign: 'center' }}>{error}</Text>
+              <Text style={{ color: colors.error, fontSize: 13, marginTop: 12, textAlign: 'center' }}>{error}</Text>
             )}
           </View>
         </Animated.View>
@@ -465,7 +465,7 @@ export default function SignupUsername() {
 
       {/* Sticky CTA */}
       {step !== 'done' && (
-        <View style={[styles.footer, { borderTopColor: colors.border }]}>
+        <View style={[styles.footer, { borderTopColor: colors.border, paddingBottom: Math.max(Platform.OS === 'ios' ? 30 : 16, insets.bottom + 12) }]}>
           <TouchableOpacity
             style={[
               styles.cta,

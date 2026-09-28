@@ -755,7 +755,7 @@ export default function SignupPhone() {
                   flex: 1,
                   height: 3,
                   borderRadius: 2,
-                  backgroundColor: idx <= cur ? colors.primary : (isDark ? '#3A3A3A' : '#DBDBDB'),
+                  backgroundColor: idx <= cur ? colors.primary : (colors.border),
                 }}
               />
             ));
@@ -776,7 +776,7 @@ export default function SignupPhone() {
         <Text style={[styles.brand, {
           color: colors.primary,
           ...(Platform.OS === 'web' ? {
-            backgroundImage: 'linear-gradient(135deg, #5B21B6 0%, #A582F7 60%, #A78BFA 100%)',
+            backgroundImage: `linear-gradient(135deg, ${colors.primaryDark} 0%, ${colors.primary} 60%, ${colors.brandSecondary} 100%)`,
             WebkitBackgroundClip: 'text',
             WebkitTextFillColor: 'transparent',
             backgroundClip: 'text',
@@ -916,7 +916,7 @@ export default function SignupPhone() {
                     field — calmer and easier to scan. Mirrors login.js. */}
                 {(() => {
                   const _country = COUNTRIES.find(c => c.code === countryCode) || COUNTRIES[0];
-                  const _hairline = isDark ? '#2a2d31' : '#e5e7eb';
+                  const _hairline = colors.border;
                   const _hairlineActive = colors.primary;
                   const _isFocused = focused === 'phone';
                   return (
@@ -956,7 +956,7 @@ export default function SignupPhone() {
                         <Text style={{ flex: 1, fontSize: 16, fontWeight: '500', color: colors.text }}>
                           {_country?.name || (t('login.selectCountry') || 'País')}
                         </Text>
-                        <IconChevronRight size={16} color={isDark ? '#9aa0a6' : '#9ca3af'} />
+                        <IconChevronRight size={16} color={colors.textTertiary} />
                       </TouchableOpacity>
                       <View style={{
                         flexDirection: 'row', alignItems: 'center',
@@ -987,7 +987,7 @@ export default function SignupPhone() {
                           }}
                           keyboardType="phone-pad"
                           placeholder={_country.mask ? _country.mask.replace(/#/g, '0') : '11 99999-9999'}
-                          placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                          placeholderTextColor={colors.textTertiary}
                           onFocus={() => setFocused('phone')}
                           onBlur={() => setFocused('')}
                           autoFocus
@@ -1043,8 +1043,8 @@ export default function SignupPhone() {
                       const _digit = code[i] || '';
                       const _filled = !!_digit;
                       const _focused = (code.length === i) || (code.length === 6 && i === 5);
-                      const _otpBg = isDark ? (_filled ? `${colors.primary}26` : '#1f2229') : (_filled ? `${colors.primary}10` : '#f3f4f6');
-                      const _otpBorder = _focused ? colors.primary : (_filled ? colors.primary : (isDark ? '#2a2d31' : '#e5e7eb'));
+                      const _otpBg = isDark ? (_filled ? `${colors.primary}26` : colors.surfaceVariant) : (_filled ? `${colors.primary}10` : colors.surfaceVariant);
+                      const _otpBorder = _focused ? colors.primary : (_filled ? colors.primary : (colors.border));
                       return (
                         <Animated.View
                           key={i}
@@ -1171,8 +1171,8 @@ export default function SignupPhone() {
                         width: 180, height: 52,
                         borderRadius: 12,
                         borderWidth: 1.5,
-                        borderColor: lockPin ? colors.primary : (isDark ? '#2a2d31' : '#e5e7eb'),
-                        backgroundColor: isDark ? '#1f2229' : '#f3f4f6',
+                        borderColor: lockPin ? colors.primary : (colors.border),
+                        backgroundColor: colors.surfaceVariant,
                         color: colors.text,
                         textAlign: 'center',
                         fontSize: 22, fontWeight: '700',
@@ -1182,7 +1182,7 @@ export default function SignupPhone() {
                       value={lockPin}
                       onChangeText={(v) => { setLockPin((v || '').replace(/\D/g, '').slice(0, 6)); if (error) setError(''); }}
                       placeholder="••••"
-                      placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                      placeholderTextColor={colors.textTertiary}
                       keyboardType="number-pad"
                       inputMode="numeric"
                       maxLength={6}
@@ -1202,7 +1202,7 @@ export default function SignupPhone() {
                     style={{
                       marginTop: 16, paddingVertical: 12, paddingHorizontal: 14,
                       flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
-                      borderRadius: 12, borderWidth: 1.5, borderColor: isDark ? '#2a2d31' : '#e5e7eb',
+                      borderRadius: 12, borderWidth: 1.5, borderColor: colors.border,
                       backgroundColor: 'transparent',
                     }}
                     activeOpacity={0.7}
@@ -1241,7 +1241,7 @@ export default function SignupPhone() {
               // name), each its own hairline-bottom row that turns 2px primary
               // on focus. No box, no surface fill, no leading icon — calmer
               // and matches the real Telegram iOS signup screen.
-              const _hairline = isDark ? '#2a2d31' : '#e5e7eb';
+              const _hairline = colors.border;
               const _isFirstFocused = focused === 'firstName';
               const _isLastFocused  = focused === 'lastName';
               const _pickAvatar = () => {
@@ -1279,9 +1279,9 @@ export default function SignupPhone() {
                       style={{
                         width: 96, height: 96, borderRadius: 48,
                         alignItems: 'center', justifyContent: 'center',
-                        backgroundColor: isDark ? '#1f2229' : '#f3f4f6',
+                        backgroundColor: colors.surfaceVariant,
                         borderWidth: avatarUri ? 0 : StyleSheet.hairlineWidth,
-                        borderColor: isDark ? '#2a2d31' : '#e5e7eb',
+                        borderColor: colors.border,
                         overflow: 'visible',
                       }}
                     >
@@ -1291,7 +1291,7 @@ export default function SignupPhone() {
                           style={{ width: 96, height: 96, borderRadius: 48 }}
                         />
                       ) : (
-                        <IconUser size={36} color={isDark ? '#5f6368' : '#9ca3af'} />
+                        <IconUser size={36} color={colors.textTertiary} />
                       )}
                       {/* Camera-plus glyph — bottom-right corner, brand color. */}
                       <View style={{
@@ -1316,7 +1316,7 @@ export default function SignupPhone() {
                         fontSize: 16, paddingVertical: 14, color: colors.text,
                       }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
                       placeholder={t('signupPhone.firstName') || 'Nome'}
-                      placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                      placeholderTextColor={colors.textTertiary}
                       value={firstName}
                       onChangeText={(v) => { setFirstName(v); if (error) setError(''); }}
                       autoCapitalize="words"
@@ -1339,7 +1339,7 @@ export default function SignupPhone() {
                         fontSize: 16, paddingVertical: 14, color: colors.text,
                       }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
                       placeholder={t('signupPhone.lastName') || 'Sobrenome'}
-                      placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                      placeholderTextColor={colors.textTertiary}
                       value={lastName}
                       onChangeText={(v) => { setLastName(v); if (error) setError(''); }}
                       autoCapitalize="words"
@@ -1358,10 +1358,10 @@ export default function SignupPhone() {
               // Telegram-stacked handle picker: hairline-bottom input with
               // suffix `@chatyy.com.br` as right adornment + status icon.
               // Border tints red/green for taken/available; primary on focus.
-              const _hairlineDefault = isDark ? '#2a2d31' : '#e5e7eb';
+              const _hairlineDefault = colors.border;
               const _isFocused = focused === 'handle';
-              const _bottomColor = usernameAvailable === false ? '#ef4444'
-                : usernameAvailable === true ? '#22c55e'
+              const _bottomColor = usernameAvailable === false ? colors.error
+                : usernameAvailable === true ? colors.success
                 : (_isFocused ? colors.primary : _hairlineDefault);
               const _bottomWidth = (_isFocused || usernameAvailable !== null) ? 2 : StyleSheet.hairlineWidth;
               // Wide-screen (>=768): username + password rows side-by-side.
@@ -1382,7 +1382,7 @@ export default function SignupPhone() {
                         flex: 1, fontSize: 16, paddingVertical: 14, color: colors.text,
                       }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
                       placeholder="seu.username"
-                      placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                      placeholderTextColor={colors.textTertiary}
                       value={username}
                       onChangeText={(v) => setUsername(v.toLowerCase().replace(/[^a-z0-9._-]/g, '').slice(0, 30))}
                       autoCapitalize="none"
@@ -1397,10 +1397,10 @@ export default function SignupPhone() {
                       <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: 6 }} />
                     ) : usernameAvailable === true ? (
                       <Animated.View style={{ marginLeft: 6, transform: [{ scale: checkScale }] }}>
-                        <IconCheckCircle size={18} color="#22c55e" />
+                        <IconCheckCircle size={18} color={colors.success} />
                       </Animated.View>
                     ) : usernameAvailable === false ? (
-                      <View style={{ marginLeft: 6 }}><IconAlertTriangle size={18} color="#ef4444" /></View>
+                      <View style={{ marginLeft: 6 }}><IconAlertTriangle size={18} color={colors.error} /></View>
                     ) : null}
                   </View>
                   {isWide && (
@@ -1410,10 +1410,10 @@ export default function SignupPhone() {
               );
               // Password block — extracted so we can render it inline next to
               // username on wide screens, or stacked below on narrow.
-              const _hl = isDark ? '#2a2d31' : '#e5e7eb';
+              const _hl = colors.border;
               const _isFocusedPwd = focused === 'password';
               const _pwdValid = password.length >= 8;
-              const _pwdBottomColor = _pwdValid ? '#22c55e' : (_isFocusedPwd ? colors.primary : _hl);
+              const _pwdBottomColor = _pwdValid ? colors.success : (_isFocusedPwd ? colors.primary : _hl);
               const _pwdBottomWidth = (_isFocusedPwd || _pwdValid) ? 2 : StyleSheet.hairlineWidth;
               const _passwordRow = (
                 <View style={{ flex: isWide ? 1 : undefined, marginTop: isWide ? 0 : 18 }}>
@@ -1429,7 +1429,7 @@ export default function SignupPhone() {
                         flex: 1, fontSize: 16, paddingVertical: 14, color: colors.text,
                       }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
                       placeholder={t('signupPhone.passwordPlaceholder') || 'Mínimo 8 caracteres'}
-                      placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                      placeholderTextColor={colors.textTertiary}
                       value={password}
                       onChangeText={setPassword}
                       autoCapitalize="none"
@@ -1450,7 +1450,7 @@ export default function SignupPhone() {
                       {showPassword ? <IconEyeOff size={18} color={colors.textSecondary} /> : <IconEye size={18} color={colors.textSecondary} />}
                     </TouchableOpacity>
                     {_pwdValid && (
-                      <IconCheckCircle size={18} color="#22c55e" style={{ marginLeft: 4 }} />
+                      <IconCheckCircle size={18} color={colors.success} style={{ marginLeft: 4 }} />
                     )}
                   </View>
                 </View>
@@ -1515,7 +1515,7 @@ export default function SignupPhone() {
                     <Animated.View style={{
                       position: 'absolute',
                       width: 140, height: 140, borderRadius: 70,
-                      borderWidth: 2, borderColor: '#22c55e',
+                      borderWidth: 2, borderColor: colors.success,
                       opacity: doneScale.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0.0, 0.5, 0.0] }),
                       transform: [{ scale: doneScale.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1.25] }) }],
                     }} />
@@ -1523,18 +1523,18 @@ export default function SignupPhone() {
                     <Animated.View style={{
                       position: 'absolute',
                       width: 124, height: 124, borderRadius: 62,
-                      backgroundColor: 'rgba(34, 197, 94, 0.15)',
+                      backgroundColor: `${colors.success}26`,
                       opacity: doneScale,
                       transform: [{ scale: doneScale.interpolate({ inputRange: [0, 1], outputRange: [0.85, 1] }) }],
                     }} />
                     <Animated.View style={{
                       width: 96, height: 96, borderRadius: 48,
-                      backgroundColor: '#22c55e',
+                      backgroundColor: colors.success,
                       alignItems: 'center', justifyContent: 'center',
                       transform: [{ scale: doneScale }],
-                      shadowColor: '#22c55e', shadowOffset: { width: 0, height: 10 },
+                      shadowColor: colors.success, shadowOffset: { width: 0, height: 10 },
                       shadowOpacity: 0.45, shadowRadius: 22, elevation: 12,
-                      ...(Platform.OS === 'web' ? { boxShadow: '0 14px 32px rgba(34,197,94,0.45), inset 0 1px 0 rgba(255,255,255,0.25)' } : {}),
+                      ...(Platform.OS === 'web' ? { boxShadow: `0 14px 32px ${colors.success}73, inset 0 1px 0 rgba(255,255,255,0.25)` } : {}),
                     }}>
                       <IconCheck size={56} color="#fff" strokeWidth={3} />
                     </Animated.View>
@@ -1565,8 +1565,8 @@ export default function SignupPhone() {
                 flexDirection: 'row', alignItems: 'flex-start', gap: 8,
                 marginTop: 10, paddingHorizontal: 2,
               }}>
-                <IconAlertTriangle size={15} color="#ef4444" style={{ marginTop: 2 }} />
-                <Text style={{ color: '#ef4444', fontSize: 13, lineHeight: 18, flex: 1 }}>
+                <IconAlertTriangle size={15} color={colors.error} style={{ marginTop: 2 }} />
+                <Text style={{ color: colors.error, fontSize: 13, lineHeight: 18, flex: 1 }}>
                   {error}
                 </Text>
               </View>
@@ -1577,7 +1577,7 @@ export default function SignupPhone() {
 
       {/* Primary action button (sticky bottom for the form-like feel) */}
       {step !== 'done' && (
-        <View style={[styles.footer, { borderTopColor: colors.border }]}>
+        <View style={[styles.footer, { borderTopColor: colors.border, paddingBottom: Math.max(Platform.OS === 'ios' ? 30 : 16, _insets.bottom + 12) }]}>
           {/* ToS disclaimer — rendered on EVERY step (phone/otp/name/handle)
               so legal consent stays visible up through the moment of account
               creation. Hidden only on `done` (already signed up — no further
@@ -1601,6 +1601,7 @@ export default function SignupPhone() {
               styles.cta,
               {
                 backgroundColor: colors.primary,
+                shadowColor: colors.primary,
                 opacity: busy ? 0.7 : (
                   (step === 'phone' && phone.replace(/\D/g, '').length < 8) ||
                   (step === 'otp'   && (lockRequired ? lockPin.length < 4 : code.length !== 6)) ||
@@ -1687,7 +1688,7 @@ export default function SignupPhone() {
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setAvatarSheetOpen(false)}
-              style={{ paddingVertical: 14, paddingHorizontal: 16, marginTop: 4, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isDark ? '#2a2d31' : '#e5e7eb' }}
+              style={{ paddingVertical: 14, paddingHorizontal: 16, marginTop: 4, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }}
               activeOpacity={0.6}
             >
               <Text style={{ fontSize: 16, color: colors.textSecondary, fontWeight: '600' }}>
@@ -1710,7 +1711,7 @@ export default function SignupPhone() {
           <View style={{
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
             paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 56 : 24, paddingBottom: 12,
-            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#2a2d31' : '#e5e7eb',
+            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
           }}>
             <TouchableOpacity onPress={() => setShowCountryPicker(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
               <IconArrowLeft size={22} color={colors.text} />
@@ -1729,7 +1730,7 @@ export default function SignupPhone() {
                 backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
               }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
               placeholder={t('signup.stepPhone.searchCountry') || 'Buscar'}
-              placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+              placeholderTextColor={colors.textTertiary}
               value={countrySearch}
               onChangeText={setCountrySearch}
               autoFocus={Platform.OS === 'web'}
@@ -1757,7 +1758,7 @@ export default function SignupPhone() {
                     flexDirection: 'row', alignItems: 'center',
                     paddingVertical: 14, paddingHorizontal: 16,
                     borderBottomWidth: StyleSheet.hairlineWidth,
-                    borderBottomColor: isDark ? '#2a2d31' : '#e5e7eb',
+                    borderBottomColor: colors.border,
                     backgroundColor: c.code === countryCode ? `${colors.primary}10` : 'transparent',
                   }}
                 >

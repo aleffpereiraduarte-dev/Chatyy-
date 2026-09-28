@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo, useRef, lazy, Suspens
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, Modal, Pressable, TextInput,
   ActivityIndicator, useWindowDimensions, Platform, Animated, Easing, Alert, AppState,
+  KeyboardAvoidingView,
 } from 'react-native';
 // FlashList reverted to FlatList
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -1157,7 +1158,7 @@ function InboxScreenInner() {
           try {
             const div = document.createElement('div');
             div.textContent = msg;
-            div.style.cssText = 'position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:10px 16px;border-radius:8px;font-size:14px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.2);';
+            div.style.cssText = `position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:${colors.toastBg};color:${colors.toastText};padding:10px 16px;border-radius:8px;font-size:14px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.2);`;
             document.body.appendChild(div);
             setTimeout(() => { try { div.remove(); } catch {} }, 3500);
           } catch {}
@@ -1267,7 +1268,7 @@ function InboxScreenInner() {
   }, [emails, activeCategory, aiCategories, inboxLayout, isImportant]);
 
   // Don't render anything while redirecting to login
-  if (!user) return <View style={{ flex: 1, backgroundColor: '#f8fafc' }} />;
+  if (!user) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
 
   // Onboarding tutorial
   if (showOnboarding) {
@@ -1500,7 +1501,7 @@ function InboxScreenInner() {
                 <Text style={[s.dropActionLabel, { color: colors.text }]}>{t('menu.settings')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.dropActionBtn} onPress={() => { try { console.log('[FAMILIA-DIAG][inbox][tap_familia_menu]'); } catch {} setShowMenu(false); router.push('/parental'); }}>
-                <IconShield size={20} color="#A582F7" />
+                <IconShield size={20} color={colors.primary} />
                 <Text style={[s.dropActionLabel, { color: colors.text }]}>{t('menu.family') || 'Família'}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.dropActionBtn} onPress={() => { toggle(); }}>
@@ -1583,7 +1584,7 @@ function InboxScreenInner() {
                   alignItems: 'center', justifyContent: 'center',
                   paddingHorizontal: 4,
                 }}>
-                  <Text style={{ color: '#fff', fontSize: 10, fontWeight: '800' }}>
+                  <Text style={{ color: colors.onPrimary, fontSize: 10, fontWeight: '800' }}>
                     {savedSearches.length}
                   </Text>
                 </View>
@@ -1960,7 +1961,7 @@ function InboxScreenInner() {
         <BrandFab
           style={{ position: 'absolute', right: 20, bottom: insets.bottom + 24 }}
           size={56}
-          color="#A582F7"
+          color={colors.primary}
           onPress={() => router.push('/compose')}
           accessibilityLabel={t('compose.new') || 'Nova mensagem'}
         >
@@ -1981,6 +1982,10 @@ function InboxScreenInner() {
       {/* Account Switch Password Prompt */}
       {switchLoginEmail && (
         <Modal visible transparent animationType="fade" onRequestClose={() => setSwitchLoginEmail(null)}>
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          >
           <Pressable
             style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' }}
             onPress={() => setSwitchLoginEmail(null)}
@@ -2041,7 +2046,7 @@ function InboxScreenInner() {
                 }}
               />
               {switchLoginError ? (
-                <Text style={{ color: '#ef4444', fontSize: 13, marginBottom: 8 }}>{switchLoginError}</Text>
+                <Text style={{ color: colors.error, fontSize: 13, marginBottom: 8 }}>{switchLoginError}</Text>
               ) : null}
               <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
                 <TouchableOpacity
@@ -2051,7 +2056,7 @@ function InboxScreenInner() {
                   <Text style={{ color: colors.textSecondary, fontWeight: '600' }}>{t('common.cancel') || 'Cancel'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: switchLoginLoading ? '#1a3a2a' : '#A582F7' }}
+                  style={{ flex: 1, paddingVertical: 12, borderRadius: 10, alignItems: 'center', backgroundColor: switchLoginLoading ? colors.primary + '50' : colors.primary }}
                   disabled={switchLoginLoading || !switchLoginPassword.trim()}
                   onPress={async () => {
                     if (!switchLoginPassword.trim()) return;
@@ -2081,6 +2086,7 @@ function InboxScreenInner() {
               </View>
             </Pressable>
           </Pressable>
+          </KeyboardAvoidingView>
         </Modal>
       )}
 

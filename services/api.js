@@ -75,6 +75,13 @@ export function parseServerDate(value) {
   return new Date(s);
 }
 export let BASE_URL = 'https://chatyy.com.br';
+// [2026-09-28] MIGRAÇÃO BRASIL: o CHAT (tempo-real, baixa latência) roda em São
+// Paulo (chat.chatyy.com.br → SP, ~15ms pro usuário BR). O EMAIL fica em NY
+// (BASE_URL = chatyy.com.br, tolera latência). As chamadas de chat (chat.php +
+// /api/rust/chat) usam CHAT_BASE_URL; o resto usa BASE_URL. Rollback: apontar
+// CHAT_BASE_URL de volta pra BASE_URL e o chat volta pro NY.
+export let CHAT_BASE_URL = 'https://chat.chatyy.com.br';
+export function getChatBase() { return CHAT_BASE_URL; }
 // [2026-05-30] media.chatyy.com.br is a Cloudflare CNAME → public.r2.dev (R2)
 // that was NEVER bound to a bucket → it 404s EVERY /data/ path (verified: even
 // `/` 404s). The actual chat/status/sticker/reel files live on the origin disk,

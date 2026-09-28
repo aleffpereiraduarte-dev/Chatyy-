@@ -75,6 +75,13 @@ import {
 
 const DRAFT_SAVE_INTERVAL = 5000;
 
+// Matches styles.header.height below — used as the iOS KeyboardAvoidingView
+// offset (header sits INSIDE the KAV, above the scrollable form) so the
+// keyboard-avoid padding is computed correctly instead of relying on the
+// KAV's automatic (and, inside a modal presentation, sometimes unreliable)
+// frame measurement.
+const HEADER_HEIGHT = 56;
+
 // ── Gmail-level limits (protect data processing/storage from pathological
 //    input). Generous enough that normal use never trips them. ──
 const MAX_SUBJECT_LEN = 255;          // Gmail truncates display beyond this
@@ -199,11 +206,11 @@ function SendButton({ size, sending, onPress, onLongPress, colors, label }) {
         accessibilityRole="button"
       >
         {sending ? (
-          <ActivityIndicator size="small" color="#fff" />
+          <ActivityIndicator size="small" color={colors.onPrimary} />
         ) : (
           <>
-            <IconSend size={size === 'large' ? 18 : 15} color="#fff" />
-            <Text style={[s.sendBtnText, size === 'large' && s.sendBtnTextLarge]}>{label}</Text>
+            <IconSend size={size === 'large' ? 18 : 15} color={colors.onPrimary} />
+            <Text style={[s.sendBtnText, size === 'large' && s.sendBtnTextLarge, { color: colors.onPrimary }]}>{label}</Text>
           </>
         )}
       </TouchableOpacity>
@@ -325,7 +332,7 @@ function SubjectField({ value, onChangeText, placeholder, label, colors }) {
             bottom: 6,
             fontSize: 10,
             fontWeight: '500',
-            color: (value && value.length > 235) ? '#ef4444' : colors.textTertiary,
+            color: (value && value.length > 235) ? colors.error : colors.textTertiary,
             letterSpacing: 0.3,
           }}
         >
@@ -338,7 +345,7 @@ function SubjectField({ value, onChangeText, placeholder, label, colors }) {
 
 // Confidential mode options sheet — bottom sheet with expiry options +
 // optional passcode + recipient phone (for SMS). Wired in the toolbar.
-function ConfidentialOptionsModal({ visible, onClose, confidential, setConfidential, expiry, setExpiry, passcode, setPasscode, phone, setPhone, colors, t }) {
+function ConfidentialOptionsModal({ visible, onClose, confidential, setConfidential, expiry, setExpiry, passcode, setPasscode, phone, setPhone, colors, t, insetsBottom = 0 }) {
   const opts = [
     { d: 1,   label: t?.('compose.confidential1d') || '1 dia' },
     { d: 7,   label: t?.('compose.confidential1w') || '1 semana' },
@@ -350,7 +357,7 @@ function ConfidentialOptionsModal({ visible, onClose, confidential, setConfident
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }} onPress={onClose}>
         <Pressable
           onPress={(e) => e.stopPropagation()}
-          style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 14, paddingBottom: 36, paddingHorizontal: 18 }}
+          style={{ backgroundColor: colors.background, borderTopLeftRadius: 20, borderTopRightRadius: 20, paddingTop: 14, paddingBottom: insetsBottom + 36, paddingHorizontal: 18 }}
         >
           <View style={{ alignItems: 'center', marginBottom: 10 }}>
             <View style={{ width: 36, height: 4, borderRadius: 2, backgroundColor: colors.border }} />
@@ -379,7 +386,7 @@ function ConfidentialOptionsModal({ visible, onClose, confidential, setConfident
                     <TouchableOpacity key={o.d} onPress={() => setExpiry(o.d)}
                       style={{ paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18,
                         backgroundColor: active ? colors.primary : colors.surfaceVariant }}>
-                      <Text style={{ color: active ? '#fff' : colors.text, fontWeight: '600', fontSize: 13 }}>{o.label}</Text>
+                      <Text style={{ color: active ? colors.onPrimary : colors.text, fontWeight: '600', fontSize: 13 }}>{o.label}</Text>
                     </TouchableOpacity>
                   );
                 })}
@@ -415,7 +422,7 @@ function ConfidentialOptionsModal({ visible, onClose, confidential, setConfident
           )}
           <TouchableOpacity onPress={onClose}
             style={{ backgroundColor: colors.primary, paddingVertical: 13, borderRadius: 12, alignItems: 'center', marginTop: 18 }}>
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>
+            <Text style={{ color: colors.onPrimary, fontWeight: '700', fontSize: 15 }}>
               {t?.('common.done') || 'Pronto'}
             </Text>
           </TouchableOpacity>
@@ -1621,7 +1628,7 @@ export default function ComposeScreen() {
         accessibilityRole="text"
         accessibilityLabel={msg}
       >
-        <Text style={{ fontSize: 11, color: '#b45309', fontWeight: '600' }}>{msg}</Text>
+        <Text style={{ fontSize: 11, color: colors.warning, fontWeight: '600' }}>{msg}</Text>
       </View>
     );
   };
@@ -1942,7 +1949,7 @@ export default function ComposeScreen() {
         />
         <View style={{
           backgroundColor: colors.background, borderTopLeftRadius: 16, borderTopRightRadius: 16,
-          paddingTop: 8, paddingBottom: 24, paddingHorizontal: 0,
+          paddingTop: 8, paddingBottom: insets.bottom + 24, paddingHorizontal: 0,
         }}>
           <View style={{ alignItems: 'center', paddingVertical: 8 }}>
             <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: colors.borderLight }} />
@@ -1993,7 +2000,11 @@ export default function ComposeScreen() {
     const origSubject = origMsg?.subject || subject;
 
     return (
-      <KeyboardAvoidingView style={[s.flex, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView
+        style={[s.flex, { backgroundColor: colors.background }]}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
+      >
         <View style={[s.container, { paddingTop: insets.top }]}>
           {/* Header — purple gradient, white iconography */}
           <View style={[s.header, Platform.OS !== 'web' && { backgroundColor: '#A582F7' }]}>
@@ -2016,7 +2027,12 @@ export default function ComposeScreen() {
 
           {renderStatusBars()}
 
-          <ScrollView style={s.form} keyboardShouldPersistTaps="always" keyboardDismissMode="none">
+          <ScrollView
+            style={s.form}
+            contentContainerStyle={{ paddingBottom: insets.bottom + Spacing.md }}
+            keyboardShouldPersistTaps="always"
+            keyboardDismissMode="none"
+          >
             {/* ── Original Message Card (read-only) ── */}
             <View style={[s.origCard, { backgroundColor: colors.surface }, Platform.OS === 'web' && s.origCardWeb]}>
               <View style={s.origHeader}>
@@ -2153,6 +2169,7 @@ export default function ComposeScreen() {
           setPasscode={setConfidentialPasscode}
           phone={confidentialPhone}
           setPhone={setConfidentialPhone}
+          insetsBottom={insets.bottom}
           colors={colors}
           t={t}
         />
@@ -2166,7 +2183,11 @@ export default function ComposeScreen() {
   //  COMPOSE / FORWARD MODE — Modern Design
   // ════════════════════════════════════════════
   return (
-    <KeyboardAvoidingView style={[s.flex, { backgroundColor: colors.background }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      style={[s.flex, { backgroundColor: colors.background }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
+    >
       <View style={[s.container, { paddingTop: insets.top }]}>
         {/* ── Modern Header — purple gradient, white iconography ── */}
         <View style={[s.header, { flex: undefined, marginLeft: 0 }, Platform.OS !== 'web' && { backgroundColor: '#A582F7' }]}>
@@ -2191,7 +2212,12 @@ export default function ComposeScreen() {
         {renderStatusBars()}
 
         {/* ── Compose Form ── */}
-        <ScrollView style={s.form} keyboardShouldPersistTaps="always" keyboardDismissMode="none">
+        <ScrollView
+          style={s.form}
+          contentContainerStyle={{ paddingBottom: insets.bottom + Spacing.md }}
+          keyboardShouldPersistTaps="always"
+          keyboardDismissMode="none"
+        >
           <View style={[s.composeCard, { backgroundColor: colors.surface }, Platform.OS === 'web' && s.composeCardWeb]}>
             {/* From — dropdown when the user has >1 verified send-as aliases. */}
             <View style={[s.fieldRow, { borderBottomColor: colors.borderLight }]}>
@@ -2381,8 +2407,8 @@ export default function ComposeScreen() {
         <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.6)', justifyContent:'center', alignItems:'center', padding:20, zIndex:9999 }}>
           <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:24, maxWidth:400, width:'100%' }}>
             <View style={{ flexDirection:'row', alignItems:'center', gap:6, marginBottom:8 }}>
-              <IconLock size={18} color="#dc2626" />
-              <Text style={{ fontSize:18, fontWeight:'700', color:'#dc2626', flexShrink:1 }}>{t('compose.leakWarning') || 'Informação sensível detectada'}</Text>
+              <IconLock size={18} color={colors.error} />
+              <Text style={{ fontSize:18, fontWeight:'700', color:colors.error, flexShrink:1 }}>{t('compose.leakWarning') || 'Informação sensível detectada'}</Text>
             </View>
             <Text style={{ fontSize:14, color:colors.text, marginBottom:8 }}>
               {leakWarning.warning}
@@ -2390,8 +2416,8 @@ export default function ComposeScreen() {
             {leakWarning.types?.length > 0 && (
               <View style={{ flexDirection:'row', flexWrap:'wrap', gap:6, marginBottom:16 }}>
                 {leakWarning.types.map((t, i) => (
-                  <View key={i} style={{ backgroundColor:'#fee2e2', paddingHorizontal:8, paddingVertical:4, borderRadius:4 }}>
-                    <Text style={{ fontSize:11, color:'#991b1b', fontWeight:'600' }}>{t}</Text>
+                  <View key={i} style={{ backgroundColor:colors.errorBg, paddingHorizontal:8, paddingVertical:4, borderRadius:4 }}>
+                    <Text style={{ fontSize:11, color:colors.error, fontWeight:'600' }}>{t}</Text>
                   </View>
                 ))}
               </View>
@@ -2400,7 +2426,7 @@ export default function ComposeScreen() {
               <TouchableOpacity onPress={() => { setLeakWarning(null); setSending(false); }} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:colors.background, alignItems:'center' }}>
                 <Text style={{ color:colors.text, fontWeight:'600' }}>{t('compose.edit') || 'Editar'}</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => { setLeakWarning(null); setTimeout(() => doSend(), 60); }} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:'#dc2626', alignItems:'center' }}>
+              <TouchableOpacity onPress={() => { setLeakWarning(null); setTimeout(() => doSend(), 60); }} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:colors.error, alignItems:'center' }}>
                 <Text style={{ color:'#fff', fontWeight:'600' }}>{t('compose.sendAnyway') || 'Enviar mesmo'}</Text>
               </TouchableOpacity>
             </View>
@@ -2413,8 +2439,8 @@ export default function ComposeScreen() {
         <View style={{ position:'absolute', top:0, left:0, right:0, bottom:0, backgroundColor:'rgba(0,0,0,0.5)', justifyContent:'center', alignItems:'center', padding:20, zIndex:9999 }}>
           <View style={{ backgroundColor:colors.surface, borderRadius:16, padding:24, maxWidth:400, width:'100%' }}>
             <View style={{ flexDirection:'row', alignItems:'center', gap:6, marginBottom:8 }}>
-              <IconAlertTriangle size={18} color="#ef4444" />
-              <Text style={{ fontSize:18, fontWeight:'700', color:'#ef4444', flexShrink:1 }}>{t('compose.toneWarning') || 'Tom detectado'}: {toneWarning.tone}</Text>
+              <IconAlertTriangle size={18} color={colors.error} />
+              <Text style={{ fontSize:18, fontWeight:'700', color:colors.error, flexShrink:1 }}>{t('compose.toneWarning') || 'Tom detectado'}: {toneWarning.tone}</Text>
             </View>
             <Text style={{ fontSize:14, color:colors.text, marginBottom:16 }}>
               {(t('compose.toneWarningBody') || 'Sua mensagem soa {tone} (intensidade {score}/100). Recomendamos revisar antes de enviar.')
@@ -2431,7 +2457,7 @@ export default function ComposeScreen() {
               <TouchableOpacity onPress={() => { setToneWarning(null); setSending(false); }} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:colors.background, alignItems:'center' }}>
                 <Text style={{ color:colors.text, fontWeight:'600' }}>{t('compose.edit') || 'Editar'}</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={handleSendAnyway} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:'#ef4444', alignItems:'center' }}>
+              <TouchableOpacity onPress={handleSendAnyway} style={{ flex:1, paddingVertical:12, borderRadius:8, backgroundColor:colors.error, alignItems:'center' }}>
                 <Text style={{ color:'#fff', fontWeight:'600' }}>{t('compose.sendAnyway') || 'Enviar mesmo'}</Text>
               </TouchableOpacity>
             </View>

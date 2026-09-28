@@ -2724,10 +2724,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           unsub = m.subscribeSyncStatus(({ running }) => {
             if (cancelled) return;
             if (running) {
-              // WhatsApp-invisible-sync (2026-05-18): suppress the brief
-              // reconnect flashes. If the recovery finishes inside 2500ms
-              // (the common case on healthy networks), the user never sees
-              // the badge at all — feels like nothing happened.
+              // WhatsApp-invisible-sync (2026-09-28): suppress reconnect flashes.
+              // Raised 2500ms→7000ms — com o servidor em NY o sync roda em 3-5s
+              // (latência BR↔NY) e o badge "Sincronizando" aparecia TODA abertura.
+              // Com 7s, em uso normal ele NUNCA aparece (sync silencioso no fundo,
+              // igual WhatsApp); só surge se travar de verdade (>7s = problema real).
+              // A migração pro Brasil deixa o sync <1s e resolve na raiz.
               if (showTimer) { try { clearTimeout(showTimer); } catch {} }
               showTimer = setTimeout(() => {
                 showTimer = null;
@@ -2740,7 +2742,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                   hideFailsafe = null;
                   setSyncingBadge(false);
                 }, 4000);
-              }, 2500);
+              }, 7000);
             } else {
               // Recovery finished — clear pending "show" timer + hide now.
               if (showTimer) { try { clearTimeout(showTimer); } catch {} showTimer = null; }

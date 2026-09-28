@@ -3,6 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, Animated, Easing, Linking,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -20,6 +21,7 @@ export default function ForgotPassword() {
   const { colors, isDark, toggle } = useTheme();
   const { t } = useLanguage();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [showHelp, setShowHelp] = useState(false);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [showTerms, setShowTerms] = useState(false);
@@ -285,7 +287,7 @@ export default function ForgotPassword() {
 
         <View style={s.btnCol}>
           <TouchableOpacity
-            style={[s.primaryBtn, { backgroundColor: colors.primary }, loading && { opacity: 0.65 }]}
+            style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }, loading && { opacity: 0.65 }]}
             onPress={handleGetOptions}
             disabled={loading}
             activeOpacity={0.85}
@@ -371,7 +373,7 @@ export default function ForgotPassword() {
 
         <View style={s.btnCol}>
           <TouchableOpacity
-            style={[s.primaryBtn, { backgroundColor: colors.primary }, loading && { opacity: 0.65 }]}
+            style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }, loading && { opacity: 0.65 }]}
             onPress={handleFindEmail}
             disabled={loading || !findQuery.trim()}
             activeOpacity={0.85}
@@ -401,7 +403,7 @@ export default function ForgotPassword() {
             <Text style={[s.noMethodsTitle, { color: colors.text }]}>{t('forgot.noMethods')}</Text>
             <Text style={[s.noMethodsDesc, { color: colors.textSecondary }]}>{t('forgot.contactSupport')}</Text>
             <TouchableOpacity
-              style={[s.primaryBtn, { backgroundColor: colors.primary, marginTop: 20, width: '100%' }]}
+              style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary, marginTop: 20, width: '100%' }]}
               onPress={() => {
                 if (Platform.OS === 'web') {
                   window.open('mailto:suporte@chatyy.com.br', '_blank');
@@ -428,8 +430,8 @@ export default function ForgotPassword() {
                 disabled={loading}
                 activeOpacity={0.7}
               >
-                <View style={[s.methodIconWrap, { backgroundColor: '#10b981' + '15' }]}>
-                  <IconSmartphone size={22} color="#10b981" />
+                <View style={[s.methodIconWrap, { backgroundColor: colors.authSuccessGreen + '15' }]}>
+                  <IconSmartphone size={22} color={colors.authSuccessGreen} />
                 </View>
                 <View style={s.methodInfo}>
                   <Text style={[s.methodTitle, { color: colors.text }]}>{t('forgot.methodPhone')}</Text>
@@ -482,8 +484,8 @@ export default function ForgotPassword() {
                 disabled={loading}
                 activeOpacity={0.7}
               >
-                <View style={[s.methodIconWrap, { backgroundColor: '#A78BFA' + '15' }]}>
-                  <IconMail size={22} color="#A78BFA" />
+                <View style={[s.methodIconWrap, { backgroundColor: colors.brandSecondary + '15' }]}>
+                  <IconMail size={22} color={colors.brandSecondary} />
                 </View>
                 <View style={s.methodInfo}>
                   <Text style={[s.methodTitle, { color: colors.text }]}>Email Chatyy</Text>
@@ -512,9 +514,9 @@ export default function ForgotPassword() {
       <>
         {renderError()}
         <View style={[s.sentBox, { backgroundColor: colors.authChipBg, borderColor: colors.authChipBorder }]}>
-          <View style={[s.sentIconWrap, { backgroundColor: (selectedMethod === 'phone' ? '#10b981' : colors.primary) + '12' }]}>
+          <View style={[s.sentIconWrap, { backgroundColor: (selectedMethod === 'phone' ? colors.authSuccessGreen : colors.primary) + '12' }]}>
             {selectedMethod === 'phone' ? (
-              <IconSmartphone size={18} color="#10b981" />
+              <IconSmartphone size={18} color={colors.authSuccessGreen} />
             ) : (
               <IconSend size={18} color={colors.primary} />
             )}
@@ -551,7 +553,7 @@ export default function ForgotPassword() {
         <OtpInput value={code} onChange={handleCodeChange} />
 
         <TouchableOpacity
-          style={[s.primaryBtn, { backgroundColor: colors.primary, marginTop: 22 }, loading && { opacity: 0.65 }]}
+          style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary, marginTop: 22 }, loading && { opacity: 0.65 }]}
           onPress={() => handleVerify()}
           disabled={loading}
           activeOpacity={0.85}
@@ -637,7 +639,7 @@ export default function ForgotPassword() {
 
         <View style={s.btnCol}>
           <TouchableOpacity
-            style={[s.primaryBtn, { backgroundColor: colors.primary }, loading && { opacity: 0.65 }]}
+            style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }, loading && { opacity: 0.65 }]}
             onPress={handleReset}
             disabled={loading}
             activeOpacity={0.85}
@@ -664,7 +666,7 @@ export default function ForgotPassword() {
           <Text style={[s.successTitle, { color: colors.authSuccessGreen }]}>{t('forgot.passwordChanged')}</Text>
           <Text style={[s.successSub, { color: colors.textSecondary }]}>{t('forgot.passwordChangedDesc')}</Text>
           <TouchableOpacity
-            style={[s.primaryBtn, { backgroundColor: colors.primary, marginTop: 24, width: '100%' }]}
+            style={[s.primaryBtn, { backgroundColor: colors.primary, shadowColor: colors.primary, marginTop: 24, width: '100%' }]}
             onPress={() => router.replace('/login')}
             activeOpacity={0.85}
           >
@@ -697,24 +699,28 @@ export default function ForgotPassword() {
       </View>
 
       {/* Theme toggle */}
-      <TouchableOpacity onPress={toggle} style={s.themeToggle} activeOpacity={0.7}>
+      <TouchableOpacity onPress={toggle} style={[s.themeToggle, { top: insets.top + 16 }]} activeOpacity={0.7}>
         <View style={[s.themeBtn, {
-          backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#ffffff',
+          backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : colors.surface,
           borderColor: colors.authInputBorder,
           ...(Platform.OS === 'web' ? {
             boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
           } : {
-            shadowColor: '#000', shadowOffset: { width: 0, height: 1 },
+            shadowColor: colors.shadow, shadowOffset: { width: 0, height: 1 },
             shadowOpacity: 0.06, shadowRadius: 3, elevation: 2,
           }),
         }]}>
-          {isDark ? <IconSun size={16} color="#fbbf24" /> : <IconMoon size={16} color={colors.textSecondary} />}
+          {isDark ? <IconSun size={16} color={colors.warning} /> : <IconMoon size={16} color={colors.textSecondary} />}
         </View>
       </TouchableOpacity>
 
-    <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+    <KeyboardAvoidingView
+      style={s.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+    >
       <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
-        <View style={s.center}>
+        <View style={[s.center, { paddingBottom: 48 + insets.bottom }]}>
           <Animated.View style={[s.cardWrap, { opacity: fadeAnim, transform: [{ scale: entryScale }, { translateY: slideAnim }] }]}>
             <View style={[s.card, {
               backgroundColor: colors.authCardBg,
@@ -723,7 +729,7 @@ export default function ForgotPassword() {
                   ? '0 2px 8px rgba(0,0,0,0.35), 0 8px 32px rgba(0,0,0,0.2)'
                   : '0 1px 3px rgba(0,0,0,0.04), 0 4px 24px rgba(0,0,0,0.08)',
               } : {
-                shadowColor: '#000',
+                shadowColor: colors.shadow,
                 shadowOffset: { width: 0, height: 4 },
                 shadowOpacity: isDark ? 0.3 : 0.12,
                 shadowRadius: 24,

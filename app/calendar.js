@@ -450,7 +450,7 @@ function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
     }),
   } : null;
   const selectedOutlineStyle = (isSelected && !isToday) ? {
-    backgroundColor: (colors.primaryLight || '#EDE9FE'),
+    backgroundColor: colors.primaryLight,
     borderWidth: 2, borderColor: colors.primary,
   } : null;
 
@@ -469,7 +469,7 @@ function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
       <Text style={[
         styles.dayCellText,
         { color: isOtherMonth ? colors.textTertiary : colors.text },
-        isToday && { color: '#fff', fontWeight: '800' },
+        isToday && { color: colors.onPrimary, fontWeight: '800' },
         isSelected && !isToday && { color: colors.primary, fontWeight: '800' },
       ]}>
         {day}
@@ -481,6 +481,7 @@ function DayCellInner({ isSelected, isToday, isOtherMonth, day, colors }) {
 // Mini AO VIVO badge (live broadcast attached to event). Pulses a red dot
 // so it reads as "happening now" without ever taking the whole chip.
 function LiveBadge({ size = 8 }) {
+  const { colors } = useTheme();
   const blink = useRef(new Animated.Value(1)).current;
   useEffect(() => {
     const loop = Animated.loop(
@@ -494,7 +495,7 @@ function LiveBadge({ size = 8 }) {
   }, [blink]);
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3,
-      backgroundColor: '#dc2626', borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}>
+      backgroundColor: colors.error, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 }}>
       <Animated.View style={{ width: size - 2, height: size - 2, borderRadius: (size - 2) / 2,
         backgroundColor: '#fff', opacity: blink }} />
       <Text style={{ color: '#fff', fontSize: 8, fontWeight: '800', letterSpacing: 0.4 }}>AO VIVO</Text>
@@ -829,7 +830,7 @@ function DayCellPressable({ colors, isSelected, onPress, children }) {
       onPress={onPress}
       style={[
         styles.calendarCell,
-        isSelected && { backgroundColor: (colors.primaryLight || '#EDE9FE') + '88' },
+        isSelected && { backgroundColor: colors.primaryLight + '88' },
       ]}
     >
       <Animated.View style={{ transform: [{ scale: pressScale }], flex: 1 }}>
@@ -977,7 +978,7 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
       </View>
 
       {/* Day name headers */}
-      <View style={weekStyles.dayHeaderRow}>
+      <View style={[weekStyles.dayHeaderRow, { borderBottomColor: colors.border }]}>
         <View style={weekStyles.timeGutter} />
         {days.map((d, i) => {
           const isToday = isSameDay(d, today);
@@ -987,7 +988,7 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
                 {dayNames[i] || ''}
               </Text>
               <View style={[weekStyles.dayNum, isToday && { backgroundColor: colors.primary }]}>
-                <Text style={[weekStyles.dayNumText, { color: isToday ? '#fff' : colors.text }]}>
+                <Text style={[weekStyles.dayNumText, { color: isToday ? colors.onPrimary : colors.text }]}>
                   {d.getDate()}
                 </Text>
               </View>
@@ -1121,8 +1122,8 @@ function WeekView({ weekStart, events, colors, onEventPress, onPrevWeek, onNextW
                 <View key={i} style={weekStyles.dayColBody}>
                   {i === todayIdx && (
                     <View style={weekStyles.nowLineInner}>
-                      <View style={weekStyles.nowDot} />
-                      <View style={weekStyles.nowBar} />
+                      <View style={[weekStyles.nowDot, { backgroundColor: colors.error }]} />
+                      <View style={[weekStyles.nowBar, { backgroundColor: colors.error }]} />
                     </View>
                   )}
                 </View>
@@ -1306,11 +1307,11 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
           activeOpacity={0.85}
           accessibilityLabel={t('calendar.edit')}
         >
-          <IconEdit size={20} color="#fff" />
-          <Text style={styles.swipeActionText}>{t('calendar.edit')}</Text>
+          <IconEdit size={20} color={colors.onPrimary} />
+          <Text style={[styles.swipeActionText, { color: colors.onPrimary }]}>{t('calendar.edit')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.swipeActionRight, { backgroundColor: colors.error || '#EA4335' }]}
+          style={[styles.swipeActionRight, { backgroundColor: colors.error }]}
           onPress={fireDelete}
           activeOpacity={0.85}
           accessibilityLabel={t('calendar.delete')}
@@ -1360,8 +1361,8 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
             )}
             {isMeetingEvent && (
               <View style={styles.eventMeta}>
-                <IconVideo size={13} color="#A582F7" />
-                <Text style={[styles.eventMetaText, { color: '#A582F7', fontWeight: '600' }]}>{t ? t('calendar.meetingEvent') : 'Video Meeting'}</Text>
+                <IconVideo size={13} color={colors.primary} />
+                <Text style={[styles.eventMetaText, { color: colors.primary, fontWeight: '600' }]}>{t ? t('calendar.meetingEvent') : 'Video Meeting'}</Text>
               </View>
             )}
           </View>
@@ -1369,8 +1370,8 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
             {/* Badges row */}
             <View style={styles.eventBadgesCol}>
               {isSynced && (
-                <View style={[styles.syncBadgeSmall, { backgroundColor: '#0097A7' + '22' }]}>
-                  <IconSmartphone size={10} color="#0097A7" />
+                <View style={[styles.syncBadgeSmall, { backgroundColor: colors.primary + '22' }]}>
+                  <IconSmartphone size={10} color={colors.primary} />
                 </View>
               )}
               {hasReminder && (
@@ -1388,12 +1389,12 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
             </View>
             {isMeetingEvent && meetingRoomId && (
               <TouchableOpacity
-                style={styles.joinMeetingBtn}
+                style={[styles.joinMeetingBtn, { backgroundColor: colors.primary }]}
                 onPress={(e) => { e.stopPropagation(); onJoinMeeting?.(meetingRoomId); }}
                 activeOpacity={0.7}
               >
-                <IconVideo size={14} color="#fff" />
-                <Text style={styles.joinMeetingBtnText}>{t ? t('calendar.joinMeeting') : 'Join'}</Text>
+                <IconVideo size={14} color={colors.onPrimary} />
+                <Text style={[styles.joinMeetingBtnText, { color: colors.onPrimary }]}>{t ? t('calendar.joinMeeting') : 'Join'}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -1407,6 +1408,7 @@ function SwipeableEventCard({ event, colors, onPress, onEdit, onDelete, onJoinMe
 // Add Event Modal
 // ============================================================
 function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDate, existingEvents, t }) {
+  const insets = useSafeAreaInsets();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [location, setLocation] = useState('');
@@ -1575,7 +1577,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
-      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
       <View style={[styles.modalOverlay, { backgroundColor: 'rgba(0,0,0,0.4)' }]}>
         <View style={[styles.modalContent, { backgroundColor: colors.background }]}>
           <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
@@ -1592,7 +1594,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
             </TouchableOpacity>
           </View>
 
-          <ScrollView style={styles.modalBody} contentContainerStyle={{ paddingBottom: 40 }} keyboardShouldPersistTaps="handled">
+          <ScrollView style={styles.modalBody} contentContainerStyle={{ paddingBottom: 40 + insets.bottom }} keyboardShouldPersistTaps="handled">
             {/* Title */}
             <TextInput
               style={[styles.input, styles.inputLarge, { color: colors.text, borderColor: colors.border, backgroundColor: colors.surface }]}
@@ -1634,7 +1636,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                           setEndDate(startDate);
                         }}
                       >
-                        <Text style={[styles.durationChipText, { color: isActive ? '#fff' : colors.text }]}>{dur.label}</Text>
+                        <Text style={[styles.durationChipText, { color: isActive ? colors.onPrimary : colors.text }]}>{dur.label}</Text>
                       </TouchableOpacity>
                     );
                   })}
@@ -1645,7 +1647,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                     ]}
                     onPress={() => setAllDay(true)}
                   >
-                    <Text style={[styles.durationChipText, { color: allDay ? '#fff' : colors.text }]}>{t('calendar.allDay')}</Text>
+                    <Text style={[styles.durationChipText, { color: allDay ? colors.onPrimary : colors.text }]}>{t('calendar.allDay')}</Text>
                   </TouchableOpacity>
                 </View>
               </>
@@ -1728,13 +1730,13 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
 
             {/* Conflict warning — non-blocking, just informs of overlap */}
             {conflictingEvents.length > 0 && (
-              <View style={[styles.conflictWarning, { backgroundColor: '#FEF3C7', borderColor: '#FCD34D' }]}>
-                <IconClock size={14} color="#92400E" />
+              <View style={[styles.conflictWarning, { backgroundColor: colors.warningBg, borderColor: colors.warning }]}>
+                <IconClock size={14} color={colors.warning} />
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.conflictWarningTitle, { color: '#92400E' }]} numberOfLines={1}>
+                  <Text style={[styles.conflictWarningTitle, { color: colors.warning }]} numberOfLines={1}>
                     {conflictingEvents[0].title || t('calendar.untitledEvent')}{conflictingEvents.length > 1 ? ` +${conflictingEvents.length - 1}` : ''}
                   </Text>
-                  <Text style={[styles.conflictWarningText, { color: '#92400E' }]} numberOfLines={1}>
+                  <Text style={[styles.conflictWarningText, { color: colors.warning }]} numberOfLines={1}>
                     {formatTime(conflictingEvents[0].start_at)} - {formatTime(conflictingEvents[0].end_at)}
                   </Text>
                 </View>
@@ -1782,7 +1784,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                   ]}
                   onPress={() => setRecurrence(opt.value)}
                 >
-                  <Text style={[styles.recurrenceChipText, { color: recurrence === opt.value ? '#fff' : colors.text }]}>
+                  <Text style={[styles.recurrenceChipText, { color: recurrence === opt.value ? colors.onPrimary : colors.text }]}>
                     {opt.label}
                   </Text>
                 </TouchableOpacity>
@@ -1817,7 +1819,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                           backgroundColor: active ? colors.primary : colors.surface,
                         }]}
                       >
-                        <Text style={[styles.weekdayChipText, { color: active ? '#fff' : colors.text }]}>
+                        <Text style={[styles.weekdayChipText, { color: active ? colors.onPrimary : colors.text }]}>
                           {d.label}
                         </Text>
                       </TouchableOpacity>
@@ -1846,7 +1848,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                           backgroundColor: active ? colors.primary : colors.surface,
                         }]}
                       >
-                        <Text style={[styles.monthDayChipText, { color: active ? '#fff' : colors.text }]}>
+                        <Text style={[styles.monthDayChipText, { color: active ? colors.onPrimary : colors.text }]}>
                           {day}
                         </Text>
                       </TouchableOpacity>
@@ -1859,7 +1861,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                       backgroundColor: Number(monthlyDay) === -1 ? colors.primary : colors.surface,
                     }]}
                   >
-                    <Text style={[styles.monthDayChipText, { color: Number(monthlyDay) === -1 ? '#fff' : colors.text }]}>
+                    <Text style={[styles.monthDayChipText, { color: Number(monthlyDay) === -1 ? colors.onPrimary : colors.text }]}>
                       {t('calendar.lastDayOfMonth') || 'Último'}
                     </Text>
                   </TouchableOpacity>
@@ -1921,7 +1923,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
                   ]}
                   onPress={() => setReminder(opt.value)}
                 >
-                  <Text style={[styles.recurrenceChipText, { color: reminder === opt.value ? '#fff' : colors.text }]}>
+                  <Text style={[styles.recurrenceChipText, { color: reminder === opt.value ? colors.onPrimary : colors.text }]}>
                     {t(`calendar.reminder_${opt.value}`)}
                   </Text>
                 </TouchableOpacity>
@@ -2869,7 +2871,7 @@ function CalendarScreenInner() {
               pointerEvents={isViewingCurrentMonth ? 'none' : 'auto'}
             >
               <TouchableOpacity onPress={handleToday} style={styles.todayPill} accessibilityLabel={t('calendar.today')}>
-                <Text style={styles.todayPillText}>{t('calendar.today')}</Text>
+                <Text style={[styles.todayPillText, { color: colors.primary }]}>{t('calendar.today')}</Text>
               </TouchableOpacity>
             </Animated.View>
           </View>
@@ -2900,7 +2902,7 @@ function CalendarScreenInner() {
                   accessibilityLabel={opt.label}
                   accessibilityState={{ selected: active }}
                 >
-                  <Text style={[styles.viewSegmentText, active && styles.viewSegmentTextActive]}>
+                  <Text style={[styles.viewSegmentText, active && { color: colors.primary }]}>
                     {opt.label}
                   </Text>
                 </TouchableOpacity>
@@ -2941,7 +2943,7 @@ function CalendarScreenInner() {
                   ]}>
                     <Text style={[
                       styles.weekStripText,
-                      isTodayDow && styles.weekStripTextToday,
+                      isTodayDow && { color: colors.primary },
                     ]}>
                       {d}
                     </Text>
@@ -2973,15 +2975,15 @@ function CalendarScreenInner() {
               {/* Import result banner */}
               {importResult && (
                 <View style={[styles.importBanner, {
-                  backgroundColor: importResult.failed === 0 ? '#dcfce7' : '#fef3c7',
-                  borderColor: importResult.failed === 0 ? '#86efac' : '#fcd34d',
+                  backgroundColor: importResult.failed === 0 ? colors.successBg : colors.warningBg,
+                  borderColor: importResult.failed === 0 ? colors.success : colors.warning,
                 }]}>
-                  <IconCheck size={16} color={importResult.failed === 0 ? '#16a34a' : '#d97706'} />
-                  <Text style={[styles.importBannerText, { color: importResult.failed === 0 ? '#16a34a' : '#92400e' }]}>
+                  <IconCheck size={16} color={importResult.failed === 0 ? colors.success : colors.warning} />
+                  <Text style={[styles.importBannerText, { color: importResult.failed === 0 ? colors.success : colors.warning }]}>
                     {t('calendar.importedCount', { success: importResult.success, total: importResult.total })}{importResult.failed > 0 ? ` (${importResult.failed} ${t('calendar.failed')})` : ''}
                   </Text>
                   <TouchableOpacity onPress={() => setImportResult(null)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                    <IconX size={14} color={importResult.failed === 0 ? '#16a34a' : '#92400e'} />
+                    <IconX size={14} color={importResult.failed === 0 ? colors.success : colors.warning} />
                   </TouchableOpacity>
                 </View>
               )}
@@ -3097,7 +3099,7 @@ function CalendarScreenInner() {
             </>
           }
           ListEmptyComponent={renderEmpty}
-          contentContainerStyle={[styles.list, dayEvents.length === 0 && styles.listEmpty]}
+          contentContainerStyle={[styles.list, { paddingBottom: Spacing.xl + insets.bottom }, dayEvents.length === 0 && styles.listEmpty]}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
           }
@@ -3166,7 +3168,7 @@ function CalendarScreenInner() {
                       <Text style={{ color: colors.text, fontSize: 15, fontWeight: selected ? '700' : '500' }}>
                         {label}
                       </Text>
-                      <Text style={{ color: colors.muted || '#888', fontSize: 12, marginTop: 2 }}>
+                      <Text style={{ color: colors.textTertiary, fontSize: 12, marginTop: 2 }}>
                         {isSystem
                           ? `${t('calendar.autoDetect') || 'Automático'}${deviceTz ? ' · ' + deviceTz : ''}`
                           : display}
@@ -3178,7 +3180,7 @@ function CalendarScreenInner() {
                       )}
                     </View>
                     {!!off && (
-                      <Text style={{ color: selected ? colors.primary : (colors.muted || '#888'), fontSize: 13, fontWeight: '600', marginLeft: 12 }}>
+                      <Text style={{ color: selected ? colors.primary : colors.textTertiary, fontSize: 13, fontWeight: '600', marginLeft: 12 }}>
                         {off}
                       </Text>
                     )}

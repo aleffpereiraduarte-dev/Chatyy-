@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   View, FlatList, SectionList, Text, TouchableOpacity, StyleSheet, TextInput,
   ActivityIndicator, RefreshControl, Alert, Platform, Modal, Linking, Image,
-  Animated, Easing, ScrollView, useWindowDimensions,
+  Animated, Easing, ScrollView, useWindowDimensions, KeyboardAvoidingView,
 } from 'react-native';
 // FlashList reverted to FlatList
 import { useRouter } from 'expo-router';
@@ -305,7 +305,7 @@ function FileCard({ file, colors, onPress, onLongPress, onContextMenu, onStar, t
               { borderColor: isDark ? 'rgba(255,255,255,0.2)' : colors.border },
               isSelected && { backgroundColor: colors.primary, borderColor: colors.primary },
             ]}>
-              {isSelected && <IconCheck size={12} color="#fff" />}
+              {isSelected && <IconCheck size={12} color={colors.onPrimary} />}
             </View>
           </TouchableOpacity>
         )}
@@ -353,7 +353,7 @@ function FileCard({ file, colors, onPress, onLongPress, onContextMenu, onStar, t
             <Text style={{
               fontSize: 11,
               fontWeight: trashCountdown.urgent ? '700' : '500',
-              color: trashCountdown.urgent ? '#dc2626' : colors.textTertiary,
+              color: trashCountdown.urgent ? colors.error : colors.textTertiary,
               marginTop: 3,
             }} numberOfLines={1}>
               {trashCountdown.label}
@@ -555,21 +555,21 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
       <View style={[styles.storageTrack, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
         <View style={{ flexDirection: 'row', height: '100%' }}>
           {drivePct > 0 && (
-            <Animated.View style={[styles.storageFillDrive, { width: driveWidth, backgroundColor: percent < 80 ? '#A582F7' : fillColor }]}>
+            <Animated.View style={[styles.storageFillDrive, { width: driveWidth, backgroundColor: percent < 80 ? colors.primary : fillColor }]}>
               <View style={[
                 styles.storageFillGradient,
                 isWeb
                   ? { background: percent < 80
-                      ? 'linear-gradient(90deg, #A78BFA 0%, #A582F7 100%)'
+                      ? `linear-gradient(90deg, ${colors.brandSecondary} 0%, ${colors.primary} 100%)`
                       : `linear-gradient(90deg, ${fillColor}, ${fillColor}cc)` }
-                  : { backgroundColor: percent < 80 ? '#A582F7' : fillColor },
+                  : { backgroundColor: percent < 80 ? colors.primary : fillColor },
               ]} />
             </Animated.View>
           )}
           {emailPct > 0 && (
             <Animated.View style={[
               styles.storageFillEmail,
-              { width: emailWidth },
+              { width: emailWidth, backgroundColor: colors.warning },
               drivePct > 0 && { borderTopLeftRadius: 0, borderBottomLeftRadius: 0 },
             ]} />
           )}
@@ -585,7 +585,7 @@ function StorageBar({ storageInfo, colors, t, isDark }) {
           </Text>
         </View>
         <View style={styles.storageLegendItem}>
-          <View style={[styles.storageLegendDot, { backgroundColor: '#f59e0b' }]} />
+          <View style={[styles.storageLegendDot, { backgroundColor: colors.warning }]} />
           <Text style={[styles.storageLegendText, { color: colors.textTertiary }]}>
             Email {storageInfo.email_formatted || formatStorageBytes(emailUsed)}
           </Text>
@@ -758,10 +758,10 @@ function FilesEmptyState({ tab, isDark, colors, t, onUpload, onNewFolder, search
 
 function SmartAlbumChips({ activeAlbum, onSelect, albumCounts, colors, isDark, t }) {
   const albums = [
-    { key: 'all', label: t('files.albumAll'), icon: IconImage, color: '#A582F7', count: null },
-    { key: 'recent', label: t('files.albumRecent'), icon: IconClock, color: '#f59e0b', count: albumCounts?.recent },
-    { key: 'starred', label: t('files.albumFavorites'), icon: IconStarFilled, color: '#f59e0b', count: albumCounts?.starred },
-    { key: 'video', label: t('files.albumVideos'), icon: IconFilm, color: '#A582F7', count: albumCounts?.videos },
+    { key: 'all', label: t('files.albumAll'), icon: IconImage, color: colors.primary, count: null },
+    { key: 'recent', label: t('files.albumRecent'), icon: IconClock, color: colors.warning, count: albumCounts?.recent },
+    { key: 'starred', label: t('files.albumFavorites'), icon: IconStarFilled, color: colors.starColor || colors.primary, count: albumCounts?.starred },
+    { key: 'video', label: t('files.albumVideos'), icon: IconFilm, color: colors.primary, count: albumCounts?.videos },
   ];
 
   return (
@@ -817,10 +817,10 @@ function SmartAlbumChips({ activeAlbum, onSelect, albumCounts, colors, isDark, t
 function FilterChips({ activeFilter, onSelect, colors, isDark, t }) {
   const filters = [
     { key: 'all', label: t('files.filterAll') },
-    { key: 'images', label: t('files.filterImages'), icon: IconImage, color: '#f59e0b' },
-    { key: 'videos', label: t('files.filterVideos'), icon: IconFilm, color: '#A582F7' },
-    { key: 'documents', label: t('files.filterDocuments'), icon: IconFileText, color: '#A582F7' },
-    { key: 'audio', label: t('files.filterAudio'), icon: IconMusic, color: '#A78BFA' },
+    { key: 'images', label: t('files.filterImages'), icon: IconImage, color: colors.warning },
+    { key: 'videos', label: t('files.filterVideos'), icon: IconFilm, color: colors.primary },
+    { key: 'documents', label: t('files.filterDocuments'), icon: IconFileText, color: colors.primary },
+    { key: 'audio', label: t('files.filterAudio'), icon: IconMusic, color: colors.brandSecondary },
   ];
 
   return (
@@ -891,7 +891,7 @@ function PhotoThumbnail({ file, size, onPress, isDark, colors }) {
       )}
       {file.is_starred === 1 && (
         <View style={photosStyles.photoStarBadge}>
-          <IconStarFilled size={10} color="#f59e0b" />
+          <IconStarFilled size={10} color={colors.starColor || colors.primary} />
         </View>
       )}
     </TouchableOpacity>
@@ -985,8 +985,8 @@ function PhotosTimelineView({
     if (loading) return <ListSkeleton count={6} />;
     return (
       <View style={photosStyles.emptyPhotos}>
-        <View style={[photosStyles.emptyPhotosIcon, { backgroundColor: isDark ? '#f59e0b18' : '#fffbeb' }]}>
-          <IconImage size={48} color="#f59e0b" />
+        <View style={[photosStyles.emptyPhotosIcon, { backgroundColor: isDark ? colors.warning + '18' : colors.warningBg }]}>
+          <IconImage size={48} color={colors.warning} />
         </View>
         <Text style={[photosStyles.emptyPhotosTitle, { color: colors.text }]}>{t('files.emptyPhotos')}</Text>
         <Text style={[photosStyles.emptyPhotosDesc, { color: colors.textSecondary }]}>{t('files.emptyPhotosDesc')}</Text>
@@ -2340,7 +2340,7 @@ function FilesScreenInner() {
               { borderColor: isDark ? 'rgba(255,255,255,0.2)' : colors.border },
               isItemSelected && { backgroundColor: colors.primary, borderColor: colors.primary },
             ]}>
-              {isItemSelected && <IconCheck size={10} color="#fff" />}
+              {isItemSelected && <IconCheck size={10} color={colors.onPrimary} />}
             </View>
           </View>
         )}
@@ -2369,7 +2369,7 @@ function FilesScreenInner() {
         </View>
         {item.is_starred === 1 && (
           <View style={styles.gridStarBadge}>
-            <IconStarFilled size={12} color="#f59e0b" />
+            <IconStarFilled size={12} color={colors.starColor || colors.primary} />
           </View>
         )}
       </GridCardPressable>
@@ -2429,7 +2429,7 @@ function FilesScreenInner() {
           ...(isWeb
             ? { background: isDark
                 ? 'linear-gradient(180deg, #1a0a2e 0%, #0a0a0a 100%)'
-                : 'linear-gradient(180deg, #5B21B6 0%, #A582F7 100%)' }
+                : `linear-gradient(180deg, ${colors.primaryDark} 0%, ${colors.primary} 100%)` }
             : { backgroundColor: isDark ? '#0d0a14' : '#6D28D9' }),
           borderBottomColor: 'transparent',
           borderBottomWidth: 0,
@@ -2533,7 +2533,7 @@ function FilesScreenInner() {
           onPress={() => setShowSortMenu(false)}
           activeOpacity={1}
         />
-        <View style={[styles.sortMenu, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
+        <View style={[styles.sortMenu, { backgroundColor: colors.surface, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
           {[
             { key: 'name', label: t('files.sortName') || 'Name' },
             { key: 'date', label: t('files.sortDate') || 'Date' },
@@ -2542,7 +2542,7 @@ function FilesScreenInner() {
           ].map(opt => (
             <TouchableOpacity
               key={opt.key}
-              style={[styles.sortMenuItem, sortBy === opt.key && { backgroundColor: isDark ? 'rgba(59,130,246,0.12)' : 'rgba(37,99,235,0.06)' }]}
+              style={[styles.sortMenuItem, sortBy === opt.key && { backgroundColor: isDark ? colors.primary + '1f' : colors.primary + '0f' }]}
               onPress={() => handleSort(opt.key)}
               activeOpacity={0.6}
             >
@@ -2572,7 +2572,7 @@ function FilesScreenInner() {
               }),
             }],
             opacity: bulkToolbarAnim,
-            shadowColor: '#000',
+            shadowColor: colors.shadow,
             shadowOffset: { width: 0, height: 2 },
             shadowOpacity: isDark ? 0.4 : 0.12,
             shadowRadius: 8,
@@ -2586,19 +2586,19 @@ function FilesScreenInner() {
             {t('files.selectedCount', { count: selectedIds.size })}
           </Text>
           <View style={{ flex: 1 }} />
-          <TouchableOpacity onPress={handleBulkStar} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(245,158,11,0.12)' : '#fffbeb' }]} accessibilityLabel={t('files.starred')}>
-            <IconStar size={18} color="#f59e0b" />
+          <TouchableOpacity onPress={handleBulkStar} style={[styles.multiSelectAction, { backgroundColor: isDark ? (colors.starColor || colors.primary) + '20' : colors.primaryLight }]} accessibilityLabel={t('files.starred')}>
+            <IconStar size={18} color={colors.starColor || colors.primary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleBulkDownload} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(99,102,241,0.16)' : '#eef2ff' }]} accessibilityLabel={t('files.download')}>
+          <TouchableOpacity onPress={handleBulkDownload} style={[styles.multiSelectAction, { backgroundColor: isDark ? colors.primary + '20' : colors.primaryLight }]} accessibilityLabel={t('files.download')}>
             <IconDownload size={18} color={colors.primary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleBulkShare} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(34,197,94,0.16)' : '#f0fdf4' }]} accessibilityLabel={t('files.share')}>
-            <IconUpload size={18} color="#16a34a" />
+          <TouchableOpacity onPress={handleBulkShare} style={[styles.multiSelectAction, { backgroundColor: isDark ? colors.success + '20' : colors.successBg }]} accessibilityLabel={t('files.share')}>
+            <IconUpload size={18} color={colors.success} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleBulkMove} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(124,58,237,0.16)' : '#f5f3ff' }]} accessibilityLabel={t('files.moveTo')}>
-            <IconFolder size={18} color="#A582F7" />
+          <TouchableOpacity onPress={handleBulkMove} style={[styles.multiSelectAction, { backgroundColor: isDark ? colors.primary + '20' : colors.primaryLight }]} accessibilityLabel={t('files.moveTo')}>
+            <IconFolder size={18} color={colors.primary} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleBulkDelete} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(220,38,38,0.12)' : '#fef2f2' }]} accessibilityLabel={t('files.delete')}>
+          <TouchableOpacity onPress={handleBulkDelete} style={[styles.multiSelectAction, { backgroundColor: isDark ? 'rgba(220,38,38,0.12)' : colors.errorBg }]} accessibilityLabel={t('files.delete')}>
             <IconTrash size={18} color={colors.error} />
           </TouchableOpacity>
         </Animated.View>
@@ -2617,10 +2617,10 @@ function FilesScreenInner() {
             onPress={() => setMainMode('files')}
             activeOpacity={0.7}
           >
-            <IconFolder size={14} color={mainMode === 'files' ? (isDark ? colors.primary : '#fff') : colors.textSecondary} />
+            <IconFolder size={14} color={mainMode === 'files' ? (isDark ? colors.primary : colors.onPrimary) : colors.textSecondary} />
             <Text style={[
               photosStyles.modeToggleText,
-              { color: mainMode === 'files' ? (isDark ? colors.primary : '#fff') : colors.textSecondary },
+              { color: mainMode === 'files' ? (isDark ? colors.primary : colors.onPrimary) : colors.textSecondary },
               mainMode === 'files' && { fontWeight: '700' },
             ]}>
               {t('files.tabFiles')}
@@ -2630,16 +2630,16 @@ function FilesScreenInner() {
             style={[
               photosStyles.modeToggleBtn,
               mainMode === 'photos' && [
-                { backgroundColor: isDark ? '#f59e0b25' : '#f59e0b' },
+                { backgroundColor: isDark ? colors.warning + '25' : colors.warning },
               ],
             ]}
             onPress={() => setMainMode('photos')}
             activeOpacity={0.7}
           >
-            <IconImage size={14} color={mainMode === 'photos' ? (isDark ? '#f59e0b' : '#fff') : colors.textSecondary} />
+            <IconImage size={14} color={mainMode === 'photos' ? (isDark ? colors.warning : colors.onPrimary) : colors.textSecondary} />
             <Text style={[
               photosStyles.modeToggleText,
-              { color: mainMode === 'photos' ? (isDark ? '#f59e0b' : '#fff') : colors.textSecondary },
+              { color: mainMode === 'photos' ? (isDark ? colors.warning : colors.onPrimary) : colors.textSecondary },
               mainMode === 'photos' && { fontWeight: '700' },
             ]}>
               {t('files.tabPhotos')}
@@ -2667,10 +2667,10 @@ function FilesScreenInner() {
                 onPress={() => { setTab(key); setCurrentFolderId(null); exitMultiSelect(); }}
               >
                 <View style={styles.tabContent}>
-                  <TabIcon size={14} color={isActive ? (isDark ? colors.primary : '#fff') : colors.textSecondary} />
+                  <TabIcon size={14} color={isActive ? (isDark ? colors.primary : colors.onPrimary) : colors.textSecondary} />
                   <Text style={[
                     styles.tabText,
-                    { color: isActive ? (isDark ? colors.primary : '#fff') : colors.textSecondary },
+                    { color: isActive ? (isDark ? colors.primary : colors.onPrimary) : colors.textSecondary },
                     isActive && { fontWeight: '700' },
                   ]}>
                     {TAB_LABELS[key]}
@@ -2700,13 +2700,13 @@ function FilesScreenInner() {
             onPress={handleEmptyTrash}
             style={{
               flexDirection: 'row', alignItems: 'center', gap: 6,
-              borderWidth: 1, borderColor: '#dc2626', borderRadius: 10,
+              borderWidth: 1, borderColor: colors.error, borderRadius: 10,
               paddingHorizontal: 14, paddingVertical: 7,
             }}
             activeOpacity={0.7}
           >
-            <IconTrash size={14} color="#dc2626" />
-            <Text style={{ color: '#dc2626', fontSize: 13, fontWeight: '600' }}>{t('sidebar.emptyTrash')}</Text>
+            <IconTrash size={14} color={colors.error} />
+            <Text style={{ color: colors.error, fontSize: 13, fontWeight: '600' }}>{t('sidebar.emptyTrash')}</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -2727,7 +2727,7 @@ function FilesScreenInner() {
         <Animated.View style={[
           styles.toast,
           {
-            backgroundColor: isDark ? '#f1f5f9' : '#1e293b',
+            backgroundColor: colors.toastBg,
             transform: [
               { translateY: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [-20, 0] }) },
               { scale: toastAnim.interpolate({ inputRange: [0, 1], outputRange: [0.9, 1] }) },
@@ -2735,10 +2735,13 @@ function FilesScreenInner() {
             opacity: toastAnim,
           },
         ]}>
+          {/* Icon bg intentionally paired with the INVERTED toast surface above
+              (isDark? light-theme green : dark-theme green) for contrast — not a
+              direct colors.success mapping, left as-is. */}
           <View style={[styles.toastIcon, { backgroundColor: isDark ? '#16a34a' : '#4ade80' }]}>
             <IconCheck size={12} color="#fff" />
           </View>
-          <Text style={[styles.toastText, { color: isDark ? '#0f172a' : '#f8fafc' }]}>{toast}</Text>
+          <Text style={[styles.toastText, { color: colors.toastText }]}>{toast}</Text>
         </Animated.View>
       )}
 
@@ -2868,14 +2871,14 @@ function FilesScreenInner() {
             style={[
               styles.fab,
               styles.fabPrimary,
-              // Brand purple gradient on web; native uses solid #A582F7 tone
+              // Brand purple gradient on web; native uses solid primary tone
               // (LinearGradient não importado — keeps tree clean).
               isWeb
-                ? { background: 'linear-gradient(135deg, #5B21B6 0%, #A582F7 50%, #A78BFA 100%)' }
-                : { backgroundColor: '#A582F7' },
+                ? { background: `linear-gradient(135deg, ${colors.primaryDark} 0%, ${colors.primary} 50%, ${colors.brandSecondary} 100%)` }
+                : { backgroundColor: colors.primary },
               Shadow.float,
               // Brand-tinted shadow so the FAB feels like a branded action.
-              { shadowColor: '#A582F7', shadowOpacity: 0.35, shadowRadius: 12 },
+              { shadowColor: colors.primary, shadowOpacity: 0.35, shadowRadius: 12 },
             ]}
             onPress={() => { triggerHaptic('light'); handleUpload(); }}
             onPressIn={() => Animated.spring(uploadFabScale, { toValue: 0.94, useNativeDriver: true, friction: 6, tension: 180 }).start()}
@@ -2884,11 +2887,11 @@ function FilesScreenInner() {
             activeOpacity={0.9}
           >
             {uploading ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator size="small" color={colors.onPrimary} />
             ) : (
               <>
-                <IconUpload size={20} color="#fff" />
-                <Text style={[styles.fabText, { color: '#fff' }]}>{t('files.upload')}</Text>
+                <IconUpload size={20} color={colors.onPrimary} />
+                <Text style={[styles.fabText, { color: colors.onPrimary }]}>{t('files.upload')}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -2925,20 +2928,20 @@ function FilesScreenInner() {
             {actionMenu?.type === 'folder' && (
               <>
                 <TouchableOpacity style={styles.actionItem} onPress={() => { setActionMenu(null); setRenameModal({ id: actionMenu.item.id, type: 'folder', name: actionMenu.item.name }); }}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#A582F718' : '#F5F3FF' }]}>
-                    <IconEdit size={18} color="#A582F7" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? colors.primary + '18' : colors.primaryLight }]}>
+                    <IconEdit size={18} color={colors.primary} />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.rename')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actionItem} onPress={() => openMoveModal(actionMenu.item.id)}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#A582F718' : '#f5f3ff' }]}>
-                    <IconFolder size={18} color="#A582F7" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? colors.primary + '18' : colors.primaryLight }]}>
+                    <IconFolder size={18} color={colors.primary} />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.moveTo')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actionItem} onPress={() => handleDelete(actionMenu.item.id)}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#dc262618' : '#fef2f2' }]}>
-                    <IconTrash size={18} color="#dc2626" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? colors.error + '18' : colors.errorBg }]}>
+                    <IconTrash size={18} color={colors.error} />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.error }]}>{t('files.delete')}</Text>
                 </TouchableOpacity>
@@ -2948,7 +2951,7 @@ function FilesScreenInner() {
             {actionMenu?.type === 'file' && (
               <>
                 {/* Analyze with One AI — prominently at the top */}
-                <TouchableOpacity style={[styles.actionItem, { backgroundColor: isDark ? 'rgba(168,85,247,0.08)' : 'rgba(168,85,247,0.05)' }]} onPress={() => {
+                <TouchableOpacity style={[styles.actionItem, { backgroundColor: isDark ? colors.primary + '14' : colors.primary + '0d' }]} onPress={() => {
                   const f = actionMenu.item;
                   setActionMenu(null);
                   const fileUrl = f.cdn_url || api.fileDownloadUrl(f.id);
@@ -2965,10 +2968,10 @@ function FilesScreenInner() {
                     router.push({ pathname: '/one', params: { intent, prefill: `Analise esse arquivo: ${fileName}` } });
                   } catch {}
                 }}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: '#a855f7' }]}>
-                    <IconSparkles size={16} color="#fff" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: colors.primary }]}>
+                    <IconSparkles size={16} color={colors.onPrimary} />
                   </View>
-                  <Text style={[styles.actionItemText, { color: '#a855f7', fontWeight: '700' }]}>{t('files.analyzeWithOne') || 'Analisar com One AI'}</Text>
+                  <Text style={[styles.actionItemText, { color: colors.primary, fontWeight: '700' }]}>{t('files.analyzeWithOne') || 'Analisar com One AI'}</Text>
                 </TouchableOpacity>
                 {(() => {
                   const m = (actionMenu.item.mime_type || '').toLowerCase();
@@ -2992,10 +2995,10 @@ function FilesScreenInner() {
                             setViewerIndex(0);
                           }
                         }}>
-                          <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#A582F718' : '#F5F3FF' }]}>
-                            <IconEye size={18} color="#A582F7" />
+                          <View style={[styles.actionItemIcon, { backgroundColor: isDark ? colors.primary + '18' : colors.primaryLight }]}>
+                            <IconEye size={18} color={colors.primary} />
                           </View>
-                          <Text style={[styles.actionItemText, { color: '#A582F7', fontWeight: '600' }]}>{t('drive.preview') || 'Visualizar'}</Text>
+                          <Text style={[styles.actionItemText, { color: colors.primary, fontWeight: '600' }]}>{t('drive.preview') || 'Visualizar'}</Text>
                         </TouchableOpacity>
                       )}
                       {(isEditableDoc || isEditableSheet) && (
@@ -3005,6 +3008,7 @@ function FilesScreenInner() {
                           if (isWeb) window.open(docsUrl, '_blank');
                           else router.push('/documentos');
                         }}>
+                          {/* Google-Docs-style blue kept as-is (brand-mark exception in the token map). */}
                           <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#4285f418' : '#e8f0fe' }]}>
                             <IconFileText size={18} color="#4285f4" />
                           </View>
@@ -3015,29 +3019,29 @@ function FilesScreenInner() {
                   );
                 })()}
                 <TouchableOpacity style={styles.actionItem} onPress={() => handleDownload(actionMenu.item.id, actionMenu.item)}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#16a34a18' : '#f0fdf4' }]}>
-                    <IconDownload size={18} color="#16a34a" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? colors.success + '18' : colors.successBg }]}>
+                    <IconDownload size={18} color={colors.success} />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.download')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actionItem} onPress={() => { setActionMenu(null); setRenameModal({ id: actionMenu.item.id, type: 'file', name: actionMenu.item.original_name }); }}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#A582F718' : '#F5F3FF' }]}>
-                    <IconEdit size={18} color="#A582F7" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? colors.primary + '18' : colors.primaryLight }]}>
+                    <IconEdit size={18} color={colors.primary} />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.rename')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actionItem} onPress={() => openMoveModal(actionMenu.item.id)}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#A582F718' : '#f5f3ff' }]}>
-                    <IconFolder size={18} color="#A582F7" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? colors.primary + '18' : colors.primaryLight }]}>
+                    <IconFolder size={18} color={colors.primary} />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.moveTo')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actionItem} onPress={() => { handleStar(actionMenu.item.id); setActionMenu(null); }}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#f59e0b18' : '#fffbeb' }]}>
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? (colors.starColor || colors.primary) + '18' : colors.primaryLight }]}>
                     {actionMenu.item.is_starred === 1 ? (
-                      <IconStarFilled size={18} color="#f59e0b" />
+                      <IconStarFilled size={18} color={colors.starColor || colors.primary} />
                     ) : (
-                      <IconStar size={18} color="#f59e0b" />
+                      <IconStar size={18} color={colors.starColor || colors.primary} />
                     )}
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>
@@ -3056,8 +3060,8 @@ function FilesScreenInner() {
                     setVersionsModal({ file_id: fid, name: fname, versions: [] });
                   }
                 }}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#A582F718' : '#f5f3ff' }]}>
-                    <IconClock size={18} color="#A582F7" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? colors.primary + '18' : colors.primaryLight }]}>
+                    <IconClock size={18} color={colors.primary} />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.versionHistory') || 'Histórico de versões'}</Text>
                 </TouchableOpacity>
@@ -3071,8 +3075,8 @@ function FilesScreenInner() {
                   } catch {}
                   setShareModal({ file_id: fid, shared });
                 }}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#0891b218' : '#ecfeff' }]}>
-                    <IconPaperclip size={18} color="#0891b2" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? colors.primary + '18' : colors.primaryLight }]}>
+                    <IconPaperclip size={18} color={colors.primary} />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.share')}</Text>
                 </TouchableOpacity>
@@ -3088,15 +3092,15 @@ function FilesScreenInner() {
                   } catch {}
                   setLinkShareModal({ file_id: fid, name: fname, links });
                 }}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#0ea5e918' : '#f0f9ff' }]}>
-                    <IconCloud size={18} color="#0ea5e9" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? colors.primary + '18' : colors.primaryLight }]}>
+                    <IconCloud size={18} color={colors.primary} />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.text }]}>{t('files.shareLink') || 'Compartilhar com link'}</Text>
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.actionItem} onPress={() => handleDelete(actionMenu.item.id)}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#dc262618' : '#fef2f2' }]}>
-                    <IconTrash size={18} color="#dc2626" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? colors.error + '18' : colors.errorBg }]}>
+                    <IconTrash size={18} color={colors.error} />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.error }]}>{t('files.delete')}</Text>
                 </TouchableOpacity>
@@ -3106,14 +3110,14 @@ function FilesScreenInner() {
             {actionMenu?.type === 'trash_file' && (
               <>
                 <TouchableOpacity style={styles.actionItem} onPress={() => handleRestore(actionMenu.item.id)}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#16a34a18' : '#f0fdf4' }]}>
-                    <IconArchive size={18} color="#16a34a" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? colors.success + '18' : colors.successBg }]}>
+                    <IconArchive size={18} color={colors.success} />
                   </View>
-                  <Text style={[styles.actionItemText, { color: colors.success || '#16a34a' }]}>{t('files.restore')}</Text>
+                  <Text style={[styles.actionItemText, { color: colors.success }]}>{t('files.restore')}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actionItem} onPress={() => handlePermanentDelete(actionMenu.item.id)}>
-                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? '#dc262618' : '#fef2f2' }]}>
-                    <IconTrash size={18} color="#dc2626" />
+                  <View style={[styles.actionItemIcon, { backgroundColor: isDark ? colors.error + '18' : colors.errorBg }]}>
+                    <IconTrash size={18} color={colors.error} />
                   </View>
                   <Text style={[styles.actionItemText, { color: colors.error }]}>{t('files.deletePermanently')}</Text>
                 </TouchableOpacity>
@@ -3132,75 +3136,79 @@ function FilesScreenInner() {
 
       {/* ============ RENAME MODAL ============ */}
       <Modal visible={!!renameModal} transparent animationType="fade" onRequestClose={() => setRenameModal(null)}>
-        <TouchableOpacity style={styles.modalBackdropCenter} activeOpacity={1} onPress={() => setRenameModal(null)}>
-          <View style={[
-            styles.dialogBox,
-            {
-              backgroundColor: isDark ? 'rgba(21,30,46,0.95)' : 'rgba(255,255,255,0.98)',
-              borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-            },
-            isWeb && { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
-          ]} onStartShouldSetResponder={() => true}>
-            <Text style={[styles.dialogTitle, { color: colors.text }]}>{t('files.rename')}</Text>
-            <TextInput
-              style={[styles.dialogInput, {
-                color: colors.text,
-                borderColor: isDark ? 'rgba(255,255,255,0.12)' : colors.border,
-                backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
-              }]}
-              value={renameModal?.name || ''}
-              onChangeText={(text) => setRenameModal(prev => prev ? { ...prev, name: text } : null)}
-              autoFocus
-              selectTextOnFocus
-              onSubmitEditing={handleRename}
-            />
-            <View style={styles.dialogBtns}>
-              <TouchableOpacity style={[styles.dialogBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]} onPress={() => setRenameModal(null)}>
-                <Text style={[styles.dialogBtnText, { color: colors.textSecondary }]}>{t('common.cancel')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.dialogBtn, styles.dialogBtnPrimary, { backgroundColor: colors.primary }]} onPress={handleRename}>
-                <Text style={[styles.dialogBtnText, { color: '#fff' }]}>{t('files.rename')}</Text>
-              </TouchableOpacity>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <TouchableOpacity style={styles.modalBackdropCenter} activeOpacity={1} onPress={() => setRenameModal(null)}>
+            <View style={[
+              styles.dialogBox,
+              {
+                backgroundColor: isDark ? 'rgba(21,30,46,0.95)' : 'rgba(255,255,255,0.98)',
+                borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+              },
+              isWeb && { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
+            ]} onStartShouldSetResponder={() => true}>
+              <Text style={[styles.dialogTitle, { color: colors.text }]}>{t('files.rename')}</Text>
+              <TextInput
+                style={[styles.dialogInput, {
+                  color: colors.text,
+                  borderColor: isDark ? 'rgba(255,255,255,0.12)' : colors.border,
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                }]}
+                value={renameModal?.name || ''}
+                onChangeText={(text) => setRenameModal(prev => prev ? { ...prev, name: text } : null)}
+                autoFocus
+                selectTextOnFocus
+                onSubmitEditing={handleRename}
+              />
+              <View style={styles.dialogBtns}>
+                <TouchableOpacity style={[styles.dialogBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]} onPress={() => setRenameModal(null)}>
+                  <Text style={[styles.dialogBtnText, { color: colors.textSecondary }]}>{t('common.cancel')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.dialogBtn, styles.dialogBtnPrimary, { backgroundColor: colors.primary }]} onPress={handleRename}>
+                  <Text style={[styles.dialogBtnText, { color: colors.onPrimary || '#fff' }]}>{t('files.rename')}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
-        </TouchableOpacity>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ============ NEW FOLDER MODAL ============ */}
       <Modal visible={newFolderModal} transparent animationType="fade" onRequestClose={() => setNewFolderModal(false)}>
-        <TouchableOpacity style={styles.modalBackdropCenter} activeOpacity={1} onPress={() => setNewFolderModal(false)}>
-          <View style={[
-            styles.dialogBox,
-            {
-              backgroundColor: isDark ? 'rgba(21,30,46,0.95)' : 'rgba(255,255,255,0.98)',
-              borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-            },
-            isWeb && { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
-          ]} onStartShouldSetResponder={() => true}>
-            <Text style={[styles.dialogTitle, { color: colors.text }]}>{t('files.newFolder')}</Text>
-            <TextInput
-              style={[styles.dialogInput, {
-                color: colors.text,
-                borderColor: isDark ? 'rgba(255,255,255,0.12)' : colors.border,
-                backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
-              }]}
-              placeholder={t('files.folderNamePlaceholder')}
-              placeholderTextColor={colors.textTertiary}
-              value={newFolderName}
-              onChangeText={setNewFolderName}
-              autoFocus
-              onSubmitEditing={handleCreateFolder}
-            />
-            <View style={styles.dialogBtns}>
-              <TouchableOpacity style={[styles.dialogBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]} onPress={() => { setNewFolderModal(false); setNewFolderName(''); }}>
-                <Text style={[styles.dialogBtnText, { color: colors.textSecondary }]}>{t('common.cancel')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.dialogBtn, styles.dialogBtnPrimary, { backgroundColor: colors.primary }]} onPress={handleCreateFolder}>
-                <Text style={[styles.dialogBtnText, { color: '#fff' }]}>{t('files.create')}</Text>
-              </TouchableOpacity>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <TouchableOpacity style={styles.modalBackdropCenter} activeOpacity={1} onPress={() => setNewFolderModal(false)}>
+            <View style={[
+              styles.dialogBox,
+              {
+                backgroundColor: isDark ? 'rgba(21,30,46,0.95)' : 'rgba(255,255,255,0.98)',
+                borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+              },
+              isWeb && { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
+            ]} onStartShouldSetResponder={() => true}>
+              <Text style={[styles.dialogTitle, { color: colors.text }]}>{t('files.newFolder')}</Text>
+              <TextInput
+                style={[styles.dialogInput, {
+                  color: colors.text,
+                  borderColor: isDark ? 'rgba(255,255,255,0.12)' : colors.border,
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
+                }]}
+                placeholder={t('files.folderNamePlaceholder')}
+                placeholderTextColor={colors.textTertiary}
+                value={newFolderName}
+                onChangeText={setNewFolderName}
+                autoFocus
+                onSubmitEditing={handleCreateFolder}
+              />
+              <View style={styles.dialogBtns}>
+                <TouchableOpacity style={[styles.dialogBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]} onPress={() => { setNewFolderModal(false); setNewFolderName(''); }}>
+                  <Text style={[styles.dialogBtnText, { color: colors.textSecondary }]}>{t('common.cancel')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.dialogBtn, styles.dialogBtnPrimary, { backgroundColor: colors.primary }]} onPress={handleCreateFolder}>
+                  <Text style={[styles.dialogBtnText, { color: colors.onPrimary || '#fff' }]}>{t('files.create')}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
-        </TouchableOpacity>
+          </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ============ VERSION HISTORY MODAL (Drive-style) ============ */}
@@ -3224,8 +3232,8 @@ function FilesScreenInner() {
                 const label = (t && t('files.versionN', { n: v.version_num })) || `Versão ${v.version_num}`;
                 return (
                   <View key={(v.id || 'cur') + ':' + idx} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: idx < (versionsModal.versions.length - 1) ? 1 : 0, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
-                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: v.is_current ? '#A582F722' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'), alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
-                      <IconClock size={16} color={v.is_current ? '#A582F7' : colors.textSecondary} />
+                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: v.is_current ? colors.primary + '22' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)'), alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                      <IconClock size={16} color={v.is_current ? colors.primary : colors.textSecondary} />
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: colors.text, fontWeight: '600', fontSize: 13 }}>
@@ -3237,7 +3245,7 @@ function FilesScreenInner() {
                     </View>
                     {!v.is_current && (
                       <TouchableOpacity
-                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#A582F7' }}
+                        style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: colors.primary }}
                         onPress={async () => {
                           try {
                             const r = await api.apiCall('file_version_restore', { file_id: versionsModal.file_id, version_id: v.id }, 'POST');
@@ -3253,7 +3261,7 @@ function FilesScreenInner() {
                           }
                         }}
                       >
-                        <Text style={{ color: '#fff', fontWeight: '600', fontSize: 12 }}>{t?.('files.restoreVersion') || 'Restaurar'}</Text>
+                        <Text style={{ color: colors.onPrimary, fontWeight: '600', fontSize: 12 }}>{t?.('files.restoreVersion') || 'Restaurar'}</Text>
                       </TouchableOpacity>
                     )}
                   </View>
@@ -3274,6 +3282,7 @@ function FilesScreenInner() {
 
       {/* ============ SHARE MODAL ============ */}
       <Modal visible={!!shareModal} transparent animationType="fade" onRequestClose={() => setShareModal(null)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <TouchableOpacity style={styles.modalBackdropCenter} activeOpacity={1} onPress={() => setShareModal(null)}>
           <View style={[
             styles.dialogBox,
@@ -3298,7 +3307,7 @@ function FilesScreenInner() {
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 13, color: colors.text }} numberOfLines={1}>{s.email}</Text>
-                      <Text style={{ fontSize: 11, color: s.permission === 'edit' ? '#22c55e' : colors.textTertiary }}>
+                      <Text style={{ fontSize: 11, color: s.permission === 'edit' ? colors.success : colors.textTertiary }}>
                         {s.permission === 'edit' ? (t('files.canEdit') || 'Pode editar') : (t('files.viewOnly') || 'Visualizar')}
                       </Text>
                     </View>
@@ -3338,13 +3347,13 @@ function FilesScreenInner() {
                 style={[
                   styles.permissionBtn,
                   {
-                    borderColor: isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0',
+                    borderColor: isDark ? 'rgba(255,255,255,0.1)' : colors.border,
                     backgroundColor: sharePermission === 'view' ? colors.primary : 'transparent',
                   },
                 ]}
                 onPress={() => setSharePermission('view')}
               >
-                <Text style={[styles.permissionText, { color: sharePermission === 'view' ? '#fff' : colors.textSecondary }]}>
+                <Text style={[styles.permissionText, { color: sharePermission === 'view' ? colors.onPrimary : colors.textSecondary }]}>
                   {t('files.viewOnly')}
                 </Text>
               </TouchableOpacity>
@@ -3352,13 +3361,13 @@ function FilesScreenInner() {
                 style={[
                   styles.permissionBtn,
                   {
-                    borderColor: isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0',
+                    borderColor: isDark ? 'rgba(255,255,255,0.1)' : colors.border,
                     backgroundColor: sharePermission === 'edit' ? colors.primary : 'transparent',
                   },
                 ]}
                 onPress={() => setSharePermission('edit')}
               >
-                <Text style={[styles.permissionText, { color: sharePermission === 'edit' ? '#fff' : colors.textSecondary }]}>
+                <Text style={[styles.permissionText, { color: sharePermission === 'edit' ? colors.onPrimary : colors.textSecondary }]}>
                   {t('files.canEdit')}
                 </Text>
               </TouchableOpacity>
@@ -3366,13 +3375,13 @@ function FilesScreenInner() {
                 style={[
                   styles.permissionBtn,
                   {
-                    borderColor: isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0',
-                    backgroundColor: sharePermission === 'admin' ? '#f59e0b' : 'transparent',
+                    borderColor: isDark ? 'rgba(255,255,255,0.1)' : colors.border,
+                    backgroundColor: sharePermission === 'admin' ? colors.primary : 'transparent',
                   },
                 ]}
                 onPress={() => setSharePermission('admin')}
               >
-                <Text style={[styles.permissionText, { color: sharePermission === 'admin' ? '#fff' : colors.textSecondary }]}>
+                <Text style={[styles.permissionText, { color: sharePermission === 'admin' ? colors.onPrimary : colors.textSecondary }]}>
                   Admin
                 </Text>
               </TouchableOpacity>
@@ -3390,15 +3399,17 @@ function FilesScreenInner() {
                   } catch {}
                 }
               }}>
-                <Text style={[styles.dialogBtnText, { color: '#fff' }]}>{t('files.share')}</Text>
+                <Text style={[styles.dialogBtnText, { color: colors.onPrimary || '#fff' }]}>{t('files.share')}</Text>
               </TouchableOpacity>
             </View>
           </View>
         </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ============ PUBLIC LINK SHARE MODAL ============ */}
       <Modal visible={!!linkShareModal} transparent animationType="fade" onRequestClose={() => setLinkShareModal(null)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <TouchableOpacity style={styles.modalBackdropCenter} activeOpacity={1} onPress={() => {
           setLinkShareModal(null);
           setLinkOptPassword(''); setLinkOptHasPassword(false); setLinkOptExpires(0); setLinkOptMaxDl(0);
@@ -3472,12 +3483,12 @@ function FilesScreenInner() {
                   onPress={() => { setLinkOptHasPassword(v => !v); if (linkOptHasPassword) setLinkOptPassword(''); }}
                   style={{
                     width: 20, height: 20, borderRadius: 4, marginRight: 10,
-                    borderWidth: 2, borderColor: linkOptHasPassword ? colors.primary : (isDark ? 'rgba(255,255,255,0.3)' : '#cbd5e1'),
+                    borderWidth: 2, borderColor: linkOptHasPassword ? colors.primary : (isDark ? 'rgba(255,255,255,0.3)' : colors.border),
                     backgroundColor: linkOptHasPassword ? colors.primary : 'transparent',
                     alignItems: 'center', justifyContent: 'center',
                   }}
                 >
-                  {linkOptHasPassword ? <IconCheck size={14} color="#fff" /> : null}
+                  {linkOptHasPassword ? <IconCheck size={14} color={colors.onPrimary} /> : null}
                 </TouchableOpacity>
                 <Text style={{ fontSize: 13, color: colors.text, flex: 1 }}>
                   {t('files.linkPasswordProtect') || 'Proteger com senha'}
@@ -3518,12 +3529,12 @@ function FilesScreenInner() {
                     style={[
                       styles.permissionBtn,
                       {
-                        borderColor: isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0',
+                        borderColor: isDark ? 'rgba(255,255,255,0.1)' : colors.border,
                         backgroundColor: linkOptExpires === opt.v ? colors.primary : 'transparent',
                       },
                     ]}
                   >
-                    <Text style={[styles.permissionText, { color: linkOptExpires === opt.v ? '#fff' : colors.textSecondary }]}>
+                    <Text style={[styles.permissionText, { color: linkOptExpires === opt.v ? colors.onPrimary : colors.textSecondary }]}>
                       {opt.label}
                     </Text>
                   </TouchableOpacity>
@@ -3547,12 +3558,12 @@ function FilesScreenInner() {
                     style={[
                       styles.permissionBtn,
                       {
-                        borderColor: isDark ? 'rgba(255,255,255,0.1)' : '#e2e8f0',
+                        borderColor: isDark ? 'rgba(255,255,255,0.1)' : colors.border,
                         backgroundColor: linkOptMaxDl === opt.v ? colors.primary : 'transparent',
                       },
                     ]}
                   >
-                    <Text style={[styles.permissionText, { color: linkOptMaxDl === opt.v ? '#fff' : colors.textSecondary }]}>
+                    <Text style={[styles.permissionText, { color: linkOptMaxDl === opt.v ? colors.onPrimary : colors.textSecondary }]}>
                       {opt.label}
                     </Text>
                   </TouchableOpacity>
@@ -3608,13 +3619,14 @@ function FilesScreenInner() {
                   }
                 }}
               >
-                <Text style={[styles.dialogBtnText, { color: '#fff' }]}>
+                <Text style={[styles.dialogBtnText, { color: colors.onPrimary || '#fff' }]}>
                   {linkCreating ? (t('common.loading') || '...') : (t('files.linkGenerate') || 'Gerar link')}
                 </Text>
               </TouchableOpacity>
             </View>
           </View>
         </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ============ MOVE MODAL ============ */}
@@ -3634,7 +3646,7 @@ function FilesScreenInner() {
               style={[styles.moveItem, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}
               onPress={() => handleMove(null)}
             >
-              <View style={[styles.moveItemIconWrap, { backgroundColor: isDark ? colors.primary + '18' : '#F5F3FF' }]}>
+              <View style={[styles.moveItemIconWrap, { backgroundColor: isDark ? colors.primary + '18' : colors.primaryLight }]}>
                 <IconFolder size={18} color={colors.primary} />
               </View>
               <Text style={[styles.moveItemText, { color: colors.primary, fontWeight: '600' }]}>{t('files.rootHome')}</Text>

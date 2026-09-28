@@ -21,6 +21,11 @@ import {
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 
+// Design-2026: ACCENT/ACCENT_DARK/ACCENT_DEEP feed the fixed purple hero
+// gradient (3 stacked overlays) and the static StyleSheet fallbacks below —
+// left as hex intentionally (see report). Everywhere else in this screen
+// (pills, badges, RSVP, secondary actions) now reads colors.primary/
+// colors.primaryDark/colors.warning/colors.error/colors.success directly.
 const ACCENT = '#A582F7';
 const ACCENT_DARK = '#5B21B6';
 const ACCENT_DEEP = '#3B0F75';
@@ -213,7 +218,7 @@ export default function MeetingDetailScreen() {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
         <View style={styles.center}>
-          <ActivityIndicator size="large" color={ACCENT} />
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       </View>
     );
@@ -249,8 +254,8 @@ export default function MeetingDetailScreen() {
 
   // Status pill config.
   let statusCfg;
-  if (active) statusCfg = { label: t('meetingDetail.statusActive') || 'Ao vivo', bg: '#ef4444', dotColor: '#fff', pulse: true };
-  else if (scheduled) statusCfg = { label: t('meetingDetail.statusScheduled') || 'Em breve', bg: '#f59e0b', dotColor: '#fff', pulse: false };
+  if (active) statusCfg = { label: t('meetingDetail.statusActive') || 'Ao vivo', bg: colors.error, dotColor: '#fff', pulse: true };
+  else if (scheduled) statusCfg = { label: t('meetingDetail.statusScheduled') || 'Em breve', bg: colors.warning, dotColor: '#fff', pulse: false };
   else if (ended) statusCfg = { label: t('meetingDetail.statusEnded') || 'Finalizada', bg: 'rgba(255,255,255,0.22)', dotColor: 'rgba(255,255,255,0.9)', pulse: false };
   else statusCfg = { label: t('meetingDetail.statusCancelled') || 'Cancelada', bg: 'rgba(255,255,255,0.22)', dotColor: 'rgba(255,255,255,0.9)', pulse: false };
 
@@ -267,7 +272,7 @@ export default function MeetingDetailScreen() {
   if (meeting.scheduled_at) {
     pills.push({
       icon: IconCalendar,
-      tint: ACCENT,
+      tint: colors.primary,
       label: t('meetingDetail.dateLabel') || 'Data',
       value: formatDate(meeting.scheduled_at, locale),
       sub: formatTime(meeting.scheduled_at, locale),
@@ -280,7 +285,7 @@ export default function MeetingDetailScreen() {
       : `${dm} min`;
     pills.push({
       icon: IconClock,
-      tint: '#f59e0b',
+      tint: colors.warning,
       label: t('meetingDetail.durationLabel') || 'Duração',
       value: valueText,
     });
@@ -288,21 +293,21 @@ export default function MeetingDetailScreen() {
   if (meeting.location) {
     pills.push({
       icon: IconMapPin,
-      tint: '#10b981',
+      tint: colors.success,
       label: t('meetingDetail.locationLabel') || 'Local',
       value: meeting.location,
     });
   }
   pills.push({
     icon: IconUsers,
-    tint: '#3b82f6',
+    tint: colors.primary,
     label: t('meetingDetail.participantsLabel') || 'Participantes',
     value: String(participants.length || 0),
   });
   if (meeting.is_private || meeting.private) {
     pills.push({
       icon: IconLock,
-      tint: '#64748b',
+      tint: colors.textSecondary,
       label: t('meetingDetail.privacyLabel') || 'Privacidade',
       value: t('meetingDetail.private') || 'Privada',
     });
@@ -315,7 +320,7 @@ export default function MeetingDetailScreen() {
       <ScrollView
         contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, Spacing.lg) + Spacing.lg + 72 }}
         showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadInfo(); }} colors={[ACCENT]} tintColor={ACCENT} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadInfo(); }} colors={[colors.primary]} tintColor={colors.primary} />}
       >
         {/* HERO — purple gradient effect via stacked overlays */}
         <View style={[styles.hero, { paddingTop: insets.top + Spacing.sm }]}>
@@ -369,7 +374,7 @@ export default function MeetingDetailScreen() {
             styles.copyToast,
             { top: insets.top + 56, backgroundColor: isDark ? colors.surface : colors.text, opacity: toastAnim, transform: [{ translateY: toastTranslate }] },
           ]}>
-            <IconCheck size={14} color={isDark ? ACCENT : colors.background} />
+            <IconCheck size={14} color={isDark ? colors.primary : colors.background} />
             <Text style={[styles.copyToastText, { color: isDark ? colors.text : colors.background }]}>
               {t('meetingDetail.copied')}
             </Text>
@@ -379,9 +384,9 @@ export default function MeetingDetailScreen() {
         {/* PRIMARY CTA — sticky-ish (top of action area, big purple) */}
         <View style={styles.actionsWrap}>
           {!isFinished && scheduled && !joinable && meeting.scheduled_at && (
-            <View style={[styles.primaryCtaDisabled, { backgroundColor: isDark ? colors.surfaceVariant || '#2a2a35' : '#eef2f7' }]}>
-              <IconClock size={18} color={isDark ? colors.textSecondary : '#64748b'} style={{ marginRight: Spacing.sm }} />
-              <Text style={[styles.primaryCtaDisabledText, { color: isDark ? colors.textSecondary : '#64748b' }]}>
+            <View style={[styles.primaryCtaDisabled, { backgroundColor: colors.surfaceVariant }]}>
+              <IconClock size={18} color={colors.textSecondary} style={{ marginRight: Spacing.sm }} />
+              <Text style={[styles.primaryCtaDisabledText, { color: colors.textSecondary }]}>
                 {(() => {
                   const start = new Date(meeting.scheduled_at).getTime();
                   const mins = Math.ceil((start - 10 * 60 * 1000 - Date.now()) / 60000);
@@ -396,24 +401,24 @@ export default function MeetingDetailScreen() {
           {/* RECAP card — show when ended/finished */}
           {isFinished && recapId && (
             <TouchableOpacity
-              style={[styles.recapCard, { backgroundColor: isDark ? '#1c1430' : '#f5f0ff', borderColor: ACCENT + '55' }]}
+              style={[styles.recapCard, { backgroundColor: isDark ? '#1c1430' : colors.primaryLight, borderColor: colors.primary + '55' }]}
               onPress={() => router.push('/meeting-recap?id=' + recapId)}
               activeOpacity={0.85}
             >
               <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(167,139,250,0.08)', borderRadius: 18 }]} />
               <View pointerEvents="none" style={[styles.recapGradientBlob]} />
-              <View style={[styles.recapIconWrap, { backgroundColor: ACCENT }]}>
+              <View style={[styles.recapIconWrap, { backgroundColor: colors.primary }]}>
                 <IconSparkles size={22} color="#fff" />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={[styles.recapTitle, { color: isDark ? '#fff' : ACCENT_DARK }]}>
+                <Text style={[styles.recapTitle, { color: isDark ? '#fff' : colors.primaryDark }]}>
                   {t('meetingDetail.viewRecapTitle') || 'Resumo da IA'}
                 </Text>
                 <Text style={[styles.recapSubtitle, { color: isDark ? colors.textSecondary : '#6b5b8a' }]}>
                   {t('meetingDetail.viewRecapSub') || 'Veja insights, tópicos e decisões'}
                 </Text>
               </View>
-              <Text style={[styles.recapArrow, { color: ACCENT }]}>›</Text>
+              <Text style={[styles.recapArrow, { color: colors.primary }]}>›</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -433,7 +438,7 @@ export default function MeetingDetailScreen() {
                     style={[styles.detailPill, {
                       backgroundColor: colors.surface,
                       borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(15,23,42,0.06)',
-                      shadowColor: isDark ? '#000' : '#94a3b8',
+                      shadowColor: isDark ? colors.shadow : '#94a3b8',
                     }]}
                   >
                     <View style={[styles.detailPillIcon, { backgroundColor: p.tint + '1a' }]}>
@@ -462,9 +467,9 @@ export default function MeetingDetailScreen() {
                 {['accepted', 'tentative', 'declined'].map((s) => {
                   const active = myRsvp === s;
                   const cfg = {
-                    accepted: { bg: ACCENT, label: t('meetingDetail.accept') },
-                    tentative: { bg: '#f59e0b', label: t('meetingDetail.maybe') },
-                    declined: { bg: '#ef4444', label: t('meetingDetail.decline') },
+                    accepted: { bg: colors.primary, label: t('meetingDetail.accept') },
+                    tentative: { bg: colors.warning, label: t('meetingDetail.maybe') },
+                    declined: { bg: colors.error, label: t('meetingDetail.decline') },
                   };
                   const c = cfg[s];
                   return (
@@ -498,8 +503,8 @@ export default function MeetingDetailScreen() {
             <Text style={[styles.sectionTitle, { color: colors.text, marginBottom: 0, marginTop: 0 }]}>
               {t('meetingDetail.participantsSection') || 'Participantes'}
             </Text>
-            <View style={[styles.countChip, { backgroundColor: ACCENT + '1a' }]}>
-              <Text style={[styles.countChipText, { color: ACCENT }]}>{participants.length}</Text>
+            <View style={[styles.countChip, { backgroundColor: colors.primary + '1a' }]}>
+              <Text style={[styles.countChipText, { color: colors.primary }]}>{participants.length}</Text>
             </View>
           </View>
 
@@ -521,7 +526,7 @@ export default function MeetingDetailScreen() {
                   <View style={styles.participantAvatarWrap}>
                     <AvatarCircle name={p.display_name || p.email} email={p.email} size={48} />
                     {p.role === 'host' && (
-                      <View style={[styles.hostStar, { backgroundColor: ACCENT, borderColor: colors.background }]}>
+                      <View style={[styles.hostStar, { backgroundColor: colors.primary, borderColor: colors.background }]}>
                         <IconStarFilled size={10} color="#fff" />
                       </View>
                     )}
@@ -531,31 +536,31 @@ export default function MeetingDetailScreen() {
                   </Text>
                   {p.rsvp_status === 'accepted' && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                      <IconCheck size={13} color={ACCENT} />
-                      <Text style={[styles.participantRsvp, { color: ACCENT }]} numberOfLines={1}>{t('meetings.rsvpAccepted')}</Text>
+                      <IconCheck size={13} color={colors.primary} />
+                      <Text style={[styles.participantRsvp, { color: colors.primary }]} numberOfLines={1}>{t('meetings.rsvpAccepted')}</Text>
                     </View>
                   )}
                   {p.rsvp_status === 'declined' && (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                      <IconX size={13} color="#ef4444" />
-                      <Text style={[styles.participantRsvp, { color: '#ef4444' }]} numberOfLines={1}>{t('meetings.rsvpDeclined')}</Text>
+                      <IconX size={13} color={colors.error} />
+                      <Text style={[styles.participantRsvp, { color: colors.error }]} numberOfLines={1}>{t('meetings.rsvpDeclined')}</Text>
                     </View>
                   )}
                   {p.rsvp_status === 'tentative' && (
-                    <Text style={[styles.participantRsvp, { color: '#f59e0b' }]} numberOfLines={1}>? {t('meetings.rsvpTentative')}</Text>
+                    <Text style={[styles.participantRsvp, { color: colors.warning }]} numberOfLines={1}>? {t('meetings.rsvpTentative')}</Text>
                   )}
                 </TouchableOpacity>
               ))}
               {isHost && (
                 <TouchableOpacity
-                  style={[styles.inviteTile, { borderColor: ACCENT + '55', backgroundColor: ACCENT + '10' }]}
+                  style={[styles.inviteTile, { borderColor: colors.primary + '55', backgroundColor: colors.primary + '10' }]}
                   activeOpacity={0.7}
                   onPress={() => router.push('/contacts?pick=1&room_id=' + (meeting.room_id || room_id))}
                 >
-                  <View style={[styles.inviteIconWrap, { backgroundColor: ACCENT }]}>
+                  <View style={[styles.inviteIconWrap, { backgroundColor: colors.primary }]}>
                     <IconPlus size={22} color="#fff" />
                   </View>
-                  <Text style={[styles.inviteLabel, { color: ACCENT }]} numberOfLines={1}>
+                  <Text style={[styles.inviteLabel, { color: colors.primary }]} numberOfLines={1}>
                     {t('meetingDetail.invite') || 'Convidar'}
                   </Text>
                 </TouchableOpacity>
@@ -603,8 +608,8 @@ export default function MeetingDetailScreen() {
                     }
                   }}
                 >
-                  <View style={[styles.attachmentIconWrap, { backgroundColor: ACCENT + '18' }]}>
-                    <IconCopy size={16} color={ACCENT} />
+                  <View style={[styles.attachmentIconWrap, { backgroundColor: colors.primary + '18' }]}>
+                    <IconCopy size={16} color={colors.primary} />
                   </View>
                   <Text style={[styles.attachmentName, { color: colors.text }]} numberOfLines={1}>
                     {a.name || a.filename || t('meetingDetail.attachment') || 'Anexo'}
@@ -623,7 +628,7 @@ export default function MeetingDetailScreen() {
           <View style={styles.secondaryActionsRow}>
             <SecondaryAction
               icon={IconCalendar}
-              tint={ACCENT}
+              tint={colors.primary}
               label={t('meetingDetail.addToCalendar') || 'Agenda'}
               onPress={() => router.push('/calendar?meeting=' + (meeting.room_id || id))}
               colors={colors}
@@ -631,7 +636,7 @@ export default function MeetingDetailScreen() {
             />
             <SecondaryAction
               icon={copied ? IconCheck : IconShare}
-              tint={copied ? ACCENT : '#3b82f6'}
+              tint={colors.primary}
               label={copied ? (t('meetingDetail.copied') || 'Copiado') : (t('meetingDetail.share') || 'Compartilhar')}
               onPress={handleCopyLink}
               colors={colors}
@@ -640,7 +645,7 @@ export default function MeetingDetailScreen() {
             {isHost && !isFinished && (
               <SecondaryAction
                 icon={IconEdit}
-                tint="#10b981"
+                tint={colors.success}
                 label={t('meetingDetail.edit') || 'Editar'}
                 onPress={() => router.push('/meeting-create?edit=' + (meeting.room_id || room_id))}
                 colors={colors}
@@ -650,7 +655,7 @@ export default function MeetingDetailScreen() {
             {isHost && !isFinished && (
               <SecondaryAction
                 icon={IconX}
-                tint="#ef4444"
+                tint={colors.error}
                 label={t('common.cancel') || 'Cancelar'}
                 onPress={handleCancel}
                 colors={colors}
@@ -660,7 +665,7 @@ export default function MeetingDetailScreen() {
             {isHost && (isFinished) && (
               <SecondaryAction
                 icon={IconTrash}
-                tint="#ef4444"
+                tint={colors.error}
                 label={t('meetingDetail.deleteMeeting') || 'Excluir'}
                 onPress={handleDelete}
                 colors={colors}
@@ -672,7 +677,7 @@ export default function MeetingDetailScreen() {
       </ScrollView>
       {!isFinished && (active || joinable) && (
         <TouchableOpacity
-          style={[styles.primaryCta, styles.primaryCtaSticky, { bottom: insets.bottom + 16 }, joining && { opacity: 0.7 }]}
+          style={[styles.primaryCta, styles.primaryCtaSticky, { backgroundColor: colors.primary, shadowColor: colors.primary, bottom: insets.bottom + 16 }, joining && { opacity: 0.7 }]}
           onPress={handleJoin}
           disabled={joining}
           activeOpacity={0.85}

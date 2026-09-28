@@ -21,6 +21,30 @@ import { Image, Platform, StyleSheet, View, ActivityIndicator } from 'react-nati
 let _ExpoImage = null;
 try { _ExpoImage = require('expo-image').Image; } catch {}
 
+// [2026-09-28 offline-first] Resolve a remote media URL to a persistent
+// on-disk file (documentDirectory) when mediaCache has already downloaded it.
+// expo-image keeps its OWN disk cache, but that cache is evictable and is NOT
+// the WhatsApp-style permanent store; consulting mediaCache's synchronous
+// index means avatars/thumbs render from the durable local file and keep
+// working fully offline. Native only; O(1) in-memory Map lookup; falls through
+// to the remote URL when the file isn't cached yet. Fn ref is cached module-
+// level so we don't require() on every render.
+let _getLocalUriSyncJs = undefined; // undefined = not yet resolved, null = unavailable
+function _resolveLocal(u) {
+  if (Platform.OS === 'web' || !u || typeof u !== 'string') return u;
+  if (u.startsWith('file://') || u.startsWith('data:')) return u; // already local
+  try {
+    if (_getLocalUriSyncJs === undefined) {
+      _getLocalUriSyncJs = require('../services/mediaCache').getLocalUriSyncJs || null;
+    }
+    if (_getLocalUriSyncJs) {
+      const local = _getLocalUriSyncJs(u);
+      if (local && typeof local === 'string') return local;
+    }
+  } catch {}
+  return u;
+}
+
 // Map RN resizeMode → expo-image contentFit
 const MODE_TO_FIT = {
   cover: 'cover',
@@ -47,7 +71,9 @@ export default function CachedImage({
   cachePolicy = 'memory-disk', transition = 80, priority = 'normal',
   onLoad, onError, accessibilityLabel, placeholder, blurhash, ...rest
 }) {
-  const uri = source?.uri || source?.url || '';
+  const _rawUri = source?.uri || source?.url || '';
+  // Prefer the durable local file if mediaCache already downloaded it (offline).
+  const uri = _resolveLocal(_rawUri);
   // No URI → render nothing. <img src=""> on web triggers a request to the
   // current page (and a console error), and an empty source on native shows
   // a blank box that masks legitimate placeholders.

@@ -7863,6 +7863,37 @@ function ChatConversationInner() {
       const cached = SmartCache.getCachedMessagesSync(conversationId, 50);
       if (Array.isArray(cached) && cached.length > 0) return cached;
     } catch {}
+    // [2026-09-28 offline-first] Cold-start fallback to the durable SQLite
+    // store (services/sqliteStore.js) — a *synchronous* read over the same
+    // chatyy.db db.js writes. When SmartCache's in-memory/MMKV window is cold
+    // (older history, or before MMKV warms at splash) this paints the FULL
+    // local history from frame 1 instead of waiting on the async
+    // getCachedMessages() effect below (which flashed a skeleton). Works fully
+    // offline. Native only — returns [] on web.
+    try {
+      const _sqlite = require('../services/sqliteStore');
+      const rows = _sqlite.getMessagesSync(conversationId, 50);
+      if (Array.isArray(rows) && rows.length > 0) {
+        // Hydrate _localUri from the media sync-index so media bubbles paint
+        // file:// from disk on the very first frame — same pattern the async
+        // load path uses (no remote→file switcheroo, offline-safe).
+        try {
+          const _hydrate = require('../services/mediaCache').getLocalUriSyncJs;
+          if (_hydrate) {
+            for (const m of rows) {
+              if (m && !m._localUri && m.file_url && ['image','video','audio','voice','gif','sticker','file'].includes(m.type)) {
+                try {
+                  const abs = api.getMediaUrl(m.file_url);
+                  const local = _hydrate(abs);
+                  if (local) m._localUri = local;
+                } catch {}
+              }
+            }
+          }
+        } catch {}
+        return rows;
+      }
+    } catch {}
     return null;
   })();
 

@@ -6,6 +6,7 @@ import {
   Easing, Linking,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth, isChildAccount } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -59,6 +60,7 @@ export default function LoginScreen() {
   const pendingGoRef = useRef(null);
   const { login, completeLoginAfterChallenge, loginWithToken } = useAuth();
   const { colors, isDark, toggle } = useTheme();
+  const insets = useSafeAreaInsets();
   const { t, language, changeLanguage } = useLanguage();
   const [showLangModal, setShowLangModal] = useState(false);
   const router = useRouter();
@@ -1512,8 +1514,8 @@ export default function LoginScreen() {
           )}
           {verificationStep === 'approved' && (
             <>
-              <View style={[s.verifyIconCircle, { backgroundColor: '#10b98115' }]}>
-                <IconCheck size={48} color="#10b981" />
+              <View style={[s.verifyIconCircle, { backgroundColor: colors.success + '15' }]}>
+                <IconCheck size={48} color={colors.success} />
               </View>
               <Text style={[s.verifyTitle, { color: colors.text }]}>
                 {t('login.verifyApproved')}
@@ -1526,8 +1528,8 @@ export default function LoginScreen() {
           )}
           {verificationStep === 'denied' && (
             <>
-              <View style={[s.verifyIconCircle, { backgroundColor: '#ef444415' }]}>
-                <IconAlertTriangle size={48} color="#ef4444" />
+              <View style={[s.verifyIconCircle, { backgroundColor: colors.error + '15' }]}>
+                <IconAlertTriangle size={48} color={colors.error} />
               </View>
               <Text style={[s.verifyTitle, { color: colors.text }]}>
                 {t('login.verifyDenied')}
@@ -1539,7 +1541,7 @@ export default function LoginScreen() {
                 onPress={handleRetryDenied}
                 style={[s.verifyBtnPrimary, { backgroundColor: colors.primary }]}
               >
-                <Text style={[s.verifyBtnPrimaryText, { color: '#fff' }]}>
+                <Text style={[s.verifyBtnPrimaryText, { color: colors.onPrimary }]}>
                   {t('login.verifyTryAgain')}
                 </Text>
               </TouchableOpacity>
@@ -1592,7 +1594,7 @@ export default function LoginScreen() {
   }
 
   return (
-    <View style={[s.root, { backgroundColor: isDark ? '#0A0A0A' : '#FAFAFA' }]}>
+    <View style={[s.root, { backgroundColor: colors.authBg }]}>
 
       {/* Tech-grade backdrop layers — faded grid pattern + radial purple wash
           behind the card. Both pointerEvents=none so they never intercept
@@ -1655,36 +1657,40 @@ export default function LoginScreen() {
       {isAddAccount && (
         <TouchableOpacity
           onPress={() => router.back()}
-          style={{ position: 'absolute', top: Platform.OS === 'ios' ? 54 : 16, left: 16, zIndex: 10 }}
+          style={{ position: 'absolute', top: insets.top + 12, left: 16, zIndex: 10 }}
           activeOpacity={0.7}
           accessibilityRole="button"
           accessibilityLabel={t('account.cancel')}
         >
-          <View style={[s.topBtn, { backgroundColor: isDark ? '#303134' : '#fff', borderColor: colors.authInputBorder }]}>
+          <View style={[s.topBtn, { backgroundColor: colors.authCardBg, borderColor: colors.authInputBorder }]}>
             <Text style={{ color: colors.primary, fontSize: 14, fontWeight: '600' }}>{t('account.cancel')}</Text>
           </View>
         </TouchableOpacity>
       )}
 
       {/* Language selector + Theme toggle — top right */}
-      <View style={s.topRightRow}>
+      <View style={[s.topRightRow, { top: insets.top + 12 }]}>
         <TouchableOpacity onPress={() => setShowLangModal(true)} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel="Change language">
           <View style={[s.langBtn, { backgroundColor: 'transparent' }]}>
-            <IconGlobe size={14} color={isDark ? '#9aa0a6' : '#5f6368'} />
-            <Text style={[s.langBtnText, { color: isDark ? '#e8eaed' : '#3c4043' }]}>{langShort}</Text>
+            <IconGlobe size={14} color={colors.textSecondary} />
+            <Text style={[s.langBtnText, { color: colors.text }]}>{langShort}</Text>
             <View style={{ marginLeft: -1 }}>
-              <IconChevronDown size={12} color={isDark ? '#9aa0a6' : '#5f6368'} />
+              <IconChevronDown size={12} color={colors.textSecondary} />
             </View>
           </View>
         </TouchableOpacity>
         <TouchableOpacity onPress={toggle} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}>
           <View style={[s.topBtn, { backgroundColor: 'transparent' }]}>
-            {isDark ? <IconSun size={16} color="#fbbf24" /> : <IconMoon size={16} color="#5f6368" />}
+            {isDark ? <IconSun size={16} color={colors.warning} /> : <IconMoon size={16} color={colors.textSecondary} />}
           </View>
         </TouchableOpacity>
       </View>
 
-      <KeyboardAvoidingView style={s.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView
+        style={s.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+      >
         <ScrollView contentContainerStyle={s.scroll} keyboardShouldPersistTaps="handled">
           <View style={[s.center, !isDesktop && {
             // Mobile: anchor content to the TOP so the keyboard opening
@@ -1701,7 +1707,7 @@ export default function LoginScreen() {
                   form sits directly on the page background like the
                   /mockups/login-unified.html). */}
               <View style={[s.card, isDesktop ? {
-                backgroundColor: isDark ? '#303134' : '#ffffff',
+                backgroundColor: colors.authCardBg,
                 borderWidth: 1,
                 borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(124,58,237,0.08)',
                 borderRadius: 24,
@@ -1714,7 +1720,7 @@ export default function LoginScreen() {
                     ? '0 2px 8px rgba(0,0,0,0.30), 0 18px 60px rgba(0,0,0,0.40)'
                     : '0 1px 2px rgba(60,64,67,0.06), 0 6px 20px rgba(124,58,237,0.07), 0 24px 64px rgba(60,64,67,0.10)',
                 } : {
-                  shadowColor: '#A582F7',
+                  shadowColor: colors.primary,
                   shadowOffset: { width: 0, height: 6 },
                   shadowOpacity: 0.08,
                   shadowRadius: 18,
@@ -1759,12 +1765,12 @@ export default function LoginScreen() {
                         <Svg width={200} height={200} viewBox="0 0 200 200" fill="none">
                           <Defs>
                             <RadialGradient id="halo1" cx="0.5" cy="0.5" r="0.5">
-                              <Stop offset="0" stopColor="#a78bfa" stopOpacity="0.18" />
-                              <Stop offset="0.7" stopColor="#a78bfa" stopOpacity="0" />
+                              <Stop offset="0" stopColor={colors.primary} stopOpacity="0.18" />
+                              <Stop offset="0.7" stopColor={colors.primary} stopOpacity="0" />
                             </RadialGradient>
                             <RadialGradient id="halo2" cx="0.5" cy="0.5" r="0.5">
-                              <Stop offset="0" stopColor="#a78bfa" stopOpacity="0.32" />
-                              <Stop offset="0.7" stopColor="#a78bfa" stopOpacity="0" />
+                              <Stop offset="0" stopColor={colors.primary} stopOpacity="0.32" />
+                              <Stop offset="0.7" stopColor={colors.primary} stopOpacity="0" />
                             </RadialGradient>
                           </Defs>
                           {/* Outer halo — 200px soft */}
@@ -1792,15 +1798,15 @@ export default function LoginScreen() {
                           than animate it. */}
                       <View style={{
                         width: 92, height: 92, borderRadius: 46,
-                        backgroundColor: '#A582F7',
+                        backgroundColor: colors.primary,
                         alignItems: 'center', justifyContent: 'center',
                         overflow: 'hidden',
                         ...(Platform.OS === 'web' ? {
                           // Degradê diagonal → esfera com profundidade (WhatsApp-grade).
-                          backgroundImage: 'linear-gradient(145deg, #A582F7 0%, #A582F7 48%, #5B21B6 100%)',
+                          backgroundImage: `linear-gradient(145deg, ${colors.authBtnGradientStart} 0%, ${colors.authBtnGradientStart} 48%, ${colors.authBtnGradientEnd} 100%)`,
                           boxShadow: '0 16px 40px rgba(124,58,237,0.48), inset 0 1px 0 rgba(255,255,255,0.28)',
                         } : Platform.select({
-                          ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.45, shadowRadius: 16 },
+                          ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.45, shadowRadius: 16 },
                           android: { elevation: 10 },
                         })),
                       }}>
@@ -1820,11 +1826,11 @@ export default function LoginScreen() {
                         <Svg viewBox="0 0 64 64" width={44} height={44} fill="none">
                           <Path
                             d="M14 24 Q14 16 22 16 L42 16 Q50 16 50 24 L50 36 Q50 44 42 44 L30 44 L22 52 L22 44 Q14 44 14 36 Z"
-                            stroke="#fff" strokeWidth={3} strokeLinejoin="round" fill="none"
+                            stroke={colors.onPrimary} strokeWidth={3} strokeLinejoin="round" fill="none"
                           />
-                          <SvgCircle cx="24" cy="30" r="2.5" fill="#fff" />
-                          <SvgCircle cx="32" cy="30" r="2.5" fill="#fff" />
-                          <SvgCircle cx="40" cy="30" r="2.5" fill="#fff" />
+                          <SvgCircle cx="24" cy="30" r="2.5" fill={colors.onPrimary} />
+                          <SvgCircle cx="32" cy="30" r="2.5" fill={colors.onPrimary} />
+                          <SvgCircle cx="40" cy="30" r="2.5" fill={colors.onPrimary} />
                         </Svg>
                       </View>
                     </Animated.View>
@@ -1842,13 +1848,13 @@ export default function LoginScreen() {
                         color: colors.primary, marginTop: 14,
                         letterSpacing: -1.1,
                         ...(Platform.OS === 'web' ? {
-                          backgroundImage: 'linear-gradient(135deg, #5B21B6 0%, #A582F7 60%, #A78BFA 100%)',
+                          backgroundImage: `linear-gradient(135deg, ${colors.primaryDark} 0%, ${colors.primary} 60%, ${colors.brandSecondary} 100%)`,
                           WebkitBackgroundClip: 'text',
                           WebkitTextFillColor: 'transparent',
                           backgroundClip: 'text',
                           textShadow: '0 4px 18px rgba(124,58,237,0.32)',
                         } : Platform.select({
-                          ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 10 },
+                          ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 10 },
                           android: {},
                         })),
                       }}>
@@ -1856,7 +1862,7 @@ export default function LoginScreen() {
                       </Text>
                       <Text style={{
                         fontSize: 15, fontWeight: '500',
-                        color: isDark ? '#9aa0a6' : '#5f6368',
+                        color: colors.textSecondary,
                         marginTop: 6, marginBottom: 4,
                         letterSpacing: 0.1,
                       }}>
@@ -1885,18 +1891,18 @@ export default function LoginScreen() {
                       style={{
                         flex: 1, paddingVertical: 11, borderRadius: 10,
                         flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-                        backgroundColor: loginMode === 'phone' ? (isDark ? '#43464b' : '#fff') : 'transparent',
+                        backgroundColor: loginMode === 'phone' ? (colors.surface) : 'transparent',
                         ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, box-shadow 160ms ease' } : {}),
                         ...(loginMode === 'phone' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.45)' : '0 1px 4px rgba(60,64,67,0.16)' } : {}),
                         ...(loginMode === 'phone' && Platform.OS !== 'web' ? {
-                          shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
+                          shadowColor: colors.shadow, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
                         } : {}),
                       }}
                       onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('phone'); setError(''); setPhoneStep('input'); setPhoneOtp(['', '', '', '', '', '']); }}
                       activeOpacity={0.7}
                     >
-                      <IconPhone size={14} color={loginMode === 'phone' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368')} />
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: loginMode === 'phone' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }}>
+                      <IconPhone size={14} color={loginMode === 'phone' ? colors.primary : (colors.textSecondary)} />
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: loginMode === 'phone' ? colors.primary : (colors.textSecondary) }}>
                         {t('login.phoneNumber') || 'Telefone'}
                       </Text>
                     </TouchableOpacity>
@@ -1905,18 +1911,18 @@ export default function LoginScreen() {
                         style={{
                           flex: 1, paddingVertical: 11, borderRadius: 10,
                           flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-                          backgroundColor: loginMode === 'qr' ? (isDark ? '#43464b' : '#fff') : 'transparent',
+                          backgroundColor: loginMode === 'qr' ? (colors.surface) : 'transparent',
                           ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, box-shadow 160ms ease' } : {}),
                           ...(loginMode === 'qr' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.45)' : '0 1px 4px rgba(60,64,67,0.16)' } : {}),
                           ...(loginMode === 'qr' && Platform.OS !== 'web' ? {
-                            shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
+                            shadowColor: colors.shadow, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
                           } : {}),
                         }}
                         onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('qr'); setError(''); setStep(1); }}
                         activeOpacity={0.7}
                       >
-                        <IconGlobe size={14} color={loginMode === 'qr' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368')} />
-                        <Text style={{ fontSize: 13, fontWeight: '600', color: loginMode === 'qr' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }}>
+                        <IconGlobe size={14} color={loginMode === 'qr' ? colors.primary : (colors.textSecondary)} />
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: loginMode === 'qr' ? colors.primary : (colors.textSecondary) }}>
                           QR
                         </Text>
                       </TouchableOpacity>
@@ -1925,18 +1931,18 @@ export default function LoginScreen() {
                       style={{
                         flex: 1, paddingVertical: 11, borderRadius: 10,
                         flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
-                        backgroundColor: loginMode === 'email' ? (isDark ? '#43464b' : '#fff') : 'transparent',
+                        backgroundColor: loginMode === 'email' ? (colors.surface) : 'transparent',
                         ...(Platform.OS === 'web' ? { transition: 'background-color 160ms ease, box-shadow 160ms ease' } : {}),
                         ...(loginMode === 'email' && Platform.OS === 'web' ? { boxShadow: isDark ? '0 1px 4px rgba(0,0,0,0.45)' : '0 1px 4px rgba(60,64,67,0.16)' } : {}),
                         ...(loginMode === 'email' && Platform.OS !== 'web' ? {
-                          shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
+                          shadowColor: colors.shadow, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.15, shadowRadius: 2, elevation: 2,
                         } : {}),
                       }}
                       onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('email'); setError(''); setStep(1); }}
                       activeOpacity={0.7}
                     >
-                      <IconMailLogo size={14} color={loginMode === 'email' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368')} />
-                      <Text style={{ fontSize: 13, fontWeight: '600', color: loginMode === 'email' ? colors.primary : (isDark ? '#9aa0a6' : '#5f6368') }}>
+                      <IconMailLogo size={14} color={loginMode === 'email' ? colors.primary : (colors.textSecondary)} />
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: loginMode === 'email' ? colors.primary : (colors.textSecondary) }}>
                         Email
                       </Text>
                     </TouchableOpacity>
@@ -1949,17 +1955,17 @@ export default function LoginScreen() {
                           Chatyy orb above the tabs). No second hero here —
                           one icon is enough. */}
 
-                      <Text style={[s.title, { color: isDark ? '#e8eaed' : '#202124', textAlign: phoneStep === 'input' ? 'center' : 'left' }]}>{t('login.phoneTitle')}</Text>
-                      <Text style={[s.subtitle, { color: isDark ? '#9aa0a6' : '#5f6368', textAlign: phoneStep === 'input' ? 'center' : 'left', paddingHorizontal: phoneStep === 'input' ? 12 : 0 }]}>
+                      <Text style={[s.title, { color: colors.text, textAlign: phoneStep === 'input' ? 'center' : 'left' }]}>{t('login.phoneTitle')}</Text>
+                      <Text style={[s.subtitle, { color: colors.textSecondary, textAlign: phoneStep === 'input' ? 'center' : 'left', paddingHorizontal: phoneStep === 'input' ? 12 : 0 }]}>
                         {phoneStep === 'otp'
                           ? `${t('login.phoneOtpSubtitle')} ${phoneCountryCode}${phoneNumber}`
                           : t('login.phoneSubtitle')}
                       </Text>
 
                       {!!error && (
-                        <View style={[s.errorBox, { backgroundColor: isDark ? '#3c2020' : '#fce8e6', borderColor: isDark ? '#c5221f' : '#d93025' }]}>
-                          <IconAlertTriangle size={14} color={isDark ? '#f28b82' : '#d93025'} />
-                          <Text style={[s.errorText, { color: isDark ? '#f28b82' : '#d93025' }]}>{error}</Text>
+                        <View style={[s.errorBox, { backgroundColor: colors.errorBg, borderColor: colors.error }]}>
+                          <IconAlertTriangle size={14} color={colors.error} />
+                          <Text style={[s.errorText, { color: colors.error }]}>{error}</Text>
                         </View>
                       )}
 
@@ -1973,7 +1979,7 @@ export default function LoginScreen() {
                           {(() => {
                             const _country = COUNTRY_CODES.find(c => c.code === phoneCountryCode);
                             const _countryName = _country?.name || _country?.label || (t('login.selectCountry') || 'Pa\u00EDs');
-                            const _hairline = isDark ? '#2a2d31' : '#e5e7eb';
+                            const _hairline = colors.border;
                             const _hairlineActive = colors.primary;
                             const _isFocused = focused === 'phone';
                             return (
@@ -2001,7 +2007,7 @@ export default function LoginScreen() {
                                   <Text style={{ flex: 1, fontSize: 16, fontWeight: '500', color: colors.text }}>
                                     {_countryName}
                                   </Text>
-                                  <IconChevronRight size={16} color={isDark ? '#9aa0a6' : '#9ca3af'} />
+                                  <IconChevronRight size={16} color={colors.textTertiary} />
                                 </TouchableOpacity>
                                 <View style={{
                                   flexDirection: 'row', alignItems: 'center',
@@ -2053,7 +2059,7 @@ export default function LoginScreen() {
                                         }}
                                         keyboardType="phone-pad"
                                         placeholder={_mask ? _mask.replace(/#/g, '0') : t('login.phonePlaceholder')}
-                                        placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                                        placeholderTextColor={colors.textTertiary}
                                         onFocus={() => setFocused('phone')}
                                         onBlur={() => setFocused('')}
                                         onSubmitEditing={handlePhoneSendOtp}
@@ -2072,8 +2078,8 @@ export default function LoginScreen() {
                               Reduz ansiedade e SMS desperdiçado em typo. */}
                           {phoneAccountState.status === 'exists' && phoneAccountState.phone === (phoneCountryCode + phoneNumber.replace(/\D/g, '')) && (
                             <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 6, marginBottom: 4 }}>
-                              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#10b981' }} />
-                              <Text style={{ color: '#10b981', fontSize: 13, fontWeight: '600' }}>
+                              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.success }} />
+                              <Text style={{ color: colors.success, fontSize: 13, fontWeight: '600' }}>
                                 {t('login.smartHasAccount') || 'Conta encontrada — vamos enviar o código'}
                               </Text>
                             </View>
@@ -2093,8 +2099,8 @@ export default function LoginScreen() {
                             // washed-out version of the brand color. Reads
                             // as "not yet ready" instead of "almost ready".
                             const _disabled = phoneSending || phoneNumber.replace(/\D/g, '').length < 8;
-                            const _bg = phoneSending ? colors.primary : (_disabled ? (isDark ? '#2a2d31' : '#e5e7eb') : colors.primary);
-                            const _fg = phoneSending ? '#fff' : (_disabled ? (isDark ? '#5f6368' : '#9ca3af') : '#fff');
+                            const _bg = phoneSending ? colors.primary : (_disabled ? (colors.border) : colors.primary);
+                            const _fg = phoneSending ? colors.onPrimary : (_disabled ? (colors.textTertiary) : colors.onPrimary);
                             return (
                               <TouchableOpacity
                                 style={[s.primaryBtn, {
@@ -2107,10 +2113,10 @@ export default function LoginScreen() {
                                   // (presença premium WhatsApp-grade). Desabilitado
                                   // fica cinza chapado de propósito (não "quase pronto").
                                   ...(!_disabled ? (Platform.OS === 'web' ? {
-                                    backgroundImage: 'linear-gradient(135deg, #A582F7 0%, #6D28D9 100%)',
+                                    backgroundImage: `linear-gradient(135deg, ${colors.authBtnGradientStart} 0%, ${colors.authBtnGradientEnd} 100%)`,
                                     boxShadow: '0 8px 22px rgba(124,58,237,0.34), 0 2px 6px rgba(124,58,237,0.18)',
                                   } : Platform.select({
-                                    ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
+                                    ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
                                     android: { elevation: 6 },
                                   })) : {}),
                                 }]}
@@ -2141,10 +2147,10 @@ export default function LoginScreen() {
                               cases automatically. Only on mobile (desktop
                               has the QR/Email tabs to clarify the choice). */}
                           {!isDesktop && (
-                            <Text style={{ fontSize: 13, color: isDark ? '#9aa0a6' : '#9ca3af', textAlign: 'center', lineHeight: 19, marginTop: 16 }}>
-                              <Text style={{ fontWeight: '600', color: isDark ? '#cbd5e1' : '#6b7280' }}>{t('login.helperHasAccount') || 'Já tem Chatyy?'}</Text>{' '}{t('login.helperHasAccountSub') || 'Você entra direto.'}
+                            <Text style={{ fontSize: 13, color: colors.textTertiary, textAlign: 'center', lineHeight: 19, marginTop: 16 }}>
+                              <Text style={{ fontWeight: '600', color: colors.textSecondary }}>{t('login.helperHasAccount') || 'Já tem Chatyy?'}</Text>{' '}{t('login.helperHasAccountSub') || 'Você entra direto.'}
                               {'\n'}
-                              <Text style={{ fontWeight: '600', color: isDark ? '#cbd5e1' : '#6b7280' }}>{t('login.helperFirstTime') || 'Primeiro acesso?'}</Text>{' '}{t('login.helperFirstTimeSub') || 'Criamos sua conta na hora.'}
+                              <Text style={{ fontWeight: '600', color: colors.textSecondary }}>{t('login.helperFirstTime') || 'Primeiro acesso?'}</Text>{' '}{t('login.helperFirstTimeSub') || 'Criamos sua conta na hora.'}
                             </Text>
                           )}
 
@@ -2161,7 +2167,7 @@ export default function LoginScreen() {
                               activeOpacity={0.6}
                               style={{ alignSelf: 'center', paddingVertical: 14, marginTop: 4 }}
                             >
-                              <Text style={{ fontSize: 13, color: isDark ? '#9aa0a6' : '#5f6368', fontWeight: '500' }}>
+                              <Text style={{ fontSize: 13, color: colors.textSecondary, fontWeight: '500' }}>
                                 {t('login.useEmailInstead') || 'Entrar com email'}
                               </Text>
                             </TouchableOpacity>
@@ -2188,8 +2194,8 @@ export default function LoginScreen() {
                               {phoneOtp.map((digit, i) => {
                                 const _filled = !!digit;
                                 const _focused = phoneOtpFocused && (phoneOtp.findIndex(d => !d) === i || (phoneOtp.every(d => !!d) && i === 5));
-                                const _otpBg = isDark ? (_filled ? `${colors.primary}26` : '#1f2229') : (_filled ? `${colors.primary}10` : '#f3f4f6');
-                                const _otpBorder = _focused ? colors.primary : (_filled ? colors.primary : (isDark ? '#2a2d31' : '#e5e7eb'));
+                                const _otpBg = isDark ? (_filled ? `${colors.primary}26` : colors.surfaceVariant) : (_filled ? `${colors.primary}10` : colors.surfaceVariant);
+                                const _otpBorder = _focused ? colors.primary : (_filled ? colors.primary : (colors.border));
                                 return (
                                   <Animated.View
                                     key={i}
@@ -2256,7 +2262,7 @@ export default function LoginScreen() {
                               <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text, marginBottom: 6, textAlign: 'center' }}>
                                 {t('login.phoneLockPinTitle') || 'Digite seu PIN de segurança'}
                               </Text>
-                              <Text style={{ fontSize: 12, color: isDark ? '#9aa0a6' : '#6b7280', marginBottom: 12, textAlign: 'center', lineHeight: 17 }}>
+                              <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 12, textAlign: 'center', lineHeight: 17 }}>
                                 {t('login.phoneLockPinDesc') || 'Essa conta tem PIN ativado para proteger contra troca de SIM.'}
                               </Text>
                               <TextInput
@@ -2265,8 +2271,8 @@ export default function LoginScreen() {
                                   width: 180, height: 52,
                                   borderRadius: 12,
                                   borderWidth: 1.5,
-                                  borderColor: phoneLockPin ? colors.primary : (isDark ? '#2a2d31' : '#e5e7eb'),
-                                  backgroundColor: isDark ? '#1f2229' : '#f3f4f6',
+                                  borderColor: phoneLockPin ? colors.primary : (colors.border),
+                                  backgroundColor: colors.surfaceVariant,
                                   color: colors.text,
                                   textAlign: 'center',
                                   fontSize: 22, fontWeight: '700',
@@ -2276,7 +2282,7 @@ export default function LoginScreen() {
                                 value={phoneLockPin}
                                 onChangeText={(v) => { setPhoneLockPin((v || '').replace(/\D/g, '').slice(0, 6)); if (error) setError(''); }}
                                 placeholder="••••"
-                                placeholderTextColor={isDark ? '#5f6368' : '#9ca3af'}
+                                placeholderTextColor={colors.textTertiary}
                                 keyboardType="number-pad"
                                 inputMode="numeric"
                                 maxLength={6}
@@ -2380,7 +2386,7 @@ export default function LoginScreen() {
                           }}>
                             <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>{n}</Text>
                           </View>
-                          <Text style={{ flex: 1, fontSize: 14, lineHeight: 21, color: isDark ? '#e8eaed' : '#3c4043' }}>{text}</Text>
+                          <Text style={{ flex: 1, fontSize: 14, lineHeight: 21, color: colors.text }}>{text}</Text>
                         </View>
                       );
                       return (
@@ -2388,12 +2394,12 @@ export default function LoginScreen() {
                       {(qrStatus === 'loading' || qrStatus === 'idle') && (
                         <View style={{
                           width: frameSize, height: frameSize, borderRadius: 20,
-                          borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.08)' : '#eceef1',
-                          backgroundColor: isDark ? '#2a2d31' : '#f6f7f9',
+                          borderWidth: 1, borderColor: colors.border,
+                          backgroundColor: colors.background,
                           alignItems: 'center', justifyContent: 'center', marginBottom: 22,
                         }}>
                           <ActivityIndicator size="large" color={colors.primary} />
-                          <Text style={{ marginTop: 14, fontSize: 13, color: isDark ? '#9aa0a6' : '#80868b' }}>
+                          <Text style={{ marginTop: 14, fontSize: 13, color: colors.textSecondary }}>
                             {t('login.qrLoading') || t('login.loading') || '...'}
                           </Text>
                         </View>
@@ -2415,7 +2421,7 @@ export default function LoginScreen() {
                         <>
                           <View style={{
                             width: frameSize, height: frameSize, borderRadius: 20,
-                            borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.08)' : '#eceef1',
+                            borderWidth: 1, borderColor: colors.border,
                             backgroundColor: '#ffffff',
                             alignItems: 'center', justifyContent: 'center',
                             marginBottom: 18, padding: 16,
@@ -2460,12 +2466,12 @@ export default function LoginScreen() {
                               marginBottom: 22,
                             }}>
                               <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.primary }} />
-                              <Text style={{ fontSize: 12, fontWeight: '500', color: isDark ? '#9aa0a6' : '#80868b' }}>
+                              <Text style={{ fontSize: 12, fontWeight: '500', color: colors.textSecondary }}>
                                 {t('login.qrExpires')} {qrCountdown}s
                               </Text>
                             </View>
                           )}
-                          <Text style={{ fontSize: 14, textAlign: 'center', marginBottom: 18, lineHeight: 22, color: isDark ? '#9aa0a6' : '#5f6368' }}>
+                          <Text style={{ fontSize: 14, textAlign: 'center', marginBottom: 18, lineHeight: 22, color: colors.textSecondary }}>
                             {t('login.qrSubtitle')}
                           </Text>
                           <View style={{ alignSelf: 'stretch', gap: 14 }}>
@@ -2497,8 +2503,8 @@ export default function LoginScreen() {
                           </Text>
                         </TouchableOpacity>
                       )}
-                      <Text style={[s.title, { color: isDark ? '#e8eaed' : '#202124' }]}>{t('login.title')}</Text>
-                      <Text style={[s.subtitle, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>
+                      <Text style={[s.title, { color: colors.text }]}>{t('login.title')}</Text>
+                      <Text style={[s.subtitle, { color: colors.textSecondary }]}>
                         {t('login.subtitle')}
                       </Text>
 
@@ -2518,11 +2524,11 @@ export default function LoginScreen() {
                         )}
                         <TextInput
                           style={[s.igInput, {
-                            backgroundColor: isDark ? '#262626' : '#FAFAFA',
+                            backgroundColor: colors.surfaceVariant,
                             borderColor: focused === 'email'
-                              ? (isDark ? '#3A3A3A' : '#A8A8A8')
-                              : (isDark ? '#262626' : '#DBDBDB'),
-                            color: isDark ? '#e8eaed' : '#202124',
+                              ? (colors.textTertiary)
+                              : (colors.authInputBorder),
+                            color: colors.text,
                             ...(Platform.OS === 'web' && focused === 'email'
                               ? { boxShadow: '0 0 0 4px rgba(124,58,237,0.18)' }
                               : {}),
@@ -2534,7 +2540,7 @@ export default function LoginScreen() {
                           autoComplete="email"
                           returnKeyType="next"
                           placeholder={t('login.emailPlaceholder')}
-                          placeholderTextColor={isDark ? '#7a7a7a' : '#8e8e8e'}
+                          placeholderTextColor={colors.textTertiary}
                           onFocus={() => setFocused('email')}
                           onBlur={() => setFocused('')}
                           onSubmitEditing={handleContinue}
@@ -2545,17 +2551,17 @@ export default function LoginScreen() {
                       {/* Inline error directly under the input. IG kills the
                           banner — surfaces only the field-level message. */}
                       {!!error && (
-                        <Text style={{ color: '#ED4956', fontSize: 13, marginTop: 6 }}>{error}</Text>
+                        <Text style={{ color: colors.error, fontSize: 13, marginTop: 6 }}>{error}</Text>
                       )}
 
                       {/* Domain hint */}
                       {!email.includes('@') && email.length > 0 && (
-                        <Text style={[s.domainHint, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>
+                        <Text style={[s.domainHint, { color: colors.textSecondary }]}>
                           {t('login.fullEmail')} <Text style={{ fontWeight: '600', color: colors.primary }}>{email}@chatyy.com.br</Text>
                         </Text>
                       )}
                       {!email && (
-                        <Text style={[s.domainHint, { color: isDark ? '#9aa0a6' : '#80868b' }]}>
+                        <Text style={[s.domainHint, { color: colors.textSecondary }]}>
                           {t('login.domainHint')}
                         </Text>
                       )}
@@ -2680,22 +2686,22 @@ export default function LoginScreen() {
                   ) : (
                     /* ── EMAIL STEP 2 — PASSWORD ── */
                     <>
-                      <Text style={[s.title, { color: isDark ? '#e8eaed' : '#202124' }]}>{t('login.welcome')}</Text>
+                      <Text style={[s.title, { color: colors.text }]}>{t('login.welcome')}</Text>
 
                       {/* User chip (email with avatar) */}
                       <TouchableOpacity
-                        style={[s.userChip, { borderColor: isDark ? '#5f6368' : '#dadce0' }]}
+                        style={[s.userChip, { borderColor: colors.authInputBorder }]}
                         onPress={() => animateStep(1)}
                         activeOpacity={0.7}
                       >
                         <View style={[s.userAvatar, { backgroundColor: colors.primary }]}>
                           <Text style={s.userAvatarLetter}>{(email || '?')[0].toUpperCase()}</Text>
                         </View>
-                        <Text style={[s.userEmail, { color: isDark ? '#e8eaed' : '#202124' }]} numberOfLines={1}>
+                        <Text style={[s.userEmail, { color: colors.text }]} numberOfLines={1}>
                           {displayEmail}
                         </Text>
                         <View style={{ marginLeft: 6 }}>
-                          <IconChevronDown size={12} color={isDark ? '#9aa0a6' : '#5f6368'} />
+                          <IconChevronDown size={12} color={colors.textSecondary} />
                         </View>
                       </TouchableOpacity>
 
@@ -2713,11 +2719,11 @@ export default function LoginScreen() {
                         <TextInput
                           ref={passwordRef}
                           style={[s.igInput, {
-                            backgroundColor: isDark ? '#262626' : '#FAFAFA',
+                            backgroundColor: colors.surfaceVariant,
                             borderColor: focused === 'pass'
-                              ? (isDark ? '#3A3A3A' : '#A8A8A8')
-                              : (isDark ? '#262626' : '#DBDBDB'),
-                            color: isDark ? '#e8eaed' : '#202124',
+                              ? (colors.textTertiary)
+                              : (colors.authInputBorder),
+                            color: colors.text,
                             paddingRight: 44,
                             ...(Platform.OS === 'web' && focused === 'pass'
                               ? { boxShadow: '0 0 0 4px rgba(124,58,237,0.18)' }
@@ -2728,7 +2734,7 @@ export default function LoginScreen() {
                           secureTextEntry={!showPassword}
                           returnKeyType="go"
                           placeholder={t('login.passwordInput')}
-                          placeholderTextColor={isDark ? '#7a7a7a' : '#8e8e8e'}
+                          placeholderTextColor={colors.textTertiary}
                           onFocus={() => setFocused('pass')}
                           onBlur={() => setFocused('')}
                           onSubmitEditing={handleLogin}
@@ -2743,13 +2749,13 @@ export default function LoginScreen() {
                           accessibilityLabel={showPassword ? t('login.hidePassword') : t('login.showPassword')}
                         >
                           {showPassword
-                            ? <IconEyeOff size={20} color={isDark ? '#9aa0a6' : '#5f6368'} />
-                            : <IconEye size={20} color={isDark ? '#9aa0a6' : '#5f6368'} />}
+                            ? <IconEyeOff size={20} color={colors.textSecondary} />
+                            : <IconEye size={20} color={colors.textSecondary} />}
                         </TouchableOpacity>
                       </Animated.View>
 
                       {!!error && (
-                        <Text style={{ color: '#ED4956', fontSize: 13, marginTop: 6 }}>{error}</Text>
+                        <Text style={{ color: colors.error, fontSize: 13, marginTop: 6 }}>{error}</Text>
                       )}
 
                       <TouchableOpacity style={s.forgotLink} activeOpacity={0.6} onPress={() => router.push('/forgot')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -2823,17 +2829,17 @@ export default function LoginScreen() {
                   <View style={{
                     paddingHorizontal: 8, paddingVertical: 3,
                     borderRadius: 4, borderWidth: 1,
-                    borderColor: isDark ? '#1F1F22' : '#E5E5E5',
+                    borderColor: colors.border,
                     backgroundColor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
                   }}>
                     <Text style={{
                       fontFamily: 'Menlo, Consolas, monospace', fontSize: 11,
-                      color: isDark ? '#A1A1A6' : '#525252',
+                      color: colors.textSecondary,
                     }}>
                       {'↵'} Enter
                     </Text>
                   </View>
-                  <Text style={{ fontSize: 12, color: isDark ? '#A1A1A6' : '#525252' }}>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary }}>
                     {t('login.keyboardHint') || 'para continuar'}
                   </Text>
                 </View>
@@ -2846,15 +2852,15 @@ export default function LoginScreen() {
                 {/* (intentionally no Scan QR Code on initial login) */}
                 <View style={s.footerLinks}>
                   <TouchableOpacity activeOpacity={0.6} onPress={() => setShowHelp(true)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
-                    <Text style={[s.footerItem, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>{t('login.help')}</Text>
+                    <Text style={[s.footerItem, { color: colors.textSecondary }]}>{t('login.help')}</Text>
                   </TouchableOpacity>
-                  <Text style={[s.footerDot, { color: isDark ? '#5f6368' : '#dadce0' }]}> {'\u00B7'} </Text>
+                  <Text style={[s.footerDot, { color: colors.authInputBorder }]}> {'\u00B7'} </Text>
                   <TouchableOpacity activeOpacity={0.6} onPress={() => setShowPrivacy(true)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
-                    <Text style={[s.footerItem, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>{t('login.privacy')}</Text>
+                    <Text style={[s.footerItem, { color: colors.textSecondary }]}>{t('login.privacy')}</Text>
                   </TouchableOpacity>
-                  <Text style={[s.footerDot, { color: isDark ? '#5f6368' : '#dadce0' }]}> {'\u00B7'} </Text>
+                  <Text style={[s.footerDot, { color: colors.authInputBorder }]}> {'\u00B7'} </Text>
                   <TouchableOpacity activeOpacity={0.6} onPress={() => setShowTerms(true)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
-                    <Text style={[s.footerItem, { color: isDark ? '#9aa0a6' : '#5f6368' }]}>{t('login.terms')}</Text>
+                    <Text style={[s.footerItem, { color: colors.textSecondary }]}>{t('login.terms')}</Text>
                   </TouchableOpacity>
                 </View>
                 {/* Build diagnostic — native build + OTA hash. Tap 5× to nuke
@@ -2895,7 +2901,7 @@ export default function LoginScreen() {
                   style={{ marginTop: 8, alignSelf: 'center' }}
                   hitSlop={{ top: 10, bottom: 10, left: 20, right: 20 }}
                 >
-                  <Text style={{ fontSize: 10, color: isDark ? '#5f6368' : '#9aa0a6' }}>
+                  <Text style={{ fontSize: 10, color: colors.textTertiary }}>
                     {buildLabel}
                   </Text>
                 </TouchableOpacity>
@@ -2922,18 +2928,18 @@ export default function LoginScreen() {
       {/* Country code picker modal */}
       <Modal visible={showCountryPicker} animationType="slide" transparent>
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
-          <View style={{ backgroundColor: isDark ? '#1c1c1e' : '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70%', paddingBottom: 30 }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 0.5, borderBottomColor: isDark ? '#333' : '#e5e5e5' }}>
-              <Text style={{ fontSize: 18, fontWeight: '700', color: isDark ? '#fff' : '#000' }}>{t('login.selectCountry') || 'Selecionar pais'}</Text>
+          <View style={{ backgroundColor: colors.authCardBg, borderTopLeftRadius: 20, borderTopRightRadius: 20, maxHeight: '70%', paddingBottom: 30 + insets.bottom }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 0.5, borderBottomColor: colors.border }}>
+              <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>{t('login.selectCountry') || 'Selecionar pais'}</Text>
               <TouchableOpacity onPress={() => setShowCountryPicker(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
                 <Text style={{ fontSize: 16, color: colors.primary, fontWeight: '600' }}>OK</Text>
               </TouchableOpacity>
             </View>
             <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
               <TextInput
-                style={{ backgroundColor: isDark ? '#2c2c2e' : '#f2f2f7', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: isDark ? '#fff' : '#000' }}
+                style={{ backgroundColor: colors.surfaceVariant, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: colors.text }}
                 placeholder={t('login.searchCountry') || 'Buscar pais...'}
-                placeholderTextColor={isDark ? '#8e8e93' : '#999'}
+                placeholderTextColor={colors.textTertiary}
                 value={countrySearch}
                 onChangeText={setCountrySearch}
                 autoFocus
@@ -2944,15 +2950,15 @@ export default function LoginScreen() {
               keyExtractor={(item) => item.code}
               renderItem={({ item }) => (
                 <TouchableOpacity
-                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: 0.5, borderBottomColor: isDark ? '#2c2c2e' : '#f0f0f0',
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: 0.5, borderBottomColor: colors.borderLight,
                     backgroundColor: item.code === phoneCountryCode ? (isDark ? 'rgba(0,122,255,0.15)' : 'rgba(0,122,255,0.08)') : 'transparent' }}
                   onPress={() => { setPhoneCountryCode(item.code); setShowCountryPicker(false); }}
                   activeOpacity={0.6}
                 >
                   <Text style={{ fontSize: 24, marginRight: 12 }}>{item.flag}</Text>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ fontSize: 16, color: isDark ? '#fff' : '#000', fontWeight: '500' }}>{item.name}</Text>
-                    <Text style={{ fontSize: 13, color: isDark ? '#8e8e93' : '#666' }}>{item.label}</Text>
+                    <Text style={{ fontSize: 16, color: colors.text, fontWeight: '500' }}>{item.name}</Text>
+                    <Text style={{ fontSize: 13, color: colors.textSecondary }}>{item.label}</Text>
                   </View>
                   {item.code === phoneCountryCode && <IconCheck size={18} color={colors.primary} />}
                 </TouchableOpacity>
@@ -2972,13 +2978,13 @@ export default function LoginScreen() {
         <Pressable style={s.langOverlay} onPress={() => setShowLangModal(false)}>
           <Pressable style={[s.langModal, {
             backgroundColor: colors.authCardBg,
-            borderColor: isDark ? colors.authCardBorder : '#e5e7eb',
+            borderColor: colors.border,
             ...(Platform.OS === 'web' ? {
               boxShadow: isDark
                 ? '0 8px 32px rgba(0,0,0,0.4)'
                 : '0 4px 24px rgba(0,0,0,0.12)',
             } : {
-              shadowColor: '#000', shadowOffset: { width: 0, height: 8 },
+              shadowColor: colors.shadow, shadowOffset: { width: 0, height: 8 },
               shadowOpacity: isDark ? 0.4 : 0.12, shadowRadius: 24, elevation: 12,
             }),
           }]} onPress={() => {}}>
@@ -3057,7 +3063,7 @@ export default function LoginScreen() {
           <Pressable style={s.langOverlay} onPress={() => setShowQrScanner(false)}>
             <Pressable style={[s.qrScanModal, {
               backgroundColor: colors.authCardBg,
-              borderColor: isDark ? colors.authCardBorder : '#e5e7eb',
+              borderColor: colors.border,
             }]} onPress={() => {}}>
               <Text style={[s.qrScanModalTitle, { color: colors.text }]}>
                 {t('login.qrScanTitle')}
@@ -3069,7 +3075,7 @@ export default function LoginScreen() {
                 style={[s.qrScanInput, {
                   color: colors.text,
                   borderColor: colors.authInputBorder,
-                  backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#f9fafb',
+                  backgroundColor: colors.surfaceVariant,
                 }]}
                 value={qrScanToken}
                 onChangeText={setQrScanToken}
@@ -3081,7 +3087,7 @@ export default function LoginScreen() {
               />
               {!!qrScanMessage && (
                 <Text style={[s.qrScanMessage, {
-                  color: qrScanMessage === t('login.qrScanSuccess') ? '#10b981' : colors.error,
+                  color: qrScanMessage === t('login.qrScanSuccess') ? colors.success : colors.error,
                 }]}>
                   {qrScanMessage}
                 </Text>
@@ -3104,7 +3110,7 @@ export default function LoginScreen() {
                   activeOpacity={0.85}
                 >
                   {qrScanLoading ? (
-                    <ActivityIndicator color="#fff" size="small" />
+                    <ActivityIndicator color={colors.onPrimary} size="small" />
                   ) : (
                     <Text style={s.primaryBtnText}>{t('login.qrScanConfirm')}</Text>
                   )}
@@ -3169,11 +3175,11 @@ export default function LoginScreen() {
         >
           <Animated.View style={{
             width: 132, height: 132, borderRadius: 66,
-            backgroundColor: '#10b981',
+            backgroundColor: colors.success,
             alignItems: 'center', justifyContent: 'center',
             transform: [{ scale: successAnim }],
             ...Platform.select({
-              ios: { shadowColor: '#10b981', shadowOpacity: 0.45, shadowRadius: 24, shadowOffset: { width: 0, height: 8 } },
+              ios: { shadowColor: colors.success, shadowOpacity: 0.45, shadowRadius: 24, shadowOffset: { width: 0, height: 8 } },
               android: { elevation: 14 },
               default: { boxShadow: '0 12px 40px -8px rgba(16,185,129,0.5)' },
             }),
@@ -3550,37 +3556,37 @@ function LoginQRScannerView({ onScan, onClose, t, colors, isDark, qrScanToken, s
   // Manual paste mode (fallback)
   if (showManual) {
     return (
-      <View style={{ flex: 1, backgroundColor: isDark ? '#0f172a' : '#fff', justifyContent: 'center', padding: 24 }}>
-        <Text style={{ color: isDark ? '#fff' : '#111', fontSize: 20, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>
+      <View style={{ flex: 1, backgroundColor: colors.background, justifyContent: 'center', padding: 24 }}>
+        <Text style={{ color: colors.text, fontSize: 20, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>
           {t('login.qrScanTitle')}
         </Text>
-        <Text style={{ color: isDark ? '#94a3b8' : '#6b7280', fontSize: 14, textAlign: 'center', marginBottom: 20 }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 14, textAlign: 'center', marginBottom: 20 }}>
           {t('login.qrScanDesc')}
         </Text>
         <TextInput
           style={{
-            borderWidth: 1, borderColor: isDark ? '#334155' : '#d1d5db', borderRadius: 12,
-            padding: 14, fontSize: 14, color: isDark ? '#fff' : '#111',
-            backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#f9fafb',
+            borderWidth: 1, borderColor: colors.border, borderRadius: 12,
+            padding: 14, fontSize: 14, color: colors.text,
+            backgroundColor: colors.surfaceVariant,
             marginBottom: 12, minHeight: 80, textAlignVertical: 'top',
           }}
           value={qrScanToken}
           onChangeText={setQrScanToken}
           placeholder={t('login.qrScanPlaceholder')}
-          placeholderTextColor={isDark ? '#475569' : '#9ca3af'}
+          placeholderTextColor={colors.textTertiary}
           autoCapitalize="none"
           autoCorrect={false}
           multiline
         />
         {!!qrScanMessage && (
-          <Text style={{ color: qrScanMessage.includes('uccess') || qrScanMessage.includes('ucesso') ? '#10b981' : '#ef4444', fontSize: 13, marginBottom: 8, textAlign: 'center' }}>
+          <Text style={{ color: qrScanMessage.includes('uccess') || qrScanMessage.includes('ucesso') ? colors.success : colors.error, fontSize: 13, marginBottom: 8, textAlign: 'center' }}>
             {qrScanMessage}
           </Text>
         )}
         <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
           <TouchableOpacity
             onPress={() => setShowManual(false)}
-            style={{ flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f3f4f6' }}
+            style={{ flex: 1, paddingVertical: 14, borderRadius: 12, alignItems: 'center', backgroundColor: colors.surfaceVariant }}
           >
             <Text style={{ color: colors.primary, fontWeight: '600' }}>{t('login.back')}</Text>
           </TouchableOpacity>
@@ -3590,14 +3596,14 @@ function LoginQRScannerView({ onScan, onClose, t, colors, isDark, qrScanToken, s
             disabled={qrScanLoading}
           >
             {qrScanLoading ? (
-              <ActivityIndicator color="#fff" size="small" />
+              <ActivityIndicator color={colors.onPrimary} size="small" />
             ) : (
-              <Text style={{ color: '#fff', fontWeight: '600' }}>{t('login.qrScanConfirm')}</Text>
+              <Text style={{ color: colors.onPrimary || '#fff', fontWeight: '600' }}>{t('login.qrScanConfirm')}</Text>
             )}
           </TouchableOpacity>
         </View>
         <TouchableOpacity onPress={onClose} style={{ marginTop: 16, alignSelf: 'center', padding: 8 }}>
-          <Text style={{ color: isDark ? '#94a3b8' : '#6b7280', fontSize: 14 }}>{t('common.cancel')}</Text>
+          <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('common.cancel')}</Text>
         </TouchableOpacity>
       </View>
     );
@@ -3623,7 +3629,7 @@ function LoginQRScannerView({ onScan, onClose, t, colors, isDark, qrScanToken, s
         </Text>
         <TouchableOpacity
           onPress={() => setShowManual(true)}
-          style={{ marginTop: 24, padding: 14, backgroundColor: '#6366f1', borderRadius: 12, paddingHorizontal: 32 }}
+          style={{ marginTop: 24, padding: 14, backgroundColor: colors.primary, borderRadius: 12, paddingHorizontal: 32 }}
         >
           <Text style={{ color: '#fff', fontWeight: '600' }}>{t('login.qrManualEntry') || 'Enter code manually'}</Text>
         </TouchableOpacity>
@@ -3643,7 +3649,7 @@ function LoginQRScannerView({ onScan, onClose, t, colors, isDark, qrScanToken, s
         <Text style={{ color: '#fff', fontSize: 16 }}>{t('login.qrCameraUnavailable') || 'Camera not available'}</Text>
         <TouchableOpacity
           onPress={() => setShowManual(true)}
-          style={{ marginTop: 24, padding: 14, backgroundColor: '#6366f1', borderRadius: 12, paddingHorizontal: 32 }}
+          style={{ marginTop: 24, padding: 14, backgroundColor: colors.primary, borderRadius: 12, paddingHorizontal: 32 }}
         >
           <Text style={{ color: '#fff', fontWeight: '600' }}>{t('login.qrManualEntry') || 'Enter code manually'}</Text>
         </TouchableOpacity>

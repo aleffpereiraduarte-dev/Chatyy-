@@ -15,8 +15,9 @@
 //   • haptic   — 'light' (default) | 'medium' | 'heavy' | 'select' | false
 //                fires on press-IN (most responsive, matches BrandFab). No-op
 //                on web (the theme helper never throws).
-//   • scaleTo  — press-in scale target (default 0.95). Use ~0.97 for big
-//                surfaces (cards/rows), ~0.9 for small icon buttons.
+//   • scaleTo  — press-in scale target (default 0.97 — CLEAN 2026: subtle,
+//                like WhatsApp). Use ~0.95 for small icon buttons if you want
+//                a touch more travel; big surfaces (cards/rows) keep 0.97.
 //   • disabled — skips scale + haptic, dims to 0.5 unless you style it.
 //
 // Zero native deps — RN Animated only (no Reanimated), so it ships via OTA.
@@ -34,7 +35,7 @@ export default function PressableScale({
   style,
   activeOpacity = 0.9,
   haptic = 'light',
-  scaleTo = 0.95,
+  scaleTo = 0.97,
   disabled = false,
   ...props
 }) {
@@ -42,11 +43,13 @@ export default function PressableScale({
 
   const handlePressIn = (e) => {
     if (!disabled) {
+      // CLEAN 2026: snap-down suave (tension 340 vs 460) — sente responsivo
+      // mas leve, sem "tapa". Combina com o scale sutil 0.97.
       Animated.spring(scaleAnim, {
         toValue: scaleTo,
         useNativeDriver: true,
-        tension: 460,
-        friction: 11,
+        tension: 340,
+        friction: 12,
       }).start();
       // Tactile tick on press-in — feels instant, like iMessage / WhatsApp.
       if (haptic && themeHaptic?.[haptic]) {
@@ -61,8 +64,8 @@ export default function PressableScale({
       Animated.spring(scaleAnim, {
         toValue: 1,
         useNativeDriver: true,
-        tension: 200,
-        friction: 9,
+        tension: 220,
+        friction: 13,
       }).start();
     }
     onPressOut?.(e);

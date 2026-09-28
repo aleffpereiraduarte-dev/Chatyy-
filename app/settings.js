@@ -1256,7 +1256,7 @@ function SettingsScreenInner() {
         <SettingsSkeleton sections={4} rows={3} />
       ) : (
       <FadeSlideIn>
-      <ScrollView ref={scrollRef} contentContainerStyle={s.scroll}>
+      <ScrollView ref={scrollRef} contentContainerStyle={[s.scroll, { paddingBottom: 80 + insets.bottom }]}>
         {/* Search bar — filtra sections em tempo real por título/label.
             Empty query mostra tudo; clear (✕) reseta. Sticky-ish topo da
             scroll, não é absolute pra não brigar com keyboard. */}
@@ -2604,8 +2604,8 @@ function SettingsScreenInner() {
         {sectionMatches(t('settings.oneAssistant'), t('settings.oneEnabled'), t('settings.oneNotifPrefs'), 'one ai', 'assistant') && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
-            <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#6366f1', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>O</Text>
+            <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+              <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '800' }}>O</Text>
             </View>
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.oneAssistant')}</Text>
           </View>
@@ -2624,8 +2624,8 @@ function SettingsScreenInner() {
                 setOneEnabled(v);
                 setStorage('one_enabled', String(v));
               }}
-              trackColor={{ false: colors.divider, true: '#6366f1' + '66' }}
-              thumbColor={oneEnabled ? '#6366f1' : '#fff'}
+              trackColor={{ false: colors.divider, true: colors.primary + '66' }}
+              thumbColor={oneEnabled ? colors.primary : '#fff'}
             />
           </View>
 
@@ -2646,7 +2646,7 @@ function SettingsScreenInner() {
                     style={[
                       s.perPageBtn,
                       { borderColor: colors.divider, flex: 1, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6 },
-                      isSel && { backgroundColor: '#6366f1', borderColor: '#6366f1' },
+                      isSel && { backgroundColor: colors.primary, borderColor: colors.primary },
                     ]}
                     onPress={() => {
                       setOneNotifLevel(opt.val);
@@ -2737,12 +2737,12 @@ function SettingsScreenInner() {
           <View ref={registerSectionRef('security')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
             {/* Família — Apple Family Sharing-style hub */}
             <TouchableOpacity
-              style={[s.settingRow, { borderBottomColor: colors.borderLight, marginBottom: Spacing.sm, backgroundColor: isDark ? '#1a1530' : '#faf5ff', borderRadius: 14, padding: 14 }]}
+              style={[s.settingRow, { borderBottomColor: colors.borderLight, marginBottom: Spacing.sm, backgroundColor: colors.primaryLight, borderRadius: 14, padding: 14 }]}
               onPress={() => router.push('/family')}
             >
               <View style={s.settingInfo}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <IconShield size={20} color="#A582F7" />
+                  <IconShield size={20} color={colors.primary} />
                   <Text style={[s.settingLabel, { color: colors.text, fontWeight: '700' }]}>Família</Text>
                 </View>
                 <Text style={[s.settingDesc, { color: colors.textTertiary }]}>Compartilhe plano, álbum, calendário e mais com a família</Text>
@@ -2752,12 +2752,12 @@ function SettingsScreenInner() {
 
             {/* Parental Controls */}
             <TouchableOpacity
-              style={[s.settingRow, { borderBottomColor: colors.borderLight, marginBottom: Spacing.lg, backgroundColor: isDark ? '#1a2e1a' : '#f0fdf4', borderRadius: 14, padding: 14 }]}
+              style={[s.settingRow, { borderBottomColor: colors.borderLight, marginBottom: Spacing.lg, backgroundColor: colors.successBg, borderRadius: 14, padding: 14 }]}
               onPress={() => router.push('/parental')}
             >
               <View style={s.settingInfo}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                  <IconShield size={20} color="#A582F7" />
+                  <IconShield size={20} color={colors.primary} />
                   <Text style={[s.settingLabel, { color: colors.text, fontWeight: '700' }]}>Controle Parental</Text>
                 </View>
                 <Text style={[s.settingDesc, { color: colors.textTertiary }]}>Crie contas monitoradas para seus filhos</Text>
@@ -4282,6 +4282,7 @@ function SettingsScreenInner() {
               backgroundColor: colors.surface,
               borderTopLeftRadius: 20, borderTopRightRadius: 20,
               padding: Spacing.lg,
+              paddingBottom: Spacing.lg + insets.bottom,
               maxHeight: '70%',
             }}
           >
@@ -4348,7 +4349,7 @@ function SettingsScreenInner() {
             style={{
               backgroundColor: colors.surface,
               borderTopLeftRadius: 20, borderTopRightRadius: 20,
-              paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28,
+              paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28 + insets.bottom,
             }}
           >
             <Text style={{ color: colors.text, fontWeight: '700', fontSize: 17, marginBottom: 6 }}>
@@ -4405,7 +4406,7 @@ function SettingsScreenInner() {
             style={{
               backgroundColor: colors.surface,
               borderTopLeftRadius: 20, borderTopRightRadius: 20,
-              paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28,
+              paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28 + insets.bottom,
             }}
           >
             <Text style={{ color: colors.text, fontWeight: '700', fontSize: 17, marginBottom: 12 }}>
@@ -4524,7 +4525,7 @@ function SettingsScreenInner() {
               editable={!e2eBackupBusy}
             />
             {e2eBackupMsg ? (
-              <Text style={{ color: e2eBackupMsg.startsWith('OK') ? '#16a34a' : '#dc2626', fontSize: 13, marginBottom: 10 }}>
+              <Text style={{ color: e2eBackupMsg.startsWith('OK') ? colors.success : colors.error, fontSize: 13, marginBottom: 10 }}>
                 {e2eBackupMsg}
               </Text>
             ) : null}
@@ -4719,8 +4720,8 @@ function SettingsScreenInner() {
             ) : null}
             {cpSuccess ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
-                <IconCheck size={14} color="#16A34A" />
-                <Text style={{ color: '#16A34A', fontSize: 13, fontWeight: '600' }}>
+                <IconCheck size={14} color={colors.success} />
+                <Text style={{ color: colors.success, fontSize: 13, fontWeight: '600' }}>
                   {t('settings.passwordChanged') || 'Senha alterada com sucesso'}
                 </Text>
               </View>
@@ -4884,7 +4885,7 @@ function SettingsScreenInner() {
               </Text>
             )}
             {twoFASuccess && (
-              <Text style={{ color: '#10B981', fontSize: 13, textAlign: 'center', marginBottom: 8, fontWeight: '600' }}>
+              <Text style={{ color: colors.success, fontSize: 13, textAlign: 'center', marginBottom: 8, fontWeight: '600' }}>
                 {t('settings.twoFactorEnabled') || 'PIN ativado com sucesso'}
               </Text>
             )}
@@ -5027,7 +5028,7 @@ function SettingsScreenInner() {
               </Text>
             )}
             {regLockSuccess && (
-              <Text style={{ color: '#10B981', fontSize: 13, textAlign: 'center', marginBottom: 8, fontWeight: '600' }}>
+              <Text style={{ color: colors.success, fontSize: 13, textAlign: 'center', marginBottom: 8, fontWeight: '600' }}>
                 {t('settings.registrationLockEnabled') || 'PIN ativado com sucesso'}
               </Text>
             )}
@@ -5202,7 +5203,7 @@ function SettingsScreenInner() {
               editable={!backupKeyBusy}
             />
             {backupKeyMsg ? (
-              <Text style={{ color: backupKeyMsg.startsWith('OK') ? '#16a34a' : '#dc2626', fontSize: 13, marginBottom: 10 }}>
+              <Text style={{ color: backupKeyMsg.startsWith('OK') ? colors.success : colors.error, fontSize: 13, marginBottom: 10 }}>
                 {backupKeyMsg}
               </Text>
             ) : null}

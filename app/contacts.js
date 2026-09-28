@@ -4,6 +4,7 @@ import React from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView,
   ActivityIndicator, Platform, Modal, Alert, SectionList, Animated, Easing,
+  KeyboardAvoidingView,
 } from 'react-native';
 // FlashList reverted to FlatList
 import { useRouter } from 'expo-router';
@@ -144,8 +145,8 @@ const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Text numberOfLines={1} ellipsizeMode="tail" style={[s.contactName, { color: colors.text, flexShrink: 1 }]}>{name}</Text>
           {isRegistered && (
-            <View style={[s.groupChip, { backgroundColor: '#dcfce7', marginTop: 0 }]}>
-              <Text style={[s.groupChipText, { color: '#16a34a' }]}>Chatyy</Text>
+            <View style={[s.groupChip, { backgroundColor: colors.successBg, marginTop: 0 }]}>
+              <Text style={[s.groupChipText, { color: colors.success }]}>Chatyy</Text>
             </View>
           )}
         </View>
@@ -218,7 +219,7 @@ const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav, onO
           <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Excluir</Text>
         </View>
       }
-      style={{ backgroundColor: '#ea4335' }}
+      style={{ backgroundColor: colors.error }}
     >
     <TouchableOpacity
       style={[s.contactRow, { borderBottomColor: colors.borderLight, backgroundColor: colors.background }]}
@@ -246,7 +247,7 @@ const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav, onO
         </View>
       </View>
       <TouchableOpacity onPress={() => onToggleFav(c)} style={s.starBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-        <IconStar size={18} color={c.favorite ? '#FBBC05' : colors.textTertiary} style={c.favorite ? { opacity: 1 } : { opacity: 0.4 }} />
+        <IconStar size={18} color={c.favorite ? colors.warning : colors.textTertiary} style={c.favorite ? { opacity: 1 } : { opacity: 0.4 }} />
       </TouchableOpacity>
       <TouchableOpacity onPress={() => onDelete(c.email)} style={s.deleteBtn}>
         <IconTrash size={16} color={colors.textTertiary} />
@@ -1134,9 +1135,9 @@ function ContactsScreenInner() {
     <View style={[s.sectionHeader, { backgroundColor: colors.background }]}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
         {section.key === 'on_chatyy' && (
-          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#A582F7' }} />
+          <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: colors.primary }} />
         )}
-        <Text style={[s.sectionHeaderText, { color: section.key === 'on_chatyy' ? '#16a34a' : colors.textTertiary, fontWeight: '700' }]}>
+        <Text style={[s.sectionHeaderText, { color: section.key === 'on_chatyy' ? colors.success : colors.textTertiary, fontWeight: '700' }]}>
           {section.title} ({section.data.length})
         </Text>
       </View>
@@ -1234,8 +1235,8 @@ function ContactsScreenInner() {
           <Text style={[s.emptyHint, { color: colors.textTertiary }]}>{t('contacts.syncWebMessage')}</Text>
           <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.lg }}>
             <TouchableOpacity onPress={handleImportVCard} style={[s.bigActionBtn, { backgroundColor: colors.primary }]}>
-              <IconUpload size={18} color="#fff" />
-              <Text style={s.bigActionBtnText}>{t('contacts.importVcf')}</Text>
+              <IconUpload size={18} color={colors.onPrimary} />
+              <Text style={[s.bigActionBtnText, { color: colors.onPrimary }]}>{t('contacts.importVcf')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1355,7 +1356,7 @@ function ContactsScreenInner() {
             style={[s.groupTab, activeGroup === 'all' && { backgroundColor: colors.primary }]}
             onPress={() => setActiveGroup('all')}
           >
-            <Text style={[s.groupTabText, { color: activeGroup === 'all' ? '#fff' : colors.text }]}>{t('contacts.all')}</Text>
+            <Text style={[s.groupTabText, { color: activeGroup === 'all' ? colors.onPrimary : colors.text }]}>{t('contacts.all')}</Text>
           </TouchableOpacity>
           {groups.map(g => (
             <TouchableOpacity
@@ -1363,7 +1364,7 @@ function ContactsScreenInner() {
               style={[s.groupTab, activeGroup === g && { backgroundColor: colors.primary }]}
               onPress={() => setActiveGroup(g)}
             >
-              <Text style={[s.groupTabText, { color: activeGroup === g ? '#fff' : colors.text }]}>{g}</Text>
+              <Text style={[s.groupTabText, { color: activeGroup === g ? colors.onPrimary : colors.text }]}>{g}</Text>
             </TouchableOpacity>
           ))}
         </ScrollView>
@@ -1444,7 +1445,7 @@ function ContactsScreenInner() {
       {loadError && contacts.length === 0 ? (
         <View style={s.emptyContainer}>
           <View style={[s.emptyIconCircle, { backgroundColor: isDark ? 'rgba(239,68,68,0.12)' : 'rgba(239,68,68,0.08)' }]}>
-            <IconX size={40} color="#ef4444" />
+            <IconX size={40} color={colors.error} />
           </View>
           <Text style={[s.emptyTitle, { color: colors.text, fontWeight: '700', fontSize: FontSize.xl }]}>
             {t('common.error')}
@@ -1458,8 +1459,8 @@ function ContactsScreenInner() {
               onPress={loadContacts}
               activeOpacity={0.8}
             >
-              <IconRefresh size={16} color="#fff" />
-              <Text style={s.emptyCTAText}>{t('common.retry')}</Text>
+              <IconRefresh size={16} color={colors.onPrimary} />
+              <Text style={[s.emptyCTAText, { color: colors.onPrimary }]}>{t('common.retry')}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1479,7 +1480,7 @@ function ContactsScreenInner() {
               {favoriteContacts.length > 0 && (
                 <View style={[s.favoritesSection, { borderBottomColor: colors.borderLight }]}>
                   <Text style={[s.favoritesSectionTitle, { color: colors.text }]}>
-                    <IconStar size={14} color="#FBBC05" /> {t('contacts.favorites')}
+                    <IconStar size={14} color={colors.warning} /> {t('contacts.favorites')}
                   </Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.favoritesScroll}>
                     {favoriteContacts.map((c, i) => renderFavoriteContact(c, i))}
@@ -1501,7 +1502,7 @@ function ContactsScreenInner() {
               onFindFriends={() => setActiveTab('family')}
             />
           }
-          contentContainerStyle={s.list}
+          contentContainerStyle={[s.list, { paddingBottom: 40 + insets.bottom }]}
         />
       ) : activeTab === 'device' ? (
         deviceSections.length > 0 ? (
@@ -1518,15 +1519,15 @@ function ContactsScreenInner() {
                 {/* Invite button at bottom */}
                 <TouchableOpacity
                   onPress={handleShareInvite}
-                  style={[s.inviteBtn, { borderColor: '#A582F7' }]}
+                  style={[s.inviteBtn, { borderColor: colors.primary }]}
                   activeOpacity={0.7}
                 >
-                  <IconPlus size={14} color="#A582F7" />
-                  <Text style={[s.inviteBtnText, { color: '#A582F7' }]}>{t('contacts.shareInviteLink') || 'Share invite link'}</Text>
+                  <IconPlus size={14} color={colors.primary} />
+                  <Text style={[s.inviteBtnText, { color: colors.primary }]}>{t('contacts.shareInviteLink') || 'Share invite link'}</Text>
                 </TouchableOpacity>
               </>
             }
-            contentContainerStyle={s.list}
+            contentContainerStyle={[s.list, { paddingBottom: 40 + insets.bottom }]}
             removeClippedSubviews={Platform.OS !== 'web'}
           />
         ) : (
@@ -1536,7 +1537,7 @@ function ContactsScreenInner() {
             renderItem={renderDeviceItem}
             ListEmptyComponent={renderDeviceEmpty}
             ListFooterComponent={renderDeviceFooter}
-            contentContainerStyle={s.list}
+            contentContainerStyle={[s.list, { paddingBottom: 40 + insets.bottom }]}
             removeClippedSubviews={Platform.OS !== 'web'}
           />
         )
@@ -1547,13 +1548,18 @@ function ContactsScreenInner() {
           renderItem={renderFamilyItem}
           ListHeaderComponent={renderFamilyHeader}
           ListEmptyComponent={renderFamilyEmpty}
-          contentContainerStyle={s.list}
+          contentContainerStyle={[s.list, { paddingBottom: 40 + insets.bottom }]}
         />
       )}
       </FadeSlideIn>
 
       {/* Add/Edit Modal */}
       <Modal visible={showAdd} animationType="slide" transparent>
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={0}
+        >
         <TouchableOpacity style={s.overlay} onPress={() => setShowAdd(false)} activeOpacity={1}>
           <TouchableOpacity activeOpacity={1} style={[s.modal, Shadow.xl, { backgroundColor: colors.surface }]}>
             <View style={[s.modalHeader, { borderBottomColor: colors.borderLight }]}>
@@ -1574,18 +1580,18 @@ function ContactsScreenInner() {
                   accessibilityLabel={t('contacts.nameLabel')} />
               </View>
               <Text style={[s.formFieldLabel, { color: colors.textSecondary }]}>
-                {t('contacts.emailLabel')} <Text style={{ color: colors.error || '#dc2626' }}>*</Text>
+                {t('contacts.emailLabel')} <Text style={{ color: colors.error }}>*</Text>
               </Text>
               <View style={s.formRow}>
                 <IconMail size={18} color={colors.textSecondary} style={{ marginRight: 10 }} />
-                <TextInput style={[s.formInput, { color: colors.text, borderColor: emailError ? (colors.error || '#dc2626') : colors.border }]}
+                <TextInput style={[s.formInput, { color: colors.text, borderColor: emailError ? colors.error : colors.border }]}
                   value={form.email} onChangeText={v => { setForm(p => ({ ...p, email: v })); if (emailError) setEmailError(''); }}
                   placeholder={t('contacts.emailPlaceholder')} placeholderTextColor={colors.textTertiary}
                   keyboardType="email-address" autoCapitalize="none"
                   accessibilityLabel={t('contacts.emailLabel')} />
               </View>
               {emailError ? (
-                <Text style={{ color: colors.error || '#dc2626', fontSize: 12, marginTop: 4, marginLeft: 28 }}>
+                <Text style={{ color: colors.error, fontSize: 12, marginTop: 4, marginLeft: 28 }}>
                   {emailError}
                 </Text>
               ) : null}
@@ -1675,9 +1681,9 @@ function ContactsScreenInner() {
                 onPress={() => setForm(p => ({ ...p, favorite: !p.favorite }))}
                 activeOpacity={0.6}
               >
-                <IconStar size={18} color={form.favorite ? '#FBBC05' : colors.textTertiary} />
+                <IconStar size={18} color={form.favorite ? colors.warning : colors.textTertiary} />
                 <Text style={[s.favoriteToggleText, { color: colors.text }]}>{t('contacts.favorites')}</Text>
-                <View style={[s.favoriteToggleCheck, form.favorite && { backgroundColor: '#FBBC05' }]}>
+                <View style={[s.favoriteToggleCheck, { borderColor: colors.border }, form.favorite && { backgroundColor: colors.warning }]}>
                   {form.favorite && <IconCheck size={12} color="#fff" />}
                 </View>
               </TouchableOpacity>
@@ -1685,11 +1691,12 @@ function ContactsScreenInner() {
                 style={[s.saveBtn, { backgroundColor: colors.primary }, saving && { opacity: 0.6 }]}
                 onPress={handleSave} disabled={saving}
               >
-                {saving ? <ActivityIndicator size="small" color="#fff" /> : <Text style={s.saveBtnText}>{t('contacts.save')}</Text>}
+                {saving ? <ActivityIndicator size="small" color={colors.onPrimary} /> : <Text style={[s.saveBtnText, { color: colors.onPrimary }]}>{t('contacts.save')}</Text>}
               </TouchableOpacity>
             </ScrollView>
           </TouchableOpacity>
         </TouchableOpacity>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* [WA-parity 2026-05-31] Share-contact: pick a conversation to send the
