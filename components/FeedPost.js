@@ -28,7 +28,7 @@ import { useLanguage } from '../context/LanguageContext';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { MONETIZATION_ENABLED } from '../constants/featureFlags';
 
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MAX_CARD_WIDTH = 600;
 const BASE_URL = 'https://chatyy.com.br';
@@ -925,7 +925,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                   paddingHorizontal: 6,
                   paddingVertical: 1,
                   borderRadius: 4,
-                  backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)',
+                  backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.10)',
                 }}>
                   <Text style={{ color: ACCENT, fontSize: 10, fontWeight: '700' }}>
                     {t?.('feed.sponsored') || 'Patrocinado'}
@@ -1483,7 +1483,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                   return (
                     <Text
                       key={i}
-                      style={{ color: '#A582F7', fontWeight: '600' }}
+                      style={{ color: '#128C7E', fontWeight: '600' }}
                       onPress={() => {
                         try {
                           const { router } = require('expo-router');
@@ -1569,7 +1569,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
               <TouchableOpacity
                 key={em}
                 onPress={() => onPressUser?.(em, handle)}
-                style={[styles.taggedChip, { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.08)' }]}
+                style={[styles.taggedChip, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.15)' : 'rgba(18, 140, 126,0.08)' }]}
                 accessibilityRole="link"
                 accessibilityLabel={'@' + handle}
               >
@@ -1818,7 +1818,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                       }).join(' ');
                       return (
                         <Svg width={W} height={H}>
-                          <Path d={path} stroke="#A582F7" strokeWidth="2" fill="none" />
+                          <Path d={path} stroke="#128C7E" strokeWidth="2" fill="none" />
                         </Svg>
                       );
                     })()}
@@ -1957,13 +1957,13 @@ function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, 
                   style={{
                     paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12,
                     borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: active ? '#A582F7' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
-                    backgroundColor: active ? (isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.10)') : 'transparent',
+                    borderColor: active ? '#128C7E' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
+                    backgroundColor: active ? (isDark ? 'rgba(18, 140, 126,0.22)' : 'rgba(18, 140, 126,0.10)') : 'transparent',
                   }}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                 >
-                  <Text style={{ color: active ? '#A582F7' : colors.text, fontWeight: active ? '800' : '600' }}>{tr.label}</Text>
+                  <Text style={{ color: active ? '#128C7E' : colors.text, fontWeight: active ? '800' : '600' }}>{tr.label}</Text>
                 </TouchableOpacity>
               );
             })}
@@ -1982,13 +1982,13 @@ function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, 
                   style={{
                     paddingHorizontal: 14, paddingVertical: 10, borderRadius: 12,
                     borderWidth: StyleSheet.hairlineWidth,
-                    borderColor: active ? '#A582F7' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
-                    backgroundColor: active ? (isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.10)') : 'transparent',
+                    borderColor: active ? '#128C7E' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
+                    backgroundColor: active ? (isDark ? 'rgba(18, 140, 126,0.22)' : 'rgba(18, 140, 126,0.10)') : 'transparent',
                   }}
                   accessibilityRole="button"
                   accessibilityState={{ selected: active }}
                 >
-                  <Text style={{ color: active ? '#A582F7' : colors.text, fontWeight: active ? '800' : '600' }}>
+                  <Text style={{ color: active ? '#128C7E' : colors.text, fontWeight: active ? '800' : '600' }}>
                     {(t?.('feed.daysN') || '{n} dias').replace('{n}', d)}
                   </Text>
                 </TouchableOpacity>
@@ -1996,7 +1996,7 @@ function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, 
             })}
           </View>
 
-          <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.06)', marginBottom: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+          <View style={{ paddingVertical: 10, paddingHorizontal: 12, borderRadius: 12, backgroundColor: isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.06)', marginBottom: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
             <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
               {t?.('feed.promoteCost') || 'Custo'}
             </Text>
@@ -2011,7 +2011,7 @@ function PromotePostModal({ visible, onClose, post, onPromoted, colors, isDark, 
           <TouchableOpacity
             onPress={submit}
             disabled={submitting}
-            style={{ backgroundColor: '#A582F7', paddingVertical: 14, borderRadius: 12, alignItems: 'center', opacity: submitting ? 0.6 : 1 }}
+            style={{ backgroundColor: '#128C7E', paddingVertical: 14, borderRadius: 12, alignItems: 'center', opacity: submitting ? 0.6 : 1 }}
             accessibilityRole="button"
             accessibilityLabel={t?.('feed.promoteConfirm') || 'Confirmar impulsionamento'}
           >
@@ -2059,7 +2059,7 @@ const styles = StyleSheet.create({
     padding: 2,
     borderRadius: 21,
     borderWidth: 1.5,
-    borderColor: 'rgba(124,58,237,0.22)',
+    borderColor: 'rgba(18, 140, 126,0.22)',
   },
   headerInfo: {
     flex: 1,
@@ -2222,7 +2222,7 @@ const styles = StyleSheet.create({
     // Subtle purple left accent so the quoted post reads as a "reply/quote"
     // block at a glance — mirrors how Threads + X surface reposts.
     borderLeftWidth: 3,
-    borderLeftColor: 'rgba(124,58,237,0.4)',
+    borderLeftColor: 'rgba(18, 140, 126,0.4)',
     gap: 10,
   },
   repostThumb: {
@@ -2280,7 +2280,7 @@ const styles = StyleSheet.create({
   },
   videoProgressFill: {
     height: '100%',
-    backgroundColor: '#A582F7',
+    backgroundColor: '#128C7E',
   },
   // Actions
   derivativeLabel: {

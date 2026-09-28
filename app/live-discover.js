@@ -33,10 +33,10 @@ import {
 import AvatarCircle from '../components/AvatarCircle';
 import { formatCount as formatViewers } from '../components/AnimatedViewerCount';
 
-// Brand purple from constants/theme.js (primary = #A582F7).
-const BRAND_PURPLE = '#A582F7';
-const BRAND_PURPLE_DARK = '#5B21B6';
-const BRAND_PURPLE_LIGHT = '#A78BFA';
+// Brand purple from constants/theme.js (primary = #128C7E).
+const BRAND_PURPLE = '#128C7E';
+const BRAND_PURPLE_DARK = '#128C7E';
+const BRAND_PURPLE_LIGHT = '#128C7E';
 
 // ─── Pill icons ────────────────────────────────────────────────────────
 // Inline 14px SVGs for category keys that don't have a matching icon in
@@ -301,8 +301,8 @@ export default function LiveDiscoverScreen() {
   // Hero palette: deep purple base + lighter accent blob — light/dark aware.
   // We fake the gradient with 2 stacked blob layers (no expo-linear-gradient
   // dep just for one screen).
-  const heroBg     = isDark ? '#1a0a2e' : BRAND_PURPLE_DARK;
-  const heroAccent = isDark ? '#2e1065' : BRAND_PURPLE;
+  const heroBg     = isDark ? '#161618' : BRAND_PURPLE_DARK;
+  const heroAccent = isDark ? '#161618' : BRAND_PURPLE;
 
   // Long-press popover (Compartilhar / Reportar). Stubbed buttons for now —
   // wired to nothing until ShareSheet + report flows land. Triggers haptic
@@ -757,7 +757,7 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
   const haloScale = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.45] });
   const haloOpacity = pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.55, 0] });
 
-  const cardBg = isDark ? '#1F1147' : '#FAF7FF';
+  const cardBg = isDark ? '#161618' : '#FAF7FF';
   const subText = colors.textSecondary || '#6B7280';
 
   return (
@@ -845,12 +845,12 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
       </View>
 
       {/* 5. Por que ir ao vivo? */}
-      <View style={[styles.whyCard, { backgroundColor: cardBg, borderColor: isDark ? '#3B2270' : '#EDE9FE' }]}>
+      <View style={[styles.whyCard, { backgroundColor: cardBg, borderColor: isDark ? '#161618' : '#F1F3F5' }]}>
         <Text style={[styles.whyTitle, { color: colors.text }]}>
           {t('live.whyGoLive') || 'Por que ir ao vivo?'}
         </Text>
         <WhyBullet
-          icon={<IconHeart size={16} color="#EC4899" />}
+          icon={<IconHeart size={16} color="#128C7E" />}
           text={t('live.whyConnect') || 'Conecte em tempo real'}
           color={colors.text}
         />
@@ -874,8 +874,8 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
 // SVG hero — stylized broadcast camera with concentric signal waves.
 // Pure inline react-native-svg so it renders identically on web + native.
 function LiveHeroIllustration({ isDark }) {
-  const bg = isDark ? '#1F1147' : '#F5F0FF';
-  const innerLens = isDark ? '#0F0628' : '#fff';
+  const bg = isDark ? '#161618' : '#F5F0FF';
+  const innerLens = isDark ? '#161618' : '#fff';
   return (
     <Svg width={180} height={140} viewBox="0 0 180 140" fill="none">
       <Defs>
@@ -964,7 +964,7 @@ function ReplayStrip({ items, loading, colors, subText, cardBg, isDark, t }) {
             key={it.id || it.session_id || `rep-${idx}`}
             style={[styles.replayCard, { backgroundColor: cardBg, opacity: loading ? 0.55 : 1 }]}
           >
-            <View style={[styles.replayThumb, { backgroundColor: isDark ? '#0F0628' : '#E9E1FF' }]}>
+            <View style={[styles.replayThumb, { backgroundColor: isDark ? '#161618' : '#F1F3F5' }]}>
               {thumb ? (
                 <Image source={{ uri: thumb }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
               ) : (

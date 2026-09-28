@@ -215,7 +215,7 @@ function hashColor(name) {
 // initials reads as ONE Chatyy identity instead of random hues. Replaces
 // the flat `hashColor()` fill that made avatars look generic/repeated.
 const AVATAR_GRADIENTS = [
-  ['#A78BFA', '#A582F7'], // brand violet
+  ['#128C7E', '#128C7E'], // brand violet
   ['#818CF8', '#4F46E5'], // indigo
   ['#60A5FA', '#2563EB'], // blue
   ['#38BDF8', '#0284C7'], // sky
@@ -223,9 +223,9 @@ const AVATAR_GRADIENTS = [
   ['#34D399', '#059669'], // emerald
   ['#FBBF24', '#D97706'], // amber
   ['#FB923C', '#EA580C'], // orange
-  ['#F472B6', '#DB2777'], // pink
+  ['#128C7E', '#DB2777'], // pink
   ['#FB7185', '#E11D48'], // rose
-  ['#C084FC', '#9333EA'], // purple
+  ['#128C7E', '#128C7E'], // purple
   ['#22D3EE', '#0891B2'], // cyan
 ];
 function hashInt(s) {
@@ -394,7 +394,7 @@ function _GroupCollage({ members, size, style }) {
   );
 }
 
-function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#A582F7', showStatus = false, members, onPress }) {
+function AvatarCircle({ name, email, uri, size = 48, style, online = false, ringColor = '#128C7E', showStatus = false, members, onPress }) {
   const [imgError, setImgError] = useState(false);
   const [version, setVersion] = useState(() => getAvatarVersion(email));
   // Holds the file:// URI from avatarCache once a background download

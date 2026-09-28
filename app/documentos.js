@@ -60,7 +60,7 @@ function DocTypeIcon({ type, size = 28 }) {
   if (type === 'markdown') {
     return (
       <View style={[iconStyles.badge, { backgroundColor: '#f3e5f5' }]}>
-        <IconFileText size={size * 0.6} color="#9c27b0" />
+        <IconFileText size={size * 0.6} color="#128C7E" />
       </View>
     );
   }
@@ -369,7 +369,7 @@ function DocumentosScreenInner() {
 
   // Context menu items
   const contextMenuItems = [
-    { key: 'analyze', label: 'Analisar com One AI', icon: IconSparkles, color: '#a855f7', action: handleAnalyzeWithOne },
+    { key: 'analyze', label: 'Analisar com One AI', icon: IconSparkles, color: '#128C7E', action: handleAnalyzeWithOne },
     { key: 'edit', label: t('common.edit'), icon: IconEdit, color: colors.text, action: openEdit },
     { key: 'rename', label: t('docs.rename'), icon: IconFileText, color: colors.text, action: openRename },
     { key: 'duplicate', label: t('docs.duplicate'), icon: IconCopy, color: colors.text, action: handleDuplicate },
@@ -557,7 +557,7 @@ function DocumentosScreenInner() {
                   { type: 'document', label: t('docs.newDocument') || 'Documento', color: '#4285f4', Icon: IconFileText },
                   { type: 'spreadsheet', label: t('docs.newSpreadsheet') || 'Planilha', color: '#34a853', Icon: IconBarChart },
                   { type: 'presentation', label: t('docs.newPresentation') || 'Apresentação', color: '#ff9800', Icon: IconFileText },
-                  { type: 'markdown', label: t('docs.newMarkdown') || 'Nota', color: '#9c27b0', Icon: IconFileText },
+                  { type: 'markdown', label: t('docs.newMarkdown') || 'Nota', color: '#128C7E', Icon: IconFileText },
                 ].map(item => (
                   <TouchableOpacity
                     key={item.type}
@@ -688,7 +688,7 @@ function DocumentosScreenInner() {
               activeOpacity={0.7}
             >
               <View style={[iconStyles.badge, { backgroundColor: '#f3e5f5' }]}>
-                <IconFileText size={20} color="#9c27b0" />
+                <IconFileText size={20} color="#128C7E" />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.menuItemTitle, { color: colors.text }]}>{t('docs.newMarkdown')}</Text>

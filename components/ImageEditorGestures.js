@@ -269,13 +269,13 @@ const styles = StyleSheet.create({
   guideVertical: {
     position: 'absolute', top: 0, bottom: 0, left: '50%',
     width: 1.5, marginLeft: -0.75,
-    backgroundColor: '#BF5AF2',
-    ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px rgba(191,90,242,0.7)' } : {}),
+    backgroundColor: '#128C7E',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px rgba(18, 140, 126,0.7)' } : {}),
   },
   guideHorizontal: {
     position: 'absolute', left: 0, right: 0, top: '50%',
     height: 1.5, marginTop: -0.75,
-    backgroundColor: '#BF5AF2',
-    ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px rgba(191,90,242,0.7)' } : {}),
+    backgroundColor: '#128C7E',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 0 8px rgba(18, 140, 126,0.7)' } : {}),
   },
 });

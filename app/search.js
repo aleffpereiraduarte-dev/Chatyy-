@@ -12,7 +12,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import FadeSlideIn from '../components/FadeSlideIn';
 import * as api from '../services/api';
 
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 
 // Unified search screen — Pessoas / Hashtags / Sons / Lives. Each tab calls
 // the matching backend endpoint (search_users, trending_hashtags + feed
@@ -203,7 +203,7 @@ export default function SearchScreen() {
             accessibilityRole="button"
             accessibilityLabel={'#' + h.tag}
           >
-            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)' }]}>
+            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.10)' }]}>
               <IconHash size={22} color={ACCENT} />
             </View>
             <View style={styles.rowText}>
@@ -253,8 +253,8 @@ export default function SearchScreen() {
               {s.image_url || s.artwork_url ? (
                 <Image source={{ uri: s.image_url || s.artwork_url }} style={{ width: 46, height: 46, borderRadius: 8 }} />
               ) : (
-                <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)', borderRadius: 8 }]}>
-                  <IconMusic size={20} color="#A582F7" />
+                <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.10)', borderRadius: 8 }]}>
+                  <IconMusic size={20} color="#128C7E" />
                 </View>
               )}
               <View style={styles.rowText}>
@@ -386,7 +386,7 @@ export default function SearchScreen() {
               onPress={() => setTab(tb.key)}
               style={[styles.tabPill, {
                 backgroundColor: active
-                  ? (isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.12)')
+                  ? (isDark ? 'rgba(18, 140, 126,0.22)' : 'rgba(18, 140, 126,0.12)')
                   : 'transparent',
                 borderColor: active ? ACCENT : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
               }]}

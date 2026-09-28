@@ -273,8 +273,8 @@ export default function LinkedDevicesScreen() {
 
     return (
       <View style={[styles.row, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-        <View style={[styles.iconBox, { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)' }]}>
-          <Icon size={22} color="#A582F7" />
+        <View style={[styles.iconBox, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.15)' : 'rgba(18, 140, 126,0.1)' }]}>
+          <Icon size={22} color="#128C7E" />
         </View>
         <View style={styles.rowBody}>
           <View style={styles.rowHead}>
@@ -311,7 +311,7 @@ export default function LinkedDevicesScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      <View style={[styles.header, { backgroundColor: isDark ? '#1a1a2e' : '#A582F7', paddingTop: 10 }]}>
+      <View style={[styles.header, { backgroundColor: isDark ? '#1a1a2e' : '#128C7E', paddingTop: 10 }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>
@@ -319,8 +319,8 @@ export default function LinkedDevicesScreen() {
       </View>
 
       <FadeSlideIn>
-      <View style={[styles.hero, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : 'rgba(124,58,237,0.06)' }]}>
-        <IconShield size={40} color="#A582F7" />
+      <View style={[styles.hero, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.1)' : 'rgba(18, 140, 126,0.06)' }]}>
+        <IconShield size={40} color="#128C7E" />
         <Text style={[styles.heroTitle, { color: colors.text }]}>
           {t('devices.heroTitle') || 'Keep your account secure'}
         </Text>
@@ -338,7 +338,7 @@ export default function LinkedDevicesScreen() {
           directions; we mirror that. */}
       <View style={styles.ctaRow}>
         <PressableScale
-          style={[styles.ctaBtn, { backgroundColor: '#A582F7' }]}
+          style={[styles.ctaBtn, { backgroundColor: '#128C7E' }]}
           onPress={() => router.push('/companion-qr')}
         >
           <IconUserPlus size={18} color="#fff" />
@@ -347,18 +347,18 @@ export default function LinkedDevicesScreen() {
           </Text>
         </PressableScale>
         <TouchableOpacity
-          style={[styles.ctaBtn, styles.ctaBtnSecondary, { borderColor: '#A582F7' }]}
+          style={[styles.ctaBtn, styles.ctaBtnSecondary, { borderColor: '#128C7E' }]}
           onPress={openScanner}
         >
-          <IconCamera size={18} color="#A582F7" />
-          <Text style={[styles.ctaBtnText, { color: '#A582F7' }]}>
+          <IconCamera size={18} color="#128C7E" />
+          <Text style={[styles.ctaBtnText, { color: '#128C7E' }]}>
             {t('devices.scanCompanion') || 'Escanear QR'}
           </Text>
         </TouchableOpacity>
       </View>
 
       {loading ? (
-        <View style={styles.loading}><ActivityIndicator color="#A582F7" size="large" /></View>
+        <View style={styles.loading}><ActivityIndicator color="#128C7E" size="large" /></View>
       ) : (
         <>
           <FlatList
@@ -369,8 +369,8 @@ export default function LinkedDevicesScreen() {
             contentContainerStyle={styles.listContent}
             ListEmptyComponent={
               <View style={styles.emptyWrap}>
-                <View style={[styles.emptyIconBox, { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)' }]}>
-                  <IconMonitor size={34} color="#A582F7" />
+                <View style={[styles.emptyIconBox, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.15)' : 'rgba(18, 140, 126,0.1)' }]}>
+                  <IconMonitor size={34} color="#128C7E" />
                 </View>
                 <Text style={[styles.emptyTitle, { color: colors.text }]}>
                   {t('devices.emptyTitle') || 'Apenas este dispositivo'}

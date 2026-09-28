@@ -24,7 +24,7 @@ import { IconX, IconChevronRight } from '../Icons';
 import * as api from '../../services/api';
 
 const GREEN  = '#10B981';
-const PURPLE = '#A855F7';
+const PURPLE = '#128C7E';
 const RED    = '#EF4444';
 
 const MIN_CASHOUT_CENTS = 5000; // R$ 50,00

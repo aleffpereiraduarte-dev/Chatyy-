@@ -27,7 +27,7 @@ import {
 } from '../Icons';
 
 const LIVE_RED = '#dc2626';
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 
 function humanizeCount(n) {
   const v = Number(n) || 0;
@@ -187,7 +187,7 @@ const styles = StyleSheet.create({
     } : {}),
   },
   btnActive: {
-    backgroundColor: 'rgba(124,58,237,0.55)',
+    backgroundColor: 'rgba(18, 140, 126,0.55)',
     borderColor: 'rgba(255,255,255,0.4)',
   },
   btnDim: {

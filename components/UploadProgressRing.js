@@ -7,7 +7,7 @@
 //   progress      0.0 – 1.0 (clamped). 0 → empty ring, 1 → full circle.
 //   size          outer width/height in px. Default 60.
 //   strokeWidth   ring thickness. Default 4.
-//   color         progress arc color. Default '#A582F7' (brand purple).
+//   color         progress arc color. Default '#128C7E' (brand purple).
 //   bgColor       background ring color. Default 'rgba(255,255,255,0.25)'.
 //   textColor     percent label color. Default '#fff'.
 //   showPercent   show "{n}%" in the center. Default true.
@@ -30,7 +30,7 @@ export default function UploadProgressRing({
   progress = 0,
   size = 60,
   strokeWidth = 4,
-  color = '#A582F7',
+  color = '#128C7E',
   bgColor = 'rgba(255,255,255,0.25)',
   textColor = '#fff',
   showPercent = true,

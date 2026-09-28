@@ -4516,14 +4516,14 @@ function CallScreenInner() {
         >
           <SvgDefs>
             <SvgLinearGradient id="callBackdropV" x1="0" y1="0" x2="0" y2="1">
-              <SvgStop offset="0" stopColor="#1a1430" stopOpacity="1" />
+              <SvgStop offset="0" stopColor="#161618" stopOpacity="1" />
               <SvgStop offset="0.45" stopColor="#100d1c" stopOpacity="1" />
               <SvgStop offset="1" stopColor="#050509" stopOpacity="1" />
             </SvgLinearGradient>
             <SvgRadialGradient id="callBackdropGlow" cx="50%" cy="34%" r="62%">
-              <SvgStop offset="0" stopColor="#A582F7" stopOpacity="0.20" />
-              <SvgStop offset="0.55" stopColor="#A582F7" stopOpacity="0.05" />
-              <SvgStop offset="1" stopColor="#A582F7" stopOpacity="0" />
+              <SvgStop offset="0" stopColor="#128C7E" stopOpacity="0.20" />
+              <SvgStop offset="0.55" stopColor="#128C7E" stopOpacity="0.05" />
+              <SvgStop offset="1" stopColor="#128C7E" stopOpacity="0" />
             </SvgRadialGradient>
           </SvgDefs>
           <SvgRect x="0" y="0" width="100%" height="100%" fill="url(#callBackdropV)" />
@@ -5140,7 +5140,7 @@ function CallScreenInner() {
                 activeOpacity={0.7}
               >
                 <View style={[styles.recordSheetIcon, onHold && styles.recordSheetIconActive]}>
-                  {onHold ? <IconPlay size={20} color="#fff" /> : <IconPause size={20} color="#A582F7" />}
+                  {onHold ? <IconPlay size={20} color="#fff" /> : <IconPause size={20} color="#128C7E" />}
                 </View>
                 <Text style={styles.recordSheetLabel}>{onHold ? (t('call.unhold') || 'Retomar') : (t('call.hold') || 'Espera')}</Text>
               </TouchableOpacity>
@@ -5172,9 +5172,9 @@ function CallScreenInner() {
               accessibilityRole="button"
               accessibilityLabel={t('call.audio.diagnostics.title') || 'Diagnóstico de áudio'}
             >
-              <View style={[styles.recordSheetIcon, { backgroundColor: 'rgba(124, 58, 237, 0.18)' }]}>
+              <View style={[styles.recordSheetIcon, { backgroundColor: 'rgba(18, 140, 126, 0.18)' }]}>
                 <Svg width={20} height={20} viewBox="0 0 24 24" fill="none">
-                  <SvgPath d="M3 12h3l3-9 4 18 3-9h5" stroke="#A582F7" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                  <SvgPath d="M3 12h3l3-9 4 18 3-9h5" stroke="#128C7E" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
                 </Svg>
               </View>
               <Text style={styles.recordSheetLabel}>
@@ -5661,7 +5661,7 @@ function CallScreenInner() {
             borderRadius: 18, backgroundColor: 'rgba(20,20,28,0.92)',
             alignItems: 'center', maxWidth: 320,
           }}>
-            <ActivityIndicator size="large" color="#A582F7" />
+            <ActivityIndicator size="large" color="#128C7E" />
             <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', marginTop: 14 }}>
               {t('call.connecting') || 'Conectando...'}
             </Text>
@@ -5880,7 +5880,7 @@ const styles = StyleSheet.create({
   e2eeLockChipText: { color: '#34d399', fontSize: 10.5, fontWeight: '700', letterSpacing: 0.2 },
   centerArea: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingBottom: 180 },
   pulseRing: { position: 'absolute', borderRadius: 999, borderWidth: 1 },
-  pulseRingOuter: { width: 212, height: 212, borderColor: 'rgba(196,181,253,0.10)' },
+  pulseRingOuter: { width: 212, height: 212, borderColor: 'rgba(18, 140, 126,0.10)' },
   pulseRingInner: { width: 182, height: 182, borderColor: 'rgba(221,214,254,0.16)' },
   // Outgoing "calling" rings — soft brand-tinted white expanding rings.
   callingPulseRing: {
@@ -6010,7 +6010,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  micPermBtnPrimary: { backgroundColor: '#A582F7' },
+  micPermBtnPrimary: { backgroundColor: '#128C7E' },
   micPermBtnPrimaryText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   micPermBtnSecondary: { backgroundColor: 'rgba(255,255,255,0.10)' },
   micPermBtnSecondaryText: { color: '#fff', fontSize: 14, fontWeight: '600' },
@@ -6019,9 +6019,9 @@ const styles = StyleSheet.create({
   // Soft, subtle ring hugging the audio-call avatar (premium FaceTime feel).
   centerAvatarRing: {
     borderRadius: 999, padding: 7,
-    borderWidth: 1, borderColor: 'rgba(196,181,253,0.18)',
-    backgroundColor: 'rgba(124,58,237,0.06)',
-    shadowColor: '#A582F7', shadowOpacity: 0.4, shadowRadius: 34, shadowOffset: { width: 0, height: 0 }, elevation: 12,
+    borderWidth: 1, borderColor: 'rgba(18, 140, 126,0.18)',
+    backgroundColor: 'rgba(18, 140, 126,0.06)',
+    shadowColor: '#128C7E', shadowOpacity: 0.4, shadowRadius: 34, shadowOffset: { width: 0, height: 0 }, elevation: 12,
   },
   centerName: { color: '#fff', fontSize: 31, fontWeight: '700', marginTop: 30, textAlign: 'center', letterSpacing: -0.6 },
   centerStatus: { color: 'rgba(255,255,255,0.62)', fontSize: 14.5, marginTop: 9, fontWeight: '500', letterSpacing: 0.2, fontVariant: ['tabular-nums'] },
@@ -6029,8 +6029,8 @@ const styles = StyleSheet.create({
   reconnectContainer: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center', gap: 12, marginTop: 26, paddingHorizontal: 16 },
   reconnectBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    backgroundColor: '#A582F7', paddingHorizontal: 22, paddingVertical: 13, borderRadius: 30,
-    shadowColor: '#A582F7', shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 6,
+    backgroundColor: '#128C7E', paddingHorizontal: 22, paddingVertical: 13, borderRadius: 30,
+    shadowColor: '#128C7E', shadowOpacity: 0.4, shadowRadius: 14, shadowOffset: { width: 0, height: 5 }, elevation: 6,
   },
   reconnectBtnText: { color: '#fff', fontSize: 15.5, fontWeight: '700', letterSpacing: -0.2 },
   reconnectEndBtn: {
@@ -6099,7 +6099,7 @@ const styles = StyleSheet.create({
   weakBannerText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   screenShareBanner: {
     position: 'absolute', top: 80, left: 20, right: 20,
-    backgroundColor: 'rgba(124, 58, 237, 0.9)',
+    backgroundColor: 'rgba(18, 140, 126, 0.9)',
     borderRadius: 12, paddingVertical: 8, paddingHorizontal: 16,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, zIndex: 15,
   },
@@ -6147,9 +6147,9 @@ const styles = StyleSheet.create({
   },
   videoRequestIconCircle: {
     width: 64, height: 64, borderRadius: 32,
-    backgroundColor: '#A582F7',
+    backgroundColor: '#128C7E',
     alignItems: 'center', justifyContent: 'center', marginBottom: 14,
-    shadowColor: '#A582F7', shadowOpacity: 0.45, shadowRadius: 18, shadowOffset: { width: 0, height: 6 },
+    shadowColor: '#128C7E', shadowOpacity: 0.45, shadowRadius: 18, shadowOffset: { width: 0, height: 6 },
   },
   videoRequestTitle: { color: '#fff', fontSize: 17, fontWeight: '700', marginBottom: 6, textAlign: 'center', letterSpacing: -0.2 },
   videoRequestSubtitle: { color: 'rgba(255,255,255,0.6)', fontSize: 13, textAlign: 'center', marginBottom: 22, lineHeight: 18 },
@@ -6212,8 +6212,8 @@ const styles = StyleSheet.create({
   videoVignette: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
   videoVignetteTop: { position: 'absolute', top: 0, left: 0, right: 0, height: 90, backgroundColor: 'rgba(0,0,0,0.45)' },
   videoVignetteBottom: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 220, backgroundColor: 'rgba(0,0,0,0.55)' },
-  videoVignetteEdgeLeft: { position: 'absolute', top: 90, bottom: 220, left: 0, width: 14, backgroundColor: 'rgba(124,58,237,0.06)' },
-  videoVignetteEdgeRight: { position: 'absolute', top: 90, bottom: 220, right: 0, width: 14, backgroundColor: 'rgba(124,58,237,0.06)' },
+  videoVignetteEdgeLeft: { position: 'absolute', top: 90, bottom: 220, left: 0, width: 14, backgroundColor: 'rgba(18, 140, 126,0.06)' },
+  videoVignetteEdgeRight: { position: 'absolute', top: 90, bottom: 220, right: 0, width: 14, backgroundColor: 'rgba(18, 140, 126,0.06)' },
   controlsRowPrimary: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 4, marginBottom: 4, gap: 6,

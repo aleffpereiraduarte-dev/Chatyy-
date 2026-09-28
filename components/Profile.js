@@ -208,14 +208,14 @@ const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors,
   // Outline color: brand tint on light mode, lighter brand on dark. Falls
   // back to colors.border when the brand isn't appropriate (e.g. very dim
   // surfaces) — but we generally want the secondary to hint at brand.
-  const outlineColor = isDark ? 'rgba(167,139,250,0.55)' : 'rgba(124,58,237,0.30)';
+  const outlineColor = isDark ? 'rgba(18, 140, 126,0.55)' : 'rgba(18, 140, 126,0.30)';
   return (
     <Animated.View style={{
       flex: 1,
       transform: [{ scale }],
       // Soft purple glow only for the primary CTA — Instagram-grade lift.
       ...(isPrimary && Platform.OS !== 'web' ? {
-        shadowColor: '#5B21B6',
+        shadowColor: '#128C7E',
         shadowOpacity: isDark ? 0.45 : 0.30,
         shadowRadius: 10,
         shadowOffset: { width: 0, height: 4 },
@@ -235,7 +235,7 @@ const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors,
           borderRadius: 999, // pill
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: isPrimary ? '#A582F7' : 'transparent',
+          backgroundColor: isPrimary ? '#128C7E' : 'transparent',
           borderWidth: isPrimary ? 0 : 1,
           borderColor: isPrimary ? 'transparent' : outlineColor,
         }}
@@ -345,7 +345,7 @@ function LiveWatchCta({ label, onPress }) {
 // matches the FlatButton above so the action stack reads as one family.
 const ChipButton = memo(function ChipButton({ icon: Icon, label, onPress, colors, isDark }) {
   const scale = useRef(new Animated.Value(1)).current;
-  const outlineColor = isDark ? 'rgba(167,139,250,0.40)' : 'rgba(124,58,237,0.22)';
+  const outlineColor = isDark ? 'rgba(18, 140, 126,0.40)' : 'rgba(18, 140, 126,0.22)';
   return (
     <Animated.View style={{ flex: 1, transform: [{ scale }] }}>
       <TouchableOpacity
@@ -388,7 +388,7 @@ const ActionButton = memo(function ActionButton({ icon: Icon, label, onPress, co
     >
       <View style={{
         width: 44, height: 44, borderRadius: 22,
-        backgroundColor: isPrimary ? '#A582F7' : (colors?.surface || '#f4f4f4'),
+        backgroundColor: isPrimary ? '#128C7E' : (colors?.surface || '#f4f4f4'),
         alignItems: 'center', justifyContent: 'center',
       }}>
         <Icon size={20} color={isPrimary ? '#fff' : (colors?.text || '#111')} />
@@ -475,7 +475,7 @@ const EmptyGridIllustration = memo(function EmptyGridIllustration({ isDark, size
     );
   }
   const tone = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(15,23,42,0.10)';
-  const accent = isDark ? 'rgba(167,139,250,0.30)' : 'rgba(124,58,237,0.20)';
+  const accent = isDark ? 'rgba(18, 140, 126,0.30)' : 'rgba(18, 140, 126,0.20)';
   return (
     <_Svg width={size} height={size} viewBox="0 0 120 120">
       {/* Two mosaic tiles + one accent tile in brand purple */}
@@ -485,7 +485,7 @@ const EmptyGridIllustration = memo(function EmptyGridIllustration({ isDark, size
       {/* Small "plus" hint inside accent tile */}
       <_SvgPath
         d="M35 78 V92 M28 85 H42"
-        stroke={isDark ? '#C084FC' : '#A582F7'}
+        stroke={isDark ? '#128C7E' : '#128C7E'}
         strokeWidth="2.4"
         strokeLinecap="round"
       />
@@ -701,7 +701,7 @@ function AnimatedTabBar({ tabs, activeKey, onChange, colors }) {
             height: 2.5,
             transform: [{ translateX: indicatorX }],
             opacity: indicatorOpacity,
-            backgroundColor: '#A582F7',
+            backgroundColor: '#128C7E',
             borderTopLeftRadius: 2,
             borderTopRightRadius: 2,
           }}
@@ -1662,7 +1662,7 @@ export default function Profile({
               {/* Gradient-style ring (two concentric views to avoid adding a lib) */}
               <View style={{
                 width: 68, height: 68, borderRadius: 34, padding: 2,
-                backgroundColor: '#A582F7',
+                backgroundColor: '#128C7E',
               }}>
                 <View style={{
                   width: '100%', height: '100%', borderRadius: 32, padding: 2,
@@ -1890,7 +1890,7 @@ export default function Profile({
                     // a linha já arquivada — referenciável pelo destaque mas
                     // invisível no status_list/manifest. Reproduz na adição de
                     // status existentes ao destaque (abaixo) também.
-                    const pub = await api.statusPublish(url, 'image', '#A582F7', null, { highlight_only: true });
+                    const pub = await api.statusPublish(url, 'image', '#128C7E', null, { highlight_only: true });
                     const sid = pub?.id || pub?.data?.id || pub?.status_id;
                     if (sid) {
                       statusIds.push(sid);
@@ -1956,11 +1956,11 @@ export default function Profile({
               // Brand-tinted ring + soft purple fill so the "+" tile reads as
               // an inviting "add a highlight" affordance instead of an empty
               // grey circle — matches the gradient rings on real tiles.
-              borderWidth: 1.5, borderColor: isDark ? 'rgba(167,139,250,0.45)' : 'rgba(124,58,237,0.30)',
+              borderWidth: 1.5, borderColor: isDark ? 'rgba(18, 140, 126,0.45)' : 'rgba(18, 140, 126,0.30)',
               alignItems: 'center', justifyContent: 'center',
-              backgroundColor: isDark ? 'rgba(167,139,250,0.10)' : 'rgba(124,58,237,0.07)',
+              backgroundColor: isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.07)',
             }}>
-              <IconPlus size={28} color={isDark ? '#C4B5FD' : '#A582F7'} strokeWidth={2.2} />
+              <IconPlus size={28} color={isDark ? '#F1F3F5' : '#128C7E'} strokeWidth={2.2} />
             </View>
             <Text style={{ fontSize: 12, color: colors?.text, marginTop: 6, fontWeight: '600', letterSpacing: 0.1 }} numberOfLines={1}>
               {t?.('profile.newHighlight') || 'Novo'}
@@ -1983,8 +1983,8 @@ export default function Profile({
                 <_Svg width={RING} height={RING} style={{ position: 'absolute', top: 0, left: 0 }}>
                   <_SvgDefs>
                     <_SvgLinearGradient id={`hlRing_${h.id}`} x1="0" y1="0" x2="1" y2="1">
-                      <_SvgStop offset="0" stopColor="#A582F7" />
-                      <_SvgStop offset="0.5" stopColor="#EC4899" />
+                      <_SvgStop offset="0" stopColor="#128C7E" />
+                      <_SvgStop offset="0.5" stopColor="#128C7E" />
                       <_SvgStop offset="1" stopColor="#F97316" />
                     </_SvgLinearGradient>
                   </_SvgDefs>
@@ -2074,7 +2074,7 @@ export default function Profile({
                 // it covers this border; if SVG isn't available the user still
                 // sees a purple ring (no silent visual regression).
                 borderWidth: _Svg ? 0 : 2,
-                borderColor: '#A582F7',
+                borderColor: '#128C7E',
                 backgroundColor: tone,
               }}>
                 {renderHighlightRing()}
@@ -2085,7 +2085,7 @@ export default function Profile({
                         ? <_ExpoImage source={{ uri: cover }} style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2 }} contentFit="cover" cachePolicy="memory-disk" />
                         : <Image source={{ uri: cover }} style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2 }} resizeMode="cover" />)
                 ) : (
-                  <View style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2, backgroundColor: '#A582F722' }} />
+                  <View style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2, backgroundColor: '#128C7E22' }} />
                 )}
               </View>
               <Text style={{ fontSize: 12, color: colors?.text, marginTop: 6, fontWeight: '500', maxWidth: SIZE + 8, letterSpacing: 0.1 }} numberOfLines={1}>
@@ -2129,7 +2129,7 @@ export default function Profile({
             an empty grey rectangle. Profile-upgrade combo (2026-05-18). */}
         {coverUrl ? (
           <View style={{
-            width: '100%', height: 160, backgroundColor: 'rgba(124,58,237,0.06)',
+            width: '100%', height: 160, backgroundColor: 'rgba(18, 140, 126,0.06)',
             borderBottomWidth: StyleSheet.hairlineWidth,
             borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
             overflow: 'hidden',
@@ -2197,12 +2197,12 @@ export default function Profile({
             {accountType === 'creator' && (
               <View style={{
                 paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999,
-                backgroundColor: 'rgba(147,51,234,0.12)',
-                borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(147,51,234,0.28)',
+                backgroundColor: 'rgba(18, 140, 126,0.12)',
+                borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(18, 140, 126,0.28)',
                 flexDirection: 'row', alignItems: 'center', gap: 4,
               }} accessibilityLabel={t?.('profile.accountTypeCreator') || 'Criador'}>
-                <IconBrush size={11} color="#9333EA" />
-                <Text style={{ fontSize: 11, color: '#9333EA', fontWeight: '700', letterSpacing: 0.1 }}>
+                <IconBrush size={11} color="#128C7E" />
+                <Text style={{ fontSize: 11, color: '#128C7E', fontWeight: '700', letterSpacing: 0.1 }}>
                   {t?.('profile.accountTypeCreator') || 'Criador'}
                 </Text>
               </View>
@@ -2262,9 +2262,9 @@ export default function Profile({
                   <_Svg width={HALO_SIZE} height={HALO_SIZE} style={{ position: 'absolute', top: 0, left: 0 }}>
                     <_SvgDefs>
                       <_SvgLinearGradient id="profileAvatarHalo" x1="0" y1="0" x2="1" y2="1">
-                        <_SvgStop offset="0" stopColor="#5B21B6" />
-                        <_SvgStop offset="0.55" stopColor="#A582F7" />
-                        <_SvgStop offset="1" stopColor="#EC4899" />
+                        <_SvgStop offset="0" stopColor="#128C7E" />
+                        <_SvgStop offset="0.55" stopColor="#128C7E" />
+                        <_SvgStop offset="1" stopColor="#128C7E" />
                       </_SvgLinearGradient>
                     </_SvgDefs>
                     <_SvgCircle
@@ -2282,7 +2282,7 @@ export default function Profile({
                 <View style={{
                   position: 'absolute', top: 0, left: 0,
                   width: HALO_SIZE, height: HALO_SIZE, borderRadius: HALO_SIZE / 2,
-                  borderWidth: 3, borderColor: '#A582F7',
+                  borderWidth: 3, borderColor: '#128C7E',
                 }} />
               );
             };
@@ -2441,8 +2441,8 @@ export default function Profile({
           )}
           {!!identity.website && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 4 }}>
-              <IconLink size={13} color="#A582F7" />
-              <Text style={{ fontSize: 13, color: '#A582F7', fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
+              <IconLink size={13} color="#128C7E" />
+              <Text style={{ fontSize: 13, color: '#128C7E', fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
                 {identity.website}
               </Text>
             </View>
@@ -2478,17 +2478,17 @@ export default function Profile({
                       flexDirection: 'row', alignItems: 'center', gap: 6,
                       paddingHorizontal: 13, paddingVertical: 7,
                       borderRadius: 999, // pill — matches the action-button family
-                      backgroundColor: isDark ? 'rgba(124,58,237,0.14)' : 'rgba(124,58,237,0.09)',
+                      backgroundColor: isDark ? 'rgba(18, 140, 126,0.14)' : 'rgba(18, 140, 126,0.09)',
                       borderWidth: StyleSheet.hairlineWidth,
-                      borderColor: isDark ? 'rgba(167,139,250,0.40)' : 'rgba(124,58,237,0.26)',
+                      borderColor: isDark ? 'rgba(18, 140, 126,0.40)' : 'rgba(18, 140, 126,0.26)',
                     }}
                     accessibilityRole="link"
                     accessibilityLabel={label}
                   >
-                    <IconLink size={13} color={isDark ? '#C4B5FD' : '#A582F7'} />
+                    <IconLink size={13} color={isDark ? '#F1F3F5' : '#128C7E'} />
                     <Text
                       numberOfLines={1}
-                      style={{ fontSize: 13, color: isDark ? '#C4B5FD' : '#A582F7', fontWeight: '600', maxWidth: 180 }}
+                      style={{ fontSize: 13, color: isDark ? '#F1F3F5' : '#128C7E', fontWeight: '600', maxWidth: 180 }}
                     >
                       {label}
                     </Text>
@@ -2568,7 +2568,7 @@ export default function Profile({
                 alignItems: 'center',
                 justifyContent: 'center',
                 gap: 8,
-                backgroundColor: '#A855F7',
+                backgroundColor: '#128C7E',
               }}
             >
               <IconGiftBox size={18} color="#fff" />
@@ -2829,7 +2829,7 @@ export default function Profile({
         if (livesLoading && lives.length === 0) {
           return (
             <View style={{ paddingVertical: 60, alignItems: 'center' }}>
-              <ActivityIndicator color="#A582F7" />
+              <ActivityIndicator color="#128C7E" />
             </View>
           );
         }
@@ -2911,10 +2911,10 @@ export default function Profile({
               >
                 <View style={{
                   width: 28, height: 28, borderRadius: 14, marginTop: 2,
-                  backgroundColor: e.from_me ? '#A582F722' : (colors?.surface || '#f3f4f6'),
+                  backgroundColor: e.from_me ? '#128C7E22' : (colors?.surface || '#f3f4f6'),
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  <IconMail size={14} color={e.from_me ? '#A582F7' : (colors?.text || '#111')} />
+                  <IconMail size={14} color={e.from_me ? '#128C7E' : (colors?.text || '#111')} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 14, color: colors?.text, fontWeight: '600' }} numberOfLines={1}>
@@ -2979,7 +2979,7 @@ export default function Profile({
           onPress={() => { setErr(null); setErrStatus(0); setLoading(true); setRetryCounter(c => c + 1); }}
           style={{
             paddingHorizontal: 22, paddingVertical: 11, borderRadius: 12,
-            backgroundColor: '#A582F7',
+            backgroundColor: '#128C7E',
           }}
           accessibilityRole="button"
         >
@@ -3527,7 +3527,7 @@ export default function Profile({
                   setNicknameValue(val);
                 } catch {}
               }}
-              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: '#A582F7' }}
+              style={{ flex: 1, paddingVertical: 12, borderRadius: 12, alignItems: 'center', backgroundColor: '#128C7E' }}
             >
               <Text style={{ fontSize: 15, color: '#fff', fontWeight: '600' }}>{t?.('common.save') || 'Salvar'}</Text>
             </TouchableOpacity>
@@ -3800,7 +3800,7 @@ export default function Profile({
         web: { boxShadow: '0 4px 12px rgba(0,0,0,0.18)' },
       }),
     }}>
-      <ActivityIndicator size="small" color="#A582F7" />
+      <ActivityIndicator size="small" color="#128C7E" />
       <Text style={{ fontSize: 14, color: colors?.text, fontWeight: '500' }}>
         {t?.('status.publishing') || 'Publicando…'}
       </Text>

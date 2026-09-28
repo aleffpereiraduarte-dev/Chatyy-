@@ -35,7 +35,7 @@ import {
 import Svg, { Path as SvgPath, Circle as SvgCircle } from 'react-native-svg';
 import { useLanguage } from '../context/LanguageContext';
 
-const BRAND_PURPLE = '#A582F7';
+const BRAND_PURPLE = '#128C7E';
 const DANGER = '#EF4444';
 const REC_RED = '#DC2626';
 
@@ -220,7 +220,7 @@ export default function HostControlsSheet({
               icon={(p) => <IconLock {...p} open={locked} />}
               label={locked ? (t('call.group.unlockRoom') || 'Unlock room') : (t('call.group.lockRoom') || 'Lock room')}
               sublabel={locked ? (t('call.group.lockOn') || 'Room is locked') : (t('call.group.lockOffHint') || 'Prevent new joiners')}
-              accent={locked ? 'rgba(124,58,237,0.18)' : undefined}
+              accent={locked ? 'rgba(18, 140, 126,0.18)' : undefined}
               onPress={handleToggleLock}
               disabled={busy === 'lock'}
             />
@@ -293,7 +293,7 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: 'rgba(124,58,237,0.2)',
+    backgroundColor: 'rgba(18, 140, 126,0.2)',
     alignItems: 'center',
     justifyContent: 'center',
   },

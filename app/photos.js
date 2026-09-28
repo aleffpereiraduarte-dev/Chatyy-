@@ -2729,7 +2729,7 @@ export default function PhotosScreen() {
       const deviceCount = deviceTotalCount || devicePhotos.length;
       const pct = deviceCount > 0 ? Math.min((backedUpTotal / deviceCount) * 100, 100) : 0;
       return (
-        <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#F5F3FF', borderColor: colors.primary + '40' }]}>
+        <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#F1F3F5', borderColor: colors.primary + '40' }]}>
           <View style={s.backupBannerLeft}>
             <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
@@ -2773,7 +2773,7 @@ export default function PhotosScreen() {
       if (deviceCount === 0) {
         // Still loading device count — show "checking..."
         return (
-          <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#F5F3FF', borderColor: colors.primary + '40' }]}>
+          <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#F1F3F5', borderColor: colors.primary + '40' }]}>
             <View style={s.backupBannerLeft}>
               <ActivityIndicator size="small" color={colors.primary} />
               <View style={{ marginLeft: 10, flex: 1 }}>
@@ -2815,7 +2815,7 @@ export default function PhotosScreen() {
 
       if (isScanning) {
         return (
-          <View style={[s.backupBanner, { backgroundColor: isDark ? '#0c1f3a' : '#F5F3FF', borderColor: colors.primary + '40', flexDirection: 'column', alignItems: 'stretch' }]}>
+          <View style={[s.backupBanner, { backgroundColor: isDark ? '#0c1f3a' : '#F1F3F5', borderColor: colors.primary + '40', flexDirection: 'column', alignItems: 'stretch' }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
               <ActivityIndicator size="small" color={colors.primary} />
               <Text style={{ marginLeft: 10, fontSize: 14, fontWeight: '600', color: colors.text, flex: 1 }}>
@@ -2841,7 +2841,7 @@ export default function PhotosScreen() {
 
       if (isUploading) {
         return (
-          <View style={[s.backupBanner, { backgroundColor: isDark ? '#0c1f3a' : '#F5F3FF', borderColor: colors.primary + '40', flexDirection: 'column', alignItems: 'stretch' }]}>
+          <View style={[s.backupBanner, { backgroundColor: isDark ? '#0c1f3a' : '#F1F3F5', borderColor: colors.primary + '40', flexDirection: 'column', alignItems: 'stretch' }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
               <IconCloudUpload size={20} color={colors.primary} />
               <Text style={{ marginLeft: 10, fontSize: 14, fontWeight: '600', color: colors.text, flex: 1 }}>
@@ -2882,7 +2882,7 @@ export default function PhotosScreen() {
 
       // Has pending photos - show start button
       return (
-        <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#F5F3FF', borderColor: colors.primary + '40' }]}>
+        <View style={[s.backupBanner, { backgroundColor: isDark ? '#172554' : '#F1F3F5', borderColor: colors.primary + '40' }]}>
           <View style={s.backupBannerLeft}>
             <IconCloudUpload size={20} color={colors.primary} />
             <View style={{ marginLeft: 10, flex: 1 }}>
@@ -3190,7 +3190,7 @@ export default function PhotosScreen() {
         ]}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
-          <View style={{ width: 4, height: 16, borderRadius: 3, backgroundColor: '#A582F7' }} />
+          <View style={{ width: 4, height: 16, borderRadius: 3, backgroundColor: '#128C7E' }} />
           <Text
             style={[
               s.sectionTitle,
@@ -3207,8 +3207,8 @@ export default function PhotosScreen() {
           </Text>
         </View>
         {total > 0 && (
-          <View style={[s.sectionCountChip, { backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.08)' }]}>
-            <Text style={[s.sectionCount, { color: '#A582F7', fontWeight: '700' }]}>
+          <View style={[s.sectionCountChip, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.08)' }]}>
+            <Text style={[s.sectionCount, { color: '#128C7E', fontWeight: '700' }]}>
               {total}
             </Text>
           </View>
@@ -3396,14 +3396,14 @@ export default function PhotosScreen() {
                     marginHorizontal: Spacing.lg, marginTop: 8, marginBottom: 4,
                     paddingHorizontal: 12, paddingVertical: 6,
                     borderRadius: 16,
-                    backgroundColor: isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.10)',
+                    backgroundColor: isDark ? 'rgba(18, 140, 126,0.22)' : 'rgba(18, 140, 126,0.10)',
                     gap: 6,
                   }}
                 >
                   {presetLoading ? (
-                    <ActivityIndicator size="small" color="#A582F7" />
+                    <ActivityIndicator size="small" color="#128C7E" />
                   ) : null}
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#A582F7' }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#128C7E' }}>
                     {(() => {
                       // Centralized label resolver — keeps the active-filter
                       // pill in sync with the card list. Falls back to a
@@ -3422,7 +3422,7 @@ export default function PhotosScreen() {
                       return labels[presetFilter] || (presetFilter.charAt(0).toUpperCase() + presetFilter.slice(1));
                     })()}
                   </Text>
-                  <Text style={{ fontSize: 13, color: '#A582F7', fontWeight: '700' }}>×</Text>
+                  <Text style={{ fontSize: 13, color: '#128C7E', fontWeight: '700' }}>×</Text>
                 </Pressable>
               )}
               {/* Memories — iOS Photos-grade horizontal carousel (320×180 cinematic 16:9). */}
@@ -3483,8 +3483,8 @@ export default function PhotosScreen() {
       ) : (
         <View style={s.emptyState}>
           <View style={s.emptyIllustration}>
-            <View style={[s.emptyIconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.16)' : 'rgba(124,58,237,0.08)' }]}>
-              <IconAlbum size={48} color="#A582F7" />
+            <View style={[s.emptyIconCircle, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.16)' : 'rgba(18, 140, 126,0.08)' }]}>
+              <IconAlbum size={48} color="#128C7E" />
             </View>
           </View>
           <Text style={[s.emptyTitle, { color: colors.text }]}>{t('photos.noAlbums')}</Text>
@@ -3677,8 +3677,8 @@ export default function PhotosScreen() {
               </View>
             ) : realFaceClusters.length === 0 ? (
               <View style={{ paddingVertical: 40, alignItems: 'center' }}>
-                <View style={[s.emptyIconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.16)' : 'rgba(124,58,237,0.08)' }]}>
-                  <IconUsers size={44} color="#A582F7" />
+                <View style={[s.emptyIconCircle, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.16)' : 'rgba(18, 140, 126,0.08)' }]}>
+                  <IconUsers size={44} color="#128C7E" />
                 </View>
                 <Text style={{ color: colors.text, fontSize: 17, fontWeight: '800', marginTop: 16, letterSpacing: -0.3 }}>
                   {t('photos.peopleEmptyTitle') || 'Ninguém por aqui ainda'}
@@ -3948,7 +3948,7 @@ export default function PhotosScreen() {
               const cur = Math.min(backedUpTotal || 0, total || (backedUpTotal || 0));
               const pct = total > 0 ? Math.min((cur / total) * 100, 100) : 0;
               return (
-                <View style={[s.card, { backgroundColor: isDark ? '#172554' : '#F5F3FF', borderColor: colors.primary + '40', marginBottom: Spacing.md }]}>
+                <View style={[s.card, { backgroundColor: isDark ? '#172554' : '#F1F3F5', borderColor: colors.primary + '40', marginBottom: Spacing.md }]}>
                   <View style={{ padding: 16 }}>
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 }}>
                       <ActivityIndicator size="small" color={colors.primary} />
@@ -4153,9 +4153,9 @@ export default function PhotosScreen() {
                     setUploadQuality(next);
                     AsyncStorage.setItem('backup_quality', next).catch(() => {});
                   }}
-                  style={[s.qualityBadge, { backgroundColor: uploadQuality === 'original' ? '#A582F720' : '#16a34a20' }]}
+                  style={[s.qualityBadge, { backgroundColor: uploadQuality === 'original' ? '#128C7E20' : '#16a34a20' }]}
                 >
-                  <Text style={{ color: uploadQuality === 'original' ? '#A582F7' : '#16a34a', fontSize: 12, fontWeight: '700' }}>
+                  <Text style={{ color: uploadQuality === 'original' ? '#128C7E' : '#16a34a', fontSize: 12, fontWeight: '700' }}>
                     {uploadQuality === 'original' ? t('photos.qualityOriginal') : t('photos.qualityEconomy')}
                   </Text>
                 </TouchableOpacity>
@@ -4182,14 +4182,14 @@ export default function PhotosScreen() {
             {/* Restore photos from cloud */}
             <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.border, marginTop: Spacing.md }]}>
               <View style={s.cardHeader}>
-                <IconDownload size={20} color="#A78BFA" />
+                <IconDownload size={20} color="#128C7E" />
                 <Text style={[s.cardTitle, { color: colors.text }]}>{t('photos.restorePhotos')}</Text>
               </View>
               <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 12 }}>
                 {t('photos.restorePhotosDesc')}
               </Text>
               <TouchableOpacity
-                style={[s.backupBtn, { backgroundColor: '#A78BFA', alignSelf: 'flex-start' }]}
+                style={[s.backupBtn, { backgroundColor: '#128C7E', alignSelf: 'flex-start' }]}
                 onPress={openPhotoRestore}
               >
                 <Text style={s.backupBtnText}>{t('photos.downloadFromCloud')}</Text>
@@ -4726,14 +4726,14 @@ export default function PhotosScreen() {
               <IconX size={24} color={colors.text} />
             </TouchableOpacity>
             <View style={s.selectCounterChip}>
-              <View style={[s.selectCounterDot, { backgroundColor: '#A582F7' }]} />
+              <View style={[s.selectCounterDot, { backgroundColor: '#128C7E' }]} />
               <Text style={[s.selectCounterText, { color: colors.text }]}>
                 {selectedItems.size} {t('photos.selected') || 'selecionadas'}
               </Text>
             </View>
             <View style={{ flex: 1 }} />
             <TouchableOpacity onPress={selectAll} style={s.headerBtn} accessibilityLabel="Selecionar tudo">
-              <IconCheckCircle size={22} color="#A582F7" />
+              <IconCheckCircle size={22} color="#128C7E" />
             </TouchableOpacity>
           </View>
         ) : showSearch ? (
@@ -4758,7 +4758,7 @@ export default function PhotosScreen() {
               <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/photos" }, "*"); } catch {} } else { router.back(); } }} style={s.headerBtn}>
                 <IconArrowLeft size={24} color={colors.text} />
               </TouchableOpacity>
-              <IconCloud size={22} color="#A582F7" />
+              <IconCloud size={22} color="#128C7E" />
               <Text style={[s.headerTitle, { color: colors.text, marginLeft: 8 }]}>{t('photos.title')}</Text>
               <View style={{ flex: 1 }} />
               {/* Backup status pill — Tudo sincronizado / Enviando / Pausado */}
@@ -4773,7 +4773,7 @@ export default function PhotosScreen() {
                 const palette = mode === 'synced'
                   ? { bg: isDark ? 'rgba(34,197,94,0.14)' : '#DCFCE7', fg: '#16A34A', dot: '#22C55E' }
                   : mode === 'uploading'
-                  ? { bg: isDark ? 'rgba(124,58,237,0.16)' : '#EDE9FE', fg: '#A582F7', dot: '#A582F7' }
+                  ? { bg: isDark ? 'rgba(18, 140, 126,0.16)' : '#F1F3F5', fg: '#128C7E', dot: '#128C7E' }
                   : { bg: isDark ? 'rgba(245,158,11,0.16)' : '#FEF3C7', fg: '#D97706', dot: '#F59E0B' };
                 const label = mode === 'synced'
                   ? (t('photos.allSynced') || 'Sincronizado')
@@ -4820,7 +4820,7 @@ export default function PhotosScreen() {
 
         {/* Fixed backup progress banner (Google Photos style - visible across all tabs) */}
         {backupStatus === 'backing_up' && (
-          <View style={{ backgroundColor: isDark ? '#172554' : '#EDE9FE', paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={{ backgroundColor: isDark ? '#172554' : '#F1F3F5', paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <ActivityIndicator size="small" color={colors.primary} />
             <View style={{ flex: 1 }}>
               <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
@@ -4897,7 +4897,7 @@ export default function PhotosScreen() {
                 style={[
                   s.tabPill,
                   isActive
-                    ? [{ backgroundColor: '#A582F7' }, s.tabPillActive]
+                    ? [{ backgroundColor: '#128C7E' }, s.tabPillActive]
                     : { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#F3F4F6' },
                 ]}
               >
@@ -5093,8 +5093,8 @@ export default function PhotosScreen() {
             onPress={() => setCreateAlbumVisible(true)}
             accessibilityLabel="Adicionar a album"
           >
-            <View style={[s.batchActionPill, { backgroundColor: 'rgba(124,58,237,0.14)' }]}>
-              <IconAlbum size={20} color="#A582F7" />
+            <View style={[s.batchActionPill, { backgroundColor: 'rgba(18, 140, 126,0.14)' }]}>
+              <IconAlbum size={20} color="#128C7E" />
             </View>
             <Text style={[s.batchActionText, { color: colors.text }]}>{t('photos.addToAlbum') || 'Adicionar'}</Text>
           </TouchableOpacity>
@@ -5448,7 +5448,7 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
 <link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet"/>
 <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
-<style>html,body,#map{height:100%;margin:0;padding:0;background:${bg}}.cluster{background:#A582F7;color:#fff;border-radius:18px;padding:4px 10px;font:600 13px system-ui;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3);cursor:pointer;white-space:nowrap}</style>
+<style>html,body,#map{height:100%;margin:0;padding:0;background:${bg}}.cluster{background:#128C7E;color:#fff;border-radius:18px;padding:4px 10px;font:600 13px system-ui;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.3);cursor:pointer;white-space:nowrap}</style>
 </head><body>
 <div id="map"></div>
 <script>
@@ -5499,7 +5499,7 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
   if (loading) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-        <ActivityIndicator color="#A582F7" />
+        <ActivityIndicator color="#128C7E" />
         <Text style={{ marginTop: 10, color: colors.textSecondary, fontSize: 13 }}>
           {t('photos.mapLoading') || 'Carregando mapa...'}
         </Text>
@@ -5512,7 +5512,7 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
         <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
           {error}
         </Text>
-        <TouchableOpacity onPress={loadClusters} style={{ marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#A582F7' }}>
+        <TouchableOpacity onPress={loadClusters} style={{ marginTop: 16, paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10, backgroundColor: '#128C7E' }}>
           <Text style={{ color: '#fff', fontWeight: '700' }}>{t('common.retry') || 'Tentar de novo'}</Text>
         </TouchableOpacity>
       </View>
@@ -5531,7 +5531,7 @@ function PhotosMapTab({ colors, isDark, insets, t, api, allPhotos, openViewer })
         <TouchableOpacity
           onPress={runExtract}
           disabled={extracting}
-          style={{ marginTop: 18, paddingHorizontal: 22, paddingVertical: 12, borderRadius: 12, backgroundColor: '#A582F7', opacity: extracting ? 0.6 : 1 }}
+          style={{ marginTop: 18, paddingHorizontal: 22, paddingVertical: 12, borderRadius: 12, backgroundColor: '#128C7E', opacity: extracting ? 0.6 : 1 }}
         >
           {extracting
             ? <ActivityIndicator color="#fff" />
@@ -5624,14 +5624,14 @@ function MemoriesCarousel({
   // per the audit). Adding new categories is a matter of dropping an entry
   // here + extending the `queries` map below; no backend change required.
   const presetCards = [
-    { key: 'summer', title: `Verão ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}`, sub: 'Os melhores momentos', tint: ['#A582F7', '#EC4899'] },
-    { key: 'thisweek', title: 'Esta semana', sub: 'Novas memórias', tint: ['#0EA5E9', '#A582F7'] },
-    { key: 'people', title: 'Pessoas', sub: 'Quem aparece mais', tint: ['#F59E0B', '#A582F7'] },
+    { key: 'summer', title: `Verão ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}`, sub: 'Os melhores momentos', tint: ['#128C7E', '#128C7E'] },
+    { key: 'thisweek', title: 'Esta semana', sub: 'Novas memórias', tint: ['#0EA5E9', '#128C7E'] },
+    { key: 'people', title: 'Pessoas', sub: 'Quem aparece mais', tint: ['#F59E0B', '#128C7E'] },
     // Auto-categories ("Coleções automáticas") — surfaced via photo_labels.
-    { key: 'selfies', title: 'Selfies', sub: 'Você no foco', tint: ['#EC4899', '#A582F7'] },
+    { key: 'selfies', title: 'Selfies', sub: 'Você no foco', tint: ['#128C7E', '#128C7E'] },
     { key: 'food', title: 'Comida', sub: 'Pratos que marcaram', tint: ['#F97316', '#EF4444'] },
     { key: 'pets', title: 'Pets', sub: 'Animais que amam você', tint: ['#10B981', '#06B6D4'] },
-    { key: 'sunset', title: 'Por do sol', tint: ['#F59E0B', '#EC4899'], sub: 'Céus inesquecíveis' },
+    { key: 'sunset', title: 'Por do sol', tint: ['#F59E0B', '#128C7E'], sub: 'Céus inesquecíveis' },
     { key: 'documents', title: 'Documentos', sub: 'Recibos, comprovantes', tint: ['#64748B', '#0EA5E9'] },
   ];
   const totalCards = memoryCards.length + presetCards.length;
@@ -5677,7 +5677,7 @@ function MemoriesCarousel({
       {/* Section header: SVG sparkle + brand pill tag (replaces plain Text). */}
       <View style={s.memoriesHeader}>
         <View style={s.memoriesHeaderPill}>
-          <IconSparkles size={13} color="#A582F7" />
+          <IconSparkles size={13} color="#128C7E" />
           <Text style={s.memoriesHeaderPillText}>
             {(t('photos.memories') || 'Memórias').toUpperCase()}
           </Text>
@@ -6332,7 +6332,7 @@ const s = StyleSheet.create({
   storageFill: {
     height: '100%',
     borderRadius: 4,
-    ...(Platform.OS === 'web' ? { background: 'linear-gradient(90deg, #4F46E5, #A582F7, #ec4899)', transition: 'width 0.5s ease' } : {}),
+    ...(Platform.OS === 'web' ? { background: 'linear-gradient(90deg, #4F46E5, #128C7E, #128C7E)', transition: 'width 0.5s ease' } : {}),
   },
   storageText: {
     fontSize: FontSize.xs,
@@ -6613,13 +6613,13 @@ const s = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 14,
-    backgroundColor: 'rgba(124,58,237,0.10)',
+    backgroundColor: 'rgba(18, 140, 126,0.10)',
   },
   memoriesHeaderPillText: {
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 1.2,
-    color: '#A582F7',
+    color: '#128C7E',
   },
   memoriesHeaderCount: {
     fontSize: 12,
@@ -6739,9 +6739,9 @@ const s = StyleSheet.create({
   },
   tabPillActive: {
     ...Platform.select({
-      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 8 },
+      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 8 },
       android: { elevation: 4 },
-      web: { boxShadow: '0 3px 10px rgba(124,58,237,0.30)' },
+      web: { boxShadow: '0 3px 10px rgba(18, 140, 126,0.30)' },
     }),
   },
   tabPillText: {
@@ -6756,7 +6756,7 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: 'rgba(124,58,237,0.15)',
+    backgroundColor: 'rgba(18, 140, 126,0.15)',
     borderRadius: 14,
     paddingHorizontal: 10,
     paddingVertical: 4,
@@ -7009,9 +7009,9 @@ const s = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 28,
     ...Platform.select({
-      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.30, shadowRadius: 12 },
+      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.30, shadowRadius: 12 },
       android: { elevation: 5 },
-      web: { boxShadow: '0 4px 14px rgba(124,58,237,0.30)' },
+      web: { boxShadow: '0 4px 14px rgba(18, 140, 126,0.30)' },
     }),
   },
   emptyUploadBtnText: {

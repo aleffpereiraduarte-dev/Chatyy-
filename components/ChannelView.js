@@ -21,8 +21,8 @@ import AvatarCircle from './AvatarCircle';
 import Svg, { Path, Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import * as api from '../services/api';
 
-const ACCENT = '#A582F7';
-const ACCENT_DARK = '#5B21B6';
+const ACCENT = '#128C7E';
+const ACCENT_DARK = '#128C7E';
 
 // Cover gradient overlay (top-to-bottom dark fade) for header readability
 function CoverGradientOverlay() {
@@ -219,7 +219,7 @@ function PostCard({ item, isAdmin, colors, isDark, t, onReact, onDelete }) {
                   styles.reactionChip,
                   {
                     backgroundColor: item.my_reaction === r.emoji
-                      ? (isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.1)')
+                      ? (isDark ? 'rgba(18, 140, 126,0.22)' : 'rgba(18, 140, 126,0.1)')
                       : (isDark ? '#1a1a24' : '#f3f4f6'),
                     borderColor: item.my_reaction === r.emoji ? ACCENT : 'transparent',
                   },

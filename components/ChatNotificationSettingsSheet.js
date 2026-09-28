@@ -52,7 +52,7 @@ function previewVibration(name, pattern) {
   } catch {}
 }
 
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 
 // ── Native per-conversation tone channel sync (Android only) ───────────────
 // Translates the sheet's abstract settings into the concrete { sound, vibration
@@ -134,7 +134,7 @@ const LED_COLORS = [
   { value: '#ff0000', hex: '#ff0000', label: 'Vermelho' },
   { value: '#00ff00', hex: '#00ff00', label: 'Verde' },
   { value: '#2563eb', hex: '#2563eb', label: 'Azul' },
-  { value: '#A582F7', hex: '#A582F7', label: 'Roxo' },
+  { value: '#128C7E', hex: '#128C7E', label: 'Roxo' },
   { value: '#f59e0b', hex: '#f59e0b', label: 'Amarelo' },
 ];
 

@@ -23,7 +23,7 @@ import {
 import { CallerIdVerifyContent } from './ChatCallsTab';
 
 // ─── Kids Profile SVG Icons (no emojis) ───
-function KidsIconShieldUser({ size = 18, color = '#A582F7' }) {
+function KidsIconShieldUser({ size = 18, color = '#128C7E' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -43,7 +43,7 @@ function KidsIconSOS({ size = 24, color = '#fff' }) {
   );
 }
 
-function KidsIconFamily({ size = 20, color = '#A582F7' }) {
+function KidsIconFamily({ size = 20, color = '#128C7E' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <SvgCircle cx="9" cy="7" r="3" />
@@ -54,7 +54,7 @@ function KidsIconFamily({ size = 20, color = '#A582F7' }) {
   );
 }
 
-function KidsIconMailPerm({ size = 18, color = '#A582F7' }) {
+function KidsIconMailPerm({ size = 18, color = '#128C7E' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Rect x="2" y="4" width="20" height="16" rx="2" />
@@ -63,7 +63,7 @@ function KidsIconMailPerm({ size = 18, color = '#A582F7' }) {
   );
 }
 
-function KidsIconTrashPerm({ size = 18, color = '#A582F7' }) {
+function KidsIconTrashPerm({ size = 18, color = '#128C7E' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
@@ -71,7 +71,7 @@ function KidsIconTrashPerm({ size = 18, color = '#A582F7' }) {
   );
 }
 
-function KidsIconKeyPerm({ size = 18, color = '#A582F7' }) {
+function KidsIconKeyPerm({ size = 18, color = '#128C7E' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
@@ -79,7 +79,7 @@ function KidsIconKeyPerm({ size = 18, color = '#A582F7' }) {
   );
 }
 
-function KidsIconMoon({ size = 18, color = '#A582F7' }) {
+function KidsIconMoon({ size = 18, color = '#128C7E' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z" />
@@ -103,7 +103,7 @@ function KidsIconXCircle({ size = 14, color = '#ef4444' }) {
   );
 }
 
-function KidsIconShieldProtected({ size = 20, color = '#A582F7' }) {
+function KidsIconShieldProtected({ size = 20, color = '#128C7E' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
@@ -121,7 +121,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useBiometric } from '../context/BiometricContext';
 
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 
 // Brand pill with press scale 0.97 (spring). Used for "Editar perfil" hero
 // CTA and similar tactile buttons in the profile tab.
@@ -149,7 +149,7 @@ function PressablePill({ onPress, style, children, accessibilityLabel, disabled 
 
 // Device-type SVG (web / mobile / desktop) for the Linked Devices row
 // subtitle. Stroke-style icons matching Icons.js conventions.
-function IconDeviceWeb({ size = 14, color = '#A582F7' }) {
+function IconDeviceWeb({ size = 14, color = '#128C7E' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Rect x="2" y="3" width="20" height="14" rx="2" />
@@ -158,7 +158,7 @@ function IconDeviceWeb({ size = 14, color = '#A582F7' }) {
     </Svg>
   );
 }
-function IconDeviceMobile({ size = 14, color = '#A582F7' }) {
+function IconDeviceMobile({ size = 14, color = '#128C7E' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Rect x="6" y="2" width="12" height="20" rx="2" />
@@ -809,19 +809,19 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
       <View style={[styles.container, { backgroundColor: isDark ? '#1a1025' : '#faf5ff' }]}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
           {/* Profile card with gradient */}
-          <View style={{ margin: 16, borderRadius: 24, overflow: 'hidden', backgroundColor: isDark ? '#2d1b4e' : '#fff',
-            ...Platform.select({ ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 12 }, android: { elevation: 4 }, web: { boxShadow: '0 4px 20px rgba(139,92,246,0.1)' } }) }}>
-            <View style={{ height: 100, backgroundColor: '#A78BFA', ...(Platform.OS === 'web' ? { background: 'linear-gradient(135deg, #A78BFA, #A582F7, #ec4899)' } : {}) }} />
+          <View style={{ margin: 16, borderRadius: 24, overflow: 'hidden', backgroundColor: isDark ? '#161618' : '#fff',
+            ...Platform.select({ ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.1, shadowRadius: 12 }, android: { elevation: 4 }, web: { boxShadow: '0 4px 20px rgba(18, 140, 126,0.1)' } }) }}>
+            <View style={{ height: 100, backgroundColor: '#128C7E', ...(Platform.OS === 'web' ? { background: 'linear-gradient(135deg, #128C7E, #128C7E, #128C7E)' } : {}) }} />
             <View style={{ alignItems: 'center', marginTop: -48 }}>
-              <View style={{ borderWidth: 4, borderColor: isDark ? '#2d1b4e' : '#fff', borderRadius: 52 }}>
+              <View style={{ borderWidth: 4, borderColor: isDark ? '#161618' : '#fff', borderRadius: 52 }}>
                 <AvatarCircle name={name} email={currentEmail} size={96} />
               </View>
             </View>
             <View style={{ alignItems: 'center', padding: 16 }}>
-              <Text style={{ fontSize: 22, fontWeight: '800', color: isDark ? '#e9d5ff' : '#1e1b4b' }}>{name}</Text>
-              <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: isDark ? 'rgba(139,92,246,0.15)' : '#ede9fe', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 }}>
-                <KidsIconShieldUser size={14} color="#A582F7" />
-                <Text style={{ fontSize: 13, fontWeight: '700', color: '#A582F7' }}>Chatyy Kids</Text>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: isDark ? '#F1F3F5' : '#1e1b4b' }}>{name}</Text>
+              <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: isDark ? 'rgba(18, 140, 126,0.15)' : '#F1F3F5', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 }}>
+                <KidsIconShieldUser size={14} color="#128C7E" />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: '#128C7E' }}>Chatyy Kids</Text>
               </View>
             </View>
           </View>
@@ -866,31 +866,31 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
           {/* Parent info */}
           {parentEmail ? (
-            <View style={{ marginHorizontal: 16, marginTop: 12, borderRadius: 20, padding: 16, backgroundColor: isDark ? '#1e1145' : '#fff', flexDirection: 'row', alignItems: 'center', gap: 14,
-              ...Platform.select({ ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 12px rgba(139,92,246,0.06)' } }) }}>
-              <View style={{ width: 40, height: 40, borderRadius: 14, backgroundColor: isDark ? 'rgba(139,92,246,0.15)' : '#ede9fe', alignItems: 'center', justifyContent: 'center' }}>
-                <KidsIconFamily size={20} color="#A582F7" />
+            <View style={{ marginHorizontal: 16, marginTop: 12, borderRadius: 20, padding: 16, backgroundColor: isDark ? '#161618' : '#fff', flexDirection: 'row', alignItems: 'center', gap: 14,
+              ...Platform.select({ ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 12px rgba(18, 140, 126,0.06)' } }) }}>
+              <View style={{ width: 40, height: 40, borderRadius: 14, backgroundColor: isDark ? 'rgba(18, 140, 126,0.15)' : '#F1F3F5', alignItems: 'center', justifyContent: 'center' }}>
+                <KidsIconFamily size={20} color="#128C7E" />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 12, fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Responsavel</Text>
-                <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#e9d5ff' : '#1e1b4b', marginTop: 2 }}>{parentEmail}</Text>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#F1F3F5' : '#1e1b4b', marginTop: 2 }}>{parentEmail}</Text>
               </View>
-              <IconShield size={20} color="#A582F7" />
+              <IconShield size={20} color="#128C7E" />
             </View>
           ) : null}
 
           {/* Restrictions */}
-          <View style={{ marginHorizontal: 16, marginTop: 12, borderRadius: 20, overflow: 'hidden', backgroundColor: isDark ? '#1e1145' : '#fff',
-            ...Platform.select({ ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 12px rgba(139,92,246,0.06)' } }) }}>
+          <View style={{ marginHorizontal: 16, marginTop: 12, borderRadius: 20, overflow: 'hidden', backgroundColor: isDark ? '#161618' : '#fff',
+            ...Platform.select({ ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 12px rgba(18, 140, 126,0.06)' } }) }}>
             <View style={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 8 }}>
               <Text style={{ fontSize: 12, fontWeight: '700', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Permissoes</Text>
             </View>
             {PERM_ITEMS.map((item, idx) => (
               <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: idx > 0 ? 0.5 : 0, borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
-                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(139,92,246,0.12)' : '#f3e8ff', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-                  <item.Icon size={16} color={isDark ? '#a78bfa' : '#A582F7'} />
+                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(18, 140, 126,0.12)' : '#f3e8ff', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                  <item.Icon size={16} color={isDark ? '#128C7E' : '#128C7E'} />
                 </View>
-                <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#e9d5ff' : '#1e1b4b' }}>{item.label}</Text>
+                <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#F1F3F5' : '#1e1b4b' }}>{item.label}</Text>
                 <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: item.allowed ? (isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7') : (isDark ? 'rgba(239,68,68,0.15)' : '#fee2e2'), alignItems: 'center', justifyContent: 'center' }}>
                   {item.allowed ? <KidsIconCheckCircle size={16} color={isDark ? '#34d399' : '#10b981'} /> : <KidsIconXCircle size={16} color={isDark ? '#f87171' : '#ef4444'} />}
                 </View>
@@ -898,24 +898,24 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             ))}
             {restrictions.bedtime_start && (
               <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 0.5, borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
-                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(139,92,246,0.12)' : '#f3e8ff', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-                  <KidsIconMoon size={16} color={isDark ? '#a78bfa' : '#A582F7'} />
+                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(18, 140, 126,0.12)' : '#f3e8ff', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                  <KidsIconMoon size={16} color={isDark ? '#128C7E' : '#128C7E'} />
                 </View>
-                <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#e9d5ff' : '#1e1b4b' }}>Hora de dormir</Text>
-                <Text style={{ fontSize: 13, fontWeight: '600', color: '#A582F7' }}>{restrictions.bedtime_start} - {restrictions.bedtime_end}</Text>
+                <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#F1F3F5' : '#1e1b4b' }}>Hora de dormir</Text>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: '#128C7E' }}>{restrictions.bedtime_start} - {restrictions.bedtime_end}</Text>
               </View>
             )}
           </View>
 
           <View style={{ alignItems: 'center', marginTop: 24 }}>
-            <KidsIconShieldProtected size={28} color={isDark ? '#A78BFA' : '#A582F7'} />
+            <KidsIconShieldProtected size={28} color={isDark ? '#128C7E' : '#128C7E'} />
             <Text style={{ fontSize: 13, color: '#9ca3af', textAlign: 'center', marginTop: 8, fontWeight: '500' }}>Sua conta e protegida pelo seu responsavel</Text>
           </View>
 
           {/* Logout button */}
           <TouchableOpacity
             onPress={handleLogout}
-            style={{ marginHorizontal: 16, marginTop: 20, marginBottom: 40, borderRadius: 20, padding: 16, backgroundColor: isDark ? '#1e1145' : '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+            style={{ marginHorizontal: 16, marginTop: 20, marginBottom: 40, borderRadius: 20, padding: 16, backgroundColor: isDark ? '#161618' : '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
               ...Platform.select({ ios: { shadowColor: '#ef4444', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8 }, android: { elevation: 2 }, web: { boxShadow: '0 2px 8px rgba(239,68,68,0.1)' } })
             }}
             activeOpacity={0.7}
@@ -931,7 +931,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   // ─── Sub-screen header ───
   const SubHeader = ({ title, right }) => (
     <View style={[styles.subHeader, {
-      backgroundColor: isDark ? '#1F2C33' : '#6D28D9',
+      backgroundColor: isDark ? '#1F2C33' : '#128C7E',
       borderBottomWidth: 0,
     }]}>
       <TouchableOpacity onPress={() => setSubScreen(null)} style={styles.subBackBtn} activeOpacity={0.7}>
@@ -1088,7 +1088,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Switch
                 value={settings.read_receipts}
                 onValueChange={(v) => saveSettings({ read_receipts: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(18, 140, 126,0.4)' }}
                 thumbColor={settings.read_receipts ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -1118,7 +1118,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Switch
                 value={!!settings.hd_media_quality}
                 onValueChange={(v) => saveSettings({ hd_media_quality: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(18, 140, 126,0.4)' }}
                 thumbColor={settings.hd_media_quality ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -1135,7 +1135,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   <Switch
                     value={biometricEnabled}
                     onValueChange={toggleBiometric}
-                    trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
+                    trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(18, 140, 126,0.4)' }}
                     thumbColor={biometricEnabled ? ACCENT : isDark ? '#555' : '#ccc'}
                   />
                 </View>
@@ -1150,8 +1150,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               onPress={() => router.push('/bots')}
               activeOpacity={0.7}
             >
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ede9fe' }]}>
-                <IconSparkles size={14} color="#A582F7" />
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.1)' : '#F1F3F5' }]}>
+                <IconSparkles size={14} color="#128C7E" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('bots.title') || 'Bots'}</Text>
               <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
@@ -1190,7 +1190,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               onPress={() => { try { router.push('/linked-devices'); } catch (e) { console.warn('[profile] nav:', e); } }}
               activeOpacity={0.7}
             >
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#EDE9FE' }]}>
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#F1F3F5' }]}>
                 {Platform.OS === 'web'
                   ? <IconDeviceWeb size={16} color="#3B82F6" />
                   : <IconDeviceMobile size={16} color="#3B82F6" />}
@@ -1214,7 +1214,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               onPress={() => setSubScreen('callerid')}
               activeOpacity={0.7}
             >
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(0,122,255,0.1)' : '#EDE9FE' }]}>
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(0,122,255,0.1)' : '#F1F3F5' }]}>
                 <IconPhone size={16} color="#007AFF" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('callerId.title') || 'Verificar Caller ID'}</Text>
@@ -1255,7 +1255,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Switch
                 value={settings.notifications}
                 onValueChange={(v) => saveSettings({ notifications: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(18, 140, 126,0.4)' }}
                 thumbColor={settings.notifications ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -1271,7 +1271,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   <Switch
                     value={settings.notification_sound}
                     onValueChange={(v) => saveSettings({ notification_sound: v })}
-                    trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
+                    trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(18, 140, 126,0.4)' }}
                     thumbColor={settings.notification_sound ? ACCENT : isDark ? '#555' : '#ccc'}
                   />
                 </View>
@@ -1286,7 +1286,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                       <Switch
                         value={settings.notification_vibration}
                         onValueChange={(v) => saveSettings({ notification_vibration: v })}
-                        trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
+                        trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(18, 140, 126,0.4)' }}
                         thumbColor={settings.notification_vibration ? ACCENT : isDark ? '#555' : '#ccc'}
                       />
                     </View>
@@ -1305,7 +1305,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Switch
                 value={settings.notification_groups}
                 onValueChange={(v) => saveSettings({ notification_groups: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(18, 140, 126,0.4)' }}
                 thumbColor={settings.notification_groups ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -1320,7 +1320,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Switch
                 value={settings.notification_calls}
                 onValueChange={(v) => saveSettings({ notification_calls: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(18, 140, 126,0.4)' }}
                 thumbColor={settings.notification_calls ? ACCENT : isDark ? '#555' : '#ccc'}
               />
             </View>
@@ -1341,7 +1341,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     key={s2.val}
                     style={[styles.btnOption, {
                       borderColor: settings.notification_tone === s2.val ? ACCENT : (isDark ? '#374151' : '#d1d5db'),
-                      backgroundColor: settings.notification_tone === s2.val ? (isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5') : 'transparent',
+                      backgroundColor: settings.notification_tone === s2.val ? (isDark ? 'rgba(18, 140, 126,0.1)' : '#ecfdf5') : 'transparent',
                     }]}
                     onPress={() => saveSettings({ notification_tone: s2.val })}
                     activeOpacity={0.7}
@@ -1386,7 +1386,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
   // ─── Wallpaper picker sub-screen ───
   if (subScreen === 'wallpaper') {
     const WALLPAPER_COLORS = [
-      '#6D28D9', '#0C8767', '#E4DCD4', '#008069', '#1B3A2D',
+      '#128C7E', '#0C8767', '#E4DCD4', '#008069', '#1B3A2D',
       '#111B21', '#D5DBDF', '#EFEAE2', '#B3C8D6', '#FFC4C4',
     ];
     const currentWp = settings.wallpaper || 'none';
@@ -1480,7 +1480,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               }}
               activeOpacity={0.7}
             >
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5' }]}>
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.1)' : '#ecfdf5' }]}>
                 <IconUpload size={16} color={ACCENT} />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.wallpaperUpload') || 'Enviar imagem'}</Text>
@@ -1523,7 +1523,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Switch
                 value={isDark}
                 onValueChange={toggleTheme}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(124,58,237,0.4)' }}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(18, 140, 126,0.4)' }}
                 thumbColor={isDark ? ACCENT : '#ccc'}
               />
             </View>
@@ -1585,7 +1585,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
             {/* Wallpaper */}
             <TouchableOpacity style={styles.linkRowModern} onPress={() => setSubScreen('wallpaper')} activeOpacity={0.7}>
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5' }]}>
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.1)' : '#ecfdf5' }]}>
                 <IconImage size={16} color={ACCENT} />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.wallpaper') || 'Papel de parede do chat'}</Text>
@@ -1729,7 +1729,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
     };
 
     const mediaItems = [
-      { label: t?.('config.storageImages') || 'Imagens', size: storageStats?.images || 0, color: '#A78BFA', icon: <IconImage size={16} color="#A78BFA" /> },
+      { label: t?.('config.storageImages') || 'Imagens', size: storageStats?.images || 0, color: '#128C7E', icon: <IconImage size={16} color="#128C7E" /> },
       { label: t?.('config.storageVideos') || 'Videos', size: storageStats?.videos || 0, color: '#ef4444', icon: <IconImage size={16} color="#ef4444" /> },
       { label: t?.('config.storageAudio') || 'Audio', size: storageStats?.audio || 0, color: '#f59e0b', icon: <IconImage size={16} color="#f59e0b" /> },
       { label: t?.('config.storageDocs') || 'Documentos', size: storageStats?.docs || 0, color: '#10b981', icon: <IconFileText size={16} color="#10b981" /> },
@@ -1801,7 +1801,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
           <SectionCard style={{ marginTop: 16 }}>
             <View style={styles.storageInfoModern}>
-              <View style={[styles.storageIconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5' }]}>
+              <View style={[styles.storageIconCircle, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.1)' : '#ecfdf5' }]}>
                 <IconSmartphone size={32} color={ACCENT} />
               </View>
               <Text style={[styles.storageTitle, { color: colors.text }]}>{t?.('config.storageUsage') || 'Uso de armazenamento'}</Text>
@@ -1895,7 +1895,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               }}
               activeOpacity={0.7}
             >
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(108,92,231,0.1)' : '#ede9fe' }]}>
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(108,92,231,0.1)' : '#F1F3F5' }]}>
                 <IconTrash size={16} color="#6C5CE7" />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.clearAudioCache') || 'Limpar cache de audio'}</Text>
@@ -2330,7 +2330,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             {/* Avatar with brand ring + camera overlay */}
             <TouchableOpacity style={styles.avatarContainerModern} onPress={handleAvatarPick} activeOpacity={0.8}>
               <View style={[styles.avatarBrandRing, {
-                borderColor: isDark ? 'rgba(167,139,250,0.55)' : 'rgba(124,58,237,0.45)',
+                borderColor: isDark ? 'rgba(18, 140, 126,0.55)' : 'rgba(18, 140, 126,0.45)',
               }]}>
                 {avatarUrl ? (
                   <ExpoImage source={{ uri: avatarUrl }} style={styles.avatarModern} cachePolicy="memory-disk" transition={200} />
@@ -2341,7 +2341,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <View style={[styles.cameraOverlayModern, Platform.select({
                 ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.35, shadowRadius: 4 },
                 android: { elevation: 4 },
-                web: { boxShadow: '0 2px 8px rgba(124,58,237,0.35)' },
+                web: { boxShadow: '0 2px 8px rgba(18, 140, 126,0.35)' },
               })]}>
                 <IconCamera size={15} color="#fff" />
               </View>
@@ -2425,7 +2425,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   activeOpacity={0.7}
                   style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}
                 >
-                  <Text style={{ fontSize: 14, color: profile?.username ? (isDark ? '#a78bfa' : ACCENT) : (isDark ? '#374151' : '#d1d5db'), fontWeight: profile?.username ? '600' : '400' }}>
+                  <Text style={{ fontSize: 14, color: profile?.username ? (isDark ? '#128C7E' : ACCENT) : (isDark ? '#374151' : '#d1d5db'), fontWeight: profile?.username ? '600' : '400' }}>
                     {profile?.username ? `@${profile.username}` : (t?.('profile.usernameAdd') || 'Add username')}
                   </Text>
                   <IconEdit size={12} color={isDark ? '#374151' : '#d1d5db'} style={{ marginLeft: 6 }} />
@@ -2498,7 +2498,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 ...Platform.select({
                   ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 6 },
                   android: { elevation: 2 },
-                  web: { boxShadow: '0 2px 8px rgba(124,58,237,0.25)' },
+                  web: { boxShadow: '0 2px 8px rgba(18, 140, 126,0.25)' },
                 }),
               }}
             >
@@ -2534,7 +2534,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         {/* Phone Number */}
         <SectionCard style={{ marginTop: 10 }}>
           <View style={styles.phoneRowModern}>
-            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5' }]}>
+            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.1)' : '#ecfdf5' }]}>
               <IconPhone size={16} color={ACCENT} />
             </View>
             <View style={{ flex: 1 }}>
@@ -2546,7 +2546,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                   {phone || (t?.('config.noPhone') || 'Nenhum telefone verificado')}
                 </Text>
                 {phone ? (
-                  <View style={[styles.verifiedBadge, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5' }]}>
+                  <View style={[styles.verifiedBadge, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.1)' : '#ecfdf5' }]}>
                     <IconCheck size={10} color={ACCENT} />
                     <Text style={styles.verifiedText}>
                       {t?.('profile.verified') || 'Verificado'}
@@ -2571,19 +2571,19 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               style={{
                 marginHorizontal: 12, marginTop: 10, padding: 16, borderRadius: 18,
                 backgroundColor: callerVerified
-                  ? (isDark ? 'rgba(124,58,237,0.08)' : '#ecfdf5')
+                  ? (isDark ? 'rgba(18, 140, 126,0.08)' : '#ecfdf5')
                   : (isDark ? 'rgba(99,102,241,0.10)' : '#eef2ff'),
                 borderWidth: 1,
                 borderColor: callerVerified
-                  ? (isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.25)')
+                  ? (isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.25)')
                   : (isDark ? 'rgba(99,102,241,0.20)' : 'rgba(99,102,241,0.25)'),
                 flexDirection: 'row', alignItems: 'center', gap: 14,
-                ...(Platform.OS === 'web' ? { boxShadow: callerVerified ? '0 2px 12px rgba(124,58,237,0.10)' : '0 2px 12px rgba(99,102,241,0.10)' } : {}),
+                ...(Platform.OS === 'web' ? { boxShadow: callerVerified ? '0 2px 12px rgba(18, 140, 126,0.10)' : '0 2px 12px rgba(99,102,241,0.10)' } : {}),
               }}
             >
               <View style={{
                 width: 46, height: 46, borderRadius: 14,
-                backgroundColor: callerVerified ? '#22c55e' : '#A78BFA',
+                backgroundColor: callerVerified ? '#22c55e' : '#128C7E',
                 alignItems: 'center', justifyContent: 'center',
               }}>
                 {callerVerified ? <IconCheck size={22} color="#fff" /> : <IconPhone size={22} color="#fff" />}
@@ -2608,11 +2608,11 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         {/* Account & Privacy Section */}
         <SectionLabel label={t?.('config.account') || 'CONTA'} />
         <SectionCard>
-          <SettingItem icon={<IconKey size={18} color="#A78BFA" />} iconBg={isDark ? 'rgba(59,130,246,0.1)' : '#EDE9FE'}
+          <SettingItem icon={<IconKey size={18} color="#128C7E" />} iconBg={isDark ? 'rgba(59,130,246,0.1)' : '#F1F3F5'}
             title={t?.('config.account') || 'Conta'}
             subtitle={t?.('config.accountDesc') || 'Seguranca, alterar senha, excluir conta'}
             colors={colors} isDark={isDark} onPress={() => setSubScreen('account')} />
-          <SettingItem icon={<IconLock size={18} color="#A582F7" />} iconBg={isDark ? 'rgba(139,92,246,0.1)' : '#ede9fe'}
+          <SettingItem icon={<IconLock size={18} color="#128C7E" />} iconBg={isDark ? 'rgba(18, 140, 126,0.1)' : '#F1F3F5'}
             title={t?.('config.privacy') || 'Privacidade'}
             subtitle={t?.('config.privacyDesc') || 'Visto por ultimo, foto de perfil, recado'}
             colors={colors} isDark={isDark} onPress={() => setSubScreen('privacy')} />
@@ -2651,8 +2651,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         {/* Invite Friends - prominent card */}
         <TouchableOpacity
           style={[styles.inviteCard, {
-            backgroundColor: isDark ? 'rgba(124,58,237,0.06)' : '#f0fdf4',
-            borderColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.2)',
+            backgroundColor: isDark ? 'rgba(18, 140, 126,0.06)' : '#f0fdf4',
+            borderColor: isDark ? 'rgba(18, 140, 126,0.15)' : 'rgba(18, 140, 126,0.2)',
           }, smallShadow(isDark)]}
           onPress={handleInvite}
           activeOpacity={0.8}
@@ -2660,7 +2660,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
           <View style={[styles.inviteIconWrap, { backgroundColor: ACCENT }, Platform.select({
             ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 6 },
             android: { elevation: 3 },
-            web: { boxShadow: '0 2px 10px rgba(124,58,237,0.3)' },
+            web: { boxShadow: '0 2px 10px rgba(18, 140, 126,0.3)' },
           })]}>
             <IconHeart size={18} color="#fff" />
           </View>
@@ -2679,7 +2679,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             style={[styles.backupRow, { opacity: backupRunning ? 0.7 : 1 }]}
             activeOpacity={0.7}
           >
-            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : '#ecfdf5' }]}>
+            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.1)' : '#ecfdf5' }]}>
               {backupRunning ? (
                 <ActivityIndicator size="small" color={ACCENT} />
               ) : backupResult?.success ? (
@@ -2727,11 +2727,11 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             style={[styles.backupRow, { opacity: restoreRunning ? 0.7 : 1 }]}
             activeOpacity={0.7}
           >
-            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#F5F3FF' }]}>
+            <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#F1F3F5' }]}>
               {restoreRunning ? (
-                <ActivityIndicator size="small" color="#A78BFA" />
+                <ActivityIndicator size="small" color="#128C7E" />
               ) : (
-                <IconDownload size={18} color="#A78BFA" />
+                <IconDownload size={18} color="#128C7E" />
               )}
             </View>
             <View style={{ flex: 1 }}>
@@ -2809,8 +2809,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                           disabled={restoreRunning}
                           activeOpacity={0.7}
                         >
-                          <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#F5F3FF' }]}>
-                            <IconFileText size={18} color="#A78BFA" />
+                          <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#F1F3F5' }]}>
+                            <IconFileText size={18} color="#128C7E" />
                           </View>
                           <View style={{ flex: 1 }}>
                             <Text style={{ color: colors.text, fontSize: 15, fontWeight: '500' }}>{dateStr}</Text>
@@ -3086,7 +3086,7 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.25, shadowRadius: 6 },
       android: { elevation: 3 },
-      web: { boxShadow: '0 2px 10px rgba(124,58,237,0.25)' },
+      web: { boxShadow: '0 2px 10px rgba(18, 140, 126,0.25)' },
     }),
   },
   appLogoText: { fontSize: 24, fontWeight: '900', color: '#fff' },
@@ -3104,7 +3104,7 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 6 },
       android: { elevation: 3 },
-      web: { boxShadow: '0 2px 10px rgba(124,58,237,0.3)' },
+      web: { boxShadow: '0 2px 10px rgba(18, 140, 126,0.3)' },
     }),
   },
 

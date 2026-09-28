@@ -18,7 +18,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { BASE_URL, getAuthHeaders } from '../services/api';
 import { IconArrowLeft, IconTrash, IconSparkles } from '../components/Icons';
 
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 
 function safeAlert(title, message, buttons) {
   if (Platform.OS === 'web') {
@@ -42,7 +42,7 @@ function EmptyOrb({ isDark }) {
       <Svg width={96} height={96} viewBox="0 0 96 96">
         <Defs>
           <RadialGradient id="memOrb" cx="50%" cy="45%" r="55%">
-            <Stop offset="0%" stopColor="#A78BFA" stopOpacity={isDark ? 0.7 : 0.55} />
+            <Stop offset="0%" stopColor="#128C7E" stopOpacity={isDark ? 0.7 : 0.55} />
             <Stop offset="60%" stopColor={ACCENT} stopOpacity={0.32} />
             <Stop offset="100%" stopColor={ACCENT} stopOpacity={0} />
           </RadialGradient>

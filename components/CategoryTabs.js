@@ -5,13 +5,13 @@ import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconInbox, IconUsers, IconTag, IconBell, IconMail, IconMailOpen, IconStarFilled } from './Icons';
 
 const CATEGORIES = [
-  { key: 'all', i18nKey: 'category.all', icon: IconMail, color: '#A78BFA' },
+  { key: 'all', i18nKey: 'category.all', icon: IconMail, color: '#128C7E' },
   { key: 'unread', i18nKey: 'category.unread', icon: IconMailOpen, color: '#f43f5e' },
   // "Importantes" — driven by the AI importance classifier (level === 'high')
   // OR a flagged message. Sits second so users see prioritized work first.
   { key: 'important', i18nKey: 'inbox.tabImportant', icon: IconStarFilled, color: '#f59e0b' },
-  { key: 'primary', i18nKey: 'category.primary', icon: IconInbox, color: '#A582F7' },
-  { key: 'social', i18nKey: 'category.social', icon: IconUsers, color: '#A582F7' },
+  { key: 'primary', i18nKey: 'category.primary', icon: IconInbox, color: '#128C7E' },
+  { key: 'social', i18nKey: 'category.social', icon: IconUsers, color: '#128C7E' },
   { key: 'promotions', i18nKey: 'category.promotions', icon: IconTag, color: '#10b981' },
   { key: 'updates', i18nKey: 'category.updates', icon: IconBell, color: '#3b82f6' },
 ];
@@ -22,7 +22,7 @@ const BUNDLE_COLORS = {
   compras: '#0ea5e9',
   viagens: '#06b6d4',
   financas: '#16a34a',
-  foruns: '#a855f7',
+  foruns: '#128C7E',
   notificacoes: '#3b82f6',
 };
 function defaultBundleIcon() { return IconTag; }

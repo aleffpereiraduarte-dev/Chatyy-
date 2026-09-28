@@ -28,7 +28,7 @@ import formatLiveChatContent from '../../utils/formatLiveChatContent';
 
 // Tier accent — matches the rest of the live UI brand palette.
 const LIVE_RED = '#dc2626';
-const TIER_HOST = '#A582F7';     // purple chip behind host name
+const TIER_HOST = '#128C7E';     // purple chip behind host name
 const TIER_GIFT = '#fbbf24';     // gold chip for paying viewers
 const TIER_GUEST = '#22d3ee';    // cyan for co-host (post-approval)
 const TIER_DEFAULT = 'rgba(255,255,255,0.16)';
@@ -368,9 +368,9 @@ const styles = StyleSheet.create({
     paddingLeft: 4,
     paddingRight: 11,
     paddingVertical: 3,
-    backgroundColor: 'rgba(124,58,237,0.35)',
+    backgroundColor: 'rgba(18, 140, 126,0.35)',
     borderWidth: 1,
-    borderColor: 'rgba(196,181,253,0.45)',
+    borderColor: 'rgba(18, 140, 126,0.45)',
     borderRadius: 14,
   },
   systemAvatarWrap: {

@@ -8,7 +8,7 @@ function getBackgrounds(t) {
     { key: 'blur', label: t('virtualBg.blur'), icon: '\uD83D\uDCA7', type: 'blur' },
     { key: 'blur-light', label: t('virtualBg.blurLight'), icon: '\u2600\uFE0F', type: 'blur-light' },
     { key: 'gradient-ocean', label: t('virtualBg.ocean'), icon: '\uD83C\uDF0A', type: 'gradient', value: 'ocean', colors: ['#0077b6', '#00b4d8', '#90e0ef'] },
-    { key: 'gradient-sunset', label: t('virtualBg.sunset'), icon: '\uD83C\uDF07', type: 'gradient', value: 'sunset', colors: ['#ff6b35', '#c2185b', '#4a148c'] },
+    { key: 'gradient-sunset', label: t('virtualBg.sunset'), icon: '\uD83C\uDF07', type: 'gradient', value: 'sunset', colors: ['#ff6b35', '#c2185b', '#161618'] },
     { key: 'gradient-forest', label: t('virtualBg.forest'), icon: '\uD83C\uDF33', type: 'gradient', value: 'forest', colors: ['#1b5e20', '#2e7d32', '#4caf50'] },
     { key: 'gradient-space', label: t('virtualBg.space'), icon: '\uD83C\uDF0C', type: 'gradient', value: 'space', colors: ['#000000', '#1a237e', '#0d0d2b'] },
     { key: 'gradient-aurora', label: t('virtualBg.aurora'), icon: '\u2728', type: 'gradient', value: 'aurora', colors: ['#0f0c29', '#302b63', '#92fe9d'] },
@@ -124,7 +124,7 @@ const s = StyleSheet.create({
     overflow: 'hidden',
   },
   optionActive: {
-    borderColor: '#A78BFA',
+    borderColor: '#128C7E',
     backgroundColor: 'rgba(59,130,246,0.15)',
   },
   optionIcon: {
@@ -134,12 +134,12 @@ const s = StyleSheet.create({
     color: '#cbd5e1', fontSize: 11, fontWeight: '600',
   },
   optionLabelActive: {
-    color: '#A78BFA',
+    color: '#128C7E',
   },
   checkmark: {
     position: 'absolute', top: 4, right: 4,
     width: 18, height: 18, borderRadius: 9,
-    backgroundColor: '#A78BFA',
+    backgroundColor: '#128C7E',
     alignItems: 'center', justifyContent: 'center',
   },
   checkmarkText: {

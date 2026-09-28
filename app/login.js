@@ -1623,7 +1623,7 @@ export default function LoginScreen() {
         <View style={{
           position: 'absolute',
           width: 600, height: 600, borderRadius: 300,
-          backgroundColor: 'rgba(124,58,237,0.10)',
+          backgroundColor: 'rgba(18, 140, 126,0.10)',
           left: '50%', top: '50%',
           marginLeft: -300, marginTop: -300,
         }} />
@@ -1636,7 +1636,7 @@ export default function LoginScreen() {
             position: 'absolute',
             width: 260, height: 260, borderRadius: 130,
             top: -60, right: -60,
-            backgroundColor: 'rgba(124,58,237,0.16)',
+            backgroundColor: 'rgba(18, 140, 126,0.16)',
             transform: [{ translateX: orb1Anim.x }, { translateY: orb1Anim.y }],
           }}
         />
@@ -1647,7 +1647,7 @@ export default function LoginScreen() {
             position: 'absolute',
             width: 320, height: 320, borderRadius: 160,
             bottom: -80, left: -80,
-            backgroundColor: 'rgba(167,139,250,0.14)',
+            backgroundColor: 'rgba(18, 140, 126,0.14)',
             transform: [{ translateX: orb2Anim.x }, { translateY: orb2Anim.y }],
           }}
         />
@@ -1709,7 +1709,7 @@ export default function LoginScreen() {
               <View style={[s.card, isDesktop ? {
                 backgroundColor: colors.authCardBg,
                 borderWidth: 1,
-                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(124,58,237,0.08)',
+                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(18, 140, 126,0.08)',
                 borderRadius: 24,
                 paddingTop: 44, paddingBottom: 36,
                 paddingHorizontal: Platform.OS === 'web' ? 48 : 24,
@@ -1718,7 +1718,7 @@ export default function LoginScreen() {
                   // a wide diffuse one for the "floating" depth Telegram Web has.
                   boxShadow: isDark
                     ? '0 2px 8px rgba(0,0,0,0.30), 0 18px 60px rgba(0,0,0,0.40)'
-                    : '0 1px 2px rgba(60,64,67,0.06), 0 6px 20px rgba(124,58,237,0.07), 0 24px 64px rgba(60,64,67,0.10)',
+                    : '0 1px 2px rgba(60,64,67,0.06), 0 6px 20px rgba(18, 140, 126,0.07), 0 24px 64px rgba(60,64,67,0.10)',
                 } : {
                   shadowColor: colors.primary,
                   shadowOffset: { width: 0, height: 6 },
@@ -1804,7 +1804,7 @@ export default function LoginScreen() {
                         ...(Platform.OS === 'web' ? {
                           // Degradê diagonal → esfera com profundidade (WhatsApp-grade).
                           backgroundImage: `linear-gradient(145deg, ${colors.authBtnGradientStart} 0%, ${colors.authBtnGradientStart} 48%, ${colors.authBtnGradientEnd} 100%)`,
-                          boxShadow: '0 16px 40px rgba(124,58,237,0.48), inset 0 1px 0 rgba(255,255,255,0.28)',
+                          boxShadow: '0 16px 40px rgba(18, 140, 126,0.48), inset 0 1px 0 rgba(255,255,255,0.28)',
                         } : Platform.select({
                           ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.45, shadowRadius: 16 },
                           android: { elevation: 10 },
@@ -1852,7 +1852,7 @@ export default function LoginScreen() {
                           WebkitBackgroundClip: 'text',
                           WebkitTextFillColor: 'transparent',
                           backgroundClip: 'text',
-                          textShadow: '0 4px 18px rgba(124,58,237,0.32)',
+                          textShadow: '0 4px 18px rgba(18, 140, 126,0.32)',
                         } : Platform.select({
                           ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 10 },
                           android: {},
@@ -2114,7 +2114,7 @@ export default function LoginScreen() {
                                   // fica cinza chapado de propósito (não "quase pronto").
                                   ...(!_disabled ? (Platform.OS === 'web' ? {
                                     backgroundImage: `linear-gradient(135deg, ${colors.authBtnGradientStart} 0%, ${colors.authBtnGradientEnd} 100%)`,
-                                    boxShadow: '0 8px 22px rgba(124,58,237,0.34), 0 2px 6px rgba(124,58,237,0.18)',
+                                    boxShadow: '0 8px 22px rgba(18, 140, 126,0.34), 0 2px 6px rgba(18, 140, 126,0.18)',
                                   } : Platform.select({
                                     ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
                                     android: { elevation: 6 },
@@ -2382,7 +2382,7 @@ export default function LoginScreen() {
                           <View style={{
                             width: 24, height: 24, borderRadius: 12, marginTop: 1,
                             alignItems: 'center', justifyContent: 'center',
-                            backgroundColor: isDark ? 'rgba(124,58,237,0.20)' : 'rgba(124,58,237,0.10)',
+                            backgroundColor: isDark ? 'rgba(18, 140, 126,0.20)' : 'rgba(18, 140, 126,0.10)',
                           }}>
                             <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>{n}</Text>
                           </View>
@@ -2407,8 +2407,8 @@ export default function LoginScreen() {
                       {qrStatus === 'confirmed' && (
                         <View style={{
                           width: frameSize, height: frameSize, borderRadius: 20,
-                          borderWidth: 1, borderColor: isDark ? 'rgba(124,58,237,0.30)' : 'rgba(124,58,237,0.18)',
-                          backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.05)',
+                          borderWidth: 1, borderColor: isDark ? 'rgba(18, 140, 126,0.30)' : 'rgba(18, 140, 126,0.18)',
+                          backgroundColor: isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.05)',
                           alignItems: 'center', justifyContent: 'center', marginBottom: 22, padding: 24,
                         }}>
                           <Text style={[s.qrConnectedText, { color: colors.primary, textAlign: 'center' }]}>
@@ -2518,7 +2518,7 @@ export default function LoginScreen() {
                         {Platform.OS !== 'web' && (
                           <Animated.View pointerEvents="none" style={{
                             position: 'absolute', top: -4, left: -4, right: -4, bottom: -4,
-                            borderRadius: 14, backgroundColor: 'rgba(124,58,237,0.18)',
+                            borderRadius: 14, backgroundColor: 'rgba(18, 140, 126,0.18)',
                             opacity: emailRingAnim, zIndex: -1,
                           }} />
                         )}
@@ -2530,7 +2530,7 @@ export default function LoginScreen() {
                               : (colors.authInputBorder),
                             color: colors.text,
                             ...(Platform.OS === 'web' && focused === 'email'
-                              ? { boxShadow: '0 0 0 4px rgba(124,58,237,0.18)' }
+                              ? { boxShadow: '0 0 0 4px rgba(18, 140, 126,0.18)' }
                               : {}),
                           }]}
                           value={email}
@@ -2587,7 +2587,7 @@ export default function LoginScreen() {
                             backgroundColor: colors.primary,
                             opacity: !email.trim() ? 0.3 : 1,
                             ...(Platform.OS === 'web' && pressed && email.trim() ? {
-                              boxShadow: '0 8px 24px -8px rgba(124,58,237,0.6)',
+                              boxShadow: '0 8px 24px -8px rgba(18, 140, 126,0.6)',
                             } : {}),
                           }]}
                           onPress={handleContinue}
@@ -2712,7 +2712,7 @@ export default function LoginScreen() {
                         {Platform.OS !== 'web' && (
                           <Animated.View pointerEvents="none" style={{
                             position: 'absolute', top: -4, left: -4, right: -4, bottom: -4,
-                            borderRadius: 14, backgroundColor: 'rgba(124,58,237,0.18)',
+                            borderRadius: 14, backgroundColor: 'rgba(18, 140, 126,0.18)',
                             opacity: passRingAnim, zIndex: -1,
                           }} />
                         )}
@@ -2726,7 +2726,7 @@ export default function LoginScreen() {
                             color: colors.text,
                             paddingRight: 44,
                             ...(Platform.OS === 'web' && focused === 'pass'
-                              ? { boxShadow: '0 0 0 4px rgba(124,58,237,0.18)' }
+                              ? { boxShadow: '0 0 0 4px rgba(18, 140, 126,0.18)' }
                               : {}),
                           }]}
                           value={password}
@@ -2772,7 +2772,7 @@ export default function LoginScreen() {
                             backgroundColor: colors.primary,
                             opacity: (loading || !password) ? 0.3 : 1,
                             ...(Platform.OS === 'web' && pressed && password && !loading ? {
-                              boxShadow: '0 8px 24px -8px rgba(124,58,237,0.6)',
+                              boxShadow: '0 8px 24px -8px rgba(18, 140, 126,0.6)',
                             } : {}),
                           }]}
                           onPress={handleLogin}
@@ -3391,10 +3391,10 @@ const s = StyleSheet.create({
     ...Platform.select({
       web: {
         cursor: 'pointer',
-        boxShadow: '0 8px 22px rgba(124,58,237,0.35), 0 2px 6px rgba(124,58,237,0.20)',
+        boxShadow: '0 8px 22px rgba(18, 140, 126,0.35), 0 2px 6px rgba(18, 140, 126,0.20)',
         transition: 'transform 140ms ease, box-shadow 140ms ease',
       },
-      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 14 },
+      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.35, shadowRadius: 14 },
       android: { elevation: 6 },
     }),
   },

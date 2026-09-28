@@ -69,9 +69,9 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-const ACCENT = '#A582F7';
-const ACCENT2 = '#6D28D9';
-const ACCENT_GLOW = 'rgba(124,58,237,0.35)';
+const ACCENT = '#128C7E';
+const ACCENT2 = '#128C7E';
+const ACCENT_GLOW = 'rgba(18, 140, 126,0.35)';
 const SWIPE_THRESHOLD = 40; // lowered from 60 for better responsiveness
 // Must match the `.swipeActionsLeft/.swipeActionsRight` width below (160)
 // so the row opens EXACTLY flush with the action buttons — otherwise the
@@ -260,7 +260,7 @@ function TypingDotsInline({ color }) {
       {dots.map((d, i) => (
         <Animated.View key={i} style={{
           width: 6, height: 6, borderRadius: 3,
-          backgroundColor: color || '#A582F7',
+          backgroundColor: color || '#128C7E',
           opacity: d.opacity,
           transform: [{ scale: d.scale }],
         }} />
@@ -796,7 +796,7 @@ const ConversationRow = React.memo(function ConversationRow({
   // ── Status checkmarks (WhatsApp parity: blue on read, gray on delivered/sent) ──
   // [2026-05-21] User explicit request: "quando ver fica azul" — matches
   // the thread's own AnimatedCheckStatus (#53BDEB). Was Chatyy brand purple
-  // (#A582F7) but the user expects WhatsApp blue.
+  // (#128C7E) but the user expects WhatsApp blue.
   // Now delegates to ListReceiptIcon, which crossfades gray→blue + pulses on
   // delivered→read instead of hard-swapping the icons (keyed by statusType).
   const renderStatusIcon = () => {
@@ -825,11 +825,11 @@ const ConversationRow = React.memo(function ConversationRow({
     // [beauty 2026-05-31] Web hover is a very light BRAND tint (hovered is only
     // ever set on web via onMouseEnter — mobile never flips it), so the cursor
     // leaves a subtle purple wash instead of a flat grey. Tasteful, low alpha.
-    ? (isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.05)')
+    ? (isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.05)')
     : (unread && !isMuted)
-      ? (isDark ? 'rgba(124,58,237,0.07)' : 'rgba(124,58,237,0.045)')
+      ? (isDark ? 'rgba(18, 140, 126,0.07)' : 'rgba(18, 140, 126,0.045)')
       : isPinned
-        ? (isDark ? 'rgba(124,58,237,0.04)' : 'rgba(124,58,237,0.03)')
+        ? (isDark ? 'rgba(18, 140, 126,0.04)' : 'rgba(18, 140, 126,0.03)')
         : colors.background;
 
   // Native swipe row content
@@ -838,7 +838,7 @@ const ConversationRow = React.memo(function ConversationRow({
           style={[
             s.row,
             {
-              backgroundColor: isSelected ? (isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.08)') : rowBg,
+              backgroundColor: isSelected ? (isDark ? 'rgba(18, 140, 126,0.12)' : 'rgba(18, 140, 126,0.08)') : rowBg,
               ...(isWeb ? { transition: 'background-color 0.2s ease' } : {}),
             },
           ]}
@@ -911,10 +911,10 @@ const ConversationRow = React.memo(function ConversationRow({
                 // pill already de-emphasizes to grey). Web uses a real conic-ish
                 // glow; native falls back to a colored shadow that reads as a ring.
                 (unread && !isMuted) && (isWeb
-                  ? { borderRadius: 28, boxShadow: `0 0 0 2px rgba(124,58,237,0.55), 0 2px 10px rgba(124,58,237,0.3)` }
+                  ? { borderRadius: 28, boxShadow: `0 0 0 2px rgba(18, 140, 126,0.55), 0 2px 10px rgba(18, 140, 126,0.3)` }
                   : {
                       borderRadius: 28,
-                      shadowColor: '#A582F7',
+                      shadowColor: '#128C7E',
                       shadowOffset: { width: 0, height: 0 },
                       shadowOpacity: 0.55,
                       shadowRadius: 5,
@@ -945,12 +945,12 @@ const ConversationRow = React.memo(function ConversationRow({
             {noteText ? (
               <View style={{
                 position: 'absolute', top: -6, left: -4, right: -4,
-                backgroundColor: isDark ? '#2d1b69' : '#ede9fe',
+                backgroundColor: isDark ? '#161618' : '#F1F3F5',
                 borderRadius: 10, paddingHorizontal: 5, paddingVertical: 2,
-                borderWidth: 1, borderColor: isDark ? '#A582F7' : '#c4b5fd',
+                borderWidth: 1, borderColor: isDark ? '#128C7E' : '#F1F3F5',
                 zIndex: 5, alignItems: 'center',
               }}>
-                <Text style={{ fontSize: 8, color: isDark ? '#c4b5fd' : '#6d28d9', fontWeight: '700' }} numberOfLines={1}>
+                <Text style={{ fontSize: 8, color: isDark ? '#F1F3F5' : '#128C7E', fontWeight: '700' }} numberOfLines={1}>
                   {noteText}
                 </Text>
               </View>
@@ -1162,7 +1162,7 @@ const ConversationRow = React.memo(function ConversationRow({
   return (
     <View style={s.swipeContainer}>
       <Animated.View style={[s.swipeActionsLeft, { opacity: leftOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#A582F7' }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#128C7E' }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
           <IconVolume2 size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{t('chat.mute') || 'Mute'}</Text>
         </TouchableOpacity>
@@ -1281,8 +1281,8 @@ function EmptyBubbles({ isDark }) {
         backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
       }]}>
         <View style={{ flexDirection: 'row', gap: 4, padding: 10, alignItems: 'center' }}>
-          <View style={{ width: 40, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(124,58,237,0.3)' : 'rgba(124,58,237,0.25)' }} />
-          <View style={{ width: 24, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(124,58,237,0.2)' : 'rgba(124,58,237,0.15)' }} />
+          <View style={{ width: 40, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(18, 140, 126,0.3)' : 'rgba(18, 140, 126,0.25)' }} />
+          <View style={{ width: 24, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(18, 140, 126,0.2)' : 'rgba(18, 140, 126,0.15)' }} />
         </View>
       </Animated.View>
 
@@ -1294,8 +1294,8 @@ function EmptyBubbles({ isDark }) {
         backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.035)',
       }]}>
         <View style={{ flexDirection: 'row', gap: 4, padding: 10, alignItems: 'center' }}>
-          <View style={{ width: 50, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(167,139,250,0.3)' : 'rgba(167,139,250,0.25)' }} />
-          <View style={{ width: 30, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(167,139,250,0.2)' : 'rgba(167,139,250,0.15)' }} />
+          <View style={{ width: 50, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(18, 140, 126,0.3)' : 'rgba(18, 140, 126,0.25)' }} />
+          <View style={{ width: 30, height: 6, borderRadius: 3, backgroundColor: isDark ? 'rgba(18, 140, 126,0.2)' : 'rgba(18, 140, 126,0.15)' }} />
         </View>
       </Animated.View>
 
@@ -1307,7 +1307,7 @@ function EmptyBubbles({ isDark }) {
         backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
       }]}>
         <View style={{ flexDirection: 'row', gap: 3, padding: 10, alignItems: 'center' }}>
-          <View style={{ width: 28, height: 5, borderRadius: 2.5, backgroundColor: isDark ? 'rgba(124,58,237,0.25)' : 'rgba(124,58,237,0.2)' }} />
+          <View style={{ width: 28, height: 5, borderRadius: 2.5, backgroundColor: isDark ? 'rgba(18, 140, 126,0.25)' : 'rgba(18, 140, 126,0.2)' }} />
         </View>
       </Animated.View>
     </Animated.View>
@@ -2134,7 +2134,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                 <Text style={{ color: colors.text, fontWeight: '600' }}>{t('common.cancel') || 'Cancelar'}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={saveNote} disabled={savingNote || !noteText.trim()}
-                style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#A582F7', alignItems: 'center', opacity: (!noteText.trim() || savingNote) ? 0.5 : 1 }}>
+                style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#128C7E', alignItems: 'center', opacity: (!noteText.trim() || savingNote) ? 0.5 : 1 }}>
                 <Text style={{ color: '#fff', fontWeight: '700' }}>{savingNote ? '...' : (t('common.save') || 'Salvar')}</Text>
               </TouchableOpacity>
             </View>
@@ -2152,7 +2152,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               {t('status.createStatus') || 'Criar status'}
             </Text>
             {[
-              { key:'text',   icon:'T',  color:'#A582F7', label: t('status.typeText')  || 'Texto' },
+              { key:'text',   icon:'T',  color:'#128C7E', label: t('status.typeText')  || 'Texto' },
               { key:'camera', icon:'📷', color:'#10B981', label: t('status.typeCamera') || 'Câmera' },
             ].map(opt => (
               <TouchableOpacity
@@ -2603,7 +2603,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                   safeAlert(t('common.error') || 'Erro', t('status.publishFailed') || 'Não foi possível publicar o status.');
                 } finally { setStatusPublishing(false); setStatusUploadPct(0); }
               }}
-              style={{ width:54, height:54, borderRadius:27, backgroundColor:'#A582F7', alignItems:'center', justifyContent:'center', opacity: statusPublishing ? 0.6 : 1 }}
+              style={{ width:54, height:54, borderRadius:27, backgroundColor:'#128C7E', alignItems:'center', justifyContent:'center', opacity: statusPublishing ? 0.6 : 1 }}
             >
               {statusPublishing ? <ActivityIndicator color="#fff" /> : <Text style={{ color:'#fff', fontSize:22, fontWeight:'700' }}>→</Text>}
             </TouchableOpacity>
@@ -2629,7 +2629,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                   pct={statusUploadPct || 0}
                   size={120}
                   strokeWidth={4}
-                  color="#A582F7"
+                  color="#128C7E"
                   inset={5}
                   style={{ position: 'absolute' }}
                 />
@@ -5461,10 +5461,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           <View style={[
             s.chipBadge,
             {
-              backgroundColor: active ? 'rgba(255,255,255,0.28)' : (isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.12)'),
+              backgroundColor: active ? 'rgba(255,255,255,0.28)' : (isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.12)'),
             },
           ]}>
-            <Text style={[s.chipBadgeText, { color: active ? '#fff' : '#A582F7' }]}>{count > 99 ? '99+' : count}</Text>
+            <Text style={[s.chipBadgeText, { color: active ? '#fff' : '#128C7E' }]}>{count > 99 ? '99+' : count}</Text>
           </View>
         ) : null}
       </TouchableOpacity>
@@ -5610,7 +5610,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               {pinnedEditMode && !pinnedHintSeen ? (
                 <Text
                   numberOfLines={1}
-                  style={{ fontSize: 11, fontWeight: '600', color: isDark ? 'rgba(255,255,255,0.7)' : '#A582F7', flexShrink: 1 }}
+                  style={{ fontSize: 11, fontWeight: '600', color: isDark ? 'rgba(255,255,255,0.7)' : '#128C7E', flexShrink: 1 }}
                 >
                   {t?.('chat.tapToResize') || 'Toque pra mudar tamanho'}
                 </Text>
@@ -5636,7 +5636,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                   width: 32, height: 32, borderRadius: 16,
                   alignItems: 'center', justifyContent: 'center',
                   backgroundColor: pressed
-                    ? (isDark ? 'rgba(124,58,237,0.32)' : 'rgba(124,58,237,0.20)')
+                    ? (isDark ? 'rgba(18, 140, 126,0.32)' : 'rgba(18, 140, 126,0.20)')
                     : 'transparent',
                   ...(Platform.OS === 'web' ? { cursor: 'pointer', userSelect: 'none' } : {}),
                 })}
@@ -5647,7 +5647,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 <Svg width={18} height={18} viewBox="0 0 24 24" fill="none">
                   <Path
                     d="M16.475 5.408l2.117 2.117M14.69 7.193l-9.39 9.39a1.5 1.5 0 00-.421.815l-.5 2.5a.5.5 0 00.59.59l2.5-.5a1.5 1.5 0 00.815-.42l9.39-9.39M14.69 7.193l1.785-1.785a1.5 1.5 0 012.117 0l0 0a1.5 1.5 0 010 2.117l-1.785 1.785M14.69 7.193l2.117 2.117"
-                    stroke={isDark ? '#A78BFA' : '#A582F7'}
+                    stroke={isDark ? '#128C7E' : '#128C7E'}
                     strokeWidth={1.8}
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -5665,7 +5665,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 style={{
                   paddingHorizontal: 14, height: 32, borderRadius: 16,
                   flexDirection: 'row', alignItems: 'center', gap: 6,
-                  backgroundColor: '#A582F7',
+                  backgroundColor: '#128C7E',
                   ...(Platform.OS === 'web' ? { cursor: 'pointer', userSelect: 'none' } : {}),
                 }}
                 accessibilityLabel={t?.('common.done') || 'Concluir'}
@@ -5822,7 +5822,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                         <View style={{
                           position: 'absolute', left: 0, top: 0,
                           width: itemSizePx, height: itemSizePx, borderRadius: itemSizePx / 2,
-                          borderWidth: 3, borderColor: '#A582F7',
+                          borderWidth: 3, borderColor: '#128C7E',
                         }} />
                       )}
                     </View>
@@ -5858,8 +5858,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             esfumado blob — this is a thin-stroke SVG sized to match the caps).
             Tinted brand purple so the PINNED group feels like a first-class
             section, WhatsApp/Telegram-style. */}
-        <IconPin size={11} color={isDark ? '#A78BFA' : '#A582F7'} />
-        <Text style={[s.sectionLabelText, { color: isDark ? 'rgba(167,139,250,0.85)' : 'rgba(124,58,237,0.85)' }]}>
+        <IconPin size={11} color={isDark ? '#128C7E' : '#128C7E'} />
+        <Text style={[s.sectionLabelText, { color: isDark ? 'rgba(18, 140, 126,0.85)' : 'rgba(18, 140, 126,0.85)' }]}>
           {(() => { const v = t('chat.pinned'); return v && v !== 'chat.pinned' ? v : 'FIXADAS'; })()}
         </Text>
       </View>
@@ -6065,7 +6065,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 : (t?.('chat.secretCodeOff') || 'Defina um código para ocultar esta pasta')}
             </Text>
           </View>
-          <Text style={{ color: '#A582F7', fontSize: 13, fontWeight: '700' }}>
+          <Text style={{ color: '#128C7E', fontSize: 13, fontWeight: '700' }}>
             {secretCode ? (t?.('common.edit') || 'Editar') : (t?.('common.set') || 'Definir')}
           </Text>
         </TouchableOpacity>
@@ -6160,12 +6160,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           style={{
             flexDirection: 'row', alignItems: 'center', gap: 8,
             paddingHorizontal: 14, paddingVertical: 5,
-            backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.06)',
+            backgroundColor: isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.06)',
             borderBottomWidth: StyleSheet.hairlineWidth,
-            borderBottomColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.14)',
+            borderBottomColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.14)',
           }}>
-          <ActivityIndicator size="small" color={isDark ? 'rgba(180,150,255,0.85)' : '#A582F7'} />
-          <Text style={{ flex: 1, fontSize: 11.5, color: isDark ? 'rgba(200,180,255,0.85)' : '#6D28D9', fontWeight: '500' }}>
+          <ActivityIndicator size="small" color={isDark ? 'rgba(18, 140, 126,0.85)' : '#128C7E'} />
+          <Text style={{ flex: 1, fontSize: 11.5, color: isDark ? 'rgba(18, 140, 126,0.85)' : '#128C7E', fontWeight: '500' }}>
             {t?.('chat.syncing') || 'Sincronizando...'}
           </Text>
         </View>
@@ -6241,10 +6241,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 {t?.('one.title') || 'Chatyy One'}
               </Text>
               <View style={{
-                backgroundColor: isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.14)',
+                backgroundColor: isDark ? 'rgba(18, 140, 126,0.22)' : 'rgba(18, 140, 126,0.14)',
                 borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1,
               }}>
-                <Text style={{ color: '#A582F7', fontSize: 9, fontWeight: '800', letterSpacing: 0.6 }}>AI</Text>
+                <Text style={{ color: '#128C7E', fontSize: 9, fontWeight: '800', letterSpacing: 0.6 }}>AI</Text>
               </View>
             </View>
             <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
@@ -6342,7 +6342,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       {renderPinnedLabel()}
       {(searchQuery || '').trim().length >= 2 && filteredConversations.length > 0 && (
         <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#a78bfa' : '#A582F7', letterSpacing: 0.3 }}>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#128C7E' : '#128C7E', letterSpacing: 0.3 }}>
             CONVERSAS
           </Text>
         </View>
@@ -6357,10 +6357,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     return (
       <View style={{ paddingTop: 8 }}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#a78bfa' : '#A582F7', letterSpacing: 0.3 }}>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#128C7E' : '#128C7E', letterSpacing: 0.3 }}>
             MENSAGENS
           </Text>
-          {searchingMessages && <ActivityIndicator size="small" color={isDark ? '#a78bfa' : '#A582F7'} />}
+          {searchingMessages && <ActivityIndicator size="small" color={isDark ? '#128C7E' : '#128C7E'} />}
         </View>
         {messageHits.length === 0 && !searchingMessages && (
           <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
@@ -6403,10 +6403,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             >
               <View style={{
                 width: 40, height: 40, borderRadius: 20,
-                backgroundColor: isDark ? 'rgba(167,139,250,0.18)' : 'rgba(124,58,237,0.1)',
+                backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.1)',
                 alignItems: 'center', justifyContent: 'center',
               }}>
-                <IconSearch size={18} color={isDark ? '#a78bfa' : '#A582F7'} />
+                <IconSearch size={18} color={isDark ? '#128C7E' : '#128C7E'} />
               </View>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -6450,7 +6450,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         <View style={{
           flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
           paddingHorizontal: 16, paddingVertical: 10,
-          backgroundColor: isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.08)',
+          backgroundColor: isDark ? 'rgba(18, 140, 126,0.12)' : 'rgba(18, 140, 126,0.08)',
           borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
         }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
@@ -6510,7 +6510,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               borderWidth: 2, borderColor: myNote ? ACCENT : (isDark ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.15)'),
               borderStyle: myNote ? 'solid' : 'dashed',
               alignItems: 'center', justifyContent: 'center',
-              backgroundColor: isDark ? 'rgba(124,58,237,0.08)' : 'rgba(124,58,237,0.05)',
+              backgroundColor: isDark ? 'rgba(18, 140, 126,0.08)' : 'rgba(18, 140, 126,0.05)',
             }}>
               {myNote ? (
                 <Text style={{ fontSize: 9, color: colors.text, textAlign: 'center', paddingHorizontal: 3 }} numberOfLines={2}>
@@ -6533,7 +6533,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                   width: 52, height: 52, borderRadius: 26,
                   borderWidth: 2, borderColor: ACCENT,
                   alignItems: 'center', justifyContent: 'center',
-                  backgroundColor: isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.06)',
+                  backgroundColor: isDark ? 'rgba(18, 140, 126,0.12)' : 'rgba(18, 140, 126,0.06)',
                   padding: 3,
                 }}>
                   <Text style={{ fontSize: 9, color: colors.text, textAlign: 'center' }} numberOfLines={2}>
@@ -6657,7 +6657,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               onPress={() => { toggleFabMenu(); setShowCreateGroup(true); }}
               activeOpacity={0.7}
             >
-              <View style={[s.fabMenuIcon, { backgroundColor: '#6D28D9' }]}>
+              <View style={[s.fabMenuIcon, { backgroundColor: '#128C7E' }]}>
                 <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                   <Path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4-4v2" />
                   <SvgCircle cx="9" cy="7" r="4" />
@@ -6777,7 +6777,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 <TouchableOpacity
                   disabled={!secretCodeInput.trim()}
                   onPress={async () => { const c = secretCodeInput.trim(); if (!c) return; await persistSecretCode(c); setSecretCodeModalVisible(false); }}
-                  style={{ paddingVertical: 11, paddingHorizontal: 18, borderRadius: 10, backgroundColor: secretCodeInput.trim() ? '#A582F7' : 'rgba(124,58,237,0.4)' }}
+                  style={{ paddingVertical: 11, paddingHorizontal: 18, borderRadius: 10, backgroundColor: secretCodeInput.trim() ? '#128C7E' : 'rgba(18, 140, 126,0.4)' }}
                 >
                   <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{t?.('common.save') || 'Salvar'}</Text>
                 </TouchableOpacity>
@@ -7249,8 +7249,8 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
 // a single bubble built from `last_message` if nothing is cached yet.
 function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isDark, t, onOpen, loading, typingUsers, presencesRef }) {
   const cardBg = isDark ? '#0b141a' : '#efeae2';
-  const headerBg = isDark ? '#1f2c33' : '#A582F7';
-  const ownBubble = '#A582F7';
+  const headerBg = isDark ? '#1f2c33' : '#128C7E';
+  const ownBubble = '#128C7E';
   const peerBubble = isDark ? '#202c33' : '#ffffff';
   const ownText = '#ffffff';
   const peerText = isDark ? '#e9edef' : '#0f172a';
@@ -7516,7 +7516,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
               const bubbleBg = isOwn ? ownBubble : peerBubble;
               const txtCol = isOwn ? ownText : peerText;
               const subTxt = isOwn ? 'rgba(255,255,255,0.75)' : meta;
-              const replyAccent = isOwn ? 'rgba(255,255,255,0.7)' : '#A582F7';
+              const replyAccent = isOwn ? 'rgba(255,255,255,0.7)' : '#128C7E';
               // Mirror the list-row formatter: strip markdown pairs, decode
               // JSON-encoded payloads (call_card / location / contact /
               // attachment), short-circuit known typed messages, and finally
@@ -7637,7 +7637,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
                   ...(isDark ? {} : (isOwn ? {} : { borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(0,0,0,0.05)' })),
                 }}>
                   {senderLabel ? (
-                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#A582F7', marginBottom: 1, paddingHorizontal: hasThumb ? 6 : 0 }} numberOfLines={1}>
+                    <Text style={{ fontSize: 11, fontWeight: '700', color: '#128C7E', marginBottom: 1, paddingHorizontal: hasThumb ? 6 : 0 }} numberOfLines={1}>
                       {senderLabel}
                     </Text>
                   ) : null}
@@ -7669,7 +7669,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
                   {replyText ? (
                     <View style={{
                       borderLeftWidth: 3, borderLeftColor: replyAccent,
-                      backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(124,58,237,0.06)'),
+                      backgroundColor: isOwn ? 'rgba(255,255,255,0.15)' : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(18, 140, 126,0.06)'),
                       paddingHorizontal: 6, paddingVertical: 3,
                       borderRadius: 4, marginBottom: 3,
                     }}>
@@ -7817,12 +7817,12 @@ const s = StyleSheet.create({
     flexShrink: 0,
   },
   chipActive: {
-    backgroundColor: '#A582F7',
-    borderColor: '#A582F7',
+    backgroundColor: '#128C7E',
+    borderColor: '#128C7E',
     ...Platform.select({
-      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.34, shadowRadius: 9 },
+      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.34, shadowRadius: 9 },
       android: { elevation: 4 },
-      web: { boxShadow: '0 3px 12px rgba(124,58,237,0.36)' },
+      web: { boxShadow: '0 3px 12px rgba(18, 140, 126,0.36)' },
     }),
   },
   chipText: {
@@ -7904,13 +7904,13 @@ const s = StyleSheet.create({
     width: 20,
     height: 20,
     borderRadius: 6,
-    backgroundColor: 'rgba(124,58,237,0.1)',
+    backgroundColor: 'rgba(18, 140, 126,0.1)',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 6,
   },
   groupBadgeDark: {
-    backgroundColor: 'rgba(124,58,237,0.15)',
+    backgroundColor: 'rgba(18, 140, 126,0.15)',
   },
   groupBadgeText: {
     fontSize: 10,
@@ -7976,16 +7976,16 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 7,
-    backgroundColor: '#A582F7',
+    backgroundColor: '#128C7E',
   },
   // [beauty 2026-05-31] One soft, tasteful shadow — no glow stack. Calmed from a
   // heavier purple bloom (0.38 / 0 2px 7px 0.4) to a single gentle lift so the
   // pill reads as a clean colored count, not a glowing blob.
   unreadBadgeShadow: {
     ...Platform.select({
-      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.22, shadowRadius: 3 },
+      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.22, shadowRadius: 3 },
       android: { elevation: 2 },
-      web: { boxShadow: '0 1px 4px rgba(124,58,237,0.28)' },
+      web: { boxShadow: '0 1px 4px rgba(18, 140, 126,0.28)' },
       default: {},
     }),
   },
@@ -8114,9 +8114,9 @@ const s = StyleSheet.create({
     paddingVertical: 15,
     borderRadius: 999,
     ...Platform.select({
-      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.32, shadowRadius: 12 },
+      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.32, shadowRadius: 12 },
       android: { elevation: 4 },
-      web: { boxShadow: `0 6px 18px rgba(124,58,237,0.34)`, transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease' },
+      web: { boxShadow: `0 6px 18px rgba(18, 140, 126,0.34)`, transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease' },
     }),
   },
   emptyActionText: {
@@ -8134,12 +8134,12 @@ const s = StyleSheet.create({
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#A582F7',
+    backgroundColor: '#128C7E',
     ...Platform.select({
-      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 14 },
+      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 14 },
       android: { elevation: 6 },
       web: {
-        boxShadow: '0 8px 22px rgba(124,58,237,0.42)',
+        boxShadow: '0 8px 22px rgba(18, 140, 126,0.42)',
         transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s ease',
       },
     }),

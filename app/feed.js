@@ -13,7 +13,7 @@ export default function FeedRedirect() {
 
   return (
     <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors?.background }}>
-      <ActivityIndicator color="#A582F7" />
+      <ActivityIndicator color="#128C7E" />
     </View>
   );
 }

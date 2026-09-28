@@ -128,8 +128,8 @@ export default function LocationRequestModal() {
               <AvatarCircle name={reqData.name} email={reqData.email} size={56} />
               <View style={{ flex: 1, marginLeft: 14 }}>
                 <View style={lrm.iconBadge}>
-                  <IconMapPin size={14} color="#A582F7" />
-                  <Text style={[lrm.badgeLabel, { color: '#A582F7' }]}>
+                  <IconMapPin size={14} color="#128C7E" />
+                  <Text style={[lrm.badgeLabel, { color: '#128C7E' }]}>
                     {(t?.('location.requestModalLabel') || 'Localização').toUpperCase()}
                   </Text>
                 </View>
@@ -156,7 +156,7 @@ export default function LocationRequestModal() {
               <TouchableOpacity
                 onPress={() => respond(-1)}
                 disabled={busy}
-                style={[lrm.btnPrimary, { backgroundColor: '#A582F7', opacity: busy ? 0.6 : 1 }]}
+                style={[lrm.btnPrimary, { backgroundColor: '#128C7E', opacity: busy ? 0.6 : 1 }]}
                 accessibilityLabel={t?.('location.acceptForever') || 'Sempre'}
               >
                 <Text style={lrm.btnPrimaryText}>{t?.('location.acceptForever') || 'Sempre'}</Text>
@@ -165,12 +165,12 @@ export default function LocationRequestModal() {
                 onPress={() => respond(3600)}
                 disabled={busy}
                 style={[lrm.btnSecondary, {
-                  backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : '#ede9fe',
+                  backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : '#F1F3F5',
                   opacity: busy ? 0.6 : 1,
                 }]}
                 accessibilityLabel={t?.('location.acceptOneHour') || '1 hora'}
               >
-                <Text style={[lrm.btnSecondaryText, { color: '#A582F7' }]}>
+                <Text style={[lrm.btnSecondaryText, { color: '#128C7E' }]}>
                   {t?.('location.acceptOneHour') || '1 hora'}
                 </Text>
               </TouchableOpacity>

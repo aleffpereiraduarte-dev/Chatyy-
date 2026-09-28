@@ -154,7 +154,7 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const WS_URL = Platform.OS === 'web' ? 'wss://chatyy.com.br/ws' : 'wss://ws.chatyy.com.br/ws';
 const MAX_HEARTS = 20;
 const LIVE_RED = '#dc2626';
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 // Cloudflare Stream HLS manifests can take 20-60s after the host hits "go live"
 // for the first segment to land — manifest 404 / empty playlist during that
 // window is NOT fatal, just "warm-up in progress". We retry quietly until the
@@ -4159,7 +4159,7 @@ const styles = StyleSheet.create({
   },
   endedBg: {
     ...(Platform.OS === 'web' ? {
-      background: 'radial-gradient(circle at 50% 35%, rgba(124,58,237,0.35), rgba(15,15,26,0.92) 55%, #0a0a14 100%)',
+      background: 'radial-gradient(circle at 50% 35%, rgba(18, 140, 126,0.35), rgba(15,15,26,0.92) 55%, #0a0a14 100%)',
     } : {
       backgroundColor: '#0a0a14',
     }),
@@ -4173,13 +4173,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#0a0a14',
     ...(Platform.OS === 'web' ? {
-      background: 'radial-gradient(circle at 50% 40%, rgba(124,58,237,0.28), rgba(10,10,20,0.92) 60%, #050510 100%)',
+      background: 'radial-gradient(circle at 50% 40%, rgba(18, 140, 126,0.28), rgba(10,10,20,0.92) 60%, #050510 100%)',
     } : {}),
   },
   preStreamWash: {
     position: 'absolute',
     width: 320, height: 320, borderRadius: 160,
-    backgroundColor: 'rgba(124,58,237,0.18)',
+    backgroundColor: 'rgba(18, 140, 126,0.18)',
     ...(Platform.OS === 'web' ? { display: 'none' } : {}),
   },
   preStreamAvatar: {
@@ -4193,7 +4193,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: '20%',
     width: 360, height: 360, borderRadius: 180,
-    backgroundColor: 'rgba(124,58,237,0.18)',
+    backgroundColor: 'rgba(18, 140, 126,0.18)',
     ...(Platform.OS === 'web' ? { display: 'none' } : {}),
   },
   endedAvatarRing: {
@@ -4204,7 +4204,7 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.18)',
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 0 32px rgba(124,58,237,0.35), inset 0 0 0 1px rgba(255,255,255,0.08)',
+      boxShadow: '0 0 32px rgba(18, 140, 126,0.35), inset 0 0 0 1px rgba(255,255,255,0.08)',
     } : {}),
   },
   endedText: {
@@ -4246,7 +4246,7 @@ const styles = StyleSheet.create({
   },
   endedBtnPrimary: {
     backgroundColor: ACCENT,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 6px 20px rgba(124,58,237,0.55)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 6px 20px rgba(18, 140, 126,0.55)' } : {}),
   },
   endedBtnGhost: {
     backgroundColor: 'rgba(255,255,255,0.1)',
@@ -4277,12 +4277,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 8,
     borderRadius: 18,
-    backgroundColor: 'rgba(124,58,237,0.18)',
+    backgroundColor: 'rgba(18, 140, 126,0.18)',
     borderWidth: 1,
-    borderColor: 'rgba(196,181,253,0.35)',
+    borderColor: 'rgba(18, 140, 126,0.35)',
   },
   endedDiscoverText: {
-    color: '#e9d5ff',
+    color: '#F1F3F5',
     fontSize: 13,
     fontWeight: '700',
     letterSpacing: 0.2,
@@ -4412,7 +4412,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 5,
     borderRadius: 14,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(124,58,237,0.45)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 8px rgba(18, 140, 126,0.45)' } : {}),
   },
   followPillText: {
     color: '#fff',
@@ -4732,7 +4732,7 @@ const styles = StyleSheet.create({
     ...(Platform.OS === 'web' ? { backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)' } : {}),
   },
   commentName: {
-    color: '#c4b5fd',          // soft lavender for contrast vs the body
+    color: '#F1F3F5',          // soft lavender for contrast vs the body
     fontSize: 11,
     fontWeight: '800',
     letterSpacing: 0.2,
@@ -4752,9 +4752,9 @@ const styles = StyleSheet.create({
   systemJoinPill: {
     paddingHorizontal: 10,
     paddingVertical: 4,
-    backgroundColor: 'rgba(124,58,237,0.35)',
+    backgroundColor: 'rgba(18, 140, 126,0.35)',
     borderWidth: 1,
-    borderColor: 'rgba(196,181,253,0.35)',
+    borderColor: 'rgba(18, 140, 126,0.35)',
     borderRadius: 12,
   },
   systemJoinText: {
@@ -4789,7 +4789,7 @@ const styles = StyleSheet.create({
     } : {}),
   },
   inputPillFocused: {
-    borderColor: 'rgba(196,181,253,0.7)',
+    borderColor: 'rgba(18, 140, 126,0.7)',
     backgroundColor: 'rgba(255,255,255,0.2)',
   },
   inputText: {
@@ -4824,7 +4824,7 @@ const styles = StyleSheet.create({
   },
   sendBtnActive: {
     backgroundColor: ACCENT,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 12px rgba(124,58,237,0.55)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 12px rgba(18, 140, 126,0.55)' } : {}),
   },
 
   // Gift picker sheet (free emoji gifts)
@@ -4874,7 +4874,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(15,15,26,0.92)',
     zIndex: 6,
     ...(Platform.OS === 'web' ? {
-      background: 'linear-gradient(to bottom, rgba(15,15,26,0.95), rgba(124,58,237,0.18) 60%, rgba(15,15,26,0.95))',
+      background: 'linear-gradient(to bottom, rgba(15,15,26,0.95), rgba(18, 140, 126,0.18) 60%, rgba(15,15,26,0.95))',
     } : {}),
   },
 
@@ -4905,7 +4905,7 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 10px rgba(124,58,237,0.55)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 10px rgba(18, 140, 126,0.55)' } : {}),
   },
 
   // Pinned host comment chip — yellow-bordered pill above the live comments
@@ -5049,7 +5049,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   peekProfileLinkText: {
-    color: 'rgba(196,181,253,0.95)',
+    color: 'rgba(18, 140, 126,0.95)',
     fontSize: 13,
     fontWeight: '700',
   },

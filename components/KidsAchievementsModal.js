@@ -180,8 +180,8 @@ const styles = StyleSheet.create({
   statsRow: { flexDirection: 'row', justifyContent: 'space-around', paddingHorizontal: 16, paddingVertical: 14, gap: 10 },
   statPill: {
     flex: 1, paddingVertical: 10, paddingHorizontal: 12,
-    borderRadius: 16, backgroundColor: '#ede9fe', alignItems: 'center',
+    borderRadius: 16, backgroundColor: '#F1F3F5', alignItems: 'center',
   },
-  statNum: { fontSize: 18, fontWeight: '800', color: '#5b21b6' },
-  statLabel: { fontSize: 11, fontWeight: '700', color: '#5b21b6', opacity: 0.7, marginTop: 2 },
+  statNum: { fontSize: 18, fontWeight: '800', color: '#128C7E' },
+  statLabel: { fontSize: 11, fontWeight: '700', color: '#128C7E', opacity: 0.7, marginTop: 2 },
 });

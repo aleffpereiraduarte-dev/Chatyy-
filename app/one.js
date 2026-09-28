@@ -71,11 +71,11 @@ function getGreeting(t) {
   return t('one.goodEvening');
 }
 
-const ACCENT = '#A582F7'; // Chatyy purple
-const ACCENT_DARK = '#6D28D9'; // Chatyy dark purple
-const ACCENT_HEADER = '#6D28D9'; // Chatyy header dark
-const USER_BUBBLE = '#EDE9FE'; // Chatyy sent bubble (light)
-const USER_BUBBLE_DARK = '#4C1D95'; // Chatyy sent bubble (dark)
+const ACCENT = '#128C7E'; // Chatyy purple
+const ACCENT_DARK = '#128C7E'; // Chatyy dark purple
+const ACCENT_HEADER = '#128C7E'; // Chatyy header dark
+const USER_BUBBLE = '#F1F3F5'; // Chatyy sent bubble (light)
+const USER_BUBBLE_DARK = '#128C7E'; // Chatyy sent bubble (dark)
 
 const ROTATING_PHRASES = [
   'resumir seus emails',
@@ -669,15 +669,15 @@ function VoiceOrb({ voiceState }) {
   // of clashing.
   const halo = hue.interpolate({
     inputRange: [0, 1, 2, 3],
-    outputRange: ['#c026d3', '#A582F7', '#06b6d4', '#a855f7'],
+    outputRange: ['#128C7E', '#128C7E', '#06b6d4', '#128C7E'],
   });
   const core = hue.interpolate({
     inputRange: [0, 1, 2, 3],
-    outputRange: ['#e879f9', '#a78bfa', '#22d3ee', '#c4b5fd'],
+    outputRange: ['#128C7E', '#128C7E', '#22d3ee', '#F1F3F5'],
   });
   const ringOuter = hue.interpolate({
     inputRange: [0, 1, 2, 3],
-    outputRange: ['#A582F7', '#06b6d4', '#a855f7', '#c026d3'],
+    outputRange: ['#128C7E', '#06b6d4', '#128C7E', '#128C7E'],
   });
 
   return (
@@ -707,9 +707,9 @@ function VoiceOrb({ voiceState }) {
         backgroundColor: core,
         transform: [{ scale: scaleCore }],
         ...(Platform.OS === 'web' ? {
-          boxShadow: '0 0 80px rgba(167,139,250,0.55), 0 0 160px rgba(124,58,237,0.35), inset 0 0 40px rgba(255,255,255,0.22)',
+          boxShadow: '0 0 80px rgba(18, 140, 126,0.55), 0 0 160px rgba(18, 140, 126,0.35), inset 0 0 40px rgba(255,255,255,0.22)',
         } : {
-          shadowColor: '#a78bfa',
+          shadowColor: '#128C7E',
           shadowOffset: { width: 0, height: 0 },
           shadowOpacity: 0.7,
           shadowRadius: 40,
@@ -1068,7 +1068,7 @@ function QuickActionsBar({ onSend, colors, isDark, t }) {
             key={a.key}
             style={[st.quickActionChip, {
               backgroundColor: a.custom
-                ? (isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)')
+                ? (isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.10)')
                 : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.03)'),
               ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'all 0.15s ease' } : {}),
             }]}
@@ -1084,8 +1084,8 @@ function QuickActionsBar({ onSend, colors, isDark, t }) {
             } : undefined}
             activeOpacity={0.7}
           >
-            <Icon size={13} color={a.custom ? '#A582F7' : (isDark ? '#8696a0' : '#667781')} />
-            <Text style={[st.quickActionText, { color: a.custom ? '#A582F7' : (isDark ? '#8696a0' : '#667781') }]} numberOfLines={1}>{a.label}</Text>
+            <Icon size={13} color={a.custom ? '#128C7E' : (isDark ? '#8696a0' : '#667781')} />
+            <Text style={[st.quickActionText, { color: a.custom ? '#128C7E' : (isDark ? '#8696a0' : '#667781') }]} numberOfLines={1}>{a.label}</Text>
           </TouchableOpacity>
         );
       })}
@@ -1409,7 +1409,7 @@ function BrandSendCircle({ size = 44, isDark }) {
     <Svg width={size} height={size}>
       <Defs>
         <SvgLinearGradient id="brandSendGrad" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor="#A78BFA" stopOpacity="1" />
+          <Stop offset="0" stopColor="#128C7E" stopOpacity="1" />
           <Stop offset="0.6" stopColor={ACCENT} stopOpacity="1" />
           <Stop offset="1" stopColor={ACCENT_DARK} stopOpacity="1" />
         </SvgLinearGradient>
@@ -1436,17 +1436,17 @@ function SparkleIllustration({ size = 96, isDark }) {
     <Svg width={size} height={size} viewBox="0 0 96 96">
       <Defs>
         <SvgLinearGradient id="sparkBigGrad" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor="#C4B5FD" stopOpacity="1" />
+          <Stop offset="0" stopColor="#F1F3F5" stopOpacity="1" />
           <Stop offset="0.55" stopColor={ACCENT} stopOpacity="1" />
           <Stop offset="1" stopColor={ACCENT_DARK} stopOpacity="1" />
         </SvgLinearGradient>
         <SvgLinearGradient id="sparkSmallGrad" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor="#A78BFA" stopOpacity="1" />
+          <Stop offset="0" stopColor="#128C7E" stopOpacity="1" />
           <Stop offset="1" stopColor={ACCENT} stopOpacity="1" />
         </SvgLinearGradient>
       </Defs>
       {/* Soft halo behind main sparkle */}
-      <SvgCircle cx="48" cy="48" r="34" fill={isDark ? 'rgba(124,58,237,0.16)' : 'rgba(124,58,237,0.10)'} />
+      <SvgCircle cx="48" cy="48" r="34" fill={isDark ? 'rgba(18, 140, 126,0.16)' : 'rgba(18, 140, 126,0.10)'} />
       {/* Big sparkle (4-point star) centered */}
       <SvgPath
         d="M48 18 L52 44 L78 48 L52 52 L48 78 L44 52 L18 48 L44 44 Z"
@@ -1486,8 +1486,8 @@ function PromptChip({ label, sub, onPress, isDark }) {
       accessibilityLabel={label}
     >
       <Animated.View style={[st.promptChip, {
-        borderColor: isDark ? 'rgba(167,139,250,0.55)' : 'rgba(124,58,237,0.45)',
-        backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.06)',
+        borderColor: isDark ? 'rgba(18, 140, 126,0.55)' : 'rgba(18, 140, 126,0.45)',
+        backgroundColor: isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.06)',
         transform: [{ scale }],
       }]}>
         <Text style={[st.promptChipLabel, { color: isDark ? '#ECECEC' : '#0D0D0D' }]} numberOfLines={1}>{label}</Text>
@@ -1705,7 +1705,7 @@ function ModelPickerSheet({ visible, onClose, isDark, t, currentModelId, onPick 
                 key={m.id}
                 onPress={() => { onPick(m); onClose(); }}
                 activeOpacity={0.7}
-                style={[st.sheetItem, active && { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.08)' }]}
+                style={[st.sheetItem, active && { backgroundColor: isDark ? 'rgba(18, 140, 126,0.15)' : 'rgba(18, 140, 126,0.08)' }]}
               >
                 <View style={{ flex: 1 }}>
                   <Text style={[st.sheetItemTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>{m.label}</Text>
@@ -3636,7 +3636,7 @@ export default function OneScreen() {
         )}
       </View>
 
-      {/* Input — rounded 24pt pill, multi-line, plus + mic left, send right (purple #A582F7 filled circle) */}
+      {/* Input — rounded 24pt pill, multi-line, plus + mic left, send right (purple #128C7E filled circle) */}
       <View style={[st.inputAreaClean, {
         paddingBottom: Math.max(insets.bottom, 8),
         backgroundColor: canvasBg,
@@ -4372,7 +4372,7 @@ const st = StyleSheet.create({
   },
   voiceTopBarTitle: {
     color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.3,
-    textShadowColor: 'rgba(124,58,237,0.35)',
+    textShadowColor: 'rgba(18, 140, 126,0.35)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 8,
   },

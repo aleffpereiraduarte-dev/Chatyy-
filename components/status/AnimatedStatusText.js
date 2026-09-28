@@ -27,7 +27,7 @@ import { resolveTextGradient as _resolveGradient } from './textGradients';
 // reach backgroundColor raw — fall back to the brand purple.
 function _safeSolid(bgColor) {
   if (typeof bgColor === 'string' && /^(#|rgb|hsl)/i.test(bgColor.trim())) return bgColor;
-  return '#6D28D9';
+  return '#128C7E';
 }
 
 const TEXT_BASE = {
@@ -53,7 +53,7 @@ function pickFontStyle(fontStyle) {
 
 export default function AnimatedStatusText({
   text = '',
-  bgColor = '#6D28D9',
+  bgColor = '#128C7E',
   animation = 'none',
   fontStyle = 'normal',
   // Reset the animation whenever this key changes (e.g. status id).

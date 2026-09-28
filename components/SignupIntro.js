@@ -28,17 +28,17 @@ function IconBrand() {
     <Svg viewBox="0 0 200 200" width="100%" height="100%" fill="none">
       <Defs>
         <LinearGradient id="brandGrad" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor="#c4b5fd" />
-          <Stop offset="1" stopColor="#A582F7" />
+          <Stop offset="0" stopColor="#F1F3F5" />
+          <Stop offset="1" stopColor="#128C7E" />
         </LinearGradient>
       </Defs>
-      <Circle cx="100" cy="100" r="94" stroke="#ede9fe" strokeWidth="2" />
+      <Circle cx="100" cy="100" r="94" stroke="#F1F3F5" strokeWidth="2" />
       <Circle cx="100" cy="100" r="76" fill="url(#brandGrad)" />
       <Path d="M68 88 Q68 76 80 76 L120 76 Q132 76 132 88 L132 110 Q132 122 120 122 L96 122 L84 134 L84 122 L80 122 Q68 122 68 110 Z" stroke="#fff" strokeWidth="3.5" strokeLinejoin="round" />
       <Circle cx="86" cy="100" r="3" fill="#fff" />
       <Circle cx="100" cy="100" r="3" fill="#fff" />
       <Circle cx="114" cy="100" r="3" fill="#fff" />
-      <Path d="M154 50 L156 56 L162 58 L156 60 L154 66 L152 60 L146 58 L152 56 Z" fill="#a78bfa" />
+      <Path d="M154 50 L156 56 L162 58 L156 60 L154 66 L152 60 L146 58 L152 56 Z" fill="#128C7E" />
     </Svg>
   );
 }
@@ -48,29 +48,29 @@ function IconAllInOne() {
     <Svg viewBox="0 0 200 200" width="100%" height="100%" fill="none" strokeLinecap="round" strokeLinejoin="round">
       {/* chat (top-left) — purple filled */}
       <G transform="translate(40, 38)">
-        <Rect width="56" height="56" rx="16" fill="#A582F7" />
+        <Rect width="56" height="56" rx="16" fill="#128C7E" />
         <Path d="M16 22 Q16 18 20 18 L36 18 Q40 18 40 22 L40 32 Q40 36 36 36 L26 36 L20 41 L20 36 Q16 36 16 32 Z" stroke="#fff" strokeWidth="2.5" />
       </G>
       {/* mail (top-right) — outline */}
       <G transform="translate(104, 38)">
-        <Rect width="56" height="56" rx="16" fill="#f5f3ff" stroke="#ede9fe" strokeWidth="1" />
-        <Rect x="14" y="20" width="28" height="20" rx="3" stroke="#A582F7" strokeWidth="2.5" />
-        <Path d="M14 22 L28 31 L42 22" stroke="#A582F7" strokeWidth="2.5" />
+        <Rect width="56" height="56" rx="16" fill="#F1F3F5" stroke="#F1F3F5" strokeWidth="1" />
+        <Rect x="14" y="20" width="28" height="20" rx="3" stroke="#128C7E" strokeWidth="2.5" />
+        <Path d="M14 22 L28 31 L42 22" stroke="#128C7E" strokeWidth="2.5" />
       </G>
       {/* calendar (bottom-left) — outline */}
       <G transform="translate(40, 104)">
-        <Rect width="56" height="56" rx="16" fill="#f5f3ff" stroke="#ede9fe" strokeWidth="1" />
-        <Rect x="14" y="18" width="28" height="22" rx="3" stroke="#A582F7" strokeWidth="2.5" />
-        <Line x1="14" y1="25" x2="42" y2="25" stroke="#A582F7" strokeWidth="2.5" />
-        <Circle cx="22" cy="32" r="1.5" fill="#A582F7" />
-        <Circle cx="28" cy="32" r="1.5" fill="#A582F7" />
-        <Circle cx="34" cy="32" r="1.5" fill="#A582F7" />
-        <Line x1="20" y1="14" x2="20" y2="20" stroke="#A582F7" strokeWidth="2.5" />
-        <Line x1="36" y1="14" x2="36" y2="20" stroke="#A582F7" strokeWidth="2.5" />
+        <Rect width="56" height="56" rx="16" fill="#F1F3F5" stroke="#F1F3F5" strokeWidth="1" />
+        <Rect x="14" y="18" width="28" height="22" rx="3" stroke="#128C7E" strokeWidth="2.5" />
+        <Line x1="14" y1="25" x2="42" y2="25" stroke="#128C7E" strokeWidth="2.5" />
+        <Circle cx="22" cy="32" r="1.5" fill="#128C7E" />
+        <Circle cx="28" cy="32" r="1.5" fill="#128C7E" />
+        <Circle cx="34" cy="32" r="1.5" fill="#128C7E" />
+        <Line x1="20" y1="14" x2="20" y2="20" stroke="#128C7E" strokeWidth="2.5" />
+        <Line x1="36" y1="14" x2="36" y2="20" stroke="#128C7E" strokeWidth="2.5" />
       </G>
       {/* drive folder (bottom-right) — purple filled */}
       <G transform="translate(104, 104)">
-        <Rect width="56" height="56" rx="16" fill="#a78bfa" />
+        <Rect width="56" height="56" rx="16" fill="#128C7E" />
         <Path d="M14 22 L24 22 L28 26 L42 26 Q44 26 44 28 L44 38 Q44 40 42 40 L14 40 Q12 40 12 38 L12 24 Q12 22 14 22 Z" stroke="#fff" strokeWidth="2.5" />
       </G>
     </Svg>
@@ -82,13 +82,13 @@ function IconPrivacy() {
     <Svg viewBox="0 0 200 200" width="100%" height="100%" fill="none" strokeLinecap="round" strokeLinejoin="round">
       <Defs>
         <LinearGradient id="shieldGrad" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0" stopColor="#ede9fe" />
-          <Stop offset="1" stopColor="#c4b5fd" />
+          <Stop offset="0" stopColor="#F1F3F5" />
+          <Stop offset="1" stopColor="#F1F3F5" />
         </LinearGradient>
       </Defs>
-      <Path d="M100 28 L160 50 L160 100 Q160 148 100 178 Q40 148 40 100 L40 50 Z" fill="url(#shieldGrad)" stroke="#A582F7" strokeWidth="3" />
-      <Path d="M100 50 L138 64 L138 100 Q138 134 100 156 Q62 134 62 100 L62 64 Z" stroke="#a78bfa" strokeWidth="2" strokeDasharray="2 4" />
-      <Path d="M76 102 L92 118 L126 86" stroke="#A582F7" strokeWidth="6" />
+      <Path d="M100 28 L160 50 L160 100 Q160 148 100 178 Q40 148 40 100 L40 50 Z" fill="url(#shieldGrad)" stroke="#128C7E" strokeWidth="3" />
+      <Path d="M100 50 L138 64 L138 100 Q138 134 100 156 Q62 134 62 100 L62 64 Z" stroke="#128C7E" strokeWidth="2" strokeDasharray="2 4" />
+      <Path d="M76 102 L92 118 L126 86" stroke="#128C7E" strokeWidth="6" />
     </Svg>
   );
 }
@@ -98,16 +98,16 @@ function IconAI() {
     <Svg viewBox="0 0 200 200" width="100%" height="100%" fill="none" strokeLinecap="round" strokeLinejoin="round">
       <Defs>
         <LinearGradient id="aiGrad" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor="#c4b5fd" />
-          <Stop offset="1" stopColor="#A582F7" />
+          <Stop offset="0" stopColor="#F1F3F5" />
+          <Stop offset="1" stopColor="#128C7E" />
         </LinearGradient>
       </Defs>
       <Path d="M100 36 Q104 84 132 88 Q104 92 100 140 Q96 92 68 88 Q96 84 100 36 Z" fill="url(#aiGrad)" />
       <Circle cx="100" cy="88" r="3" fill="#fff" opacity="0.85" />
-      <Path d="M148 56 Q150 64 158 66 Q150 68 148 76 Q146 68 138 66 Q146 64 148 56 Z" fill="#a78bfa" />
-      <Path d="M52 134 Q54 142 62 144 Q54 146 52 154 Q50 146 42 144 Q50 142 52 134 Z" fill="#c4b5fd" />
-      <Circle cx="160" cy="116" r="2" fill="#a78bfa" />
-      <Circle cx="38" cy="78" r="2" fill="#c4b5fd" />
+      <Path d="M148 56 Q150 64 158 66 Q150 68 148 76 Q146 68 138 66 Q146 64 148 56 Z" fill="#128C7E" />
+      <Path d="M52 134 Q54 142 62 144 Q54 146 52 154 Q50 146 42 144 Q50 142 52 134 Z" fill="#F1F3F5" />
+      <Circle cx="160" cy="116" r="2" fill="#128C7E" />
+      <Circle cx="38" cy="78" r="2" fill="#F1F3F5" />
     </Svg>
   );
 }
@@ -116,28 +116,28 @@ function IconMultiDevice() {
   return (
     <Svg viewBox="0 0 200 200" width="100%" height="100%" fill="none" strokeLinecap="round" strokeLinejoin="round">
       {/* laptop body — outline */}
-      <Rect x="34" y="58" width="116" height="74" rx="6" fill="#fff" stroke="#A582F7" strokeWidth="3" />
+      <Rect x="34" y="58" width="116" height="74" rx="6" fill="#fff" stroke="#128C7E" strokeWidth="3" />
       {/* screen content lines */}
-      <Rect x="46" y="70" width="34" height="6" rx="3" fill="#a78bfa" />
-      <Rect x="46" y="82" width="60" height="3" rx="1.5" fill="#ddd6fe" />
-      <Rect x="46" y="89" width="50" height="3" rx="1.5" fill="#ddd6fe" />
-      <Rect x="46" y="96" width="64" height="3" rx="1.5" fill="#ddd6fe" />
-      <Rect x="46" y="106" width="22" height="10" rx="3" fill="#a78bfa" />
-      <Rect x="74" y="106" width="32" height="10" rx="3" fill="#ede9fe" />
+      <Rect x="46" y="70" width="34" height="6" rx="3" fill="#128C7E" />
+      <Rect x="46" y="82" width="60" height="3" rx="1.5" fill="#F1F3F5" />
+      <Rect x="46" y="89" width="50" height="3" rx="1.5" fill="#F1F3F5" />
+      <Rect x="46" y="96" width="64" height="3" rx="1.5" fill="#F1F3F5" />
+      <Rect x="46" y="106" width="22" height="10" rx="3" fill="#128C7E" />
+      <Rect x="74" y="106" width="32" height="10" rx="3" fill="#F1F3F5" />
       {/* laptop base */}
-      <Rect x="22" y="138" width="140" height="8" rx="3" fill="#a78bfa" />
+      <Rect x="22" y="138" width="140" height="8" rx="3" fill="#128C7E" />
       {/* phone overlapping right */}
-      <Rect x="120" y="76" width="50" height="92" rx="10" fill="#fff" stroke="#A582F7" strokeWidth="3" />
-      <Line x1="138" y1="84" x2="152" y2="84" stroke="#a78bfa" strokeWidth="2" />
-      <Circle cx="145" cy="100" r="8" fill="none" stroke="#a78bfa" strokeWidth="2" />
-      <Rect x="128" y="116" width="34" height="3" rx="1.5" fill="#ddd6fe" />
-      <Rect x="128" y="124" width="24" height="3" rx="1.5" fill="#ddd6fe" />
-      <Rect x="128" y="136" width="34" height="9" rx="3" fill="#a78bfa" />
-      <Rect x="128" y="148" width="26" height="9" rx="3" fill="#ede9fe" />
-      <Line x1="138" y1="162" x2="152" y2="162" stroke="#a78bfa" strokeWidth="2" />
+      <Rect x="120" y="76" width="50" height="92" rx="10" fill="#fff" stroke="#128C7E" strokeWidth="3" />
+      <Line x1="138" y1="84" x2="152" y2="84" stroke="#128C7E" strokeWidth="2" />
+      <Circle cx="145" cy="100" r="8" fill="none" stroke="#128C7E" strokeWidth="2" />
+      <Rect x="128" y="116" width="34" height="3" rx="1.5" fill="#F1F3F5" />
+      <Rect x="128" y="124" width="24" height="3" rx="1.5" fill="#F1F3F5" />
+      <Rect x="128" y="136" width="34" height="9" rx="3" fill="#128C7E" />
+      <Rect x="128" y="148" width="26" height="9" rx="3" fill="#F1F3F5" />
+      <Line x1="138" y1="162" x2="152" y2="162" stroke="#128C7E" strokeWidth="2" />
       {/* sync arrows */}
-      <Path d="M178 110 Q186 118 178 126" stroke="#a78bfa" strokeWidth="2" />
-      <Path d="M22 110 Q14 118 22 126" stroke="#a78bfa" strokeWidth="2" />
+      <Path d="M178 110 Q186 118 178 126" stroke="#128C7E" strokeWidth="2" />
+      <Path d="M22 110 Q14 118 22 126" stroke="#128C7E" strokeWidth="2" />
     </Svg>
   );
 }
@@ -332,7 +332,7 @@ export default function SignupIntro({ onFinish }) {
               hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
             >
               <Animated.View style={[styles.dot, {
-                backgroundColor: isActive ? '#A582F7' : (isDark ? '#374151' : '#d1d5db'),
+                backgroundColor: isActive ? '#128C7E' : (isDark ? '#374151' : '#d1d5db'),
                 width: widthInterp,
                 opacity: opacityInterp,
               }]} />
@@ -356,13 +356,13 @@ export default function SignupIntro({ onFinish }) {
                 onPressIn={_pressIn}
                 onPressOut={_pressOut}
                 style={[styles.cta, {
-                  // Saturated brand purple — mockup matches `#A582F7`. The previous
-                  // washed `#a78bfa` looked anemic next to the bold typography.
-                  backgroundColor: '#A582F7',
+                  // Saturated brand purple — mockup matches `#128C7E`. The previous
+                  // washed `#128C7E` looked anemic next to the bold typography.
+                  backgroundColor: '#128C7E',
                   ...(Platform.OS === 'web'
-                    ? { boxShadow: '0 8px 24px rgba(124,58,237,0.42), inset 0 1px 0 rgba(255,255,255,0.18)' }
+                    ? { boxShadow: '0 8px 24px rgba(18, 140, 126,0.42), inset 0 1px 0 rgba(255,255,255,0.18)' }
                     : Platform.select({
-                        ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.42, shadowRadius: 18 },
+                        ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.42, shadowRadius: 18 },
                         android: { elevation: 8 },
                       })),
                 }]}

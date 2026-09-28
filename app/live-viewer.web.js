@@ -33,7 +33,7 @@ import { IconEye } from '../components/Icons';
 // hls.js is loaded dynamically only when we need it (CF HLS pipeline). Keeps
 // the initial bundle smaller for LiveKit-only viewers.
 
-const BRAND = '#A582F7';
+const BRAND = '#128C7E';
 
 function prettifyHandle(handle) {
   if (!handle) return '';

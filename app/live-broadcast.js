@@ -3377,13 +3377,13 @@ export default function LiveBroadcastScreen() {
         justifyContent: 'center',
         backgroundColor: '#0a0a14',
         ...(Platform.OS === 'web' ? {
-          background: 'radial-gradient(circle at 50% 40%, rgba(124,58,237,0.28), rgba(10,10,20,0.92) 60%, #050510 100%)',
+          background: 'radial-gradient(circle at 50% 40%, rgba(18, 140, 126,0.28), rgba(10,10,20,0.92) 60%, #050510 100%)',
         } : {}),
       }]}>
         <View pointerEvents="none" style={{
           position: 'absolute',
           width: 320, height: 320, borderRadius: 160,
-          backgroundColor: 'rgba(124,58,237,0.18)',
+          backgroundColor: 'rgba(18, 140, 126,0.18)',
           ...(Platform.OS === 'web' ? { display: 'none' } : {}),
         }} />
         <AvatarCircle
@@ -3640,7 +3640,7 @@ export default function LiveBroadcastScreen() {
               />
               {!titleInput ? (
                 <Animated.View pointerEvents="none" style={[styles.preTitleSparkle, { opacity: placeholderFade }]}>
-                  <IconSparkles size={14} color="rgba(168,85,247,0.9)" />
+                  <IconSparkles size={14} color="rgba(18, 140, 126,0.9)" />
                 </Animated.View>
               ) : (
                 <TouchableOpacity
@@ -3704,8 +3704,8 @@ export default function LiveBroadcastScreen() {
               >
                 {[
                   { key: '',         label: t('live.catGeneral')  || 'Geral',       color: '#6B7280' },
-                  { key: 'gaming',   label: t('live.catGaming')   || 'Gaming',      color: '#A855F7' },
-                  { key: 'music',    label: t('live.catMusic')    || 'Música',      color: '#EC4899' },
+                  { key: 'gaming',   label: t('live.catGaming')   || 'Gaming',      color: '#128C7E' },
+                  { key: 'music',    label: t('live.catMusic')    || 'Música',      color: '#128C7E' },
                   { key: 'chat',     label: t('live.catChat')     || 'Bate-papo',   color: '#22D3EE' },
                   { key: 'food',     label: t('live.catFood')     || 'Comida',      color: '#FBBF24' },
                   { key: 'travel',   label: t('live.catTravel')   || 'Viagens',     color: '#34D399' },
@@ -4348,9 +4348,9 @@ export default function LiveBroadcastScreen() {
               { key: 'none',        glyph: '✕',  tint: 'rgba(148,163,184,0.35)', label: t('live.arNone')        || 'Nenhum' },
               { key: 'dog',         glyph: 'D',  tint: 'rgba(251,146,60,0.45)',  label: t('live.arDogEars')     || 'Cachorro' },
               { key: 'sunglasses',  glyph: 'S',  tint: 'rgba(56,189,248,0.45)',  label: t('live.arSunglasses')  || 'Óculos' },
-              { key: 'hearts',      glyph: '♥',  tint: 'rgba(244,114,182,0.55)', label: t('live.arHearts')      || 'Corações' },
+              { key: 'hearts',      glyph: '♥',  tint: 'rgba(18, 140, 126,0.55)', label: t('live.arHearts')      || 'Corações' },
               { key: 'beauty',      svg: 'sparkles', tint: 'rgba(250,204,21,0.45)', label: t('live.arBeauty')   || 'Suavizar' },
-              { key: 'slim',        glyph: '◊',  tint: 'rgba(168,85,247,0.45)',  label: t('live.arSlimFace')    || 'Afinar' },
+              { key: 'slim',        glyph: '◊',  tint: 'rgba(18, 140, 126,0.45)',  label: t('live.arSlimFace')    || 'Afinar' },
               { key: 'blur',        glyph: '◐',  tint: 'rgba(99,102,241,0.45)',  label: t('live.arBlurBg')      || 'Desfocar' },
               { key: 'greenscreen', glyph: '▣',  tint: 'rgba(34,197,94,0.45)',   label: t('live.arGreenscreen') || 'Cenário' },
             ].map(p => {
@@ -4392,7 +4392,7 @@ export default function LiveBroadcastScreen() {
                   <TouchableOpacity
                     key={wid}
                     onPress={() => applyArFilter('greenscreen', wid)}
-                    style={[styles.arWallpaperChip, active && { borderColor: '#ec4899', borderWidth: 2 }]}
+                    style={[styles.arWallpaperChip, active && { borderColor: '#128C7E', borderWidth: 2 }]}
                     activeOpacity={0.85}
                     accessibilityRole="button"
                     accessibilityLabel={(t('live.arWallpaper') || 'Cenário') + ' ' + wid}
@@ -4630,7 +4630,7 @@ export default function LiveBroadcastScreen() {
           backgroundColor: activeFilter === 'bw' ? 'rgba(0,0,0,0.35)'
             : activeFilter === 'warm' ? 'rgba(255,140,0,0.18)'
             : activeFilter === 'cool' ? 'rgba(0,128,255,0.16)'
-            : activeFilter === 'vivid' ? 'rgba(168,85,247,0.14)'
+            : activeFilter === 'vivid' ? 'rgba(18, 140, 126,0.14)'
             : 'transparent',
           zIndex: 1,
         }]} />
@@ -4702,7 +4702,7 @@ export default function LiveBroadcastScreen() {
                 { key: 'bw', label: 'P&B', color: '#000' },
                 { key: 'warm', label: 'Quente', color: '#ff8c00' },
                 { key: 'cool', label: 'Frio', color: '#3b82f6' },
-                { key: 'vivid', label: 'Vivid', color: '#a855f7' },
+                { key: 'vivid', label: 'Vivid', color: '#128C7E' },
               ].map(f => (
                 <TouchableOpacity
                   key={f.key}
@@ -4729,12 +4729,12 @@ export default function LiveBroadcastScreen() {
           activeOpacity={0.85}
           style={{
             position: 'absolute', top: insets.top + 100, right: 16,
-            backgroundColor: '#A582F7', borderRadius: 16,
+            backgroundColor: '#128C7E', borderRadius: 16,
             paddingHorizontal: 12, paddingVertical: 8,
             flexDirection: 'row', alignItems: 'center', gap: 6,
             zIndex: 30,
             ...(Platform.OS === 'web' ? {
-              boxShadow: '0 4px 14px rgba(124,58,237,0.5)',
+              boxShadow: '0 4px 14px rgba(18, 140, 126,0.5)',
             } : {}),
           }}
         >
@@ -4897,7 +4897,7 @@ export default function LiveBroadcastScreen() {
                 keyExtractor={(item) => item.email}
                 renderItem={({ item }) => (
                   <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' }}>
-                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#A582F7', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                    <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: '#128C7E', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
                       <Text style={{ color: '#fff', fontWeight: '700' }}>{(item.name || '?').slice(0, 1).toUpperCase()}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
@@ -4965,14 +4965,14 @@ export default function LiveBroadcastScreen() {
                     style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.06)' }}
                     activeOpacity={0.7}
                   >
-                    <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: '#A582F7', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+                    <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: '#128C7E', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
                       <Text style={{ color: '#fff', fontWeight: '700' }}>{(item.name || '?').slice(0, 1).toUpperCase()}</Text>
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: '#fff', fontWeight: '600', fontSize: 15 }} numberOfLines={1}>{item.name}</Text>
                       <Text style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12 }} numberOfLines={1}>{item.email}</Text>
                     </View>
-                    <View style={{ width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: selected ? '#A582F7' : 'rgba(255,255,255,0.3)', backgroundColor: selected ? '#A582F7' : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
+                    <View style={{ width: 22, height: 22, borderRadius: 11, borderWidth: 2, borderColor: selected ? '#128C7E' : 'rgba(255,255,255,0.3)', backgroundColor: selected ? '#128C7E' : 'transparent', alignItems: 'center', justifyContent: 'center' }}>
                       {selected ? <IconCheck size={12} color="#fff" /> : null}
                     </View>
                   </TouchableOpacity>
@@ -5305,7 +5305,7 @@ export default function LiveBroadcastScreen() {
                 onPress={() => setPollDraftOptions(prev => [...prev, ''])}
                 style={{ paddingVertical: 10, marginBottom: 8 }}
               >
-                <Text style={{ color: '#a78bfa', fontWeight: '700', fontSize: 13 }}>
+                <Text style={{ color: '#128C7E', fontWeight: '700', fontSize: 13 }}>
                   + {t('live.pollAddOption') || 'Adicionar opção'}
                 </Text>
               </TouchableOpacity>
@@ -5340,7 +5340,7 @@ export default function LiveBroadcastScreen() {
                 activeOpacity={0.7}
               >
                 <Text style={liveSheetStyles.rowLabel}>{o.label}</Text>
-                {slowModeSeconds === o.sec ? <IconCheck size={12} color="#a78bfa" /> : null}
+                {slowModeSeconds === o.sec ? <IconCheck size={12} color="#128C7E" /> : null}
               </TouchableOpacity>
             ))}
           </View>
@@ -5362,14 +5362,14 @@ const liveSheetStyles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 12, borderBottomColor: 'rgba(255,255,255,0.06)', borderBottomWidth: 1 },
   rowLabel: { color: '#fff', fontSize: 15, fontWeight: '500' },
   toggle: { width: 42, height: 24, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.18)', padding: 2 },
-  toggleOn: { backgroundColor: '#A582F7' },
+  toggleOn: { backgroundColor: '#128C7E' },
   knob: { width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff' },
   knobOn: { transform: [{ translateX: 18 }] },
-  closeBtn: { marginTop: 16, backgroundColor: '#A582F7', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
+  closeBtn: { marginTop: 16, backgroundColor: '#128C7E', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
   closeText: { color: '#fff', fontWeight: '700', fontSize: 15 },
   filterRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
   filterChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 7, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.07)', borderWidth: 1, borderColor: 'transparent' },
-  filterChipActive: { backgroundColor: 'rgba(124,58,237,0.32)', borderColor: '#A582F7' },
+  filterChipActive: { backgroundColor: 'rgba(18, 140, 126,0.32)', borderColor: '#128C7E' },
   filterSwatch: { width: 14, height: 14, borderRadius: 7, borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)' },
   filterLabel: { color: 'rgba(255,255,255,0.85)', fontSize: 13 },
 });
@@ -5444,7 +5444,7 @@ const connStyles = StyleSheet.create({
 // payoff moment for the host wrapping a broadcast (TikTok parity). No
 // external dep — pure Animated.Value loops. Particles share four brand-
 // adjacent colors so the burst reads as celebratory without being chaotic.
-const CONFETTI_COLORS = ['#a855f7', '#fbbf24', '#ef4444', '#22c55e', '#3b82f6'];
+const CONFETTI_COLORS = ['#128C7E', '#fbbf24', '#ef4444', '#22c55e', '#3b82f6'];
 const CONFETTI_COUNT = 24;
 function EndLiveConfetti() {
   // Build particles once on mount — each has a random start x, fall distance,
@@ -6065,14 +6065,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
-    backgroundColor: 'rgba(124,58,237,0.85)',
+    backgroundColor: 'rgba(18, 140, 126,0.85)',
     borderRadius: 14,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderLeftWidth: 3,
     borderLeftColor: '#fff',
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 4px 14px rgba(124,58,237,0.4)',
+      boxShadow: '0 4px 14px rgba(18, 140, 126,0.4)',
     } : {}),
   },
   pinnedIconWrap: {
@@ -6122,24 +6122,24 @@ const styles = StyleSheet.create({
   // mode is on" cue without losing the underlying glass aesthetic. All
   // colors are taken from the brand palette (no off-brand reds/blues).
   rightBtnActiveEffects: {
-    backgroundColor: 'rgba(168,85,247,0.55)',
-    borderColor: 'rgba(168,85,247,0.7)',
+    backgroundColor: 'rgba(18, 140, 126,0.55)',
+    borderColor: 'rgba(18, 140, 126,0.7)',
   },
   rightBtnActiveFilter: {
-    backgroundColor: 'rgba(124,58,237,0.55)',
-    borderColor: 'rgba(124,58,237,0.7)',
+    backgroundColor: 'rgba(18, 140, 126,0.55)',
+    borderColor: 'rgba(18, 140, 126,0.7)',
   },
   rightBtnActiveAr: {
-    backgroundColor: 'rgba(236,72,153,0.55)',
-    borderColor: 'rgba(236,72,153,0.7)',
+    backgroundColor: 'rgba(18, 140, 126,0.55)',
+    borderColor: 'rgba(18, 140, 126,0.7)',
   },
   rightBtnActiveSave: {
     backgroundColor: 'rgba(250,204,21,0.4)',
     borderColor: 'rgba(250,204,21,0.6)',
   },
   rightBtnActivePoll: {
-    backgroundColor: 'rgba(124,58,237,0.55)',
-    borderColor: 'rgba(124,58,237,0.7)',
+    backgroundColor: 'rgba(18, 140, 126,0.55)',
+    borderColor: 'rgba(18, 140, 126,0.7)',
   },
   rightBtnIconEmoji: { fontSize: 18 },
   // Cumulative heart total above the action stack — TikTok aesthetic.
@@ -6213,9 +6213,9 @@ const styles = StyleSheet.create({
   // Host-authored comment: subtle purple tint + 1px brand border so the
   // host's voice stands out in the rolling feed without screaming.
   commentBubbleHost: {
-    backgroundColor: 'rgba(124,58,237,0.32)',
+    backgroundColor: 'rgba(18, 140, 126,0.32)',
     borderWidth: 1,
-    borderColor: 'rgba(168,85,247,0.55)',
+    borderColor: 'rgba(18, 140, 126,0.55)',
   },
   commentNameRow: {
     flexDirection: 'row',
@@ -6224,7 +6224,7 @@ const styles = StyleSheet.create({
     marginBottom: 1,
   },
   commentName: {
-    color: '#a78bfa', fontSize: 11, fontWeight: '800', letterSpacing: 0.3,
+    color: '#128C7E', fontSize: 11, fontWeight: '800', letterSpacing: 0.3,
   },
   commentHostTag: {
     color: '#f59e0b', fontSize: 10, fontWeight: '700',
@@ -6276,12 +6276,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#A582F7',
+    backgroundColor: '#128C7E',
     paddingHorizontal: 12,
     paddingVertical: 9,
     borderRadius: 22,
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 2px 12px rgba(124,58,237,0.45)',
+      boxShadow: '0 2px 12px rgba(18, 140, 126,0.45)',
     } : {}),
   },
   invitePillText: {
@@ -6309,7 +6309,7 @@ const styles = StyleSheet.create({
   },
   composerSendBtn: {
     width: 32, height: 32, borderRadius: 16,
-    backgroundColor: '#A582F7',
+    backgroundColor: '#128C7E',
     alignItems: 'center', justifyContent: 'center',
   },
   composerIconBtn: {
@@ -6382,13 +6382,13 @@ const styles = StyleSheet.create({
   endModalStats: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(124,58,237,0.12)',
+    backgroundColor: 'rgba(18, 140, 126,0.12)',
     borderRadius: 14,
     paddingVertical: 14,
     paddingHorizontal: 8,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: 'rgba(124,58,237,0.25)',
+    borderColor: 'rgba(18, 140, 126,0.25)',
   },
   endModalStat: {
     flex: 1,
@@ -6441,7 +6441,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   endModalToggleOn: {
-    backgroundColor: '#A582F7',
+    backgroundColor: '#128C7E',
   },
   endModalToggleKnob: {
     width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff',
@@ -6495,7 +6495,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.12)',
     ...(Platform.OS === 'web' ? {
       backdropFilter: 'blur(22px) saturate(140%)', WebkitBackdropFilter: 'blur(22px) saturate(140%)',
-      boxShadow: '0 24px 60px rgba(0,0,0,0.6), 0 0 1px rgba(168,85,247,0.55)',
+      boxShadow: '0 24px 60px rgba(0,0,0,0.6), 0 0 1px rgba(18, 140, 126,0.55)',
     } : {}),
   },
   preHint: {
@@ -6515,7 +6515,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     width: 520, height: 520,
     borderRadius: 260,
-    backgroundColor: 'rgba(124,58,237,0.35)',
+    backgroundColor: 'rgba(18, 140, 126,0.35)',
     bottom: -200,
     alignSelf: 'center',
     ...(Platform.OS === 'web' ? {
@@ -6572,10 +6572,10 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.08)',
   },
   preAudPillActive: {
-    backgroundColor: 'rgba(124,58,237,0.55)',
-    borderColor: 'rgba(168,85,247,0.85)',
+    backgroundColor: 'rgba(18, 140, 126,0.55)',
+    borderColor: 'rgba(18, 140, 126,0.85)',
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 0 14px rgba(124,58,237,0.4)',
+      boxShadow: '0 0 14px rgba(18, 140, 126,0.4)',
     } : {}),
   },
   preAudPillText: {
@@ -6679,12 +6679,12 @@ const styles = StyleSheet.create({
   // multi-color border + boxShadow (web) + a brand-purple drop shadow
   // (native) for the same visual read.
   arChipActive: {
-    borderColor: '#a855f7',
-    backgroundColor: 'rgba(168,85,247,0.22)',
+    borderColor: '#128C7E',
+    backgroundColor: 'rgba(18, 140, 126,0.22)',
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 0 0 1px #ec4899, 0 0 12px rgba(168,85,247,0.6), 0 0 18px rgba(236,72,153,0.35)',
+      boxShadow: '0 0 0 1px #128C7E, 0 0 12px rgba(18, 140, 126,0.6), 0 0 18px rgba(18, 140, 126,0.35)',
     } : {
-      shadowColor: '#a855f7',
+      shadowColor: '#128C7E',
       shadowOffset: { width: 0, height: 0 },
       shadowOpacity: 0.7,
       shadowRadius: 8,
@@ -6808,12 +6808,12 @@ const styles = StyleSheet.create({
   },
   insightsStatsRow: {
     flexDirection: 'row',
-    backgroundColor: 'rgba(124,58,237,0.12)',
+    backgroundColor: 'rgba(18, 140, 126,0.12)',
     borderRadius: 14,
     paddingVertical: 14,
     paddingHorizontal: 8,
     borderWidth: 1,
-    borderColor: 'rgba(124,58,237,0.25)',
+    borderColor: 'rgba(18, 140, 126,0.25)',
     marginTop: 4,
   },
   insightsStat: { flex: 1, alignItems: 'center' },
@@ -6843,7 +6843,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 24px 70px rgba(0,0,0,0.7), 0 0 1px rgba(168,85,247,0.5)',
+      boxShadow: '0 24px 70px rgba(0,0,0,0.7), 0 0 1px rgba(18, 140, 126,0.5)',
     } : {}),
   },
   endCardHero: {
@@ -6872,13 +6872,13 @@ const styles = StyleSheet.create({
   endCardStatsRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(124,58,237,0.12)',
+    backgroundColor: 'rgba(18, 140, 126,0.12)',
     borderRadius: 16,
     paddingVertical: 16,
     paddingHorizontal: 8,
     marginBottom: 18,
     borderWidth: 1,
-    borderColor: 'rgba(124,58,237,0.25)',
+    borderColor: 'rgba(18, 140, 126,0.25)',
   },
   endCardStat: { flex: 1, alignItems: 'center' },
   endCardStatValue: {
@@ -6928,7 +6928,7 @@ const styles = StyleSheet.create({
     } : {}),
   },
   endCardCtaPrimaryOff: {
-    backgroundColor: 'rgba(124,58,237,0.85)',
+    backgroundColor: 'rgba(18, 140, 126,0.85)',
   },
   endCardCtaPrimaryText: { color: '#000', fontSize: 13, fontWeight: '800', letterSpacing: 0.2, flexShrink: 1, textAlign: 'center' },
   endCardDone: {
@@ -6944,13 +6944,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    backgroundColor: '#A582F7',
+    backgroundColor: '#128C7E',
     paddingVertical: 16,
     paddingHorizontal: 18,
     borderRadius: 16,
     marginTop: 12,
     marginHorizontal: 4,
-    shadowColor: '#A582F7',
+    shadowColor: '#128C7E',
     shadowOpacity: 0.45,
     shadowRadius: 14,
     shadowOffset: { width: 0, height: 6 },

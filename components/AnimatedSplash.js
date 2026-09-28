@@ -141,13 +141,13 @@ const s = StyleSheet.create({
   },
   // Eyelid bars sit on top of the icon image. Tinted with the icon's
   // skin/face base color so the closed eye reads as part of the face
-  // (matches Chatyy avatar). #2a1b3a is the dark eye/lash area of the
+  // (matches Chatyy avatar). #161618 is the dark eye/lash area of the
   // current icon; tweak alongside the icon if the art changes.
   eyelid: {
     position: 'absolute',
     width: EYE_W,
     height: EYE_H,
     borderRadius: EYE_H / 2,
-    backgroundColor: '#2a1b3a',
+    backgroundColor: '#161618',
   },
 });

@@ -32,9 +32,9 @@ const STORAGE_KEY = 'chatyy_whatsnew_v2_5_0';
 const VERSION_KEY = 'chatyy_last_seen_version';
 const CURRENT_VERSION = '2.5.0';
 
-const BRAND_PURPLE = '#A582F7';
-const BRAND_PURPLE_DARK = '#5B21B6';
-const BRAND_PINK = '#EC4899';
+const BRAND_PURPLE = '#128C7E';
+const BRAND_PURPLE_DARK = '#128C7E';
+const BRAND_PINK = '#128C7E';
 
 // ─── Module-level helpers exposed for parent (gate) ──────────────────
 
@@ -104,7 +104,7 @@ function buildTiles(t) {
       title: tx('whatsnew.communities.title', 'Comunidades'),
       desc: tx('whatsnew.communities.desc', 'Junte-se a milhares de pessoas em grupos públicos.'),
       ctaRoute: '/community/discover',
-      gradient: ['#A582F7', '#A855F7'],
+      gradient: ['#128C7E', '#128C7E'],
     },
     {
       key: 'saved',
@@ -137,7 +137,7 @@ function buildTiles(t) {
       title: tx('whatsnew.family.title', 'Família compartilhada'),
       desc: tx('whatsnew.family.desc', 'Compartilhe planos, fotos e localização.'),
       ctaRoute: '/family',
-      gradient: ['#EC4899', '#F97316'],
+      gradient: ['#128C7E', '#F97316'],
     },
     {
       key: 'privacy',
@@ -145,7 +145,7 @@ function buildTiles(t) {
       title: tx('whatsnew.privacy.title', 'Privacidade avançada'),
       desc: tx('whatsnew.privacy.desc', 'Sealed sender, mensagens que somem e tradução de conversas.'),
       ctaRoute: '/settings',
-      gradient: ['#6366F1', '#A582F7'],
+      gradient: ['#6366F1', '#128C7E'],
     },
     {
       key: 'broadcast',
@@ -153,7 +153,7 @@ function buildTiles(t) {
       title: tx('whatsnew.broadcast.title', 'Listas de transmissão'),
       desc: tx('whatsnew.broadcast.desc', 'Mande a mesma mensagem pra vários sem criar grupo.'),
       ctaRoute: '/chat-new',
-      gradient: ['#F43F5E', '#EC4899'],
+      gradient: ['#F43F5E', '#128C7E'],
     },
     {
       key: 'bots',
@@ -189,7 +189,7 @@ function ConfettiBurst({ size = 120 }) {
   // Pure RN — render colored dots arranged in a radial burst. No SVG
   // dependency beyond what Icons.js already pulls in.
   const pieces = useMemo(() => {
-    const colors = ['#F59E0B', '#EC4899', '#A582F7', '#10B981', '#3B82F6', '#F97316', '#EF4444'];
+    const colors = ['#F59E0B', '#128C7E', '#128C7E', '#10B981', '#3B82F6', '#F97316', '#EF4444'];
     return Array.from({ length: 18 }).map((_, i) => {
       const angle = (i / 18) * Math.PI * 2;
       const r = 36 + (i % 3) * 10;

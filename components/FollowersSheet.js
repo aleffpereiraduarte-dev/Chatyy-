@@ -16,7 +16,7 @@ import AvatarCircle from './AvatarCircle';
 import { IconX, IconSearch } from './Icons';
 import * as api from '../services/api';
 
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 
 export default function FollowersSheet({
   visible, email, initialTab = 'followers',

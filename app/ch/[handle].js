@@ -58,7 +58,7 @@ export default function ChannelFollowScreen() {
             </Text>
             <TouchableOpacity
               onPress={() => router.replace({ pathname: '/login', params: { redirect: `/ch/${String(handle || '').replace(/^@/, '')}` } })}
-              style={{ paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, backgroundColor: '#A582F7' }}
+              style={{ paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, backgroundColor: '#128C7E' }}
             >
               <Text style={{ color: '#fff', fontWeight: '700' }}>{t?.('common.login') || 'Entrar'}</Text>
             </TouchableOpacity>

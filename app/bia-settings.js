@@ -13,7 +13,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconSparkles } from '../components/Icons';
 import { aiMemoryGet, aiMemorySet, aiMemoryLearnStyle } from '../services/api';
 
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 
 export default function BiaSettings() {
   const router = useRouter();
@@ -80,7 +80,7 @@ export default function BiaSettings() {
   }, [hydrate, showToast, t]);
 
   const cardBg = isDark ? '#1a1424' : '#ffffff';
-  const border = isDark ? '#2c2340' : '#ece7f5';
+  const border = isDark ? '#161618' : '#ece7f5';
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }} edges={['top']}>

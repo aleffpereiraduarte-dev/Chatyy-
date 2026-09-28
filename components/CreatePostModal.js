@@ -31,7 +31,7 @@ async function getVideoThumbnail(uri) {
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const MAX_WIDTH = 600;
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 const MAX_CAPTION = 2200;
 const MAX_MEDIA = 10;
 
@@ -333,7 +333,7 @@ function AudienceModal({ visible, onClose, selected, onSelect, colors, isDark, t
             return (
               <TouchableOpacity
                 key={opt.key}
-                style={[gs.audienceRow, isActive && { backgroundColor: isDark ? 'rgba(124,58,237,0.1)' : 'rgba(124,58,237,0.06)' }]}
+                style={[gs.audienceRow, isActive && { backgroundColor: isDark ? 'rgba(18, 140, 126,0.1)' : 'rgba(18, 140, 126,0.06)' }]}
                 onPress={() => { onSelect(opt.key); onClose(); }}
               >
                 <View style={[gs.audienceIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }]}>
@@ -449,7 +449,7 @@ function TagPeopleModal({ visible, onClose, tagged, onTag, colors, isDark, t }) 
             {tagged.map(person => (
               <TouchableOpacity
                 key={person.email}
-                style={[gs.tagChip, { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)' }]}
+                style={[gs.tagChip, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.15)' : 'rgba(18, 140, 126,0.1)' }]}
                 onPress={() => onTag(tagged.filter(p => p.email !== person.email))}
               >
                 <Text style={[gs.tagChipText, { color: ACCENT }]}>{person.name || person.email}</Text>
@@ -1173,14 +1173,14 @@ export default function CreatePostModal({
             {/* Action buttons row */}
             <View style={[gs.actionRow, { borderBottomColor: borderColor }]}>
               <TouchableOpacity style={gs.actionBtn} onPress={pickMedia} activeOpacity={0.7}>
-                <View style={[gs.actionIcon, { backgroundColor: isDark ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.1)' }]}>
+                <View style={[gs.actionIcon, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.15)' : 'rgba(18, 140, 126,0.1)' }]}>
                   <IconImage size={22} color={ACCENT} />
                 </View>
                 <Text style={[gs.actionLabel, { color: colors.text }]}>{t('post.gallery') || 'Gallery'}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={gs.actionBtn} onPress={openCamera} activeOpacity={0.7}>
                 <View style={[gs.actionIcon, { backgroundColor: isDark ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.1)' }]}>
-                  <IconCamera size={22} color="#A78BFA" />
+                  <IconCamera size={22} color="#128C7E" />
                 </View>
                 <Text style={[gs.actionLabel, { color: colors.text }]}>{t('post.camera') || 'Camera'}</Text>
               </TouchableOpacity>
@@ -1192,12 +1192,12 @@ export default function CreatePostModal({
                 >
                   <View style={[gs.actionIcon, {
                     backgroundColor: multiSelectMode
-                      ? (isDark ? 'rgba(168,85,247,0.2)' : 'rgba(168,85,247,0.1)')
+                      ? (isDark ? 'rgba(18, 140, 126,0.2)' : 'rgba(18, 140, 126,0.1)')
                       : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
                   }]}>
-                    <IconCheck size={22} color={multiSelectMode ? '#a855f7' : colors.textSecondary} />
+                    <IconCheck size={22} color={multiSelectMode ? '#128C7E' : colors.textSecondary} />
                   </View>
-                  <Text style={[gs.actionLabel, { color: multiSelectMode ? '#a855f7' : colors.text }]}>
+                  <Text style={[gs.actionLabel, { color: multiSelectMode ? '#128C7E' : colors.text }]}>
                     {t('post.selectMultiple') || 'Multi'}
                   </Text>
                 </TouchableOpacity>
@@ -1212,7 +1212,7 @@ export default function CreatePostModal({
                   borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
                 }]}>
                   <View style={[gs.iconCircle, {
-                    backgroundColor: isDark ? 'rgba(124,58,237,0.12)' : 'rgba(124,58,237,0.08)',
+                    backgroundColor: isDark ? 'rgba(18, 140, 126,0.12)' : 'rgba(18, 140, 126,0.08)',
                   }]}>
                     <IconCamera size={44} color={ACCENT} />
                   </View>
@@ -1227,7 +1227,7 @@ export default function CreatePostModal({
                       <IconImage size={20} color="#fff" />
                       <Text style={gs.webBtnText}>{t('post.gallery') || 'Gallery'}</Text>
                     </TouchableOpacity>
-                    <TouchableOpacity style={[gs.webBtn, { backgroundColor: '#A78BFA' }]} onPress={openCamera} activeOpacity={0.8}>
+                    <TouchableOpacity style={[gs.webBtn, { backgroundColor: '#128C7E' }]} onPress={openCamera} activeOpacity={0.8}>
                       <IconCamera size={20} color="#fff" />
                       <Text style={gs.webBtnText}>{t('post.camera') || 'Camera'}</Text>
                     </TouchableOpacity>
@@ -1398,16 +1398,16 @@ export default function CreatePostModal({
               {/* Caption footer: char count + AI suggest */}
               <View style={gs.captionFooter}>
                 <TouchableOpacity
-                  style={[gs.aiBtn, { backgroundColor: isDark ? 'rgba(168,85,247,0.15)' : 'rgba(168,85,247,0.08)' }]}
+                  style={[gs.aiBtn, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.15)' : 'rgba(18, 140, 126,0.08)' }]}
                   onPress={suggestCaption}
                   disabled={aiLoading}
                   activeOpacity={0.7}
                 >
                   {aiLoading ? (
-                    <ActivityIndicator size="small" color="#a855f7" />
+                    <ActivityIndicator size="small" color="#128C7E" />
                   ) : (
                     <>
-                      <IconSparkles size={16} color="#a855f7" />
+                      <IconSparkles size={16} color="#128C7E" />
                       <Text style={gs.aiBtnText}>{t('post.aiSuggest') || 'AI Suggest'}</Text>
                     </>
                   )}
@@ -1514,7 +1514,7 @@ export default function CreatePostModal({
               <View
                 style={[gs.optionRow, {
                   borderTopColor: borderColor,
-                  backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.06)',
+                  backgroundColor: isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.06)',
                 }]}
               >
                 <View style={{ width: 32, height: 44, borderRadius: 4, overflow: 'hidden', backgroundColor: '#000' }}>
@@ -1602,7 +1602,7 @@ export default function CreatePostModal({
                 <Switch
                   value={postAsReel}
                   onValueChange={setPostAsReel}
-                  trackColor={{ false: isDark ? '#333' : '#ddd', true: 'rgba(124,58,237,0.4)' }}
+                  trackColor={{ false: isDark ? '#333' : '#ddd', true: 'rgba(18, 140, 126,0.4)' }}
                   thumbColor={postAsReel ? ACCENT : '#f4f3f4'}
                 />
               </View>
@@ -1760,7 +1760,7 @@ export default function CreatePostModal({
                       paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999,
                       borderWidth: StyleSheet.hairlineWidth,
                       borderColor: active ? ACCENT : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.10)'),
-                      backgroundColor: active ? (isDark ? 'rgba(124,58,237,0.22)' : 'rgba(124,58,237,0.10)') : 'transparent',
+                      backgroundColor: active ? (isDark ? 'rgba(18, 140, 126,0.22)' : 'rgba(18, 140, 126,0.10)') : 'transparent',
                     }}
                     accessibilityRole="tab"
                     accessibilityState={{ selected: active }}
@@ -2073,7 +2073,7 @@ const gs = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 8 },
       android: { elevation: 3 },
-      default: { boxShadow: '0 3px 8px rgba(124,58,237,0.28)' },
+      default: { boxShadow: '0 3px 8px rgba(18, 140, 126,0.28)' },
     }),
   },
   publishText: { color: '#fff', fontWeight: '700', fontSize: 14, letterSpacing: 0.2 },
@@ -2101,7 +2101,7 @@ const gs = StyleSheet.create({
   },
   previewStripIndex: {
     position: 'absolute', top: 4, left: 4,
-    width: 20, height: 20, borderRadius: 10, backgroundColor: 'rgba(124,58,237,0.9)',
+    width: 20, height: 20, borderRadius: 10, backgroundColor: 'rgba(18, 140, 126,0.9)',
     alignItems: 'center', justifyContent: 'center',
   },
   previewStripIndexText: { color: '#fff', fontSize: 10, fontWeight: '700' },
@@ -2224,7 +2224,7 @@ const gs = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 6,
     paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
   },
-  aiBtnText: { color: '#a855f7', fontSize: 13, fontWeight: '600' },
+  aiBtnText: { color: '#128C7E', fontSize: 13, fontWeight: '600' },
 
   // Mention dropdown
   mentionDrop: {
@@ -2282,7 +2282,7 @@ const gs = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
       android: { elevation: 6 },
-      default: { boxShadow: '0 6px 14px rgba(124,58,237,0.32)' },
+      default: { boxShadow: '0 6px 14px rgba(18, 140, 126,0.32)' },
     }),
   },
   bottomShareBtnDisabled: {

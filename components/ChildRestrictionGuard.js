@@ -245,7 +245,7 @@ function ConfettiDots() {
       x: Math.random() * 100,
       y: Math.random() * 100,
       size: 6 + Math.random() * 10,
-      color: ['#A582F7', '#ec4899', '#fbbf24', '#10b981', '#A78BFA', '#f43f5e', '#06b6d4'][i % 7],
+      color: ['#128C7E', '#128C7E', '#fbbf24', '#10b981', '#128C7E', '#f43f5e', '#06b6d4'][i % 7],
       anim: new Animated.Value(0),
     }))
   ).current;
@@ -471,11 +471,11 @@ export default function ChildRestrictionGuard({ children }) {
   // Graduation celebration
   if (graduated) {
     const FEATURES = [
-      { label: 'Email completo', Icon: IconMail, color: '#A78BFA' },
+      { label: 'Email completo', Icon: IconMail, color: '#128C7E' },
       { label: 'Chat sem restricoes', Icon: IconMessageCircle, color: '#10b981' },
-      { label: 'Feed e Status', Icon: IconLayout, color: '#ec4899' },
+      { label: 'Feed e Status', Icon: IconLayout, color: '#128C7E' },
       { label: 'Drive e Documentos', Icon: IconFolder, color: '#f59e0b' },
-      { label: 'Lives e Stories', Icon: IconVideo, color: '#A582F7' },
+      { label: 'Lives e Stories', Icon: IconVideo, color: '#128C7E' },
     ];
 
     return (
@@ -556,13 +556,13 @@ export default function ChildRestrictionGuard({ children }) {
     return (
       <Animated.View style={[sty.bedtime, { opacity: fadeAnim, backgroundColor: '#1e1b4b' }]}>
         <Animated.View style={{ alignItems: 'center', zIndex: 1, transform: [{ scale: bounceAnim }] }}>
-          <View style={{ width: 110, height: 110, borderRadius: 55, backgroundColor: 'rgba(167,139,250,0.18)', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
-            <IconLock size={64} color="#A582F7" />
+          <View style={{ width: 110, height: 110, borderRadius: 55, backgroundColor: 'rgba(18, 140, 126,0.18)', alignItems: 'center', justifyContent: 'center', marginBottom: 18 }}>
+            <IconLock size={64} color="#128C7E" />
           </View>
           <Text style={[sty.bedTitle, { color: '#fff' }]}>
             {t('kids.restriction.locked') || 'App pausado pelos pais'}
           </Text>
-          <Text style={[sty.bedSub, { color: '#c4b5fd' }]}>
+          <Text style={[sty.bedSub, { color: '#F1F3F5' }]}>
             {t('kids.restriction.lockedDesc') || 'Volta mais tarde — peça pro seu responsável liberar.'}
           </Text>
           <TouchableOpacity
@@ -741,22 +741,22 @@ const sty = StyleSheet.create({
   graduation: {
     flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32,
     backgroundColor: '#0f0720',
-    ...(Platform.OS === 'web' ? { background: 'linear-gradient(135deg, #0f0720 0%, #1e1145 40%, #3b1d6e 70%, #4c1d95 100%)' } : {}),
+    ...(Platform.OS === 'web' ? { background: 'linear-gradient(135deg, #0f0720 0%, #161618 40%, #161618 70%, #128C7E 100%)' } : {}),
   },
   gradTitle: { fontSize: 34, fontWeight: '800', color: '#fff', marginTop: 12, marginBottom: 4 },
-  gradSub: { fontSize: 22, color: '#a78bfa', marginBottom: 24, fontWeight: '700' },
+  gradSub: { fontSize: 22, color: '#128C7E', marginBottom: 24, fontWeight: '700' },
   gradCard: {
     backgroundColor: 'rgba(255,255,255,0.08)', borderRadius: 24, padding: 28, width: '100%', maxWidth: 360,
-    borderWidth: 1, borderColor: 'rgba(139,92,246,0.25)',
+    borderWidth: 1, borderColor: 'rgba(18, 140, 126,0.25)',
     ...(Platform.OS === 'web' ? { backdropFilter: 'blur(10px)' } : {}),
   },
-  gradText: { fontSize: 16, color: '#e9d5ff', lineHeight: 24, textAlign: 'center' },
+  gradText: { fontSize: 16, color: '#F1F3F5', lineHeight: 24, textAlign: 'center' },
   gradItem: { fontSize: 17, color: '#fff', fontWeight: '600' },
   gradBtn: {
-    marginTop: 28, backgroundColor: '#A582F7', paddingHorizontal: 36, paddingVertical: 16, borderRadius: 20,
+    marginTop: 28, backgroundColor: '#128C7E', paddingHorizontal: 36, paddingVertical: 16, borderRadius: 20,
     flexDirection: 'row', alignItems: 'center', gap: 10,
     minHeight: 56,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(139,92,246,0.5)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(18, 140, 126,0.5)' } : {}),
   },
   gradBtnText: { color: '#fff', fontSize: 19, fontWeight: '800' },
 });

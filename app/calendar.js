@@ -46,7 +46,7 @@ const MONTH_NAMES_FALLBACK = [
   'January', 'February', 'March', 'April', 'May', 'June',
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
-const PRESET_COLORS = ['#4285F4', '#EA4335', '#34A853', '#FBBC05', '#8E24AA', '#F4511E', '#0097A7', '#616161'];
+const PRESET_COLORS = ['#4285F4', '#EA4335', '#34A853', '#FBBC05', '#128C7E', '#F4511E', '#0097A7', '#616161'];
 
 const REMINDER_OPTIONS = [
   { value: 'none', mins: 0 },
@@ -2562,7 +2562,7 @@ function CalendarScreenInner() {
           try {
             targetCalId = await ExpoCalendar.createCalendarAsync({
               title: 'Chatyy',
-              color: '#A582F7',
+              color: '#128C7E',
               entityType: ExpoCalendar.EntityTypes.EVENT,
               source: defaultSource,
               name: 'Chatyy',
@@ -2757,10 +2757,10 @@ function CalendarScreenInner() {
         Platform.OS === 'web'
           ? {
               background: isDark
-                ? 'linear-gradient(140deg, #1a0a2e 0%, #2a0e3a 55%, #3a1148 100%)'
-                : 'linear-gradient(135deg, #6D28D9 0%, #A582F7 55%, #DB2777 100%)',
+                ? 'linear-gradient(140deg, #161618 0%, #161618 55%, #161618 100%)'
+                : 'linear-gradient(135deg, #128C7E 0%, #128C7E 55%, #DB2777 100%)',
             }
-          : { backgroundColor: isDark ? '#1a0a2e' : '#A582F7' },
+          : { backgroundColor: isDark ? '#161618' : '#128C7E' },
       ]}>
         {/* Row 1 — top bar */}
         <View style={styles.headerTopRow}>
@@ -3220,7 +3220,7 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.16, shadowRadius: 18 },
       android: { elevation: 6 },
-      web: { boxShadow: '0 8px 28px rgba(91,33,182,0.28)' },
+      web: { boxShadow: '0 8px 28px rgba(18, 140, 126,0.28)' },
     }),
   },
   headerTopRow: {
@@ -3281,7 +3281,7 @@ const styles = StyleSheet.create({
     }),
   },
   todayPillText: {
-    color: '#A582F7', fontSize: FontSize.xs, fontWeight: '800', letterSpacing: 0.3, textTransform: 'uppercase',
+    color: '#128C7E', fontSize: FontSize.xs, fontWeight: '800', letterSpacing: 0.3, textTransform: 'uppercase',
   },
   // Segmented view toggle — Mês / Semana / Agenda
   viewSegmentRow: {
@@ -3311,7 +3311,7 @@ const styles = StyleSheet.create({
     }),
   },
   viewSegmentText: { color: 'rgba(255,255,255,0.85)', fontSize: FontSize.xs + 1, fontWeight: '700', letterSpacing: 0.1 },
-  viewSegmentTextActive: { color: '#A582F7' },
+  viewSegmentTextActive: { color: '#128C7E' },
   // Timezones toggle (ghost pill on the right of the segment row)
   tzGhostBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
@@ -3346,7 +3346,7 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.85)', fontSize: FontSize.xs, fontWeight: '700',
     textTransform: 'uppercase', letterSpacing: 0.6,
   },
-  weekStripTextToday: { color: '#A582F7' },
+  weekStripTextToday: { color: '#128C7E' },
   headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderRadius: 12 },
   // Mini-FAB inside header — same brand-accented style as the floating FABs
   // in Inbox/Chat (purple gradient orb + soft glow), so the "novo evento"
@@ -3539,7 +3539,7 @@ const styles = StyleSheet.create({
   calBadgeText: { fontSize: FontSize.xs, fontWeight: '600' },
   joinMeetingBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: '#A582F7', borderRadius: 8,
+    backgroundColor: '#128C7E', borderRadius: 8,
     paddingHorizontal: 10, paddingVertical: 6,
     marginTop: 6,
   },

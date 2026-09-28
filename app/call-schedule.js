@@ -122,7 +122,7 @@ export default function CallScheduleScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <View style={[styles.header, {
-        backgroundColor: isDark ? '#110a1f' : '#6D28D9',
+        backgroundColor: isDark ? '#110a1f' : '#128C7E',
         paddingTop: insets.top,
       }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn} hitSlop={10}>

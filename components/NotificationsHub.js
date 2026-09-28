@@ -45,7 +45,7 @@ import {
 } from './Icons';
 
 // Brand color (Chatyy purple)
-const BRAND = '#A582F7';
+const BRAND = '#128C7E';
 
 // 4-segment Instagram-style tab bar
 const TABS = [
@@ -171,7 +171,7 @@ function NotifRow({ item, colors, isDark, t, onPress, onAction }) {
   const thumbUri = item.thumbnail_url || item.post_thumbnail;
 
   const showActions = item.type === 'follow' && !item.action_taken;
-  const unreadBg = isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.05)';
+  const unreadBg = isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.05)';
 
   return (
     <TouchableOpacity
@@ -390,7 +390,7 @@ function EmptyState({ colors, t }) {
     <View style={{ padding: 40, alignItems: 'center' }}>
       <View style={{
         width: 80, height: 80, borderRadius: 40,
-        backgroundColor: 'rgba(124,58,237,0.10)',
+        backgroundColor: 'rgba(18, 140, 126,0.10)',
         alignItems: 'center', justifyContent: 'center',
         marginBottom: 14,
       }}>
@@ -631,7 +631,7 @@ export default function NotificationsHub({
                   flexDirection: 'row', alignItems: 'center', gap: 4,
                   paddingHorizontal: 10, paddingVertical: 5,
                   borderRadius: 999,
-                  backgroundColor: 'rgba(124,58,237,0.10)',
+                  backgroundColor: 'rgba(18, 140, 126,0.10)',
                 }}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityRole="button"

@@ -545,7 +545,7 @@ const StoryMedia = React.memo(function StoryMedia({
       // Bug user 2026-05-21: "foto não aparece, se volta aparece".
       if (cur?._placeholder) {
         return (
-          <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+          <View style={{ flex: 1, backgroundColor: '#161618', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
             <ActivityIndicator size="large" color="rgba(255,255,255,0.85)" />
             <Text style={{ marginTop: 16, color: 'rgba(255,255,255,0.85)', fontSize: 14, fontWeight: '600', textAlign: 'center' }}>
               {t?.('status.loading') || 'Carregando…'}
@@ -554,7 +554,7 @@ const StoryMedia = React.memo(function StoryMedia({
         );
       }
       return (
-        <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+        <View style={{ flex: 1, backgroundColor: '#161618', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
           <View style={{ marginBottom: 12 }}><IconCamera size={40} color="rgba(255,255,255,0.55)" /></View>
           <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
             {t?.('status.unavailable') || 'Mídia indisponível'}
@@ -673,7 +673,7 @@ const StoryMedia = React.memo(function StoryMedia({
     // for both photo + video status. Painting a blurred thumb behind the
     // full image kills the 1-2s black gap users reported while expo-image /
     // network finished the full payload. Falls back gracefully on older
-    // statuses without thumbnail_url (the wrapper's #1a0a2e tint reads as
+    // statuses without thumbnail_url (the wrapper's #161618 tint reads as
     // a soft brand-purple, not pitch black).
     //
     // [WAVE 99 2026-05-21] When backend didn't ship a thumbnail_url for an
@@ -710,13 +710,13 @@ const StoryMedia = React.memo(function StoryMedia({
     // the real reason in dev logs + offers a Retry tap that bumps the
     // imageRetry counter — that remounts the underlying image with a fresh
     // cache key (cachePolicy="none" on retry) so a poisoned disk cache entry
-    // can't soft-brick the viewer forever. Branded #1a0a2e backdrop so the
+    // can't soft-brick the viewer forever. Branded #161618 backdrop so the
     // canvas reads as "Stories" not "app crashed". Falls through to next
     // story via the existing auto-advance timer so a single broken item
     // doesn't dead-end the carousel.
     if (imageError) {
       return (
-        <View style={{ flex: 1, backgroundColor: '#1a0a2e', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+        <View style={{ flex: 1, backgroundColor: '#161618', alignItems: 'center', justifyContent: 'center', padding: 30 }}>
           <View style={{ marginBottom: 14 }}><IconAlertTriangle size={38} color="rgba(255,255,255,0.55)" /></View>
           <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 16, fontWeight: '700', textAlign: 'center' }}>
             {t?.('status.imageUnavailable') || 'Imagem indisponível'}
@@ -753,7 +753,7 @@ const StoryMedia = React.memo(function StoryMedia({
     // but the safety-net imageFade forces opacity 1 anyway, the user at
     // least sees a recognizable dark-purple "Stories canvas" — not a blank
     // black void the user calls "preto puro".
-    const _wrapperBg = '#1a0a2e';
+    const _wrapperBg = '#161618';
     // Force-remount the inner image whenever URL or retry counter changes
     // so React doesn't reuse a stale instance still tied to the old cache
     // hit. expo-image internally dedupes by source.uri so the key= is the
@@ -858,7 +858,7 @@ try { _expoAudio = require('expo-audio'); } catch {}
 // a static waveform + label. The audio itself is driven by StatusMusicPlayer;
 // this only paints the canvas (StoryMedia handles image/video/text).
 function VoiceStatusMedia({ caption, bgColor, t }) {
-  const bg = (bgColor && /^#|rgb/.test(String(bgColor))) ? bgColor : '#A582F7';
+  const bg = (bgColor && /^#|rgb/.test(String(bgColor))) ? bgColor : '#128C7E';
   const bars = [10, 18, 26, 16, 30, 22, 34, 20, 28, 14, 24, 32, 18, 26, 12, 22, 30, 16, 24, 20];
   return (
     <View style={{ flex: 1, backgroundColor: bg, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
@@ -2051,9 +2051,9 @@ export default function StoryViewer({
             // so finished + in-progress segments read as one consistent brand
             // surface (vs the prior solid white that looked disconnected).
             <View style={{ width: '100%', height: '100%', flexDirection: 'row' }}>
-              <View style={{ flex: 1, backgroundColor: '#A582F7' }} />
-              <View style={{ flex: 1, backgroundColor: '#A855F7' }} />
-              <View style={{ flex: 1, backgroundColor: '#EC4899' }} />
+              <View style={{ flex: 1, backgroundColor: '#128C7E' }} />
+              <View style={{ flex: 1, backgroundColor: '#128C7E' }} />
+              <View style={{ flex: 1, backgroundColor: '#128C7E' }} />
             </View>
           )}
           {i === safeIdx && (
@@ -2065,15 +2065,15 @@ export default function StoryViewer({
                 width: progressRef.current.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
                 backgroundColor: 'transparent',
                 flexDirection: 'row',
-                shadowColor: '#EC4899', shadowOpacity: 0.7, shadowRadius: 4, shadowOffset: { width: 0, height: 0 },
+                shadowColor: '#128C7E', shadowOpacity: 0.7, shadowRadius: 4, shadowOffset: { width: 0, height: 0 },
               }}
             >
               {/* Brand gradient (purple → pink) — three stacked color steps
                   approximate a linear-gradient cheaply. Pink trailing edge
                   carries a soft glow via shadowColor on the parent. */}
-              <View style={{ flex: 1, backgroundColor: '#A582F7' }} />
-              <View style={{ flex: 1, backgroundColor: '#A855F7' }} />
-              <View style={{ flex: 1, backgroundColor: '#EC4899' }} />
+              <View style={{ flex: 1, backgroundColor: '#128C7E' }} />
+              <View style={{ flex: 1, backgroundColor: '#128C7E' }} />
+              <View style={{ flex: 1, backgroundColor: '#128C7E' }} />
             </Animated.View>
           )}
         </View>
@@ -2114,7 +2114,7 @@ export default function StoryViewer({
           pointerEvents="none"
           style={{
             position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-            backgroundColor: '#1a0a2e',
+            backgroundColor: '#161618',
             zIndex: 0,
             opacity: dragX.interpolate({
               inputRange: [-winW, -40, 0, 40, winW],
@@ -2264,7 +2264,7 @@ export default function StoryViewer({
                     onClose?.();
                     setTimeout(() => { try { onRepost?.(item); } catch {} }, 150);
                   }}
-                  style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(124,58,237,0.55)', alignItems: 'center', justifyContent: 'center' }}
+                  style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(18, 140, 126,0.55)', alignItems: 'center', justifyContent: 'center' }}
                   accessibilityLabel={t?.('status.repostAction') || 'Repostar'}
                 >
                   <IconArrowRight size={18} color="#fff" />
@@ -2282,7 +2282,7 @@ export default function StoryViewer({
               disabled={saving}
               style={{
                 width: 34, height: 34, borderRadius: 17,
-                backgroundColor: saving ? 'rgba(124,58,237,0.55)' : 'rgba(0,0,0,0.4)',
+                backgroundColor: saving ? 'rgba(18, 140, 126,0.55)' : 'rgba(0,0,0,0.4)',
                 alignItems: 'center', justifyContent: 'center',
                 opacity: saving ? 0.7 : 1,
               }}
@@ -2675,7 +2675,7 @@ export default function StoryViewer({
               </Text>
               <View style={{
                 width: 22, height: 22, borderRadius: 11,
-                backgroundColor: '#A582F7',
+                backgroundColor: '#128C7E',
                 alignItems: 'center', justifyContent: 'center',
               }}>
                 <IconArrowRight size={13} color="#fff" />
@@ -2837,7 +2837,7 @@ export default function StoryViewer({
               left: rippleAt.x - 60, top: rippleAt.y - 60,
               width: 120, height: 120, borderRadius: 60,
               backgroundColor: 'rgba(255,255,255,0.3)',
-              borderWidth: 2, borderColor: 'rgba(236,72,153,0.55)',
+              borderWidth: 2, borderColor: 'rgba(18, 140, 126,0.55)',
               zIndex: 15,
               opacity: rippleAnim.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }),
               transform: [{
@@ -2881,7 +2881,7 @@ export default function StoryViewer({
               flexDirection: 'row', alignItems: 'center', gap: 8,
               backgroundColor: 'rgba(20,20,28,0.92)',
               borderRadius: 22, paddingHorizontal: 14, paddingVertical: 9,
-              borderWidth: 1, borderColor: 'rgba(124,58,237,0.55)',
+              borderWidth: 1, borderColor: 'rgba(18, 140, 126,0.55)',
               shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8,
               shadowOffset: { width: 0, height: 4 }, elevation: 6,
               maxWidth: '85%',
@@ -3024,7 +3024,7 @@ export default function StoryViewer({
                   style={{
                     flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
                     gap: 8,
-                    backgroundColor: 'rgba(124,58,237,0.78)',
+                    backgroundColor: 'rgba(18, 140, 126,0.78)',
                     borderRadius: 18, paddingHorizontal: 12, paddingVertical: 6,
                     borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
                   }}
@@ -3108,7 +3108,7 @@ export default function StoryViewer({
                         // Soft glow only while pulsing — adds visual oomph
                         // without bloating the resting state.
                         ...(pulsing ? {
-                          shadowColor: '#EC4899', shadowOpacity: 0.6, shadowRadius: 10, shadowOffset: { width: 0, height: 0 },
+                          shadowColor: '#128C7E', shadowOpacity: 0.6, shadowRadius: 10, shadowOffset: { width: 0, height: 0 },
                         } : null),
                       }}
                     >
@@ -3216,12 +3216,12 @@ export default function StoryViewer({
                       }}
                       style={{
                         width: 34, height: 34, borderRadius: 17,
-                        backgroundColor: '#A582F7',
+                        backgroundColor: '#128C7E',
                         alignItems: 'center', justifyContent: 'center',
                         opacity: replying ? 0.6 : 1,
                         // Soft brand glow so the send affordance pops against
                         // the translucent reply field (WhatsApp/IG parity).
-                        shadowColor: '#A582F7', shadowOpacity: 0.55, shadowRadius: 8,
+                        shadowColor: '#128C7E', shadowOpacity: 0.55, shadowRadius: 8,
                         shadowOffset: { width: 0, height: 2 }, elevation: 5,
                       }}
                       accessibilityLabel={t?.('common.send') || 'Enviar'}
@@ -3250,8 +3250,8 @@ export default function StoryViewer({
           >
             <Animated.View style={{
               width: 88, height: 88, borderRadius: 44,
-              backgroundColor: 'rgba(124,58,237,0.18)',
-              borderWidth: 2, borderColor: '#A582F7',
+              backgroundColor: 'rgba(18, 140, 126,0.18)',
+              borderWidth: 2, borderColor: '#128C7E',
               alignItems: 'center', justifyContent: 'center', marginBottom: 18,
               transform: [{ scale: caughtUpAnim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
             }}>
@@ -3300,7 +3300,7 @@ export default function StoryViewer({
               </View>
               {viewersLoading ? (
                 <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color="#A582F7" />
+                  <ActivityIndicator size="small" color="#128C7E" />
                 </View>
               ) : viewersList.length === 0 ? (
                 <View style={{ paddingVertical: 32, alignItems: 'center' }}>
@@ -3335,8 +3335,8 @@ export default function StoryViewer({
                         {emoji ? (
                           <View style={{
                             width: 34, height: 34, borderRadius: 17,
-                            backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.08)',
-                            borderWidth: 1, borderColor: 'rgba(124,58,237,0.32)',
+                            backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.08)',
+                            borderWidth: 1, borderColor: 'rgba(18, 140, 126,0.32)',
                             alignItems: 'center', justifyContent: 'center',
                           }}>
                             <Text style={{ fontSize: 18 }}>{emoji}</Text>

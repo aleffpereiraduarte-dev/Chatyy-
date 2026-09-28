@@ -32,7 +32,7 @@ export default function BrandFab({
   delayLongPress,
   size = 56,
   radius,                 // defaults to circle (size/2)
-  color = '#A582F7',      // brand
+  color = '#128C7E',      // brand
   variant = 'primary',    // 'primary' | 'secondary' | 'ghost'
   surfaceColor,           // for secondary/ghost: bg color (e.g. card)
   borderColor,            // for ghost variant

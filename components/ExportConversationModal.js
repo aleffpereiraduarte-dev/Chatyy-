@@ -26,7 +26,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconPackage, IconFileText, IconImage, IconX, IconCalendar, IconAlertCircle } from './Icons';
 import * as api from '../services/api';
 
-const PURPLE = '#A582F7';
+const PURPLE = '#128C7E';
 
 // Resolve the absolute origin for a server-relative export URL. Mirrors the
 // logic the old inline modal used so behavior stays identical.
@@ -239,7 +239,7 @@ export default function ExportConversationModal({
         style={{
           flexDirection: 'row', alignItems: 'center', gap: 12,
           paddingVertical: 12, paddingHorizontal: 12, borderRadius: 14,
-          backgroundColor: active ? (isDark ? 'rgba(124,58,237,0.16)' : 'rgba(124,58,237,0.08)') : 'transparent',
+          backgroundColor: active ? (isDark ? 'rgba(18, 140, 126,0.16)' : 'rgba(18, 140, 126,0.08)') : 'transparent',
           borderWidth: 1.5, borderColor: active ? PURPLE : chipBorder,
         }}
       >

@@ -5,9 +5,9 @@ import { IconSparkles, IconX } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
 import useIsMounted from '../hooks/useIsMounted';
 
-const BRAND = '#A582F7';
+const BRAND = '#128C7E';
 // Secondary gradient stop — pairs with brand for the "AI gradient" header.
-const BRAND_2 = '#EC4899';
+const BRAND_2 = '#128C7E';
 
 /**
  * Spotlight-grade AI search header banner.
@@ -136,7 +136,7 @@ const s = StyleSheet.create({
   chipActive: {
     // Subtle elevation when AI rerank is active so the toggle feels live.
     ...Platform.select({
-      web: { boxShadow: '0 0 0 3px rgba(124,58,237,0.12)' },
+      web: { boxShadow: '0 0 0 3px rgba(18, 140, 126,0.12)' },
       default: { shadowColor: BRAND, shadowOpacity: 0.25, shadowRadius: 6, shadowOffset: { width: 0, height: 2 }, elevation: 2 },
     }),
   },
@@ -165,7 +165,7 @@ const s = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(124,58,237,0.12)',
+    backgroundColor: 'rgba(18, 140, 126,0.12)',
   },
   headerTitle: {
     flex: 1,

@@ -252,7 +252,7 @@ export default function LivesSavedScreen() {
           </View>
           {item.is_host && item.saved_count > 0 && (
             <View style={styles.savedCountRow}>
-              <IconStar size={11} color="#A582F7" />
+              <IconStar size={11} color="#128C7E" />
               <Text style={[styles.savedCountTxt, { color: colors.textMuted || '#888' }]}>
                 {item.saved_count} {item.saved_count === 1
                   ? (t('liveReplay.savedBy1') || 'pessoa salvou')
@@ -339,7 +339,7 @@ export default function LivesSavedScreen() {
           keyExtractor={(it) => String(it.session_id || it.id)}
           renderItem={renderItem}
           contentContainerStyle={{ paddingVertical: 8 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#A582F7" />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#128C7E" />}
         />
       )}
     </View>

@@ -7,11 +7,11 @@ import AvatarCircle from './AvatarCircle';
 import { IconSend } from './Icons';
 
 const MAX_VISIBLE = 100;
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 
 // Generate consistent color from name string
 function nameColor(name) {
-  const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#FF9FF3', '#54A0FF', '#5F27CD', '#01A3A4', '#F368E0'];
+  const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FECA57', '#F1F3F5', '#54A0FF', '#128C7E', '#01A3A4', '#128C7E'];
   let hash = 0;
   for (let i = 0; i < (name || '').length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return colors[Math.abs(hash) % colors.length];
@@ -225,7 +225,7 @@ const styles = StyleSheet.create({
   sendBtnActive: {
     backgroundColor: ACCENT,
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 2px 8px rgba(124,58,237,0.4)',
+      boxShadow: '0 2px 8px rgba(18, 140, 126,0.4)',
     } : {}),
   },
 });

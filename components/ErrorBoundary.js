@@ -11,7 +11,7 @@ function getColors() {
       text: '#f1f5f9',
       sub: '#94a3b8',
       error: '#f87171',
-      btnBg: '#A582F7',
+      btnBg: '#128C7E',
       btnText: '#fff',
     };
   }
@@ -20,7 +20,7 @@ function getColors() {
     text: '#0f172a',
     sub: '#64748b',
     error: '#dc2626',
-    btnBg: '#A582F7',
+    btnBg: '#128C7E',
     btnText: '#fff',
   };
 }

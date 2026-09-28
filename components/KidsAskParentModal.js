@@ -38,7 +38,7 @@ function IconCheck({ size = 16, color = '#10b981' }) {
   );
 }
 
-function IconBack({ size = 18, color = '#A78BFA' }) {
+function IconBack({ size = 18, color = '#128C7E' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M19 12H5M12 19l-7-7 7-7" />
@@ -49,9 +49,9 @@ function IconBack({ size = 18, color = '#A78BFA' }) {
 const REQUEST_TYPES = [
   { key: 'extra_time',  emoji: '⏰', color: '#f97316', name: 'Mais tempo no app',       desc: 'Peça mais minutos pro seu pai ou mãe' },
   { key: 'new_contact', emoji: '👥', color: '#10b981', name: 'Aprovar novo contato',    desc: 'Adicionar um amigo novo' },
-  { key: 'new_app',     emoji: '📱', color: '#A78BFA', name: 'Liberar novo app',        desc: 'Usar um app que está bloqueado' },
+  { key: 'new_app',     emoji: '📱', color: '#128C7E', name: 'Liberar novo app',        desc: 'Usar um app que está bloqueado' },
   { key: 'help',        emoji: '🆘', color: '#ef4444', name: 'Preciso de ajuda',        desc: 'Mandar alerta importante' },
-  { key: 'other',       emoji: '💬', color: '#A582F7', name: 'Outro pedido',            desc: 'Escrever do seu jeito' },
+  { key: 'other',       emoji: '💬', color: '#128C7E', name: 'Outro pedido',            desc: 'Escrever do seu jeito' },
 ];
 
 export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
@@ -124,8 +124,8 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
         }}>
           {/* Gradient header */}
           <View style={[styles.header, Platform.OS === 'web'
-            ? { background: 'linear-gradient(135deg, #10b981 0%, #A78BFA 60%, #A582F7 100%)' }
-            : { backgroundColor: '#A78BFA' },
+            ? { background: 'linear-gradient(135deg, #10b981 0%, #128C7E 60%, #128C7E 100%)' }
+            : { backgroundColor: '#128C7E' },
           ]}>
             <View style={{ flex: 1 }}>
               <Text style={styles.headerTitle}>
@@ -169,12 +169,12 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
             <View style={{
               flexDirection: 'row', alignItems: 'center', gap: 10,
               paddingHorizontal: 16, paddingVertical: 12,
-              borderBottomWidth: 1, borderBottomColor: isDark ? '#2d1b4e' : '#f3e8ff',
+              borderBottomWidth: 1, borderBottomColor: isDark ? '#161618' : '#f3e8ff',
             }}>
               <TouchableOpacity onPress={() => setHistoryOpen(false)} accessibilityRole="button" accessibilityLabel="Voltar">
-                <IconBack size={20} color={isDark ? '#A78BFA' : '#A582F7'} />
+                <IconBack size={20} color={isDark ? '#128C7E' : '#128C7E'} />
               </TouchableOpacity>
-              <Text style={{ fontSize: 15, fontWeight: '800', color: isDark ? '#e9d5ff' : '#1e1b4b' }}>
+              <Text style={{ fontSize: 15, fontWeight: '800', color: isDark ? '#F1F3F5' : '#1e1b4b' }}>
                 {t?.('kids.askParent.history') || 'Pedidos anteriores'}
               </Text>
             </View>
@@ -182,7 +182,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
             <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 32 }}>
               {historyLoading ? (
                 <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-                  <ActivityIndicator color="#A78BFA" />
+                  <ActivityIndicator color="#128C7E" />
                 </View>
               ) : historyItems.length === 0 ? (
                 <View style={{ alignItems: 'center', paddingVertical: 40 }}>
@@ -221,23 +221,23 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                         flexDirection: 'row', alignItems: 'flex-start', gap: 12,
                         padding: 14, marginBottom: 10, borderRadius: 16,
                         borderWidth: 1,
-                        borderColor: isDark ? '#2d1b4e' : '#e5e7eb',
-                        backgroundColor: isDark ? '#1a0f30' : '#fafafa',
+                        borderColor: isDark ? '#161618' : '#e5e7eb',
+                        backgroundColor: isDark ? '#161618' : '#fafafa',
                       }}
                     >
                       <View style={{
                         width: 38, height: 38, borderRadius: 12,
-                        backgroundColor: (matchType?.color || '#A582F7') + '25',
+                        backgroundColor: (matchType?.color || '#128C7E') + '25',
                         alignItems: 'center', justifyContent: 'center',
                       }}>
                         <Text style={{ fontSize: 20 }}>{matchType?.emoji || '💬'}</Text>
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 14, fontWeight: '800', color: isDark ? '#e9d5ff' : '#111' }}>
+                        <Text style={{ fontSize: 14, fontWeight: '800', color: isDark ? '#F1F3F5' : '#111' }}>
                           {matchType?.name || item.reason || item.type || '—'}
                         </Text>
                         {!!item.note && (
-                          <Text style={{ fontSize: 13, color: isDark ? '#c4b5fd' : '#475569', marginTop: 4 }} numberOfLines={2}>
+                          <Text style={{ fontSize: 13, color: isDark ? '#F1F3F5' : '#475569', marginTop: 4 }} numberOfLines={2}>
                             {item.note}
                           </Text>
                         )}
@@ -252,7 +252,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                             </Text>
                           </View>
                           {!!timeStr && (
-                            <Text style={{ fontSize: 11, color: isDark ? '#7c6ba6' : '#9ca3af' }}>
+                            <Text style={{ fontSize: 11, color: isDark ? '#128C7E' : '#9ca3af' }}>
                               {timeStr}
                             </Text>
                           )}
@@ -268,7 +268,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
           <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingBottom: 28 }}>
             {/* Type picker */}
             <View style={{ padding: 16 }}>
-              <Text style={[styles.sectionLabel, { color: isDark ? '#c4b5fd' : '#6b7280' }]}>
+              <Text style={[styles.sectionLabel, { color: isDark ? '#F1F3F5' : '#6b7280' }]}>
                 {t?.('kids.askParent.pickType') || 'O que você quer pedir?'}
               </Text>
               <View style={{ gap: 10 }}>
@@ -283,8 +283,8 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                         flexDirection: 'row', alignItems: 'center', gap: 12,
                         paddingHorizontal: 14, paddingVertical: 14,
                         borderRadius: 18, borderWidth: 2,
-                        borderColor: selected ? rt.color : (isDark ? '#2d1b4e' : '#e5e7eb'),
-                        backgroundColor: selected ? rt.color + '18' : (isDark ? '#1a0f30' : '#fafafa'),
+                        borderColor: selected ? rt.color : (isDark ? '#161618' : '#e5e7eb'),
+                        backgroundColor: selected ? rt.color + '18' : (isDark ? '#161618' : '#fafafa'),
                       }}
                     >
                       <View style={{
@@ -295,7 +295,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                         <Text style={{ fontSize: 26 }}>{rt.emoji}</Text>
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ fontSize: 15, fontWeight: '800', color: selected ? rt.color : (isDark ? '#e9d5ff' : '#111') }}>
+                        <Text style={{ fontSize: 15, fontWeight: '800', color: selected ? rt.color : (isDark ? '#F1F3F5' : '#111') }}>
                           {rt.name}
                         </Text>
                         <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginTop: 2 }}>
@@ -311,7 +311,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
             {/* Type-specific fields */}
             {type === 'extra_time' && (
               <View style={{ paddingHorizontal: 16, paddingTop: 4 }}>
-                <Text style={[styles.sectionLabel, { color: isDark ? '#c4b5fd' : '#6b7280' }]}>
+                <Text style={[styles.sectionLabel, { color: isDark ? '#F1F3F5' : '#6b7280' }]}>
                   {t?.('kids.askParent.howMuch') || 'Quantos minutos a mais?'}
                 </Text>
                 <View style={{ flexDirection: 'row', gap: 8, flexWrap: 'wrap' }}>
@@ -324,7 +324,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                         activeOpacity={0.85}
                         style={{
                           paddingVertical: 10, paddingHorizontal: 16, borderRadius: 14,
-                          backgroundColor: sel ? '#f97316' : (isDark ? '#2d1b4e' : '#fef3c7'),
+                          backgroundColor: sel ? '#f97316' : (isDark ? '#161618' : '#fef3c7'),
                         }}
                       >
                         <Text style={{ fontSize: 15, fontWeight: '800', color: sel ? '#fff' : '#92400e' }}>
@@ -338,31 +338,31 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
             )}
             {type === 'new_contact' && (
               <View style={{ paddingHorizontal: 16, paddingTop: 4 }}>
-                <Text style={[styles.sectionLabel, { color: isDark ? '#c4b5fd' : '#6b7280' }]}>
+                <Text style={[styles.sectionLabel, { color: isDark ? '#F1F3F5' : '#6b7280' }]}>
                   {t?.('kids.askParent.contactEmail') || 'Email do contato'}
                 </Text>
                 <TextInput
                   value={contactEmail} onChangeText={setContactEmail}
-                  placeholder="amigo@chatyy.com.br" placeholderTextColor={isDark ? '#6b5895' : '#a78bfa'}
+                  placeholder="amigo@chatyy.com.br" placeholderTextColor={isDark ? '#128C7E' : '#128C7E'}
                   keyboardType="email-address" autoCapitalize="none"
                   style={[styles.input, {
-                    backgroundColor: isDark ? '#2d1b4e' : '#f3e8ff',
-                    color: isDark ? '#e9d5ff' : '#1e1b4b',
+                    backgroundColor: isDark ? '#161618' : '#f3e8ff',
+                    color: isDark ? '#F1F3F5' : '#1e1b4b',
                   }]}
                 />
               </View>
             )}
             {type === 'new_app' && (
               <View style={{ paddingHorizontal: 16, paddingTop: 4 }}>
-                <Text style={[styles.sectionLabel, { color: isDark ? '#c4b5fd' : '#6b7280' }]}>
+                <Text style={[styles.sectionLabel, { color: isDark ? '#F1F3F5' : '#6b7280' }]}>
                   {t?.('kids.askParent.appName') || 'Qual app?'}
                 </Text>
                 <TextInput
                   value={appName} onChangeText={setAppName}
-                  placeholder={t?.('kids.askParent.appHint') || 'Ex: YouTube, Roblox'} placeholderTextColor={isDark ? '#6b5895' : '#a78bfa'}
+                  placeholder={t?.('kids.askParent.appHint') || 'Ex: YouTube, Roblox'} placeholderTextColor={isDark ? '#128C7E' : '#128C7E'}
                   style={[styles.input, {
-                    backgroundColor: isDark ? '#2d1b4e' : '#f3e8ff',
-                    color: isDark ? '#e9d5ff' : '#1e1b4b',
+                    backgroundColor: isDark ? '#161618' : '#f3e8ff',
+                    color: isDark ? '#F1F3F5' : '#1e1b4b',
                   }]}
                 />
               </View>
@@ -372,21 +372,21 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
             {type && (
               <View style={{ paddingHorizontal: 16, paddingTop: 14 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <Text style={[styles.sectionLabel, { color: isDark ? '#c4b5fd' : '#6b7280', marginBottom: 0 }]}>
+                  <Text style={[styles.sectionLabel, { color: isDark ? '#F1F3F5' : '#6b7280', marginBottom: 0 }]}>
                     {t?.('kids.askParent.why') || 'Quer explicar? (opcional)'}
                   </Text>
-                  <Text style={{ fontSize: 11, color: isDark ? '#7c6ba6' : '#a78bfa', fontWeight: '600' }}>
+                  <Text style={{ fontSize: 11, color: isDark ? '#128C7E' : '#128C7E', fontWeight: '600' }}>
                     {message.length}/500
                   </Text>
                 </View>
                 <TextInput
                   value={message} onChangeText={setMessage}
                   placeholder={t?.('kids.askParent.messageHint') || 'Escreve aqui…'}
-                  placeholderTextColor={isDark ? '#6b5895' : '#a78bfa'}
+                  placeholderTextColor={isDark ? '#128C7E' : '#128C7E'}
                   multiline numberOfLines={3} maxLength={500}
                   style={[styles.input, {
-                    backgroundColor: isDark ? '#2d1b4e' : '#f3e8ff',
-                    color: isDark ? '#e9d5ff' : '#1e1b4b',
+                    backgroundColor: isDark ? '#161618' : '#f3e8ff',
+                    color: isDark ? '#F1F3F5' : '#1e1b4b',
                     minHeight: 80, textAlignVertical: 'top', paddingTop: 12,
                   }]}
                 />
@@ -405,8 +405,8 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                 accessibilityRole="button"
                 accessibilityLabel={t?.('kids.askParent.history') || 'Ver pedidos anteriores'}
               >
-                <IconClock size={14} color={isDark ? '#A78BFA' : '#A582F7'} />
-                <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#A78BFA' : '#A582F7' }}>
+                <IconClock size={14} color={isDark ? '#128C7E' : '#128C7E'} />
+                <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#128C7E' : '#128C7E' }}>
                   {t?.('kids.askParent.history') || 'Ver pedidos anteriores'}
                 </Text>
               </TouchableOpacity>
@@ -420,10 +420,10 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                   onPress={handleSend}
                   activeOpacity={0.85}
                   style={{
-                    backgroundColor: activeType?.color || '#A582F7',
+                    backgroundColor: activeType?.color || '#128C7E',
                     opacity: ((!type || sending || (type === 'new_contact' && !contactEmail.trim()) || (type === 'new_app' && !appName.trim())) ? 0.5 : 1),
                     borderRadius: 18, paddingVertical: 16, alignItems: 'center',
-                    ...(Platform.OS === 'web' ? { boxShadow: `0 6px 18px ${activeType?.color || '#A582F7'}55` } : {}),
+                    ...(Platform.OS === 'web' ? { boxShadow: `0 6px 18px ${activeType?.color || '#128C7E'}55` } : {}),
                   }}
                 >
                   {sending

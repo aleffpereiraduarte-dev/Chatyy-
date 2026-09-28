@@ -139,7 +139,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   header: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  quizBadge: { backgroundColor: '#EC4899', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
+  quizBadge: { backgroundColor: '#128C7E', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 999 },
   quizBadgeText: { color: '#fff', fontSize: 10, fontWeight: '800', letterSpacing: 0.4 },
   closedText: { color: '#9CA3AF', fontSize: 11 },
   question: { color: '#fff', fontSize: 14, fontWeight: '700' },

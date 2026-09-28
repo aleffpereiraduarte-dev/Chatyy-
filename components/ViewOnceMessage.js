@@ -293,7 +293,7 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
   const safeColors = {
     surface: '#fff',
     border: '#e0e0e0',
-    primary: '#A582F7',
+    primary: '#128C7E',
     textTertiary: '#999',
     textSecondary: '#666',
     text: '#000',
@@ -388,7 +388,7 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
       : (t?.('chatConv.viewOnceOpened') || 'Aberta');
     return (
       <View style={s.expiredRow}>
-        <View style={[s.expiredIconCircle, { backgroundColor: 'rgba(124,58,237,0.12)' }]}>
+        <View style={[s.expiredIconCircle, { backgroundColor: 'rgba(18, 140, 126,0.12)' }]}>
           {isAudio ? <IconMic size={16} color={accent} /> : <IconCheck size={16} color={accent} />}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -434,7 +434,7 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
         accessibilityRole="button"
         accessibilityLabel={t?.('chatConv.tapToView') || 'Toque para ver'}
       >
-        <View style={[s.tapIconCircle, { backgroundColor: 'rgba(124,58,237,0.14)' }]}>
+        <View style={[s.tapIconCircle, { backgroundColor: 'rgba(18, 140, 126,0.14)' }]}>
           {isVideo ? <IconVideo size={18} color={accent} /> : <IconEye size={18} color={accent} />}
         </View>
         <View style={{ flex: 1, minWidth: 0 }}>
@@ -681,7 +681,7 @@ function ViewOnceAudioPlayer({ msg, fileUrl, colors, t, onConsumed }) {
       accessibilityRole="button"
       accessibilityLabel={t?.('chatConv.viewOnceVoiceTapToHear') || 'Tocar para ouvir'}
     >
-      <View style={[s.tapIconCircle, { backgroundColor: 'rgba(124,58,237,0.14)' }]}>
+      <View style={[s.tapIconCircle, { backgroundColor: 'rgba(18, 140, 126,0.14)' }]}>
         {playing
           ? <IconPause size={18} color={accent} />
           : errored
@@ -731,7 +731,7 @@ const fs = StyleSheet.create({
   errorBox: { padding: 24, alignItems: 'center', justifyContent: 'center' },
   errorOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.85)', padding: 24, gap: 16 },
   errorText: { color: '#fff', fontSize: 16, textAlign: 'center' },
-  errorBtn: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 22, backgroundColor: '#A582F7' },
+  errorBtn: { paddingHorizontal: 18, paddingVertical: 10, borderRadius: 22, backgroundColor: '#128C7E' },
   errorBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
   bottomHint: {
     position: 'absolute', bottom: 32, left: 16, right: 16,

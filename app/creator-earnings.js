@@ -38,7 +38,7 @@ import { formatInt } from '../utils/dateFormat';
 
 const MIN_CASHOUT_CENTS = 5000;
 const BRAND_GREEN = '#10B981';
-const BRAND_PURPLE = '#A855F7';
+const BRAND_PURPLE = '#128C7E';
 const BRAND_AMBER = '#F59E0B';
 
 function fmtBrl(cents) {

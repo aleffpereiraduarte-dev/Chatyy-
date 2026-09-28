@@ -28,7 +28,7 @@ import StoryRingAvatar from './status/StoryRingAvatar';
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
 
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const useNative = Platform.OS !== 'web';
 
@@ -182,12 +182,12 @@ function TrendingHashtagsRail({ colors, isDark, t, router }) {
               paddingHorizontal: 12,
               paddingVertical: 6,
               borderRadius: 14,
-              backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.08)',
+              backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.08)',
               borderWidth: 1,
-              borderColor: 'rgba(124,58,237,0.32)',
+              borderColor: 'rgba(18, 140, 126,0.32)',
             }}
           >
-            <Text style={{ color: '#A582F7', fontSize: 13, fontWeight: '600' }}>
+            <Text style={{ color: '#128C7E', fontSize: 13, fontWeight: '600' }}>
               #{row.hashtag} <Text style={{ color: colors.textSecondary, fontWeight: '500' }}>· {row.uses}</Text>
             </Text>
           </TouchableOpacity>
@@ -1354,7 +1354,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
         position: 'absolute',
         top: 4, bottom: 4, left: algoPillLeft,
         width: '48%',
-        backgroundColor: isDark ? 'rgba(124,58,237,0.20)' : 'rgba(124,58,237,0.10)',
+        backgroundColor: isDark ? 'rgba(18, 140, 126,0.20)' : 'rgba(18, 140, 126,0.10)',
         borderRadius: 10,
       }} />
       <TouchableOpacity
@@ -1399,7 +1399,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
         position: 'absolute',
         top: 6, bottom: 6, left: pillLeft,
         width: '48%',
-        backgroundColor: isDark ? 'rgba(124,58,237,0.20)' : 'rgba(124,58,237,0.10)',
+        backgroundColor: isDark ? 'rgba(18, 140, 126,0.20)' : 'rgba(18, 140, 126,0.10)',
         borderRadius: 10,
       }} />
       <TouchableOpacity
@@ -1561,8 +1561,8 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            tintColor="#A582F7"
-            colors={['#A582F7', '#5B21B6']}
+            tintColor="#128C7E"
+            colors={['#128C7E', '#128C7E']}
             progressBackgroundColor={isDark ? '#1f1b2e' : '#fff'}
           />
         }
@@ -1668,7 +1668,7 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 16,
-    backgroundColor: '#A582F7',
+    backgroundColor: '#128C7E',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 10,
@@ -1921,7 +1921,7 @@ const styles = StyleSheet.create({
     height: 42,
     gap: 8,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(124,58,237,0.10)',
+    borderColor: 'rgba(18, 140, 126,0.10)',
   },
   searchInput: {
     flex: 1,
@@ -1959,7 +1959,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   followButton: {
-    backgroundColor: '#A582F7',
+    backgroundColor: '#128C7E',
     paddingHorizontal: 18,
     paddingVertical: 9,
     borderRadius: 10,

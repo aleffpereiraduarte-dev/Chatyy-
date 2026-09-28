@@ -27,7 +27,7 @@ import AvatarCircle from '../AvatarCircle';
 import * as api from '../../services/api';
 import { formatInt } from '../../utils/dateFormat';
 
-const PURPLE = '#A855F7';
+const PURPLE = '#128C7E';
 
 const QUICK_AMOUNTS = [10, 50, 100, 500];
 
@@ -338,7 +338,7 @@ export default function WalletSendSheet({ visible, onClose, balance, onSent }) {
                   disabled={sending || finalAmount <= 0}
                   activeOpacity={0.9}
                   style={[styles.cta, {
-                    backgroundColor: finalAmount > 0 ? PURPLE : (isDark ? 'rgba(168,85,247,0.35)' : 'rgba(168,85,247,0.40)'),
+                    backgroundColor: finalAmount > 0 ? PURPLE : (isDark ? 'rgba(18, 140, 126,0.35)' : 'rgba(18, 140, 126,0.40)'),
                   }]}
                 >
                   {sending ? (

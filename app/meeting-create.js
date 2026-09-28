@@ -227,7 +227,7 @@ export default function MeetingCreateScreen() {
               start_at: scheduledDate.toISOString(),
               end_at: endDate.toISOString(),
               all_day: false,
-              color: '#A582F7',
+              color: '#128C7E',
               calendar_id: 0,
               location: joinLink,
               meeting_room_id: roomId,

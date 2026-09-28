@@ -183,7 +183,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${isDark ?
 }
 .tool-btn.active {
   background: ${isDark ? 'rgba(100,160,255,0.18)' : 'rgba(37,99,235,0.12)'};
-  color: ${isDark ? '#6aa0ff' : '#A582F7'};
+  color: ${isDark ? '#6aa0ff' : '#128C7E'};
   box-shadow: 0 0 12px ${isDark ? 'rgba(100,160,255,0.15)' : 'rgba(37,99,235,0.1)'};
 }
 .tool-btn:active {
@@ -355,7 +355,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${isDark ?
   transition: border-color 0.2s, transform 0.2s;
 }
 .bg-option:hover { border-color: ${isDark ? '#666' : '#999'}; transform: scale(1.06); }
-.bg-option.active { border-color: ${isDark ? '#6aa0ff' : '#A582F7'}; border-width: 2.5px; }
+.bg-option.active { border-color: ${isDark ? '#6aa0ff' : '#128C7E'}; border-width: 2.5px; }
 .bg-option canvas { width: 100%; height: 100%; }
 
 .bg-label {
@@ -399,7 +399,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: ${isDark ?
   transition: border-color 0.2s, transform 0.15s;
 }
 .thumb-item:hover { transform: scale(1.08); }
-.thumb-item.active { border-color: ${isDark ? '#6aa0ff' : '#A582F7'}; border-width: 2.5px; }
+.thumb-item.active { border-color: ${isDark ? '#6aa0ff' : '#128C7E'}; border-width: 2.5px; }
 .thumb-item canvas { width: 100%; height: 100%; }
 .thumb-num {
   position: absolute;
@@ -525,7 +525,7 @@ let stylusOnly = false;
 let stylusDetected = false;
 let activePointerId = null;
 
-const COLORS = ['#333333', '#1a73e8', '#d32f2f', '#2e7d32', '#7b1fa2', '#f57c00', '#00838f', '#c2185b', '#455a64', '#e65100'];
+const COLORS = ['#333333', '#1a73e8', '#d32f2f', '#2e7d32', '#128C7E', '#f57c00', '#00838f', '#c2185b', '#455a64', '#e65100'];
 const WIDTHS = [
   { label: 'thin', size: 1.5 },
   { label: 'medium', size: 3 },

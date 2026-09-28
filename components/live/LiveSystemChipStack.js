@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import AvatarCircle from '../AvatarCircle';
 
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 
 function Chip({ item, onDismiss }) {
   const anim = useRef(new Animated.Value(0)).current;
@@ -96,15 +96,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 9,
     paddingVertical: 5,
     borderRadius: 18,
-    backgroundColor: 'rgba(124,58,237,0.42)',
+    backgroundColor: 'rgba(18, 140, 126,0.42)',
     borderWidth: 1,
-    borderColor: 'rgba(196,181,253,0.45)',
+    borderColor: 'rgba(18, 140, 126,0.45)',
     alignSelf: 'flex-start',
     maxWidth: 260,
     ...(Platform.OS === 'web' ? {
       backdropFilter: 'blur(12px)',
       WebkitBackdropFilter: 'blur(12px)',
-      boxShadow: '0 2px 12px rgba(124,58,237,0.3)',
+      boxShadow: '0 2px 12px rgba(18, 140, 126,0.3)',
     } : {}),
   },
   text: {

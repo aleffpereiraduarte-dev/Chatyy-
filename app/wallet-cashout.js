@@ -348,7 +348,7 @@ export default function WalletCashoutScreen() {
             </Text>
           )}
           <View style={styles.rateChip}>
-            <IconDiamond size={12} color="#A855F7" />
+            <IconDiamond size={12} color="#128C7E" />
             <Text style={[styles.rateChipText, { color: colors.textSecondary }]}>
               {(t('wallet.cashoutRateLine') || '1 000 ◆ ≈ R$ {brl}')
                 .replace('{brl}', ((1000 * DIAMOND_TO_BRL_CENTS) / 100).toFixed(2).replace('.', numberLocale(language).startsWith('pt') ? ',' : '.'))}
@@ -601,7 +601,7 @@ const styles = StyleSheet.create({
   rateChip: {
     flexDirection: 'row', alignItems: 'center', gap: 5,
     marginTop: 10, paddingHorizontal: 10, paddingVertical: 4,
-    borderRadius: 999, backgroundColor: 'rgba(168,85,247,0.10)',
+    borderRadius: 999, backgroundColor: 'rgba(18, 140, 126,0.10)',
   },
   rateChipText: { fontSize: 11, fontWeight: '700' },
 
@@ -639,7 +639,7 @@ const styles = StyleSheet.create({
   detailRowVal: { flex: 1, fontSize: 13, fontWeight: '700', textAlign: 'right' },
   detailShareBtn: {
     marginTop: 14, paddingVertical: 12,
-    borderRadius: 12, backgroundColor: '#A855F7',
+    borderRadius: 12, backgroundColor: '#128C7E',
     alignItems: 'center',
   },
   detailShareBtnText: { color: '#fff', fontSize: 14, fontWeight: '800' },

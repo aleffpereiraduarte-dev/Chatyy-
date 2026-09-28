@@ -12,7 +12,7 @@ import ErrorBoundary from '../components/ErrorBoundary';
 import { getCached, setCache } from '../services/cache';
 import useIsMounted from '../hooks/useIsMounted';
 
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 const TIME_LIMITS = [
   { value: 30, label: '30 min' },
   { value: 60, label: '1h' },
@@ -438,9 +438,9 @@ function ParentalMonitorScreenInner() {
   const appsBreakdown = useMemo(() => {
     const f = todayData?.feature_usage || weekData?.feature_usage || screenTime?.feature_usage || {};
     return [
-      { key: 'chat',   label: 'Chat',     value: f.chat ?? f.messages ?? screenTime?.today_minutes ?? 0, color: '#A582F7', Icon: IconMessageSquare },
+      { key: 'chat',   label: 'Chat',     value: f.chat ?? f.messages ?? screenTime?.today_minutes ?? 0, color: '#128C7E', Icon: IconMessageSquare },
       { key: 'status', label: 'Status',   value: f.status ?? 0,    color: '#22c55e', Icon: IconImage },
-      { key: 'reels',  label: 'Reels',    value: f.reels ?? 0,     color: '#ec4899', Icon: IconVideo },
+      { key: 'reels',  label: 'Reels',    value: f.reels ?? 0,     color: '#128C7E', Icon: IconVideo },
       { key: 'feed',   label: 'Feed',     value: f.feed ?? 0,      color: '#f59e0b', Icon: IconHeart },
       { key: 'calls',  label: 'Chamadas', value: f.calls ?? calls.length, color: '#3b82f6', Icon: IconPhone },
     ];
@@ -449,7 +449,7 @@ function ParentalMonitorScreenInner() {
 
   // ─── Render: AI Cards ───
   const renderAICard = (card) => {
-    const tone = card.risk === 'high' ? '#ef4444' : card.risk === 'warning' ? '#f59e0b' : card.risk === 'medium' ? '#f59e0b' : '#A78BFA';
+    const tone = card.risk === 'high' ? '#ef4444' : card.risk === 'warning' ? '#f59e0b' : card.risk === 'medium' ? '#f59e0b' : '#128C7E';
     return (
       <TouchableOpacity
         key={card.id}
@@ -768,7 +768,7 @@ function ParentalMonitorScreenInner() {
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
             {newThisWeek && <View style={[s.riskTag, { backgroundColor: '#f59e0b20' }]}><Text style={[s.riskTagText, { color: '#d97706' }]}>Novo esta semana</Text></View>}
             {unknown && <View style={[s.riskTag, { backgroundColor: '#ef444415' }]}><Text style={[s.riskTagText, { color: '#ef4444' }]}>Desconhecido</Text></View>}
-            {ageUnknown && <View style={[s.riskTag, { backgroundColor: '#A78BFA20' }]}><Text style={[s.riskTagText, { color: '#A78BFA' }]}>Idade ?</Text></View>}
+            {ageUnknown && <View style={[s.riskTag, { backgroundColor: '#128C7E20' }]}><Text style={[s.riskTagText, { color: '#128C7E' }]}>Idade ?</Text></View>}
           </View>
           {/* Approve / Block inline actions */}
           {status !== 'approved' && status !== 'blocked' && (
@@ -849,7 +849,7 @@ function ParentalMonitorScreenInner() {
 
       <Text style={[s.sectionLabel, { color: colors.textSecondary }]}>{t('parental.restrictions').toUpperCase()}</Text>
       <View style={[s.settingsGroup, { backgroundColor: isDark ? '#1e293b' : '#fff', borderColor: isDark ? '#334155' : '#e2e8f0' }]}>
-        <SettingRow icon={<IconMail size={18} color="#A78BFA" />} label={t('parental.canSendEmail')} colors={colors}
+        <SettingRow icon={<IconMail size={18} color="#128C7E" />} label={t('parental.canSendEmail')} colors={colors}
           right={<Switch value={restrictions.can_send_email !== false} onValueChange={(v) => updateRestriction('can_send_email', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.can_send_email !== false ? ACCENT : '#f4f3f4'} />} />
         <View style={[s.divider, { backgroundColor: isDark ? '#334155' : '#f1f5f9' }]} />
         <SettingRow icon={<IconTrash size={18} color="#ef4444" />} label={t('parental.canDeleteMessages')} colors={colors}
@@ -945,10 +945,10 @@ function ParentalMonitorScreenInner() {
         <SettingRow icon={<IconAlertTriangle size={18} color="#f59e0b" />} label={t('parental.filterViolence') || 'Block violence'} colors={colors}
           right={<Switch value={restrictions.filter_violence === true} onValueChange={(v) => updateRestriction('filter_violence', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.filter_violence === true ? ACCENT : '#f4f3f4'} />} />
         <View style={[s.divider, { backgroundColor: isDark ? '#334155' : '#f1f5f9' }]} />
-        <SettingRow icon={<IconFilter size={18} color="#A582F7" />} label={t('parental.filterProfanity') || 'Filter profanity'} colors={colors}
+        <SettingRow icon={<IconFilter size={18} color="#128C7E" />} label={t('parental.filterProfanity') || 'Filter profanity'} colors={colors}
           right={<Switch value={restrictions.filter_profanity === true} onValueChange={(v) => updateRestriction('filter_profanity', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.filter_profanity === true ? ACCENT : '#f4f3f4'} />} />
         <View style={[s.divider, { backgroundColor: isDark ? '#334155' : '#f1f5f9' }]} />
-        <SettingRow icon={<IconEye size={18} color="#A78BFA" />} label={t('parental.safeSearch') || 'Safe search'} colors={colors}
+        <SettingRow icon={<IconEye size={18} color="#128C7E" />} label={t('parental.safeSearch') || 'Safe search'} colors={colors}
           right={<Switch value={restrictions.safe_search === true} onValueChange={(v) => updateRestriction('safe_search', v)} trackColor={{ false: '#767577', true: ACCENT + '60' }} thumbColor={restrictions.safe_search === true ? ACCENT : '#f4f3f4'} />} />
       </View>
 
@@ -1099,15 +1099,15 @@ function activityIconFor(type) {
     case 'message_sent':
     case 'message_received':
     case 'chat_message':
-      return { Icon: IconMessageSquare, color: '#A582F7', label: type === 'message_received' ? 'Recebeu mensagem' : 'Mensagem' };
+      return { Icon: IconMessageSquare, color: '#128C7E', label: type === 'message_received' ? 'Recebeu mensagem' : 'Mensagem' };
     case 'call_outgoing': return { Icon: IconPhone, color: '#22c55e', label: 'Ligação' };
     case 'call_incoming': return { Icon: IconPhone, color: '#3b82f6', label: 'Chamada recebida' };
     case 'call_missed':   return { Icon: IconPhoneOff, color: '#ef4444', label: 'Chamada perdida' };
     case 'status_post':   return { Icon: IconImage, color: '#22c55e', label: 'Publicou status' };
     case 'video_played':
-    case 'reel_view':     return { Icon: IconVideo, color: '#ec4899', label: 'Reels' };
+    case 'reel_view':     return { Icon: IconVideo, color: '#128C7E', label: 'Reels' };
     case 'feed_post':     return { Icon: IconHeart, color: '#f59e0b', label: 'Postou no feed' };
-    case 'app_open':      return { Icon: IconZap, color: '#A78BFA', label: 'Abriu o app' };
+    case 'app_open':      return { Icon: IconZap, color: '#128C7E', label: 'Abriu o app' };
     default:              return { Icon: IconClock, color: '#94a3b8', label: 'Atividade' };
   }
 }
@@ -1175,7 +1175,7 @@ const s = StyleSheet.create({
   riskTagText: { fontSize: 10, fontWeight: '700' },
 
   // Unread dot
-  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#A78BFA' },
+  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#128C7E' },
 
   // Settings group
   sectionLabel: { fontSize: 12, fontWeight: '800', letterSpacing: 0.8, marginBottom: 10, paddingHorizontal: 4 },

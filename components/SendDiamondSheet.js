@@ -253,7 +253,7 @@ export default function SendDiamondSheet({
                 {t('wallet.currentBalance') || 'Saldo atual'}:
               </Text>
               {loadingBal ? (
-                <ActivityIndicator size="small" color="#A855F7" />
+                <ActivityIndicator size="small" color="#128C7E" />
               ) : (
                 <Text style={[styles.balanceVal, { color: insufficient ? '#EF4444' : colors.text }]}>
                   {formatInt(balance, language)} ◆
@@ -280,9 +280,9 @@ export default function SendDiamondSheet({
                       styles.amountChip,
                       {
                         backgroundColor: active
-                          ? '#A855F7'
-                          : (isDark ? 'rgba(168,85,247,0.10)' : 'rgba(168,85,247,0.06)'),
-                        borderColor: active ? '#A855F7' : (isDark ? 'rgba(168,85,247,0.30)' : 'rgba(168,85,247,0.22)'),
+                          ? '#128C7E'
+                          : (isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.06)'),
+                        borderColor: active ? '#128C7E' : (isDark ? 'rgba(18, 140, 126,0.30)' : 'rgba(18, 140, 126,0.22)'),
                       },
                     ]}
                     accessibilityRole="button"
@@ -348,7 +348,7 @@ export default function SendDiamondSheet({
               style={[
                 styles.sendBtn,
                 {
-                  backgroundColor: insufficient ? '#F59E0B' : '#A855F7',
+                  backgroundColor: insufficient ? '#F59E0B' : '#128C7E',
                   opacity: (sending || !toEmail || amount < 1) ? 0.65 : 1,
                 },
               ]}
@@ -401,13 +401,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 8,
     marginTop: 10, marginBottom: 12,
     paddingHorizontal: 10, paddingVertical: 8,
-    borderRadius: 12, backgroundColor: 'rgba(168,85,247,0.06)',
+    borderRadius: 12, backgroundColor: 'rgba(18, 140, 126,0.06)',
   },
   balanceLabel: { fontSize: 12 },
   balanceVal: { fontSize: 15, fontWeight: '800' },
   topUpInlineBtn: {
     marginLeft: 'auto', paddingHorizontal: 10, paddingVertical: 6,
-    borderRadius: 999, backgroundColor: '#A855F7',
+    borderRadius: 999, backgroundColor: '#128C7E',
   },
   topUpInlineText: { color: '#fff', fontSize: 12, fontWeight: '700' },
   amountsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },

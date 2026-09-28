@@ -311,10 +311,10 @@ export function ChatBubbleSkeleton({ count = 8 }) {
         // chat uses, so the skeleton reads as bubbles instead of floating
         // lines on a blank canvas.
         const bubbleBg = isRight
-          ? (colors.chatBubbleOwn || '#EDE9FE')
+          ? (colors.chatBubbleOwn || '#F1F3F5')
           : (colors.chatBubbleOther || '#FFFFFF');
         const bubbleBorder = isRight
-          ? (colors.chatBubbleOwnBorder || 'rgba(124,58,237,0.08)')
+          ? (colors.chatBubbleOwnBorder || 'rgba(18, 140, 126,0.08)')
           : (colors.chatBubbleOtherBorder || 'rgba(0,0,0,0.04)');
         return (
           <View key={i} style={{ alignSelf: isRight ? 'flex-end' : 'flex-start', width: `${w * 70}%`, maxWidth: 280 }}>

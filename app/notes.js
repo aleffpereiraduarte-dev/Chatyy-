@@ -35,7 +35,7 @@ const NOTE_COLORS = [
   { id: '#F8BBD0', label: 'Pink', dark: '#E91E63', gradient: ['#F8BBD0', '#F48FB1'], shadowColor: 'rgba(244,143,177,0.4)', darkGradient: ['#3E1E2A', '#4A2535'], darkShadow: 'rgba(233,30,99,0.25)' },
   { id: '#C8E6C9', label: 'Green', dark: '#388E3C', gradient: ['#C8E6C9', '#A5D6A7'], shadowColor: 'rgba(165,214,167,0.4)', darkGradient: ['#1E3E20', '#254A28'], darkShadow: 'rgba(56,142,60,0.25)' },
   { id: '#BBDEFB', label: 'Blue', dark: '#1976D2', gradient: ['#BBDEFB', '#90CAF9'], shadowColor: 'rgba(144,202,249,0.4)', darkGradient: ['#1E2A3E', '#25354A'], darkShadow: 'rgba(25,118,210,0.25)' },
-  { id: '#D1C4E9', label: 'Purple', dark: '#7B1FA2', gradient: ['#D1C4E9', '#B39DDB'], shadowColor: 'rgba(179,157,219,0.4)', darkGradient: ['#2E1E3E', '#38254A'], darkShadow: 'rgba(123,31,162,0.25)' },
+  { id: '#F1F3F5', label: 'Purple', dark: '#128C7E', gradient: ['#F1F3F5', '#128C7E'], shadowColor: 'rgba(18, 140, 126,0.4)', darkGradient: ['#161618', '#161618'], darkShadow: 'rgba(18, 140, 126,0.25)' },
   { id: '#FFE0B2', label: 'Orange', dark: '#F57C00', gradient: ['#FFE0B2', '#FFCC80'], shadowColor: 'rgba(255,204,128,0.4)', darkGradient: ['#3E2E1E', '#4A3825'], darkShadow: 'rgba(245,124,0,0.25)' },
   { id: '#FFFFFF', label: 'White', dark: '#9E9E9E', gradient: ['#FFFFFF', '#F5F5F5'], shadowColor: 'rgba(0,0,0,0.12)', darkGradient: ['#2A2A2A', '#333333'], darkShadow: 'rgba(255,255,255,0.08)' },
   { id: '#E0E0E0', label: 'Gray', dark: '#616161', gradient: ['#E0E0E0', '#BDBDBD'], shadowColor: 'rgba(0,0,0,0.15)', darkGradient: ['#353535', '#404040'], darkShadow: 'rgba(255,255,255,0.06)' },
@@ -43,7 +43,7 @@ const NOTE_COLORS = [
 
 // Tag colors for visual pills
 const TAG_COLORS = [
-  '#A582F7', '#dc2626', '#16a34a', '#9333ea', '#ea580c', '#0891b2', '#c026d3', '#4f46e5',
+  '#128C7E', '#dc2626', '#16a34a', '#128C7E', '#ea580c', '#0891b2', '#128C7E', '#4f46e5',
 ];
 
 // Dark mode equivalents for note colors
@@ -52,7 +52,7 @@ const DARK_NOTE_COLORS = {
   '#F8BBD0': '#3E1E2A',
   '#C8E6C9': '#1E3E20',
   '#BBDEFB': '#1E2A3E',
-  '#D1C4E9': '#2E1E3E',
+  '#F1F3F5': '#161618',
   '#FFE0B2': '#3E2E1E',
   '#FFFFFF': '#2A2A2A',
   '#E0E0E0': '#353535',
@@ -64,7 +64,7 @@ const DARK_NOTE_TEXT = {
   '#F8BBD0': '#F8BBD0',
   '#C8E6C9': '#C8E6C9',
   '#BBDEFB': '#BBDEFB',
-  '#D1C4E9': '#D1C4E9',
+  '#F1F3F5': '#F1F3F5',
   '#FFE0B2': '#FFE0B2',
   '#FFFFFF': '#E0E0E0',
   '#E0E0E0': '#BDBDBD',
@@ -898,7 +898,7 @@ export default function NotesScreen() {
       Animated.spring(quickNoteAnim, { toValue: 1, tension: 200, friction: 10, useNativeDriver: true }),
     ]).start();
     try {
-      const randomColors = ['#FFF9C4', '#F8BBD0', '#C8E6C9', '#BBDEFB', '#D1C4E9', '#FFE0B2'];
+      const randomColors = ['#FFF9C4', '#F8BBD0', '#C8E6C9', '#BBDEFB', '#F1F3F5', '#FFE0B2'];
       const color = randomColors[Math.floor(Math.random() * randomColors.length)];
       const res = await api.notesCreate({
         title: '', content: '', color,
@@ -949,7 +949,7 @@ export default function NotesScreen() {
   // Create note at specific board position
   const createNoteAtPosition = useCallback(async (x, y) => {
     try {
-      const randomColors = ['#FFF9C4', '#F8BBD0', '#C8E6C9', '#BBDEFB', '#D1C4E9', '#FFE0B2'];
+      const randomColors = ['#FFF9C4', '#F8BBD0', '#C8E6C9', '#BBDEFB', '#F1F3F5', '#FFE0B2'];
       const color = randomColors[Math.floor(Math.random() * randomColors.length)];
       const res = await api.notesCreate({
         title: '', content: '', color,
@@ -2352,7 +2352,7 @@ export default function NotesScreen() {
               autoFocus
             />
             <View style={s.notebookColorRow}>
-              {['#4285F4','#EA4335','#FBBC04','#34A853','#FF6D01','#46BDC6','#7B1FA2','#E91E63'].map(c => (
+              {['#4285F4','#EA4335','#FBBC04','#34A853','#FF6D01','#46BDC6','#128C7E','#E91E63'].map(c => (
                 <TouchableOpacity
                   key={c}
                   onPress={() => setNotebookColor(c)}
@@ -2503,7 +2503,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
   const [showFormatBar, setShowFormatBar] = useState(false);
 
   const contentInputRef = useRef(null);
-  const BRAND = '#A582F7';
+  const BRAND = '#128C7E';
 
   // Tick savedAgo every 5s for the pill text
   useEffect(() => {
@@ -2782,7 +2782,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
       const q = line.match(/^>\s+(.*)$/);
       if (q) {
         return (
-          <View key={i} style={[editorStyles.quoteBlock, { borderLeftColor: '#A582F7' }]}>
+          <View key={i} style={[editorStyles.quoteBlock, { borderLeftColor: '#128C7E' }]}>
             <Text style={[editorStyles.quoteText, { color: textColor }]}>{q[1]}</Text>
           </View>
         );
@@ -3116,7 +3116,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
               onLongPress={() => setCoverImage('')}
               style={[s.coverImage, {
                 ...(Platform.OS === 'web' ? {
-                  background: `linear-gradient(135deg, ${BRAND}, #C4B5FD 60%, #FDE68A)`,
+                  background: `linear-gradient(135deg, ${BRAND}, #F1F3F5 60%, #FDE68A)`,
                 } : { backgroundColor: BRAND + '88' }),
               }]}
             />
@@ -3236,7 +3236,7 @@ function NoteEditor({ note, colors, isDark, t, notebooks, titleRef, contentRef, 
                       key={opt.id}
                       onPress={() => applySlash(opt)}
                       style={[s.slashItem, i === slashSelIdx && {
-                        backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.08)',
+                        backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.08)',
                       }]}
                     >
                       <View style={[s.slashIconBox, {

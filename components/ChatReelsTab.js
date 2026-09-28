@@ -26,7 +26,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconSearch, IconCamera, IconChevronUp } from './Icons';
 import ReelsViewer from './ReelsViewer';
 
-const BRAND = '#A582F7';
+const BRAND = '#128C7E';
 const HINT_KEY = '@chatyy:reels_hint_seen_v1';
 const { height: SCREEN_H } = Dimensions.get('window');
 
@@ -434,7 +434,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 18,
     borderWidth: 1,
-    borderColor: 'rgba(124,58,237,0.55)',
+    borderColor: 'rgba(18, 140, 126,0.55)',
   },
   hintText: {
     color: '#fff',

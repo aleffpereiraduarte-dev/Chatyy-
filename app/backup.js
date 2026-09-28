@@ -413,7 +413,7 @@ export default function BackupScreen() {
   });
   const groupedKeys = Object.keys(grouped);
 
-  const ACCENT = isDark ? '#A78BFA' : '#A582F7';
+  const ACCENT = isDark ? '#128C7E' : '#128C7E';
 
   // Loading state handled inline - no full-screen spinner
 
@@ -452,8 +452,8 @@ export default function BackupScreen() {
               {t('backup.upgradePrompt')}
             </Text>
           )}
-          <View style={{ marginTop: 16, padding: 16, borderRadius: 12, backgroundColor: (colors.primary || '#A582F7') + '12' }}>
-            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.primary || '#A582F7' }}>
+          <View style={{ marginTop: 16, padding: 16, borderRadius: 12, backgroundColor: (colors.primary || '#128C7E') + '12' }}>
+            <Text style={{ fontSize: 15, fontWeight: '700', color: colors.primary || '#128C7E' }}>
               {t?.('backup.freeTier') || '100 GB grátis'}
             </Text>
             <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 4 }}>
@@ -827,7 +827,7 @@ export default function BackupScreen() {
                     {group.items.length > 1 && (
                       <TouchableOpacity
                         onPress={() => handleRestoreAll(key)}
-                        style={[s.restoreAllBtn, { backgroundColor: isDark ? 'rgba(167, 139, 250, 0.12)' : 'rgba(124, 58, 237, 0.08)' }]}
+                        style={[s.restoreAllBtn, { backgroundColor: isDark ? 'rgba(18, 140, 126, 0.12)' : 'rgba(18, 140, 126, 0.08)' }]}
                       >
                         <Text style={{ color: ACCENT, fontSize: FontSize.xs, fontWeight: '600' }}>{t('backup.restoreAll')}</Text>
                       </TouchableOpacity>
@@ -861,7 +861,7 @@ export default function BackupScreen() {
                           <TouchableOpacity
                             onPress={() => handleRestore(item.id)}
                             disabled={restoring === item.id}
-                            style={[s.actionBtn, { backgroundColor: isDark ? 'rgba(167, 139, 250, 0.12)' : 'rgba(124, 58, 237, 0.08)' }]}
+                            style={[s.actionBtn, { backgroundColor: isDark ? 'rgba(18, 140, 126, 0.12)' : 'rgba(18, 140, 126, 0.08)' }]}
                           >
                             {restoring === item.id ? <ActivityIndicator size="small" color={ACCENT} /> :
                               <Text style={{ color: ACCENT, fontSize: FontSize.xs, fontWeight: '600' }}>{t('backup.restore')}</Text>

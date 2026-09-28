@@ -40,7 +40,7 @@ function BounceIn({ children, delay = 0 }) {
 }
 
 const CATEGORIES = [
-  { key: 'math', emoji: '\uD83D\uDD22', color: '#A582F7', videos: [
+  { key: 'math', emoji: '\uD83D\uDD22', color: '#128C7E', videos: [
     { title: 'Como fazer conta de dividir', duration: '5 min', url: 'https://youtube.com/results?search_query=como+dividir+para+criancas' },
     { title: 'O que sao fracoes', duration: '7 min', url: 'https://youtube.com/results?search_query=fracoes+para+criancas+explicacao' },
     { title: 'Tabuada divertida', duration: '4 min', url: 'https://youtube.com/results?search_query=tabuada+divertida+criancas' },
@@ -56,12 +56,12 @@ const CATEGORIES = [
     { title: 'Como funciona o corpo humano', duration: '6 min', url: 'https://youtube.com/results?search_query=corpo+humano+criancas' },
     { title: 'Experimentos caseiros faceis', duration: '5 min', url: 'https://youtube.com/results?search_query=experimentos+caseiros+criancas+manual+do+mundo' },
   ]},
-  { key: 'history', emoji: '\uD83C\uDFDB\uFE0F', color: '#A78BFA', videos: [
+  { key: 'history', emoji: '\uD83C\uDFDB\uFE0F', color: '#128C7E', videos: [
     { title: 'Descobrimento do Brasil', duration: '6 min', url: 'https://youtube.com/results?search_query=descobrimento+brasil+criancas' },
     { title: 'Povos indigenas', duration: '7 min', url: 'https://youtube.com/results?search_query=povos+indigenas+brasil+criancas' },
     { title: 'Independencia do Brasil', duration: '5 min', url: 'https://youtube.com/results?search_query=independencia+brasil+criancas' },
   ]},
-  { key: 'english', emoji: '\uD83C\uDDEC\uD83C\uDDE7', color: '#ec4899', videos: [
+  { key: 'english', emoji: '\uD83C\uDDEC\uD83C\uDDE7', color: '#128C7E', videos: [
     { title: 'Cores em ingles', duration: '3 min', url: 'https://youtube.com/results?search_query=colors+in+english+for+kids' },
     { title: 'Numeros em ingles', duration: '4 min', url: 'https://youtube.com/results?search_query=numbers+in+english+for+kids' },
     { title: 'Animais em ingles', duration: '5 min', url: 'https://youtube.com/results?search_query=animals+in+english+for+kids' },
@@ -118,8 +118,8 @@ function KidsLearnScreenInner() {
       {/* Colorful gradient header */}
       <View style={[s.header,
         Platform.OS === 'web'
-          ? { background: 'linear-gradient(135deg, #A78BFA 0%, #a855f7 40%, #ec4899 70%, #f43f5e 100%)' }
-          : { backgroundColor: '#A78BFA' }
+          ? { background: 'linear-gradient(135deg, #128C7E 0%, #128C7E 40%, #128C7E 70%, #f43f5e 100%)' }
+          : { backgroundColor: '#128C7E' }
       ]}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityLabel="Back" accessibilityRole="button">
           <IconArrowLeft size={24} color="#fff" />
@@ -141,8 +141,8 @@ function KidsLearnScreenInner() {
             <BounceIn key={cat.key} delay={idx * 40}>
               <TouchableOpacity
                 style={[s.catChip, {
-                  backgroundColor: activeCategory === cat.key ? cat.color : (isDark ? '#1e1145' : '#fff'),
-                  borderColor: activeCategory === cat.key ? cat.color : (isDark ? '#2d1b4e' : '#e5e7eb'),
+                  backgroundColor: activeCategory === cat.key ? cat.color : (isDark ? '#161618' : '#fff'),
+                  borderColor: activeCategory === cat.key ? cat.color : (isDark ? '#161618' : '#e5e7eb'),
                   ...(activeCategory === cat.key && Platform.OS === 'web' ? { boxShadow: `0 4px 12px ${cat.color}40` } : {}),
                 }]}
                 onPress={() => setActiveCategory(cat.key)}
@@ -150,7 +150,7 @@ function KidsLearnScreenInner() {
                 accessibilityRole="button"
               >
                 <Text style={s.catEmoji}>{cat.emoji}</Text>
-                <Text style={[s.catLabel, { color: activeCategory === cat.key ? '#fff' : (isDark ? '#e9d5ff' : '#1e1b4b') }]}>
+                <Text style={[s.catLabel, { color: activeCategory === cat.key ? '#fff' : (isDark ? '#F1F3F5' : '#1e1b4b') }]}>
                   {t(`kids.categories.${cat.key}`) || cat.key}
                 </Text>
               </TouchableOpacity>
@@ -159,15 +159,15 @@ function KidsLearnScreenInner() {
         </ScrollView>
 
         {/* Video cards - large, colorful */}
-        <Text style={[s.sectionTitle, { color: isDark ? '#e9d5ff' : '#1e1b4b' }]}>
+        <Text style={[s.sectionTitle, { color: isDark ? '#F1F3F5' : '#1e1b4b' }]}>
           {'\uD83C\uDFAC'} {t('kids.videos') || 'Videos'}
         </Text>
         {category.videos.map((video, i) => (
           <BounceIn key={i} delay={i * 60}>
             <TouchableOpacity
               style={[s.videoCard, {
-                backgroundColor: isDark ? '#1e1145' : '#fff',
-                borderColor: isDark ? '#2d1b4e' : '#e5e7eb',
+                backgroundColor: isDark ? '#161618' : '#fff',
+                borderColor: isDark ? '#161618' : '#e5e7eb',
                 ...(Platform.OS === 'web' ? { boxShadow: '0 4px 16px rgba(0,0,0,0.06)' } : {}),
               }]}
               onPress={() => openVideo(video.url)}
@@ -179,10 +179,10 @@ function KidsLearnScreenInner() {
                 <Text style={{ fontSize: 32 }}>{category.emoji}</Text>
               </View>
               <View style={s.videoInfo}>
-                <Text style={[s.videoTitle, { color: isDark ? '#e9d5ff' : '#1e1b4b' }]}>{video.title}</Text>
+                <Text style={[s.videoTitle, { color: isDark ? '#F1F3F5' : '#1e1b4b' }]}>{video.title}</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 6 }}>
                   <Text style={{ fontSize: 12 }}>{'\u23F1'}</Text>
-                  <Text style={[s.videoDuration, { color: isDark ? '#a78bfa' : '#6b7280' }]}>{video.duration}</Text>
+                  <Text style={[s.videoDuration, { color: isDark ? '#128C7E' : '#6b7280' }]}>{video.duration}</Text>
                 </View>
               </View>
             </TouchableOpacity>
@@ -191,17 +191,17 @@ function KidsLearnScreenInner() {
 
         {/* AI Tutor - large card with playful design */}
         <View style={[s.tutorCard, {
-          backgroundColor: isDark ? '#1e1145' : '#fff',
-          borderColor: '#A582F740',
-          ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(139,92,246,0.1)' } : {}),
+          backgroundColor: isDark ? '#161618' : '#fff',
+          borderColor: '#128C7E40',
+          ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(18, 140, 126,0.1)' } : {}),
         }]}>
           <View style={s.tutorHeader}>
-            <View style={{ width: 52, height: 52, borderRadius: 18, backgroundColor: '#A582F720', alignItems: 'center', justifyContent: 'center' }}>
+            <View style={{ width: 52, height: 52, borderRadius: 18, backgroundColor: '#128C7E20', alignItems: 'center', justifyContent: 'center' }}>
               <Text style={{ fontSize: 30 }}>{'\uD83C\uDF93'}</Text>
             </View>
             <View style={{ flex: 1, marginLeft: 14 }}>
-              <Text style={[s.tutorTitle, { color: isDark ? '#e9d5ff' : '#1e1b4b' }]}>{t('kids.homework') || 'Dever de Casa'}</Text>
-              <Text style={[s.tutorDesc, { color: isDark ? '#a78bfa' : '#6b7280' }]}>{t('kids.homeworkDesc') || 'Precisa de ajuda? Pergunte!'}</Text>
+              <Text style={[s.tutorTitle, { color: isDark ? '#F1F3F5' : '#1e1b4b' }]}>{t('kids.homework') || 'Dever de Casa'}</Text>
+              <Text style={[s.tutorDesc, { color: isDark ? '#128C7E' : '#6b7280' }]}>{t('kids.homeworkDesc') || 'Precisa de ajuda? Pergunte!'}</Text>
             </View>
           </View>
 
@@ -209,25 +209,25 @@ function KidsLearnScreenInner() {
             <TextInput
               style={[s.tutorInput, {
                 backgroundColor: isDark ? '#0f0720' : '#faf5ff',
-                color: isDark ? '#e9d5ff' : '#1e1b4b',
-                borderColor: isDark ? '#2d1b4e' : '#e5e7eb',
+                color: isDark ? '#F1F3F5' : '#1e1b4b',
+                borderColor: isDark ? '#161618' : '#e5e7eb',
               }]}
               placeholder={t('kids.homeworkPlaceholder') || 'Qual sua duvida?'}
-              placeholderTextColor={isDark ? '#6b5895' : '#a78bfa'}
+              placeholderTextColor={isDark ? '#128C7E' : '#128C7E'}
               value={question}
               onChangeText={setQuestion}
               multiline
             />
             <TouchableOpacity
               style={[s.tutorSendBtn, {
-                backgroundColor: question.trim() ? '#A582F7' : (isDark ? '#2d1b4e' : '#e9d5ff'),
-                ...(question.trim() && Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(139,92,246,0.3)' } : {}),
+                backgroundColor: question.trim() ? '#128C7E' : (isDark ? '#161618' : '#F1F3F5'),
+                ...(question.trim() && Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(18, 140, 126,0.3)' } : {}),
               }]}
               onPress={askTutor}
               disabled={!question.trim() || tutorLoading}
               accessibilityLabel="Send" accessibilityRole="button"
             >
-              {tutorLoading ? <ActivityIndicator size="small" color="#fff" /> : <IconSend size={20} color={question.trim() ? '#fff' : (isDark ? '#6b5895' : '#a78bfa')} />}
+              {tutorLoading ? <ActivityIndicator size="small" color="#fff" /> : <IconSend size={20} color={question.trim() ? '#fff' : (isDark ? '#128C7E' : '#128C7E')} />}
             </TouchableOpacity>
           </View>
 
@@ -237,7 +237,7 @@ function KidsLearnScreenInner() {
                 <IconCheck size={18} color="#22c55e" />
                 <Text style={{ fontSize: 13, fontWeight: '700', color: '#22c55e' }}>{t('kids.teacherOne')}</Text>
               </View>
-              <Text style={[s.tutorResponseText, { color: isDark ? '#e9d5ff' : '#1e1b4b' }]}>{tutorResponse}</Text>
+              <Text style={[s.tutorResponseText, { color: isDark ? '#F1F3F5' : '#1e1b4b' }]}>{tutorResponse}</Text>
             </View>
           ) : null}
         </View>

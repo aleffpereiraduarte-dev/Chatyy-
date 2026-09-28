@@ -25,7 +25,7 @@ import {
 } from 'react-native';
 import { IconSparkles, IconX, IconCheck } from '../Icons';
 
-const BRAND = '#A582F7';
+const BRAND = '#128C7E';
 
 export default function AISummarizeModal({
   visible,

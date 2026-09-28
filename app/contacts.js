@@ -1909,7 +1909,7 @@ const s = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingHorizontal: 24, paddingVertical: 13, borderRadius: 14,
     ...Platform.select({
-      web: { cursor: 'pointer', transition: 'transform 0.15s ease, opacity 0.15s ease', boxShadow: '0 2px 12px rgba(124,58,237,0.25)' },
+      web: { cursor: 'pointer', transition: 'transform 0.15s ease, opacity 0.15s ease', boxShadow: '0 2px 12px rgba(18, 140, 126,0.25)' },
       default: {},
     }),
   },
@@ -2025,7 +2025,7 @@ const s = StyleSheet.create({
   saveBtn: {
     borderRadius: 24, paddingVertical: 14, alignItems: 'center', marginTop: Spacing.md,
     ...Platform.select({
-      web: { background: 'linear-gradient(135deg, #A582F7 0%, #A78BFA 100%)', boxShadow: '0 4px 14px rgba(37,99,235,0.3)', cursor: 'pointer' },
+      web: { background: 'linear-gradient(135deg, #128C7E 0%, #128C7E 100%)', boxShadow: '0 4px 14px rgba(37,99,235,0.3)', cursor: 'pointer' },
       default: {},
     }),
   },

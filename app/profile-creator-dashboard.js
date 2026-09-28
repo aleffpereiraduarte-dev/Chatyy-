@@ -25,9 +25,9 @@ import { useCurrency } from '../context/CurrencyContext';
 import { IconArrowLeft } from '../components/Icons';
 import DiamondTopUpSheet from '../components/DiamondTopUpSheet';
 
-const ACCENT = '#A582F7';
-const ACCENT_DEEP = '#5B21B6';
-const ACCENT_PINK = '#EC4899';
+const ACCENT = '#128C7E';
+const ACCENT_DEEP = '#128C7E';
+const ACCENT_PINK = '#128C7E';
 const GREEN = '#10B981';
 const AMBER = '#F59E0B';
 

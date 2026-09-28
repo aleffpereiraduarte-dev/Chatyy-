@@ -6,7 +6,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconHash } from '../components/Icons';
 import * as api from '../services/api';
 
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const COLS = 3;

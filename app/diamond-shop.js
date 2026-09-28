@@ -219,7 +219,7 @@ export default function DiamondShopScreen() {
           style={styles.headerLinkBtn}
           accessibilityRole="button"
         >
-          <Text style={[styles.headerLinkText, { color: '#A855F7' }]}>
+          <Text style={[styles.headerLinkText, { color: '#128C7E' }]}>
             {t('diamondShop.wallet') || 'Carteira'}
           </Text>
         </TouchableOpacity>
@@ -231,8 +231,8 @@ export default function DiamondShopScreen() {
       >
         {/* Hero */}
         <View style={[styles.hero, {
-          backgroundColor: isDark ? 'rgba(168,85,247,0.18)' : 'rgba(168,85,247,0.10)',
-          borderColor: isDark ? 'rgba(168,85,247,0.40)' : 'rgba(168,85,247,0.25)',
+          backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.10)',
+          borderColor: isDark ? 'rgba(18, 140, 126,0.40)' : 'rgba(18, 140, 126,0.25)',
         }]}>
           <View style={styles.diamondBig}>
             <IconDiamond size={44} color="#fff" />
@@ -245,10 +245,10 @@ export default function DiamondShopScreen() {
               {t('wallet.currentBalance') || 'Saldo atual'}:
             </Text>
             {loadingBal ? (
-              <ActivityIndicator size="small" color="#A855F7" />
+              <ActivityIndicator size="small" color="#128C7E" />
             ) : (
               <View style={styles.balPillValRow}>
-                <IconDiamond size={14} color="#A855F7" />
+                <IconDiamond size={14} color="#128C7E" />
                 <Text style={styles.balPillVal}>{formatInt(balance, language)}</Text>
               </View>
             )}
@@ -263,14 +263,14 @@ export default function DiamondShopScreen() {
         <TouchableOpacity
           onPress={() => openWebCheckout(null)}
           style={[styles.ccCta, {
-            borderColor: isDark ? 'rgba(168,85,247,0.45)' : 'rgba(168,85,247,0.35)',
-            backgroundColor: isDark ? 'rgba(168,85,247,0.10)' : 'rgba(168,85,247,0.06)',
+            borderColor: isDark ? 'rgba(18, 140, 126,0.45)' : 'rgba(18, 140, 126,0.35)',
+            backgroundColor: isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.06)',
           }]}
           accessibilityRole="button"
           accessibilityLabel={t('diamondShop.payWithCard') || 'Comprar com cartão de crédito'}
         >
           <View style={styles.ccCtaIcon}>
-            <IconCreditCard size={22} color="#A855F7" />
+            <IconCreditCard size={22} color="#128C7E" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={[styles.ccCtaTitle, { color: colors.text }]}>
@@ -280,7 +280,7 @@ export default function DiamondShopScreen() {
               {t('diamondShop.payWithCardSub') || 'Pagamento seguro via web. Cartão fica salvo para próximas compras.'}
             </Text>
           </View>
-          <IconChevronRight size={20} color="#A855F7" />
+          <IconChevronRight size={20} color="#128C7E" />
         </TouchableOpacity>
 
         {/* Packs */}
@@ -304,13 +304,13 @@ export default function DiamondShopScreen() {
                 featured ? { transform: [{ scale: pulseScale }] } : null,
                 {
                   borderColor: featured
-                    ? '#A855F7'
-                    : (isDark ? 'rgba(168,85,247,0.25)' : 'rgba(168,85,247,0.18)'),
+                    ? '#128C7E'
+                    : (isDark ? 'rgba(18, 140, 126,0.25)' : 'rgba(18, 140, 126,0.18)'),
                   backgroundColor: featured
-                    ? (isDark ? 'rgba(168,85,247,0.16)' : 'rgba(168,85,247,0.08)')
-                    : (isDark ? 'rgba(168,85,247,0.06)' : 'rgba(168,85,247,0.03)'),
+                    ? (isDark ? 'rgba(18, 140, 126,0.16)' : 'rgba(18, 140, 126,0.08)')
+                    : (isDark ? 'rgba(18, 140, 126,0.06)' : 'rgba(18, 140, 126,0.03)'),
                   opacity: pendingSku && !isLoading ? 0.45 : 1,
-                  shadowColor: featured ? '#A855F7' : 'transparent',
+                  shadowColor: featured ? '#128C7E' : 'transparent',
                   shadowOffset: { width: 0, height: 4 },
                   shadowOpacity: featured ? 0.35 : 0,
                   shadowRadius: featured ? 14 : 0,
@@ -330,7 +330,7 @@ export default function DiamondShopScreen() {
 
               <View style={styles.packLeftCol}>
                 <View style={styles.packAmountRow}>
-                  <IconDiamond size={22} color="#A855F7" />
+                  <IconDiamond size={22} color="#128C7E" />
                   <Text style={[styles.packDiamonds, { color: colors.text }]}>
                     {formatInt(p.diamonds, language)}
                   </Text>
@@ -344,10 +344,10 @@ export default function DiamondShopScreen() {
 
               <View style={styles.packRightCol}>
                 {isLoading ? (
-                  <ActivityIndicator color="#A855F7" />
+                  <ActivityIndicator color="#128C7E" />
                 ) : (
-                  <View style={[styles.buyBtn, { backgroundColor: featured ? '#A855F7' : (isDark ? 'rgba(168,85,247,0.20)' : 'rgba(168,85,247,0.12)') }]}>
-                    <Text style={[styles.buyBtnText, { color: featured ? '#fff' : '#A855F7' }]}>
+                  <View style={[styles.buyBtn, { backgroundColor: featured ? '#128C7E' : (isDark ? 'rgba(18, 140, 126,0.20)' : 'rgba(18, 140, 126,0.12)') }]}>
+                    <Text style={[styles.buyBtnText, { color: featured ? '#fff' : '#128C7E' }]}>
                       {priceLabel}
                     </Text>
                   </View>
@@ -377,7 +377,7 @@ export default function DiamondShopScreen() {
           style={styles.historyLink}
           accessibilityRole="button"
         >
-          <Text style={[styles.historyLinkText, { color: '#A855F7' }]}>
+          <Text style={[styles.historyLinkText, { color: '#128C7E' }]}>
             {t('diamondShop.viewHistory') || 'Ver histórico e enviar diamantes'}
           </Text>
         </TouchableOpacity>
@@ -404,9 +404,9 @@ const styles = StyleSheet.create({
   },
   diamondBig: {
     width: 76, height: 76, borderRadius: 38,
-    backgroundColor: '#A855F7', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: '#128C7E', alignItems: 'center', justifyContent: 'center',
     marginBottom: 10,
-    shadowColor: '#A855F7', shadowOpacity: 0.45, shadowRadius: 16, shadowOffset: { width: 0, height: 6 },
+    shadowColor: '#128C7E', shadowOpacity: 0.45, shadowRadius: 16, shadowOffset: { width: 0, height: 6 },
     elevation: 8,
   },
   diamondGlyph: { color: '#fff', fontSize: 38, fontWeight: '900', lineHeight: 44 },
@@ -414,11 +414,11 @@ const styles = StyleSheet.create({
   balPill: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingHorizontal: 14, paddingVertical: 8, borderRadius: 999,
-    backgroundColor: 'rgba(168,85,247,0.18)',
+    backgroundColor: 'rgba(18, 140, 126,0.18)',
   },
-  balPillLabel: { fontSize: 12, color: '#A855F7', fontWeight: '700' },
+  balPillLabel: { fontSize: 12, color: '#128C7E', fontWeight: '700' },
   balPillValRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  balPillVal: { fontSize: 14, color: '#A855F7', fontWeight: '900' },
+  balPillVal: { fontSize: 14, color: '#128C7E', fontWeight: '900' },
 
   packCard: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -428,13 +428,13 @@ const styles = StyleSheet.create({
   },
   featuredRibbon: {
     position: 'absolute', top: -10, left: 16,
-    backgroundColor: '#A855F7', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999,
+    backgroundColor: '#128C7E', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999,
   },
   featuredRibbonText: { color: '#fff', fontSize: 10, fontWeight: '900', letterSpacing: 0.4 },
 
   packLeftCol: { flex: 1, gap: 6 },
   packAmountRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  packDiamondGlyph: { color: '#A855F7', fontSize: 22, fontWeight: '900' },
+  packDiamondGlyph: { color: '#128C7E', fontSize: 22, fontWeight: '900' },
   packDiamonds: { fontSize: 22, fontWeight: '900' },
   bonusBadge: {
     alignSelf: 'flex-start',
@@ -463,7 +463,7 @@ const styles = StyleSheet.create({
   ccCtaIcon: {
     width: 42, height: 42, borderRadius: 10,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: 'rgba(168,85,247,0.20)',
+    backgroundColor: 'rgba(18, 140, 126,0.20)',
   },
   ccCtaTitle: { fontSize: 15, fontWeight: '700' },
   ccCtaSub: { fontSize: 12, marginTop: 2, lineHeight: 16 },

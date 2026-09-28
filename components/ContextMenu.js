@@ -150,7 +150,7 @@ const s = StyleSheet.create({
     // Tap target gets a hover bg via inline pseudo since RN-Web strips :hover —
     // the WebkitTapHighlight + active state covers most clicks; on mouse, browsers
     // honor cursor:pointer + the transition prepares the bg-color animation.
-    WebkitTapHighlightColor: 'rgba(124,58,237,0.12)',
+    WebkitTapHighlightColor: 'rgba(18, 140, 126,0.12)',
   } : {},
   menuItemText: { fontSize: FontSize.sm },
   separator: { borderTopWidth: 1, marginVertical: 4 },

@@ -35,12 +35,19 @@ export const DENSITY_CONFIG = {
   spacious: { rowMinHeight: 96, paddingV: 18, avatarSize: 50, showPreview: true, fontSize: 15 },
 };
 
+// NEUTRAL 2026: default accent is the sober WhatsApp-style action green (was
+// purple #A582F7). The first preset — historically 'purple' — now carries the
+// action green so the default swatch and the base palette agree. Key names are
+// kept so the settings picker + i18n labels still resolve; only hexes changed
+// off violet. This accent overrides `primary`/`chatPrimary` in `colors` below,
+// so it MUST match constants/theme.js `primary` (light #128C7E) — otherwise the
+// override would re-introduce a different hue.
 export const ACCENT_PRESETS = [
-  { key: 'purple', hex: '#A582F7' },
+  { key: 'green',  hex: '#128C7E' },
+  { key: 'teal',   hex: '#0FA97F' },
   { key: 'blue',   hex: '#3B82F6' },
-  { key: 'green',  hex: '#10B981' },
   { key: 'orange', hex: '#F59E0B' },
-  { key: 'pink',   hex: '#EC4899' },
+  { key: 'slate',  hex: '#64748B' },
 ];
 const ACCENT_HEX_SET = new Set(ACCENT_PRESETS.map(p => p.hex));
 
@@ -59,7 +66,7 @@ export function ThemeProvider({ children }) {
   const [themeMode, setThemeModeState] = useState('system');
   const [density, setDensityState] = useState('comfortable');
   const [inboxType, setInboxTypeState] = useState('default');
-  const [accentColor, setAccentColorState] = useState('#A582F7');
+  const [accentColor, setAccentColorState] = useState('#128C7E');
   const systemScheme = useColorScheme();
 
   // Load saved theme, density, inboxType

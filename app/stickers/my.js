@@ -336,11 +336,11 @@ export default function StickerMyPacksScreen() {
                 </View>
                 {item.premium && (
                   <View style={{
-                    backgroundColor: 'rgba(124,58,237,0.15)', paddingHorizontal: 6, paddingVertical: 2,
+                    backgroundColor: 'rgba(18, 140, 126,0.15)', paddingHorizontal: 6, paddingVertical: 2,
                     borderRadius: 6, flexDirection: 'row', alignItems: 'center', gap: 3,
                   }}>
-                    <IconStar size={10} color="#A582F7" />
-                    <Text style={{ color: '#A582F7', fontSize: 9, fontWeight: '800' }}>PRO</Text>
+                    <IconStar size={10} color="#128C7E" />
+                    <Text style={{ color: '#128C7E', fontSize: 9, fontWeight: '800' }}>PRO</Text>
                   </View>
                 )}
                 <TouchableOpacity onPress={() => sharePack(item)} hitSlop={8} style={{ paddingHorizontal: 4 }}>
@@ -373,11 +373,11 @@ export default function StickerMyPacksScreen() {
             {!['pro', 'family'].includes(planTier) && (
               <View style={{
                 marginTop: 14, padding: 12, borderRadius: 12,
-                backgroundColor: 'rgba(124,58,237,0.08)',
-                borderWidth: 1, borderColor: 'rgba(124,58,237,0.25)',
+                backgroundColor: 'rgba(18, 140, 126,0.08)',
+                borderWidth: 1, borderColor: 'rgba(18, 140, 126,0.25)',
                 flexDirection: 'row', alignItems: 'center', gap: 10,
               }}>
-                <IconStar size={18} color="#A582F7" />
+                <IconStar size={18} color="#128C7E" />
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 13, color: colors.text, fontWeight: '700' }}>
                     {t?.('chat.proRequired') || 'Recurso Pro'}

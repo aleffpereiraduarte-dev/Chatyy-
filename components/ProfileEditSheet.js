@@ -133,7 +133,7 @@ function Row({
       </View>
       {showVerMais ? (
         <TouchableOpacity onPress={() => setExpanded(true)} style={{ marginTop: 4 }} accessibilityRole="button">
-          <Text style={{ fontSize: 13, color: '#A582F7', fontWeight: '600' }}>Ver mais</Text>
+          <Text style={{ fontSize: 13, color: '#128C7E', fontWeight: '600' }}>Ver mais</Text>
         </TouchableOpacity>
       ) : null}
       {showCounter && multiline && maxLength ? (
@@ -557,14 +557,14 @@ export default function ProfileEditSheet({
               <TouchableOpacity onPress={handleSave} disabled={saving || !dirty} activeOpacity={0.75}>
                 {saving ? (
                   <View style={{ paddingHorizontal: 16, paddingVertical: 8 }}>
-                    <ActivityIndicator size="small" color="#A582F7" />
+                    <ActivityIndicator size="small" color="#128C7E" />
                   </View>
                 ) : (
                   <View style={{
                     paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18,
-                    backgroundColor: headerCanSave ? '#A582F7' : 'transparent',
+                    backgroundColor: headerCanSave ? '#128C7E' : 'transparent',
                     ...(headerCanSave && Platform.OS === 'web'
-                      ? { boxShadow: '0 2px 10px rgba(124,58,237,0.45)' }
+                      ? { boxShadow: '0 2px 10px rgba(18, 140, 126,0.45)' }
                       : {}),
                   }}>
                     <Text style={{
@@ -585,7 +585,7 @@ export default function ProfileEditSheet({
                   button to swap. Preview (coverPreview) wins over coverUrl
                   during upload so the user sees the new banner instantly.
                   Empty state shows a faint purple wash + camera prompt. */}
-              <View style={{ width: '100%', height: 150, backgroundColor: 'rgba(124,58,237,0.08)', position: 'relative' }}>
+              <View style={{ width: '100%', height: 150, backgroundColor: 'rgba(18, 140, 126,0.08)', position: 'relative' }}>
                 {(coverPreview || coverUrl) ? (
                   <ExpoImage
                     source={{ uri: coverPreview || coverUrl }}
@@ -594,8 +594,8 @@ export default function ProfileEditSheet({
                   />
                 ) : (
                   <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-                    <IconCamera size={28} color="rgba(124,58,237,0.4)" />
-                    <Text style={{ fontSize: 12, color: 'rgba(124,58,237,0.6)', marginTop: 6, fontWeight: '600' }}>
+                    <IconCamera size={28} color="rgba(18, 140, 126,0.4)" />
+                    <Text style={{ fontSize: 12, color: 'rgba(18, 140, 126,0.6)', marginTop: 6, fontWeight: '600' }}>
                       {t?.('profile.cover') || 'Capa'}
                     </Text>
                   </View>
@@ -636,7 +636,7 @@ export default function ProfileEditSheet({
                 {/* Soft purple wash sitting behind the avatar */}
                 <View pointerEvents="none" style={{
                   position: 'absolute', top: 0, left: 0, right: 0, height: 140,
-                  backgroundColor: 'rgba(124,58,237,0.05)',
+                  backgroundColor: 'rgba(18, 140, 126,0.05)',
                 }} />
                 <TouchableOpacity
                   onPress={handlePickAvatar}
@@ -647,13 +647,13 @@ export default function ProfileEditSheet({
                   style={{
                     width: 104, height: 104, borderRadius: 52,
                     alignItems: 'center', justifyContent: 'center',
-                    backgroundColor: 'rgba(124,58,237,0.10)',
+                    backgroundColor: 'rgba(18, 140, 126,0.10)',
                     // Defined brand ring around the avatar puck so it reads as
                     // a deliberate "edit photo" target (Instagram-grade) rather
                     // than a flat tinted blob.
                     borderWidth: 1.5,
-                    borderColor: isDark ? 'rgba(167,139,250,0.35)' : 'rgba(124,58,237,0.22)',
-                    ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(124,58,237,0.18)' } : {}),
+                    borderColor: isDark ? 'rgba(18, 140, 126,0.35)' : 'rgba(18, 140, 126,0.22)',
+                    ...(Platform.OS === 'web' ? { boxShadow: '0 8px 24px rgba(18, 140, 126,0.18)' } : {}),
                   }}
                 >
                   <View style={{
@@ -681,10 +681,10 @@ export default function ProfileEditSheet({
                   <View style={{
                     position: 'absolute', right: 6, bottom: 6,
                     width: 28, height: 28, borderRadius: 14,
-                    backgroundColor: '#A582F7',
+                    backgroundColor: '#128C7E',
                     alignItems: 'center', justifyContent: 'center',
                     borderWidth: 2, borderColor: colors?.background || '#fff',
-                    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 6px rgba(124,58,237,0.45)' } : {}),
+                    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 6px rgba(18, 140, 126,0.45)' } : {}),
                   }}>
                     <IconCamera size={15} color="#fff" />
                   </View>
@@ -695,7 +695,7 @@ export default function ProfileEditSheet({
                   style={{ marginTop: 14, paddingVertical: 4, paddingHorizontal: 8 }}
                   activeOpacity={0.6}
                 >
-                  <Text style={{ fontSize: 15, color: '#A582F7', fontWeight: '600' }}>
+                  <Text style={{ fontSize: 15, color: '#128C7E', fontWeight: '600' }}>
                     {t?.('profile.changePhoto') || 'Trocar foto'}
                   </Text>
                 </TouchableOpacity>
@@ -865,8 +865,8 @@ export default function ProfileEditSheet({
                   }}
                   accessibilityRole="button"
                 >
-                  <IconPlus size={16} color="#A582F7" />
-                  <Text style={{ fontSize: 14, color: '#A582F7', fontWeight: '600' }}>
+                  <IconPlus size={16} color="#128C7E" />
+                  <Text style={{ fontSize: 14, color: '#128C7E', fontWeight: '600' }}>
                     {t?.('profile.addLink') || 'Adicionar link'}
                   </Text>
                 </TouchableOpacity>
@@ -894,7 +894,7 @@ export default function ProfileEditSheet({
                   hint: t?.('profile.accountTypeBusinessHint') || 'Categoria + contato + métricas comerciais.' },
               ].map((opt) => {
                 const selected = accountType === opt.key;
-                const accent = opt.key === 'creator' ? '#9333EA' : opt.key === 'business' ? '#2563EB' : '#A582F7';
+                const accent = opt.key === 'creator' ? '#128C7E' : opt.key === 'business' ? '#2563EB' : '#128C7E';
                 return (
                   <TouchableOpacity
                     key={opt.key}
@@ -905,7 +905,7 @@ export default function ProfileEditSheet({
                       flexDirection: 'row', alignItems: 'center', gap: 12,
                       borderBottomWidth: StyleSheet.hairlineWidth,
                       borderBottomColor: colors?.border || 'rgba(0,0,0,0.08)',
-                      backgroundColor: selected ? (isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.04)') : 'transparent',
+                      backgroundColor: selected ? (isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.04)') : 'transparent',
                     }}
                     accessibilityRole="radio"
                     accessibilityState={{ selected }}
@@ -1028,9 +1028,9 @@ export default function ProfileEditSheet({
                   onPress={confirmAvatarUpload}
                   style={{
                     flex: 1, paddingVertical: 14, borderRadius: 14,
-                    backgroundColor: '#A582F7',
+                    backgroundColor: '#128C7E',
                     alignItems: 'center', justifyContent: 'center',
-                    ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(124,58,237,0.45)' } : {}),
+                    ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(18, 140, 126,0.45)' } : {}),
                   }}
                   accessibilityRole="button"
                   accessibilityLabel={t?.('common.confirm') || 'Confirmar'}

@@ -28,27 +28,27 @@ const FOLDER_ICONS = {
 
 // Colorful folder icon colors
 const FOLDER_COLORS = {
-  INBOX: '#A582F7',
+  INBOX: '#128C7E',
   Sent: '#10b981',
   Drafts: '#f59e0b',
   Trash: '#ef4444',
-  Spam: '#A582F7',
+  Spam: '#128C7E',
   Archive: '#6b7280',
   Flagged: '#f59e0b',
-  Snoozed: '#A78BFA',
-  Junk: '#A582F7',
+  Snoozed: '#128C7E',
+  Junk: '#128C7E',
 };
 
 const FOLDER_BG_COLORS = {
-  INBOX: '#EDE9FE',
+  INBOX: '#F1F3F5',
   Sent: '#d1fae5',
   Drafts: '#fef3c7',
   Trash: '#fee2e2',
-  Spam: '#ede9fe',
+  Spam: '#F1F3F5',
   Archive: '#f3f4f6',
   Flagged: '#fef3c7',
   Snoozed: '#e0e7ff',
-  Junk: '#ede9fe',
+  Junk: '#F1F3F5',
 };
 
 const FOLDER_KEYS = {
@@ -357,15 +357,15 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
   if (collapsed) {
     const quickItems = [
       { label: t('sidebar.inbox'), icon: IconInbox, route: '/inbox', onPress: () => onFolderPress('INBOX') },
-      { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', color: '#A582F7', badge: chatUnread },
+      { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', color: '#128C7E', badge: chatUnread },
       { label: t('sidebar.meetings'), icon: IconFilm, route: '/meetings', color: '#ef4444' },
       { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar', color: '#4285f4' },
       { label: 'Cloud', icon: IconFolder, route: '/drive', color: '#f59e0b' },
       { label: t('photos.title'), icon: IconCamera, route: '/photos', color: '#e11d48' },
-      { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts', color: '#A582F7' },
+      { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts', color: '#128C7E' },
       { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#4285f4' },
       { label: t('sidebar.notes'), icon: IconStickyNote, route: '/notes', color: '#f59e0b' },
-      { label: 'One', icon: IconZap, route: '/one', color: '#A78BFA' },
+      { label: 'One', icon: IconZap, route: '/one', color: '#128C7E' },
       { label: t('snapmap.sidebar') || 'Mapa', icon: IconMapPin, route: '/snap-map', color: '#22c55e' },
     ];
     return (
@@ -443,12 +443,12 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         // visíveis sempre, duplicando o que o Apps drawer (chat tab) já oferece.
         // Reclamação do usuário: "abre todas as funções de novo no menu lateral".
         const primary = [
-          { label: t('sidebar.search') || 'Buscar', icon: IconSearch, route: '__search__', color: '#A582F7' },
+          { label: t('sidebar.search') || 'Buscar', icon: IconSearch, route: '__search__', color: '#128C7E' },
           { label: t('notifications.title') || 'Notificações', icon: IconBell, route: '__notifications__', color: '#f59e0b', badge: notifsUnread },
           { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
         ];
         const secondary = [
-          { label: 'One',                  icon: IconZap,        route: '/one',       color: '#A78BFA' },
+          { label: 'One',                  icon: IconZap,        route: '/one',       color: '#128C7E' },
           { label: t('photos.title'),      icon: IconCamera,     route: '/photos',    color: '#e11d48' },
           { label: 'Chatyy Cloud',         icon: IconFolder,     route: '/drive',     color: '#f59e0b' },
           { label: t('sidebar.meetings'),  icon: IconFilm,       route: '/meetings' },
@@ -459,14 +459,14 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           // Saved Messages — Telegram-style "chat with yourself" with
           // dedicated screen (tabs, search, schedule reminders). Floppy-
           // disk feel uses IconBookmark since the codebase already ships it.
-          { label: t('chat.savedMessages') || 'Mensagens Salvas', icon: IconBookmark, route: '/saved-messages', color: '#A582F7' },
+          { label: t('chat.savedMessages') || 'Mensagens Salvas', icon: IconBookmark, route: '/saved-messages', color: '#128C7E' },
           // Lives salvas — replays of broadcasts the user saved (CF Stream
           // VOD). WAVE 99 (2026-05-21): user reported "salvo em lives mas
           // onde tá essa opção?" — the only discoverable entry points were
           // the Profile "Lives" tab and the end-card CTA after a broadcast.
           // Surfacing it in the sidebar More section gives a permanent
           // navigation target so the host can find their replays anytime.
-          { label: t('sidebar.livesSaved') || 'Lives salvas', icon: IconPlay, route: '/lives-saved', color: '#A582F7' },
+          { label: t('sidebar.livesSaved') || 'Lives salvas', icon: IconPlay, route: '/lives-saved', color: '#128C7E' },
           // Snap-Map / Friends-on-a-Map — Snapchat-style "where are my
           // friends" screen. Pin-icon is overloaded for "live location"
           // semantics already; the green color (matches the live-share
@@ -904,8 +904,8 @@ const s = StyleSheet.create({
       web: {
         transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
         cursor: 'pointer',
-        boxShadow: '0 4px 14px rgba(124,58,237,0.28)',
-        backgroundColor: '#A582F7',
+        boxShadow: '0 4px 14px rgba(18, 140, 126,0.28)',
+        backgroundColor: '#128C7E',
       },
       default: {},
     }),
@@ -1017,8 +1017,8 @@ const s = StyleSheet.create({
     marginBottom: Spacing.md,
     ...(Platform.OS === 'web' ? {
       cursor: 'pointer',
-      boxShadow: '0 4px 12px rgba(124,58,237,0.28)',
-      backgroundColor: '#A582F7',
+      boxShadow: '0 4px 12px rgba(18, 140, 126,0.28)',
+      backgroundColor: '#128C7E',
       transition: 'transform 0.15s ease, box-shadow 0.15s ease',
     } : {}),
   },

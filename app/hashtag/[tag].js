@@ -134,7 +134,7 @@ export default function ChatHashtagScreen() {
 
   return (
     <View style={[sty.screen, { backgroundColor: colors.background, paddingTop: Platform.OS === 'web' ? 0 : insets.top }]}>
-      <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#6D28D9' }]}>
+      <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#128C7E' }]}>
         <TouchableOpacity
           onPress={() => { try { router.back(); } catch {} }}
           style={sty.backBtn}

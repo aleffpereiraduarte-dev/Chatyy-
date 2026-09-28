@@ -101,7 +101,7 @@ export default function CallRecapScreen() {
       <ScrollView contentContainerStyle={{ padding: Spacing.lg, paddingBottom: insets.bottom + 24 }}>
         {(loading || pending) && (
           <View style={styles.center}>
-            <ActivityIndicator size="large" color={colors.tint || '#A582F7'} />
+            <ActivityIndicator size="large" color={colors.tint || '#128C7E'} />
             <Text style={[styles.muted, { color: colors.subText }]}>
               {pending
                 ? (t('callRecap.processing') || 'Processando áudio...')

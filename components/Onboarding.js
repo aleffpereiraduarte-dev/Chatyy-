@@ -12,7 +12,7 @@ import {
 } from './Icons';
 
 const ONBOARDING_KEY = '@chatyy_onboarding_done';
-const BRAND = '#A582F7';
+const BRAND = '#128C7E';
 
 // React Native invariant: a regular FlatList cannot use `onScroll` with
 // `useNativeDriver: true`. The list MUST be wrapped via
@@ -29,8 +29,8 @@ const SLIDES = [
     Icon: IconMessageSquare,
     titleKey: 'onboarding.slideChatTitle',
     descKey: 'onboarding.slideChatDesc',
-    blob1: '#A78BFA',
-    blob2: '#EC4899',
+    blob1: '#128C7E',
+    blob2: '#128C7E',
     blob3: '#6366F1',
   },
   {
@@ -38,9 +38,9 @@ const SLIDES = [
     Icon: IconPlay,
     titleKey: 'onboarding.slideReelsTitle',
     descKey: 'onboarding.slideReelsDesc',
-    blob1: '#EC4899',
-    blob2: '#A582F7',
-    blob3: '#F472B6',
+    blob1: '#128C7E',
+    blob2: '#128C7E',
+    blob3: '#128C7E',
   },
   {
     key: 'email',
@@ -48,17 +48,17 @@ const SLIDES = [
     titleKey: 'onboarding.slideEmailTitle',
     descKey: 'onboarding.slideEmailDesc',
     blob1: '#6366F1',
-    blob2: '#A78BFA',
-    blob3: '#A582F7',
+    blob2: '#128C7E',
+    blob3: '#128C7E',
   },
   {
     key: 'privacy',
     Icon: IconShield,
     titleKey: 'onboarding.slidePrivacyTitle',
     descKey: 'onboarding.slidePrivacyDesc',
-    blob1: '#A582F7',
+    blob1: '#128C7E',
     blob2: '#6366F1',
-    blob3: '#A78BFA',
+    blob3: '#128C7E',
   },
 ];
 
@@ -197,7 +197,7 @@ export default function Onboarding({ onDone }) {
                   background: 'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))',
                   backdropFilter: 'blur(20px)',
                   WebkitBackdropFilter: 'blur(20px)',
-                  boxShadow: '0 24px 60px rgba(124, 58, 237, 0.35), inset 0 1px 0 rgba(255,255,255,0.4)',
+                  boxShadow: '0 24px 60px rgba(18, 140, 126, 0.35), inset 0 1px 0 rgba(255,255,255,0.4)',
                 },
               ]}
             >
@@ -270,10 +270,10 @@ export default function Onboarding({ onDone }) {
     <View style={[styles.container, { backgroundColor: baseBg }]}>
       {/* Animated gradient mesh background — purple → pink → indigo */}
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-        <Blob color="#A582F7" size={420} top={-120} left={-120} delay={0} />
-        <Blob color="#EC4899" size={360} top={120} right={-140} delay={1200} />
+        <Blob color="#128C7E" size={420} top={-120} left={-120} delay={0} />
+        <Blob color="#128C7E" size={360} top={120} right={-140} delay={1200} />
         <Blob color="#6366F1" size={500} bottom={-180} left={-80} delay={2400} />
-        <Blob color="#A78BFA" size={300} bottom={140} right={-60} delay={1800} />
+        <Blob color="#128C7E" size={300} bottom={140} right={-60} delay={1800} />
       </View>
 
       {/* Skip glass pill top-right */}
@@ -286,7 +286,7 @@ export default function Onboarding({ onDone }) {
               backdropFilter: 'blur(14px)',
               WebkitBackdropFilter: 'blur(14px)',
               background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.55)',
-              boxShadow: '0 4px 16px rgba(124,58,237,0.18), inset 0 1px 0 rgba(255,255,255,0.5)',
+              boxShadow: '0 4px 16px rgba(18, 140, 126,0.18), inset 0 1px 0 rgba(255,255,255,0.5)',
             },
             Platform.OS !== 'web' && {
               backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(255,255,255,0.65)',
@@ -297,7 +297,7 @@ export default function Onboarding({ onDone }) {
           accessibilityRole="button"
           accessibilityLabel={t('onboarding.skip')}
         >
-          <Text style={[styles.skipText, { color: isDark ? '#fff' : '#3B1F6B' }]}>
+          <Text style={[styles.skipText, { color: isDark ? '#fff' : '#161618' }]}>
             {t('onboarding.skip')}
           </Text>
         </TouchableOpacity>
@@ -329,7 +329,7 @@ export default function Onboarding({ onDone }) {
           feedback during scroll, scales gracefully with slide count, and the
           gradient mirrors the CTA so the eye links progress → action. */}
       <View style={[styles.progressTrack, isDesktop && styles.progressTrackDesktop, {
-        backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(60,30,100,0.10)',
+        backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(18, 140, 126,0.10)',
       }]}
       >
         <Animated.View
@@ -343,7 +343,7 @@ export default function Onboarding({ onDone }) {
               }),
             },
             Platform.OS === 'web' && {
-              background: `linear-gradient(90deg, ${BRAND}, #A78BFA)`,
+              background: `linear-gradient(90deg, ${BRAND}, #128C7E)`,
               boxShadow: `0 1px 8px ${BRAND}66`,
             },
             Platform.OS !== 'web' && { backgroundColor: BRAND },
@@ -351,7 +351,7 @@ export default function Onboarding({ onDone }) {
         />
       </View>
       <View style={styles.progressLabelRow}>
-        <Text style={[styles.progressLabel, { color: isDark ? 'rgba(255,255,255,0.65)' : 'rgba(60,30,100,0.65)' }]}>
+        <Text style={[styles.progressLabel, { color: isDark ? 'rgba(255,255,255,0.65)' : 'rgba(18, 140, 126,0.65)' }]}>
           {Math.min(currentIndex + 1, SLIDES.length)} / {SLIDES.length}
         </Text>
       </View>
@@ -369,7 +369,7 @@ export default function Onboarding({ onDone }) {
             style={[
               styles.cta,
               Platform.OS === 'web' && {
-                background: `linear-gradient(135deg, ${BRAND} 0%, #9333EA 50%, #A78BFA 100%)`,
+                background: `linear-gradient(135deg, ${BRAND} 0%, #128C7E 50%, #128C7E 100%)`,
                 boxShadow: `0 12px 32px ${BRAND}66, 0 4px 12px ${BRAND}44, inset 0 1px 0 rgba(255,255,255,0.35)`,
                 transition: 'transform 0.18s ease',
               },
@@ -400,7 +400,7 @@ export default function Onboarding({ onDone }) {
           <Text
             style={[
               styles.loginLinkText,
-              { color: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(60,30,100,0.55)' },
+              { color: isDark ? 'rgba(255,255,255,0.55)' : 'rgba(18, 140, 126,0.55)' },
             ]}
           >
             {t('onboarding.haveAccount')}
@@ -503,11 +503,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 14,
     letterSpacing: -0.7,
-    color: '#1A0938',
+    color: '#161618',
     ...Platform.select({
       web: {
         fontFamily: '"Segoe UI", system-ui, -apple-system, sans-serif',
-        backgroundImage: `linear-gradient(135deg, #1A0938 0%, ${BRAND} 100%)`,
+        backgroundImage: `linear-gradient(135deg, #161618 0%, ${BRAND} 100%)`,
         WebkitBackgroundClip: 'text',
         backgroundClip: 'text',
         WebkitTextFillColor: 'transparent',
@@ -524,7 +524,7 @@ const styles = StyleSheet.create({
     lineHeight: 25,
     maxWidth: 380,
     fontWeight: '500',
-    color: 'rgba(40,20,70,0.72)',
+    color: 'rgba(18, 140, 126,0.72)',
   },
   descDesktop: {
     fontSize: 19,

@@ -176,10 +176,10 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
               {t('wallet.currentBalance') || 'Saldo atual'}:
             </Text>
             {loadingBal ? (
-              <ActivityIndicator size="small" color="#A855F7" />
+              <ActivityIndicator size="small" color="#128C7E" />
             ) : (
               <View style={styles.balValRow}>
-                <IconDiamond size={14} color="#A855F7" />
+                <IconDiamond size={14} color="#128C7E" />
                 <Text style={[styles.balanceVal, { color: colors.text }]}>{formatInt(balance, language)}</Text>
               </View>
             )}
@@ -198,12 +198,12 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
                   key={p.sku}
                   onPress={() => onBuy(p)}
                   disabled={!!pendingSku}
-                  style={[styles.packRow, { borderColor: isDark ? 'rgba(168,85,247,0.25)' : 'rgba(168,85,247,0.18)', backgroundColor: isDark ? 'rgba(168,85,247,0.08)' : 'rgba(168,85,247,0.04)', opacity: pendingSku && !isLoading ? 0.5 : 1 }]}
+                  style={[styles.packRow, { borderColor: isDark ? 'rgba(18, 140, 126,0.25)' : 'rgba(18, 140, 126,0.18)', backgroundColor: isDark ? 'rgba(18, 140, 126,0.08)' : 'rgba(18, 140, 126,0.04)', opacity: pendingSku && !isLoading ? 0.5 : 1 }]}
                   accessibilityRole="button"
                   accessibilityLabel={`${p.diamonds} ${t('wallet.diamondsLabel') || 'diamantes'} ${priceLabel}`}
                 >
                   <View style={styles.packLeft}>
-                    <IconDiamond size={18} color="#A855F7" />
+                    <IconDiamond size={18} color="#128C7E" />
                     <Text style={[styles.packDiamonds, { color: colors.text }]}>
                       {formatInt(p.diamonds, language)}
                     </Text>
@@ -215,7 +215,7 @@ export default function DiamondTopUpSheet({ visible, onClose, onBalanceChange })
                   </View>
                   <View style={styles.packRight}>
                     {isLoading ? (
-                      <ActivityIndicator color="#A855F7" />
+                      <ActivityIndicator color="#128C7E" />
                     ) : (
                       <Text style={[styles.packPrice, { color: colors.text }]}>{priceLabel}</Text>
                     )}

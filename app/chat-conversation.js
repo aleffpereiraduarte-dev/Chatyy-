@@ -639,7 +639,7 @@ function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
       >
         <IconChevronDown size={20} color={colors.textSecondary} />
         {newMsgCount > 0 && (
-          <Animated.View style={[styles.scrollDownBadge, { backgroundColor: '#A582F7', transform: [{ scale: badgeScale }] }]}>
+          <Animated.View style={[styles.scrollDownBadge, { backgroundColor: '#128C7E', transform: [{ scale: badgeScale }] }]}>
             <Text style={styles.scrollDownBadgeText}>{newMsgCount > 99 ? '99+' : newMsgCount}</Text>
           </Animated.View>
         )}
@@ -650,8 +650,8 @@ function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
 
 // [VISUAL-G1, 2026-05-19] Module-scope sender color palette + djb2 hash (avoid re-alloc per render).
 // 20 distinct high-contrast colors, all chosen to read clearly against both the
-// purple own bubble (#5B21B6 dark / #E6DBFF light) AND the received bubble
-// (#FFFFFF light / #231835 dark). No near-duplicates, no near-purples.
+// purple own bubble (#128C7E dark / #F1F3F5 light) AND the received bubble
+// (#FFFFFF light / #161618 dark). No near-duplicates, no near-purples.
 const SENDER_COLORS = [
   '#E11D48', // rose
   '#F97316', // orange
@@ -663,9 +663,9 @@ const SENDER_COLORS = [
   '#0EA5E9', // sky
   '#3B82F6', // blue
   '#6366F1', // indigo
-  '#A855F7', // purple-light (distinct from #5B21B6)
-  '#D946EF', // fuchsia
-  '#EC4899', // pink
+  '#128C7E', // purple-light (distinct from #128C7E)
+  '#128C7E', // fuchsia
+  '#128C7E', // pink
   '#F43F5E', // rose-dark
   '#EAB308', // yellow
   '#22C55E', // green
@@ -740,7 +740,7 @@ function AnimatedCheckStatus({ status, color, pending = false }) {
     // Single check (sent)
     return (
       <Animated.View style={{ marginLeft: 3, flexShrink: 0, opacity }}>
-        {/* [VISUAL-G6, 2026-05-19] Check size 13→15 + read color #C4B5FD→#53BDEB (WA blue, visible on purple). */}
+        {/* [VISUAL-G6, 2026-05-19] Check size 13→15 + read color #F1F3F5→#53BDEB (WA blue, visible on purple). */}
         <IconCheck size={15} color={color} />
       </Animated.View>
     );
@@ -843,7 +843,7 @@ function MediaStatusFooter({ msg, isOwn, variant }) {
     if (!showChecks) return null;
     if (msg._readStatus === 2) {
       // [2026-05-21] WhatsApp parity: read = blue (#53BDEB), not lavender.
-      // Was rendering as light purple #C4B5FD which didn't read as "blue"
+      // Was rendering as light purple #F1F3F5 which didn't read as "blue"
       // to users coming from WhatsApp. Unified with AnimatedCheckStatus.
       return (
         <View style={{ flexDirection: 'row', marginLeft: 1, flexShrink: 0 }}>
@@ -1095,7 +1095,7 @@ function TypingBubble({ name, colors, recording, t, active = true, entries = nul
           </>
         ) : (
           [dot1, dot2, dot3].map((dot, i) => (
-            <Animated.View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#A582F7', transform: [{ translateY: dot }] }} />
+            <Animated.View key={i} style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#128C7E', transform: [{ translateY: dot }] }} />
           ))
         )}
       </View>
@@ -1182,7 +1182,7 @@ function AvatarHalo({ size = 36 }) {
         top: -3, left: -3,
         width: size + 6, height: size + 6, borderRadius: (size + 6) / 2,
         borderWidth: 2,
-        borderColor: '#A78BFA',
+        borderColor: '#128C7E',
         opacity,
         transform: [{ scale }],
       }}
@@ -1225,7 +1225,7 @@ function PresencePulse({ isDark }) {
       />
       <View style={{
         width: 13, height: 13, borderRadius: 6.5,
-        backgroundColor: '#22c55e', borderWidth: 2.5, borderColor: isDark ? '#1E1A2E' : '#6D28D9',
+        backgroundColor: '#22c55e', borderWidth: 2.5, borderColor: isDark ? '#1E1A2E' : '#128C7E',
         ...Platform.select({
           ios: { shadowColor: '#22c55e', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.5, shadowRadius: 4 },
           web: { boxShadow: '0 0 6px rgba(34,197,94,0.5)' },
@@ -1820,7 +1820,7 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
       p.t === '#' ? (
         <Text
           key={`${kp}_h${j}`}
-          style={{ color: '#A582F7', fontWeight: '700' }}
+          style={{ color: '#128C7E', fontWeight: '700' }}
           onPress={() => {
             // Telegram-style hashtag tap: route to the dedicated hashtag
             // results screen which queries chat_hashtag_search and lists
@@ -2040,7 +2040,7 @@ function LinkPreview({ url, colors }) {
 const linkPreviewStyles = StyleSheet.create({
   container: {
     borderRadius: 12, overflow: 'hidden', marginTop: 6, maxWidth: 280,
-    borderLeftWidth: 3, borderLeftColor: '#A582F7',
+    borderLeftWidth: 3, borderLeftColor: '#128C7E',
   },
   image: { width: '100%', height: 140, backgroundColor: '#00000010' },
   imageFallback: {
@@ -2107,7 +2107,7 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) 
       // drag progress smoothly and a circular violet badge grows behind.
       const scale    = dragX.interpolate({ inputRange: [0, 30, 60], outputRange: [0.4, 1, 1.15], extrapolate: 'clamp' });
       const opacity  = dragX.interpolate({ inputRange: [0, 20, 40],   outputRange: [0, 0.6, 1],  extrapolate: 'clamp' });
-      const badgeBg  = dragX.interpolate({ inputRange: [0, 30, 60],   outputRange: ['rgba(124,58,237,0)', 'rgba(124,58,237,0.18)', 'rgba(124,58,237,0.35)'], extrapolate: 'clamp' });
+      const badgeBg  = dragX.interpolate({ inputRange: [0, 30, 60],   outputRange: ['rgba(18, 140, 126,0)', 'rgba(18, 140, 126,0.18)', 'rgba(18, 140, 126,0.35)'], extrapolate: 'clamp' });
       return (
         <Animated.View style={{ width: 60, justifyContent: 'center', alignItems: 'center', opacity }}>
           <Animated.View style={{
@@ -2212,7 +2212,7 @@ function SwipeReplyWrap({ children, onReply, onInfo, disabled, colors, style }) 
 
   const replyOpacity = swipeX.interpolate({ inputRange: [0, 20, 40], outputRange: [0, 0.6, 1], extrapolate: 'clamp' });
   const replyScale   = swipeX.interpolate({ inputRange: [0, 30, 60], outputRange: [0.4, 1, 1.15], extrapolate: 'clamp' });
-  const badgeBg      = swipeX.interpolate({ inputRange: [0, 30, 60], outputRange: ['rgba(124,58,237,0)', 'rgba(124,58,237,0.18)', 'rgba(124,58,237,0.35)'], extrapolate: 'clamp' });
+  const badgeBg      = swipeX.interpolate({ inputRange: [0, 30, 60], outputRange: ['rgba(18, 140, 126,0)', 'rgba(18, 140, 126,0.18)', 'rgba(18, 140, 126,0.35)'], extrapolate: 'clamp' });
 
   return (
     <Animated.View {...panResponder.panHandlers} style={[{ transform: [{ translateX: swipeX }] }, style]}>
@@ -2402,7 +2402,7 @@ function ReactionButton({ emoji, onPress, index, isPlus, colors, isDark, isActiv
         // accent chip) so they can see their current pick and understand that
         // tapping it again removes the reaction. WhatsApp/iMessage parity.
         backgroundColor: isActive
-          ? ((colors?.primary || '#A582F7') + '22')
+          ? ((colors?.primary || '#128C7E') + '22')
           : (isPlus ? (isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)') : 'transparent'),
         justifyContent: 'center',
         alignItems: 'center',
@@ -3457,10 +3457,10 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
   // On LIGHT theme the own bubble is light lavender, so white controls
   // vanish. Use dark purple for own controls on light theme; keep white on
   // dark. Received bubble colors unchanged.
-  const ownCtrl = isDarkMode ? '#fff' : '#5B21B6';
-  const ownCtrlSoft = isDarkMode ? 'rgba(255,255,255,0.85)' : 'rgba(91,33,182,0.85)';
-  const tintColor = isOwn ? ownCtrl : '#A582F7';
-  const tintDim = isOwn ? (isDarkMode ? 'rgba(255,255,255,0.35)' : 'rgba(91,33,182,0.30)') : 'rgba(124,58,237,0.25)';
+  const ownCtrl = isDarkMode ? '#fff' : '#128C7E';
+  const ownCtrlSoft = isDarkMode ? 'rgba(255,255,255,0.85)' : 'rgba(18, 140, 126,0.85)';
+  const tintColor = isOwn ? ownCtrl : '#128C7E';
+  const tintDim = isOwn ? (isDarkMode ? 'rgba(255,255,255,0.35)' : 'rgba(18, 140, 126,0.30)') : 'rgba(18, 140, 126,0.25)';
   const playedBarIdx = Math.floor(progress * waveformBars.length);
   const displayTime = playing ? currentTime : (duration || 0);
 
@@ -3479,12 +3479,12 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
           accessibilityLabel={t('chatConv.skipBack15') || 'Voltar 15 segundos'}
           accessibilityRole="button"
         >
-          <IconRotateCcw size={16} color={isOwn ? ownCtrlSoft : '#A582F7'} />
-          <Text style={[audioStyles.skipLabel, { color: isOwn ? ownCtrlSoft : '#A582F7' }]}>15</Text>
+          <IconRotateCcw size={16} color={isOwn ? ownCtrlSoft : '#128C7E'} />
+          <Text style={[audioStyles.skipLabel, { color: isOwn ? ownCtrlSoft : '#128C7E' }]}>15</Text>
         </TouchableOpacity>
       )}
       <View style={{ position: 'relative' }}>
-        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.25)' : '#5B21B6') : '#A582F7' }]} accessibilityLabel={caching ? (t('common.downloading') || 'Baixando') : playing ? (t('common.pause') || 'Pausar') : (t('common.play') || 'Reproduzir')} accessibilityRole="button">
+        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.25)' : '#128C7E') : '#128C7E' }]} accessibilityLabel={caching ? (t('common.downloading') || 'Baixando') : playing ? (t('common.pause') || 'Pausar') : (t('common.play') || 'Reproduzir')} accessibilityRole="button">
           {caching ? (
             <ActivityIndicator size={18} color="#fff" />
           ) : playing ? (
@@ -3506,8 +3506,8 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
           accessibilityLabel={t('chatConv.skipForward15') || 'Avançar 15 segundos'}
           accessibilityRole="button"
         >
-          <IconRotateCw size={16} color={isOwn ? ownCtrlSoft : '#A582F7'} />
-          <Text style={[audioStyles.skipLabel, { color: isOwn ? ownCtrlSoft : '#A582F7' }]}>15</Text>
+          <IconRotateCw size={16} color={isOwn ? ownCtrlSoft : '#128C7E'} />
+          <Text style={[audioStyles.skipLabel, { color: isOwn ? ownCtrlSoft : '#128C7E' }]}>15</Text>
         </TouchableOpacity>
       )}
       <View style={audioStyles.trackWrap}>
@@ -3637,9 +3637,9 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
             onPress={cycleSpeed}
             accessibilityLabel={`${t ? (t('chatConv.playbackSpeed') || 'Playback speed') : 'Playback speed'} ${speed}x`}
             accessibilityRole="button"
-            style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.15)' : 'rgba(91,33,182,0.12)') : 'rgba(124,58,237,0.15)' }}
+            style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 10, backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.15)' : 'rgba(18, 140, 126,0.12)') : 'rgba(18, 140, 126,0.15)' }}
           >
-            <Text style={{ fontSize: 10, fontWeight: '800', color: isOwn ? ownCtrlSoft : '#A582F7' }}>{speed}x</Text>
+            <Text style={{ fontSize: 10, fontWeight: '800', color: isOwn ? ownCtrlSoft : '#128C7E' }}>{speed}x</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -3933,7 +3933,7 @@ html,body,#map{margin:0;padding:0;width:100%;height:100%;background:#000}
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: '#000' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 50 : ((require('react-native').StatusBar.currentHeight || 24) + 10), paddingHorizontal: 12, paddingBottom: 10, backgroundColor: isStillLive ? '#16a34a' : '#6D28D9' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingTop: Platform.OS === 'ios' ? 50 : ((require('react-native').StatusBar.currentHeight || 24) + 10), paddingHorizontal: 12, paddingBottom: 10, backgroundColor: isStillLive ? '#16a34a' : '#128C7E' }}>
           <TouchableOpacity onPress={onClose} style={{ padding: 8 }} accessibilityLabel={t('common.close') || 'Fechar'} accessibilityRole="button">
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>
@@ -4172,11 +4172,11 @@ function AttachmentMenu({ visible, onClose, onPick, colors }) {
   // botões dedicados no input bar (atalho de câmera + microfone), ficavam
   // redundantes aqui.
   const items = [
-    { key: 'gallery', icon: IconImage, label: t('chatConv.gallery') || 'Galeria', color: '#A582F7' },
+    { key: 'gallery', icon: IconImage, label: t('chatConv.gallery') || 'Galeria', color: '#128C7E' },
     // GIF relocated here from the composer pill — see handlePickAttachment
     // 'gif' case. Keeps the feature one tap away without crowding the
     // text-input edge where stray keyboard-open taps used to land.
-    { key: 'gif', icon: IconGifBadge, label: t('chatConv.gif') || 'GIF', color: '#ec4899' },
+    { key: 'gif', icon: IconGifBadge, label: t('chatConv.gif') || 'GIF', color: '#128C7E' },
     { key: 'file', icon: IconFileText, label: t('chatConv.file') || 'Arquivo', color: '#3b82f6' },
     // Scan document → PDF (native VisionKit / ML Kit). FLAG-GATED, default OFF
     // (constants/featureFlags.js SCAN_DOCUMENT_ENABLED). The slot is not even
@@ -4193,8 +4193,8 @@ function AttachmentMenu({ visible, onClose, onPick, colors }) {
     { key: 'location', icon: IconMapPin, label: t('chatConv.location') || 'Localização', color: '#10b981' },
     { key: 'contact', icon: IconUser, label: t('chatConv.contact') || 'Contato', color: '#06b6d4' },
     { key: 'poll', icon: IconBarChart, label: t('chat.poll') || 'Enquete', color: '#f59e0b' },
-    { key: 'meetup', icon: IconMapPin, label: t('chatConv.meetup') || 'Encontro', color: '#ec4899' },
-    { key: 'playlist', icon: IconPlay, label: t('chatConv.playlist') || 'Playlist', color: '#a855f7' },
+    { key: 'meetup', icon: IconMapPin, label: t('chatConv.meetup') || 'Encontro', color: '#128C7E' },
+    { key: 'playlist', icon: IconPlay, label: t('chatConv.playlist') || 'Playlist', color: '#128C7E' },
     // 2026-05-18: "Vídeo curto" — Reels-style 9:16 clip in-chat. Only renders
     // when the feature flag is on (isShortVideoInChatEnabled returns true).
     // Returns null otherwise so the grid silently drops the slot for users
@@ -4203,7 +4203,7 @@ function AttachmentMenu({ visible, onClose, onPick, colors }) {
       key: 'short_video',
       icon: IconFilm,
       label: t('chat.attach.shortVideo') || 'Vídeo curto',
-      color: '#A582F7',
+      color: '#128C7E',
     }] : []),
   ];
 
@@ -4532,7 +4532,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
               onChangeText={(v) => { setLocation(v); setPickedCoords(null); }}
               autoCapitalize="none"
             />
-            {searchingAddress && <ActivityIndicator size="small" color="#ec4899" />}
+            {searchingAddress && <ActivityIndicator size="small" color="#128C7E" />}
             {pickedCoords && <IconCheckCircle size={16} color="#10b981" />}
           </View>
           {addressSuggestions.length > 0 && (
@@ -4583,7 +4583,7 @@ function MeetupCreatorModal({ colors, t, conversationId, onClose, onCreated }) {
         <TouchableOpacity
           onPress={handleCreate}
           disabled={sending || !title.trim() || !dateText.trim()}
-          style={{ backgroundColor: (!title.trim() || !dateText.trim()) ? colors.border : '#ec4899', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
+          style={{ backgroundColor: (!title.trim() || !dateText.trim()) ? colors.border : '#128C7E', borderRadius: 12, paddingVertical: 14, alignItems: 'center' }}
         >
           {sending
             ? <ActivityIndicator color="#fff" />
@@ -4703,8 +4703,8 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
         <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 14 }} />
 
         <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
-          <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#a855f7' + '20', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
-            <IconMusic size={22} color="#a855f7" />
+          <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: '#128C7E' + '20', alignItems: 'center', justifyContent: 'center', marginRight: 10 }}>
+            <IconMusic size={22} color="#128C7E" />
           </View>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text }}>
@@ -4744,7 +4744,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
             onChangeText={setSearchQuery}
             autoCapitalize="none"
           />
-          {searching && <ActivityIndicator size="small" color="#a855f7" />}
+          {searching && <ActivityIndicator size="small" color="#128C7E" />}
         </View>
 
         {/* Selected songs chip strip */}
@@ -4753,13 +4753,13 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
             {selectedSongs.map((s, i) => (
               <View key={s.id || i} style={{
                 flexDirection: 'row', alignItems: 'center', gap: 6,
-                backgroundColor: '#a855f7' + '22',
+                backgroundColor: '#128C7E' + '22',
                 borderRadius: 14, paddingHorizontal: 10, paddingVertical: 6,
                 maxWidth: 200,
               }}>
-                <Text style={{ fontSize: 11, color: '#a855f7', fontWeight: '700' }} numberOfLines={1}>{s.title}</Text>
+                <Text style={{ fontSize: 11, color: '#128C7E', fontWeight: '700' }} numberOfLines={1}>{s.title}</Text>
                 <TouchableOpacity onPress={() => toggleSong(s)} hitSlop={6}>
-                  <Text style={{ color: '#a855f7', fontSize: 14, fontWeight: '900' }}>×</Text>
+                  <Text style={{ color: '#128C7E', fontSize: 14, fontWeight: '900' }}>×</Text>
                 </TouchableOpacity>
               </View>
             ))}
@@ -4776,7 +4776,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
           {searchResults.length === 0 && !searching && searchQuery.length < 2 && (
             <View style={{ alignItems: 'center', paddingVertical: 32 }}>
               <View style={{ marginBottom: 8 }}>
-                <IconMusic size={48} color="#a855f7" />
+                <IconMusic size={48} color="#128C7E" />
               </View>
               <Text style={{ color: colors.textTertiary, fontSize: 13, textAlign: 'center' }}>
                 Digite o nome de uma música ou artista pra começar
@@ -4793,14 +4793,14 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
                   flexDirection: 'row', alignItems: 'center', gap: 12,
                   paddingVertical: 8, paddingHorizontal: 4,
                   borderRadius: 10,
-                  backgroundColor: isSelected ? '#a855f7' + '12' : 'transparent',
+                  backgroundColor: isSelected ? '#128C7E' + '12' : 'transparent',
                   marginBottom: 4,
                 }}
                 activeOpacity={0.6}
               >
                 {track.coverUrl
                   ? <Image source={{ uri: track.coverUrl }} style={{ width: 48, height: 48, borderRadius: 6 }} />
-                  : <View style={{ width: 48, height: 48, borderRadius: 6, backgroundColor: '#a855f7' + '22', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={22} color="#a855f7" /></View>}
+                  : <View style={{ width: 48, height: 48, borderRadius: 6, backgroundColor: '#128C7E' + '22', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={22} color="#128C7E" /></View>}
                 <View style={{ flex: 1 }}>
                   <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }} numberOfLines={1}>{track.title}</Text>
                   <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>{track.artist}</Text>
@@ -4808,8 +4808,8 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
                 <View style={{
                   width: 28, height: 28, borderRadius: 14,
                   borderWidth: 2,
-                  borderColor: isSelected ? '#a855f7' : colors.border,
-                  backgroundColor: isSelected ? '#a855f7' : 'transparent',
+                  borderColor: isSelected ? '#128C7E' : colors.border,
+                  backgroundColor: isSelected ? '#128C7E' : 'transparent',
                   alignItems: 'center', justifyContent: 'center',
                 }}>
                   {isSelected && <IconCheck size={14} color="#fff" strokeWidth={3} />}
@@ -4823,7 +4823,7 @@ function PlaylistCreatorModal({ colors, t, conversationId, onClose, onCreated })
           onPress={handleCreate}
           disabled={sending || !name.trim()}
           style={{
-            backgroundColor: !name.trim() ? colors.border : '#a855f7',
+            backgroundColor: !name.trim() ? colors.border : '#128C7E',
             borderRadius: 14, paddingVertical: 14, alignItems: 'center', marginTop: 10,
           }}
         >
@@ -4911,7 +4911,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
           paddingTop: 0, paddingBottom: 24,
           maxHeight: '92%',
           overflow: 'hidden',
-          ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 40px rgba(168,85,247,0.20)' } : {}),
+          ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 40px rgba(18, 140, 126,0.20)' } : {}),
         }}
         onPress={e => e.stopPropagation()}
       >
@@ -4919,8 +4919,8 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
         <View style={{
           paddingHorizontal: 20, paddingTop: 16, paddingBottom: 18,
           ...(Platform.OS === 'web'
-            ? { background: 'linear-gradient(135deg, #a855f7 0%, #ec4899 100%)' }
-            : { backgroundColor: '#a855f7' }),
+            ? { background: 'linear-gradient(135deg, #128C7E 0%, #128C7E 100%)' }
+            : { backgroundColor: '#128C7E' }),
         }}>
           <View style={{ alignSelf: 'center', width: 44, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.5)', marginBottom: 14 }} />
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
@@ -4985,7 +4985,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                     </View>
                     {s.cover
                       ? <Image source={{ uri: s.cover }} style={{ width: 44, height: 44, borderRadius: 8 }} />
-                      : <View style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#a855f7' + '22', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={20} color="#a855f7" /></View>}
+                      : <View style={{ width: 44, height: 44, borderRadius: 8, backgroundColor: '#128C7E' + '22', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={20} color="#128C7E" /></View>}
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }} numberOfLines={1}>{s.title}</Text>
                       <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>{s.artist}</Text>
@@ -5028,7 +5028,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
               onChangeText={setSearchQuery}
               autoCapitalize="none"
             />
-            {searching && <ActivityIndicator size="small" color="#a855f7" />}
+            {searching && <ActivityIndicator size="small" color="#128C7E" />}
             {!!searchQuery && !searching && (
               <TouchableOpacity onPress={() => setSearchQuery('')} hitSlop={8}>
                 <IconX size={16} color={colors.textTertiary} />
@@ -5042,10 +5042,10 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
               <View style={{ alignItems: 'center', paddingVertical: 28 }}>
                 <View style={{
                   width: 64, height: 64, borderRadius: 32,
-                  backgroundColor: '#a855f7' + '14',
+                  backgroundColor: '#128C7E' + '14',
                   alignItems: 'center', justifyContent: 'center', marginBottom: 12,
                 }}>
-                  <IconMusic size={30} color="#a855f7" />
+                  <IconMusic size={30} color="#128C7E" />
                 </View>
                 <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', paddingHorizontal: 32, lineHeight: 18 }}>
                   Digite o nome de uma música, artista ou álbum para adicionar à playlist.
@@ -5074,7 +5074,7 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                 >
                   {track.coverUrl
                     ? <Image source={{ uri: track.coverUrl }} style={{ width: 48, height: 48, borderRadius: 8 }} />
-                    : <View style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: '#a855f7' + '22', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={22} color="#a855f7" /></View>}
+                    : <View style={{ width: 48, height: 48, borderRadius: 8, backgroundColor: '#128C7E' + '22', alignItems: 'center', justifyContent: 'center' }}><IconMusic size={22} color="#128C7E" /></View>}
                   <View style={{ flex: 1 }}>
                     <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }} numberOfLines={1}>{track.title}</Text>
                     <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>
@@ -5083,9 +5083,9 @@ function PlaylistEditorModal({ colors, isDark, t, editor, onClose, onUpdated }) 
                   </View>
                   <View style={{
                     width: 36, height: 36, borderRadius: 18,
-                    backgroundColor: already ? colors.border : '#a855f7',
+                    backgroundColor: already ? colors.border : '#128C7E',
                     alignItems: 'center', justifyContent: 'center',
-                    ...(Platform.OS === 'web' && !already ? { boxShadow: '0 2px 6px rgba(168,85,247,0.35)' } : {}),
+                    ...(Platform.OS === 'web' && !already ? { boxShadow: '0 2px 6px rgba(18, 140, 126,0.35)' } : {}),
                   }}>
                     {already
                       ? <IconCheck size={18} color={colors.textSecondary} strokeWidth={3} />
@@ -5412,7 +5412,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
               </TouchableOpacity>
               {edits[activeIdx] && (
                 <TouchableOpacity onPress={() => setEdits(prev => { const n = { ...prev }; delete n[activeIdx]; return n; })} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.resetEdits') || 'Desfazer'}>
-                  <IconUndo size={20} color="#A582F7" />
+                  <IconUndo size={20} color="#128C7E" />
                 </TouchableOpacity>
               )}
               <TouchableOpacity onPress={() => { editorAutoOpenedRef.current = false; setCropOpen(true); }} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.crop') || 'Recortar'}>
@@ -5421,7 +5421,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
               <TouchableOpacity onPress={() => setDrawOpen(true)} disabled={editing} style={previewStyles.headerBtn} accessibilityLabel={t('chatConv.draw') || 'Desenhar'}>
                 <IconPencil size={20} color="#fff" />
               </TouchableOpacity>
-              <TouchableOpacity onPress={onToggleHD} style={[previewStyles.headerBtn, hdMode && { backgroundColor: '#A582F7' }]} accessibilityLabel="HD">
+              <TouchableOpacity onPress={onToggleHD} style={[previewStyles.headerBtn, hdMode && { backgroundColor: '#128C7E' }]} accessibilityLabel="HD">
                 <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 }}>HD</Text>
               </TouchableOpacity>
             </View>
@@ -5539,7 +5539,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
                       onPress={() => switchToIdx(i)}
                       style={{
                         width: 60, height: 60, borderRadius: 8, overflow: 'hidden',
-                        borderWidth: isActive ? 2 : 0, borderColor: '#A582F7',
+                        borderWidth: isActive ? 2 : 0, borderColor: '#128C7E',
                         backgroundColor: '#222',
                       }}
                     >
@@ -5689,14 +5689,14 @@ const previewStyles = StyleSheet.create({
     width: 36, height: 36, borderRadius: 18, borderWidth: 2,
     borderColor: 'rgba(255,255,255,0.5)', alignItems: 'center', justifyContent: 'center',
   },
-  viewOnceBtnActive: { backgroundColor: '#A582F7', borderColor: '#A582F7' },
+  viewOnceBtnActive: { backgroundColor: '#128C7E', borderColor: '#128C7E' },
   viewOnceBtnText: { fontSize: 16, fontWeight: '800', color: 'rgba(255,255,255,0.5)' },
-  viewOnceHint: { color: '#A582F7', fontSize: 12, textAlign: 'center', marginTop: 6, fontWeight: '500' },
+  viewOnceHint: { color: '#128C7E', fontSize: 12, textAlign: 'center', marginTop: 6, fontWeight: '500' },
   sendBtn: {
     width: 48, height: 48, borderRadius: 24,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#A582F7',
-    shadowColor: '#A582F7',
+    backgroundColor: '#128C7E',
+    shadowColor: '#128C7E',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.35, shadowRadius: 6,
     elevation: 4,
@@ -5707,7 +5707,7 @@ const previewStyles = StyleSheet.create({
     paddingHorizontal: 5, backgroundColor: '#fff',
     alignItems: 'center', justifyContent: 'center',
   },
-  sendBadgeText: { color: '#A582F7', fontSize: 11, fontWeight: '800' },
+  sendBadgeText: { color: '#128C7E', fontSize: 11, fontWeight: '800' },
 });
 
 // ============================================================
@@ -6505,9 +6505,9 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   }
 
   const isDarkBg = colors.surface === '#1e1e1e' || colors.surface === '#121212' || colors.surface === '#000';
-  const recBg = isDarkBg ? 'rgba(124,58,237,0.08)' : 'rgba(124,58,237,0.06)';
-  const previewBg = isDarkBg ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.08)';
-  const waveColor = '#A582F7';
+  const recBg = isDarkBg ? 'rgba(18, 140, 126,0.08)' : 'rgba(18, 140, 126,0.06)';
+  const previewBg = isDarkBg ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.08)';
+  const waveColor = '#128C7E';
   const slideCancelColor = colors.textSecondary;
 
   // ─── PREVIEW MODE (after stopping recording, before sending) ───
@@ -6543,7 +6543,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
                   recStyles.waveBar,
                   {
                     height: Math.max(4, level * 30),
-                    backgroundColor: played ? '#A582F7' : (isDarkBg ? '#374151' : '#9ca3af'),
+                    backgroundColor: played ? '#128C7E' : (isDarkBg ? '#374151' : '#9ca3af'),
                     opacity: played ? 1 : 0.55,
                   },
                 ]}
@@ -6566,7 +6566,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           onPress={() => setPreviewData(p => p ? { ...p, viewOnce: !p.viewOnce } : p)}
           style={[
             recStyles.voiceOnceBtn,
-            previewData.viewOnce ? recStyles.voiceOnceBtnActive : { borderColor: colors.border || 'rgba(124,58,237,0.35)' },
+            previewData.viewOnce ? recStyles.voiceOnceBtnActive : { borderColor: colors.border || 'rgba(18, 140, 126,0.35)' },
           ]}
           accessibilityRole="button"
           accessibilityLabel={previewData.viewOnce ? (t('chatConv.viewOnceVoiceLabel') || 'Áudio único') : 'Marcar como visualização única'}
@@ -6689,7 +6689,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
               translateX/opacity interpolations spec'd by the design. */}
         <Animated.View style={[recStyles.slideRow, { opacity: slideHintOpacity }]}>
           {voiceViewOnce ? (
-            <Text style={[recStyles.slideHint, { color: '#A582F7', fontWeight: '600' }]} numberOfLines={1}>
+            <Text style={[recStyles.slideHint, { color: '#128C7E', fontWeight: '600' }]} numberOfLines={1}>
               {t('chatConv.viewOnceVoiceHint') || 'Áudio só pode ser ouvido uma vez'}
             </Text>
           ) : (
@@ -6719,7 +6719,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
         onPress={() => setVoiceViewOnce(v => !v)}
         style={[
           recStyles.voiceOnceBtn,
-          voiceViewOnce ? recStyles.voiceOnceBtnActive : { borderColor: colors.border || 'rgba(124,58,237,0.35)' },
+          voiceViewOnce ? recStyles.voiceOnceBtnActive : { borderColor: colors.border || 'rgba(18, 140, 126,0.35)' },
         ]}
         accessibilityRole="button"
         accessibilityLabel={voiceViewOnce ? (t('chatConv.viewOnceVoiceLabel') || 'Áudio único') : 'Marcar como visualização única'}
@@ -6774,7 +6774,7 @@ const recStyles = StyleSheet.create({
     borderRadius: 28,
     borderTopWidth: 0,
     paddingHorizontal: 8,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 14px rgba(124,58,237,0.18)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 14px rgba(18, 140, 126,0.18)' } : {}),
   },
   previewPill: {
     marginHorizontal: 10,
@@ -6782,14 +6782,14 @@ const recStyles = StyleSheet.create({
     borderRadius: 28,
     borderTopWidth: 0,
     paddingHorizontal: 8,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 14px rgba(124,58,237,0.20)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 14px rgba(18, 140, 126,0.20)' } : {}),
   },
   previewPlayBtn: {
     width: 40, height: 40, borderRadius: 20,
-    backgroundColor: '#A582F7',
+    backgroundColor: '#128C7E',
     alignItems: 'center', justifyContent: 'center',
     marginLeft: 4,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 1px 6px rgba(124,58,237,0.35)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 1px 6px rgba(18, 140, 126,0.35)' } : {}),
   },
   stopSquare: {
     width: 16, height: 16, borderRadius: 3, backgroundColor: '#fff',
@@ -6811,10 +6811,10 @@ const recStyles = StyleSheet.create({
   lockedSendBtn: {
     width: 46, height: 46, borderRadius: 23,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#A582F7',
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 10px rgba(124,58,237,0.45)' } : {}),
+    backgroundColor: '#128C7E',
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 10px rgba(18, 140, 126,0.45)' } : {}),
     ...Platform.select({
-      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.4, shadowRadius: 8 },
+      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.4, shadowRadius: 8 },
       android: { elevation: 5 },
       default: {},
     }),
@@ -6828,8 +6828,8 @@ const recStyles = StyleSheet.create({
     marginRight: 4,
   },
   voiceOnceBtnActive: {
-    backgroundColor: '#A582F7',
-    borderColor: '#A582F7',
+    backgroundColor: '#128C7E',
+    borderColor: '#128C7E',
   },
   voiceOnceBtnText: {
     fontSize: 13, fontWeight: '800',
@@ -6923,25 +6923,25 @@ const recStyles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 10,
-    backgroundColor: 'rgba(124,58,237,0.12)',
+    backgroundColor: 'rgba(18, 140, 126,0.12)',
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: 'rgba(124,58,237,0.35)',
+    borderColor: 'rgba(18, 140, 126,0.35)',
     zIndex: 5,
   },
   tapToSendHintText: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#A582F7',
+    color: '#128C7E',
     letterSpacing: 0.2,
   },
   // Right column: lock + send
   sendBtn: {
     width: 52, height: 52, borderRadius: 26,
     alignItems: 'center', justifyContent: 'center',
-    backgroundColor: '#A582F7',
+    backgroundColor: '#128C7E',
     alignSelf: 'flex-end',
     marginTop: 12,
-    shadowColor: '#A582F7',
+    shadowColor: '#128C7E',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.35,
     shadowRadius: 6,
@@ -8989,7 +8989,7 @@ function ChatConversationInner() {
   // Admin-only "create topic" sheet (separate from the read-only topic
   // filter — keeps the picker UI out of the way for non-admins).
   const [showTopicCreate, setShowTopicCreate] = useState(false);
-  const [newTopicColor, setNewTopicColor] = useState('#A582F7');
+  const [newTopicColor, setNewTopicColor] = useState('#128C7E');
   // Per-member custom permissions sheet. `roleEditTarget` holds the email
   // of the admin we're editing; `rolePermsLocal` keeps optimistic state
   // keyed by email (until the backend grows real persistence).
@@ -18411,7 +18411,7 @@ function ChatConversationInner() {
 
   const presenceColor = useMemo(() => {
     if (!presence || conversationType === 'group') return colors.textTertiary;
-    if (presence.status === 'online') return '#A582F7';
+    if (presence.status === 'online') return '#128C7E';
     if (presence.status === 'away') return '#f59e0b';
     return colors.textTertiary;
   }, [presence, conversationType, colors.textTertiary]);
@@ -19027,7 +19027,7 @@ function ChatConversationInner() {
           </Text>
           <TouchableOpacity
             onPress={() => { setLoadError(null); loadMessages(true); }}
-            style={{ backgroundColor: '#A582F7', paddingHorizontal: 22, paddingVertical: 10, borderRadius: 22 }}
+            style={{ backgroundColor: '#128C7E', paddingHorizontal: 22, paddingVertical: 10, borderRadius: 22 }}
           >
             <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>
               {t('common.retry') || 'Tentar novamente'}
@@ -19040,16 +19040,16 @@ function ChatConversationInner() {
       <View style={[styles.emptyMessages, { transform: [{ scaleY: -1 }] }]}>
         <View style={{
           width: 96, height: 96, borderRadius: 48,
-          backgroundColor: isDark ? 'rgba(124,58,237,0.10)' : 'rgba(124,58,237,0.10)',
+          backgroundColor: isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.10)',
           alignItems: 'center', justifyContent: 'center', marginBottom: 18,
-          ...(Platform.OS === 'web' ? { boxShadow: '0 8px 32px rgba(124,58,237,0.18)' } : {}),
+          ...(Platform.OS === 'web' ? { boxShadow: '0 8px 32px rgba(18, 140, 126,0.18)' } : {}),
         }}>
           <View style={{
             width: 72, height: 72, borderRadius: 36,
-            backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.18)',
+            backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.18)',
             alignItems: 'center', justifyContent: 'center',
           }}>
-            <IconLock size={32} color="#A582F7" />
+            <IconLock size={32} color="#128C7E" />
           </View>
         </View>
         <Text style={{
@@ -19411,7 +19411,7 @@ function ChatConversationInner() {
           {/* Date pill — harmonized to the purple brand (was WhatsApp green
               #E1F2DA, which clashed with the violet header/bubbles). Light:
               soft lavender wash + violet ink. Dark: deep glass + muted text. */}
-          <Text style={[styles.dateText, { color: isDark ? 'rgba(221,214,254,0.85)' : '#6D28D9', backgroundColor: isDark ? 'rgba(46,16,101,0.55)' : 'rgba(124,58,237,0.10)' }]}>
+          <Text style={[styles.dateText, { color: isDark ? 'rgba(221,214,254,0.85)' : '#128C7E', backgroundColor: isDark ? 'rgba(18, 140, 126,0.55)' : 'rgba(18, 140, 126,0.10)' }]}>
             {item._label || formatDateSeparator(item.date, t)}
           </Text>
         </View>
@@ -19603,7 +19603,7 @@ function ChatConversationInner() {
             borderRadius: 14,
             overflow: 'hidden',
             backgroundColor: isOwn
-              ? (isDark ? '#3b1a6e' : '#E8DEF8')
+              ? (isDark ? '#161618' : '#E8DEF8')
               : (isDark ? '#1a2330' : '#ffffff'),
           }}>
             {grid}
@@ -19718,8 +19718,8 @@ function ChatConversationInner() {
         return (
           <View style={styles.systemMsg}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <IconEye size={14} color="#a855f7" />
-              <Text style={[styles.systemText, { color: '#a855f7' }]}>{text}</Text>
+              <IconEye size={14} color="#128C7E" />
+              <Text style={[styles.systemText, { color: '#128C7E' }]}>{text}</Text>
             </View>
           </View>
         );
@@ -20445,7 +20445,7 @@ function ChatConversationInner() {
                 )}
                 {/* Download progress ring — shown when receiving an image from
                     the server and the full-resolution is still fetching.
-                    [WAVE 36 2026-05-20] Switched to purple Chatyy ring (#A582F7)
+                    [WAVE 36 2026-05-20] Switched to purple Chatyy ring (#128C7E)
                     + white translucent backing per user spec — much more visible
                     on the HSL-pastel fallback placeholder backgrounds.
                     [WAVE 38 2026-05-20] Now renders whenever the bubble has a
@@ -20461,14 +20461,14 @@ function ChatConversationInner() {
                   if (hasPct && dlPct >= 100) return null;
                   return (
                     <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.18)', zIndex: 2 }}>
-                      <View style={{ width: 56, height: 56, borderRadius: 28, borderWidth: 2, borderColor: 'rgba(124,58,237,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.92)' }}>
+                      <View style={{ width: 56, height: 56, borderRadius: 28, borderWidth: 2, borderColor: 'rgba(18, 140, 126,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.92)' }}>
                         {hasPct && dlPct > 0 ? (
                           <>
-                            <CircularProgressArc pct={dlPct} size={56} strokeWidth={3} color="#A582F7" style={{ position: 'absolute' }} />
-                            <Text style={{ color: '#A582F7', fontSize: 13, fontWeight: '800' }}>{dlPct}%</Text>
+                            <CircularProgressArc pct={dlPct} size={56} strokeWidth={3} color="#128C7E" style={{ position: 'absolute' }} />
+                            <Text style={{ color: '#128C7E', fontSize: 13, fontWeight: '800' }}>{dlPct}%</Text>
                           </>
                         ) : (
-                          <ActivityIndicator size="small" color="#A582F7" />
+                          <ActivityIndicator size="small" color="#128C7E" />
                         )}
                       </View>
                     </View>
@@ -20708,9 +20708,9 @@ function ChatConversationInner() {
                     // [WAVE 34 2026-05-20] Web variant matches native:
                     // purple-tinted halo + brand-color play icon.
                     <View style={styles.videoOverlayAbsolute}>
-                      <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(124,58,237,0.22)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { boxShadow: '0 4px 24px rgba(124,58,237,0.45)' } }) }}>
+                      <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(18, 140, 126,0.22)', borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.45)', alignItems: 'center', justifyContent: 'center', ...Platform.select({ web: { boxShadow: '0 4px 24px rgba(18, 140, 126,0.45)' } }) }}>
                         <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: 'rgba(255,255,255,0.97)', alignItems: 'center', justifyContent: 'center' }}>
-                          <Svg width={26} height={26} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#A582F7" /></Svg>
+                          <Svg width={26} height={26} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#128C7E" /></Svg>
                         </View>
                       </View>
                     </View>
@@ -20795,7 +20795,7 @@ function ChatConversationInner() {
                     // center). Same purple-tinted glow as the play btn so
                     // the transition download→play→play feels of-a-piece.
                     <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-                      <View style={{ width: 68, height: 68, borderRadius: 34, backgroundColor: 'rgba(124,58,237,0.55)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)', alignItems: 'center', justifyContent: 'center', ...Platform.select({ ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.7, shadowRadius: 14 }, android: { elevation: 8 } }) }}>
+                      <View style={{ width: 68, height: 68, borderRadius: 34, backgroundColor: 'rgba(18, 140, 126,0.55)', borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)', alignItems: 'center', justifyContent: 'center', ...Platform.select({ ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.7, shadowRadius: 14 }, android: { elevation: 8 } }) }}>
                         <CircularProgressArc pct={vidDlProgress} size={68} strokeWidth={3.5} style={{ position: 'absolute' }} />
                         <Text style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>{Math.round(vidDlProgress)}%</Text>
                       </View>
@@ -20812,13 +20812,13 @@ function ChatConversationInner() {
                     // would double the per-bubble render cost.
                     <View style={{
                       width: 78, height: 78, borderRadius: 39,
-                      backgroundColor: 'rgba(124,58,237,0.28)',
+                      backgroundColor: 'rgba(18, 140, 126,0.28)',
                       borderWidth: 2, borderColor: 'rgba(255,255,255,0.55)',
                       alignItems: 'center', justifyContent: 'center',
                       ...Platform.select({
-                        ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.65, shadowRadius: 20 },
+                        ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.65, shadowRadius: 20 },
                         android: { elevation: 14 },
-                        web: { boxShadow: '0 6px 32px rgba(124,58,237,0.55)' },
+                        web: { boxShadow: '0 6px 32px rgba(18, 140, 126,0.55)' },
                       }),
                     }}>
                       <View style={{
@@ -20829,7 +20829,7 @@ function ChatConversationInner() {
                           ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.18, shadowRadius: 4 },
                         }),
                       }}>
-                        <Svg width={28} height={28} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#A582F7" /></Svg>
+                        <Svg width={28} height={28} viewBox="0 0 24 24"><Path d="M8 5v14l11-7z" fill="#128C7E" /></Svg>
                       </View>
                     </View>
                   )}
@@ -20911,7 +20911,7 @@ function ChatConversationInner() {
               {!!_vidQuality && !vidUploading && !vidIsDownloading && (
                 <View style={{
                   position: 'absolute', top: 10, right: 10,
-                  backgroundColor: _vidQuality === '4K' ? 'rgba(124,58,237,0.92)' : 'rgba(0,0,0,0.72)',
+                  backgroundColor: _vidQuality === '4K' ? 'rgba(18, 140, 126,0.92)' : 'rgba(0,0,0,0.72)',
                   borderRadius: 6,
                   paddingHorizontal: 7, paddingVertical: 2.5,
                   borderWidth: 1, borderColor: _vidQuality === '4K' ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.28)',
@@ -20951,7 +20951,7 @@ function ChatConversationInner() {
               style={{ marginHorizontal: -13, marginTop: -8, marginBottom: -8 }}
             >
               <View style={{ width: vmSize, height: vmSize, borderRadius: vmSize / 2, overflow: 'hidden', backgroundColor: '#000',
-                borderWidth: 3, borderColor: isOwn ? (isDark ? '#A582F7' : '#A582F7') : (isDark ? '#374151' : '#e5e7eb'),
+                borderWidth: 3, borderColor: isOwn ? (isDark ? '#128C7E' : '#128C7E') : (isDark ? '#374151' : '#e5e7eb'),
                 ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 8 }, android: { elevation: 4 } }),
               }}>
                 {Platform.OS === 'web' ? (
@@ -21335,7 +21335,7 @@ function ChatConversationInner() {
               {/* Footer: title + subtitle (WhatsApp-style) */}
               <View style={{ paddingHorizontal: 12, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 {/* Left circle icon */}
-                <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: isLiveActive ? '#22c55e' : '#A582F7', alignItems: 'center', justifyContent: 'center' }}>
+                <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: isLiveActive ? '#22c55e' : '#128C7E', alignItems: 'center', justifyContent: 'center' }}>
                   {isLiveActive
                     ? <IconNavigation size={18} color="#fff" />
                     : <IconMapPin size={18} color="#fff" />}
@@ -21484,11 +21484,11 @@ function ChatConversationInner() {
             ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.18)')
             : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)');
           const dividerColor = isOwn
-            ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(91,33,182,0.18)')
+            ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(18, 140, 126,0.18)')
             : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)');
           // Own bubble on LIGHT theme is light lavender — a white accent on the
           // faint white-wash card vanished. Dark purple on light, white on dark.
-          const accent = isOwn ? (isDark ? '#fff' : '#5B21B6') : '#A582F7';
+          const accent = isOwn ? (isDark ? '#fff' : '#128C7E') : '#128C7E';
           const handleStartChat = () => {
             if (ctEmail) {
               try { router.push(`/chat-new?email=${encodeURIComponent(ctEmail)}`); } catch {}
@@ -21654,8 +21654,8 @@ function ChatConversationInner() {
           if (Platform.OS === 'web' || !lottieUrl) {
             return (
               <View>
-                <View style={{ width: 96, height: 96, borderRadius: 16, backgroundColor: 'rgba(124,58,237,0.10)', alignItems: 'center', justifyContent: 'center' }}>
-                  <IconFilm size={48} color="#A582F7" />
+                <View style={{ width: 96, height: 96, borderRadius: 16, backgroundColor: 'rgba(18, 140, 126,0.10)', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconFilm size={48} color="#128C7E" />
                 </View>
                 <MediaStatusFooter msg={msg} isOwn={isOwn} variant="sticker" />
               </View>
@@ -21663,7 +21663,7 @@ function ChatConversationInner() {
           }
           let LottieView = null;
           try { const M = require('lottie-react-native'); LottieView = M.default || M; } catch {}
-          if (!LottieView) return <IconFilm size={64} color="#A582F7" />;
+          if (!LottieView) return <IconFilm size={64} color="#128C7E" />;
           return (
             <View>
               <LottieView
@@ -21958,7 +21958,7 @@ function ChatConversationInner() {
               : '';
           // Own bubble on LIGHT theme: white accent stripe vanished on light
           // lavender — use a visible purple stripe; keep white on dark.
-          const accent = isOwn ? (isDark ? 'rgba(255,255,255,0.85)' : 'rgba(91,33,182,0.85)') : colors.primary;
+          const accent = isOwn ? (isDark ? 'rgba(255,255,255,0.85)' : 'rgba(18, 140, 126,0.85)') : colors.primary;
           // Status TTL = 24h. WhatsApp pattern: when user taps an expired
           // snapshot, show "Status nao disponivel" toast in vez de navegar
           // pra um profile que vai falhar silenciosamente. Backend agora
@@ -22063,7 +22063,7 @@ function ChatConversationInner() {
                 ) : (
                   <View style={{
                     width: 44, height: 56, borderRadius: 6,
-                    backgroundColor: st.bg_color || '#6D28D9',
+                    backgroundColor: st.bg_color || '#128C7E',
                     alignItems: 'center', justifyContent: 'center',
                     opacity: isStatusExpired ? 0.55 : 1,
                   }}>
@@ -22149,7 +22149,7 @@ function ChatConversationInner() {
           return (
             <View style={{ minWidth: 240, maxWidth: 280, borderRadius: 12, overflow: 'hidden', marginVertical: 1 }}>
               {/* Colored header strip */}
-              <View style={{ backgroundColor: isPast ? '#6b7280' : '#ec4899', paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <View style={{ backgroundColor: isPast ? '#6b7280' : '#128C7E', paddingHorizontal: 12, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
                   <IconCalendar size={18} color="#fff" />
                 </View>
@@ -22162,13 +22162,13 @@ function ChatConversationInner() {
               <View style={{ backgroundColor: isOwn ? 'rgba(0,0,0,0.06)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)'), padding: 10 }}>
                 {/* Date/time row */}
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  <IconClock size={14} color={isPast ? '#6b7280' : '#ec4899'} />
+                  <IconClock size={14} color={isPast ? '#6b7280' : '#128C7E'} />
                   <Text style={{ fontSize: 12.5, fontWeight: '600', color: isOwn ? ownTextColor : colors.text }}>{dateStr}</Text>
                 </View>
                 {/* Location row */}
                 {meetup.location ? (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <IconMapPin size={14} color={isPast ? '#6b7280' : '#ec4899'} />
+                    <IconMapPin size={14} color={isPast ? '#6b7280' : '#128C7E'} />
                     <Text style={{ fontSize: 12, color: isOwn ? ownMetaColor : colors.textSecondary, flex: 1 }} numberOfLines={2}>{meetup.location}</Text>
                   </View>
                 ) : null}
@@ -22263,7 +22263,7 @@ function ChatConversationInner() {
               }}
             >
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: 'rgba(168,85,247,0.14)', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
+                <View style={{ width: 30, height: 30, borderRadius: 8, backgroundColor: 'rgba(18, 140, 126,0.14)', alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
                   <Text style={{ fontSize: 15 }}>{'\uD83C\uDFB5'}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
@@ -22282,7 +22282,7 @@ function ChatConversationInner() {
                   </View>
                   {song.url && /^https?:\/\//i.test(song.url) ? (
                     <TouchableOpacity onPress={() => Linking.openURL(song.url).catch(() => {})} style={{ padding: 3 }}>
-                      <IconPlay size={12} color="#a855f7" />
+                      <IconPlay size={12} color="#128C7E" />
                     </TouchableOpacity>
                   ) : null}
                 </View>
@@ -22298,7 +22298,7 @@ function ChatConversationInner() {
                 </Text>
               )}
               <View style={{ marginTop: 6, paddingTop: 6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)', flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                <Text style={{ fontSize: 10, color: '#a855f7', fontWeight: '600' }}>
+                <Text style={{ fontSize: 10, color: '#128C7E', fontWeight: '600' }}>
                   {'\u270F\uFE0F'} {t('chatConv.tapToEdit') || 'Toque pra editar'}
                 </Text>
               </View>
@@ -22441,8 +22441,8 @@ function ChatConversationInner() {
             csv:   { color: '#16A34A', label: 'CSV' },
             ppt:   { color: '#EA580C', label: 'PPT' },
             pptx:  { color: '#EA580C', label: 'PPT' },
-            zip:   { color: '#A582F7', label: 'ZIP' },
-            rar:   { color: '#A582F7', label: 'RAR' },
+            zip:   { color: '#128C7E', label: 'ZIP' },
+            rar:   { color: '#128C7E', label: 'RAR' },
             txt:   { color: '#6B7280', label: 'TXT' },
           };
           const fileType = fileTypeMap[fileExt] || { color: isOwn ? 'rgba(255,255,255,0.7)' : colors.primary, label: (fileExt || 'FILE').toUpperCase().slice(0, 4) };
@@ -22790,9 +22790,9 @@ function ChatConversationInner() {
           const cardBorder = isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
           const cardText = isDark ? '#f5f5f5' : '#111827';
           const cardSubtext = isDark ? 'rgba(255,255,255,0.55)' : '#64748b';
-          const accent = '#A582F7';
-          const bgFill = isDark ? 'rgba(124,58,237,0.32)' : 'rgba(124,58,237,0.18)';
-          const bgFillVoted = isDark ? 'rgba(124,58,237,0.55)' : 'rgba(124,58,237,0.42)';
+          const accent = '#128C7E';
+          const bgFill = isDark ? 'rgba(18, 140, 126,0.32)' : 'rgba(18, 140, 126,0.18)';
+          const bgFillVoted = isDark ? 'rgba(18, 140, 126,0.55)' : 'rgba(18, 140, 126,0.42)';
           const trackBg = isDark ? 'rgba(255,255,255,0.06)' : '#f1f5f9';
           return (
             <View style={{
@@ -22809,7 +22809,7 @@ function ChatConversationInner() {
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 7 }}>
                 <View style={{
                   width: 28, height: 28, borderRadius: 14,
-                  backgroundColor: 'rgba(124,58,237,0.14)',
+                  backgroundColor: 'rgba(18, 140, 126,0.14)',
                   alignItems: 'center', justifyContent: 'center',
                 }}>
                   <IconBarChart size={14} color={accent} />
@@ -22864,7 +22864,7 @@ function ChatConversationInner() {
                       borderColor: isCorrect ? quizGreen
                                  : isWrongChosen ? quizRed
                                  : voted ? accent
-                                 : (isOwn ? 'rgba(255,255,255,0.22)' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(124,58,237,0.20)')),
+                                 : (isOwn ? 'rgba(255,255,255,0.22)' : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(18, 140, 126,0.20)')),
                     }}
                   >
                     {/* Gradient progress fill */}
@@ -22876,8 +22876,8 @@ function ChatConversationInner() {
                         borderRadius: 12,
                         ...(Platform.OS === 'web' ? {
                           background: voted
-                            ? (isOwn ? 'linear-gradient(90deg, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0.15) 100%)' : 'linear-gradient(90deg, rgba(124,58,237,0.35) 0%, rgba(124,58,237,0.12) 100%)')
-                            : (isOwn ? 'linear-gradient(90deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 100%)' : 'linear-gradient(90deg, rgba(124,58,237,0.18) 0%, rgba(124,58,237,0.06) 100%)'),
+                            ? (isOwn ? 'linear-gradient(90deg, rgba(255,255,255,0.32) 0%, rgba(255,255,255,0.15) 100%)' : 'linear-gradient(90deg, rgba(18, 140, 126,0.35) 0%, rgba(18, 140, 126,0.12) 100%)')
+                            : (isOwn ? 'linear-gradient(90deg, rgba(255,255,255,0.18) 0%, rgba(255,255,255,0.06) 100%)' : 'linear-gradient(90deg, rgba(18, 140, 126,0.18) 0%, rgba(18, 140, 126,0.06) 100%)'),
                           transition: 'width 0.3s ease',
                         } : {}),
                       }}
@@ -22928,7 +22928,7 @@ function ChatConversationInner() {
                 <View style={{
                   marginTop: 6, paddingHorizontal: 10, paddingVertical: 8,
                   borderRadius: 8,
-                  backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.08)'),
+                  backgroundColor: isOwn ? 'rgba(255,255,255,0.12)' : (isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.08)'),
                 }}>
                   <Text style={{ fontSize: 11, fontWeight: '700', color: cardSubtext, marginBottom: 2 }}>
                     {t('chat.quizExplanation') || 'Explica\u00E7\u00E3o'}
@@ -23159,10 +23159,10 @@ function ChatConversationInner() {
                   alignSelf: 'flex-start',
                   paddingHorizontal: 8, paddingVertical: 3,
                   borderRadius: 999, marginBottom: 4,
-                  backgroundColor: isDark ? 'rgba(124, 58, 237, 0.18)' : '#ede9fe',
+                  backgroundColor: isDark ? 'rgba(18, 140, 126, 0.18)' : '#F1F3F5',
                 }}>
-                  <Text style={{ color: '#A582F7', fontSize: 11, fontWeight: '700' }}>@</Text>
-                  <Text style={{ color: '#A582F7', fontSize: 11, fontWeight: '700' }}>
+                  <Text style={{ color: '#128C7E', fontSize: 11, fontWeight: '700' }}>@</Text>
+                  <Text style={{ color: '#128C7E', fontSize: 11, fontWeight: '700' }}>
                     {t?.('chat.youWereMentioned') || 'Você foi mencionado'}
                   </Text>
                 </View>
@@ -23215,8 +23215,8 @@ function ChatConversationInner() {
                         <TextWithLinks
                           text={rest}
                           style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}
-                          linkColor={isOwn ? '#A582F7' : colors.primary}
-                          mentionColor={isOwn ? '#A582F7' : '#1a73e8'}
+                          linkColor={isOwn ? '#128C7E' : colors.primary}
+                          mentionColor={isOwn ? '#128C7E' : '#1a73e8'}
                           colors={colors}
                           router={router}
                         />
@@ -23228,8 +23228,8 @@ function ChatConversationInner() {
                   <TextWithLinks
                     text={msg.content}
                     style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}
-                    linkColor={isOwn ? '#A582F7' : colors.primary}
-                    mentionColor={isOwn ? '#A582F7' : '#1a73e8'}
+                    linkColor={isOwn ? '#128C7E' : colors.primary}
+                    mentionColor={isOwn ? '#128C7E' : '#1a73e8'}
                     colors={colors}
                     router={router}
                   />
@@ -23246,9 +23246,9 @@ function ChatConversationInner() {
                   marginTop: msg._filtered && msg._hidden ? 4 : 0,
                 } : {
                   marginTop: 6, padding: 8, borderRadius: 10,
-                  backgroundColor: isOwn ? 'rgba(255,255,255,0.13)' : 'rgba(124,58,237,0.08)',
+                  backgroundColor: isOwn ? 'rgba(255,255,255,0.13)' : 'rgba(18, 140, 126,0.08)',
                   borderLeftWidth: 2,
-                  borderLeftColor: isOwn ? 'rgba(255,255,255,0.4)' : '#A582F7',
+                  borderLeftColor: isOwn ? 'rgba(255,255,255,0.4)' : '#128C7E',
                 }}>
                   {msgTranslation.loading ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -23261,8 +23261,8 @@ function ChatConversationInner() {
                     <View>
                       {!msgTranslation._auto && (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginBottom: 3 }}>
-                          <IconGlobe size={11} color={isOwn ? ownMetaColor : '#A582F7'} />
-                          <Text style={{ fontSize: 10, fontWeight: '700', color: isOwn ? ownMetaColor : '#A582F7', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                          <IconGlobe size={11} color={isOwn ? ownMetaColor : '#128C7E'} />
+                          <Text style={{ fontSize: 10, fontWeight: '700', color: isOwn ? ownMetaColor : '#128C7E', textTransform: 'uppercase', letterSpacing: 0.5 }}>
                             {t('chatConv.translated')}
                             {msgTranslation.sourceLang && msgTranslation.targetLang
                               ? `  ${msgTranslation.sourceLang.toUpperCase()} → ${msgTranslation.targetLang.toUpperCase()}`
@@ -23290,7 +23290,7 @@ function ChatConversationInner() {
                         >
                           <Text style={{
                             fontSize: 11,
-                            color: isOwn ? ownMetaColor : (isDark ? '#a78bfa' : '#A582F7'),
+                            color: isOwn ? ownMetaColor : (isDark ? '#128C7E' : '#128C7E'),
                             textDecorationLine: 'underline',
                           }}>
                             {msgTranslation._showOriginal
@@ -23485,7 +23485,7 @@ function ChatConversationInner() {
               // lavender (light) / brighter purple (dark); received bubbles
               // pick up a slightly warmer white / darker navy-tinted purple
               // so the contrast against the background is stronger.
-              ? [styles.bubbleOwn, { backgroundColor: isDark ? '#5B21B6' : '#E6DBFF' }]
+              ? [styles.bubbleOwn, { backgroundColor: isDark ? '#128C7E' : '#F1F3F5' }]
               // [bubble-redesign 2026-05-30] Received bubble: cleaner neutral
               // surface — light stays crisp white with a hairline; dark moves
               // to a slightly lighter slate-purple (#262135) so body text and
@@ -23532,7 +23532,7 @@ function ChatConversationInner() {
                   ? 'M0,0 L8,0 C8,0 8,3 7,5.5 C5,9.5 0,13 0,13 Z'
                   : 'M8,0 L0,0 C0,0 0,3 1,5.5 C3,9.5 8,13 8,13 Z'}
                 fill={isOwn
-                  ? (isDark ? '#5B21B6' : '#E6DBFF')
+                  ? (isDark ? '#128C7E' : '#F1F3F5')
                   : (isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#262135' : '#FFFFFF'))}
               />
             </Svg>
@@ -23549,7 +23549,7 @@ function ChatConversationInner() {
               media bubbles where the chrome would clash with the image. */}
           {e2eEnabled && msg.type !== 'sticker' && msg.type !== 'gif' && msg.type !== 'image' && msg.type !== 'video' && (
             <View pointerEvents="none" style={{ position: 'absolute', top: 4, right: 4, opacity: 0.6, zIndex: 2 }}>
-              <IconLock size={12} color={isOwn ? 'rgba(255,255,255,0.85)' : (colors.primary || '#A582F7')} />
+              <IconLock size={12} color={isOwn ? 'rgba(255,255,255,0.85)' : (colors.primary || '#128C7E')} />
             </View>
           )}
           {/* audit gap #8 — pin / star surface for long messages. Long-form
@@ -23590,7 +23590,7 @@ function ChatConversationInner() {
               ? (colors.error || '#ef4444')
               // Own bubble on LIGHT theme is light lavender — white-65% text
               // vanished. Use a muted dark purple on light, keep white on dark.
-              : (isOwn ? (isDark ? 'rgba(255,255,255,0.65)' : 'rgba(91,33,182,0.70)') : colors.textTertiary);
+              : (isOwn ? (isDark ? 'rgba(255,255,255,0.65)' : 'rgba(18, 140, 126,0.70)') : colors.textTertiary);
             // Resolve display name: forwarded_from_name (server-supplied via
             // metadata) > emailToDisplayName(forwarded_from) > raw email local
             // part. Falls through gracefully if any are missing.
@@ -23684,8 +23684,8 @@ function ChatConversationInner() {
                   // own-bubble fill on light theme so the quote section
                   // disappeared visually. Wash uses ~8% brand purple per spec.
                   backgroundColor: isOwn
-                    ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(124,58,237,0.10)')
-                    : 'rgba(124,58,237,0.08)',
+                    ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(18, 140, 126,0.10)')
+                    : 'rgba(18, 140, 126,0.08)',
                   borderLeftColor: replySenderColor,
                 }]}
               >
@@ -23717,7 +23717,7 @@ function ChatConversationInner() {
                         { color: isOwn ? ownMetaColor : colors.textSecondary },
                         msg.reply_to?.deleted_at && { fontStyle: 'italic', opacity: 0.7 },
                       ];
-                      const iconColor = isOwn ? ownMetaColor : (isDark ? '#a78bfa' : '#A582F7');
+                      const iconColor = isOwn ? ownMetaColor : (isDark ? '#128C7E' : '#128C7E');
                       const renderIconLabel = (IconCmp, label) => (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                           <IconCmp size={12} color={iconColor} />
@@ -24175,13 +24175,13 @@ function ChatConversationInner() {
                         style={{
                           paddingHorizontal: 12, paddingVertical: 8,
                           borderRadius: 14,
-                          backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)',
+                          backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.10)',
                           borderWidth: 1,
-                          borderColor: 'rgba(124,58,237,0.32)',
+                          borderColor: 'rgba(18, 140, 126,0.32)',
                           minWidth: 44,
                         }}
                       >
-                        <Text style={{ color: '#A582F7', fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
+                        <Text style={{ color: '#128C7E', fontSize: 13, fontWeight: '600', textAlign: 'center' }}>
                           {btn.text}
                         </Text>
                       </TouchableOpacity>
@@ -24389,7 +24389,7 @@ function ChatConversationInner() {
   if (chatLocked && !chatUnlocked) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-        <View style={[styles.header, { backgroundColor: isDark ? '#0a0a0a' : '#6D28D9', paddingTop: insets.top, position: 'absolute', top: 0, left: 0, right: 0 }]}>
+        <View style={[styles.header, { backgroundColor: isDark ? '#0a0a0a' : '#128C7E', paddingTop: insets.top, position: 'absolute', top: 0, left: 0, right: 0 }]}>
           <TouchableOpacity onPress={goBack} style={styles.headerBtn}>
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>
@@ -24450,7 +24450,7 @@ function ChatConversationInner() {
           style={{
             position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
             zIndex: 9999,
-            backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.12)',
+            backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.12)',
             borderWidth: 3, borderColor: colors.primary, borderStyle: 'dashed',
             alignItems: 'center', justifyContent: 'center',
           }}
@@ -24524,13 +24524,13 @@ function ChatConversationInner() {
       ) : (
       /* Header with presence — gradient on web for premium feel */
       <View style={[styles.header, {
-        backgroundColor: isDark ? '#110a1f' : '#6D28D9',
+        backgroundColor: isDark ? '#110a1f' : '#128C7E',
         paddingTop: insets.top,
         ...(Platform.OS === 'web'
           ? {
               background: isDark
-                ? 'linear-gradient(180deg, #1a0a2e 0%, #0d0a14 100%)'
-                : 'linear-gradient(180deg, #A582F7 0%, #6D28D9 100%)',
+                ? 'linear-gradient(180deg, #161618 0%, #0d0a14 100%)'
+                : 'linear-gradient(180deg, #128C7E 0%, #128C7E 100%)',
               boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
             }
           : {}),
@@ -24733,7 +24733,7 @@ function ChatConversationInner() {
       {/* Vanish mode purple gradient overlay */}
       {vanishMode && (
         <View style={[styles.wallpaper, {
-          backgroundColor: isDark ? 'rgba(88,28,135,0.12)' : 'rgba(139,92,246,0.06)',
+          backgroundColor: isDark ? 'rgba(18, 140, 126,0.12)' : 'rgba(18, 140, 126,0.06)',
         }]} pointerEvents="none" />
       )}
 
@@ -24779,13 +24779,13 @@ function ChatConversationInner() {
           activeOpacity={0.85}
           onPress={handleToggleVanishMode}
           style={[styles.disappearingBanner, {
-            backgroundColor: isDark ? 'rgba(168,85,247,0.18)' : 'rgba(168,85,247,0.12)',
+            backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.12)',
             borderWidth: 1,
-            borderColor: isDark ? 'rgba(168,85,247,0.35)' : 'rgba(168,85,247,0.25)',
+            borderColor: isDark ? 'rgba(18, 140, 126,0.35)' : 'rgba(18, 140, 126,0.25)',
           }]}
         >
-          <IconEye size={14} color="#a855f7" />
-          <Text style={[styles.disappearingBannerText, { color: isDark ? '#c4b5fd' : '#A582F7' }]}>
+          <IconEye size={14} color="#128C7E" />
+          <Text style={[styles.disappearingBannerText, { color: isDark ? '#F1F3F5' : '#128C7E' }]}>
             {t('chat.vanishBanner') || 'Modo efêmero — mensagens desaparecem após leitura'}
           </Text>
         </TouchableOpacity>
@@ -25207,11 +25207,11 @@ function ChatConversationInner() {
             }
             return `${messages.length}_${messages[messages.length - 1]?.id || 0}_${voteSum}_${txCount}_${reactSum}_${editSum}`;
           })()}
-          ownBubbleColor={isDark ? '#5B21B6' : '#E6DBFF'}
+          ownBubbleColor={isDark ? '#128C7E' : '#F1F3F5'}
           otherBubbleColor={isDark ? '#262135' : '#ffffff'}
           listBackgroundColor={isDark ? '#0E0A18' : '#F6F0FE'}
           textColor={isDark ? '#f0f2f5' : '#111b21'}
-          metaColor={isDark ? 'rgba(240,242,245,0.55)' : 'rgba(76,29,149,0.55)'}
+          metaColor={isDark ? 'rgba(240,242,245,0.55)' : 'rgba(18, 140, 126,0.55)'}
           isGroupChat={conversationType === 'group'}
           selectedIds={selectionMode ? Array.from(selectedIds).filter(id => typeof id === 'number') : []}
           onMessageTap={(e) => {
@@ -25769,7 +25769,7 @@ function ChatConversationInner() {
             flexDirection: 'row', alignItems: 'center', gap: 12,
             paddingHorizontal: 16, paddingVertical: 12,
             borderBottomWidth: 1, borderBottomColor: colors.border,
-            backgroundColor: isDark ? '#0a0a0a' : '#6D28D9',
+            backgroundColor: isDark ? '#0a0a0a' : '#128C7E',
           }}>
             <TouchableOpacity onPress={() => setShowContactPicker(false)} hitSlop={12}>
               <IconArrowLeft size={22} color="#fff" />
@@ -25824,7 +25824,7 @@ function ChatConversationInner() {
               const displayName = c.name || phone || email || (t('chatConv.contact') || 'Contato');
               const initialSrc = c.name || displayName;
               const initials = ((initialSrc || '?').split(/\s+/).filter(Boolean).slice(0, 2).map(w => w[0]).join('').toUpperCase()) || '?';
-              const colorPalette = ['#A582F7', '#A78BFA', '#F59E0B', '#A78BFA', '#EC4899', '#10B981', '#3B82F6'];
+              const colorPalette = ['#128C7E', '#128C7E', '#F59E0B', '#128C7E', '#128C7E', '#10B981', '#3B82F6'];
               const hash = (initialSrc || '').split('').reduce((a, ch) => a + ch.charCodeAt(0), 0);
               const avatarColor = colorPalette[hash % colorPalette.length];
               return (
@@ -25855,10 +25855,10 @@ function ChatConversationInner() {
                   </View>
                   <View style={{
                     width: 32, height: 32, borderRadius: 16,
-                    backgroundColor: '#A582F7' + '18',
+                    backgroundColor: '#128C7E' + '18',
                     alignItems: 'center', justifyContent: 'center',
                   }}>
-                    <Text style={{ color: '#A582F7', fontSize: 18, fontWeight: '700' }}>›</Text>
+                    <Text style={{ color: '#128C7E', fontSize: 18, fontWeight: '700' }}>›</Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -26096,7 +26096,7 @@ function ChatConversationInner() {
         // [VISUAL-G8, 2026-05-19] Composer reply chip bar color = quoted sender's color.
         // For edit-mode use brand purple (editing your own msg, no quoted sender).
         const _composerReplyColor = editingMsg
-          ? '#A582F7'
+          ? '#128C7E'
           : senderColorFromEmail(replyTo?.sender_email || replyTo?.sender_name || '');
         return (
         <ReplyPreviewBar style={[styles.replyBar, { backgroundColor: isDark ? '#1a2329' : '#f0f2f5', borderTopColor: colors.border }]}>
@@ -26318,8 +26318,8 @@ function ChatConversationInner() {
                     accessibilityRole="button"
                     accessibilityLabel={'/' + row.command}
                   >
-                    <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#A582F722', alignItems: 'center', justifyContent: 'center' }}>
-                      <Text style={{ color: '#A582F7', fontSize: 14, fontWeight: '800' }}>/</Text>
+                    <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#128C7E22', alignItems: 'center', justifyContent: 'center' }}>
+                      <Text style={{ color: '#128C7E', fontSize: 14, fontWeight: '800' }}>/</Text>
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={{ color: colors.text, fontSize: 14, fontWeight: '700' }} numberOfLines={1}>
@@ -26357,7 +26357,7 @@ function ChatConversationInner() {
                 onPress={() => handleUnblockUser(params.email || '')}
                 style={{ paddingHorizontal: 20, paddingVertical: 8, borderRadius: 20, backgroundColor: isDark ? '#2a3942' : '#e5e7eb' }}
               >
-                <Text style={{ color: '#A582F7', fontWeight: '600', fontSize: 14 }}>
+                <Text style={{ color: '#128C7E', fontWeight: '600', fontSize: 14 }}>
                   {t('chat.unblockUser')}
                 </Text>
               </TouchableOpacity>
@@ -26467,7 +26467,7 @@ function ChatConversationInner() {
                   }
                 } catch {}
               }}
-              style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#A582F7' }}
+              style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: '#128C7E' }}
               accessibilityRole="button"
             >
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>Desbloquear</Text>
@@ -26520,7 +26520,7 @@ function ChatConversationInner() {
               accessibilityLabel={t('chatConv.stickers') || 'Stickers'}
               accessibilityRole="button"
             >
-              <IconSmile size={22} color={showStickerPicker ? '#A582F7' : (isDark ? '#8696a0' : '#8696a0')} />
+              <IconSmile size={22} color={showStickerPicker ? '#128C7E' : (isDark ? '#8696a0' : '#8696a0')} />
             </TouchableOpacity>
 
             {/* TextInput - center, flex: 1.
@@ -26562,7 +26562,7 @@ function ChatConversationInner() {
                 // (RichTextOverlay paints the glyphs) but on web caret-color
                 // CSS inherits from color, so the caret disappears too. RN
                 // native paints caret separately, web doesn't.
-                ...(Platform.OS === 'web' ? { outlineStyle: 'none', caretColor: colors.primary || '#A582F7' } : {}),
+                ...(Platform.OS === 'web' ? { outlineStyle: 'none', caretColor: colors.primary || '#128C7E' } : {}),
               }}
               placeholder={t('chatConv.messagePlaceholder') || 'Mensagem'}
               placeholderTextColor={isDark ? '#8696a0' : '#8696a0'}
@@ -26777,7 +26777,7 @@ function ChatConversationInner() {
                 accessibilityLabel={t('chatConv.format') || 'Format text'}
                 accessibilityRole="button"
               >
-                <Text style={{ fontSize: 14, fontWeight: '700', color: showFormatToolbar ? '#A582F7' : (isDark ? '#8696a0' : '#8696a0') }}>Aa</Text>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: showFormatToolbar ? '#128C7E' : (isDark ? '#8696a0' : '#8696a0') }}>Aa</Text>
               </TouchableOpacity>
             )}
 
@@ -26884,7 +26884,7 @@ function ChatConversationInner() {
                   }
                 }}
                 delayLongPress={400}
-                style={[styles.sendBtn, { backgroundColor: '#A582F7', transform: [{ scale: sending ? 0.92 : 1 }] }]}
+                style={[styles.sendBtn, { backgroundColor: '#128C7E', transform: [{ scale: sending ? 0.92 : 1 }] }]}
                 accessibilityLabel={t('chatConv.send') || 'Send message'}
                 accessibilityRole="button"
               >
@@ -26955,7 +26955,7 @@ function ChatConversationInner() {
                   onPress={() => setShowVideoNoteRecorder(true)}
                   style={{
                     width: 44, height: 44, borderRadius: 22,
-                    backgroundColor: 'rgba(124,58,237,0.12)',
+                    backgroundColor: 'rgba(18, 140, 126,0.12)',
                     alignItems: 'center', justifyContent: 'center',
                     marginLeft: 6,
                   }}
@@ -26963,7 +26963,7 @@ function ChatConversationInner() {
                   accessibilityRole="button"
                   hitSlop={8}
                 >
-                  <IconVideoNote size={20} color="#A582F7" />
+                  <IconVideoNote size={20} color="#128C7E" />
                 </TouchableOpacity>
               ) : null}
               {VoiceMicButton ? (
@@ -26997,7 +26997,7 @@ function ChatConversationInner() {
                       mailWs.sendTyping(conversationId, true);
                     } catch {}
                   }}
-                  style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#A582F7', alignItems: 'center', justifyContent: 'center', marginLeft: 6 }}
+                  style={{ width: 48, height: 48, borderRadius: 24, backgroundColor: '#128C7E', alignItems: 'center', justifyContent: 'center', marginLeft: 6 }}
                   accessibilityLabel={t('chatConv.recordAudio') || 'Record audio'}
                   accessibilityRole="button"
                 >
@@ -27084,13 +27084,13 @@ function ChatConversationInner() {
                   onPress={() => { persistAutoTranslate(opt.code); setShowAutoTranslatePicker(false); }}
                   style={{
                     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14,
-                    backgroundColor: isCurrent ? (colors.background === '#0B141A' ? 'rgba(124,58,237,0.15)' : 'rgba(124,58,237,0.08)') : 'transparent',
+                    backgroundColor: isCurrent ? (colors.background === '#0B141A' ? 'rgba(18, 140, 126,0.15)' : 'rgba(18, 140, 126,0.08)') : 'transparent',
                   }}
                 >
                   <Text style={{ flex: 1, fontSize: 15, color: colors.text, fontWeight: isCurrent ? '700' : '500' }}>
                     {opt.label}
                   </Text>
-                  {isCurrent && <IconCheck size={18} color="#A582F7" />}
+                  {isCurrent && <IconCheck size={18} color="#128C7E" />}
                 </TouchableOpacity>
               );
             })}
@@ -27793,8 +27793,8 @@ function ChatConversationInner() {
                   }}
                   activeOpacity={0.6}
                 >
-                  <View style={[styles.ctxIconCircle, { backgroundColor: '#A582F720' }]}>
-                    <IconMessageSquare size={20} color="#A582F7" />
+                  <View style={[styles.ctxIconCircle, { backgroundColor: '#128C7E20' }]}>
+                    <IconMessageSquare size={20} color="#128C7E" />
                   </View>
                   <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>
                     {t('chatConv.replyPrivately') || 'Responder em privado'}
@@ -28153,8 +28153,8 @@ function ChatConversationInner() {
               {/* Read by */}
               <View style={{ marginBottom: 16 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                  <IconCheck size={14} color="#A582F7" />
-                  <IconCheck size={14} color="#A582F7" style={{ marginLeft: -14 }} />
+                  <IconCheck size={14} color="#128C7E" />
+                  <IconCheck size={14} color="#128C7E" style={{ marginLeft: -14 }} />
                   <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text, textTransform: 'uppercase', letterSpacing: 0.5, marginLeft: 4 }}>
                     {t('chatConv.readBy') || 'Lido por'} ({messageInfo?.read?.length || 0})
                   </Text>
@@ -28472,7 +28472,7 @@ function ChatConversationInner() {
                   );
                   return (
                     <>
-                      <Section titleKey="chatConv.readBy" fallback="Lido por" list={readList} tintColor="#A582F7" tsKey="read_at" />
+                      <Section titleKey="chatConv.readBy" fallback="Lido por" list={readList} tintColor="#128C7E" tsKey="read_at" />
                       <Section titleKey="chatConv.deliveredTo" fallback="Entregue para" list={deliveredList} tintColor={colors.textSecondary} tsKey="delivered_at" />
                       {pendingList.length > 0 && (
                         <Section titleKey="chatConv.pendingTo" fallback="Pendente" list={pendingList} tintColor={null} tsKey={null} />
@@ -28498,7 +28498,7 @@ function ChatConversationInner() {
 
                   {/* Delivered */}
                   <View style={styles.messageInfoRow}>
-                    <View style={[styles.messageInfoDot, { backgroundColor: r.delivered_at ? '#A582F7' : colors.textTertiary }]} />
+                    <View style={[styles.messageInfoDot, { backgroundColor: r.delivered_at ? '#128C7E' : colors.textTertiary }]} />
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.deliveredAt')}</Text>
                       <Text style={[styles.messageInfoTime, { color: colors.text }]}>
@@ -28509,7 +28509,7 @@ function ChatConversationInner() {
 
                   {/* Read */}
                   <View style={styles.messageInfoRow}>
-                    <View style={[styles.messageInfoDot, { backgroundColor: r.read_at ? '#A582F7' : colors.textTertiary }]} />
+                    <View style={[styles.messageInfoDot, { backgroundColor: r.read_at ? '#128C7E' : colors.textTertiary }]} />
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.readAt')}</Text>
                       <Text style={[styles.messageInfoTime, { color: colors.text }]}>
@@ -28870,16 +28870,16 @@ function ChatConversationInner() {
             {(() => {
               const sections = [
                 { divider: false, items: [
-                  { Icon: IconUsers, tint: '#A78BFA', label: conversationType === 'group' ? (t('chatConv.groupInfo') || 'Info do grupo') : (t('chatConv.contactInfo') || 'Info do contato'), onPress: () => {
+                  { Icon: IconUsers, tint: '#128C7E', label: conversationType === 'group' ? (t('chatConv.groupInfo') || 'Info do grupo') : (t('chatConv.contactInfo') || 'Info do contato'), onPress: () => {
                     setShowHeaderMenu(false);
                     if (conversationType === 'group') { setEditGroupName(conversationName); loadGroupMembers(); setShowGroupInfo(true); }
                     else { setProfileViewer({ name: conversationName, email: params.email || '' }); }
                   }},
                 ]},
                 { divider: true, items: [
-                  { Icon: IconSearch, tint: '#A78BFA', label: t('chat.searchPlaceholder') || 'Buscar', onPress: () => { setShowHeaderMenu(false); setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus(), 200); }},
+                  { Icon: IconSearch, tint: '#128C7E', label: t('chat.searchPlaceholder') || 'Buscar', onPress: () => { setShowHeaderMenu(false); setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus(), 200); }},
                   { Icon: IconStar, tint: '#F59E0B', label: t('chat.starredMessages') || 'Favoritas', onPress: () => { setShowHeaderMenu(false); setShowStarredModal(true); loadStarredMessages(); }},
-                  { Icon: IconImage, tint: '#EC4899', label: t('chatConv.media') || 'Mídia, links e docs', onPress: () => { setShowHeaderMenu(false); setShowMediaGallery(true); }},
+                  { Icon: IconImage, tint: '#128C7E', label: t('chatConv.media') || 'Mídia, links e docs', onPress: () => { setShowHeaderMenu(false); setShowMediaGallery(true); }},
                   { Icon: IconBarChart, tint: '#10B981', label: t('chatConv.stats') || 'Estatísticas', onPress: () => { setShowHeaderMenu(false); setShowStatsModal(true); }},
                 ]},
                 { divider: true, items: [
@@ -28911,10 +28911,10 @@ function ChatConversationInner() {
                   // Per-conversation notification settings sheet — full
                   // controls beyond the mute timer: sound, vibration, preview,
                   // mention-exception toggle for muted groups.
-                  { Icon: IconBell, tint: '#A78BFA', label: t('notifications.title') || 'Notificações', onPress: () => { setShowHeaderMenu(false); setShowNotifSettingsSheet(true); }},
+                  { Icon: IconBell, tint: '#128C7E', label: t('notifications.title') || 'Notificações', onPress: () => { setShowHeaderMenu(false); setShowNotifSettingsSheet(true); }},
                   // Vanish (modo invisível): mensagens novas somem após lidas.
                   // Backend já existia mas não tinha entrada no menu — toggle agora exposto.
-                  { Icon: IconClock, tint: vanishMode ? '#A582F7' : '#6B7280', label: vanishMode ? (t('chatConv.vanishModeOff') || 'Desligar modo invisível') : (t('chatConv.vanishModeOn') || 'Ativar modo invisível'), badge: !!vanishMode, onPress: () => { setShowHeaderMenu(false); handleToggleVanishMode(); }},
+                  { Icon: IconClock, tint: vanishMode ? '#128C7E' : '#6B7280', label: vanishMode ? (t('chatConv.vanishModeOff') || 'Desligar modo invisível') : (t('chatConv.vanishModeOn') || 'Ativar modo invisível'), badge: !!vanishMode, onPress: () => { setShowHeaderMenu(false); handleToggleVanishMode(); }},
                   // Archive — mirrors WhatsApp: a quick way to hide a quiet
                   // conversation without leaving it. Backend chatArchive was
                   // wired but only ChatListTab swipe surfaced it.
@@ -28935,7 +28935,7 @@ function ChatConversationInner() {
                   }},
                 ]},
                 { divider: true, items: [
-                  { Icon: IconSparkles, tint: '#A855F7', highlight: true, label: t('chatConv.aiSummary') || 'Resumir com IA', onPress: async () => {
+                  { Icon: IconSparkles, tint: '#128C7E', highlight: true, label: t('chatConv.aiSummary') || 'Resumir com IA', onPress: async () => {
                     setShowHeaderMenu(false);
                     const items = (messages || []).slice(-50)
                       .filter(m => !m._pending && m.type !== 'system' && m.content && typeof m.content === 'string' && !m.content.startsWith('🔒'))
@@ -28970,7 +28970,7 @@ function ChatConversationInner() {
                 ]},
                 { divider: true, items: [
                   { Icon: IconImage, tint: '#3B82F6', label: t('chatConv.wallpaper') || 'Papel de parede', onPress: () => { setShowHeaderMenu(false); setShowWallpaperPicker(true); }},
-                  { Icon: IconCalendar, tint: '#A582F7', label: t('chatConv.scheduled') || 'Mensagens agendadas', onPress: () => { setShowHeaderMenu(false); setShowScheduledMessages(true); loadScheduledMessages(); }},
+                  { Icon: IconCalendar, tint: '#128C7E', label: t('chatConv.scheduled') || 'Mensagens agendadas', onPress: () => { setShowHeaderMenu(false); setShowScheduledMessages(true); loadScheduledMessages(); }},
                   { Icon: IconGlobe, tint: '#06B6D4',
                     label: autoTranslateLocale
                       ? `${t('chatConv.autoTranslate') || 'Auto-traduzir'} • ${autoTranslateLocale.toUpperCase()}`
@@ -29115,9 +29115,9 @@ function ChatConversationInner() {
                         paddingHorizontal: 16, paddingVertical: 14,
                         borderRadius: 12,
                         ...(isHighlighted ? {
-                          backgroundColor: (item.tint || '#A855F7') + '0D',
+                          backgroundColor: (item.tint || '#128C7E') + '0D',
                           borderWidth: 1,
-                          borderColor: (item.tint || '#A855F7') + '33',
+                          borderColor: (item.tint || '#128C7E') + '33',
                         } : null),
                       }}
                       onPress={() => {
@@ -29219,7 +29219,7 @@ function ChatConversationInner() {
                     flexDirection: 'row', alignItems: 'center',
                     paddingVertical: 10, paddingHorizontal: 14,
                     borderBottomWidth: 1, borderBottomColor: colors.border + '40',
-                    backgroundColor: isSelected ? (isDark ? 'rgba(124,58,237,0.16)' : 'rgba(124,58,237,0.08)') : 'transparent',
+                    backgroundColor: isSelected ? (isDark ? 'rgba(18, 140, 126,0.16)' : 'rgba(18, 140, 126,0.08)') : 'transparent',
                   }}
                   onPress={() => toggleForwardTarget(item.id)}
                   activeOpacity={0.65}
@@ -29245,7 +29245,7 @@ function ChatConversationInner() {
                     width: 22, height: 22, borderRadius: 11,
                     borderWidth: isSelected ? 0 : 1.5,
                     borderColor: colors.border,
-                    backgroundColor: isSelected ? '#A582F7' : 'transparent',
+                    backgroundColor: isSelected ? '#128C7E' : 'transparent',
                     alignItems: 'center', justifyContent: 'center',
                   }}>
                     {isSelected && <IconCheck size={12} color="#fff" />}
@@ -29298,7 +29298,7 @@ function ChatConversationInner() {
                       disabled={forwardSending}
                       activeOpacity={0.85}
                       style={{
-                        backgroundColor: '#A582F7',
+                        backgroundColor: '#128C7E',
                         borderRadius: 28,
                         paddingVertical: 14,
                         paddingHorizontal: 22,
@@ -29310,7 +29310,7 @@ function ChatConversationInner() {
                         ...Platform.select({
                           ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.18, shadowRadius: 10 },
                           android: { elevation: 6 },
-                          web: { boxShadow: '0 4px 14px rgba(124,58,237,0.35)' },
+                          web: { boxShadow: '0 4px 14px rgba(18, 140, 126,0.35)' },
                         }),
                       }}
                     >
@@ -29374,7 +29374,7 @@ function ChatConversationInner() {
                   <View style={{
                     position: 'absolute', right: 0, bottom: 0,
                     width: 36, height: 36, borderRadius: 18,
-                    backgroundColor: '#A582F7',
+                    backgroundColor: '#128C7E',
                     alignItems: 'center', justifyContent: 'center',
                     borderWidth: 3, borderColor: colors.surface,
                   }}>
@@ -29393,8 +29393,8 @@ function ChatConversationInner() {
               {/* WhatsApp-style action buttons row (4 round) */}
               <View style={{ flexDirection: 'row', gap: 14, marginTop: 22 }}>
                 <TouchableOpacity activeOpacity={0.6} onPress={() => { setShowGroupInfo(false); handleStartAudioCall(); }} style={{ alignItems: 'center', minWidth: 56 }}>
-                  <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#A582F7' + '20', alignItems: 'center', justifyContent: 'center' }}>
-                    <IconPhone size={20} color="#A582F7" />
+                  <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#128C7E' + '20', alignItems: 'center', justifyContent: 'center' }}>
+                    <IconPhone size={20} color="#128C7E" />
                   </View>
                   <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6 }}>{t('chatConv.audio') || 'Áudio'}</Text>
                 </TouchableOpacity>
@@ -29405,8 +29405,8 @@ function ChatConversationInner() {
                   <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6 }}>{t('chatConv.video') || 'Vídeo'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity activeOpacity={0.6} onPress={() => { setShowGroupInfo(false); setShowSearchBar?.(true); }} style={{ alignItems: 'center', minWidth: 56 }}>
-                  <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#a855f7' + '20', alignItems: 'center', justifyContent: 'center' }}>
-                    <IconSearch size={20} color="#a855f7" />
+                  <View style={{ width: 50, height: 50, borderRadius: 25, backgroundColor: '#128C7E' + '20', alignItems: 'center', justifyContent: 'center' }}>
+                    <IconSearch size={20} color="#128C7E" />
                   </View>
                   <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 6 }}>{t('chatConv.search') || 'Buscar'}</Text>
                 </TouchableOpacity>
@@ -29624,8 +29624,8 @@ function ChatConversationInner() {
                     <View style={{ alignItems: 'flex-end', marginRight: 6, gap: 3 }}>
                       <View style={{
                         flexDirection: 'row', alignItems: 'center', gap: 4,
-                        backgroundColor: '#A582F7', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 11,
-                        ...(Platform.OS === 'web' ? { boxShadow: '0 1px 4px rgba(124,58,237,0.35)' } : {}),
+                        backgroundColor: '#128C7E', paddingHorizontal: 9, paddingVertical: 3, borderRadius: 11,
+                        ...(Platform.OS === 'web' ? { boxShadow: '0 1px 4px rgba(18, 140, 126,0.35)' } : {}),
                       }}>
                         <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#fff', opacity: 0.9 }} />
                         <Text style={{ fontSize: 11, color: '#fff', fontWeight: '700', letterSpacing: 0.2 }}>Admin</Text>
@@ -29748,8 +29748,8 @@ function ChatConversationInner() {
                 onPress={() => { setShowGroupInfo(false); setShowMediaGallery(true); }}
                 style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.sm, gap: 10 }}
               >
-                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#EC489918', alignItems: 'center', justifyContent: 'center' }}>
-                  <IconImage size={18} color="#EC4899" />
+                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#128C7E18', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconImage size={18} color="#128C7E" />
                 </View>
                 <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '500', flex: 1 }}>
                   {t('chatConv.media') || 'Midia, links e docs'}
@@ -29761,7 +29761,7 @@ function ChatConversationInner() {
                 style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.sm, gap: 10 }}
               >
                 <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#a855f718', alignItems: 'center', justifyContent: 'center' }}>
-                  <IconSearch size={18} color="#a855f7" />
+                  <IconSearch size={18} color="#128C7E" />
                 </View>
                 <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '500', flex: 1 }}>
                   {t('chatConv.searchInConversation') || 'Buscar na conversa'}
@@ -29847,7 +29847,7 @@ function ChatConversationInner() {
                       } catch {}
                       setNewTopicName('');
                       setNewTopicIcon('💬');
-                      setNewTopicColor('#A582F7');
+                      setNewTopicColor('#128C7E');
                       setShowTopicCreate(true);
                     }}
                     accessibilityLabel={t('chat.createTopic') || 'Criar tópico'}
@@ -29960,7 +29960,7 @@ function ChatConversationInner() {
                     onPress={handleToggleHideMembers}
                     style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.md, gap: 10 }}
                   >
-                    <IconEye size={20} color={hideMembers ? '#A582F7' : colors.textSecondary} />
+                    <IconEye size={20} color={hideMembers ? '#128C7E' : colors.textSecondary} />
                     <View style={{ flex: 1 }}>
                       <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '600' }}>
                         {t('chatConv.hideMembers') || 'Ocultar lista de membros'}
@@ -29971,7 +29971,7 @@ function ChatConversationInner() {
                           : (t('chatConv.hideMembersOff') || 'Desativado — todos veem a lista')}
                       </Text>
                     </View>
-                    <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: hideMembers ? '#A582F7' : colors.border, justifyContent: 'center', padding: 3 }}>
+                    <View style={{ width: 44, height: 26, borderRadius: 13, backgroundColor: hideMembers ? '#128C7E' : colors.border, justifyContent: 'center', padding: 3 }}>
                       <View style={{ width: 20, height: 20, borderRadius: 10, backgroundColor: '#fff', alignSelf: hideMembers ? 'flex-end' : 'flex-start' }} />
                     </View>
                   </TouchableOpacity>
@@ -30359,7 +30359,7 @@ function ChatConversationInner() {
               {t('chat.topicColor') || 'Cor'}
             </Text>
             <View style={{ flexDirection: 'row', gap: 10, marginBottom: 18 }}>
-              {['#A582F7', '#3B82F6', '#10B981', '#F59E0B', '#EC4899', '#EF4444'].map(c => (
+              {['#128C7E', '#3B82F6', '#10B981', '#F59E0B', '#128C7E', '#EF4444'].map(c => (
                 <TouchableOpacity
                   key={c}
                   onPress={() => setNewTopicColor(c)}
@@ -30383,7 +30383,7 @@ function ChatConversationInner() {
                 setShowTopicCreate(false);
                 setNewTopicName('');
                 setNewTopicIcon('💬');
-                setNewTopicColor('#A582F7');
+                setNewTopicColor('#128C7E');
                 try {
                   const r = await api.chatTopicCreate(conversationId, { name, color, emoji });
                   if (r?.success && r.data?.id) {
@@ -30850,7 +30850,7 @@ function ChatConversationInner() {
                   <IconImage size={20} color={colors.primary} />
                 </TouchableOpacity>
                 {/* Color options */}
-                {['#6D28D9', '#A582F7', '#EDE9FE', '#4C1D95', '#3B0764', '#0E0A18', '#F3EFF8', '#DDD6FE', '#C4B5FD', '#FFC4C4'].map(c => (
+                {['#128C7E', '#128C7E', '#F1F3F5', '#128C7E', '#161618', '#0E0A18', '#F3EFF8', '#F1F3F5', '#F1F3F5', '#FFC4C4'].map(c => (
                   <TouchableOpacity
                     key={c}
                     onPress={() => { saveWallpaper(c); setShowWallpaperPicker(false); }}
@@ -30927,7 +30927,7 @@ function ChatConversationInner() {
                   location: t('chatConv.statsTypeLocation') || 'Local',
                   other: t('chatConv.statsTypeOther') || 'Outros',
                 };
-                const typeColors = { text: '#3B82F6', image: '#EC4899', video: '#F59E0B', audio: '#A582F7', sticker: '#10B981', gif: '#EF4444', file: '#64748B', location: '#06B6D4', other: '#94A3B8' };
+                const typeColors = { text: '#3B82F6', image: '#128C7E', video: '#F59E0B', audio: '#128C7E', sticker: '#10B981', gif: '#EF4444', file: '#64748B', location: '#06B6D4', other: '#94A3B8' };
                 const typeIcons = {
                   text: IconMessageSquare, image: IconImage, video: IconFilm, audio: IconMusic,
                   sticker: IconSparkles, gif: IconFilm, file: IconPaperclip, location: IconMapPin,
@@ -30955,11 +30955,11 @@ function ChatConversationInner() {
                     {/* Hero cards 2x2 */}
                     <View style={{ flexDirection: 'row', gap: 10 }}>
                       <HeroCard label={t('chatConv.statsTotal') || 'Mensagens'} value={total.toLocaleString()} color="#10B981" IconCmp={IconMessageSquare} />
-                      <HeroCard label={t('chatConv.statsAvgLen') || 'Média'} value={`${avgLen}`} sub={charsLabel} color="#A582F7" IconCmp={IconFileText} />
+                      <HeroCard label={t('chatConv.statsAvgLen') || 'Média'} value={`${avgLen}`} sub={charsLabel} color="#128C7E" IconCmp={IconFileText} />
                     </View>
                     <View style={{ flexDirection: 'row', gap: 10, marginTop: 10 }}>
                       <HeroCard label={t('chatConv.statsPerDay') || 'Por dia'} value={msgsPerDay.toLocaleString()} sub={`${days} ${days === 1 ? daySingular : dayPlural}`} color="#F59E0B" IconCmp={IconCalendar} />
-                      <HeroCard label={t('chatConv.statsPeakHour') || 'Hora pico'} value={`${topHour}h`} sub={`${byHour[topHour]} ${msgsLabel}`} color="#EC4899" IconCmp={IconClock} />
+                      <HeroCard label={t('chatConv.statsPeakHour') || 'Hora pico'} value={`${topHour}h`} sub={`${byHour[topHour]} ${msgsLabel}`} color="#128C7E" IconCmp={IconClock} />
                     </View>
 
                     {/* 24h activity bar chart */}
@@ -30971,7 +30971,7 @@ function ChatConversationInner() {
                             const maxH = Math.max(...byHour, 1);
                             const pct = (h / maxH) * 100;
                             return (
-                              <View key={i} style={{ flex: 1, height: `${Math.max(pct, 3)}%`, backgroundColor: i === topHour ? '#EC4899' : '#A582F7', borderRadius: 2, opacity: h === 0 ? 0.15 : 1 }} />
+                              <View key={i} style={{ flex: 1, height: `${Math.max(pct, 3)}%`, backgroundColor: i === topHour ? '#128C7E' : '#128C7E', borderRadius: 2, opacity: h === 0 ? 0.15 : 1 }} />
                             );
                           })}
                         </View>
@@ -30993,7 +30993,7 @@ function ChatConversationInner() {
                       {sorted.slice(0, 8).map(([email, count], i) => {
                         const pct = total > 0 ? Math.round((count / total) * 100) : 0;
                         const name = email === currentEmail ? (t('chatConv.statsYou') || 'Você') : (email.split('@')[0] || email);
-                        const palette = ['#A582F7', '#EC4899', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#06B6D4', '#A582F7'];
+                        const palette = ['#128C7E', '#128C7E', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#06B6D4', '#128C7E'];
                         const barColor = palette[i % palette.length];
                         return (
                           <View key={email} style={{ paddingVertical: 8 }}>
@@ -31041,9 +31041,9 @@ function ChatConversationInner() {
           <Pressable style={{ flex: 1 }} onPress={() => setAiSummary(s => ({ ...s, visible: false }))} />
           <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 34, maxHeight: '82%', overflow: 'hidden' }}>
             {/* Gradient header */}
-            <View style={{ paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, backgroundColor: isDark ? 'rgba(168,85,247,0.12)' : 'rgba(168,85,247,0.08)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(168,85,247,0.25)' : 'rgba(168,85,247,0.2)' }}>
+            <View style={{ paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, backgroundColor: isDark ? 'rgba(18, 140, 126,0.12)' : 'rgba(18, 140, 126,0.08)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(18, 140, 126,0.25)' : 'rgba(18, 140, 126,0.2)' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: '#A855F7', alignItems: 'center', justifyContent: 'center', marginRight: 12, shadowColor: '#A855F7', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 }}>
+                <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: '#128C7E', alignItems: 'center', justifyContent: 'center', marginRight: 12, shadowColor: '#128C7E', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 }}>
                   <IconSparkles size={20} color="#fff" />
                 </View>
                 <View style={{ flex: 1 }}>
@@ -31065,7 +31065,7 @@ function ChatConversationInner() {
             <ScrollView contentContainerStyle={{ padding: 22 }} showsVerticalScrollIndicator={false}>
               {aiSummary.loading ? (
                 <View style={{ alignItems: 'center', paddingVertical: 40 }}>
-                  <ActivityIndicator size="large" color="#A855F7" />
+                  <ActivityIndicator size="large" color="#128C7E" />
                   <Text style={{ marginTop: 14, fontSize: 14, color: colors.textSecondary, fontWeight: '500' }}>
                     {t('chatConv.aiSummarizing') || 'Gerando resumo...'}
                   </Text>
@@ -31092,7 +31092,7 @@ function ChatConversationInner() {
                     if (/^(tl;?\s*dr|^dr|resumo|t[óo]picos|principais\s+t[óo]picos|decis[õo]es|a[çc][õo]es)/i.test(ln) && ln.endsWith(':')) {
                       const heading = /^(tl;?\s*dr|^dr)/i.test(ln) ? 'Resumo' : ln.replace(/:$/, '');
                       return (
-                        <Text key={idx} style={{ fontSize: 12, fontWeight: '700', color: '#A855F7', letterSpacing: 0.6, textTransform: 'uppercase', marginTop: idx === 0 ? 0 : 14, marginBottom: 6 }}>
+                        <Text key={idx} style={{ fontSize: 12, fontWeight: '700', color: '#128C7E', letterSpacing: 0.6, textTransform: 'uppercase', marginTop: idx === 0 ? 0 : 14, marginBottom: 6 }}>
                           {heading}
                         </Text>
                       );
@@ -31102,7 +31102,7 @@ function ChatConversationInner() {
                     if (bulletMatch) {
                       return (
                         <View key={idx} style={{ flexDirection: 'row', alignItems: 'flex-start', marginVertical: 4, paddingRight: 8 }}>
-                          <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#A855F7', marginTop: 8, marginRight: 10 }} />
+                          <View style={{ width: 5, height: 5, borderRadius: 2.5, backgroundColor: '#128C7E', marginTop: 8, marginRight: 10 }} />
                           <Text style={{ flex: 1, fontSize: 15, color: colors.text, lineHeight: 22 }}>{bulletMatch[1]}</Text>
                         </View>
                       );
@@ -31129,7 +31129,7 @@ function ChatConversationInner() {
                     </TouchableOpacity>
                     <TouchableOpacity
                       onPress={() => setAiSummary(s => ({ ...s, visible: false }))}
-                      style={{ flex: 1, height: 44, borderRadius: 12, backgroundColor: '#A855F7', alignItems: 'center', justifyContent: 'center' }}
+                      style={{ flex: 1, height: 44, borderRadius: 12, backgroundColor: '#128C7E', alignItems: 'center', justifyContent: 'center' }}
                     >
                       <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{t('common.done') || 'Concluído'}</Text>
                     </TouchableOpacity>
@@ -31225,7 +31225,7 @@ function ChatConversationInner() {
                 <View style={{ flexDirection: 'row', gap: 10 }}>
                   <TouchableOpacity
                     onPress={() => { setInputText(aiResult); setShowAiModal(false); setAiResult(null); }}
-                    style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#A582F7', alignItems: 'center' }}
+                    style={{ flex: 1, paddingVertical: 12, borderRadius: 10, backgroundColor: '#128C7E', alignItems: 'center' }}
                   >
                     <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{t('chatAi.useThis') || 'Use this text'}</Text>
                   </TouchableOpacity>
@@ -31480,10 +31480,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15, paddingVertical: 6,
     borderRadius: 999, overflow: 'hidden',
     ...Platform.select({
-      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 6 },
+      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 6 },
       android: { elevation: 1 },
       web: {
-        boxShadow: '0 2px 10px rgba(124,58,237,0.10)',
+        boxShadow: '0 2px 10px rgba(18, 140, 126,0.10)',
         backdropFilter: 'blur(20px) saturate(180%)',
         WebkitBackdropFilter: 'blur(20px) saturate(180%)',
       },
@@ -31499,9 +31499,9 @@ const styles = StyleSheet.create({
     // Brand-tinted lift: a faint violet halo (was pure black) so the FAB
     // reads as part of the purple system instead of a generic grey button.
     ...Platform.select({
-      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.22, shadowRadius: 18 },
+      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.22, shadowRadius: 18 },
       android: { elevation: 10 },
-      web: { boxShadow: '0 6px 24px rgba(124,58,237,0.18), 0 2px 6px rgba(0,0,0,0.08)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', transition: 'transform 0.2s ease, box-shadow 0.2s ease' },
+      web: { boxShadow: '0 6px 24px rgba(18, 140, 126,0.18), 0 2px 6px rgba(0,0,0,0.08)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', transition: 'transform 0.2s ease, box-shadow 0.2s ease' },
     }),
     zIndex: 10,
   },
@@ -31666,9 +31666,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.md + 4, paddingVertical: 14,
     borderTopWidth: 0, borderRadius: 24, marginHorizontal: 10, marginBottom: 6,
     ...Platform.select({
-      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 14 },
+      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.12, shadowRadius: 14 },
       android: { elevation: 4 },
-      web: { backdropFilter: 'blur(28px) saturate(180%)', WebkitBackdropFilter: 'blur(28px) saturate(180%)', boxShadow: '0 4px 18px rgba(124,58,237,0.10), 0 1px 3px rgba(0,0,0,0.04)' },
+      web: { backdropFilter: 'blur(28px) saturate(180%)', WebkitBackdropFilter: 'blur(28px) saturate(180%)', boxShadow: '0 4px 18px rgba(18, 140, 126,0.10), 0 1px 3px rgba(0,0,0,0.04)' },
     }),
   },
   // Why: 4→3px wider-feel via borderRadius (2.5→1.5) for a sharper accent
@@ -31719,11 +31719,11 @@ const styles = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center',
     alignSelf: 'flex-end', marginBottom: 2,
     ...Platform.select({
-      ios: { shadowColor: '#A582F7', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 16 },
+      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 16 },
       android: { elevation: 8 },
       web: {
-        background: 'linear-gradient(145deg, #A582F7 0%, #A582F7 50%, #6D28D9 100%)',
-        boxShadow: '0 6px 20px rgba(124,58,237,0.45), 0 2px 6px rgba(124,58,237,0.25), inset 0 1px 0 rgba(255,255,255,0.18)',
+        background: 'linear-gradient(145deg, #128C7E 0%, #128C7E 50%, #128C7E 100%)',
+        boxShadow: '0 6px 20px rgba(18, 140, 126,0.45), 0 2px 6px rgba(18, 140, 126,0.25), inset 0 1px 0 rgba(255,255,255,0.18)',
         transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease',
         cursor: 'pointer',
       },

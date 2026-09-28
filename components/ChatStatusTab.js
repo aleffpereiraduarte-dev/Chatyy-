@@ -312,7 +312,7 @@ function StatusVideoPlayer({ url, posterUrl, paused, onDuration, onLoaded, onErr
 }
 
 const STATUS_DURATION = 5000;
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 
 // mm:ss for the voice-status recording timer.
 function _fmtDur(secs) {
@@ -320,7 +320,7 @@ function _fmtDur(secs) {
   const m = Math.floor(s / 60);
   return `${m}:${String(s % 60).padStart(2, '0')}`;
 }
-const GRADIENT_COLORS = ['#A582F7', '#6D28D9', '#6D28D9'];
+const GRADIENT_COLORS = ['#128C7E', '#128C7E', '#128C7E'];
 
 // --- Music Note Icon ---
 function IconMusicNote({ size = 20, color = '#fff' }) {
@@ -397,7 +397,7 @@ function timeAgo(dateStr, t) {
 }
 
 const TEXT_BG_COLORS = [
-  '#6D28D9', '#6D28D9', '#A582F7', '#1A73E8', '#6B5CE7',
+  '#128C7E', '#128C7E', '#128C7E', '#1A73E8', '#6B5CE7',
   '#E84393', '#D63031', '#E17055', '#FDCB6E', '#00B894',
 ];
 
@@ -469,7 +469,7 @@ function DraggableSticker({ sticker, onMove, onRemove }) {
   const renderContent = () => {
     if (sticker.emoji) return <Text style={{ fontSize: 48 }}>{sticker.emoji}</Text>;
     if (sticker.type === 'poll') return (
-      <View style={{ backgroundColor: 'rgba(124,58,237,0.9)', borderRadius: 14, padding: 14, width: 220 }}>
+      <View style={{ backgroundColor: 'rgba(18, 140, 126,0.9)', borderRadius: 14, padding: 14, width: 220 }}>
         <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700', textAlign: 'center', marginBottom: 10 }}>{sticker.question}</Text>
         <View style={{ flexDirection: 'row', gap: 8 }}>
           <View style={{ flex: 1, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 20, paddingVertical: 8, alignItems: 'center' }}>
@@ -605,7 +605,7 @@ function DraggableSticker({ sticker, onMove, onRemove }) {
           {sticker.label || 'Saiba mais'}
         </Text>
         <View style={{
-          width: 22, height: 22, borderRadius: 11, backgroundColor: '#A582F7',
+          width: 22, height: 22, borderRadius: 11, backgroundColor: '#128C7E',
           alignItems: 'center', justifyContent: 'center',
         }}>
           <IconArrowRight size={13} color="#fff" />
@@ -822,9 +822,9 @@ const SegmentedRing = React.memo(function SegmentedRing({ items, size, viewed, c
       <Svg width={ringSize} height={ringSize}>
         <Defs>
           <LinearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor={closeFriends ? '#34D399' : '#A582F7'} />
-            <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : '#6D28D9'} />
-            <Stop offset="1" stopColor={closeFriends ? '#047857' : '#6D28D9'} />
+            <Stop offset="0" stopColor={closeFriends ? '#34D399' : '#128C7E'} />
+            <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : '#128C7E'} />
+            <Stop offset="1" stopColor={closeFriends ? '#047857' : '#128C7E'} />
           </LinearGradient>
         </Defs>
         {Array.from({ length: count }).map((_, i) => {
@@ -2483,7 +2483,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       const url = uploadR?.data?.url || uploadR?.data?.cdn_url;
       if (uploadR?.success && url) {
         const extraMeta = { privacy: statusPrivacy !== 'all' ? statusPrivacy : undefined };
-        const r = await api.statusPublish(url, 'voice', '#A582F7', null, extraMeta);
+        const r = await api.statusPublish(url, 'voice', '#128C7E', null, extraMeta);
         if (r?.success) {
           setVoiceComposerVisible(false);
           loadStatuses();
@@ -3146,7 +3146,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
             refreshing={refreshing}
             onRefresh={onPullRefresh}
             tintColor={ACCENT}
-            colors={[ACCENT, '#6D28D9']}
+            colors={[ACCENT, '#128C7E']}
             progressBackgroundColor={isDark ? '#1a1a1a' : '#fff'}
           />
         }
@@ -3187,9 +3187,9 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   <Svg width={108} height={108} style={{ position: 'absolute', top: -6, left: -6 }}>
                     <Defs>
                       <LinearGradient id="heroRing" x1="0" y1="0" x2="1" y2="1">
-                        <Stop offset="0" stopColor="#A582F7" />
-                        <Stop offset="0.5" stopColor="#9333EA" />
-                        <Stop offset="1" stopColor="#6D28D9" />
+                        <Stop offset="0" stopColor="#128C7E" />
+                        <Stop offset="0.5" stopColor="#128C7E" />
+                        <Stop offset="1" stopColor="#128C7E" />
                       </LinearGradient>
                     </Defs>
                     <SvgCircle cx="54" cy="54" r="51" stroke="url(#heroRing)" strokeWidth={3.5} fill="none" />
@@ -3226,8 +3226,8 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               {hasMyStatus && myViewCount > 0 && (
                 <TouchableOpacity
                   style={[styles.viewCountPill, {
-                    backgroundColor: isDark ? 'rgba(124,58,237,0.18)' : 'rgba(124,58,237,0.10)',
-                    borderColor: isDark ? 'rgba(124,58,237,0.35)' : 'rgba(124,58,237,0.22)',
+                    backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.10)',
+                    borderColor: isDark ? 'rgba(18, 140, 126,0.35)' : 'rgba(18, 140, 126,0.22)',
                   }]}
                   activeOpacity={0.7}
                   onPress={async () => {
@@ -3476,8 +3476,8 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               <IconX size={26} color="#fff" />
             </TouchableOpacity>
 
-            <View style={{ width: 140, height: 140, borderRadius: 70, backgroundColor: voiceRecording ? 'rgba(236,72,153,0.25)' : 'rgba(124,58,237,0.22)', alignItems: 'center', justifyContent: 'center', marginBottom: 28 }}>
-              <View style={{ width: 104, height: 104, borderRadius: 52, backgroundColor: voiceRecording ? '#EC4899' : '#A582F7', alignItems: 'center', justifyContent: 'center' }}>
+            <View style={{ width: 140, height: 140, borderRadius: 70, backgroundColor: voiceRecording ? 'rgba(18, 140, 126,0.25)' : 'rgba(18, 140, 126,0.22)', alignItems: 'center', justifyContent: 'center', marginBottom: 28 }}>
+              <View style={{ width: 104, height: 104, borderRadius: 52, backgroundColor: voiceRecording ? '#128C7E' : '#128C7E', alignItems: 'center', justifyContent: 'center' }}>
                 <IconMic size={48} color="#fff" />
               </View>
             </View>
@@ -3494,7 +3494,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
             ) : (
               <TouchableOpacity
                 onPress={() => { if (voiceRecording) stopVoiceRecording(false); else startVoiceRecording(); }}
-                style={{ marginTop: 34, width: 76, height: 76, borderRadius: 38, backgroundColor: voiceRecording ? '#EC4899' : '#A582F7', alignItems: 'center', justifyContent: 'center', borderWidth: 4, borderColor: 'rgba(255,255,255,0.25)' }}
+                style={{ marginTop: 34, width: 76, height: 76, borderRadius: 38, backgroundColor: voiceRecording ? '#128C7E' : '#128C7E', alignItems: 'center', justifyContent: 'center', borderWidth: 4, borderColor: 'rgba(255,255,255,0.25)' }}
                 accessibilityLabel={voiceRecording ? (t?.('status.voiceStop') || 'Parar') : (t?.('status.voiceRecord') || 'Gravar')}
               >
                 {voiceRecording ? <IconCheck size={34} color="#fff" /> : <IconMic size={34} color="#fff" />}
@@ -3702,7 +3702,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                     style={({ pressed }) => ({
                       paddingHorizontal: 16, paddingVertical: 11,
                       backgroundColor: active
-                        ? (pressed ? 'rgba(124,58,237,0.85)' : 'rgba(124,58,237,0.65)')
+                        ? (pressed ? 'rgba(18, 140, 126,0.85)' : 'rgba(18, 140, 126,0.65)')
                         : (pressed ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.15)'),
                       borderRadius: 22, flexDirection: 'row', alignItems: 'center', gap: 7,
                     })}
@@ -3940,7 +3940,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                 <AnimatedStatusText
                   animKey={currentViewerItem?.id || 0}
                   text={currentViewerItem?.content || ''}
-                  bgColor={currentViewerItem?.bgColor || currentViewerItem?.background || currentViewerItem?.bg_color || '#6D28D9'}
+                  bgColor={currentViewerItem?.bgColor || currentViewerItem?.background || currentViewerItem?.bg_color || '#128C7E'}
                   fontStyle={currentViewerItem?.font_style || currentViewerItem?.meta?.font_style || 'normal'}
                   animation={currentViewerItem?.text_animation || currentViewerItem?.meta?.text_animation || 'none'}
                 />
@@ -4132,7 +4132,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                 // ternary fell to null = silent black screen.
                 (() => {
                   const rawBg = currentViewerItem?.bgColor || currentViewerItem?.background || currentViewerItem?.bg_color;
-                  const bg = (rawBg && /^#|rgb/.test(String(rawBg))) ? rawBg : '#A582F7';
+                  const bg = (rawBg && /^#|rgb/.test(String(rawBg))) ? rawBg : '#128C7E';
                   const bars = [10, 18, 26, 16, 30, 22, 34, 20, 28, 14, 24, 32, 18, 26, 12, 22, 30, 16, 24, 20];
                   const caption = (currentViewerItem?.content || '').trim();
                   return (
@@ -4378,7 +4378,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                 disabled={!newHighlightName.trim() || highlightSaving}
                 style={{
                   paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12,
-                  backgroundColor: '#A582F7',
+                  backgroundColor: '#128C7E',
                   opacity: !newHighlightName.trim() || highlightSaving ? 0.5 : 1,
                 }}
               >
@@ -4415,16 +4415,16 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                 <View style={{
                   width: 44, height: 44, borderRadius: 14,
                   overflow: 'hidden', alignItems: 'center', justifyContent: 'center',
-                  ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(124,58,237,0.35)' } : {
-                    shadowColor: '#A582F7', shadowOffset: { width: 0, height: 4 },
+                  ...(Platform.OS === 'web' ? { boxShadow: '0 4px 14px rgba(18, 140, 126,0.35)' } : {
+                    shadowColor: '#128C7E', shadowOffset: { width: 0, height: 4 },
                     shadowOpacity: 0.3, shadowRadius: 8, elevation: 4,
                   }),
                 }}>
                   <Svg width={44} height={44} viewBox="0 0 44 44" style={{ position: 'absolute' }}>
                     <Defs>
                       <LinearGradient id="viewerGrad" x1="0" y1="0" x2="1" y2="1">
-                        <Stop offset="0" stopColor="#A855F7" />
-                        <Stop offset="1" stopColor="#A582F7" />
+                        <Stop offset="0" stopColor="#128C7E" />
+                        <Stop offset="1" stopColor="#128C7E" />
                       </LinearGradient>
                     </Defs>
                     <Rect x="0" y="0" width="44" height="44" rx="14" fill="url(#viewerGrad)" />
@@ -4448,7 +4448,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
             {viewersLoading ? (
               <View style={{ paddingVertical: 60 }}>
-                <ActivityIndicator size="large" color="#A582F7" />
+                <ActivityIndicator size="large" color="#128C7E" />
               </View>
             ) : viewersList.length === 0 ? (
               <View style={{ alignItems: 'center', paddingVertical: 60, paddingHorizontal: 28 }}>
@@ -4529,9 +4529,9 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                                 <Svg width={48} height={48} viewBox="0 0 48 48" style={{ position: 'absolute' }}>
                                   <Defs>
                                     <LinearGradient id={`vring${i}`} x1="0" y1="0" x2="1" y2="1">
-                                      <Stop offset="0" stopColor="#F472B6" />
-                                      <Stop offset="0.5" stopColor="#A855F7" />
-                                      <Stop offset="1" stopColor="#A582F7" />
+                                      <Stop offset="0" stopColor="#128C7E" />
+                                      <Stop offset="0.5" stopColor="#128C7E" />
+                                      <Stop offset="1" stopColor="#128C7E" />
                                     </LinearGradient>
                                   </Defs>
                                   <SvgCircle cx="24" cy="24" r="22" stroke={`url(#vring${i})`} strokeWidth="2.2" fill="none" />
@@ -4754,7 +4754,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                           aspectRatio: 0.6,
                           borderRadius: 12,
                           overflow: 'hidden',
-                          backgroundColor: isText ? (item.background || '#6D28D9') : (isDark ? '#0f0f1e' : '#f3f4f6'),
+                          backgroundColor: isText ? (item.background || '#128C7E') : (isDark ? '#0f0f1e' : '#f3f4f6'),
                           position: 'relative',
                         }}
                       >
@@ -5269,7 +5269,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                       <View style={{
                         width: 62, height: 62, borderRadius: 8, overflow: 'hidden',
                         borderWidth: photoFilter === f.key ? 2.5 : 0,
-                        borderColor: '#A582F7',
+                        borderColor: '#128C7E',
                       }}>
                         {Platform.OS === 'web' ? (
                           <img src={photoUri} alt="" style={{ width: 62, height: 62, objectFit: 'cover', filter: f.css }} />
@@ -5280,7 +5280,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                           </View>
                         )}
                       </View>
-                      <Text style={{ color: photoFilter === f.key ? '#A582F7' : 'rgba(255,255,255,0.7)', fontSize: 10, fontWeight: '600', marginTop: 4 }}>{f.label}</Text>
+                      <Text style={{ color: photoFilter === f.key ? '#128C7E' : 'rgba(255,255,255,0.7)', fontSize: 10, fontWeight: '600', marginTop: 4 }}>{f.label}</Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
@@ -5318,7 +5318,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => setDrawMode(d => !d)}
-                    style={[editorToolBtnStyle, drawMode && { backgroundColor: '#A582F7' }]}
+                    style={[editorToolBtnStyle, drawMode && { backgroundColor: '#128C7E' }]}
                     accessibilityLabel="Desenhar"
                     accessibilityRole="button"
                   >
@@ -5353,9 +5353,9 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
               {/* Draw color picker (when draw mode active) */}
               {drawMode && creatorMode === 'photo' && (
                 <View style={{ position: 'absolute', top: 8, left: 12, zIndex: 20, flexDirection: 'row', gap: 6 }}>
-                  {['#fff', '#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#AF52DE', '#000'].map(c => (
+                  {['#fff', '#FF3B30', '#FF9500', '#FFCC00', '#34C759', '#007AFF', '#128C7E', '#000'].map(c => (
                     <TouchableOpacity key={c} onPress={() => setDrawColor(c)}
-                      style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: c, borderWidth: drawColor === c ? 3 : 1, borderColor: drawColor === c ? '#A582F7' : 'rgba(255,255,255,0.4)' }}
+                      style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: c, borderWidth: drawColor === c ? 3 : 1, borderColor: drawColor === c ? '#128C7E' : 'rgba(255,255,255,0.4)' }}
                     />
                   ))}
                 </View>
@@ -5423,7 +5423,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                       </TouchableOpacity>
                       <TouchableOpacity onPress={() => {
                         if (newOverlayText.trim()) {
-                          const colors = ['#fff', '#FFD700', '#FF6B6B', '#A582F7', '#10B981', '#3B82F6'];
+                          const colors = ['#fff', '#FFD700', '#FF6B6B', '#128C7E', '#10B981', '#3B82F6'];
                           recordEdit();
                           setTextOverlays(prev => [...prev, {
                             id: Date.now(), text: newOverlayText.trim(),
@@ -5432,7 +5432,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                           }]);
                         }
                         setShowAddTextInput(false);
-                      }} style={{ paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, backgroundColor: '#A582F7' }}>
+                      }} style={{ paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, backgroundColor: '#128C7E' }}>
                         <Text style={{ color: '#fff', fontWeight: '700' }}>Adicionar</Text>
                       </TouchableOpacity>
                     </View>
@@ -5598,7 +5598,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                             }}
                             style={{
                               flex: 1, paddingVertical: 9, borderRadius: 8,
-                              backgroundColor: isValidStickerUrl(linkPromptUrl) ? '#A582F7' : 'rgba(124,58,237,0.35)',
+                              backgroundColor: isValidStickerUrl(linkPromptUrl) ? '#128C7E' : 'rgba(18, 140, 126,0.35)',
                               alignItems: 'center',
                             }}
                           >
@@ -5646,7 +5646,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                                     }}
                                     style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 4, gap: 10 }}
                                   >
-                                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#A582F7', alignItems: 'center', justifyContent: 'center' }}>
+                                    <View style={{ width: 32, height: 32, borderRadius: 16, backgroundColor: '#128C7E', alignItems: 'center', justifyContent: 'center' }}>
                                       <Text style={{ color: '#fff', fontSize: 14, fontWeight: '700' }}>{(c.name || c.email || '?').charAt(0).toUpperCase()}</Text>
                                     </View>
                                     <View style={{ flex: 1 }}>
@@ -5723,7 +5723,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                 accessibilityState={{ checked: crossPostFeed }}
                 accessibilityLabel={t?.('status.crossPostFeed') || 'Postar também no Feed'}
               >
-                {crossPostFeed ? <IconCheckboxChecked size={20} color="#A582F7" /> : <IconCheckbox size={20} color="rgba(255,255,255,0.5)" />}
+                {crossPostFeed ? <IconCheckboxChecked size={20} color="#128C7E" /> : <IconCheckbox size={20} color="rgba(255,255,255,0.5)" />}
                 <IconFeedShare size={16} color="rgba(255,255,255,0.85)" />
                 <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600', flex: 1 }}>
                   {t?.('status.crossPostFeed') || 'Postar também no Feed'}
@@ -5785,7 +5785,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
       >
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end' }}>
           <View style={{
-            backgroundColor: isDark ? '#1A0F2E' : '#fff',
+            backgroundColor: isDark ? '#161618' : '#fff',
             borderTopLeftRadius: 22, borderTopRightRadius: 22,
             paddingHorizontal: 18, paddingTop: 14, paddingBottom: 28,
             maxHeight: '72%',
@@ -5862,7 +5862,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                 onPress={() => setExceptPickerVisible(false)}
                 style={{
                   flex: 1, paddingVertical: 12, borderRadius: 22,
-                  backgroundColor: '#A582F7',
+                  backgroundColor: '#128C7E',
                   alignItems: 'center',
                 }}
               >
@@ -6023,7 +6023,7 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.4, shadowRadius: 5 },
       android: { elevation: 5 },
-      web: { boxShadow: '0 2px 8px rgba(124,58,237,0.4)' },
+      web: { boxShadow: '0 2px 8px rgba(18, 140, 126,0.4)' },
     }),
   },
   // "Quem viu" pill — sits under the name/sub on the hero card. Soft
@@ -6060,7 +6060,7 @@ const styles = StyleSheet.create({
     ...Platform.select({
       ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.3, shadowRadius: 3 },
       android: { elevation: 3 },
-      web: { boxShadow: '0 1px 4px rgba(124,58,237,0.3)' },
+      web: { boxShadow: '0 1px 4px rgba(18, 140, 126,0.3)' },
     }),
   },
   myStatusName: {
@@ -6170,7 +6170,7 @@ const styles = StyleSheet.create({
     marginTop: 24,
     gap: 8,
     ...Platform.select({
-      web: { boxShadow: '0 3px 10px rgba(124,58,237,0.3)' },
+      web: { boxShadow: '0 3px 10px rgba(18, 140, 126,0.3)' },
       ios: { shadowColor: ACCENT, shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.3, shadowRadius: 8 },
       android: { elevation: 4 },
     }),
@@ -6424,9 +6424,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   reactionBtnActive: {
-    backgroundColor: 'rgba(124,58,237,0.4)',
+    backgroundColor: 'rgba(18, 140, 126,0.4)',
     borderWidth: 1.5,
-    borderColor: 'rgba(124,58,237,0.7)',
+    borderColor: 'rgba(18, 140, 126,0.7)',
   },
   reactionEmoji: {
     fontSize: 22,

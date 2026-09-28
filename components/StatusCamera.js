@@ -156,9 +156,9 @@ const SPEED_CYCLE = [0.3, 0.5, 1, 2, 3];
 const SPEED_LABELS = { 0.3: '0.3x', 0.5: '0.5x', 1: '1x', 2: '2x', 3: '3x' };
 
 // Brand purple gradient — applied via tinted ring layers around record button
-const BRAND_PURPLE = '#5B21B6';
-const BRAND_PURPLE_LIGHT = '#A582F7';
-const BRAND_PINK = '#EC4899';
+const BRAND_PURPLE = '#128C7E';
+const BRAND_PURPLE_LIGHT = '#128C7E';
+const BRAND_PINK = '#128C7E';
 
 // Max video duration (TikTok-style 60s cap)
 const MAX_RECORD_MS = 60000;
@@ -2110,7 +2110,7 @@ const s = StyleSheet.create({
     flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end',
   },
   musicSheet: {
-    backgroundColor: '#1A0F2E',
+    backgroundColor: '#161618',
     borderTopLeftRadius: 24, borderTopRightRadius: 24,
     paddingHorizontal: 24, paddingTop: 12, paddingBottom: 36,
     maxHeight: '85%',
@@ -2139,7 +2139,7 @@ const s = StyleSheet.create({
   },
   trimWindow: {
     position: 'absolute', top: 0, bottom: 0, borderRadius: 12,
-    backgroundColor: 'rgba(124,58,237,0.35)', borderWidth: 1.5, borderColor: BRAND_PURPLE_LIGHT,
+    backgroundColor: 'rgba(18, 140, 126,0.35)', borderWidth: 1.5, borderColor: BRAND_PURPLE_LIGHT,
   },
   trimHandle: {
     position: 'absolute', top: -6, width: 28, height: 56, borderRadius: 14,
@@ -2170,7 +2170,7 @@ const s = StyleSheet.create({
     paddingVertical: 10, paddingHorizontal: 8, borderRadius: 12,
     marginBottom: 4,
   },
-  musicRowActive: { backgroundColor: 'rgba(155,116,255,0.18)' },
+  musicRowActive: { backgroundColor: 'rgba(18, 140, 126,0.18)' },
   musicCover: { width: 44, height: 44, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.08)' },
   musicCoverNone: {
     width: 44, height: 44, borderRadius: 8,

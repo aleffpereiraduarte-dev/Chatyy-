@@ -13,7 +13,7 @@ import { IconArrowLeft, IconSearch, IconX, IconUsers, IconCheck, IconPlus } from
 import AvatarCircle from './AvatarCircle';
 import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
 
-const ACCENT = '#A582F7';
+const ACCENT = '#128C7E';
 const isWeb = Platform.OS === 'web';
 
 function IconCamera({ size = 24, color = '#666' }) {
@@ -200,7 +200,7 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         {/* Header */}
-        <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#6D28D9', paddingTop: headerPadTop }]}>
+        <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#128C7E', paddingTop: headerPadTop }]}>
           <TouchableOpacity onPress={handleBack} style={sty.headerBtn}>
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>
