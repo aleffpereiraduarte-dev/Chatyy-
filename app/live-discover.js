@@ -33,10 +33,10 @@ import {
 import AvatarCircle from '../components/AvatarCircle';
 import { formatCount as formatViewers } from '../components/AnimatedViewerCount';
 
-// Brand purple from constants/theme.js (primary = #128C7E).
-const BRAND_PURPLE = '#128C7E';
-const BRAND_PURPLE_DARK = '#128C7E';
-const BRAND_PURPLE_LIGHT = '#128C7E';
+// Brand purple from constants/theme.js (primary = #111111).
+const BRAND_PURPLE = '#111111';
+const BRAND_PURPLE_DARK = '#111111';
+const BRAND_PURPLE_LIGHT = '#111111';
 
 // ─── Pill icons ────────────────────────────────────────────────────────
 // Inline 14px SVGs for category keys that don't have a matching icon in
@@ -850,7 +850,7 @@ function EmptyLiveDiscover({ colors, isDark, t, router, refreshing, onRefresh })
           {t('live.whyGoLive') || 'Por que ir ao vivo?'}
         </Text>
         <WhyBullet
-          icon={<IconHeart size={16} color="#128C7E" />}
+          icon={<IconHeart size={16} color="#111111" />}
           text={t('live.whyConnect') || 'Conecte em tempo real'}
           color={colors.text}
         />

@@ -160,10 +160,10 @@ export default function ChatScreenWrapper() {
   );
 }
 
-const ACCENT = '#128C7E';
-const ACCENT_DARK = '#128C7E';
-const ACCENT_GLOW = 'rgba(18, 140, 126,0.35)';
-const ACCENT2 = '#128C7E';
+const ACCENT = '#111111';
+const ACCENT_DARK = '#111111';
+const ACCENT_GLOW = 'rgba(17, 17, 17,0.35)';
+const ACCENT2 = '#111111';
 const DESKTOP_BREAKPOINT = 900;
 
 // Mobile bottom bar: 4 tabs — Reels + Chats + Calls + Apps.
@@ -184,11 +184,11 @@ function BrandTitle({ colors, size = 22, light }) {
       {isChildAccount() ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
           <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-            <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="#128C7E" opacity={0.9} />
+            <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="#111111" opacity={0.9} />
             <Path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
           </Svg>
           <Text style={[styles.brandTitle, { color: '#fff', fontSize: size }]}>Chatyy</Text>
-          <View style={{ backgroundColor: '#128C7E', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 }}>
+          <View style={{ backgroundColor: '#111111', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 }}>
             <Text style={{ color: '#fff', fontSize: size - 6, fontWeight: '800' }}>Kids</Text>
           </View>
         </View>
@@ -814,9 +814,9 @@ function ChatHub() {
   // WhatsApp 2026 header style — premium gradient
   const glassHeader = isKids
     ? (Platform.OS === 'web'
-      ? { background: 'linear-gradient(135deg, #6366f1 0%, #128C7E 40%, #128C7E 100%)' }
+      ? { background: 'linear-gradient(135deg, #6366f1 0%, #111111 40%, #111111 100%)' }
       : { backgroundColor: isDark ? '#161618' : '#6366f1' })
-    : { backgroundColor: isDark ? '#111111' : '#128C7E' };
+    : { backgroundColor: isDark ? '#111111' : '#111111' };
 
   const glassTabBar = {
     backgroundColor: isDark ? '#0a0a0a' : '#ffffff',
@@ -828,7 +828,7 @@ function ChatHub() {
       <View style={[styles.container, { backgroundColor: isDark ? '#000000' : '#f0f2f5', flexDirection: 'row' }]}>
         {/* Side Rail */}
         <View style={[styles.desktopRail, {
-          backgroundColor: isKids ? (isDark ? '#161618' : '#6366f1') : (isDark ? '#0a0a0a' : '#128C7E'),
+          backgroundColor: isKids ? (isDark ? '#161618' : '#6366f1') : (isDark ? '#0a0a0a' : '#111111'),
           borderRightColor: 'transparent',
         }]}>
           {/* Brand at top — icon only: 72px rail is too narrow for the "Chatyy" wordmark, which would overflow to the left. */}
@@ -914,9 +914,9 @@ function ChatHub() {
                 <TouchableOpacity
                   onPress={() => setShowGlobalSearch(true)}
                   activeOpacity={0.6}
-                  style={{ paddingHorizontal: 8, paddingVertical: 4, marginRight: 4, borderRadius: 12, backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.10)' }}
+                  style={{ paddingHorizontal: 8, paddingVertical: 4, marginRight: 4, borderRadius: 12, backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)' }}
                 >
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#128C7E' }}>{t('common.searchAll') || 'Tudo'}</Text>
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#111111' }}>{t('common.searchAll') || 'Tudo'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} style={styles.searchCloseBtn}>
                   <IconClose size={16} color={isDark ? '#6b7280' : '#9ca3af'} />
@@ -1087,7 +1087,7 @@ function ChatHub() {
         {isKids ? (
           <>
             <TabBarItem
-              icon={(active) => <IconChatsTab size={25} color={active ? '#128C7E' : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
+              icon={(active) => <IconChatsTab size={25} color={active ? '#111111' : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
               label={t('kids.chat') || 'Chats'}
               active={activeTab === 'chats'}
               onPress={() => handleTabPress('chats')}
@@ -1096,7 +1096,7 @@ function ChatHub() {
             />
             <TabBarItem
               icon={(active) => {
-                const c = active ? '#128C7E' : (isDark ? '#5a6270' : '#a0a8b4');
+                const c = active ? '#111111' : (isDark ? '#5a6270' : '#a0a8b4');
                 return (
                   <Svg width={25} height={25} viewBox="0 0 24 24" fill="none">
                     <Path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3z" fill={c} />
@@ -1392,7 +1392,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
     {
       title: t('apps.communication') || 'Comunicação',
       items: [
-        { key: 'channels', label: t('channel.title') || 'Channels',      ic: I(IconBell, '#128C7E'),     action: onOpenChannels },
+        { key: 'channels', label: t('channel.title') || 'Channels',      ic: I(IconBell, '#111111'),     action: onOpenChannels },
         { key: 'communities', label: t('community.title') || 'Communities', ic: I(IconUsers, '#10b981'),   action: onOpenCommunities },
         { key: 'snapmap',  label: t('snapmap.tile') || t('snapmap.sidebar') || 'Mapa de Amigos', ic: I(IconMapPin, '#22c55e'), route: '/snap-map' },
       ],
@@ -1403,7 +1403,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
         { key: 'email',    label: t('sidebar.inbox') || 'Email',        ic: I(IconMail, '#ef4444'),      route: '/inbox' },
         { key: 'calendar', label: t('sidebar.calendar') || 'Agenda',    ic: I(IconCalendar, '#10b981'),  route: '/calendar' },
         { key: 'meet',     label: t('sidebar.meetings') || 'Meet',      ic: I(IconFilm, '#3b82f6'),      route: '/meetings' },
-        { key: 'contacts', label: t('sidebar.contacts') || 'Contatos',  ic: I(IconUsers, '#128C7E'),     route: '/contacts' },
+        { key: 'contacts', label: t('sidebar.contacts') || 'Contatos',  ic: I(IconUsers, '#111111'),     route: '/contacts' },
         { key: 'files',    label: t('sidebar.files') || 'Arquivos',     ic: I(IconFolder, '#f59e0b'),    route: '/files' },
         { key: 'docs',     label: t('sidebar.documents') || 'Docs',     ic: I(IconFileText, '#4285f4'),  route: '/documentos' },
         { key: 'notes',    label: t('sidebar.notes') || 'Notas',        ic: I(IconStickyNote, '#eab308'), route: '/notes' },
@@ -1412,9 +1412,9 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
     {
       title: t('apps.mediaAi') || 'Mídia & IA',
       items: [
-        { key: 'photos',   label: t('sidebar.photos') || 'Fotos',        ic: I(IconImage, '#128C7E'),    route: '/photos' },
+        { key: 'photos',   label: t('sidebar.photos') || 'Fotos',        ic: I(IconImage, '#111111'),    route: '/photos' },
         { key: 'live',     label: t('apps.goLive') || 'Ao vivo',         ic: I(IconVideo, '#ef4444'),    route: '/live-broadcast' },
-        { key: 'one',      label: 'One',                                 ic: I(IconSparkles, '#128C7E'), route: '/one' },
+        { key: 'one',      label: 'One',                                 ic: I(IconSparkles, '#111111'), route: '/one' },
       ],
     },
     {
@@ -1431,7 +1431,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
         // "Carteira" tile dropped from the Apps drawer; the wallet screen
         // itself redirects to /chat now, so leaving the tile would just
         // bounce users. Spread keeps it gone from sort/search arrays too.
-        ...(WALLET_ENABLED ? [{ key: 'wallet', label: t('apps.wallet') || 'Carteira', ic: I(IconCreditCard, '#128C7E'), route: '/wallet' }] : []),
+        ...(WALLET_ENABLED ? [{ key: 'wallet', label: t('apps.wallet') || 'Carteira', ic: I(IconCreditCard, '#111111'), route: '/wallet' }] : []),
         { key: 'settings',      label: t('sidebar.settings') || 'Configurações', ic: I(IconSettings, '#475569'), action: () => { onClose(); try { router.push('/settings'); } catch (e) { console.warn('[chat] router.push failed:', e); } } },
         { key: 'notifications', label: t('sidebar.notifications') || 'Alertas',  ic: I(IconBell, '#f97316'),     route: '/notifications' },
         { key: 'backup',        label: t('sidebar.backup') || 'Backup',          ic: I(IconShield, '#0ea5e9'),   route: '/backup' },
@@ -1570,7 +1570,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                 <Text style={{
                   fontSize: 11,
                   fontWeight: '700',
-                  color: isDark ? 'rgba(18, 140, 126,0.78)' : '#128C7E',
+                  color: isDark ? 'rgba(17, 17, 17,0.78)' : '#111111',
                   letterSpacing: 0.5,
                   textTransform: 'uppercase',
                   marginBottom: 12,
@@ -1640,7 +1640,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
 // ── Desktop sidebar tab item with hover ──
 function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark, badge, dot }) {
   const [hovered, setHovered] = useState(false);
-  const color = active ? '#128C7E' : 'rgba(255,255,255,0.6)';
+  const color = active ? '#111111' : 'rgba(255,255,255,0.6)';
   const isWeb = Platform.OS === 'web';
 
   return (
@@ -1655,7 +1655,7 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
           : hovered
             ? (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.025)')
             : 'transparent',
-        borderLeftColor: active ? '#128C7E' : 'transparent',
+        borderLeftColor: active ? '#111111' : 'transparent',
         cursor: 'pointer',
         ...(isWeb ? { transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)' } : {}),
       }]}

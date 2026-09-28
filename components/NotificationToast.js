@@ -26,13 +26,13 @@ function getNotificationType(data) {
 const TYPE_ACCENTS = {
   email: { light: '#2563eb', dark: '#60a5fa' },
   chat: { light: '#10b981', dark: '#34d399' },
-  meeting: { light: '#128C7E', dark: '#128C7E' },
+  meeting: { light: '#111111', dark: '#111111' },
   live: { light: '#dc2626', dark: '#f87171' },
 };
 
 // Avatar color from name
 function getAvatarColor(name) {
-  const colors = ['#2563eb', '#16a34a', '#dc2626', '#f59e0b', '#128C7E', '#ea580c', '#0d9488', '#e11d48'];
+  const colors = ['#2563eb', '#16a34a', '#dc2626', '#f59e0b', '#111111', '#ea580c', '#0d9488', '#e11d48'];
   let hash = 0;
   for (let i = 0; i < (name || '').length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
   return colors[Math.abs(hash) % colors.length];
@@ -58,7 +58,7 @@ function getUrgencyStyle(data, isDark) {
 const CATEGORY_STYLES = {
   action_required: { key: 'toast.categoryAction', color: '#dc2626', bg: '#fef2f2' },
   finance: { key: 'toast.categoryFinance', color: '#d97706', bg: '#fffbeb' },
-  calendar: { key: 'toast.categoryCalendar', color: '#128C7E', bg: '#F1F3F5' },
+  calendar: { key: 'toast.categoryCalendar', color: '#111111', bg: '#F1F3F5' },
   security: { key: 'toast.categorySecurity', color: '#dc2626', bg: '#fef2f2' },
   shipping: { key: 'toast.categoryShipping', color: '#0d9488', bg: '#f0fdfa' },
   work: { key: 'toast.categoryWork', color: '#2563eb', bg: '#eff6ff' },
@@ -422,7 +422,7 @@ export default function NotificationToast({ notification, onDismiss }) {
               justifyContent: 'center',
               // Subtle purple ring — brand-aware, soft.
               borderWidth: 2,
-              borderColor: isDark ? 'rgba(18, 140, 126,0.55)' : 'rgba(18, 140, 126,0.35)',
+              borderColor: isDark ? 'rgba(17, 17, 17,0.55)' : 'rgba(17, 17, 17,0.35)',
             }}>
               <Text style={{
                 color: '#fff',
@@ -477,12 +477,12 @@ export default function NotificationToast({ notification, onDismiss }) {
               {isAI && (
                 <View style={{
                   marginLeft: 6,
-                  backgroundColor: 'rgba(18, 140, 126, 0.1)',
+                  backgroundColor: 'rgba(17, 17, 17, 0.1)',
                   paddingHorizontal: 5,
                   paddingVertical: 1,
                   borderRadius: 4,
                 }}>
-                  <Text style={{ fontSize: 9, fontWeight: '700', color: '#128C7E', letterSpacing: 0.3 }}>AI</Text>
+                  <Text style={{ fontSize: 9, fontWeight: '700', color: '#111111', letterSpacing: 0.3 }}>AI</Text>
                 </View>
               )}
               <Text style={{
@@ -641,7 +641,7 @@ export default function NotificationToast({ notification, onDismiss }) {
               outputRange: ['0%', '100%'],
             }),
             ...(Platform.OS === 'web' && data.urgency !== 'high' ? {
-              backgroundImage: 'linear-gradient(90deg, #128C7E 0%, #128C7E 100%)',
+              backgroundImage: 'linear-gradient(90deg, #111111 0%, #111111 100%)',
               backgroundColor: 'transparent',
             } : {}),
           }}

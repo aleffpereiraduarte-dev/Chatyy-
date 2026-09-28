@@ -13,7 +13,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconArrowLeft, IconSparkles } from '../components/Icons';
 import { aiMemoryGet, aiMemorySet, aiMemoryLearnStyle } from '../services/api';
 
-const ACCENT = '#128C7E';
+const ACCENT = '#111111';
 
 export default function BiaSettings() {
   const router = useRouter();

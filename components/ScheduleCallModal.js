@@ -566,9 +566,9 @@ const styles = StyleSheet.create({
     marginTop: 24, paddingVertical: 15, borderRadius: BorderRadius.lg,
     alignItems: 'center',
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 6px 18px rgba(18, 140, 126,0.32)',
+      boxShadow: '0 6px 18px rgba(17, 17, 17,0.32)',
     } : Platform.OS === 'ios' ? {
-      shadowColor: '#128C7E', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 14,
+      shadowColor: '#111111', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.3, shadowRadius: 14,
     } : { elevation: 5 }),
   },
   ctaText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '700', letterSpacing: 0.2 },

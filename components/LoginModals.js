@@ -231,8 +231,8 @@ export function HelpModal({ visible, onClose }) {
 
   const TICKET_TYPES = [
     { key: 'cant_login', icon: IconLock, color: '#dc2626' },
-    { key: 'email_issue', icon: IconMail, color: '#128C7E' },
-    { key: 'security', icon: IconShield, color: '#128C7E' },
+    { key: 'email_issue', icon: IconMail, color: '#111111' },
+    { key: 'security', icon: IconShield, color: '#111111' },
     { key: 'other', icon: IconInfo, color: '#64748b' },
   ];
 
@@ -413,7 +413,7 @@ export function PrivacyModal({ visible, onClose }) {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(60)).current;
   const scaleAnim = useRef(new Animated.Value(0.95)).current;
-  const privacyAccent = '#128C7E';
+  const privacyAccent = '#111111';
 
   useEffect(() => {
     if (visible) {
@@ -518,7 +518,7 @@ export function TermsModal({ visible, onClose }) {
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(60)).current;
   const scaleAnim = useRef(new Animated.Value(0.95)).current;
-  const termsAccent = '#128C7E';
+  const termsAccent = '#111111';
 
   useEffect(() => {
     if (visible) {

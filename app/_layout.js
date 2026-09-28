@@ -980,7 +980,7 @@ function AppInit({ onNotification, setOtaToast }) {
           /* Selection color */
           ::selection { background: rgba(37,99,235,0.2); color: inherit; }
           /* Focus ring for keyboard navigation */
-          :focus-visible { outline: 2px solid rgba(18, 140, 126,0.6); outline-offset: 2px; border-radius: 4px; }
+          :focus-visible { outline: 2px solid rgba(17, 17, 17,0.6); outline-offset: 2px; border-radius: 4px; }
           /* Smooth image loading */
           img { transition: opacity 0.3s ease; }
           /* Desktop chat message hover */
@@ -1490,7 +1490,7 @@ export default function RootLayout() {
                     top: Platform.OS === 'ios' ? 54 : 24,
                     left: 16, right: 16,
                     backgroundColor: otaToast.kind === 'success' ? '#16a34a'
-                                   : otaToast.kind === 'info' ? '#128C7E'
+                                   : otaToast.kind === 'info' ? '#111111'
                                    : 'rgba(30,30,30,0.95)',
                     borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16,
                     flexDirection: 'row', alignItems: 'center', gap: 10,

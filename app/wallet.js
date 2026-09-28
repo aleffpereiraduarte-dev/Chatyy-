@@ -44,9 +44,9 @@ import { WALLET_ENABLED } from '../constants/featureFlags';
 
 // ---- Palette -----------------------------------------------------------
 
-const PURPLE_DEEP = '#128C7E';
-const PURPLE      = '#128C7E';
-const PURPLE_SOFT = '#128C7E';
+const PURPLE_DEEP = '#111111';
+const PURPLE      = '#111111';
+const PURPLE_SOFT = '#111111';
 const GREEN       = '#10B981';
 const RED         = '#EF4444';
 
@@ -71,7 +71,7 @@ function HeroGradient({ children, style }) {
   return (
     <View style={[styles.heroBase, { backgroundColor: PURPLE_DEEP }, style]}>
       <View style={[styles.heroOverlay, {
-        backgroundColor: '#128C7E', opacity: 0.40,
+        backgroundColor: '#111111', opacity: 0.40,
         transform: [{ translateX: 80 }, { translateY: -60 }, { rotate: '-15deg' }],
       }]} />
       <View style={[styles.heroOverlay, {

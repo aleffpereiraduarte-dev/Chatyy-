@@ -525,7 +525,7 @@ const styles = StyleSheet.create({
 
   // ── Poll ───────────────────────────────────────────────────────────────────
   pollContainer: {
-    backgroundColor: 'rgba(18, 140, 126,0.92)',
+    backgroundColor: 'rgba(17, 17, 17,0.92)',
     borderRadius: CARD_RADIUS,
     padding: 14,
     width: 240,

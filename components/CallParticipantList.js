@@ -43,7 +43,7 @@ import Svg, { Path as SvgPath, Circle as SvgCircle } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
 import { useLanguage } from '../context/LanguageContext';
 
-const BRAND_PURPLE = '#128C7E';
+const BRAND_PURPLE = '#111111';
 const DANGER = '#EF4444';
 const SUCCESS = '#10B981';
 const MUTED_COLOR = '#9CA3AF';
@@ -529,7 +529,7 @@ const styles = StyleSheet.create({
   // Video on = blue cam pill.
   statusChipVideo: { backgroundColor: 'rgba(96,165,250,0.14)' },
   // Pinned = brand purple pill.
-  statusChipPinned: { backgroundColor: 'rgba(18, 140, 126,0.18)' },
+  statusChipPinned: { backgroundColor: 'rgba(17, 17, 17,0.18)' },
   statusText: { fontSize: 11, fontWeight: '600' },
   rowActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   iconBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },

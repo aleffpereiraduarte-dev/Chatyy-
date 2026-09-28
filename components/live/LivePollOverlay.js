@@ -144,7 +144,7 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   pollBadge: {
-    backgroundColor: '#128C7E',
+    backgroundColor: '#111111',
     paddingHorizontal: 8,
     paddingVertical: 2,
     borderRadius: 8,
@@ -181,7 +181,7 @@ const styles = StyleSheet.create({
   resultBar: {
     position: 'absolute',
     left: 0, top: 0, bottom: 0,
-    backgroundColor: 'rgba(18, 140, 126,0.55)',
+    backgroundColor: 'rgba(17, 17, 17,0.55)',
   },
   resultBarMine: {
     backgroundColor: 'rgba(34,197,94,0.65)',

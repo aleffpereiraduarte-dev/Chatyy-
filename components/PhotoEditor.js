@@ -105,8 +105,8 @@ function IconSun({ size = 22, color = '#fff' }) {
 
 // Brand color (Chatyy purple). Sourced once so we can use it inline as a
 // gradient stop / pill background without pulling theme on every paint.
-const BRAND = '#128C7E';
-const BRAND_DARK = '#128C7E';
+const BRAND = '#111111';
+const BRAND_DARK = '#111111';
 
 // Tab order matches the design brief: Filtros first (most-used color path),
 // then Texto, Adesivos, Desenho, Cortar, Brilho, Música, Tag pessoas. The
@@ -123,7 +123,7 @@ const TABS = ['filters', 'text', 'sticker', 'draw', 'crop', 'adjust', 'ai', 'mus
 // keeps the current color (real picker is TODO).
 const PEN_COLORS = [
   '#ffffff', '#000000', '#FF3B30', '#FF9500', '#FFCC00',
-  '#34C759', '#0A84FF', '#5856D6', '#128C7E', '#FF2D92',
+  '#34C759', '#0A84FF', '#5856D6', '#111111', '#FF2D92',
 ];
 
 // Stickers panel — grouped into packs (Emoji / GIPHY / Avatares / Branded)
@@ -1066,7 +1066,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
           <TouchableOpacity
             onPressIn={() => setComparing(true)}
             onPressOut={() => setComparing(false)}
-            style={[s.resetPill, comparing && { backgroundColor: 'rgba(18, 140, 126,0.55)' }]}
+            style={[s.resetPill, comparing && { backgroundColor: 'rgba(17, 17, 17,0.55)' }]}
             hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
             accessibilityLabel="Original"
           >
@@ -1608,9 +1608,9 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                       the existing stickerItems pipeline saves it unchanged. */}
                   <TouchableOpacity
                     onPress={() => setShowStickerStore(true)}
-                    style={[s.stickerPackPill, { backgroundColor: 'rgba(18, 140, 126,0.22)' }]}
+                    style={[s.stickerPackPill, { backgroundColor: 'rgba(17, 17, 17,0.22)' }]}
                   >
-                    <Text style={[s.stickerPackLabel, { color: '#128C7E', fontWeight: '700' }]}>
+                    <Text style={[s.stickerPackLabel, { color: '#111111', fontWeight: '700' }]}>
                       + Loja
                     </Text>
                   </TouchableOpacity>
@@ -1730,7 +1730,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                           onPress={() => _runAi(b.k)}
                           style={{
                             paddingHorizontal: 14, paddingVertical: 10,
-                            borderRadius: 18, backgroundColor: aiBusyMode === b.k ? '#128C7E' : 'rgba(255,255,255,0.08)',
+                            borderRadius: 18, backgroundColor: aiBusyMode === b.k ? '#111111' : 'rgba(255,255,255,0.08)',
                             opacity: aiBusyMode && aiBusyMode !== b.k ? 0.5 : 1,
                           }}
                         >
@@ -1765,7 +1765,7 @@ export default function PhotoEditor({ visible, imageUri, onSave, onClose, photoI
                         <Text numberOfLines={1} style={{ color: '#bbb', fontSize: 11, marginTop: 2 }}>{aiResultUrl}</Text>
                         <TouchableOpacity
                           onPress={() => { onSave?.({ uri: aiResultUrl, ai_enhanced: true }); }}
-                          style={{ marginTop: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, backgroundColor: '#128C7E', alignSelf: 'flex-start' }}
+                          style={{ marginTop: 8, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14, backgroundColor: '#111111', alignSelf: 'flex-start' }}
                         >
                           <Text style={{ color: '#fff', fontWeight: '600', fontSize: 13 }}>Usar resultado</Text>
                         </TouchableOpacity>
@@ -2171,7 +2171,7 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.1)',
   },
   transformBtnActive: {
-    backgroundColor: 'rgba(18, 140, 126,0.4)',
+    backgroundColor: 'rgba(17, 17, 17,0.4)',
   },
   ratioRow: {
     flexDirection: 'row',
@@ -2229,7 +2229,7 @@ const s = StyleSheet.create({
     marginTop: 4,
   },
   activeTool: {
-    backgroundColor: 'rgba(18, 140, 126, 0.3)',
+    backgroundColor: 'rgba(17, 17, 17, 0.3)',
   },
   // Filters — filmstrip with 60×80 thumbnails. Active gets a 2px white
   // border per the design spec (vs the brand color we used to use). The
@@ -2365,7 +2365,7 @@ const s = StyleSheet.create({
   sliderFill: {
     position: 'absolute',
     height: '100%',
-    backgroundColor: '#128C7E',
+    backgroundColor: '#111111',
     borderRadius: 2,
   },
   sliderKnob: {
@@ -2414,7 +2414,7 @@ const s = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#128C7E',
+    backgroundColor: '#111111',
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -2515,7 +2515,7 @@ const s = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 8,
     borderRadius: 18,
-    backgroundColor: '#128C7E',
+    backgroundColor: '#111111',
   },
   blurAddBtnLabel: {
     color: '#fff',

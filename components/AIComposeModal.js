@@ -9,8 +9,8 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconSparkles, IconX } from './Icons';
 
-const BRAND = '#128C7E';
-const BRAND_PINK = '#128C7E';
+const BRAND = '#111111';
+const BRAND_PINK = '#111111';
 
 const TONES = [
   { id: 'formal', label: 'Formal', emoji: '🎩' },

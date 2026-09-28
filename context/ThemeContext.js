@@ -40,11 +40,11 @@ export const DENSITY_CONFIG = {
 // action green so the default swatch and the base palette agree. Key names are
 // kept so the settings picker + i18n labels still resolve; only hexes changed
 // off violet. This accent overrides `primary`/`chatPrimary` in `colors` below,
-// so it MUST match constants/theme.js `primary` (light #128C7E) — otherwise the
+// so it MUST match constants/theme.js `primary` (light #111111) — otherwise the
 // override would re-introduce a different hue.
 export const ACCENT_PRESETS = [
-  { key: 'green',  hex: '#128C7E' },
-  { key: 'teal',   hex: '#0FA97F' },
+  { key: 'green',  hex: '#111111' },
+  { key: 'teal',   hex: '#111111' },
   { key: 'blue',   hex: '#3B82F6' },
   { key: 'orange', hex: '#F59E0B' },
   { key: 'slate',  hex: '#64748B' },
@@ -66,7 +66,7 @@ export function ThemeProvider({ children }) {
   const [themeMode, setThemeModeState] = useState('system');
   const [density, setDensityState] = useState('comfortable');
   const [inboxType, setInboxTypeState] = useState('default');
-  const [accentColor, setAccentColorState] = useState('#128C7E');
+  const [accentColor, setAccentColorState] = useState('#111111');
   const systemScheme = useColorScheme();
 
   // Load saved theme, density, inboxType

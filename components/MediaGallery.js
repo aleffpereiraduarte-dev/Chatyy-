@@ -14,8 +14,8 @@ const TABS = ['image', 'video', 'audio', 'file'];
 // the active-pill, empty-state circle, list icons and accents are all the
 // brand color. Per-type is still distinguishable via the icon (Image/Film/
 // Music/FileText), not via clashing hues.
-const BRAND = '#128C7E';
-const BRAND_SOFT = 'rgba(18, 140, 126,0.12)';
+const BRAND = '#111111';
+const BRAND_SOFT = 'rgba(17, 17, 17,0.12)';
 const TAB_THEME = {
   image: { color: BRAND, soft: BRAND_SOFT, Icon: IconImage },
   video: { color: BRAND, soft: BRAND_SOFT, Icon: IconFilm },
@@ -66,7 +66,7 @@ function EmptyState({ type, colors }) {
       <View style={{
         width: 92, height: 92, borderRadius: 46, backgroundColor: soft,
         alignItems: 'center', justifyContent: 'center', marginBottom: 18,
-        borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(18, 140, 126,0.22)',
+        borderWidth: StyleSheet.hairlineWidth, borderColor: 'rgba(17, 17, 17,0.22)',
       }}>
         <Icon size={38} color={color} />
       </View>

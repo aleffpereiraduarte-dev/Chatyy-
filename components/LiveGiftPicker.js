@@ -23,11 +23,11 @@ import { IconX } from './Icons';
 // table so client tampering won't fake-credit a sender.
 export const GIFT_CATALOG = [
   { type: 'rose',   diamonds: 1,   color: '#ef4444', label: 'Rose' },
-  { type: 'heart',  diamonds: 5,   color: '#128C7E', label: 'Heart' },
+  { type: 'heart',  diamonds: 5,   color: '#111111', label: 'Heart' },
   { type: 'star',   diamonds: 10,  color: '#facc15', label: 'Star' },
   { type: 'crown',  diamonds: 25,  color: '#fbbf24', label: 'Crown' },
   { type: 'fire',   diamonds: 50,  color: '#f97316', label: 'Fire' },
-  { type: 'rocket', diamonds: 100, color: '#128C7E', label: 'Rocket' },
+  { type: 'rocket', diamonds: 100, color: '#111111', label: 'Rocket' },
 ];
 
 export function GiftGlyph({ type, size = 36, color }) {
@@ -75,7 +75,7 @@ export function GiftGlyph({ type, size = 36, color }) {
       return (
         <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
           <Path d="M12 2c4 2 6 6 6 10v3l-2 2h-8l-2-2v-3c0-4 2-8 6-10Z" fill={fill} />
-          <Circle cx="12" cy="9" r="2" fill="#fef3c7" stroke="#128C7E" strokeWidth={1} />
+          <Circle cx="12" cy="9" r="2" fill="#fef3c7" stroke="#111111" strokeWidth={1} />
           <Path d="M7 17l-3 4 3-1 1 2 1-3" fill="#f97316" />
           <Path d="M17 17l3 4-3-1-1 2-1-3" fill="#f97316" />
           <Path d="M10 21h4l-2 2-2-2Z" fill="#fbbf24" />

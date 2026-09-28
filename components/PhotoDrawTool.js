@@ -29,7 +29,7 @@ const COLORS = [
   '#FFFFFF', '#000000', '#9CA3AF',
   '#EF4444', '#F59E0B', '#FFCC00',
   '#10B981', '#06B6D4', '#3B82F6',
-  '#128C7E', '#128C7E', '#128C7E',
+  '#111111', '#111111', '#111111',
 ];
 
 // 4 brush sizes (was 3). The smallest is for fine annotation (signature,
@@ -238,7 +238,7 @@ export default function PhotoDrawTool({ imageUri, width, height, onDone, onCance
             onPress={() => setTool(TOOLS.PEN)}
             style={{
               paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18,
-              backgroundColor: tool === TOOLS.PEN ? '#128C7E' : 'rgba(255,255,255,0.1)',
+              backgroundColor: tool === TOOLS.PEN ? '#111111' : 'rgba(255,255,255,0.1)',
             }}
           >
             <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
@@ -249,7 +249,7 @@ export default function PhotoDrawTool({ imageUri, width, height, onDone, onCance
             onPress={() => setTool(TOOLS.ERASER)}
             style={{
               paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18,
-              backgroundColor: tool === TOOLS.ERASER ? '#128C7E' : 'rgba(255,255,255,0.1)',
+              backgroundColor: tool === TOOLS.ERASER ? '#111111' : 'rgba(255,255,255,0.1)',
             }}
           >
             <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>
@@ -329,7 +329,7 @@ export default function PhotoDrawTool({ imageUri, width, height, onDone, onCance
                 style={{
                   alignItems: 'center', justifyContent: 'center',
                   width: 42, height: 42, borderRadius: 21,
-                  backgroundColor: strokeWidth === w ? 'rgba(18, 140, 126,0.3)' : 'transparent',
+                  backgroundColor: strokeWidth === w ? 'rgba(17, 17, 17,0.3)' : 'transparent',
                   borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)',
                 }}
               >
@@ -366,7 +366,7 @@ export default function PhotoDrawTool({ imageUri, width, height, onDone, onCance
           >
             <Text style={{ color: '#fff', fontWeight: '600', fontSize: 12 }}>{t?.('common.clear') || 'Limpar'}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={handleDone} style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#128C7E', alignItems: 'center' }}>
+          <TouchableOpacity onPress={handleDone} style={{ flex: 1, padding: 12, borderRadius: 10, backgroundColor: '#111111', alignItems: 'center' }}>
             <Text style={{ color: '#fff', fontWeight: '700', fontSize: 12 }}>{t?.('common.done') || 'Pronto'}</Text>
           </TouchableOpacity>
         </View>

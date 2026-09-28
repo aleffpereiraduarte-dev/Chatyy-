@@ -12,7 +12,7 @@ import { IconArrowLeft, IconSearch, IconX } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import Svg, { Path, Rect, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
 
-const ACCENT = '#128C7E';
+const ACCENT = '#111111';
 const isWeb = Platform.OS === 'web';
 
 // SVG category icons (no emoji per UI rule)
@@ -74,7 +74,7 @@ const CATEGORY_GRID = [
   { key: 'music',    label: 'Música',   Icon: IconMusic,    tint: '#F59E0B' },
   { key: 'sports',   label: 'Esporte',  Icon: IconSports,   tint: '#10B981' },
   { key: 'science',  label: 'Ciência',  Icon: IconScience,  tint: '#3B82F6' },
-  { key: 'comedy',   label: 'Comédia',  Icon: IconComedy,   tint: '#128C7E' },
+  { key: 'comedy',   label: 'Comédia',  Icon: IconComedy,   tint: '#111111' },
   { key: 'business', label: 'Negócios', Icon: IconBusiness, tint: ACCENT    },
 ];
 
@@ -183,7 +183,7 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
     return (
       <View style={[sty.channelRow, { borderBottomColor: isDark ? '#222' : '#f0f0f0' }]}>
         <View style={[sty.channelIcon, {
-          backgroundColor: isDark ? 'rgba(18, 140, 126,0.15)' : 'rgba(18, 140, 126,0.1)',
+          backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(17, 17, 17,0.1)',
         }]}>
           <IconHashtag size={22} color={ACCENT} />
         </View>
@@ -226,7 +226,7 @@ export default function ChannelDiscoverModal({ visible, onClose, onJoined }) {
     <Modal visible={visible} animationType="slide" onRequestClose={onClose} transparent={false}>
       <View style={[sty.container, { backgroundColor: colors.background }]}>
         {/* Header */}
-        <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#128C7E', paddingTop: headerPadTop }]}>
+        <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#111111', paddingTop: headerPadTop }]}>
           <TouchableOpacity onPress={onClose} style={sty.headerBtn}>
             <IconArrowLeft size={22} color="#fff" />
           </TouchableOpacity>

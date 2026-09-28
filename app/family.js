@@ -30,13 +30,13 @@ import * as api from '../services/api';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { PLANS_ENABLED } from '../constants/featureFlags';
 
-const ACCENT = '#128C7E';
-const ACCENT_LIGHT = '#128C7E';
+const ACCENT = '#111111';
+const ACCENT_LIGHT = '#111111';
 
 // Role color palette — keeps UI consistent across rows.
 const ROLE_PALETTE = {
-  parent: { bg: '#128C7E22', fg: '#128C7E', label: 'Pai/Mãe' },
-  spouse: { bg: '#128C7E22', fg: '#128C7E', label: 'Cônjuge' },
+  parent: { bg: '#11111122', fg: '#111111', label: 'Pai/Mãe' },
+  spouse: { bg: '#11111122', fg: '#111111', label: 'Cônjuge' },
   child:  { bg: '#10B98122', fg: '#10B981', label: 'Criança' },
 };
 
@@ -511,7 +511,7 @@ function FamilyScreenInner() {
               )}
               <FeatureRow
                 icon={IconImage}
-                color="#128C7E"
+                color="#111111"
                 title="Álbum compartilhado"
                 subtitle="Fotos e vídeos visíveis pra família toda"
                 onPress={() => {
@@ -541,7 +541,7 @@ function FamilyScreenInner() {
               />
               <FeatureRow
                 icon={IconNavigation}
-                color="#128C7E"
+                color="#111111"
                 title="Encontrar família"
                 subtitle="Veja a localização dos membros no mapa"
                 onPress={() => {

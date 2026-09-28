@@ -266,7 +266,7 @@ const s = StyleSheet.create({
   primaryBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     paddingVertical: 14, borderRadius: BorderRadius.lg, marginTop: 6,
-    shadowColor: '#128C7E', shadowOffset: { width: 0, height: 6 },
+    shadowColor: '#111111', shadowOffset: { width: 0, height: 6 },
     shadowOpacity: 0.28, shadowRadius: 14, elevation: 6,
   },
   primaryBtnLabel: { color: '#fff', fontWeight: '800', marginLeft: 8, fontSize: FontSize.base },

@@ -225,7 +225,7 @@ const styles = StyleSheet.create({
     width: SCREEN_W * 0.7,
     height: SCREEN_W * 0.7,
     borderRadius: (SCREEN_W * 0.7) / 2,
-    backgroundColor: '#128C7E',
+    backgroundColor: '#111111',
     justifyContent: 'center',
     alignItems: 'center',
   },

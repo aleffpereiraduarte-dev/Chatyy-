@@ -34,7 +34,7 @@ import {
   IconSparkles, IconBell, IconCheck,
 } from '../components/Icons';
 
-const ACCENT = '#128C7E';
+const ACCENT = '#111111';
 
 function timeAgo(iso, t) {
   if (!iso) return '';
@@ -49,7 +49,7 @@ function timeAgo(iso, t) {
 
 function NotificationIcon({ type, colors }) {
   if (type === 'feed_like') return <IconHeart size={22} color="#ef4444" />;
-  if (type === 'feed_comment') return <IconMessageCircle size={22} color="#128C7E" />;
+  if (type === 'feed_comment') return <IconMessageCircle size={22} color="#111111" />;
   if (type === 'follow') return <IconUser size={22} color={ACCENT} />;
   if (type === 'one_alert') return <IconSparkles size={20} color="#f59e0b" />;
   return <IconMessageCircle size={22} color={colors.textSecondary} />;
@@ -196,7 +196,7 @@ export default function NotificationsFeedScreen() {
       <TouchableOpacity
         onPress={() => handlePress(item)}
         activeOpacity={0.7}
-        style={[styles.row, { backgroundColor: item.read ? 'transparent' : (isDark ? 'rgba(18, 140, 126,0.08)' : 'rgba(18, 140, 126,0.05)') }]}
+        style={[styles.row, { backgroundColor: item.read ? 'transparent' : (isDark ? 'rgba(17, 17, 17,0.08)' : 'rgba(17, 17, 17,0.05)') }]}
       >
         <View style={{ position: 'relative' }}>
           <AvatarCircle email={item.author_email} name={item.author_email} size={44} />

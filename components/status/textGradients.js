@@ -15,12 +15,12 @@
 
 // Canonical ARRAY form — preserves preset order for the composer's picker row.
 export const TEXT_BG_GRADIENTS = [
-  { id: 'purple_pink', colors: ['#128C7E', '#128C7E'] },
+  { id: 'purple_pink', colors: ['#111111', '#111111'] },
   { id: 'blue_cyan',   colors: ['#2563EB', '#06B6D4'] },
   { id: 'orange_red',  colors: ['#F97316', '#EF4444'] },
   { id: 'green_teal',  colors: ['#10B981', '#14B8A6'] },
   { id: 'sunset',      colors: ['#FACC15', '#F97316', '#EF4444'] },
-  { id: 'aurora',      colors: ['#06B6D4', '#128C7E', '#128C7E'] },
+  { id: 'aurora',      colors: ['#06B6D4', '#111111', '#111111'] },
 ];
 
 // Resolve a published `bg_color` (solid hex OR `gradient:<id>` token) back to a

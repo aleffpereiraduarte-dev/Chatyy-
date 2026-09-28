@@ -21,7 +21,7 @@ import * as api from '../services/api';
 import { swr, getCachedSync, setCache, userScopedKey } from '../services/cache';
 
 // Brand color (Chatyy purple)
-const BRAND = '#128C7E';
+const BRAND = '#111111';
 
 // [WAVE 100] Module-scope live store — survives unmount/remount in the same
 // JS runtime (e.g. user opens /notifications, navigates to /inbox, comes
@@ -68,7 +68,7 @@ function TypeBadge({ type, size = 18 }) {
     like:    { Icon: IconHeart,         bg: '#ef4444', color: '#fff' },
     comment: { Icon: IconMessageSquare, bg: '#f59e0b', color: '#fff' },
     follow:  { Icon: IconUser,          bg: '#10b981', color: '#fff' },
-    live:    { Icon: IconFilm,          bg: '#128C7E', color: '#fff' },
+    live:    { Icon: IconFilm,          bg: '#111111', color: '#fff' },
   };
   const cfg = map[type] || { Icon: IconBell, bg: '#6b7280', color: '#fff' };
   return (
@@ -176,7 +176,7 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
     title = name ? `${name} começou a seguir você` : title;
   }
 
-  const unreadBg = isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.05)';
+  const unreadBg = isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.05)';
 
   // Right-side thumbnail (post preview) for likes/comments referencing a post
   const thumbUri = item.thumbnail_url || item.post_thumbnail || null;
@@ -709,7 +709,7 @@ function NotificationsScreenInner() {
         {hasUnread ? (
           <TouchableOpacity
             onPress={markAllRead}
-            style={[styles.markAllPill, { backgroundColor: 'rgba(18, 140, 126,0.10)' }]}
+            style={[styles.markAllPill, { backgroundColor: 'rgba(17, 17, 17,0.10)' }]}
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button"
             accessibilityLabel={t('notifications.markAll') || 'Marcar todas'}

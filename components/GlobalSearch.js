@@ -21,7 +21,7 @@ import {
 } from './Icons';
 
 // Spotlight-style brand accent — used everywhere the focus needs to pop.
-const BRAND = '#128C7E';
+const BRAND = '#111111';
 const RECENT_KEY = '@chatyy_global_recent_searches';
 const MAX_RECENT = 6;
 // Per-section preview cap. Anything beyond shows "Ver todos →".
@@ -207,7 +207,7 @@ function applyFilter(results, filterId) {
 }
 
 function FilterChip({ label, active, onPress, colors }) {
-  const brand = colors?.primary || '#128C7E';
+  const brand = colors?.primary || '#111111';
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -391,7 +391,7 @@ export default function GlobalSearch({
                 borderRadius: 10,
                 alignItems: 'center',
                 justifyContent: 'center',
-                backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.10)',
+                backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)',
               }}
             >
               <IconSearch size={18} color={BRAND} />

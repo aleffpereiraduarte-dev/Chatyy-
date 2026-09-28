@@ -36,7 +36,7 @@ import { useBiometric } from '../context/BiometricContext';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { WALLET_ENABLED, MONETIZATION_ENABLED } from '../constants/featureFlags';
 
-const ACCENT = '#128C7E';
+const ACCENT = '#111111';
 
 // ─── Shared building blocks ──────────────────────────────────────────
 // Row — iconTint is the brand colour for the icon glyph + a 14% bg tint
@@ -57,7 +57,7 @@ function Row({ icon: Icon, label, value, onPress, colors, destructive, right, ic
         paddingHorizontal: 16,
         paddingVertical: 13,
         gap: 14,
-        backgroundColor: pressed ? 'rgba(18, 140, 126,0.06)' : 'transparent',
+        backgroundColor: pressed ? 'rgba(17, 17, 17,0.06)' : 'transparent',
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: (colors?.borderLight || '#f1f5f9') + '60',
       })}
@@ -199,13 +199,13 @@ function AccentColorRow({ colors, t }) {
 //  • Logout/Delete pushed to bottom with strong 6px divider on top
 //
 // Section colour palette (kept inline so tweaks live next to the rows):
-const ICON_PURPLE = '#128C7E';
+const ICON_PURPLE = '#111111';
 const ICON_RED    = '#ef4444';
 const ICON_AMBER  = '#f59e0b';
 const ICON_BLUE   = '#3b82f6';
 const ICON_TEAL   = '#0ea5e9';
 const ICON_GRAY   = '#64748b';
-const ICON_PINK   = '#128C7E';
+const ICON_PINK   = '#111111';
 const ICON_GREEN  = '#10b981';
 
 // ─── Hero card (avatar + name + email) ───────────────────────────────
@@ -275,22 +275,22 @@ function PlusUpsellCard({ colors, onPress, t }) {
         paddingVertical: 10,
         paddingHorizontal: 12,
         borderRadius: 12,
-        backgroundColor: 'rgba(18, 140, 126,0.06)',
+        backgroundColor: 'rgba(17, 17, 17,0.06)',
         opacity: pressed ? 0.7 : 1,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
         borderWidth: 1,
-        borderColor: 'rgba(18, 140, 126,0.28)',
+        borderColor: 'rgba(17, 17, 17,0.28)',
       })}
       accessibilityRole="button"
     >
       <View style={{
         width: 28, height: 28, borderRadius: 8,
-        backgroundColor: 'rgba(18, 140, 126,0.12)',
+        backgroundColor: 'rgba(17, 17, 17,0.12)',
         alignItems: 'center', justifyContent: 'center',
       }}>
-        <IconSparkles size={16} color="#128C7E" />
+        <IconSparkles size={16} color="#111111" />
       </View>
       <View style={{ flex: 1 }}>
         <Text style={{ fontSize: 14, fontWeight: '600', color: colors?.text || '#111' }} numberOfLines={1}>
@@ -510,7 +510,7 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
                 }}>
                   <View style={{
                     minWidth: 22, paddingHorizontal: 6, height: 20,
-                    borderRadius: 10, backgroundColor: '#128C7E',
+                    borderRadius: 10, backgroundColor: '#111111',
                     alignItems: 'center', justifyContent: 'center',
                   }}>
                     <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{r.badge}</Text>
@@ -697,7 +697,7 @@ function DevicesScreen({ colors, t, onClose, onLogout }) {
   const deviceVisual = (s) => {
     const label = (s.device_label || s.user_agent || '').toLowerCase();
     if (label.includes('iphone') || label.includes('ipad') || label.includes('darwin') || label.includes('cfnetwork')) {
-      return { Icon: IconSmartphone, tint: '#128C7E', bg: '#128C7E18' };
+      return { Icon: IconSmartphone, tint: '#111111', bg: '#11111118' };
     }
     if (label.includes('android')) {
       return { Icon: IconSmartphone, tint: '#10b981', bg: '#10b98118' };

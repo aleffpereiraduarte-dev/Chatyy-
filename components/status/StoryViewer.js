@@ -858,7 +858,7 @@ try { _expoAudio = require('expo-audio'); } catch {}
 // a static waveform + label. The audio itself is driven by StatusMusicPlayer;
 // this only paints the canvas (StoryMedia handles image/video/text).
 function VoiceStatusMedia({ caption, bgColor, t }) {
-  const bg = (bgColor && /^#|rgb/.test(String(bgColor))) ? bgColor : '#128C7E';
+  const bg = (bgColor && /^#|rgb/.test(String(bgColor))) ? bgColor : '#111111';
   const bars = [10, 18, 26, 16, 30, 22, 34, 20, 28, 14, 24, 32, 18, 26, 12, 22, 30, 16, 24, 20];
   return (
     <View style={{ flex: 1, backgroundColor: bg, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
@@ -2051,9 +2051,9 @@ export default function StoryViewer({
             // so finished + in-progress segments read as one consistent brand
             // surface (vs the prior solid white that looked disconnected).
             <View style={{ width: '100%', height: '100%', flexDirection: 'row' }}>
-              <View style={{ flex: 1, backgroundColor: '#128C7E' }} />
-              <View style={{ flex: 1, backgroundColor: '#128C7E' }} />
-              <View style={{ flex: 1, backgroundColor: '#128C7E' }} />
+              <View style={{ flex: 1, backgroundColor: '#111111' }} />
+              <View style={{ flex: 1, backgroundColor: '#111111' }} />
+              <View style={{ flex: 1, backgroundColor: '#111111' }} />
             </View>
           )}
           {i === safeIdx && (
@@ -2065,15 +2065,15 @@ export default function StoryViewer({
                 width: progressRef.current.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }),
                 backgroundColor: 'transparent',
                 flexDirection: 'row',
-                shadowColor: '#128C7E', shadowOpacity: 0.7, shadowRadius: 4, shadowOffset: { width: 0, height: 0 },
+                shadowColor: '#111111', shadowOpacity: 0.7, shadowRadius: 4, shadowOffset: { width: 0, height: 0 },
               }}
             >
               {/* Brand gradient (purple → pink) — three stacked color steps
                   approximate a linear-gradient cheaply. Pink trailing edge
                   carries a soft glow via shadowColor on the parent. */}
-              <View style={{ flex: 1, backgroundColor: '#128C7E' }} />
-              <View style={{ flex: 1, backgroundColor: '#128C7E' }} />
-              <View style={{ flex: 1, backgroundColor: '#128C7E' }} />
+              <View style={{ flex: 1, backgroundColor: '#111111' }} />
+              <View style={{ flex: 1, backgroundColor: '#111111' }} />
+              <View style={{ flex: 1, backgroundColor: '#111111' }} />
             </Animated.View>
           )}
         </View>
@@ -2264,7 +2264,7 @@ export default function StoryViewer({
                     onClose?.();
                     setTimeout(() => { try { onRepost?.(item); } catch {} }, 150);
                   }}
-                  style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(18, 140, 126,0.55)', alignItems: 'center', justifyContent: 'center' }}
+                  style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: 'rgba(17, 17, 17,0.55)', alignItems: 'center', justifyContent: 'center' }}
                   accessibilityLabel={t?.('status.repostAction') || 'Repostar'}
                 >
                   <IconArrowRight size={18} color="#fff" />
@@ -2282,7 +2282,7 @@ export default function StoryViewer({
               disabled={saving}
               style={{
                 width: 34, height: 34, borderRadius: 17,
-                backgroundColor: saving ? 'rgba(18, 140, 126,0.55)' : 'rgba(0,0,0,0.4)',
+                backgroundColor: saving ? 'rgba(17, 17, 17,0.55)' : 'rgba(0,0,0,0.4)',
                 alignItems: 'center', justifyContent: 'center',
                 opacity: saving ? 0.7 : 1,
               }}
@@ -2675,7 +2675,7 @@ export default function StoryViewer({
               </Text>
               <View style={{
                 width: 22, height: 22, borderRadius: 11,
-                backgroundColor: '#128C7E',
+                backgroundColor: '#111111',
                 alignItems: 'center', justifyContent: 'center',
               }}>
                 <IconArrowRight size={13} color="#fff" />
@@ -2837,7 +2837,7 @@ export default function StoryViewer({
               left: rippleAt.x - 60, top: rippleAt.y - 60,
               width: 120, height: 120, borderRadius: 60,
               backgroundColor: 'rgba(255,255,255,0.3)',
-              borderWidth: 2, borderColor: 'rgba(18, 140, 126,0.55)',
+              borderWidth: 2, borderColor: 'rgba(17, 17, 17,0.55)',
               zIndex: 15,
               opacity: rippleAnim.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0] }),
               transform: [{
@@ -2881,7 +2881,7 @@ export default function StoryViewer({
               flexDirection: 'row', alignItems: 'center', gap: 8,
               backgroundColor: 'rgba(20,20,28,0.92)',
               borderRadius: 22, paddingHorizontal: 14, paddingVertical: 9,
-              borderWidth: 1, borderColor: 'rgba(18, 140, 126,0.55)',
+              borderWidth: 1, borderColor: 'rgba(17, 17, 17,0.55)',
               shadowColor: '#000', shadowOpacity: 0.35, shadowRadius: 8,
               shadowOffset: { width: 0, height: 4 }, elevation: 6,
               maxWidth: '85%',
@@ -3024,7 +3024,7 @@ export default function StoryViewer({
                   style={{
                     flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start',
                     gap: 8,
-                    backgroundColor: 'rgba(18, 140, 126,0.78)',
+                    backgroundColor: 'rgba(17, 17, 17,0.78)',
                     borderRadius: 18, paddingHorizontal: 12, paddingVertical: 6,
                     borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)',
                   }}
@@ -3108,7 +3108,7 @@ export default function StoryViewer({
                         // Soft glow only while pulsing — adds visual oomph
                         // without bloating the resting state.
                         ...(pulsing ? {
-                          shadowColor: '#128C7E', shadowOpacity: 0.6, shadowRadius: 10, shadowOffset: { width: 0, height: 0 },
+                          shadowColor: '#111111', shadowOpacity: 0.6, shadowRadius: 10, shadowOffset: { width: 0, height: 0 },
                         } : null),
                       }}
                     >
@@ -3216,12 +3216,12 @@ export default function StoryViewer({
                       }}
                       style={{
                         width: 34, height: 34, borderRadius: 17,
-                        backgroundColor: '#128C7E',
+                        backgroundColor: '#111111',
                         alignItems: 'center', justifyContent: 'center',
                         opacity: replying ? 0.6 : 1,
                         // Soft brand glow so the send affordance pops against
                         // the translucent reply field (WhatsApp/IG parity).
-                        shadowColor: '#128C7E', shadowOpacity: 0.55, shadowRadius: 8,
+                        shadowColor: '#111111', shadowOpacity: 0.55, shadowRadius: 8,
                         shadowOffset: { width: 0, height: 2 }, elevation: 5,
                       }}
                       accessibilityLabel={t?.('common.send') || 'Enviar'}
@@ -3250,8 +3250,8 @@ export default function StoryViewer({
           >
             <Animated.View style={{
               width: 88, height: 88, borderRadius: 44,
-              backgroundColor: 'rgba(18, 140, 126,0.18)',
-              borderWidth: 2, borderColor: '#128C7E',
+              backgroundColor: 'rgba(17, 17, 17,0.18)',
+              borderWidth: 2, borderColor: '#111111',
               alignItems: 'center', justifyContent: 'center', marginBottom: 18,
               transform: [{ scale: caughtUpAnim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 1] }) }],
             }}>
@@ -3300,7 +3300,7 @@ export default function StoryViewer({
               </View>
               {viewersLoading ? (
                 <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                  <ActivityIndicator size="small" color="#128C7E" />
+                  <ActivityIndicator size="small" color="#111111" />
                 </View>
               ) : viewersList.length === 0 ? (
                 <View style={{ paddingVertical: 32, alignItems: 'center' }}>
@@ -3335,8 +3335,8 @@ export default function StoryViewer({
                         {emoji ? (
                           <View style={{
                             width: 34, height: 34, borderRadius: 17,
-                            backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.08)',
-                            borderWidth: 1, borderColor: 'rgba(18, 140, 126,0.32)',
+                            backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.08)',
+                            borderWidth: 1, borderColor: 'rgba(17, 17, 17,0.32)',
                             alignItems: 'center', justifyContent: 'center',
                           }}>
                             <Text style={{ fontSize: 18 }}>{emoji}</Text>

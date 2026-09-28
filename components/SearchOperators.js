@@ -16,7 +16,7 @@ const RECENT_SEARCHES_KEY = '@onemundo_recent_searches';
 const MAX_RECENT = 5;
 
 // Brand accent for operator pills (consistent with global search overlay).
-const BRAND = '#128C7E';
+const BRAND = '#111111';
 
 // --- Search operator definitions ---
 const OPERATORS = [
@@ -243,8 +243,8 @@ export default function SearchOperators({
                 style={[
                   styles.pill,
                   {
-                    backgroundColor: isDark ? 'rgba(18, 140, 126,0.14)' : 'rgba(18, 140, 126,0.08)',
-                    borderColor: isDark ? 'rgba(18, 140, 126,0.30)' : 'rgba(18, 140, 126,0.20)',
+                    backgroundColor: isDark ? 'rgba(17, 17, 17,0.14)' : 'rgba(17, 17, 17,0.08)',
+                    borderColor: isDark ? 'rgba(17, 17, 17,0.30)' : 'rgba(17, 17, 17,0.20)',
                   },
                 ]}
               >

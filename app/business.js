@@ -34,7 +34,7 @@ function IconCartLocal({ size = 24, color = "#666" }) {
 }
 
 const ACCENT = '#25D366'; // WhatsApp green
-const ACCENT_DARK = '#128C7E';
+const ACCENT_DARK = '#111111';
 const VERIFIED_COLOR = '#1DA1F2';
 
 // ─── Helper: safe Alert ───
@@ -56,7 +56,7 @@ const CATEGORIES = [
 // ─── Label colors (WhatsApp Business style) ───
 const LABEL_COLORS = [
   '#ef4444', '#f97316', '#eab308', '#22c55e',
-  '#3b82f6', '#128C7E', '#128C7E', '#14b8a6',
+  '#3b82f6', '#111111', '#111111', '#14b8a6',
 ];
 
 const LABEL_DEFAULTS = [
@@ -298,7 +298,7 @@ function ProfileTab({ colors, isDark, user }) {
 
         {/* Stats */}
         <View style={styles.statsRow}>
-          <StatCard label="Produtos" value={profile?.product_count ?? '—'} color="#128C7E" colors={colors} />
+          <StatCard label="Produtos" value={profile?.product_count ?? '—'} color="#111111" colors={colors} />
           <StatCard label="Pedidos" value={profile?.order_count ?? '—'} color={ACCENT} colors={colors} />
           <StatCard label="Avaliação" value={profile?.rating ? `${profile.rating}★` : '—'} color="#f59e0b" colors={colors} />
         </View>

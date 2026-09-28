@@ -64,7 +64,7 @@ export default function GroupJoinScreen() {
             </Text>
             <TouchableOpacity
               onPress={() => router.replace({ pathname: '/login', params: { redirect: `/j/${token}` } })}
-              style={{ paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, backgroundColor: '#128C7E' }}
+              style={{ paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, backgroundColor: '#111111' }}
             >
               <Text style={{ color: '#fff', fontWeight: '700' }}>{t?.('common.login') || 'Entrar'}</Text>
             </TouchableOpacity>

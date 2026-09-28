@@ -150,7 +150,7 @@ function RenderEffect({ effect }) {
 
 // ── Balloons ────────────────────────────────────────────────────────
 function Balloons() {
-  const COLORS = ['#EF4444', '#F59E0B', '#FACC15', '#10B981', '#3B82F6', '#128C7E', '#128C7E', '#06B6D4'];
+  const COLORS = ['#EF4444', '#F59E0B', '#FACC15', '#10B981', '#3B82F6', '#111111', '#111111', '#06B6D4'];
   // iMessage-grade upgrade 2026-05-07: 18 → 28 balloons, broader staggering
   // so they fill the screen instead of clumping mid-anim.
   const balloons = useRef(
@@ -233,7 +233,7 @@ function Balloon({ x, delay, duration, sway, swayPeriod, size, color }) {
 function Confetti({ golden = false }) {
   const COLORS = golden
     ? ['#FACC15', '#F59E0B', '#FCD34D', '#FFFFFF', '#EAB308']
-    : ['#EF4444', '#F59E0B', '#FACC15', '#10B981', '#3B82F6', '#128C7E', '#128C7E', '#06B6D4'];
+    : ['#EF4444', '#F59E0B', '#FACC15', '#10B981', '#3B82F6', '#111111', '#111111', '#06B6D4'];
 
   // iMessage-grade upgrade 2026-05-07: 110 → 180 particles, 4 shape variants
   // (circle / rect / strip / triangle), broader size range for parallax.
@@ -330,7 +330,7 @@ function Love() {
       duration: rand(2400, 3600),
       size: rand(18, 42),
       sway: rand(20, 50),
-      color: i % 3 === 0 ? '#FB7185' : i % 3 === 1 ? '#128C7E' : '#F43F5E',
+      color: i % 3 === 0 ? '#FB7185' : i % 3 === 1 ? '#111111' : '#F43F5E',
     }))
   ).current;
 
@@ -347,7 +347,7 @@ function Love() {
         opacity: bloomOp,
         transform: [{ scale: bloomScale }],
       }}>
-        <HeartShape size={120} color="#128C7E" glow />
+        <HeartShape size={120} color="#111111" glow />
       </Animated.View>
       {hearts.map((h, i) => <RisingHeart key={i} {...h} />)}
     </>
@@ -409,10 +409,10 @@ function HeartShape({ size, color, glow = false }) {
 // ── Lasers ──────────────────────────────────────────────────────────
 function Lasers() {
   const beams = useRef([
-    { color: '#128C7E', y: SCREEN_H * 0.2,  angle: 14,  delay: 0,    dir: 1 },
+    { color: '#111111', y: SCREEN_H * 0.2,  angle: 14,  delay: 0,    dir: 1 },
     { color: '#06B6D4', y: SCREEN_H * 0.32, angle: -22, delay: 80,   dir: -1 },
     { color: '#F59E0B', y: SCREEN_H * 0.45, angle: 30,  delay: 160,  dir: 1 },
-    { color: '#128C7E', y: SCREEN_H * 0.55, angle: -18, delay: 240,  dir: -1 },
+    { color: '#111111', y: SCREEN_H * 0.55, angle: -18, delay: 240,  dir: -1 },
     { color: '#10B981', y: SCREEN_H * 0.68, angle: 24,  delay: 320,  dir: 1 },
     { color: '#FACC15', y: SCREEN_H * 0.78, angle: -28, delay: 400,  dir: -1 },
     { color: '#3B82F6', y: SCREEN_H * 0.88, angle: 16,  delay: 480,  dir: 1 },
@@ -495,8 +495,8 @@ function Fireworks() {
     { x: SCREEN_W * 0.70, y: SCREEN_H * 0.20, color: '#EF4444', delay: 220,  sparks: 26 },
     { x: SCREEN_W * 0.50, y: SCREEN_H * 0.40, color: '#3B82F6', delay: 460,  sparks: 32 },
     { x: SCREEN_W * 0.18, y: SCREEN_H * 0.50, color: '#10B981', delay: 700,  sparks: 24 },
-    { x: SCREEN_W * 0.80, y: SCREEN_H * 0.42, color: '#128C7E', delay: 940,  sparks: 28 },
-    { x: SCREEN_W * 0.40, y: SCREEN_H * 0.18, color: '#128C7E', delay: 1180, sparks: 34 },
+    { x: SCREEN_W * 0.80, y: SCREEN_H * 0.42, color: '#111111', delay: 940,  sparks: 28 },
+    { x: SCREEN_W * 0.40, y: SCREEN_H * 0.18, color: '#111111', delay: 1180, sparks: 34 },
     { x: SCREEN_W * 0.60, y: SCREEN_H * 0.60, color: '#FACC15', delay: 1420, sparks: 28 },
     { x: SCREEN_W * 0.30, y: SCREEN_H * 0.62, color: '#06B6D4', delay: 1660, sparks: 24 },
     { x: SCREEN_W * 0.85, y: SCREEN_H * 0.55, color: '#FB7185', delay: 1900, sparks: 26 },
@@ -657,7 +657,7 @@ function DustMote({ x, y, delay, size }) {
 // so the ripple feels organic instead of uniform.
 function Echo() {
   const COPIES = 14;
-  const PURPLES = ['#128C7E', '#128C7E', '#128C7E', '#128C7E', '#128C7E'];
+  const PURPLES = ['#111111', '#111111', '#111111', '#111111', '#111111'];
   const copies = useRef(
     Array.from({ length: COPIES }).map((_, i) => ({
       v: new Animated.Value(0),

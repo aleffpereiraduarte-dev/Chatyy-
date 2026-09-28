@@ -729,7 +729,7 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
         <View style={{ borderBottomWidth: 1, borderBottomColor: colors.border }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingTop: 4, gap: 4 }}>
             <Text style={{ fontSize: 10 }}>⭐</Text>
-            <Text style={{ fontSize: 9, fontWeight: '800', color: '#128C7E', letterSpacing: 0.6 }}>
+            <Text style={{ fontSize: 9, fontWeight: '800', color: '#111111', letterSpacing: 0.6 }}>
               FAVORITOS
             </Text>
           </View>
@@ -981,9 +981,9 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
         style={{
           position: 'absolute', right: 14, bottom: 60,
           width: 48, height: 48, borderRadius: 24,
-          backgroundColor: '#128C7E',
+          backgroundColor: '#111111',
           alignItems: 'center', justifyContent: 'center',
-          shadowColor: '#128C7E', shadowOpacity: 0.45,
+          shadowColor: '#111111', shadowOpacity: 0.45,
           shadowRadius: 10, shadowOffset: { width: 0, height: 4 },
           elevation: 6,
           opacity: creating ? 0.6 : 1,
@@ -1042,18 +1042,18 @@ export default function StickerPicker({ onSelect, onClose, colors, t, userEmail 
                 borderRadius: 999,
                 backgroundColor: previewItem != null && isFav(previewItem)
                   ? 'transparent'
-                  : '#128C7E',
+                  : '#111111',
                 borderWidth: previewItem != null && isFav(previewItem) ? 1.5 : 0,
-                borderColor: '#128C7E',
+                borderColor: '#111111',
               }}
             >
               <IconHeart
                 size={14}
-                color={previewItem != null && isFav(previewItem) ? '#128C7E' : '#fff'}
+                color={previewItem != null && isFav(previewItem) ? '#111111' : '#fff'}
               />
               <Text style={{
                 fontSize: 12, fontWeight: '800',
-                color: previewItem != null && isFav(previewItem) ? '#128C7E' : '#fff',
+                color: previewItem != null && isFav(previewItem) ? '#111111' : '#fff',
               }}>
                 {previewItem != null && isFav(previewItem)
                   ? 'Remover dos favoritos'

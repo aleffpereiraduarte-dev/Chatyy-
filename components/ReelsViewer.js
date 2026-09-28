@@ -253,7 +253,7 @@ const NativeReelVideo = memo(function NativeReelVideo({ videoUrl, poster, isActi
   );
 });
 
-const ACCENT = '#128C7E';
+const ACCENT = '#111111';
 const DOUBLE_TAP_DELAY = 300;
 const BASE_URL = 'https://chatyy.com.br';
 const isWeb = Platform.OS === 'web';
@@ -713,12 +713,12 @@ const TipSheetWrapper = memo(function TipSheetWrapper({ visible, onClose, postId
                 <TouchableOpacity
                   onPress={() => onSend(item)}
                   disabled={sending}
-                  style={{ flex: 1, aspectRatio: 0.85, marginBottom: 10, borderRadius: 14, padding: 10, backgroundColor: 'rgba(18, 140, 126,0.10)', borderWidth: 1, borderColor: 'rgba(18, 140, 126,0.20)', alignItems: 'center', opacity: affordable ? 1 : 0.55 }}
+                  style={{ flex: 1, aspectRatio: 0.85, marginBottom: 10, borderRadius: 14, padding: 10, backgroundColor: 'rgba(17, 17, 17,0.10)', borderWidth: 1, borderColor: 'rgba(17, 17, 17,0.20)', alignItems: 'center', opacity: affordable ? 1 : 0.55 }}
                   activeOpacity={0.85}
                   accessibilityRole="button"
                   accessibilityLabel={`${item.label} ${item.diamonds_cost} diamonds`}
                 >
-                  <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#128C7E', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
+                  <View style={{ width: 56, height: 56, borderRadius: 28, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center', marginBottom: 6 }}>
                     <Text style={{ color: '#fff', fontSize: 22, fontWeight: '800' }}>{(item.icon || item.label || '?').toString().charAt(0).toUpperCase()}</Text>
                   </View>
                   <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }} numberOfLines={1}>{item.label}</Text>
@@ -770,7 +770,7 @@ const FloatingDiamond = memo(function FloatingDiamond({ label }) {
         paddingHorizontal: 10,
         paddingVertical: 6,
         borderRadius: 999,
-        backgroundColor: 'rgba(18, 140, 126,0.85)',
+        backgroundColor: 'rgba(17, 17, 17,0.85)',
         opacity,
         transform: [{ translateY }],
       }}
@@ -973,7 +973,7 @@ function SpeedPickerSheet({ visible, current, onSelect, onClose, t }) {
                     style={{
                       flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
                       paddingVertical: 12, paddingHorizontal: 10, borderRadius: 10,
-                      backgroundColor: active ? 'rgba(18, 140, 126,0.20)' : 'transparent',
+                      backgroundColor: active ? 'rgba(17, 17, 17,0.20)' : 'transparent',
                     }}
                     accessibilityRole="button"
                     accessibilityLabel={`${s}x`}
@@ -982,7 +982,7 @@ function SpeedPickerSheet({ visible, current, onSelect, onClose, t }) {
                       {s}×{s === 1 ? `  (${t?.('common.default') || 'Padrão'})` : ''}
                     </Text>
                     {active ? (
-                      <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#128C7E' }} />
+                      <View style={{ width: 12, height: 12, borderRadius: 6, backgroundColor: '#111111' }} />
                     ) : null}
                   </TouchableOpacity>
                 );
@@ -1850,7 +1850,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             activeOpacity={0.7}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             style={{
-              backgroundColor: muted ? 'rgba(18, 140, 126,0.85)' : 'rgba(0,0,0,0.45)',
+              backgroundColor: muted ? 'rgba(17, 17, 17,0.85)' : 'rgba(0,0,0,0.45)',
               borderRadius: 20,
               width: 36,
               height: 36,
@@ -1871,7 +1871,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
               onPress={toggleSubtitles}
               activeOpacity={0.7}
               hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              style={{ backgroundColor: subtitlesEnabled ? 'rgba(18, 140, 126,0.85)' : 'rgba(0,0,0,0.35)', borderRadius: 8, paddingHorizontal: 8, height: 28, alignItems: 'center', justifyContent: 'center' }}
+              style={{ backgroundColor: subtitlesEnabled ? 'rgba(17, 17, 17,0.85)' : 'rgba(0,0,0,0.35)', borderRadius: 8, paddingHorizontal: 8, height: 28, alignItems: 'center', justifyContent: 'center' }}
               accessibilityLabel={subtitlesEnabled ? (t('feed.captionsOn') || t('media.subtitlesOn') || 'Captions on') : (t('feed.captionsOff') || t('media.subtitlesOff') || 'Captions off')}
               accessibilityRole="button"
             >
@@ -1991,7 +1991,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         >
           <View style={{
             paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
-            backgroundColor: playbackRate === 1 ? 'rgba(255,255,255,0.15)' : '#128C7E',
+            backgroundColor: playbackRate === 1 ? 'rgba(255,255,255,0.15)' : '#111111',
             minWidth: 36, alignItems: 'center',
           }}>
             <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
@@ -2241,7 +2241,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
               <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', flex: 1 }}>
                 {t?.('feed.speed') || 'Velocidade'}
               </Text>
-              <Text style={{ color: '#128C7E', fontSize: 14, fontWeight: '700' }}>{playbackRate}×</Text>
+              <Text style={{ color: '#111111', fontSize: 14, fontWeight: '700' }}>{playbackRate}×</Text>
             </TouchableOpacity>
 
             {/* Report — escalated negative signal. */}
@@ -3257,11 +3257,11 @@ const styles = StyleSheet.create({
   // and react-native-svg <LinearGradient> on a 3px bar isn't worth it).
   progressFill: {
     height: '100%',
-    backgroundColor: '#128C7E',
+    backgroundColor: '#111111',
     borderRadius: 1.5,
     ...(isWeb ? {
-      backgroundImage: 'linear-gradient(90deg, #128C7E 0%, #128C7E 100%)',
-      boxShadow: '0 0 8px rgba(18, 140, 126,0.55), 0 0 14px rgba(18, 140, 126,0.4)',
+      backgroundImage: 'linear-gradient(90deg, #111111 0%, #111111 100%)',
+      boxShadow: '0 0 8px rgba(17, 17, 17,0.55), 0 0 14px rgba(17, 17, 17,0.4)',
     } : {}),
   },
 
@@ -3463,7 +3463,7 @@ const styles = StyleSheet.create({
     zIndex: 25,
   },
   boostToastBg: {
-    backgroundColor: 'rgba(18, 140, 126,0.92)',
+    backgroundColor: 'rgba(17, 17, 17,0.92)',
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 20,

@@ -56,13 +56,13 @@ import { canNavigateNow } from '../services/navGuard';
 const MUTED_UIDS_KEY = '@onemundo_muted_uids';
 
 const SIDE_PANEL_ROUTES = {
-  '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#128C7E' },
+  '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#111111' },
   '/calendar': { key: 'calendar', icon: IconCalendar, label: 'sidebar.calendar', color: '#4285f4' },
   '/drive': { key: 'drive', icon: IconFolder, label: 'Chatyy Cloud', color: '#f59e0b' },
   '/meetings': { key: 'meetings', icon: IconFilm, label: 'sidebar.meetings', color: '#ef4444' },
   '/documentos': { key: 'documentos', icon: IconGlobe, label: 'sidebar.documents', color: '#4285f4' },
-  '/contacts': { key: 'contacts', icon: IconUser, label: 'sidebar.contacts', color: '#128C7E' },
-  '/one': { key: 'one', icon: IconZap, label: 'One', color: '#128C7E' },
+  '/contacts': { key: 'contacts', icon: IconUser, label: 'sidebar.contacts', color: '#111111' },
+  '/one': { key: 'one', icon: IconZap, label: 'One', color: '#111111' },
   '/photos': { key: 'photos', icon: IconImage, label: 'photos.title', color: '#e11d48' },
   '/backup': { key: 'backup', icon: IconArchive, label: 'Backup', color: '#f59e0b' },
   '/notes': { key: 'notes', icon: IconStickyNote, label: 'sidebar.notes', color: '#f59e0b' },
@@ -1304,8 +1304,8 @@ function InboxScreenInner() {
       <Animated.View style={[
         s.header,
         { ...(Platform.OS === 'web'
-            ? { background: isDark ? 'linear-gradient(180deg, #161618 0%, #0a0a0a 100%)' : 'linear-gradient(180deg, #128C7E 0%, #128C7E 100%)' }
-            : { backgroundColor: isDark ? '#0d0a14' : '#128C7E' }),
+            ? { background: isDark ? 'linear-gradient(180deg, #161618 0%, #0a0a0a 100%)' : 'linear-gradient(180deg, #111111 0%, #111111 100%)' }
+            : { backgroundColor: isDark ? '#0d0a14' : '#111111' }),
           borderBottomColor: 'transparent',
           borderBottomWidth: 0,
           opacity: headerAnim,
@@ -1326,7 +1326,7 @@ function InboxScreenInner() {
         <View style={s.logoWrap}>
           <View style={{ position: 'relative' }}>
             <IconMail size={24} color="#fff" style={{ marginRight: 6 }} />
-            <View style={[s.wsDot, { borderColor: '#128C7E', backgroundColor: wsStatus === 'authenticated' ? colors.connectionGood : wsStatus === 'connected' ? colors.connectionWarn : colors.connectionBad }]} />
+            <View style={[s.wsDot, { borderColor: '#111111', backgroundColor: wsStatus === 'authenticated' ? colors.connectionGood : wsStatus === 'connected' ? colors.connectionWarn : colors.connectionBad }]} />
           </View>
           {isDesktop ? (
             <Text style={[s.logoText, { color: '#fff' }]}>Chatyy</Text>
@@ -2312,7 +2312,7 @@ function QRScannerView({ onScan, onClose }) {
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000', padding: 40 }}>
         <Text style={{ color: '#fff', fontSize: 18, fontWeight: '600', textAlign: 'center' }}>{t('login.qrCameraPermission') || 'Permissão da câmera necessária'}</Text>
         <Text style={{ color: '#aaa', fontSize: 14, textAlign: 'center', marginTop: 8 }}>{t('login.qrCameraPermissionHint') || 'Vá em Ajustes → Chatyy → Câmera e permita o acesso'}</Text>
-        <TouchableOpacity onPress={onClose} accessibilityLabel={t('common.close') || 'Close'} accessibilityRole="button" style={{ marginTop: 24, padding: 14, backgroundColor: '#128C7E', borderRadius: 12, paddingHorizontal: 32 }}>
+        <TouchableOpacity onPress={onClose} accessibilityLabel={t('common.close') || 'Close'} accessibilityRole="button" style={{ marginTop: 24, padding: 14, backgroundColor: '#111111', borderRadius: 12, paddingHorizontal: 32 }}>
           <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.close') || 'Fechar'}</Text>
         </TouchableOpacity>
       </View>
@@ -2326,7 +2326,7 @@ function QRScannerView({ onScan, onClose }) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
         <Text style={{ color: '#fff', fontSize: 16 }}>{t('login.qrCameraUnavailable') || 'Câmera não disponível'}</Text>
-        <TouchableOpacity onPress={onClose} accessibilityLabel={t('common.close') || 'Close'} accessibilityRole="button" style={{ marginTop: 24, padding: 14, backgroundColor: '#128C7E', borderRadius: 12 }}>
+        <TouchableOpacity onPress={onClose} accessibilityLabel={t('common.close') || 'Close'} accessibilityRole="button" style={{ marginTop: 24, padding: 14, backgroundColor: '#111111', borderRadius: 12 }}>
           <Text style={{ color: '#fff', fontWeight: '600' }}>{t('common.close') || 'Fechar'}</Text>
         </TouchableOpacity>
       </View>
@@ -2510,13 +2510,13 @@ const s = StyleSheet.create({
     borderRadius: 20, width: 62, height: 62,
     ...Platform.select({
       web: {
-        boxShadow: '0 8px 28px rgba(18, 140, 126, 0.45), 0 2px 8px rgba(18, 140, 126, 0.2), 0 0 0 4px rgba(18, 140, 126, 0.08)',
+        boxShadow: '0 8px 28px rgba(17, 17, 17, 0.45), 0 2px 8px rgba(17, 17, 17, 0.2), 0 0 0 4px rgba(17, 17, 17, 0.08)',
         transition: 'box-shadow 0.3s ease, transform 0.2s ease',
-        background: 'linear-gradient(135deg, #128C7E 0%, #128C7E 100%)',
+        background: 'linear-gradient(135deg, #111111 0%, #111111 100%)',
       },
       default: {
         elevation: 14,
-        shadowColor: '#128C7E',
+        shadowColor: '#111111',
         shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.45,
         shadowRadius: 18,

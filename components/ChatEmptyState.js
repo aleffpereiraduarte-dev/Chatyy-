@@ -98,13 +98,13 @@ function NoStatus({ accent }) {
     <Svg width={160} height={160} viewBox="0 0 200 200">
       <Defs>
         <SvgGradient id="bg-st" x1="0" y1="0" x2="1" y2="1">
-          <Stop offset="0" stopColor="#128C7E" stopOpacity="0.18" />
-          <Stop offset="1" stopColor="#128C7E" stopOpacity="0.04" />
+          <Stop offset="0" stopColor="#111111" stopOpacity="0.18" />
+          <Stop offset="1" stopColor="#111111" stopOpacity="0.04" />
         </SvgGradient>
       </Defs>
       <Circle cx="100" cy="100" r="92" fill="url(#bg-st)" />
-      <Circle cx="100" cy="100" r="55" fill="#fff" stroke="#128C7E" strokeWidth="4" strokeDasharray="10 6" />
-      <Path d="M85 85 L120 100 L85 115 Z" fill="#128C7E" />
+      <Circle cx="100" cy="100" r="55" fill="#fff" stroke="#111111" strokeWidth="4" strokeDasharray="10 6" />
+      <Path d="M85 85 L120 100 L85 115 Z" fill="#111111" />
     </Svg>
   );
 }
@@ -121,7 +121,7 @@ export default function ChatEmptyState({ type = 'no-chats', title, subtitle, act
   const { colors } = useTheme();
   const cfg = TYPES[type] || TYPES['no-chats'];
   const Illustration = cfg.Comp;
-  const accent = colors.primary || '#128C7E';
+  const accent = colors.primary || '#111111';
   const fadeIn = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {

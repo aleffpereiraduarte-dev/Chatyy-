@@ -939,9 +939,9 @@ export default function SignupPhone() {
                           flexDirection: 'row', alignItems: 'center',
                           paddingVertical: 12, paddingHorizontal: 14,
                           borderRadius: 12,
-                          backgroundColor: 'rgba(18, 140, 126,0.08)',
+                          backgroundColor: 'rgba(17, 17, 17,0.08)',
                           borderWidth: 1,
-                          borderColor: 'rgba(18, 140, 126,0.22)',
+                          borderColor: 'rgba(17, 17, 17,0.22)',
                           marginBottom: 4,
                         }}
                       >
@@ -1845,10 +1845,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     ...Platform.select({
       web: {
-        boxShadow: '0 10px 26px rgba(18, 140, 126,0.35), 0 2px 6px rgba(18, 140, 126,0.20)',
+        boxShadow: '0 10px 26px rgba(17, 17, 17,0.35), 0 2px 6px rgba(17, 17, 17,0.20)',
         transition: 'transform 140ms ease, box-shadow 140ms ease',
       },
-      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 14 },
+      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 14 },
       android: { elevation: 6 },
     }),
   },

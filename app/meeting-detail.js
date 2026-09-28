@@ -26,8 +26,8 @@ import AvatarCircle from '../components/AvatarCircle';
 // left as hex intentionally (see report). Everywhere else in this screen
 // (pills, badges, RSVP, secondary actions) now reads colors.primary/
 // colors.primaryDark/colors.warning/colors.error/colors.success directly.
-const ACCENT = '#128C7E';
-const ACCENT_DARK = '#128C7E';
+const ACCENT = '#111111';
+const ACCENT_DARK = '#111111';
 const ACCENT_DEEP = '#161618';
 
 function formatDate(dateStr, locale) {
@@ -405,7 +405,7 @@ export default function MeetingDetailScreen() {
               onPress={() => router.push('/meeting-recap?id=' + recapId)}
               activeOpacity={0.85}
             >
-              <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(18, 140, 126,0.08)', borderRadius: 18 }]} />
+              <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(17, 17, 17,0.08)', borderRadius: 18 }]} />
               <View pointerEvents="none" style={[styles.recapGradientBlob]} />
               <View style={[styles.recapIconWrap, { backgroundColor: colors.primary }]}>
                 <IconSparkles size={22} color="#fff" />
@@ -414,7 +414,7 @@ export default function MeetingDetailScreen() {
                 <Text style={[styles.recapTitle, { color: isDark ? '#fff' : colors.primaryDark }]}>
                   {t('meetingDetail.viewRecapTitle') || 'Resumo da IA'}
                 </Text>
-                <Text style={[styles.recapSubtitle, { color: isDark ? colors.textSecondary : '#128C7E' }]}>
+                <Text style={[styles.recapSubtitle, { color: isDark ? colors.textSecondary : '#111111' }]}>
                   {t('meetingDetail.viewRecapSub') || 'Veja insights, tópicos e decisões'}
                 </Text>
               </View>
@@ -753,7 +753,7 @@ const styles = StyleSheet.create({
   },
   heroGlow2: {
     position: 'absolute', width: 200, height: 200, borderRadius: 100,
-    backgroundColor: 'rgba(18, 140, 126,0.45)',
+    backgroundColor: 'rgba(17, 17, 17,0.45)',
     bottom: -40, left: -40,
   },
   heroTopRow: {
@@ -825,7 +825,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 18,
     elevation: 8,
-    ...(Platform.OS === 'web' ? { boxShadow: '0 8px 22px rgba(18, 140, 126,0.4)', cursor: 'pointer', transition: 'transform 180ms ease' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 8px 22px rgba(17, 17, 17,0.4)', cursor: 'pointer', transition: 'transform 180ms ease' } : {}),
   },
   primaryCtaText: { color: '#fff', fontSize: FontSize.lg, fontWeight: '800', letterSpacing: -0.3 },
   primaryCtaSticky: {
@@ -852,7 +852,7 @@ const styles = StyleSheet.create({
   recapGradientBlob: {
     position: 'absolute', right: -30, top: -30,
     width: 140, height: 140, borderRadius: 70,
-    backgroundColor: 'rgba(18, 140, 126,0.18)',
+    backgroundColor: 'rgba(17, 17, 17,0.18)',
   },
   recapIconWrap: {
     width: 44, height: 44, borderRadius: 14,

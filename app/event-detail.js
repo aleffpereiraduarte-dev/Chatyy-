@@ -30,7 +30,7 @@ function describeRecurrence(rule, t) {
   return t('eventDetail.recurrence');
 }
 
-const PRESET_COLORS = ['#4285F4', '#EA4335', '#34A853', '#FBBC05', '#128C7E', '#F4511E', '#0097A7', '#616161'];
+const PRESET_COLORS = ['#4285F4', '#EA4335', '#34A853', '#FBBC05', '#111111', '#F4511E', '#0097A7', '#616161'];
 
 // Approx height of the fixed header row (back/edit buttons ~40 + paddingVertical
 // Spacing.sm*2) that stays visible above the edit form — kept clear of the

@@ -29,8 +29,8 @@ const MEET_BASE = 'https://chatyy.com.br/meet/';
 // styles no longer rendered). Every actual render-time usage in this file now
 // pulls the live color from `colors` (colors.primary/primaryDark/warning/error)
 // so dark mode resolves correctly — see the theme map in BRIEFING.md.
-const ACCENT = '#128C7E';
-const ACCENT_DARK = '#128C7E';
+const ACCENT = '#111111';
+const ACCENT_DARK = '#111111';
 const AMBER = '#F59E0B';
 const LIVE_RED = '#EF4444';
 

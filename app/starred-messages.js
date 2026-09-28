@@ -68,12 +68,12 @@ export default function StarredMessagesScreen() {
     } catch { return ''; }
   };
 
-  const tabAccent = isDark ? '#128C7E' : '#fff';
+  const tabAccent = isDark ? '#111111' : '#fff';
   const tabInactive = 'rgba(255,255,255,0.6)';
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      <View style={[styles.header, { backgroundColor: isDark ? '#1a1a2e' : '#128C7E', paddingTop: 10 }]}>
+      <View style={[styles.header, { backgroundColor: isDark ? '#1a1a2e' : '#111111', paddingTop: 10 }]}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <IconArrowLeft size={24} color="#fff" />
         </TouchableOpacity>
@@ -81,7 +81,7 @@ export default function StarredMessagesScreen() {
       </View>
 
       {/* Tab switcher — Salvas | Favoritas */}
-      <View style={[styles.tabBar, { backgroundColor: isDark ? '#1a1a2e' : '#128C7E' }]}>
+      <View style={[styles.tabBar, { backgroundColor: isDark ? '#1a1a2e' : '#111111' }]}>
         <TouchableOpacity
           style={[styles.tab, tab === 'saved' && { borderBottomColor: tabAccent }]}
           onPress={() => setTab('saved')}
@@ -113,9 +113,9 @@ export default function StarredMessagesScreen() {
           <TouchableOpacity
             onPress={openSavedMessages}
             activeOpacity={0.85}
-            style={[styles.savedCard, { backgroundColor: isDark ? 'rgba(18, 140, 126,0.12)' : 'rgba(18, 140, 126,0.06)', borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(18, 140, 126,0.18)' }]}
+            style={[styles.savedCard, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17, 17, 17,0.06)', borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17, 17, 17,0.18)' }]}
           >
-            <View style={[styles.savedIcon, { backgroundColor: '#128C7E' }]}>
+            <View style={[styles.savedIcon, { backgroundColor: '#111111' }]}>
               <IconBookmark size={22} color="#fff" />
             </View>
             <View style={styles.savedCardBody}>
@@ -131,7 +131,7 @@ export default function StarredMessagesScreen() {
         </View>
       ) : loading ? (
         <View style={styles.loading}>
-          <ActivityIndicator color="#128C7E" size="large" />
+          <ActivityIndicator color="#111111" size="large" />
         </View>
       ) : messages.length === 0 ? (
         <View style={styles.empty}>

@@ -19,7 +19,7 @@ import FadeSlideIn from '../components/FadeSlideIn';
 // chart lib needed. Falls back to a dashed baseline when all values are 0
 // so an empty state still reads as "we have a graph slot here" rather
 // than a blank box.
-function Sparkline({ data, color = '#128C7E', width = 220, height = 60 }) {
+function Sparkline({ data, color = '#111111', width = 220, height = 60 }) {
   const arr = Array.isArray(data) && data.length > 0 ? data : [0, 0, 0, 0, 0, 0, 0];
   const max = Math.max(1, ...arr);
   const stepX = arr.length > 1 ? width / (arr.length - 1) : 0;
@@ -88,7 +88,7 @@ export default function ProfileInsightsScreen() {
 
   const cardBg = isDark ? '#1a1625' : '#ffffff';
   const cardBorder = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
-  const accent = '#128C7E';
+  const accent = '#111111';
 
   const Card = ({ title, value, spark, color = accent }) => (
     <View style={[styles.card, { backgroundColor: cardBg, borderColor: cardBorder }]}>
@@ -123,7 +123,7 @@ export default function ProfileInsightsScreen() {
             title={t?.('profile.viewsLast7d') || 'Visualizações do perfil (7d)'}
             value={data.profile_views_count}
             spark={data.spark_views}
-            color="#128C7E"
+            color="#111111"
           />
           <Card
             title={t?.('profile.reachLast7d') || 'Alcance dos posts (7d)'}

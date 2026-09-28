@@ -409,7 +409,7 @@ export function buildShortVideoMenuItem(t, _colors, onPick) {
     label: (t && t('chat.attach.shortVideo')) || 'Vídeo curto',
     icon: IconFilm,
     // Match ReelsRecorder's neon-violet accent so the pill reads as Reels.
-    color: '#128C7E',
+    color: '#111111',
     onPress: onPick,
   };
 }

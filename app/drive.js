@@ -100,7 +100,7 @@ function getFileIcon(iconType, size, color) {
     case 'video': return <IconFilm size={size} color={color} />;
     case 'audio': return <IconMusic size={size} color={color} />;
     case 'pdf': return <IconFileText size={size} color="#dc2626" />;
-    case 'document': return <IconFileText size={size} color="#128C7E" />;
+    case 'document': return <IconFileText size={size} color="#111111" />;
     case 'spreadsheet': return <IconFileText size={size} color="#16a34a" />;
     case 'presentation': return <IconFileText size={size} color="#d97706" />;
     case 'archive': return <IconArchive size={size} color={color} />;
@@ -132,11 +132,11 @@ function getFileTypeBadge(item) {
   if (!ext || item.is_folder) return null;
   const badges = {
     pdf: { label: 'PDF', bg: '#dc2626' },
-    doc: { label: 'DOC', bg: '#128C7E' }, docx: { label: 'DOC', bg: '#128C7E' },
+    doc: { label: 'DOC', bg: '#111111' }, docx: { label: 'DOC', bg: '#111111' },
     xls: { label: 'XLS', bg: '#16a34a' }, xlsx: { label: 'XLS', bg: '#16a34a' }, csv: { label: 'CSV', bg: '#16a34a' },
     ppt: { label: 'PPT', bg: '#d97706' }, pptx: { label: 'PPT', bg: '#d97706' },
     zip: { label: 'ZIP', bg: '#6b7280' }, rar: { label: 'RAR', bg: '#6b7280' }, '7z': { label: '7Z', bg: '#6b7280' },
-    mp3: { label: 'MP3', bg: '#128C7E' }, wav: { label: 'WAV', bg: '#128C7E' }, ogg: { label: 'OGG', bg: '#128C7E' },
+    mp3: { label: 'MP3', bg: '#111111' }, wav: { label: 'WAV', bg: '#111111' }, ogg: { label: 'OGG', bg: '#111111' },
     mp4: { label: 'MP4', bg: '#db2777' }, mov: { label: 'MOV', bg: '#db2777' }, avi: { label: 'AVI', bg: '#db2777' },
     png: { label: 'PNG', bg: '#0891b2' }, jpg: { label: 'JPG', bg: '#0891b2' }, jpeg: { label: 'JPG', bg: '#0891b2' },
     gif: { label: 'GIF', bg: '#0891b2' }, webp: { label: 'WEBP', bg: '#0891b2' }, svg: { label: 'SVG', bg: '#0891b2' },
@@ -1117,7 +1117,7 @@ function DriveScreenInner() {
   const storageUsedBytes = storageInfo?.total_used || storageInfo?.used_bytes || 0;
   const storageTotalBytes = storageInfo?.quota || storageInfo?.plan_quota || (STORAGE_LIMIT_GB * 1024 * 1024 * 1024);
   const storagePercent = Math.min((storageUsedBytes / storageTotalBytes) * 100, 100);
-  const storageColor = storagePercent > 90 ? '#dc2626' : storagePercent > 70 ? '#f59e0b' : '#128C7E';
+  const storageColor = storagePercent > 90 ? '#dc2626' : storagePercent > 70 ? '#f59e0b' : '#111111';
 
   // ============================================================
   // RENDER HELPERS
@@ -1130,10 +1130,10 @@ function DriveScreenInner() {
     const chatBytes = storageInfo?.chat_used || 0;
     const feedBytes = storageInfo?.feed_used || 0;
     const segments = [
-      { label: 'Cloud', bytes: driveBytes, color: '#128C7E' },
+      { label: 'Cloud', bytes: driveBytes, color: '#111111' },
       { label: 'Email', bytes: emailBytes, color: '#16a34a' },
       { label: 'Chat', bytes: chatBytes, color: '#f59e0b' },
-      { label: 'Feed', bytes: feedBytes, color: '#128C7E' },
+      { label: 'Feed', bytes: feedBytes, color: '#111111' },
     ].filter(s => s.bytes > 0);
 
     return (
@@ -1219,7 +1219,7 @@ function DriveScreenInner() {
                 <TouchableOpacity
                   style={[
                     { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6 },
-                    isBcDropTarget && { backgroundColor: '#128C7E' },
+                    isBcDropTarget && { backgroundColor: '#111111' },
                   ]}
                   onPress={() => navigateToBreadcrumb(i)}
                 >
@@ -1275,7 +1275,7 @@ function DriveScreenInner() {
         e.dataTransfer.effectAllowed = 'move';
         setDraggingItem(item);
         const ghost = document.createElement('div');
-        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#128C7E;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
+        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#111111;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
         ghost.textContent = dragIds.length > 1 ? `${dragIds.length} itens` : item.name;
         document.body.appendChild(ghost);
         e.dataTransfer.setDragImage(ghost, 0, 0);
@@ -1306,7 +1306,7 @@ function DriveScreenInner() {
         style={[
           styles.listItem,
           { backgroundColor: isSelected ? (isDark ? colors.selectedBg : '#F1F3F5') : 'transparent', borderBottomColor: colors.border },
-          isDragTarget && { backgroundColor: isDark ? '#1e3a5f' : '#F1F3F5', borderColor: '#128C7E', borderWidth: 2, borderRadius: 8 },
+          isDragTarget && { backgroundColor: isDark ? '#1e3a5f' : '#F1F3F5', borderColor: '#111111', borderWidth: 2, borderRadius: 8 },
           isFocused && !isSelected && { backgroundColor: isDark ? colors.surfaceVariant : '#f1f5f9' },
         ]}
         onPress={(e) => { setFocusedIndex(index); handleItemPress(item, e); }}
@@ -1371,7 +1371,7 @@ function DriveScreenInner() {
         e.dataTransfer.effectAllowed = 'move';
         setDraggingItem(item);
         const ghost = document.createElement('div');
-        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#128C7E;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
+        ghost.style.cssText = 'position:fixed;top:-999px;padding:8px 16px;background:#111111;color:#fff;border-radius:8px;font:600 14px sans-serif;white-space:nowrap;z-index:99999';
         ghost.textContent = dragIds.length > 1 ? `${dragIds.length} itens` : item.name;
         document.body.appendChild(ghost);
         e.dataTransfer.setDragImage(ghost, 0, 0);
@@ -1419,7 +1419,7 @@ function DriveScreenInner() {
               ...(isDark ? { backgroundColor: colors.surfaceVariant } : { backgroundColor: '#f8fafc' }),
               transform: [{ translateY: -1 }],
             },
-            isDragTarget && { borderColor: '#128C7E', borderWidth: 2, backgroundColor: isDark ? '#1e3a5f' : '#F1F3F5' },
+            isDragTarget && { borderColor: '#111111', borderWidth: 2, backgroundColor: isDark ? '#1e3a5f' : '#F1F3F5' },
             isFocused && !isSelected && !isDragTarget && { borderColor: colors.primary, borderWidth: 2 },
             Platform.OS === 'web' && { transition: 'all 0.15s ease' },
           ]}
@@ -1621,8 +1621,8 @@ function DriveScreenInner() {
     ] : [
       !item.is_folder && {
         label: 'Analisar com One AI',
-        icon: <IconSparkles size={18} color="#128C7E" />,
-        accent: '#128C7E',
+        icon: <IconSparkles size={18} color="#111111" />,
+        accent: '#111111',
         onPress: () => {
           setContextMenu(null);
           try {
@@ -1638,7 +1638,7 @@ function DriveScreenInner() {
           } catch {}
         },
       },
-      canPreview && { label: t('drive.preview'), icon: <IconEye size={18} color={colors.primary || '#128C7E'} />, onPress: () => {
+      canPreview && { label: t('drive.preview'), icon: <IconEye size={18} color={colors.primary || '#111111'} />, onPress: () => {
         setContextMenu(null);
         // Always use the in-app FileViewer modal — never open preview.html in a new tab
         setPreviewFile(item);
@@ -1844,10 +1844,10 @@ function DriveScreenInner() {
     const freeBytes = storageTotalBytes - storageUsedBytes;
 
     const segments = [
-      { label: 'Cloud', bytes: driveBytes, color: '#128C7E' },
+      { label: 'Cloud', bytes: driveBytes, color: '#111111' },
       { label: 'Email', bytes: emailBytes, color: '#16a34a' },
       { label: 'Chat', bytes: chatBytes, color: '#f59e0b' },
-      { label: 'Feed', bytes: feedBytes, color: '#128C7E' },
+      { label: 'Feed', bytes: feedBytes, color: '#111111' },
     ].filter(s => s.bytes > 0);
 
     return (
@@ -2040,7 +2040,7 @@ function DriveScreenInner() {
           <View style={[styles.fabMenu, { backgroundColor: colors.surface, borderColor: colors.border, ...Shadow.xl }]}>
             <TouchableOpacity style={styles.fabMenuItem} onPress={handleUploadFile}>
               <View style={[styles.fabMenuIcon, { backgroundColor: '#F1F3F5' }]}>
-                <IconUpload size={18} color="#128C7E" />
+                <IconUpload size={18} color="#111111" />
               </View>
               <Text style={[styles.fabMenuText, { color: colors.text }]}>{t('drive.uploadFile')}</Text>
             </TouchableOpacity>
@@ -2505,7 +2505,7 @@ function DriveScreenInner() {
             return (
               <View style={{
                 position: 'absolute', left: mx, top: my, width: mw, height: mh,
-                backgroundColor: 'rgba(18, 140, 126, 0.15)', borderWidth: 1, borderColor: '#128C7E',
+                backgroundColor: 'rgba(17, 17, 17, 0.15)', borderWidth: 1, borderColor: '#111111',
                 borderRadius: 2, pointerEvents: 'none', zIndex: 999,
               }} />
             );
@@ -2693,7 +2693,7 @@ const styles = StyleSheet.create({
   sortOptionText: { fontSize: FontSize.base },
 
   // Drag & drop overlay — covers entire viewport on web
-  dragOverlay: { position: Platform.OS === 'web' ? 'fixed' : 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, backgroundColor: 'rgba(18, 140, 126, 0.88)', alignItems: 'center', justifyContent: 'center' },
+  dragOverlay: { position: Platform.OS === 'web' ? 'fixed' : 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999, backgroundColor: 'rgba(17, 17, 17, 0.88)', alignItems: 'center', justifyContent: 'center' },
   dragOverlayInner: { alignItems: 'center', gap: 16, padding: 48, borderRadius: 24, borderWidth: 3, borderColor: 'rgba(255,255,255,0.7)', borderStyle: 'dashed' },
   dragOverlayText: { color: '#fff', fontSize: 24, fontWeight: '700', marginTop: 4 },
   dragOverlaySubtext: { color: 'rgba(255,255,255,0.85)', fontSize: 15, fontWeight: '500', marginTop: -4 },

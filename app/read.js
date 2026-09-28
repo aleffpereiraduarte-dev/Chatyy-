@@ -350,7 +350,7 @@ export default function ReadScreen() {
     return (
       <View style={[s.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         {Platform.OS !== 'web' && (
-          <View style={[s.navBar, { backgroundColor: isDark ? '#0d0a14' : '#128C7E', borderBottomColor: 'transparent', borderBottomWidth: 0 }]}>
+          <View style={[s.navBar, { backgroundColor: isDark ? '#0d0a14' : '#111111', borderBottomColor: 'transparent', borderBottomWidth: 0 }]}>
             <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }}>
               <IconChevronLeft size={22} color="#fff" />
               <Text style={[s.backText, { color: '#fff' }]}>{t('reader.back')}</Text>
@@ -367,7 +367,7 @@ export default function ReadScreen() {
   // entre Conversas/Inbox/Read — todas usam o mesmo brand purple gradient.
   const navBar = Platform.OS !== 'web' ? (
     <View style={[s.navBar, {
-      backgroundColor: isDark ? '#0d0a14' : '#128C7E',
+      backgroundColor: isDark ? '#0d0a14' : '#111111',
       borderBottomColor: 'transparent',
       borderBottomWidth: 0,
     }]}>
@@ -596,15 +596,15 @@ const s = StyleSheet.create({
   loader: { marginTop: 60 },
   progressBar: {
     height: 3,
-    // Brand purple instead of #128C7E blue — matches the tab bar glow,
+    // Brand purple instead of #111111 blue — matches the tab bar glow,
     // send button, and chat header pulse so the reading-progress strip
     // reads as part of the app instead of a foreign accent.
-    backgroundColor: '#128C7E',
+    backgroundColor: '#111111',
     ...Platform.select({
       web: {
         transformOrigin: 'left',
         transition: 'opacity 0.3s ease',
-        background: 'linear-gradient(90deg, #128C7E 0%, #128C7E 100%)',
+        background: 'linear-gradient(90deg, #111111 0%, #111111 100%)',
       },
       default: {},
     }),

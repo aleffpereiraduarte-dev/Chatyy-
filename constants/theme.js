@@ -11,7 +11,7 @@ import { scaleSize, moderateScale } from '../utils/responsive';
 //   • Background = white / barely-there gray; text = near-black gray. Lots of
 //     breathing room.
 //   • Color lives ONLY in actions: ONE sober WhatsApp-style green (teal
-//     #128C7E, same in light + dark) on send button, links, active states,
+//     #111111, same in light + dark) on send button, links, active states,
 //     badges, focus. Everything structural is neutral gray.
 //   • Chat bubbles are NEUTRAL: mine = light gray, other = white. No colored
 //     bubble.
@@ -34,12 +34,12 @@ import { scaleSize, moderateScale } from '../utils/responsive';
 export const Colors = {
   // Primary — the single ACTION color: sober WhatsApp teal-green. Used ONLY on
   // actions/links/active states. Everything structural stays neutral gray.
-  primary: '#128C7E',
-  primaryLight: '#E4F3EF',
-  primaryDark: '#0E6B60',
-  primaryContainer: '#E4F3EF',
+  primary: '#111111',
+  primaryLight: '#F2F3F5',
+  primaryDark: '#111111',
+  primaryContainer: '#F2F3F5',
   onPrimary: '#ffffff',
-  onPrimaryContainer: '#0E6B60',
+  onPrimaryContainer: '#111111',
 
   // Background / Surface — white + barely-there gray. Maximum breathing room.
   background: '#F7F8FA',
@@ -51,7 +51,7 @@ export const Colors = {
   headerBg: 'rgba(255, 255, 255, 0.95)',
   headerBgSolid: '#ffffff',
   headerBorder: 'rgba(0, 0, 0, 0.06)',
-  sidebarActiveBg: 'rgba(18, 140, 126, 0.10)',
+  sidebarActiveBg: 'rgba(17, 17, 17, 0.10)',
 
   // Text — NEUTRAL gray ramp, near-black on top. textTertiary kept ≥AA.
   text: '#111315',
@@ -73,28 +73,28 @@ export const Colors = {
   warningBg: '#fffbeb',
 
   // Email states — active/selected get a whisper of the action green; star = green
-  unreadBg: '#F1F8F6',
-  unreadAccent: '#128C7E',
-  selectedBg: '#E4F3EF',
-  starColor: '#128C7E',
+  unreadBg: '#F2F3F5',
+  unreadAccent: '#111111',
+  selectedBg: '#F2F3F5',
+  starColor: '#111111',
   starEmpty: '#CBD0D6',
 
   // Compose — solid action green
-  composeBg: '#128C7E',
+  composeBg: '#111111',
   composeText: '#ffffff',
 
   // Sidebar — badge = action green (single-accent, WhatsApp-style)
   sidebarBg: '#ffffff',
-  folderActive: '#F1F8F6',
+  folderActive: '#F2F3F5',
   folderHover: '#F2F3F5',
-  badge: '#128C7E',
+  badge: '#111111',
 
   // Avatar — neutral gray tones only (no violet)
   avatarBg: '#8A9099',
   avatarColors: ['#8A9099', '#7C8B9A', '#9AA0A6', '#A0968C'],
 
   // Chat — NEUTRAL bubbles: mine = light gray, other = white. Zero color.
-  chatPrimary: '#128C7E',
+  chatPrimary: '#111111',
   chatBubbleOwn: '#E7E9EC',
   chatBubbleOwnBorder: 'rgba(0,0,0,0.05)',
   chatBubbleOther: '#FFFFFF',
@@ -112,28 +112,28 @@ export const Colors = {
   toastBg: '#2A2C30',
   toastText: '#f8fafc',
   checkboxColor: '#65676B',
-  selectedCheckbox: '#128C7E',
-  focusBorder: '#128C7E',
-  bulkToolbarBg: '#F1F8F6',
-  gradientStart: '#128C7E',
-  gradientEnd: '#128C7E',
-  loginPanelBg: '#F1F8F6',
+  selectedCheckbox: '#111111',
+  focusBorder: '#111111',
+  bulkToolbarBg: '#F2F3F5',
+  gradientStart: '#111111',
+  gradientEnd: '#111111',
+  loginPanelBg: '#F2F3F5',
 
   // Focus glow — action green, softened
-  focusGlow: 'rgba(18, 140, 126, 0.12)',
+  focusGlow: 'rgba(17, 17, 17, 0.12)',
 
   // Secondary & Tertiary accents — collapsed onto the single action green
-  secondary: '#128C7E',
-  secondaryLight: '#E4F3EF',
-  secondaryDark: '#0E6B60',
-  tertiary: '#128C7E',
-  tertiaryLight: '#E4F3EF',
-  tertiaryDark: '#0E6B60',
+  secondary: '#111111',
+  secondaryLight: '#F2F3F5',
+  secondaryDark: '#111111',
+  tertiary: '#111111',
+  tertiaryLight: '#F2F3F5',
+  tertiaryDark: '#111111',
 
   // Brand colors — all point at the action green; danger stays (functional)
-  brandPrimary: '#128C7E',
-  brandSecondary: '#128C7E',
-  brandAccent: '#128C7E',
+  brandPrimary: '#111111',
+  brandSecondary: '#111111',
+  brandAccent: '#111111',
   brandDanger: '#ef4444',
 
   // Folder colors — UNIFIED to one neutral gray (was 8 different hues).
@@ -163,8 +163,8 @@ export const Colors = {
   meetBtnBg: 'rgba(255, 255, 255, 0.12)',
   meetBtnActive: '#dc2626',
   meetEndCall: '#dc2626',
-  meetScreenShare: '#128C7E',
-  meetHandRaised: '#128C7E',
+  meetScreenShare: '#111111',
+  meetHandRaised: '#111111',
 
   // Connection status — functional traffic-light, kept
   connectionGood: '#16a34a',
@@ -174,45 +174,45 @@ export const Colors = {
   // Auth pages — neutral gray surfaces; accents / links / steps = action green
   authBg: '#F7F8FA',
   authBgSubtle: '#F0F1F3',
-  authPatternColor: 'rgba(18, 140, 126, 0.03)',
-  authPatternDot: 'rgba(18, 140, 126, 0.06)',
+  authPatternColor: 'rgba(17, 17, 17, 0.03)',
+  authPatternDot: 'rgba(17, 17, 17, 0.06)',
   authCardBg: '#ffffff',
   authCardBorder: 'transparent',
   authCardShadow: 'rgba(0, 0, 0, 0.06)',
   authInputBg: 'transparent',
   authInputBorder: '#dadce0',
-  authInputFocusBorder: '#128C7E',
-  authInputFocusGlow: 'rgba(18, 140, 126, 0.08)',
+  authInputFocusBorder: '#111111',
+  authInputFocusGlow: 'rgba(17, 17, 17, 0.08)',
   authLabelColor: '#5f6368',
-  authLabelFloatColor: '#128C7E',
+  authLabelFloatColor: '#111111',
   authDividerColor: '#E6E8EB',
   authFooterText: '#8A8D91',
-  authFooterLink: '#128C7E',
-  authBtnGradientStart: '#128C7E',
-  authBtnGradientEnd: '#0E6B60',
-  authSecondaryBtn: 'rgba(18, 140, 126, 0.04)',
+  authFooterLink: '#111111',
+  authBtnGradientStart: '#111111',
+  authBtnGradientEnd: '#111111',
+  authSecondaryBtn: 'rgba(17, 17, 17, 0.04)',
   authSecondaryBtnBorder: '#DCEFEA',
-  authSecondaryBtnHover: 'rgba(18, 140, 126, 0.08)',
-  authAccentGlow: 'rgba(18, 140, 126, 0.08)',
-  authAccentLine: 'rgba(18, 140, 126, 0.15)',
-  authStepDoneBg: '#128C7E',
-  authStepActiveBg: '#128C7E',
+  authSecondaryBtnHover: 'rgba(17, 17, 17, 0.08)',
+  authAccentGlow: 'rgba(17, 17, 17, 0.08)',
+  authAccentLine: 'rgba(17, 17, 17, 0.15)',
+  authStepDoneBg: '#111111',
+  authStepActiveBg: '#111111',
   authStepPendingBg: '#CBD0D6',
   authStepConnector: '#E6E8EB',
-  authStepConnectorDone: '#128C7E',
+  authStepConnectorDone: '#111111',
   authSuccessGreen: '#10b981',
-  authChipBg: '#F1F8F6',
+  authChipBg: '#F2F3F5',
   authChipBorder: '#DCEFEA',
-  authLeftPanelBg: '#F1F8F6',
-  authLeftPanelAccent: '#128C7E',
-  authGridColor: 'rgba(18, 140, 126, 0.04)',
+  authLeftPanelBg: '#F2F3F5',
+  authLeftPanelAccent: '#111111',
+  authGridColor: 'rgba(17, 17, 17, 0.04)',
 };
 
 export const DarkColors = {
   // Primary — SAME single action green as light (sober teal), so it stays
   // consistent everywhere. ThemeContext's accent override applies one hex to
   // both modes, so light and dark must share it. Kept muted/"sóbrio" per brief.
-  primary: '#128C7E',
+  primary: '#111111',
   primaryLight: '#10352A',
   primaryDark: '#45C9B4',
   primaryContainer: '#10352A',
@@ -232,7 +232,7 @@ export const DarkColors = {
   headerBg: 'rgba(13, 13, 13, 0.97)',
   headerBgSolid: '#0d0d0d',
   headerBorder: 'rgba(255, 255, 255, 0.06)',
-  sidebarActiveBg: 'rgba(18, 140, 126, 0.14)',
+  sidebarActiveBg: 'rgba(17, 17, 17, 0.14)',
 
   // Text — NEUTRAL gray ramp; tertiary kept ≥AA on OLED
   text: '#F0F1F3',
@@ -255,27 +255,27 @@ export const DarkColors = {
 
   // Email states — active/selected = subtle green; star = action green
   unreadBg: '#0F1F17',
-  unreadAccent: '#128C7E',
+  unreadAccent: '#111111',
   selectedBg: '#10352A',
-  starColor: '#128C7E',
+  starColor: '#111111',
   starEmpty: '#4A4D52',
 
   // Compose
-  composeBg: '#128C7E',
+  composeBg: '#111111',
   composeText: '#ffffff',
 
   // Sidebar — badge = action green
   sidebarBg: '#0a0a0a',
   folderActive: '#141414',
   folderHover: '#111111',
-  badge: '#128C7E',
+  badge: '#111111',
 
   // Avatar — neutral gray tones only (no violet)
   avatarBg: '#7C828A',
   avatarColors: ['#7C828A', '#8B95A3', '#9AA0A6', '#A09488'],
 
   // Chat — NEUTRAL bubbles: mine = neutral gray, other = dark surface. Zero color.
-  chatPrimary: '#128C7E',
+  chatPrimary: '#111111',
   chatBubbleOwn: '#26282C',
   chatBubbleOwnBorder: 'rgba(255,255,255,0.06)',
   chatBubbleOther: '#161618',
@@ -293,28 +293,28 @@ export const DarkColors = {
   toastBg: '#F0F1F3',
   toastText: '#1C1E21',
   checkboxColor: '#9BA0A6',
-  selectedCheckbox: '#128C7E',
-  focusBorder: '#128C7E',
+  selectedCheckbox: '#111111',
+  focusBorder: '#111111',
   bulkToolbarBg: '#10352A',
-  gradientStart: '#128C7E',
-  gradientEnd: '#128C7E',
+  gradientStart: '#111111',
+  gradientEnd: '#111111',
   loginPanelBg: '#000000',
 
   // Focus glow — action green, softened
-  focusGlow: 'rgba(18, 140, 126, 0.16)',
+  focusGlow: 'rgba(17, 17, 17, 0.16)',
 
   // Secondary & Tertiary accents — collapsed onto the single action green
-  secondary: '#128C7E',
+  secondary: '#111111',
   secondaryLight: '#10352A',
   secondaryDark: '#45C9B4',
-  tertiary: '#128C7E',
+  tertiary: '#111111',
   tertiaryLight: '#10352A',
   tertiaryDark: '#45C9B4',
 
   // Brand colors — all point at the action green; danger stays
-  brandPrimary: '#128C7E',
-  brandSecondary: '#128C7E',
-  brandAccent: '#128C7E',
+  brandPrimary: '#111111',
+  brandSecondary: '#111111',
+  brandAccent: '#111111',
   brandDanger: '#f87171',
 
   // Folder colors — UNIFIED to one neutral gray
@@ -342,8 +342,8 @@ export const DarkColors = {
   meetBtnBg: 'rgba(255, 255, 255, 0.1)',
   meetBtnActive: '#f87171',
   meetEndCall: '#f87171',
-  meetScreenShare: '#128C7E',
-  meetHandRaised: '#128C7E',
+  meetScreenShare: '#111111',
+  meetHandRaised: '#111111',
 
   // Connection status — functional
   connectionGood: '#4ade80',
@@ -353,38 +353,38 @@ export const DarkColors = {
   // Auth pages — neutral near-black surfaces; accents / links / steps = action green
   authBg: '#000000',
   authBgSubtle: '#0d0d0d',
-  authPatternColor: 'rgba(18, 140, 126, 0.04)',
-  authPatternDot: 'rgba(18, 140, 126, 0.08)',
+  authPatternColor: 'rgba(17, 17, 17, 0.04)',
+  authPatternDot: 'rgba(17, 17, 17, 0.08)',
   authCardBg: '#0d0d0d',
   authCardBorder: 'rgba(255, 255, 255, 0.06)',
   authCardShadow: 'rgba(0, 0, 0, 0.5)',
   authInputBg: '#000000',
   authInputBorder: 'rgba(255, 255, 255, 0.08)',
-  authInputFocusBorder: '#128C7E',
-  authInputFocusGlow: 'rgba(18, 140, 126, 0.15)',
+  authInputFocusBorder: '#111111',
+  authInputFocusGlow: 'rgba(17, 17, 17, 0.15)',
   authLabelColor: '#9BA0A6',
-  authLabelFloatColor: '#128C7E',
+  authLabelFloatColor: '#111111',
   authDividerColor: 'rgba(255, 255, 255, 0.08)',
   authFooterText: '#6B6F76',
-  authFooterLink: '#128C7E',
-  authBtnGradientStart: '#128C7E',
-  authBtnGradientEnd: '#0E6B60',
-  authSecondaryBtn: 'rgba(18, 140, 126, 0.06)',
-  authSecondaryBtnBorder: 'rgba(18, 140, 126, 0.2)',
-  authSecondaryBtnHover: 'rgba(18, 140, 126, 0.12)',
-  authAccentGlow: 'rgba(18, 140, 126, 0.1)',
-  authAccentLine: 'rgba(18, 140, 126, 0.12)',
-  authStepDoneBg: '#128C7E',
-  authStepActiveBg: '#128C7E',
+  authFooterLink: '#111111',
+  authBtnGradientStart: '#111111',
+  authBtnGradientEnd: '#111111',
+  authSecondaryBtn: 'rgba(17, 17, 17, 0.06)',
+  authSecondaryBtnBorder: 'rgba(17, 17, 17, 0.2)',
+  authSecondaryBtnHover: 'rgba(17, 17, 17, 0.12)',
+  authAccentGlow: 'rgba(17, 17, 17, 0.1)',
+  authAccentLine: 'rgba(17, 17, 17, 0.12)',
+  authStepDoneBg: '#111111',
+  authStepActiveBg: '#111111',
   authStepPendingBg: '#4A4D52',
   authStepConnector: 'rgba(255, 255, 255, 0.08)',
-  authStepConnectorDone: '#128C7E',
+  authStepConnectorDone: '#111111',
   authSuccessGreen: '#34d399',
-  authChipBg: 'rgba(18, 140, 126, 0.1)',
-  authChipBorder: 'rgba(18, 140, 126, 0.2)',
+  authChipBg: 'rgba(17, 17, 17, 0.1)',
+  authChipBorder: 'rgba(17, 17, 17, 0.2)',
   authLeftPanelBg: '#1C1E22',
-  authLeftPanelAccent: '#128C7E',
-  authGridColor: 'rgba(18, 140, 126, 0.04)',
+  authLeftPanelAccent: '#111111',
+  authGridColor: 'rgba(17, 17, 17, 0.04)',
 };
 
 // Espaçamento — escala PARCIAL (moderateScale) com a tela. Em celular pequeno
@@ -531,7 +531,7 @@ export const Shadow = {
   },
   // Soft inner glow effect (bem sutil) — action green, not purple
   glow: {
-    shadowColor: '#128C7E',
+    shadowColor: '#111111',
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.05,
     shadowRadius: 12,
@@ -556,7 +556,7 @@ export const Shadow = {
   // Send/CTA shadow — key name kept (screens reference it); now a SUBTLE
   // neutral lift on the action green, no colored glow.
   purpleGlow: {
-    shadowColor: '#0E6B60',
+    shadowColor: '#111111',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.10,
     shadowRadius: 10,
@@ -644,9 +644,9 @@ export const GlassCard = {
 // (success/danger/warning) stay their meaning color, just flattened. No key
 // removed so every screen that reads a preset still resolves.
 export const Gradients = {
-  primary: ['#128C7E', '#128C7E'],
-  primarySoft: ['#E4F3EF', '#E4F3EF'],
-  accent: ['#128C7E', '#128C7E'],
+  primary: ['#111111', '#111111'],
+  primarySoft: ['#F2F3F5', '#F2F3F5'],
+  accent: ['#111111', '#111111'],
   success: ['#16a34a', '#16a34a'],
   danger: ['#ef4444', '#ef4444'],
   warning: ['#f59e0b', '#f59e0b'],
@@ -654,25 +654,25 @@ export const Gradients = {
   sunset: ['#9AA0A6', '#9AA0A6'],
   ocean: ['#9AA0A6', '#9AA0A6'],
   // Was purple → action green solid.
-  purple: ['#128C7E', '#128C7E'],
+  purple: ['#111111', '#111111'],
   dark: ['#101114', '#101114'],
-  star: ['#128C7E', '#128C7E'],
-  unreadDot: ['#128C7E', '#128C7E'],
+  star: ['#111111', '#111111'],
+  unreadDot: ['#111111', '#111111'],
   // Story ring — was rainbow (had purple/blue) → action green solid.
-  statusRing: ['#128C7E', '#128C7E'],
+  statusRing: ['#111111', '#111111'],
   // Decorative gold → neutral gray solid.
   gold: ['#9AA0A6', '#9AA0A6'],
-  chatSend: ['#128C7E', '#128C7E'],
-  primaryButton: ['#128C7E', '#128C7E'],
+  chatSend: ['#111111', '#111111'],
+  primaryButton: ['#111111', '#111111'],
   // Header — neutral gray solid (structural, not an action).
   header: ['#9AA0A6', '#9AA0A6'],
   headerDark: ['#1C1E22', '#1C1E22'],
   // Tab indicator — action green solid.
-  tabIndicator: ['#128C7E', '#128C7E'],
+  tabIndicator: ['#111111', '#111111'],
   // Chat bubble glow (own) — neutralized to transparent (bubble is neutral).
   bubbleGlow: ['rgba(0,0,0,0.04)', 'rgba(0,0,0,0)'],
   // Send button — action green solid.
-  sendButton: ['#128C7E', '#128C7E', '#128C7E'],
+  sendButton: ['#111111', '#111111', '#111111'],
   // Premium badge — neutral gray solid.
   premiumBadge: ['#9AA0A6', '#9AA0A6'],
 };

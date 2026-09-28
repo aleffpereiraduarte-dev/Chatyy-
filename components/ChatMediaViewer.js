@@ -137,7 +137,7 @@ function senderInitials(name, email) {
 // available. Matches the chat list palette so the same user shows the same
 // color across screens.
 function colorFromString(str) {
-  const palette = ['#128C7E', '#128C7E', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#128C7E', '#06B6D4'];
+  const palette = ['#111111', '#111111', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#111111', '#06B6D4'];
   let hash = 0;
   for (let i = 0; i < (str || '').length; i++) {
     hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
@@ -233,7 +233,7 @@ function NativeImageViewerWithLoading({ url }) {
           </Text>
           <TouchableOpacity
             onPress={() => setRetryEpoch(e => e + 1)}
-            style={{ backgroundColor: '#128C7E', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 }}
+            style={{ backgroundColor: '#111111', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 }}
             accessibilityLabel="Tentar novamente"
             accessibilityRole="button"
           >
@@ -421,7 +421,7 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
               onPress={handleRedownload}
               disabled={redownloading}
               style={{
-                backgroundColor: redownloading ? '#128C7E' : '#128C7E',
+                backgroundColor: redownloading ? '#111111' : '#111111',
                 paddingHorizontal: 20, paddingVertical: 10,
                 borderRadius: 10, flexDirection: 'row', alignItems: 'center',
               }}
@@ -443,7 +443,7 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
           ) : (
             <TouchableOpacity
               onPress={handleRetry}
-              style={{ backgroundColor: '#128C7E', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 }}
+              style={{ backgroundColor: '#111111', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 10 }}
               accessibilityLabel="Tentar novamente"
               accessibilityRole="button"
             >
@@ -910,7 +910,7 @@ function ModernWebVideoPlayer({ url, videoRef }) {
                 top: 0,
                 bottom: 0,
                 width: `${pct}%`,
-                background: '#128C7E',
+                background: '#111111',
                 borderRadius: 2,
                 transition: scrubbing ? 'none' : 'width 0.1s linear',
               }} />
@@ -1152,7 +1152,7 @@ function WebViewWithErrorFallback({ source, url, filename, messageId, fileSize, 
             disabled={redownloading}
             style={{
               marginTop: 16,
-              backgroundColor: redownloading ? '#128C7E' : '#128C7E',
+              backgroundColor: redownloading ? '#111111' : '#111111',
               paddingHorizontal: 20, paddingVertical: 10,
               borderRadius: 10, flexDirection: 'row', alignItems: 'center',
             }}
@@ -1267,8 +1267,8 @@ function GenericFileViewer({ url, filename, fileSize, messageId, t }) {
           accessibilityLabel={t?.('media.redownload') || 'Baixar de novo'}
           accessibilityRole="button"
         >
-          {redownloading && <ActivityIndicator size="small" color="#128C7E" style={{ marginRight: 8 }} />}
-          <Text style={{ color: '#128C7E', fontSize: 13, fontWeight: '500' }}>
+          {redownloading && <ActivityIndicator size="small" color="#111111" style={{ marginRight: 8 }} />}
+          <Text style={{ color: '#111111', fontSize: 13, fontWeight: '500' }}>
             {redownloadFailed?.deleted
               ? (t?.('media.messageDeleted') || 'Mensagem apagada')
               : redownloadDone
@@ -2310,7 +2310,7 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#128C7E',
+    backgroundColor: '#111111',
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 10,

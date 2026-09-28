@@ -433,7 +433,7 @@ function SettingsScreenInner() {
   const [languageAuto, setLanguageAuto] = useState(false);
   const [dataSaver, setDataSaver] = useState(false);
   const [bubbleShape, setBubbleShape] = useState('rounded'); // 'rounded' | 'square' | 'classic'
-  const [notifLedColor, setNotifLedColor] = useState('#128C7E');
+  const [notifLedColor, setNotifLedColor] = useState('#111111');
   const [mediaRoaming, setMediaRoaming] = useState(false);
   // [gap C3 2026-05-20] WhatsApp parity — "Usar menos dados em chamadas".
   // Caps video at 200kbps / 15fps / 360p with 2-layer simulcast (180p+360p).
@@ -450,7 +450,7 @@ function SettingsScreenInner() {
   // Default = Chatyy purple (was WhatsApp green '#075E54'). Stored as a
   // hex so chat-conversation.js renders it correctly — gradient swatches
   // below are previews; the dominant hex is what we actually persist.
-  const [wallpaperDefault, setWallpaperDefault] = useState('#128C7E');
+  const [wallpaperDefault, setWallpaperDefault] = useState('#111111');
   // Modal state
   const [aboutOpen, setAboutOpen] = useState(false);
   const [backupKeyOpen, setBackupKeyOpen] = useState(false);
@@ -2312,12 +2312,12 @@ function SettingsScreenInner() {
           {/* Swatch grid with labeled colors. Six brand-aligned options. */}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14, justifyContent: 'flex-start' }}>
             {[
-              { c: '#128C7E', label: t('settings.led.c1') || 'Roxo' },
+              { c: '#111111', label: t('settings.led.c1') || 'Roxo' },
               { c: '#3B82F6', label: t('settings.led.c2') || 'Azul' },
               { c: '#10B981', label: t('settings.led.c3') || 'Verde' },
               { c: '#EF4444', label: t('settings.led.c4') || 'Vermelho' },
               { c: '#F59E0B', label: t('settings.led.c5') || 'Âmbar' },
-              { c: '#128C7E', label: t('settings.led.c6') || 'Rosa' },
+              { c: '#111111', label: t('settings.led.c6') || 'Rosa' },
               { c: '#06B6D4', label: t('settings.led.c7') || 'Ciano' },
               { c: '#FFFFFF', label: t('settings.led.c8') || 'Branco' },
             ].map(({ c, label }) => {
@@ -2380,8 +2380,8 @@ function SettingsScreenInner() {
               hex (compatible with chat-conversation.js render path). */}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: Spacing.md }}>
             {[
-              { id: '#128C7E', from: '#128C7E', to: '#128C7E', label: t('settings.wallpaperDefault.p1') || 'Roxo Chatyy' },
-              { id: '#DB2777', from: '#128C7E', to: '#BE185D', label: t('settings.wallpaperDefault.p2') || 'Rosa' },
+              { id: '#111111', from: '#111111', to: '#111111', label: t('settings.wallpaperDefault.p1') || 'Roxo Chatyy' },
+              { id: '#DB2777', from: '#111111', to: '#BE185D', label: t('settings.wallpaperDefault.p2') || 'Rosa' },
               { id: '#F59E0B', from: '#FBBF24', to: '#D97706', label: t('settings.wallpaperDefault.p3') || 'Pôr-do-sol' },
               { id: '#0EA5E9', from: '#38BDF8', to: '#0369A1', label: t('settings.wallpaperDefault.p4') || 'Oceano' },
               { id: '#16A34A', from: '#4ADE80', to: '#15803D', label: t('settings.wallpaperDefault.p5') || 'Floresta' },
@@ -5299,8 +5299,8 @@ const s = StyleSheet.create({
   saveBtn: {
     borderRadius: 22, paddingVertical: Spacing.sm + 2, paddingHorizontal: Spacing.lg + 2,
     ...Platform.select({
-      web: { background: 'linear-gradient(135deg, #128C7E 0%, #128C7E 100%)', boxShadow: '0 4px 12px rgba(18, 140, 126,0.3)' },
-      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 8 },
+      web: { background: 'linear-gradient(135deg, #111111 0%, #111111 100%)', boxShadow: '0 4px 12px rgba(17, 17, 17,0.3)' },
+      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 8 },
       android: { elevation: 2 },
     }),
   },

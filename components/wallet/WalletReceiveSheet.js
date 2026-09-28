@@ -25,7 +25,7 @@ import { useAuth } from '../../context/AuthContext';
 import { IconX, IconCopy, IconShare, IconCheck } from '../Icons';
 import AvatarCircle from '../AvatarCircle';
 
-const PURPLE = '#128C7E';
+const PURPLE = '#111111';
 const GREEN  = '#10B981';
 
 function tap(kind = 'light') {

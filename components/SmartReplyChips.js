@@ -5,7 +5,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconSparkles } from './Icons';
 
-const BRAND = '#128C7E';
+const BRAND = '#111111';
 
 export default function SmartReplyChips({ email, onSelectReply, onSendReply, replies: providedReplies, label: customLabel }) {
   const { colors } = useTheme();

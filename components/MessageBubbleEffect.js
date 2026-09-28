@@ -180,7 +180,7 @@ function LoudRings({ ripple1, ripple2 }) {
           position: 'absolute',
           left: -16, right: -16, top: -10, bottom: -10,
           borderRadius: 40, borderWidth: 3,
-          borderColor: 'rgba(18, 140, 126,0.7)',
+          borderColor: 'rgba(17, 17, 17,0.7)',
           opacity: ripple1.interpolate({ inputRange: [0, 0.2, 1], outputRange: [0, 0.7, 0] }),
           transform: [{ scale: ripple1.interpolate({ inputRange: [0, 1], outputRange: [0.85, 2.4] }) }],
         }}
@@ -191,7 +191,7 @@ function LoudRings({ ripple1, ripple2 }) {
           position: 'absolute',
           left: -16, right: -16, top: -10, bottom: -10,
           borderRadius: 40, borderWidth: 2,
-          borderColor: 'rgba(18, 140, 126,0.5)',
+          borderColor: 'rgba(17, 17, 17,0.5)',
           opacity: ripple2.interpolate({ inputRange: [0, 0.2, 1], outputRange: [0, 0.55, 0] }),
           transform: [{ scale: ripple2.interpolate({ inputRange: [0, 1], outputRange: [0.85, 2.6] }) }],
         }}
@@ -248,7 +248,7 @@ export default function MessageBubbleEffect({ effect, messageId, isOwn, children
 // sender's preview matches the recipient pixel-for-pixel. Loops: play once,
 // rest, reset, repeat. `active=false` stops the loop (sheet closed / tab
 // switched away) so we don't burn Animated cycles behind a closed sheet.
-export function BubbleEffectPreview({ effect, active = true, color = '#128C7E', label = 'Olá' }) {
+export function BubbleEffectPreview({ effect, active = true, color = '#111111', label = 'Olá' }) {
   const validEffect = effect && BUBBLE_EFFECTS.has(effect) ? effect : null;
   const anim = useBubbleEffectAnim(validEffect === 'invisible-ink' ? null : validEffect);
   const { scale, tx, ty, rot, opacity, shockwave, ripple1, ripple2, localShake, play, reset } = anim;

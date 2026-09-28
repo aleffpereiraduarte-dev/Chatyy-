@@ -88,7 +88,7 @@ export default function VerifyPhoneRequiredScreen() {
     >
       <ScrollView contentContainerStyle={{ flexGrow: 1, padding: 24, justifyContent: 'center' }}>
         <View style={{ alignItems: 'center', marginBottom: 32 }}>
-          <IconSmartphone size={56} color="#128C7E" />
+          <IconSmartphone size={56} color="#111111" />
           <Text style={{ fontSize: 22, fontWeight: '700', color: colors.text, marginTop: 16, textAlign: 'center' }}>
             Verifique seu telefone
           </Text>

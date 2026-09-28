@@ -32,7 +32,7 @@ import {
 } from 'react-native';
 import { IconSparkles } from '../Icons';
 
-const BRAND = '#128C7E';
+const BRAND = '#111111';
 
 export default function SmartRepliesBar({ conversationId, lastIncomingId, onPick, colors, t }) {
   const [replies, setReplies] = useState([]);
@@ -120,7 +120,7 @@ export default function SmartRepliesBar({ conversationId, lastIncomingId, onPick
                 activeOpacity={0.7}
                 style={[s.chip, {
                   borderColor: BRAND,
-                  backgroundColor: (colors?.background === '#0B141A' || colors?.background?.startsWith?.('#0')) ? 'rgba(18, 140, 126,0.18)' : BRAND + '14',
+                  backgroundColor: (colors?.background === '#0B141A' || colors?.background?.startsWith?.('#0')) ? 'rgba(17, 17, 17,0.18)' : BRAND + '14',
                 }]}
               >
                 <Text style={[s.chipText, { color: BRAND }]} numberOfLines={2}>{r}</Text>

@@ -13,7 +13,7 @@ import {
 } from 'react-native';
 import { IconUserPlus, IconCheck } from '../Icons';
 
-const ACCENT = '#128C7E';
+const ACCENT = '#111111';
 
 export default function LiveJoinPill({
   joinRequested = false,
@@ -53,7 +53,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.35)',
     alignSelf: 'flex-start',
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 4px 14px rgba(18, 140, 126,0.55)',
+      boxShadow: '0 4px 14px rgba(17, 17, 17,0.55)',
     } : {}),
   },
   pillSent: {

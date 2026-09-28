@@ -75,7 +75,7 @@ function PackCard({ pack, installedSet, onInstall, onUninstall, onPress, colors,
           {pack.premium && (
             <View style={{
               position: 'absolute', top: 6, left: 6,
-              backgroundColor: 'rgba(18, 140, 126,0.92)', paddingHorizontal: 6, paddingVertical: 2,
+              backgroundColor: 'rgba(17, 17, 17,0.92)', paddingHorizontal: 6, paddingVertical: 2,
               borderRadius: 8, flexDirection: 'row', alignItems: 'center', gap: 3,
             }}>
               <IconStar size={10} color="#fff" />

@@ -819,20 +819,20 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           sending → done states. */}
       {unsubscribeInfo && (
         <View style={{ marginHorizontal: 16, marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 10,
-                       backgroundColor: '#f3e8ff', borderLeftWidth: 4, borderLeftColor: '#128C7E',
+                       backgroundColor: '#f3e8ff', borderLeftWidth: 4, borderLeftColor: '#111111',
                        padding: 12, borderRadius: 8 }}>
           <View style={{ flex: 1 }}>
-            <Text style={{ fontWeight: '700', color: '#128C7E', fontSize: 13 }}>
+            <Text style={{ fontWeight: '700', color: '#111111', fontSize: 13 }}>
               {t('reader.unsubscribeTitle') || 'Newsletter detectada'}
             </Text>
             {!!unsubscribeInfo.sender_name && (
-              <Text style={{ color: '#128C7E', fontSize: 12, marginTop: 2 }}>{unsubscribeInfo.sender_name}</Text>
+              <Text style={{ color: '#111111', fontSize: 12, marginTop: 2 }}>{unsubscribeInfo.sender_name}</Text>
             )}
           </View>
           <TouchableOpacity
             onPress={handleUnsubscribe}
             disabled={unsubscribeState === 'sending' || unsubscribeState === 'done'}
-            style={{ backgroundColor: unsubscribeState === 'done' ? '#128C7E' : '#128C7E',
+            style={{ backgroundColor: unsubscribeState === 'done' ? '#111111' : '#111111',
                      paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8,
                      opacity: unsubscribeState === 'sending' ? 0.6 : 1 }}
             accessibilityLabel={t('reader.unsubscribe') || 'Descadastrar'}
@@ -957,7 +957,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
       <View style={s.senderRow}>
         <View style={[
           s.senderAvatarRing,
-          { borderColor: (colors.primary || '#128C7E') + '33', shadowColor: colors.primary || '#128C7E' },
+          { borderColor: (colors.primary || '#111111') + '33', shadowColor: colors.primary || '#111111' },
         ]}>
           <AvatarCircle name={email.from_name || email.from} email={email.from} size={40} />
         </View>
@@ -1442,7 +1442,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         {/* AI: Action items button (only for long emails) */}
         {(email.body_text || '').length > 300 && (
           <TouchableOpacity
-            style={[s.secBtn, { backgroundColor: '#128C7E22', borderWidth: 1, borderColor: '#128C7E' }]}
+            style={[s.secBtn, { backgroundColor: '#11111122', borderWidth: 1, borderColor: '#111111' }]}
             onPress={async () => {
               setActionItemsLoading(true);
               try {
@@ -1453,11 +1453,11 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             }}
           >
             {actionItemsLoading ? (
-              <Text style={{ color: '#128C7E', fontWeight: '600', fontSize: 12 }}>...</Text>
+              <Text style={{ color: '#111111', fontWeight: '600', fontSize: 12 }}>...</Text>
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <IconSparkles size={12} color="#128C7E" />
-                <Text style={{ color: '#128C7E', fontWeight: '600', fontSize: 12 }}>Tarefas</Text>
+                <IconSparkles size={12} color="#111111" />
+                <Text style={{ color: '#111111', fontWeight: '600', fontSize: 12 }}>Tarefas</Text>
               </View>
             )}
           </TouchableOpacity>

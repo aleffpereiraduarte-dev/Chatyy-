@@ -18,8 +18,8 @@ function IconPaperclip({ size = 22, color = '#666' }) {
   );
 }
 
-const ACCENT = '#128C7E';
-const ACCENT_DARK = '#128C7E';
+const ACCENT = '#111111';
+const ACCENT_DARK = '#111111';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 // Filter chips on Discover (top-level filters: subscribed/discover/suggested/recent)
@@ -46,12 +46,12 @@ function formatCount(n) {
 function CardCoverFallback({ seed = 0 }) {
   // Six brand-harmonized gradients seeded by channel id parity
   const palettes = [
-    ['#128C7E', '#128C7E'],
-    ['#128C7E', '#128C7E'],
-    ['#128C7E', '#128C7E'],
-    ['#128C7E', '#128C7E'],
-    ['#128C7E', '#128C7E'],
-    ['#128C7E', '#128C7E'],
+    ['#111111', '#111111'],
+    ['#111111', '#111111'],
+    ['#111111', '#111111'],
+    ['#111111', '#111111'],
+    ['#111111', '#111111'],
+    ['#111111', '#111111'],
   ];
   const [a, b] = palettes[Math.abs(seed) % palettes.length];
   const id = `cardCover-${Math.abs(seed) % palettes.length}`;
@@ -557,7 +557,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
                     key={r.emoji}
                     onPress={() => handleReact(item.id, r.emoji)}
                     style={[styles.reactionChip, {
-                      backgroundColor: item.my_reaction === r.emoji ? (isDark ? 'rgba(18, 140, 126,0.2)' : 'rgba(18, 140, 126,0.1)') : (isDark ? '#1a1a24' : '#f0f0f5'),
+                      backgroundColor: item.my_reaction === r.emoji ? (isDark ? 'rgba(17, 17, 17,0.2)' : 'rgba(17, 17, 17,0.1)') : (isDark ? '#1a1a24' : '#f0f0f5'),
                       borderColor: item.my_reaction === r.emoji ? ACCENT : 'transparent',
                     }]}
                   >

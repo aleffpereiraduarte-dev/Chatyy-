@@ -115,8 +115,8 @@ export default function FormatToolbar({ text = '', setText, selection, colors = 
 
   const isDark = _isDarkBg(colors.background);
   const tray = isDark ? 'rgba(20,20,28,0.98)' : 'rgba(248,248,250,0.98)';
-  const pill = isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.10)';
-  const pillActive = '#128C7E';
+  const pill = isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)';
+  const pillActive = '#111111';
 
   return (
     <Animated.View

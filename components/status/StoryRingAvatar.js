@@ -11,7 +11,7 @@
 //     primitive without losing the bigger 86px variant
 //
 // Wave 4 modernization (2026-05-06): solid ring now paints an Instagram-style
-// linear gradient (#128C7E → #128C7E) when there's an unviewed story, plus a
+// linear gradient (#111111 → #111111) when there's an unviewed story, plus a
 // gentle scale-pulse (1.0 → 1.025 → 1.0, native driver) for that "live" feel.
 // Once allViewed flips true, both effects collapse to the dim grey static ring.
 //
@@ -37,7 +37,7 @@ export default function StoryRingAvatar({
   email,
   size = 54,
   ringStyle = 'solid',
-  ringColor = '#128C7E',
+  ringColor = '#111111',
   dimmedColor,
   allViewed = false,
   itemsViewed = null,    // bool[] — drives per-segment dimming when ringStyle='segmented'
@@ -151,9 +151,9 @@ export default function StoryRingAvatar({
                     knows at a glance the post is restricted. Default is the
                     brand purple gradient. */}
                 <LinearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
-                  <Stop offset="0" stopColor={closeFriends ? '#34D399' : '#128C7E'} />
+                  <Stop offset="0" stopColor={closeFriends ? '#34D399' : '#111111'} />
                   <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : ringColor} />
-                  <Stop offset="1" stopColor={closeFriends ? '#047857' : '#128C7E'} />
+                  <Stop offset="1" stopColor={closeFriends ? '#047857' : '#111111'} />
                 </LinearGradient>
               </Defs>
               <SvgCircle
@@ -208,9 +208,9 @@ export default function StoryRingAvatar({
                   audience scope is visible at a glance — same per-segment
                   dimming as the purple variant once that item is viewed. */}
               <LinearGradient id={segGid} x1="0" y1="0" x2="1" y2="1">
-                <Stop offset="0" stopColor={closeFriends ? '#34D399' : '#128C7E'} />
+                <Stop offset="0" stopColor={closeFriends ? '#34D399' : '#111111'} />
                 <Stop offset="0.5" stopColor={closeFriends ? '#10B981' : ringColor} />
-                <Stop offset="1" stopColor={closeFriends ? '#047857' : '#128C7E'} />
+                <Stop offset="1" stopColor={closeFriends ? '#047857' : '#111111'} />
               </LinearGradient>
             </Defs>
             {Array.from({ length: count }).map((_, i) => {
@@ -223,7 +223,7 @@ export default function StoryRingAvatar({
                   cy={ringSize / 2}
                   r={radius}
                   stroke={segViewed
-                    ? (closeFriends ? 'rgba(16,185,129,0.22)' : 'rgba(18, 140, 126,0.22)')
+                    ? (closeFriends ? 'rgba(16,185,129,0.22)' : 'rgba(17, 17, 17,0.22)')
                     : `url(#${segGid})`}
                   strokeWidth={3}
                   fill="none"

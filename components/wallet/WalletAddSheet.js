@@ -27,8 +27,8 @@ import {
 import { getBaseUrl } from '../../services/api';
 import * as api from '../../services/api';
 
-const PURPLE      = '#128C7E';
-const PURPLE_DEEP = '#128C7E';
+const PURPLE      = '#111111';
+const PURPLE_DEEP = '#111111';
 const GREEN       = '#10B981';
 const GOLD        = '#F59E0B';
 

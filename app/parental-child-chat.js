@@ -11,7 +11,7 @@ import AvatarCircle from '../components/AvatarCircle';
 import * as api from '../services/api';
 import ErrorBoundary from '../components/ErrorBoundary';
 
-const ACCENT = '#128C7E';
+const ACCENT = '#111111';
 
 const FILTERS = [
   { key: 'today',  labelKey: 'parental.filterToday', fallback: 'Hoje' },
@@ -178,7 +178,7 @@ function ParentalChildChatScreenInner() {
         <View style={[
           s.msgBubble,
           fromChild
-            ? { backgroundColor: isDark ? '#128C7E' : '#F1F3F5', borderBottomRightRadius: 4 }
+            ? { backgroundColor: isDark ? '#111111' : '#F1F3F5', borderBottomRightRadius: 4 }
             : { backgroundColor: isDark ? '#1e293b' : '#fff', borderBottomLeftRadius: 4 },
           flagged && { borderWidth: 2, borderColor: '#ef4444' },
         ]}>

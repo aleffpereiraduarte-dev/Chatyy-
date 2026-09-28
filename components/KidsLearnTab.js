@@ -41,7 +41,7 @@ function IconSend({ size = 18, color = '#fff' }) {
   );
 }
 
-function IconCamera({ size = 20, color = '#128C7E' }) {
+function IconCamera({ size = 20, color = '#111111' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
       <Path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
@@ -96,11 +96,11 @@ function IconParent({ size = 18, color = '#fff' }) {
 // ─── Category Config ───
 
 const CATEGORIES = [
-  { key: 'matematica', emoji: '\uD83D\uDD22', color: '#128C7E', gradient: ['#128C7E', '#128C7E'], i18nKey: 'kids.categories.math' },
-  { key: 'portugues', emoji: '\uD83D\uDCDA', color: '#128C7E', gradient: ['#db2777', '#f9a8d4'], i18nKey: 'kids.categories.portuguese' },
+  { key: 'matematica', emoji: '\uD83D\uDD22', color: '#111111', gradient: ['#111111', '#111111'], i18nKey: 'kids.categories.math' },
+  { key: 'portugues', emoji: '\uD83D\uDCDA', color: '#111111', gradient: ['#db2777', '#f9a8d4'], i18nKey: 'kids.categories.portuguese' },
   { key: 'ciencias', emoji: '\uD83D\uDD2C', color: '#10b981', gradient: ['#059669', '#6ee7b7'], i18nKey: 'kids.categories.science' },
   { key: 'historia', emoji: '\uD83C\uDFDB\uFE0F', color: '#f59e0b', gradient: ['#d97706', '#fcd34d'], i18nKey: 'kids.categories.history' },
-  { key: 'ingles', emoji: '\uD83C\uDF0D', color: '#128C7E', gradient: ['#128C7E', '#93c5fd'], i18nKey: 'kids.categories.english' },
+  { key: 'ingles', emoji: '\uD83C\uDF0D', color: '#111111', gradient: ['#111111', '#93c5fd'], i18nKey: 'kids.categories.english' },
   { key: 'artes', emoji: '\uD83C\uDFA8', color: '#f43f5e', gradient: ['#e11d48', '#fda4af'], i18nKey: 'kids.categories.art' },
   { key: 'musica', emoji: '\uD83C\uDFB5', color: '#06b6d4', gradient: ['#0891b2', '#67e8f9'], i18nKey: 'kids.categories.music' },
   { key: 'geografia', emoji: '\uD83C\uDF0E', color: '#84cc16', gradient: ['#65a30d', '#bef264'], i18nKey: 'kids.categories.geography' },
@@ -125,7 +125,7 @@ function TypingDots() {
   return (
     <View style={{ flexDirection: 'row', gap: 6, paddingVertical: 8 }}>
       {[dot1, dot2, dot3].map((dot, i) => (
-        <Animated.View key={i} style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#128C7E',
+        <Animated.View key={i} style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: '#111111',
           opacity: dot.interpolate({ inputRange: [0, 1], outputRange: [0.3, 1] }),
           transform: [{ scale: dot.interpolate({ inputRange: [0, 1], outputRange: [0.8, 1.3] }) }],
         }} />
@@ -153,7 +153,7 @@ function BounceIn({ children, delay = 0 }) {
 function AvatarIcon({ size = 36 }) {
   return (
     <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: '#F1F3F5', alignItems: 'center', justifyContent: 'center' }}>
-      <IconGraduationCap size={size * 0.55} color="#128C7E" />
+      <IconGraduationCap size={size * 0.55} color="#111111" />
     </View>
   );
 }
@@ -174,7 +174,7 @@ function SpecialCard({ type, content, isDark }) {
   const configs = {
     badge: { bg: isDark ? '#1a2e1a' : '#dcfce7', color: isDark ? '#86efac' : '#166534', icon: '\uD83C\uDFC6' },
     fact: { bg: isDark ? '#2e2a1a' : '#fef3c7', color: isDark ? '#fbbf24' : '#92400e', icon: '\uD83D\uDCA1' },
-    exercise: { bg: isDark ? '#161618' : '#F1F3F5', color: isDark ? '#F1F3F5' : '#128C7E', icon: '\u270D\uFE0F' },
+    exercise: { bg: isDark ? '#161618' : '#F1F3F5', color: isDark ? '#F1F3F5' : '#111111', icon: '\u270D\uFE0F' },
   };
   const c = configs[type] || configs.fact;
   return (
@@ -274,19 +274,19 @@ export default function KidsLearnTab() {
           isUser ? s.userBubble : s.aiBubble,
           {
             backgroundColor: isUser
-              ? (Platform.OS === 'web' ? 'linear-gradient(135deg, #128C7E, #128C7E)' : '#128C7E')
+              ? (Platform.OS === 'web' ? 'linear-gradient(135deg, #111111, #111111)' : '#111111')
               : (isDark ? '#161618' : '#fff'),
-            ...(Platform.OS === 'web' && !isUser ? { boxShadow: '0 4px 16px rgba(18, 140, 126,0.12)' } : {}),
+            ...(Platform.OS === 'web' && !isUser ? { boxShadow: '0 4px 16px rgba(17, 17, 17,0.12)' } : {}),
           },
         ]}>
           {!isUser && (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 }}>
               <AvatarIcon size={36} />
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 15, fontWeight: '800', color: '#128C7E' }}>{t('kids.teacherOne')}</Text>
+                <Text style={{ fontSize: 15, fontWeight: '800', color: '#111111' }}>{t('kids.teacherOne')}</Text>
                 {level > 1 && (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                    <Text style={{ fontSize: 11, color: '#128C7E', fontWeight: '700' }}>Lv.{level}</Text>
+                    <Text style={{ fontSize: 11, color: '#111111', fontWeight: '700' }}>Lv.{level}</Text>
                     <StarProgress stars={Math.min(stars, 5)} maxStars={5} size={12} />
                   </View>
                 )}
@@ -310,7 +310,7 @@ export default function KidsLearnTab() {
     <KeyboardAvoidingView style={[s.container, { backgroundColor: bg }]} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={100}>
       {/* Colorful gradient header */}
       <View style={[s.header, Platform.OS === 'web'
-        ? { background: 'linear-gradient(135deg, #6366f1 0%, #128C7E 40%, #128C7E 70%, #f43f5e 100%)' }
+        ? { background: 'linear-gradient(135deg, #6366f1 0%, #111111 40%, #111111 70%, #f43f5e 100%)' }
         : { backgroundColor: '#6366f1' }
       ]}>
         <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
@@ -384,7 +384,7 @@ export default function KidsLearnTab() {
           <View style={[s.bubble, s.aiBubble, { backgroundColor: isDark ? '#161618' : '#fff' }]}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 4 }}>
               <AvatarIcon size={36} />
-              <Text style={{ fontSize: 15, fontWeight: '800', color: '#128C7E' }}>{t('kids.teacherOne')}</Text>
+              <Text style={{ fontSize: 15, fontWeight: '800', color: '#111111' }}>{t('kids.teacherOne')}</Text>
             </View>
             <TypingDots />
           </View>
@@ -458,7 +458,7 @@ export default function KidsLearnTab() {
       {/* Category selection - large, colorful, touch-friendly cards */}
       {showCategories && (
         <View style={s.topicsWrap}>
-          <Text style={{ fontSize: 15, fontWeight: '700', color: isDark ? '#128C7E' : '#6b7280', marginBottom: 12, textAlign: 'center' }}>
+          <Text style={{ fontSize: 15, fontWeight: '700', color: isDark ? '#111111' : '#6b7280', marginBottom: 12, textAlign: 'center' }}>
             {t('kids.chooseSubject')}
           </Text>
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center' }}>
@@ -496,7 +496,7 @@ export default function KidsLearnTab() {
       )}
 
       {/* Input bar - large touch targets for kids */}
-      <View style={[s.inputBar, { backgroundColor: isDark ? '#161618' : '#fff', borderTopColor: isDark ? 'rgba(18, 140, 126,0.15)' : 'rgba(0,0,0,0.06)' }]}>
+      <View style={[s.inputBar, { backgroundColor: isDark ? '#161618' : '#fff', borderTopColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(0,0,0,0.06)' }]}>
         {ImagePicker && (
           <TouchableOpacity style={s.iconBtn} onPress={async () => {
             try {
@@ -504,27 +504,27 @@ export default function KidsLearnTab() {
               if (!r.canceled && r.assets?.[0]) sendMessage(input.trim() || 'Me ajuda com esse dever de casa!');
             } catch {}
           }} activeOpacity={0.7} accessibilityLabel="Photo" accessibilityRole="button">
-            <IconCamera size={24} color={isDark ? '#128C7E' : '#128C7E'} />
+            <IconCamera size={24} color={isDark ? '#111111' : '#111111'} />
           </TouchableOpacity>
         )}
         <TextInput
           style={[s.input, { backgroundColor: isDark ? '#161618' : '#f3e8ff', color: isDark ? '#F1F3F5' : '#1e1b4b' }]}
           placeholder={t('kids.homeworkPlaceholder') || 'Qual sua duvida?'}
-          placeholderTextColor={isDark ? '#128C7E' : '#128C7E'}
+          placeholderTextColor={isDark ? '#111111' : '#111111'}
           value={input} onChangeText={setInput}
           onSubmitEditing={() => sendMessage(input)} returnKeyType="send" maxLength={500} editable={!loading}
         />
         <TouchableOpacity
           style={[s.sendBtn, {
-            backgroundColor: input.trim() && !loading ? '#128C7E' : (isDark ? '#161618' : '#F1F3F5'),
-            ...(input.trim() && !loading && Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(18, 140, 126,0.35)' } : {}),
+            backgroundColor: input.trim() && !loading ? '#111111' : (isDark ? '#161618' : '#F1F3F5'),
+            ...(input.trim() && !loading && Platform.OS === 'web' ? { boxShadow: '0 4px 12px rgba(17, 17, 17,0.35)' } : {}),
           }]}
           onPress={() => sendMessage(input)} disabled={!input.trim() || loading} activeOpacity={0.7}
           accessibilityLabel="Send" accessibilityRole="button"
         >
           {loading
-            ? <ActivityIndicator size="small" color="#128C7E" />
-            : <IconSend size={20} color={input.trim() ? '#fff' : '#128C7E'} />
+            ? <ActivityIndicator size="small" color="#111111" />
+            : <IconSend size={20} color={input.trim() ? '#fff' : '#111111'} />
           }
         </TouchableOpacity>
       </View>

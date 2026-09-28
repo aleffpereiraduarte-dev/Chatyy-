@@ -30,7 +30,7 @@ const GREEN = '#34C759';
 const GREEN_DARK = '#30D158';
 const RED = '#E53935';
 const BLUE = '#007AFF';
-const ACCENT = '#128C7E';
+const ACCENT = '#111111';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MAX_DIALER_WIDTH = 400;
 
@@ -841,7 +841,7 @@ function CallEmptyIllustration({ isDark }) {
   const ringStyle = (anim) => ({
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     borderRadius: 999, borderWidth: 2,
-    borderColor: isDark ? 'rgba(18, 140, 126,0.55)' : 'rgba(18, 140, 126,0.45)',
+    borderColor: isDark ? 'rgba(17, 17, 17,0.55)' : 'rgba(17, 17, 17,0.45)',
     transform: [
       { scale: anim.interpolate({ inputRange: [0, 1], outputRange: [0.7, 2.4] }) },
     ],
@@ -861,11 +861,11 @@ function CallEmptyIllustration({ isDark }) {
         width: 64, height: 64, borderRadius: 32,
         alignItems: 'center', justifyContent: 'center',
         ...Platform.select({
-          ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
+          ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.32, shadowRadius: 14 },
           android: { elevation: 6 },
-          web: { boxShadow: '0 6px 20px rgba(18, 140, 126,0.32)', background: 'linear-gradient(135deg, #128C7E 0%, #128C7E 100%)' },
+          web: { boxShadow: '0 6px 20px rgba(17, 17, 17,0.32)', background: 'linear-gradient(135deg, #111111 0%, #111111 100%)' },
         }),
-        backgroundColor: '#128C7E',
+        backgroundColor: '#111111',
       }}>
         <IconPhone size={26} color="#fff" />
       </View>
@@ -1478,17 +1478,17 @@ const activeCallStyles = StyleSheet.create({
     height: 140,
     borderRadius: 70,
     borderWidth: 2,
-    borderColor: 'rgba(18, 140, 126,0.5)',
+    borderColor: 'rgba(17, 17, 17,0.5)',
   },
   avatarOuter: {
     width: 120,
     height: 120,
     borderRadius: 60,
-    backgroundColor: 'rgba(18, 140, 126,0.15)',
+    backgroundColor: 'rgba(17, 17, 17,0.15)',
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: 'rgba(18, 140, 126,0.3)',
+    borderColor: 'rgba(17, 17, 17,0.3)',
   },
   avatarInner: {
     width: 96,
@@ -1554,8 +1554,8 @@ const activeCallStyles = StyleSheet.create({
   },
   // Active state reads as "on" — brand-tinted fill (white icons stay legible).
   actionBtnActive: {
-    backgroundColor: 'rgba(18, 140, 126,0.55)',
-    borderColor: 'rgba(18, 140, 126,0.6)',
+    backgroundColor: 'rgba(17, 17, 17,0.55)',
+    borderColor: 'rgba(17, 17, 17,0.6)',
   },
   actionLabel: {
     color: 'rgba(255,255,255,0.8)',
@@ -3379,12 +3379,12 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
             style={{
               flexDirection: 'row', alignItems: 'center', gap: 5,
               paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14,
-              backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.10)',
+              backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)',
             }}
             accessibilityLabel={t?.('calls.schedule') || 'Agendar'}
           >
-            <IconCalendar size={13} color="#128C7E" />
-            <Text style={{ color: '#128C7E', fontSize: 13, fontWeight: '600' }}>
+            <IconCalendar size={13} color="#111111" />
+            <Text style={{ color: '#111111', fontSize: 13, fontWeight: '600' }}>
               {t?.('calls.schedule') || 'Agendar'}
             </Text>
           </TouchableOpacity>
@@ -3395,11 +3395,11 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
               style={{
                 flexDirection: 'row', alignItems: 'center', gap: 5,
                 paddingHorizontal: 11, paddingVertical: 6, borderRadius: 14,
-                backgroundColor: isDark ? 'rgba(18, 140, 126,0.10)' : 'rgba(18, 140, 126,0.06)',
+                backgroundColor: isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.06)',
               }}
               accessibilityLabel={t?.('calls.scheduled') || 'Agendadas'}
             >
-              <Text style={{ color: '#128C7E', fontSize: 13, fontWeight: '600' }}>
+              <Text style={{ color: '#111111', fontSize: 13, fontWeight: '600' }}>
                 {t?.('calls.scheduled') || 'Agendadas'}
               </Text>
             </TouchableOpacity>
@@ -3471,14 +3471,14 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         <View style={{
           width: 40, height: 40, borderRadius: 20, marginRight: 12,
           alignItems: 'center', justifyContent: 'center',
-          backgroundColor: 'rgba(18, 140, 126,0.15)',
+          backgroundColor: 'rgba(17, 17, 17,0.15)',
         }}>
           {creatingLink
-            ? <ActivityIndicator size="small" color="#128C7E" />
-            : <IconLink size={20} color="#128C7E" />}
+            ? <ActivityIndicator size="small" color="#111111" />
+            : <IconLink size={20} color="#111111" />}
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 15, fontWeight: '600', color: '#128C7E' }}>
+          <Text style={{ fontSize: 15, fontWeight: '600', color: '#111111' }}>
             {t?.('calls.createCallLink') || 'Criar link de chamada'}
           </Text>
           <Text style={{ fontSize: 11, color: isDark ? '#8e8e93' : '#8e8e93', marginTop: 2 }}>
@@ -3826,12 +3826,12 @@ const s = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 28,
     borderRadius: 999,
-    backgroundColor: '#128C7E',
+    backgroundColor: '#111111',
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 6px 18px rgba(18, 140, 126,0.35)',
-      backgroundImage: 'linear-gradient(135deg, #128C7E 0%, #128C7E 100%)',
+      boxShadow: '0 6px 18px rgba(17, 17, 17,0.35)',
+      backgroundImage: 'linear-gradient(135deg, #111111 0%, #111111 100%)',
     } : Platform.OS === 'ios' ? {
-      shadowColor: '#128C7E',
+      shadowColor: '#111111',
       shadowOffset: { width: 0, height: 6 },
       shadowOpacity: 0.32,
       shadowRadius: 14,

@@ -16,23 +16,23 @@ import useIsMounted from '../hooks/useIsMounted';
 import * as haptics from '../services/haptics';
 import ErrorBoundary from '../components/ErrorBoundary';
 
-const ACCENT = '#128C7E';
+const ACCENT = '#111111';
 const STEPS = ['info', 'document', 'verifying', 'credentials'];
 
 // Step gradient configs
 const STEP_GRADIENTS = {
-  0: { web: 'linear-gradient(145deg, #4F46E5 0%, #128C7E 40%, #128C7E 100%)', native: '#128C7E' },
+  0: { web: 'linear-gradient(145deg, #4F46E5 0%, #111111 40%, #111111 100%)', native: '#111111' },
   1: { web: 'linear-gradient(145deg, #059669 0%, #10B981 40%, #34D399 100%)', native: '#10B981' },
-  2: { web: 'linear-gradient(145deg, #128C7E 0%, #128C7E 40%, #128C7E 100%)', native: '#128C7E' },
+  2: { web: 'linear-gradient(145deg, #111111 0%, #111111 40%, #111111 100%)', native: '#111111' },
   3: { web: 'linear-gradient(145deg, #D97706 0%, #F59E0B 40%, #FBBF24 100%)', native: '#F59E0B' },
 };
 
 // Age-appropriate icon
 const AGE_ICON = (age) => {
-  if (age <= 7) return <IconUser size={16} color="#128C7E" />;
+  if (age <= 7) return <IconUser size={16} color="#111111" />;
   if (age <= 9) return <IconUser size={16} color="#3B82F6" />;
   if (age <= 11) return <IconStar size={16} color="#F59E0B" />;
-  return <IconStar size={16} color="#128C7E" />;
+  return <IconStar size={16} color="#111111" />;
 };
 
 // Mascot frames for animation (icon components)
@@ -471,14 +471,14 @@ function ParentalScreenInner() {
   }, [showWizard, isMountedRef]);
 
   const relationships = [
-    { key: 'mae', label: t('parental.relMom'), emoji: <IconUser size={24} color="#128C7E" />, color: '#128C7E' },
+    { key: 'mae', label: t('parental.relMom'), emoji: <IconUser size={24} color="#111111" />, color: '#111111' },
     { key: 'pai', label: t('parental.relDad'), emoji: <IconUser size={24} color="#3B82F6" />, color: '#3B82F6' },
-    { key: 'tutor', label: t('parental.relGuardian'), emoji: <IconHome size={24} color="#128C7E" />, color: '#128C7E' },
+    { key: 'tutor', label: t('parental.relGuardian'), emoji: <IconHome size={24} color="#111111" />, color: '#111111' },
   ];
 
   const genders = [
     { key: 'male', label: t('parental.genderBoy'), emoji: <IconUser size={24} color="#3B82F6" />, color: '#3B82F6' },
-    { key: 'female', label: t('parental.genderGirl'), emoji: <IconUser size={24} color="#128C7E" />, color: '#128C7E' },
+    { key: 'female', label: t('parental.genderGirl'), emoji: <IconUser size={24} color="#111111" />, color: '#111111' },
     { key: 'other', label: t('parental.genderOther'), emoji: <IconStar size={24} color="#F59E0B" />, color: '#F59E0B' },
   ];
 
@@ -599,7 +599,7 @@ function ParentalScreenInner() {
     active: { color: '#22c55e', label: t('parental.active'), icon: <IconCheck size={24} color="#22c55e" /> },
     suspended: { color: '#ef4444', label: t('parental.suspended'), icon: <IconAlertCircle size={24} color="#ef4444" /> },
     revoked: { color: '#6b7280', label: t('parental.revoked'), icon: <IconX size={24} color="#6b7280" /> },
-    graduated: { color: '#128C7E', label: t('parental.graduated'), icon: <IconStar size={24} color="#128C7E" /> },
+    graduated: { color: '#111111', label: t('parental.graduated'), icon: <IconStar size={24} color="#111111" /> },
   };
 
   const formatLastActive = (dateStr) => {
@@ -641,11 +641,11 @@ function ParentalScreenInner() {
   // the same child always gets the same colors across sessions.
   const childGradient = (email) => {
     const palettes = [
-      ['#128C7E', '#128C7E'], // purple → pink
+      ['#111111', '#111111'], // purple → pink
       ['#3B82F6', '#06B6D4'], // blue → cyan
       ['#10B981', '#84CC16'], // green → lime
       ['#F59E0B', '#EF4444'], // amber → red
-      ['#128C7E', '#3B82F6'], // violet → blue
+      ['#111111', '#3B82F6'], // violet → blue
     ];
     let h = 0;
     for (let i = 0; i < (email || '').length; i++) h = (h * 31 + email.charCodeAt(i)) | 0;
@@ -766,7 +766,7 @@ function ParentalScreenInner() {
   }, [t]);
 
   // ─── Confetti Overlay ───
-  const CONFETTI_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FED766', '#128C7E', '#128C7E', '#34D399', '#FB923C'];
+  const CONFETTI_COLORS = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FED766', '#111111', '#111111', '#34D399', '#FB923C'];
   const renderConfetti = () => {
     if (!showConfetti) return null;
     return (
@@ -848,7 +848,7 @@ function ParentalScreenInner() {
           {(() => {
             const icons = [IconShield, IconUser, IconStar, IconHeart, IconSparkles, IconSmile];
             const Ico = icons[mascotFrame % icons.length];
-            return <Ico size={44} color="#128C7E" />;
+            return <Ico size={44} color="#111111" />;
           })()}
         </View>
       </Animated.View>
@@ -857,7 +857,7 @@ function ParentalScreenInner() {
         <Text style={[s.wizardTitle, { color: colors.text, marginBottom: 0 }]}>
           {t('parental.addYourChild')}
         </Text>
-        <IconUser size={24} color="#128C7E" />
+        <IconUser size={24} color="#111111" />
       </View>
       <Text style={[s.wizardSubtitle, { color: colors.textSecondary }]}>
         {t('parental.addChildDesc')}
@@ -867,7 +867,7 @@ function ParentalScreenInner() {
       <View style={s.fieldGroup}>
         <Text style={[s.fieldLabel, { color: colors.textSecondary }]}>{t('parental.childFullName')}</Text>
         <View style={[s.inputWrap, { backgroundColor: isDark ? '#1a2332' : '#f8f9fb', borderColor: isDark ? '#2d3748' : '#e2e8f0' }]}>
-          <View style={{ marginRight: 12 }}><IconUser size={20} color="#128C7E" /></View>
+          <View style={{ marginRight: 12 }}><IconUser size={20} color="#111111" /></View>
           <TextInput
             ref={nameInputRef}
             style={[s.input, { color: colors.text }]}
@@ -1151,8 +1151,8 @@ function ParentalScreenInner() {
                 onPress={() => pickDocument(false)}
                 activeOpacity={0.7}
               >
-                <View style={[s.docBtnIconWrap, { backgroundColor: '#128C7E' + '15' }]}>
-                  <IconImage size={24} color="#128C7E" />
+                <View style={[s.docBtnIconWrap, { backgroundColor: '#111111' + '15' }]}>
+                  <IconImage size={24} color="#111111" />
                 </View>
                 <Text style={[s.docBtnText, { color: colors.text }]}>{t('parental.gallery')}</Text>
                 <Text style={[s.docBtnSub, { color: colors.textSecondary }]}>{t('parental.selectPhoto')}</Text>
@@ -1264,7 +1264,7 @@ function ParentalScreenInner() {
         {newChild && approved && (
           <View style={[s.childReadyCard, { backgroundColor: isDark ? '#132218' : '#f0fdf4', borderColor: '#22c55e40' }]}>
             <View style={s.childReadyAvatar}>
-              {childGender === 'female' ? <IconUser size={40} color="#128C7E" /> : childGender === 'male' ? <IconUser size={40} color="#3B82F6" /> : <IconUser size={40} color="#F59E0B" />}
+              {childGender === 'female' ? <IconUser size={40} color="#111111" /> : childGender === 'male' ? <IconUser size={40} color="#3B82F6" /> : <IconUser size={40} color="#F59E0B" />}
             </View>
             <Text style={[s.childReadyName, { color: colors.text }]}>{newChild.child_name}</Text>
             <View style={s.childReadyBadge}>
@@ -1328,7 +1328,7 @@ function ParentalScreenInner() {
               onPress={() => setQuickSetup(p => ({ ...p, bedtime: !p.bedtime }))}
               activeOpacity={0.7}
             >
-              <View style={s.setupEmojiWrap}><IconMoon size={24} color="#128C7E" /></View>
+              <View style={s.setupEmojiWrap}><IconMoon size={24} color="#111111" /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.setupBedtime')}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{presets.bedtimeStart} - {presets.bedtimeEnd}</Text>
@@ -1431,33 +1431,33 @@ function ParentalScreenInner() {
 
             <TouchableOpacity
               style={[s.setupOption, {
-                backgroundColor: quickSetup.filterProfanity ? '#128C7E' + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
-                borderColor: quickSetup.filterProfanity ? '#128C7E' : (isDark ? '#2d3748' : '#e2e8f0'),
+                backgroundColor: quickSetup.filterProfanity ? '#111111' + '12' : (isDark ? '#1a2332' : '#f8f9fb'),
+                borderColor: quickSetup.filterProfanity ? '#111111' : (isDark ? '#2d3748' : '#e2e8f0'),
               }]}
               onPress={() => setQuickSetup(p => ({ ...p, filterProfanity: !p.filterProfanity }))}
               activeOpacity={0.7}
             >
-              <View style={s.setupEmojiWrap}><IconMessageSquare size={24} color="#128C7E" /></View>
+              <View style={s.setupEmojiWrap}><IconMessageSquare size={24} color="#111111" /></View>
               <View style={{ flex: 1 }}>
                 <Text style={[s.setupLabel, { color: colors.text }]}>{t('parental.filterProfanity') || 'Filter profanity'}</Text>
                 <Text style={[s.setupDesc, { color: colors.textSecondary }]}>{t('parental.filterProfanityDesc') || 'Block bad language'}</Text>
               </View>
-              <View style={[s.setupToggle, { backgroundColor: quickSetup.filterProfanity ? '#128C7E' : (isDark ? '#374151' : '#d1d5db') }]}>
+              <View style={[s.setupToggle, { backgroundColor: quickSetup.filterProfanity ? '#111111' : (isDark ? '#374151' : '#d1d5db') }]}>
                 <View style={[s.setupToggleDot, { transform: [{ translateX: quickSetup.filterProfanity ? 16 : 0 }] }]} />
               </View>
             </TouchableOpacity>
 
             {/* One-tap recommended */}
             <TouchableOpacity
-              style={[s.recommendedBtn, { backgroundColor: '#128C7E' + '12', borderColor: '#128C7E' + '40' }]}
+              style={[s.recommendedBtn, { backgroundColor: '#111111' + '12', borderColor: '#111111' + '40' }]}
               onPress={() => {
                 setQuickSetup({ bedtime: true, contacts: true, screenTime: true, safeSearch: true, filterAdult: true, filterViolence: true, filterProfanity: true });
                 if (Platform.OS !== 'web') try { Vibration.vibrate(30); } catch {}
               }}
               activeOpacity={0.7}
             >
-              <IconSparkles size={18} color="#128C7E" />
-              <Text style={[s.recommendedText, { color: '#128C7E' }]}>{t('parental.applyRecommended')}</Text>
+              <IconSparkles size={18} color="#111111" />
+              <Text style={[s.recommendedText, { color: '#111111' }]}>{t('parental.applyRecommended')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -1609,8 +1609,8 @@ function ParentalScreenInner() {
         {/* Bedtime active banner — countdown updates via `now` heartbeat */}
         {isActive && bedtime.active && (
           <View style={[s.bedtimeBanner, { backgroundColor: isDark ? '#1e1b3a' : '#F1F3F5', borderTopColor: isDark ? '#2d3748' : '#F1F3F5' }]}>
-            <IconMoon size={16} color="#128C7E" />
-            <Text style={[s.bedtimeText, { color: isDark ? '#F1F3F5' : '#128C7E' }]} numberOfLines={1}>
+            <IconMoon size={16} color="#111111" />
+            <Text style={[s.bedtimeText, { color: isDark ? '#F1F3F5' : '#111111' }]} numberOfLines={1}>
               {t('parental.bedtimeActive') || 'Em modo noturno até'} {bedtime.endLabel}
               {bedtime.minsLeft > 0 ? ` · ${bedtime.minsLeft} min` : ''}
             </Text>
@@ -1637,9 +1637,9 @@ function ParentalScreenInner() {
         )}
 
         {isGraduated && (
-          <View style={[s.graduatedBanner, { backgroundColor: '#128C7E10', borderTopColor: isDark ? '#2d3748' : '#e8ecf0' }]}>
-            <IconStar size={14} color="#128C7E" />
-            <Text style={[s.graduatedText, { color: '#128C7E' }]}>{t('parental.turnedThirteen')}</Text>
+          <View style={[s.graduatedBanner, { backgroundColor: '#11111110', borderTopColor: isDark ? '#2d3748' : '#e8ecf0' }]}>
+            <IconStar size={14} color="#111111" />
+            <Text style={[s.graduatedText, { color: '#111111' }]}>{t('parental.turnedThirteen')}</Text>
           </View>
         )}
 
@@ -1730,7 +1730,7 @@ function ParentalScreenInner() {
               <Animated.View style={{ transform: [{ scale: bounceAnim }] }}>
                 <TouchableOpacity
                   style={[s.nextBtn, {
-                    backgroundColor: canNext ? (step === 0 ? '#128C7E' : ACCENT) : (isDark ? '#2d3748' : '#e2e8f0'),
+                    backgroundColor: canNext ? (step === 0 ? '#111111' : ACCENT) : (isDark ? '#2d3748' : '#e2e8f0'),
                   }]}
                   onPress={handleNextStep}
                   disabled={!canNext || creating}
@@ -1944,7 +1944,7 @@ function ParentalScreenInner() {
     { key: 'screenTime', label: t('parental.screenTime'), icon: IconBarChart, color: '#3b82f6', emoji: <IconClock size={24} color="#3b82f6" /> },
     { key: 'lock', label: t('parental.lockDevice'), icon: IconShield, color: '#ef4444', emoji: <IconShield size={24} color="#ef4444" /> },
     { key: 'message', label: t('parental.sendMessage'), icon: IconMessageSquare, color: '#22c55e', emoji: <IconMessageSquare size={24} color="#22c55e" /> },
-    { key: 'summary', label: t('parental.aiSummary'), icon: IconBarChart, color: '#128C7E', emoji: <IconSparkles size={24} color="#128C7E" /> },
+    { key: 'summary', label: t('parental.aiSummary'), icon: IconBarChart, color: '#111111', emoji: <IconSparkles size={24} color="#111111" /> },
   ];
 
   const handleQuickAction = (action, child) => {
@@ -2030,7 +2030,7 @@ function ParentalScreenInner() {
               <View style={s.heroIllustration}>
                 <View style={[s.heroBlob, { backgroundColor: ACCENT + '18' }]} />
                 <View style={[s.heroBlob, s.heroBlob2, { backgroundColor: '#10B98118' }]} />
-                <View style={[s.heroBlob, s.heroBlob3, { backgroundColor: '#128C7E18' }]} />
+                <View style={[s.heroBlob, s.heroBlob3, { backgroundColor: '#11111118' }]} />
                 <View style={s.heroIconCenter}>
                   <IconShield size={56} color={ACCENT} />
                 </View>
@@ -2161,7 +2161,7 @@ const s = StyleSheet.create({
 
   // Mascot
   mascotWrap: { alignItems: 'center', marginBottom: 4 },
-  mascotCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#128C7E15', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#128C7E30' },
+  mascotCircle: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#11111115', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: '#11111130' },
   mascotEmoji: { fontSize: 32 },
 
   // Shield
@@ -2382,7 +2382,7 @@ const s = StyleSheet.create({
   flaggedText: { flex: 1, fontSize: 13, lineHeight: 18 },
 
   // FAB
-  fab: { position: 'absolute', bottom: 28, right: 28, width: 60, height: 60, borderRadius: 22, alignItems: 'center', justifyContent: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(18, 140, 126,0.4)' } : {}) },
+  fab: { position: 'absolute', bottom: 28, right: 28, width: 60, height: 60, borderRadius: 22, alignItems: 'center', justifyContent: 'center', elevation: 8, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8, ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(17, 17, 17,0.4)' } : {}) },
 
   // Pending requests banner (top of dashboard)
   pendingBanner: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 18, borderWidth: 1.5, marginBottom: 14 },
@@ -2417,7 +2417,7 @@ const s = StyleSheet.create({
   heroBlob: { position: 'absolute', width: 110, height: 110, borderRadius: 55 },
   heroBlob2: { top: 8, left: 14, width: 80, height: 80, borderRadius: 40 },
   heroBlob3: { bottom: 10, right: 16, width: 70, height: 70, borderRadius: 35 },
-  heroIconCenter: { width: 96, height: 96, borderRadius: 48, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: '#128C7E', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 12 },
+  heroIconCenter: { width: 96, height: 96, borderRadius: 48, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', elevation: 4, shadowColor: '#111111', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 12 },
 
   // Skeleton loader (initial load, no cache)
   skeletonCard: { flexDirection: 'row', alignItems: 'center', padding: 18, gap: 14, borderRadius: 22, borderWidth: 1.5 },

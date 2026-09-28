@@ -11,7 +11,7 @@ import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline, IconMic, IconP
 import ModalHeader from './ModalHeader';
 import * as api from '../services/api';
 
-const ACCENT = '#128C7E';
+const ACCENT = '#111111';
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SHEET_HEIGHT = Math.min(SCREEN_HEIGHT * 0.75, 700);
 
@@ -176,17 +176,17 @@ const CommentItem = memo(function CommentItem({
                   style={{
                     flexDirection: 'row', alignItems: 'center', gap: 6,
                     paddingHorizontal: 10, paddingVertical: 6, borderRadius: 18,
-                    backgroundColor: 'rgba(18, 140, 126,0.12)',
+                    backgroundColor: 'rgba(17, 17, 17,0.12)',
                   }}
                   accessibilityLabel={t?.('feed.voiceComment') || 'Voice comment'}
                   accessibilityRole="button"
                 >
                   {voicePlaying
-                    ? <IconPause size={14} color="#128C7E" />
-                    : <IconPlay size={14} color="#128C7E" />}
+                    ? <IconPause size={14} color="#111111" />
+                    : <IconPlay size={14} color="#111111" />}
                   <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 14 }}>
                     {[5,9,7,11,6,10,8,12,7,9,5].map((h, i) => (
-                      <View key={i} style={{ width: 2, height: h, borderRadius: 1, backgroundColor: '#128C7E', opacity: 0.6 }} />
+                      <View key={i} style={{ width: 2, height: h, borderRadius: 1, backgroundColor: '#111111', opacity: 0.6 }} />
                     ))}
                   </View>
                 </Pressable>
@@ -1040,7 +1040,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           {/* Reply indicator */}
           {replyTo && (
             <View style={[styles.replyBar, {
-              backgroundColor: isDark ? 'rgba(18, 140, 126,0.08)' : 'rgba(18, 140, 126,0.06)',
+              backgroundColor: isDark ? 'rgba(17, 17, 17,0.08)' : 'rgba(17, 17, 17,0.06)',
               borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
             }]}>
               <View style={[styles.replyAccent, { backgroundColor: ACCENT }]} />

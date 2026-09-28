@@ -19,7 +19,7 @@ import {
 import { IconSend, IconHeart, IconSmile, IconGiftBox } from '../Icons';
 
 const LIVE_RED = '#dc2626';
-const ACCENT = '#128C7E';
+const ACCENT = '#111111';
 
 const LiveCommentInput = forwardRef(function LiveCommentInput({
   value,
@@ -153,7 +153,7 @@ const styles = StyleSheet.create({
     } : {}),
   },
   pillFocused: {
-    borderColor: 'rgba(18, 140, 126,0.85)',
+    borderColor: 'rgba(17, 17, 17,0.85)',
     backgroundColor: 'rgba(255,255,255,0.18)',
   },
   leftIcon: {
@@ -178,7 +178,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
-    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 10px rgba(18, 140, 126,0.55)' } : {}),
+    ...(Platform.OS === 'web' ? { boxShadow: '0 2px 10px rgba(17, 17, 17,0.55)' } : {}),
   },
   heartPill: {
     backgroundColor: LIVE_RED,

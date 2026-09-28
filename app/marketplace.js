@@ -131,12 +131,12 @@ function IconStar({ size = 18, color = '#F59E0B' }) {
 
 // ─── Category config ──────────────────────────────────────────────────────────
 const CATEGORIES = [
-  { key: 'all', labelKey: 'marketplace.catAll', Icon: IconTag, color: '#128C7E' },
+  { key: 'all', labelKey: 'marketplace.catAll', Icon: IconTag, color: '#111111' },
   { key: 'Eletrônicos', labelKey: 'marketplace.catEletronicos', Icon: IconEletronicos, color: '#3B82F6' },
   { key: 'Veículos', labelKey: 'marketplace.catVeiculos', Icon: IconVeiculos, color: '#10B981' },
   { key: 'Imóveis', labelKey: 'marketplace.catImoveis', Icon: IconImoveis, color: '#F59E0B' },
-  { key: 'Roupas', labelKey: 'marketplace.catRoupas', Icon: IconRoupas, color: '#128C7E' },
-  { key: 'Serviços', labelKey: 'marketplace.catServicos', Icon: IconServicos, color: '#128C7E' },
+  { key: 'Roupas', labelKey: 'marketplace.catRoupas', Icon: IconRoupas, color: '#111111' },
+  { key: 'Serviços', labelKey: 'marketplace.catServicos', Icon: IconServicos, color: '#111111' },
   { key: 'Outros', labelKey: 'marketplace.catOutros', Icon: IconOutros, color: '#6B7280' },
 ];
 

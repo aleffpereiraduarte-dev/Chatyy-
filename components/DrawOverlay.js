@@ -13,7 +13,7 @@ import CachedImage from './CachedImage';
 import { IconX, IconCheck, IconTrash } from './Icons';
 
 const { width: SW, height: SH } = Dimensions.get('window');
-const COLORS = ['#ffffff', '#000000', '#FF3B30', '#FF9500', '#FFCC00', '#30D158', '#0A84FF', '#128C7E'];
+const COLORS = ['#ffffff', '#000000', '#FF3B30', '#FF9500', '#FFCC00', '#30D158', '#0A84FF', '#111111'];
 const WIDTHS = [3, 6, 10];
 
 export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {

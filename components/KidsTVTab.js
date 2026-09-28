@@ -36,7 +36,7 @@ function IconArrowBack({ size = 22, color = '#fff' }) {
   );
 }
 
-function IconStar({ size = 16, color = '#128C7E' }) {
+function IconStar({ size = 16, color = '#111111' }) {
   return (
     <Svg width={size} height={size} viewBox="0 0 24 24" fill={color} stroke="none">
       <Path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
@@ -55,10 +55,10 @@ function IconClock({ size = 14, color = '#fff' }) {
 
 // ─── Category Pills ───
 const TV_CATEGORIES = [
-  { key: 'all', emoji: '\uD83C\uDF1F', color: '#128C7E', i18nKey: null },
-  { key: 'cartoons', emoji: '\uD83C\uDFA8', color: '#128C7E', i18nKey: 'kids.categories.cartoons' },
+  { key: 'all', emoji: '\uD83C\uDF1F', color: '#111111', i18nKey: null },
+  { key: 'cartoons', emoji: '\uD83C\uDFA8', color: '#111111', i18nKey: 'kids.categories.cartoons' },
   { key: 'educational', emoji: '\uD83D\uDCDA', color: '#10b981', i18nKey: 'kids.categories.educational' },
-  { key: 'music', emoji: '\uD83C\uDFB5', color: '#128C7E', i18nKey: 'kids.categories.music' },
+  { key: 'music', emoji: '\uD83C\uDFB5', color: '#111111', i18nKey: 'kids.categories.music' },
   { key: 'stories', emoji: '\uD83D\uDCDA', color: '#f59e0b', i18nKey: 'kids.categories.stories' },
 ];
 
@@ -81,8 +81,8 @@ function ChannelIcon({ name, emoji, color, size = 60 }) {
   return (
     <View style={{
       width: size, height: size, borderRadius: size * 0.35,
-      backgroundColor: color || '#128C7E', alignItems: 'center', justifyContent: 'center',
-      ...(Platform.OS === 'web' ? { boxShadow: `0 4px 12px ${(color || '#128C7E')}40` } : {}),
+      backgroundColor: color || '#111111', alignItems: 'center', justifyContent: 'center',
+      ...(Platform.OS === 'web' ? { boxShadow: `0 4px 12px ${(color || '#111111')}40` } : {}),
     }}>
       <Text style={{ fontSize: size * 0.35, fontWeight: '800', color: '#fff' }}>{emoji || letter}</Text>
     </View>
@@ -95,8 +95,8 @@ function PlayOverlay({ size = 52 }) {
     <View style={st.playOverlay}>
       <View style={{
         width: size, height: size, borderRadius: size / 2,
-        backgroundColor: 'rgba(18, 140, 126,0.92)', alignItems: 'center', justifyContent: 'center',
-        ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(18, 140, 126,0.5)' } : {}),
+        backgroundColor: 'rgba(17, 17, 17,0.92)', alignItems: 'center', justifyContent: 'center',
+        ...(Platform.OS === 'web' ? { boxShadow: '0 6px 24px rgba(17, 17, 17,0.5)' } : {}),
       }}>
         <IconPlay size={size * 0.45} color="#fff" />
       </View>
@@ -120,7 +120,7 @@ function WatchTimeBadge({ minutes }) {
 }
 
 // Channel color palette
-const CHANNEL_COLORS = ['#128C7E', '#128C7E', '#10b981', '#f59e0b', '#128C7E', '#f43f5e', '#06b6d4', '#84cc16'];
+const CHANNEL_COLORS = ['#111111', '#111111', '#10b981', '#f59e0b', '#111111', '#f43f5e', '#06b6d4', '#84cc16'];
 
 export default function KidsTVTab() {
   const { colors, isDark } = useTheme();
@@ -165,7 +165,7 @@ export default function KidsTVTab() {
   const bg = isDark ? '#0f0720' : '#faf5ff';
   const cardBg = isDark ? '#161618' : '#fff';
   const textColor = isDark ? '#F1F3F5' : '#1e1b4b';
-  const subColor = isDark ? '#128C7E' : '#6b7280';
+  const subColor = isDark ? '#111111' : '#6b7280';
 
   // === PLAYING VIDEO ===
   if (playingVideo) {
@@ -200,7 +200,7 @@ export default function KidsTVTab() {
     return (
       <View style={[st.container, { backgroundColor: bg }]}>
         <View style={[st.header, Platform.OS === 'web'
-          ? { background: 'linear-gradient(135deg, #6366f1, #128C7E, #128C7E)' }
+          ? { background: 'linear-gradient(135deg, #6366f1, #111111, #111111)' }
           : { backgroundColor: '#6366f1' }
         ]}>
           <TouchableOpacity
@@ -217,7 +217,7 @@ export default function KidsTVTab() {
           </View>
         </View>
         {loadingVideos ? (
-          <View style={st.center}><ActivityIndicator size="large" color="#128C7E" /></View>
+          <View style={st.center}><ActivityIndicator size="large" color="#111111" /></View>
         ) : (
           <FlatList data={videos} keyExtractor={item => item.id} contentContainerStyle={{ padding: 14 }}
             renderItem={({ item, index }) => (
@@ -255,7 +255,7 @@ export default function KidsTVTab() {
   return (
     <View style={[st.container, { backgroundColor: bg }]}>
       <View style={[st.header, Platform.OS === 'web'
-        ? { background: 'linear-gradient(135deg, #6366f1 0%, #128C7E 40%, #128C7E 70%, #f43f5e 100%)' }
+        ? { background: 'linear-gradient(135deg, #6366f1 0%, #111111 40%, #111111 70%, #f43f5e 100%)' }
         : { backgroundColor: '#6366f1' }
       ]}>
         <View style={{ width: 48, height: 48, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
@@ -268,7 +268,7 @@ export default function KidsTVTab() {
       </View>
 
       {loading ? (
-        <View style={st.center}><ActivityIndicator size="large" color="#128C7E" /></View>
+        <View style={st.center}><ActivityIndicator size="large" color="#111111" /></View>
       ) : (
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 80 }}>
           {/* Category pills */}
@@ -301,7 +301,7 @@ export default function KidsTVTab() {
           {featured.length > 0 && (
             <View style={{ marginTop: 4 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 18, marginBottom: 14 }}>
-                <IconStar size={18} color={isDark ? '#128C7E' : '#128C7E'} />
+                <IconStar size={18} color={isDark ? '#111111' : '#111111'} />
                 <Text style={[st.sectionTitle, { color: textColor, marginBottom: 0, paddingHorizontal: 0 }]}>{t('kids.featured')}</Text>
               </View>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 14 }}>
@@ -382,9 +382,9 @@ const st = StyleSheet.create({
   featCard: {
     width: 240, borderRadius: 20, overflow: 'hidden',
     ...Platform.select({
-      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.15, shadowRadius: 12 },
+      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.15, shadowRadius: 12 },
       android: { elevation: 5 },
-      web: { boxShadow: '0 6px 20px rgba(18, 140, 126,0.12)' },
+      web: { boxShadow: '0 6px 20px rgba(17, 17, 17,0.12)' },
     }),
   },
   featThumb: { width: 240, height: 135, borderTopLeftRadius: 20, borderTopRightRadius: 20 },
@@ -394,9 +394,9 @@ const st = StyleSheet.create({
   channelCard: {
     width: (SCREEN_W - 42) / 2, borderRadius: 24, padding: 18, alignItems: 'center',
     ...Platform.select({
-      ios: { shadowColor: '#128C7E', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 12 },
+      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.12, shadowRadius: 12 },
       android: { elevation: 4 },
-      web: { boxShadow: '0 6px 20px rgba(18, 140, 126,0.1)' },
+      web: { boxShadow: '0 6px 20px rgba(17, 17, 17,0.1)' },
     }),
   },
   channelName: { fontSize: 15, fontWeight: '800', textAlign: 'center', marginTop: 12 },

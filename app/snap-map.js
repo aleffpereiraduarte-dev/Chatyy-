@@ -129,16 +129,16 @@ function buildMapHtml({ center, zoom, isDark, initialPins, initialMe }) {
      both an outer halo + a hairline white separator inside, matching the
      iOS Find-My pin design. */
   .pin .ring{width:52px;height:52px;border-radius:26px;background:linear-gradient(135deg,#22c55e,#16a34a);padding:3px;box-sizing:border-box;box-shadow:0 4px 14px rgba(0,0,0,0.45),0 0 0 2px rgba(255,255,255,0.95) inset;position:relative}
-  .pin.unlimited .ring{background:linear-gradient(135deg,#128C7E,#128C7E)}
+  .pin.unlimited .ring{background:linear-gradient(135deg,#111111,#111111)}
   .pin.stale .ring{background:linear-gradient(135deg,#9ca3af,#6b7280);opacity:0.85}
-  .pin .ring img{width:100%;height:100%;border-radius:50%;display:block;object-fit:cover;background:#128C7E}
-  .pin .ring .ini{width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px;background:#128C7E}
+  .pin .ring img{width:100%;height:100%;border-radius:50%;display:block;object-fit:cover;background:#111111}
+  .pin .ring .ini{width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px;background:#111111}
   /* Live breathing pulse — only shown for fresh (non-stale) sharers. The
      ring radiates a soft green glow that fades, signaling "this person is
      ACTIVE right now". Stale pins skip the animation so the eye is drawn
      to the live ones. */
   .pin:not(.stale) .ring::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid rgba(34,197,94,0.55);animation:pinPulse 2.4s ease-out infinite;pointer-events:none}
-  .pin.unlimited:not(.stale) .ring::after{border-color:rgba(18, 140, 126,0.6)}
+  .pin.unlimited:not(.stale) .ring::after{border-color:rgba(17, 17, 17,0.6)}
   @keyframes pinPulse{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.45);opacity:0}}
   .pin .label{margin-top:5px;background:rgba(0,0,0,0.82);color:#fff;font-size:10px;font-weight:700;padding:3px 9px;border-radius:11px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;backdrop-filter:blur(8px)}
   /* "há Xmin" badge stacked under the name label so users can eyeball at a
@@ -519,14 +519,14 @@ function ActiveSessionsChip({ grantsData, isDark, colors, t, ghostMode, onOpen, 
       style={{
         marginHorizontal: 12, marginTop: 8, marginBottom: 4,
         paddingHorizontal: 14, paddingVertical: 10, borderRadius: 14,
-        backgroundColor: isDark ? 'rgba(18, 140, 126,0.18)' : 'rgba(18, 140, 126,0.10)',
-        borderWidth: 1, borderColor: 'rgba(18, 140, 126,0.40)',
+        backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)',
+        borderWidth: 1, borderColor: 'rgba(17, 17, 17,0.40)',
         flexDirection: 'row', alignItems: 'center', gap: 10,
       }}
       accessibilityRole="button"
       accessibilityLabel={t?.('snapmap.activeSessionsA11y') || 'Ver sessões ativas'}
     >
-      <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#128C7E', alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center' }}>
         <IconMapPin size={16} color="#fff" />
       </View>
       <View style={{ flex: 1 }}>
@@ -1278,7 +1278,7 @@ export default function SnapMapScreen() {
                   onPress={() => setFilter(p.id)}
                   style={{
                     paddingHorizontal: 14, paddingVertical: 7, borderRadius: 16,
-                    backgroundColor: active ? '#128C7E' : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'),
+                    backgroundColor: active ? '#111111' : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'),
                     flexDirection: 'row', alignItems: 'center', gap: 6,
                   }}
                   accessibilityRole="button"
@@ -1326,7 +1326,7 @@ export default function SnapMapScreen() {
               backgroundColor: isDark ? '#1a1a1a' : '#f3f4f6',
               borderRadius: 14, paddingHorizontal: 12, paddingVertical: 10,
               flexDirection: 'row', alignItems: 'center', gap: 10,
-              borderWidth: 1, borderColor: '#128C7E',
+              borderWidth: 1, borderColor: '#111111',
             }}>
               <AvatarCircle name={r.name || r.email} email={r.email} size={32} />
               <View style={{ maxWidth: 160 }}>
@@ -1337,7 +1337,7 @@ export default function SnapMapScreen() {
                   {t?.('snapmap.wantsToSee') || 'Quer ver sua localização'}
                 </Text>
               </View>
-              <TouchableOpacity onPress={() => respondToRequest(r, true)} style={{ backgroundColor: '#128C7E', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 }}>
+              <TouchableOpacity onPress={() => respondToRequest(r, true)} style={{ backgroundColor: '#111111', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14 }}>
                 <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{t?.('common.accept') || 'Aceitar'}</Text>
               </TouchableOpacity>
               <TouchableOpacity onPress={() => respondToRequest(r, false)} style={{ padding: 6 }}>
@@ -1395,7 +1395,7 @@ export default function SnapMapScreen() {
               </Text>
               <TouchableOpacity
                 onPress={() => { setMapErr(null); mapReadyRef.current = false; try { webRef.current?.reload?.(); } catch(_){} }}
-                style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: '#128C7E', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 12 }}
+                style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: '#111111', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 12 }}
               >
                 <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Tentar de novo</Text>
               </TouchableOpacity>
@@ -1537,7 +1537,7 @@ export default function SnapMapScreen() {
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => router.push('/chat-new')}
-                  style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: '#128C7E' }}
+                  style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: '#111111' }}
                   accessibilityLabel={t?.('snapmap.inviteFriend') || 'Convidar amigo'}
                 >
                   <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
@@ -1621,7 +1621,7 @@ export default function SnapMapScreen() {
                       style={{ alignItems: 'center', width: 72 }}
                       accessibilityLabel={`${s.name || s.email}, ${ago(s.updated_at)}`}
                     >
-                      <View style={{ borderWidth: 2, borderColor: s.is_unlimited ? '#128C7E' : '#22c55e', borderRadius: 30, padding: 2 }}>
+                      <View style={{ borderWidth: 2, borderColor: s.is_unlimited ? '#111111' : '#22c55e', borderRadius: 30, padding: 2 }}>
                         <AvatarCircle name={s.name || s.email} email={s.email} size={50} />
                       </View>
                       <Text numberOfLines={1} style={{ color: colors.text, fontSize: 11, fontWeight: '600', marginTop: 4, maxWidth: 70, textAlign: 'center' }}>
@@ -1675,7 +1675,7 @@ export default function SnapMapScreen() {
                       style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 12 }}
                       accessibilityRole="button"
                     >
-                      <View style={{ borderWidth: 2, borderColor: s.is_unlimited ? '#128C7E' : '#22c55e', borderRadius: 28, padding: 2 }}>
+                      <View style={{ borderWidth: 2, borderColor: s.is_unlimited ? '#111111' : '#22c55e', borderRadius: 28, padding: 2 }}>
                         <AvatarCircle name={s.name || s.email} email={s.email} size={46} />
                       </View>
                       <View style={{ flex: 1 }}>
@@ -1742,7 +1742,7 @@ export default function SnapMapScreen() {
               return (
               <>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                  <View style={{ borderWidth: 3, borderColor: isStale ? '#9ca3af' : (selected.is_unlimited ? '#128C7E' : '#22c55e'), borderRadius: 36, padding: 2 }}>
+                  <View style={{ borderWidth: 3, borderColor: isStale ? '#9ca3af' : (selected.is_unlimited ? '#111111' : '#22c55e'), borderRadius: 36, padding: 2 }}>
                     <AvatarCircle name={selected.name || selected.email} email={selected.email} size={60} />
                   </View>
                   <View style={{ flex: 1 }}>

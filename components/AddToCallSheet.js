@@ -48,7 +48,7 @@ function hImpact() {
   try { Haptics?.impactAsync?.(Haptics.ImpactFeedbackStyle?.Medium); } catch {}
 }
 
-const BRAND_PURPLE = '#128C7E';
+const BRAND_PURPLE = '#111111';
 const MAX_FANOUT = 16; // backend caps fan-out at 16/request
 
 const IconSearch = ({ size = 16, color = '#9CA3AF' }) => (
@@ -420,7 +420,7 @@ const styles = StyleSheet.create({
   rowName: { fontSize: 15.5, fontWeight: '600', letterSpacing: -0.2 },
   rowEmail: { color: '#9CA3AF', fontSize: 12.5, marginTop: 2 },
   inCallPill: {
-    backgroundColor: 'rgba(18, 140, 126,0.18)',
+    backgroundColor: 'rgba(17, 17, 17,0.18)',
     borderRadius: 8,
     paddingHorizontal: 9,
     paddingVertical: 4,
@@ -449,6 +449,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  addBtnDisabled: { backgroundColor: 'rgba(18, 140, 126,0.35)' },
+  addBtnDisabled: { backgroundColor: 'rgba(17, 17, 17,0.35)' },
   addBtnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
 });

@@ -38,10 +38,10 @@ const isWeb = Platform.OS === 'web';
 
 const FILE_TYPE_COLORS = {
   image:        { accent: '#f59e0b', bg: '#fffbeb', bgDark: '#451a03', icon: '#d97706' },
-  video:        { accent: '#128C7E', bg: '#F1F3F5', bgDark: '#161618', icon: '#128C7E' },
-  audio:        { accent: '#128C7E', bg: '#eef2ff', bgDark: '#1e1b4b', icon: '#4f46e5' },
+  video:        { accent: '#111111', bg: '#F1F3F5', bgDark: '#161618', icon: '#111111' },
+  audio:        { accent: '#111111', bg: '#eef2ff', bgDark: '#1e1b4b', icon: '#4f46e5' },
   pdf:          { accent: '#dc2626', bg: '#fef2f2', bgDark: '#450a0a', icon: '#dc2626' },
-  document:     { accent: '#128C7E', bg: '#F1F3F5', bgDark: '#172554', icon: '#128C7E' },
+  document:     { accent: '#111111', bg: '#F1F3F5', bgDark: '#172554', icon: '#111111' },
   spreadsheet:  { accent: '#16a34a', bg: '#f0fdf4', bgDark: '#052e16', icon: '#16a34a' },
   presentation: { accent: '#d97706', bg: '#fffbeb', bgDark: '#451a03', icon: '#d97706' },
   archive:      { accent: '#64748b', bg: '#f8fafc', bgDark: '#1e293b', icon: '#64748b' },
@@ -49,11 +49,11 @@ const FILE_TYPE_COLORS = {
 };
 
 const FOLDER_COLORS = [
-  '#128C7E', '#128C7E', '#16a34a', '#f59e0b', '#dc2626', '#128C7E', '#0891b2', '#ea580c',
+  '#111111', '#111111', '#16a34a', '#f59e0b', '#dc2626', '#111111', '#0891b2', '#ea580c',
 ];
 
 function getFolderColor(folderId) {
-  if (!folderId) return '#128C7E';
+  if (!folderId) return '#111111';
   const hash = typeof folderId === 'number' ? folderId : String(folderId).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
   return FOLDER_COLORS[hash % FOLDER_COLORS.length];
 }
@@ -673,21 +673,21 @@ export default function FilesScreenWrapper() {
 // Brand-purple folder + upload arrow illustration. Used by FilesEmptyState
 // instead of the generic Icon so the empty state reads as a designed moment,
 // not a glyph stamp.
-function FilesEmptyIllustration({ tone = '#128C7E' }) {
+function FilesEmptyIllustration({ tone = '#111111' }) {
   return (
     <Svg width={140} height={120} viewBox="0 0 140 120" fill="none">
       <Defs>
         <SvgLinearGradient id="folderGrad" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0" stopColor="#128C7E" stopOpacity="0.95" />
-          <Stop offset="1" stopColor="#128C7E" stopOpacity="1" />
+          <Stop offset="0" stopColor="#111111" stopOpacity="0.95" />
+          <Stop offset="1" stopColor="#111111" stopOpacity="1" />
         </SvgLinearGradient>
         <SvgLinearGradient id="folderTab" x1="0" y1="0" x2="0" y2="1">
           <Stop offset="0" stopColor="#F1F3F5" stopOpacity="1" />
-          <Stop offset="1" stopColor="#128C7E" stopOpacity="1" />
+          <Stop offset="1" stopColor="#111111" stopOpacity="1" />
         </SvgLinearGradient>
       </Defs>
       {/* Soft halo */}
-      <SvgCircle cx="70" cy="62" r="50" fill="#128C7E" fillOpacity="0.08" />
+      <SvgCircle cx="70" cy="62" r="50" fill="#111111" fillOpacity="0.08" />
       {/* Folder tab */}
       <Path
         d="M28 38 H58 L66 46 H112 V52 H28 Z"
@@ -707,9 +707,9 @@ function FilesEmptyIllustration({ tone = '#128C7E' }) {
         fill="none"
       />
       {/* Sparkle dots */}
-      <SvgCircle cx="116" cy="40" r="3" fill="#128C7E" />
+      <SvgCircle cx="116" cy="40" r="3" fill="#111111" />
       <SvgCircle cx="22" cy="74" r="2" fill="#F1F3F5" />
-      <SvgCircle cx="124" cy="86" r="2.5" fill="#128C7E" fillOpacity="0.7" />
+      <SvgCircle cx="124" cy="86" r="2.5" fill="#111111" fillOpacity="0.7" />
     </Svg>
   );
 }
@@ -2393,7 +2393,7 @@ function FilesScreenInner() {
           style={{
             position: 'absolute',
             top: 0, left: 0, right: 0, bottom: 0,
-            backgroundColor: 'rgba(18, 140, 126,0.10)',
+            backgroundColor: 'rgba(17, 17, 17,0.10)',
             borderWidth: 2,
             borderStyle: 'dashed',
             borderColor: colors.primary,
@@ -2430,7 +2430,7 @@ function FilesScreenInner() {
             ? { background: isDark
                 ? 'linear-gradient(180deg, #161618 0%, #0a0a0a 100%)'
                 : `linear-gradient(180deg, ${colors.primaryDark} 0%, ${colors.primary} 100%)` }
-            : { backgroundColor: isDark ? '#0d0a14' : '#128C7E' }),
+            : { backgroundColor: isDark ? '#0d0a14' : '#111111' }),
           borderBottomColor: 'transparent',
           borderBottomWidth: 0,
         },

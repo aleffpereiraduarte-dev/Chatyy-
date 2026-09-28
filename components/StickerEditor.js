@@ -19,8 +19,8 @@ import * as api from '../services/api';
 const { width: SW } = Dimensions.get('window');
 const CANVAS = Math.min(SW - 40, 360);
 
-const TEXT_COLORS = ['#ffffff', '#000000', '#FF3B30', '#FFCC00', '#30D158', '#0A84FF', '#128C7E'];
-const OUTLINE_COLORS = { '#ffffff': '#000000', '#000000': '#ffffff', '#FF3B30': '#000000', '#FFCC00': '#000000', '#30D158': '#000000', '#0A84FF': '#ffffff', '#128C7E': '#ffffff' };
+const TEXT_COLORS = ['#ffffff', '#000000', '#FF3B30', '#FFCC00', '#30D158', '#0A84FF', '#111111'];
+const OUTLINE_COLORS = { '#ffffff': '#000000', '#000000': '#ffffff', '#FF3B30': '#000000', '#FFCC00': '#000000', '#30D158': '#000000', '#0A84FF': '#ffffff', '#111111': '#ffffff' };
 
 // Curated emoji for quick-tag. Tapping one adds it to the tag list.
 const QUICK_EMOJIS = ['😀', '😂', '🥰', '😎', '😢', '😡', '🤔', '🔥', '❤️', '👍', '👎', '🎉', '💯', '🙏', '👻', '🥳', '😴', '🤯'];

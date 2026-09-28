@@ -255,7 +255,7 @@ export default function SyncBar() {
   const isOffline = status === 'offline';
   const isBootstrap = status === 'bootstrap';
   const bgColor = isOffline ? (isDark ? '#7f1d1d' : '#fef2f2') : (isDark ? '#1e3a5f' : '#F1F3F5');
-  const textColor = isOffline ? (isDark ? '#fca5a5' : '#dc2626') : (isDark ? '#93c5fd' : '#128C7E');
+  const textColor = isOffline ? (isDark ? '#fca5a5' : '#dc2626') : (isDark ? '#93c5fd' : '#111111');
 
   let label;
   if (status === 'offline') label = t('sync.offline') || 'No internet';

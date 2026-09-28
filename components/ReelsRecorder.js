@@ -101,9 +101,9 @@ const COUNTDOWN_CYCLE = [0, 3, 10];
 // Clip palette — each finished clip in the multi-clip timeline gets a hue
 // based on its index so the user can visually distinguish segments. Mirrors
 // TikTok's segmented progress bar.
-const CLIP_COLORS = ['#128C7E', '#128C7E', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#128C7E', '#06B6D4'];
+const CLIP_COLORS = ['#111111', '#111111', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#111111', '#06B6D4'];
 
-const BRAND = '#128C7E';
+const BRAND = '#111111';
 
 // Instagram-style CSS filter strip — same vocabulary as CreatePostModal so
 // users get one mental model across feed/reels. CSS string is used directly
@@ -796,7 +796,7 @@ export default function ReelsRecorder({
                         // Web: paint a colored swatch with the actual CSS
                         // filter applied so the chip previews the look.
                         Platform.OS === 'web' && {
-                          backgroundColor: '#128C7E',
+                          backgroundColor: '#111111',
                           filter: preset.css || undefined,
                         },
                         Platform.OS !== 'web' && getNativeFilterStyle(preset.name),
