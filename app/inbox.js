@@ -346,9 +346,15 @@ function InboxScreenInner() {
     (async () => {
       try {
         const updates = {};
-        for (let i = 0; i < pending.length; i += 5) {
+        // [2026-09-29] Throttle gentler (3 concurrent + 250ms gap) so the AI
+        // importance classifier (Claude Haiku, 1-3s/call, holds a php-fpm
+        // worker) doesn't burst-starve the backend and 504/522 the chat sync
+        // that runs in parallel on inbox open. 80 workers absorve, mas não
+        // precisa competir com o chat.
+        for (let i = 0; i < pending.length; i += 3) {
           if (!alive) return;
-          const batch = pending.slice(i, i + 5);
+          if (i > 0) await new Promise(r => setTimeout(r, 250));
+          const batch = pending.slice(i, i + 3);
           const results = await Promise.all(batch.map(async (e) => {
             try {
               // message_id is preferred (cache key); fallback to uid so the
