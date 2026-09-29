@@ -18,6 +18,58 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
+      # Reconstrói as credenciais locais (credentials.json + arquivos) a partir
+      # dos secrets do GitHub — o perfil production usa credentialsSource: local.
+      - name: Reconstruct signing credentials
+        env:
+          IOS_P12: ${{ secrets.IOS_DIST_CERT_P12_BASE64 }}
+          IOS_MAIN: ${{ secrets.IOS_PROFILE_MAIN_BASE64 }}
+          IOS_SHAREEXT: ${{ secrets.IOS_PROFILE_SHAREEXT_BASE64 }}
+          IOS_NSE: ${{ secrets.IOS_PROFILE_NSE_BASE64 }}
+          ANDROID_KS: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p credentials
+          [ -n "$IOS_P12" ] && echo "$IOS_P12" | base64 -d > credentials/apple-dist.p12
+          [ -n "$IOS_MAIN" ] && echo "$IOS_MAIN" | base64 -d > credentials/chatyy-main.mobileprovision
+          [ -n "$IOS_SHAREEXT" ] && echo "$IOS_SHAREEXT" | base64 -d > credentials/chatyy-shareext.mobileprovision
+          [ -n "$IOS_NSE" ] && echo "$IOS_NSE" | base64 -d > credentials/chatyy-nse.mobileprovision
+          [ -n "$ANDROID_KS" ] && echo "$ANDROID_KS" | base64 -d > credentials/android-upload-new.jks
+          cat > credentials.json <<'CREDS'
+          {
+            "ios": {
+              "Chatyy": {
+                "provisioningProfilePath": "credentials/chatyy-main.mobileprovision",
+                "distributionCertificate": {
+                  "path": "credentials/apple-dist.p12",
+                  "password": "chatyy123"
+                }
+              },
+              "ShareExtension": {
+                "provisioningProfilePath": "credentials/chatyy-shareext.mobileprovision",
+                "distributionCertificate": {
+                  "path": "credentials/apple-dist.p12",
+                  "password": "chatyy123"
+                }
+              },
+              "ChatyyNotificationService": {
+                "provisioningProfilePath": "credentials/chatyy-nse.mobileprovision",
+                "distributionCertificate": {
+                  "path": "credentials/apple-dist.p12",
+                  "password": "chatyy123"
+                }
+              }
+            },
+            "android": {
+              "keystore": {
+                "keystorePath": "credentials/android-upload-new.jks",
+                "keystorePassword": "D0aFFJxxQ0wXsFcBzCkE68hhrqGC",
+                "keyAlias": "chatyy-upload",
+                "keyPassword": "D0aFFJxxQ0wXsFcBzCkE68hhrqGC"
+              }
+            }
+          }
+          CREDS
+          echo "credentials reconstruídas:" && ls -la credentials/
       - uses: expo/expo-github-action@v8
         with:
           expo-version: latest
