@@ -26,28 +26,31 @@ const FOLDER_ICONS = {
   Snoozed: IconClock,
 };
 
-// Colorful folder icon colors
+// Folder icon colors — MONOCHROME 2026: every folder reads as the single
+// neutral accent (#111111). Active = solid, inactive = 60% (see FolderItem).
 const FOLDER_COLORS = {
   INBOX: '#111111',
-  Sent: '#10b981',
-  Drafts: '#f59e0b',
-  Trash: '#ef4444',
+  Sent: '#111111',
+  Drafts: '#111111',
+  Trash: '#111111',
   Spam: '#111111',
-  Archive: '#6b7280',
-  Flagged: '#f59e0b',
+  Archive: '#111111',
+  Flagged: '#111111',
   Snoozed: '#111111',
   Junk: '#111111',
 };
 
+// Active-folder icon pill background is now theme-driven (colors.surfaceVariant)
+// so it stays neutral AND correct in dark mode. Map kept neutral as a fallback.
 const FOLDER_BG_COLORS = {
   INBOX: '#F1F3F5',
-  Sent: '#d1fae5',
-  Drafts: '#fef3c7',
-  Trash: '#fee2e2',
+  Sent: '#F1F3F5',
+  Drafts: '#F1F3F5',
+  Trash: '#F1F3F5',
   Spam: '#F1F3F5',
-  Archive: '#f3f4f6',
-  Flagged: '#fef3c7',
-  Snoozed: '#e0e7ff',
+  Archive: '#F1F3F5',
+  Flagged: '#F1F3F5',
+  Snoozed: '#F1F3F5',
   Junk: '#F1F3F5',
 };
 
@@ -126,7 +129,8 @@ function AnimatedBadge({ count, isActive, colors, showTotal, folderColor, isInbo
 function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setDragOverFolder, onMoveEmail, currentFolder, folderAnim, children }) {
   const FolderIcon = FOLDER_ICONS[folder.name] || IconFolder;
   const folderColor = FOLDER_COLORS[folder.name] || colors.textSecondary;
-  const folderBgColor = FOLDER_BG_COLORS[folder.name] || colors.surfaceVariant;
+  // Theme-driven neutral pill (correct in dark mode); map is a light fallback.
+  const folderBgColor = colors.surfaceVariant || FOLDER_BG_COLORS[folder.name];
   const activeIndicatorWidth = useRef(new Animated.Value(isActive ? 3 : 0)).current;
   const bgOpacity = useRef(new Animated.Value(isActive ? 1 : 0)).current;
   const [hovered, setHovered] = useState(false);
@@ -358,15 +362,15 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
     const quickItems = [
       { label: t('sidebar.inbox'), icon: IconInbox, route: '/inbox', onPress: () => onFolderPress('INBOX') },
       { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', color: '#111111', badge: chatUnread },
-      { label: t('sidebar.meetings'), icon: IconFilm, route: '/meetings', color: '#ef4444' },
-      { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar', color: '#4285f4' },
-      { label: 'Cloud', icon: IconFolder, route: '/drive', color: '#f59e0b' },
-      { label: t('photos.title'), icon: IconCamera, route: '/photos', color: '#e11d48' },
+      { label: t('sidebar.meetings'), icon: IconFilm, route: '/meetings', color: '#111111' },
+      { label: t('sidebar.calendar'), icon: IconCalendar, route: '/calendar', color: '#111111' },
+      { label: 'Cloud', icon: IconFolder, route: '/drive', color: '#111111' },
+      { label: t('photos.title'), icon: IconCamera, route: '/photos', color: '#111111' },
       { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts', color: '#111111' },
-      { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#4285f4' },
-      { label: t('sidebar.notes'), icon: IconStickyNote, route: '/notes', color: '#f59e0b' },
+      { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#111111' },
+      { label: t('sidebar.notes'), icon: IconStickyNote, route: '/notes', color: '#111111' },
       { label: 'One', icon: IconZap, route: '/one', color: '#111111' },
-      { label: t('snapmap.sidebar') || 'Mapa', icon: IconMapPin, route: '/snap-map', color: '#22c55e' },
+      { label: t('snapmap.sidebar') || 'Mapa', icon: IconMapPin, route: '/snap-map', color: '#111111' },
     ];
     return (
       <ScrollView style={[s.sidebar, { backgroundColor: colors.sidebarBg }]} showsVerticalScrollIndicator={false} contentContainerStyle={s.collapsedContent}>
@@ -387,7 +391,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           const isActive = item.route === '/inbox'
             ? !activeSidePanel?.length
             : (Array.isArray(activeSidePanel) ? activeSidePanel.includes(item.route) : activeSidePanel === item.route);
-          const iconColor = item.color || colors.primary;
+          const iconColor = colors.primary; // monochrome: ignore per-item accent
           return (
             <CollapsedItem
               key={item.route}
@@ -444,18 +448,18 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
         // Reclamação do usuário: "abre todas as funções de novo no menu lateral".
         const primary = [
           { label: t('sidebar.search') || 'Buscar', icon: IconSearch, route: '__search__', color: '#111111' },
-          { label: t('notifications.title') || 'Notificações', icon: IconBell, route: '__notifications__', color: '#f59e0b', badge: notifsUnread },
+          { label: t('notifications.title') || 'Notificações', icon: IconBell, route: '__notifications__', color: '#111111', badge: notifsUnread },
           { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
         ];
         const secondary = [
           { label: 'One',                  icon: IconZap,        route: '/one',       color: '#111111' },
-          { label: t('photos.title'),      icon: IconCamera,     route: '/photos',    color: '#e11d48' },
-          { label: 'Chatyy Cloud',         icon: IconFolder,     route: '/drive',     color: '#f59e0b' },
+          { label: t('photos.title'),      icon: IconCamera,     route: '/photos',    color: '#111111' },
+          { label: 'Chatyy Cloud',         icon: IconFolder,     route: '/drive',     color: '#111111' },
           { label: t('sidebar.meetings'),  icon: IconFilm,       route: '/meetings' },
           { label: t('sidebar.calendar'),  icon: IconCalendar,   route: '/calendar' },
           { label: t('sidebar.contacts'),  icon: IconUser,       route: '/contacts' },
-          { label: t('sidebar.documents'), icon: IconGlobe,      route: '/documentos', color: '#4285f4' },
-          { label: t('sidebar.notes'),     icon: IconStickyNote, route: '/notes',      color: '#f59e0b' },
+          { label: t('sidebar.documents'), icon: IconGlobe,      route: '/documentos', color: '#111111' },
+          { label: t('sidebar.notes'),     icon: IconStickyNote, route: '/notes',      color: '#111111' },
           // Saved Messages — Telegram-style "chat with yourself" with
           // dedicated screen (tabs, search, schedule reminders). Floppy-
           // disk feel uses IconBookmark since the codebase already ships it.
@@ -471,7 +475,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           // friends" screen. Pin-icon is overloaded for "live location"
           // semantics already; the green color (matches the live-share
           // pulse) reads as "live now" at a glance.
-          { label: t('snapmap.sidebar') || 'Mapa de Amigos', icon: IconMapPin, route: '/snap-map', color: '#22c55e' },
+          { label: t('snapmap.sidebar') || 'Mapa de Amigos', icon: IconMapPin, route: '/snap-map', color: '#111111' },
         ];
         const list = showMoreQuick ? [...primary, ...secondary] : primary;
         return (
@@ -752,7 +756,7 @@ function UserPill({ user, colors, t, onPress, onLogout }) {
           <View style={s.userPillAvatarWrap}>
             <AvatarCircle email={email} name={name} size={36} />
             {/* Online status dot — green ring + dot */}
-            <View style={[s.userPillStatusDot, { borderColor: colors.sidebarBg, backgroundColor: '#10b981' }]} />
+            <View style={[s.userPillStatusDot, { borderColor: colors.sidebarBg, backgroundColor: colors.text }]} />
           </View>
           <View style={{ flex: 1, marginLeft: 10, minWidth: 0 }}>
             <Text numberOfLines={1} style={[s.userPillName, { color: colors.text }]}>{name}</Text>
@@ -820,7 +824,8 @@ function QuickAccessItem({ item, colors, onPress, isActive }) {
     onMouseLeave: () => setHovered(false),
   } : {};
 
-  const iconColor = item.color || colors.primary;
+  // MONOCHROME 2026: ignore per-item accent — one neutral system.
+  const iconColor = colors.primary;
 
   return (
     <TouchableOpacity
@@ -834,8 +839,8 @@ function QuickAccessItem({ item, colors, onPress, isActive }) {
       activeOpacity={0.6}
       {...webHover}
     >
-      <View style={[s.folderIconWrap, { backgroundColor: isActive ? iconColor + '18' : (hovered ? iconColor + '0a' : 'transparent'), borderRadius: 8 }]}>
-        <item.icon size={18} color={isActive ? iconColor : (item.color || colors.textSecondary)} />
+      <View style={[s.folderIconWrap, { backgroundColor: isActive ? iconColor + '18' : (hovered ? iconColor + '0a' : 'transparent'), borderRadius: BorderRadius.md }]}>
+        <item.icon size={18} color={isActive ? iconColor : colors.textSecondary} />
       </View>
       <Text style={[s.folderLabel, { color: isActive ? iconColor : colors.text, fontWeight: isActive ? '700' : '500' }]}>{item.label}</Text>
       {item.badge > 0 && (

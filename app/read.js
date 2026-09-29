@@ -362,9 +362,9 @@ export default function ReadScreen() {
     );
   }
 
-  // Back nav bar (mobile) — gradient roxo igual ao /chat e /inbox.
-  // Wave 3 consolidação 2026-05-08: header não muda mais a paleta visual
-  // entre Conversas/Inbox/Read — todas usam o mesmo brand purple gradient.
+  // Back nav bar (mobile) — solid monochrome black (#111111) igual ao /chat e
+  // /inbox. Header não muda mais a paleta visual entre Conversas/Inbox/Read —
+  // todas usam o mesmo preto sólido (2026: zero cor, zero gradiente).
   const navBar = Platform.OS !== 'web' ? (
     <View style={[s.navBar, {
       backgroundColor: isDark ? '#0d0d0d' : '#111111',
@@ -402,8 +402,8 @@ export default function ReadScreen() {
   ) : null;
 
   // Floating action bar (mobile only) with press animations.
-  // Wave 3 consolidação 2026-05-08: Reply ganhou destaque pill roxo
-  // (Telegram-style hierarquia primary action), outros ações ficam icons
+  // Wave 3 consolidação 2026-05-08: Reply ganhou destaque pill (monochrome
+  // primary action, Telegram-style hierarquia), outras ações ficam icons
   // neutros — antes os 4 tinham mesmo peso visual e poluía.
   const actionBar = Platform.OS !== 'web' && email ? (
     <View style={[s.actionBar, Shadow.lg, { backgroundColor: colors.surface, paddingBottom: insets.bottom + 8, borderTopColor: colors.borderLight }]}>
@@ -596,9 +596,8 @@ const s = StyleSheet.create({
   loader: { marginTop: 60 },
   progressBar: {
     height: 3,
-    // Brand purple instead of #111111 blue — matches the tab bar glow,
-    // send button, and chat header pulse so the reading-progress strip
-    // reads as part of the app instead of a foreign accent.
+    // Monochrome accent (#111111) — matches the send button and header so the
+    // reading-progress strip reads as part of the one 2026 system.
     backgroundColor: '#111111',
     ...Platform.select({
       web: {
@@ -624,7 +623,7 @@ const s = StyleSheet.create({
     borderRadius: 12,
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 160ms ease' } : {}),
   },
-  backText: { fontSize: FontSize.lg, fontWeight: '700', marginLeft: 4, letterSpacing: -0.2 },
+  backText: { fontSize: FontSize.lg, fontWeight: '700', marginLeft: 4, letterSpacing: -0.3 },
   navArrows: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   navArrowBtn: {
     padding: 10, borderRadius: 10,

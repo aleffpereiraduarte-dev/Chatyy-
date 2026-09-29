@@ -5363,7 +5363,7 @@ const s = StyleSheet.create({
   // -0.5) so it doesn't look squashed at this size.
   // [beauty2 2026-05-31] dialed the card heading down to 18px/700 — closer to
   // iOS Settings group-header weight; calmer, less shouty than 20/800.
-  sectionTitle: { fontSize: 18, fontWeight: '700', marginBottom: Spacing.md + 2, letterSpacing: -0.35 },
+  sectionTitle: { fontSize: 18, fontWeight: '700', marginBottom: Spacing.md + 2, letterSpacing: -0.4 },
   // Eyebrow label — small uppercase brand-color tag rendered above a section
   // title for screens that want extra navigability (iOS Settings pattern).
   // Currently only used internally; rows opt in via <Text style={[s.sectionEyebrow, { color: colors.primary }]}/>.

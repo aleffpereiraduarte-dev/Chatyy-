@@ -1552,23 +1552,24 @@ export default function ComposeScreen() {
     } else if (draftStatus === 'error') {
       label = t('compose.errorConnection') || 'Erro';
     }
-    // Pill styling — header sits on purple gradient now, raw text disappears.
-    // Saved → soft-green pill (calm reassurance), saving → translucent-white,
-    // error → soft-red pill. All readable on the gradient.
+    // Pill styling — header sits on solid black now, raw text disappears.
+    // MONOCHROME 2026: saved → white pill (the check icon + label carry the
+    // "saved" meaning, no green), saving → translucent-white, error → soft-red
+    // (functional). All readable on the solid black header.
     const isSaved = draftStatus === 'saved';
     const isError = draftStatus === 'error';
     const pillBg = isSaved
-      ? 'rgba(34, 197, 94, 0.22)'
+      ? 'rgba(255, 255, 255, 0.22)'
       : isError
         ? 'rgba(239, 68, 68, 0.22)'
         : 'rgba(255, 255, 255, 0.18)';
     const pillBorder = isSaved
-      ? 'rgba(134, 239, 172, 0.55)'
+      ? 'rgba(255, 255, 255, 0.45)'
       : isError
         ? 'rgba(252, 165, 165, 0.55)'
         : 'rgba(255, 255, 255, 0.28)';
-    const tickColor = isSaved ? '#86efac' : '#fff';
-    const labelColor = isSaved ? '#dcfce7' : isError ? '#fecaca' : 'rgba(255,255,255,0.92)';
+    const tickColor = isSaved ? '#fff' : '#fff';
+    const labelColor = isSaved ? '#fff' : isError ? '#fecaca' : 'rgba(255,255,255,0.92)';
     return (
       <View
         style={{
@@ -2006,7 +2007,7 @@ export default function ComposeScreen() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
       >
         <View style={[s.container, { paddingTop: insets.top }]}>
-          {/* Header — purple gradient, white iconography */}
+          {/* Header — solid black, white iconography */}
           <View style={[s.header, Platform.OS !== 'web' && { backgroundColor: '#111111' }]}>
             <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
               <IconArrowLeft size={20} color="#fff" />
@@ -2189,7 +2190,7 @@ export default function ComposeScreen() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
     >
       <View style={[s.container, { paddingTop: insets.top }]}>
-        {/* ── Modern Header — purple gradient, white iconography ── */}
+        {/* ── Modern Header — solid black, white iconography ── */}
         <View style={[s.header, { flex: undefined, marginLeft: 0 }, Platform.OS !== 'web' && { backgroundColor: '#111111' }]}>
           <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
             <IconX size={20} color="#fff" />
@@ -2476,10 +2477,9 @@ const s = StyleSheet.create({
   container: { flex: 1 },
 
   // ── Header ──
-  // Brand: purple gradient (#111111 → #111111) — moment-of-intent screen
-  // deserves a confident, on-brand hero. Web uses CSS linear-gradient; native
-  // falls back to solid colors.primary applied inline (see header JSX) plus a
-  // subtle elevation so the bar floats above scroll content.
+  // Brand: solid monochrome black (#111111) — moment-of-intent screen deserves
+  // a confident, on-brand hero. Flat black bar (2026: zero gradient) with a
+  // subtle 1px elevation so it floats above scroll content.
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.md, height: 56,

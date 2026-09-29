@@ -59,10 +59,10 @@ export const Colors = {
   textTertiary: '#787C82',
   textOnPrimary: '#ffffff',
 
-  // Border — neutral gray
-  border: '#E6E8EB',
+  // Border — neutral hairline (2026: crisp 1px separators, #EAEAEC)
+  border: '#EAEAEC',
   borderLight: '#F0F1F3',
-  divider: '#E6E8EB',
+  divider: '#EAEAEC',
 
   // Status — functional only, kept saturated so meaning still reads
   error: '#dc2626',
@@ -219,9 +219,10 @@ export const DarkColors = {
   onPrimary: '#ffffff',
   onPrimaryContainer: '#F0F1F3',
 
-  // Background / Surface — NEUTRAL near-black, layered depth
-  background: '#0B0B0D',
-  surface: '#161618',
+  // Background / Surface — refined NEUTRAL near-blacks (2026: not pure #000),
+  // layered depth: page #0B0B0C → surface #141416 → variant #202022.
+  background: '#0B0B0C',
+  surface: '#141416',
   surfaceVariant: '#202022',
   surfaceHover: '#1C1C1E',
   surfaceElevated: '#202022',
@@ -240,8 +241,9 @@ export const DarkColors = {
   textTertiary: '#868B91',
   textOnPrimary: '#ffffff',
 
-  // Border — subtle for OLED
-  border: 'rgba(255, 255, 255, 0.06)',
+  // Border — solid hairline for OLED (2026: crisp #232326 instead of near-
+  // invisible alpha), so cards/rows read as intentional in dark mode.
+  border: '#232326',
   borderLight: 'rgba(255, 255, 255, 0.03)',
   divider: 'rgba(255, 255, 255, 0.08)',
 
@@ -422,8 +424,12 @@ export const FontFamily = {
   mono: '"JetBrains Mono", "SF Mono", Consolas, monospace',
 };
 
+// 2026 type tracking — tighter on headings for a confident, modern hierarchy
+// (~-0.02 to -0.03em at heading sizes). Body/labels stay calm at 0.
 export const LetterSpacing = {
-  tight: -0.3,
+  tightest: -0.6, // hero / display numbers
+  tighter: -0.4,  // titles / section headings
+  tight: -0.3,    // sub-headings / dense labels
   normal: 0,
   wide: 0.3,
   wider: 0.5,
@@ -485,12 +491,15 @@ export const haptic = {
 
 // DENSIDADE 2026: raios um pouco menores = visual mais reto/clean tipo Gmail.
 // Todas as chaves mantidas.
+// 2026 radius scale — consistent medium corners: controls 8, cards 12,
+// sheets 16 (modern, not pills everywhere). Still compact/clean, just cleaner
+// stepping than the old 3/6/8/10/14 ramp.
 export const BorderRadius = {
-  sm: 3,    // era 4
-  md: 6,    // era 8
-  lg: 8,    // era 12
-  xl: 10,   // era 12 (Uber ~6-8, cartões maiores ~10)
-  xxl: 14,  // era 18
+  sm: 4,    // was 3 — chips / inner controls
+  md: 8,    // was 6 — buttons / inputs / controls
+  lg: 10,   // was 8 — small cards
+  xl: 12,   // was 10 — cards
+  xxl: 16,  // was 14 — sheets / modals
   full: 999,
 };
 

@@ -55,17 +55,19 @@ import { canNavigateNow } from '../services/navGuard';
 
 const MUTED_UIDS_KEY = '@onemundo_muted_uids';
 
+// MONOCHROME 2026: side-panel header accents unified to the single neutral
+// accent (#111111) — no per-route color. Tints derive from this one hex.
 const SIDE_PANEL_ROUTES = {
   '/chat': { key: 'chat', icon: IconMessageSquare, label: 'sidebar.messages', color: '#111111' },
-  '/calendar': { key: 'calendar', icon: IconCalendar, label: 'sidebar.calendar', color: '#4285f4' },
-  '/drive': { key: 'drive', icon: IconFolder, label: 'Chatyy Cloud', color: '#f59e0b' },
-  '/meetings': { key: 'meetings', icon: IconFilm, label: 'sidebar.meetings', color: '#ef4444' },
-  '/documentos': { key: 'documentos', icon: IconGlobe, label: 'sidebar.documents', color: '#4285f4' },
+  '/calendar': { key: 'calendar', icon: IconCalendar, label: 'sidebar.calendar', color: '#111111' },
+  '/drive': { key: 'drive', icon: IconFolder, label: 'Chatyy Cloud', color: '#111111' },
+  '/meetings': { key: 'meetings', icon: IconFilm, label: 'sidebar.meetings', color: '#111111' },
+  '/documentos': { key: 'documentos', icon: IconGlobe, label: 'sidebar.documents', color: '#111111' },
   '/contacts': { key: 'contacts', icon: IconUser, label: 'sidebar.contacts', color: '#111111' },
   '/one': { key: 'one', icon: IconZap, label: 'One', color: '#111111' },
-  '/photos': { key: 'photos', icon: IconImage, label: 'photos.title', color: '#e11d48' },
-  '/backup': { key: 'backup', icon: IconArchive, label: 'Backup', color: '#f59e0b' },
-  '/notes': { key: 'notes', icon: IconStickyNote, label: 'sidebar.notes', color: '#f59e0b' },
+  '/photos': { key: 'photos', icon: IconImage, label: 'photos.title', color: '#111111' },
+  '/backup': { key: 'backup', icon: IconArchive, label: 'Backup', color: '#111111' },
+  '/notes': { key: 'notes', icon: IconStickyNote, label: 'sidebar.notes', color: '#111111' },
 };
 
 // Wrap the inner screen in an ErrorBoundary so that any crash inside
@@ -1297,7 +1299,7 @@ function InboxScreenInner() {
         </View>
       )}
 
-      {/* Header — unified Chatyy purple gradient (matches /chat header).
+      {/* Header — unified Chatyy solid black (matches /chat header).
           Wave 3 consolidation 2026-05-08: era branco glassmorphism, ficava
           parecendo "outro app" depois do chat roxo. Agora todas as superfícies
           top-level (Conversas/Email/Reels/Ligações) compartilham o mesmo brand. */}
@@ -2503,7 +2505,7 @@ const s = StyleSheet.create({
     width: 100, height: 100, borderRadius: 50,
     justifyContent: 'center', alignItems: 'center',
   },
-  noSelectionTitle: { fontSize: 22, fontWeight: '700', letterSpacing: -0.5 },
+  noSelectionTitle: { fontSize: 22, fontWeight: '700', letterSpacing: LetterSpacing.tightest },
   noSelectionSub: { fontSize: FontSize.base, marginTop: Spacing.sm, textAlign: 'center', maxWidth: 300, lineHeight: 23, opacity: 0.7 },
   loader: { marginTop: 60 },
   fab: {
@@ -2511,16 +2513,17 @@ const s = StyleSheet.create({
     borderRadius: 20, width: 62, height: 62,
     ...Platform.select({
       web: {
-        boxShadow: '0 4px 14px rgba(17, 17, 17, 0.22), 0 1px 4px rgba(17, 17, 17, 0.12)',
+        // 2026: lighter two-layer lift (no heavy dark shadow)
+        boxShadow: '0 6px 16px rgba(17, 17, 17, 0.16), 0 2px 6px rgba(17, 17, 17, 0.10)',
         transition: 'box-shadow 0.3s ease, transform 0.2s ease',
         background: '#111111',
       },
       default: {
-        elevation: 8,
+        elevation: 7,
         shadowColor: '#111111',
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.24,
-        shadowRadius: 12,
+        shadowOffset: { width: 0, height: 5 },
+        shadowOpacity: 0.18,
+        shadowRadius: 14,
       },
     }),
   },
