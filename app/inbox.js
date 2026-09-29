@@ -2362,10 +2362,11 @@ function QRScannerView({ onScan, onClose }) {
 
 const s = StyleSheet.create({
   container: { flex: 1 },
+  // DENSIDADE 2026: header mais fino (nível Gmail) — menos altura/padding.
   header: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg + 2, paddingVertical: 12,
+    flexDirection: 'row', alignItems: 'center', paddingHorizontal: Spacing.lg + 2, paddingVertical: 9,
     borderBottomWidth: StyleSheet.hairlineWidth, zIndex: 100,
-    minHeight: 60,
+    minHeight: 52,
   },
   headerGlass: Platform.OS === 'web' ? {
     backdropFilter: 'blur(28px) saturate(200%)',
@@ -2390,8 +2391,8 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: Spacing.md,
-    paddingTop: 8,
-    paddingBottom: 8,
+    paddingTop: 6,
+    paddingBottom: 6,
     borderBottomWidth: StyleSheet.hairlineWidth, // [beauty2 2026-05-31] hairline divider — softer Gmail/Spark feel
   },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },

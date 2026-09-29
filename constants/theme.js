@@ -389,14 +389,16 @@ export const DarkColors = {
 
 // Espaçamento — escala PARCIAL (moderateScale) com a tela. Em celular pequeno
 // encolhe um pouco pra caber mais conteúdo; não some de vez (factor 0.5).
+// DENSIDADE 2026 (nível Gmail web): escala reduzida ~15-25% pra caber MAIS
+// conteúdo por tela sem parecer apertado. Todas as chaves mantidas.
 export const Spacing = {
-  xs: moderateScale(4),
-  sm: moderateScale(8),
-  md: moderateScale(12),
-  lg: moderateScale(16),
-  xl: moderateScale(20),
-  xxl: moderateScale(24),
-  xxxl: moderateScale(32),
+  xs: moderateScale(3),    // era 4
+  sm: moderateScale(6),    // era 8
+  md: moderateScale(10),   // era 12
+  lg: moderateScale(13),   // era 16
+  xl: moderateScale(16),   // era 20
+  xxl: moderateScale(20),  // era 24
+  xxxl: moderateScale(26), // era 32
 };
 
 // Tipografia — escala COM a tela (scaleSize, clamp [0.85,1.15] em utils).
@@ -451,14 +453,16 @@ export const Motion = {
 
 // ── Chat bubble system ────────────────────────────────────────────────
 // WhatsApp-style geometry, pulled out so every bubble in the app matches.
+// DENSIDADE 2026: bolhas mais enxutas (menos padding, gaps menores, raio um
+// pouco menor) pra caber mais conversa por tela sem apertar a leitura.
 export const ChatBubble = {
-  radius: 20,        // 2026: cantos arredondados uniformes
-  tailRadius: 20,    // tail-less (sem canto pontudo) — visual matte/flat
-  gap: 3,            // between consecutive messages from same sender
-  gapGroup: 8,       // between speaker changes
-  paddingX: 13,
-  paddingY: 9,
-  maxWidth: '80%',
+  radius: 16,        // era 20 — cantos arredondados uniformes
+  tailRadius: 16,    // era 20 — tail-less (sem canto pontudo)
+  gap: 2,            // era 3 — between consecutive messages from same sender
+  gapGroup: 6,       // era 8 — between speaker changes
+  paddingX: 11,      // era 13
+  paddingY: 7,       // era 9
+  maxWidth: '82%',   // era 80% — um tiquinho mais largo compensa menos padding
 };
 
 // ── Haptic helper — never throws on web, single import point ──────────
@@ -479,12 +483,14 @@ export const haptic = {
   error: () => { const H = _getHaptics(); try { H?.notificationAsync?.(H.NotificationFeedbackType.Error); } catch {} },
 };
 
+// DENSIDADE 2026: raios um pouco menores = visual mais reto/clean tipo Gmail.
+// Todas as chaves mantidas.
 export const BorderRadius = {
-  sm: 4,
-  md: 8,
-  lg: 12,
-  xl: 16,
-  xxl: 24,
+  sm: 3,    // era 4
+  md: 6,    // era 8
+  lg: 8,    // era 12
+  xl: 12,   // era 16
+  xxl: 18,  // era 24
   full: 999,
 };
 

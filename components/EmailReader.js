@@ -1660,10 +1660,10 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
 
 const s = StyleSheet.create({
   container: { flex: 1 },
-  content: { padding: Spacing.xxl + 4, paddingBottom: 48 },
-  // Header
-  headerRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: Spacing.xl + 4 },
-  subject: { flex: 1, fontSize: 26, fontWeight: '800', lineHeight: 34, letterSpacing: -0.8 },
+  content: { padding: Spacing.xl + 2, paddingBottom: 40 },
+  // Header — DENSIDADE 2026: assunto menor + menos respiro (leitura tipo Gmail).
+  headerRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: Spacing.lg },
+  subject: { flex: 1, fontSize: 22, fontWeight: '800', lineHeight: 28, letterSpacing: -0.6 },
   headerActions: { flexDirection: 'row', marginLeft: Spacing.sm, gap: 4 },
   headerBtn: {
     width: 38, height: 38, borderRadius: 19,
@@ -1673,7 +1673,7 @@ const s = StyleSheet.create({
   // Sender
   senderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md + 2 },
   senderAvatar: {
-    width: 50, height: 50, borderRadius: 25,
+    width: 44, height: 44, borderRadius: 22,
     justifyContent: 'center', alignItems: 'center', marginRight: Spacing.md + 2,
   },
   senderAvatarText: { color: '#fff', fontSize: 21, fontWeight: '800' },
@@ -1727,8 +1727,8 @@ const s = StyleSheet.create({
   summaryText: { fontSize: FontSize.base, lineHeight: 22 },
   summaryClose: { fontSize: FontSize.sm, marginTop: Spacing.sm },
   // Body
-  bodyContainer: { marginTop: Spacing.lg, paddingTop: Spacing.xl + 4, borderTopWidth: StyleSheet.hairlineWidth, minHeight: 200 },
-  bodyText: { fontSize: 16, lineHeight: 28, letterSpacing: -0.05 },
+  bodyContainer: { marginTop: Spacing.md, paddingTop: Spacing.lg, borderTopWidth: StyleSheet.hairlineWidth, minHeight: 200 },
+  bodyText: { fontSize: 15.5, lineHeight: 24, letterSpacing: -0.05 },
   // Attachments
   attachments: { marginTop: Spacing.xxl, paddingTop: Spacing.lg, borderTopWidth: StyleSheet.hairlineWidth },
   attachTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md },

@@ -892,17 +892,17 @@ const ConversationRow = React.memo(function ConversationRow({
           <View style={s.avatarWrap}>
             {isChannel ? (
               <View style={{
-                width: 50, height: 50, borderRadius: 25,
+                width: 46, height: 46, borderRadius: 23,
                 backgroundColor: isDark ? 'rgba(0,136,204,0.15)' : 'rgba(0,136,204,0.1)',
                 alignItems: 'center', justifyContent: 'center',
               }}>
-                <Svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="#0088cc" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <Svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="#0088cc" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                   <Path d="M3 11l18-5v12L3 13v-2z" />
                   <Path d="M11.6 16.8a3 3 0 11-5.8-1.6" />
                 </Svg>
               </View>
             ) : isGroup ? (
-              <GroupAvatarStack conversation={conversation} size={50} isDark={isDark} />
+              <GroupAvatarStack conversation={conversation} size={46} isDark={isDark} />
             ) : (
               <View style={[
                 // Unread direct chats get a soft brand-purple gradient halo so
@@ -930,7 +930,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 <AvatarCircle
                   name={displayName}
                   email={otherEmail}
-                  size={50}
+                  size={46}
                   // WAVE 95: tap-avatar → fullscreen lightbox (only for direct
                   // chats; group/channel avatars don't have a single photo to
                   // enlarge — the row tap still opens the conversation).
@@ -7847,9 +7847,9 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 20,
-    paddingTop: 18,
-    paddingBottom: 7,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 5,
   },
   sectionLabelText: {
     fontSize: 11,
@@ -7862,12 +7862,15 @@ const s = StyleSheet.create({
   // so single-line rows don't feel cramped against multi-line ones. Vertical
   // padding eased to 13 — the rowTop/rowBottom margins already carry the
   // internal rhythm, so this keeps the row from feeling stacked-tight.
+  // DENSIDADE 2026 (nível Gmail): linha mais compacta — menos padding vertical
+  // e altura mínima menor pra caber mais conversas por tela. Continua bem acima
+  // do alvo de toque mínimo.
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-    minHeight: 80,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    minHeight: 62,
     ...(Platform.OS === 'web' ? {
       transition: 'background-color 0.18s ease, box-shadow 0.18s ease',
       cursor: 'pointer',
@@ -7875,7 +7878,7 @@ const s = StyleSheet.create({
   },
   avatarWrap: {
     position: 'relative',
-    marginRight: 13,
+    marginRight: 11,
     // Subtle lift under the avatar so it reads as a layered token, iMessage-
     // style. Soft + tight so it never looks like a heavy drop shadow.
     ...Platform.select({
@@ -7926,13 +7929,13 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 5,
+    marginBottom: 3,
   },
   // [beauty 2026-05-31] Name reads crisper at 16 with a slightly tighter
   // tracking; read rows sit at semibold so the unread→bold step is a real,
   // legible contrast jump (iMessage-style) rather than a subtle weight nudge.
   rowName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '500',
     flex: 1,
     letterSpacing: -0.25,
@@ -7956,10 +7959,10 @@ const s = StyleSheet.create({
   // so it reads as the quiet secondary line under the name — never competing
   // with it for weight.
   rowPreview: {
-    fontSize: 14,
+    fontSize: 13.5,
     flex: 1,
     marginRight: 10,
-    lineHeight: 19,
+    lineHeight: 18,
     letterSpacing: -0.1,
   },
   // Unread badge — brand-purple pill (was WhatsApp green). Crisp squircle pill

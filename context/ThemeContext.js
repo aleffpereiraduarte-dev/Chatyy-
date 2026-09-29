@@ -26,13 +26,14 @@ function _broadcastSetting(key, value) {
   } catch {}
 }
 
+// DENSIDADE 2026 (nível Gmail web): o default `comfortable` ficou bem mais
+// enxuto (linhas ~60px, menos padding vertical, avatar 40) pra caber MAIS
+// e-mails por tela sem perder o preview/snippet. Quem quiser mais respiro
+// escolhe `spacious` nas configurações; quem quiser ainda mais denso, `compact`.
 export const DENSITY_CONFIG = {
-  compact: { rowMinHeight: 48, paddingV: 6, avatarSize: 28, showPreview: false, fontSize: 13 },
-  // Wave 5 polish 2026-05-08: avatar default bumpado 40→46 pra alinhar com
-  // ChatList (50). Antes parecia que email row era de outro app por ter
-  // avatares menores. Spacious 44→50 = paridade total.
-  comfortable: { rowMinHeight: 76, paddingV: 14, avatarSize: 46, showPreview: true, fontSize: 14 },
-  spacious: { rowMinHeight: 96, paddingV: 18, avatarSize: 50, showPreview: true, fontSize: 15 },
+  compact: { rowMinHeight: 44, paddingV: 5, avatarSize: 28, showPreview: false, fontSize: 13 },
+  comfortable: { rowMinHeight: 60, paddingV: 9, avatarSize: 40, showPreview: true, fontSize: 14 },
+  spacious: { rowMinHeight: 84, paddingV: 14, avatarSize: 46, showPreview: true, fontSize: 15 },
 };
 
 // NEUTRAL 2026: default accent is the sober WhatsApp-style action green (was

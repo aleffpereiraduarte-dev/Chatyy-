@@ -31425,7 +31425,7 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md + 2, paddingBottom: 12, paddingTop: 6,
+    paddingHorizontal: Spacing.md + 2, paddingBottom: 9, paddingTop: 6,
     borderBottomWidth: 0,
     zIndex: 10,
     ...Platform.select({
@@ -31525,7 +31525,7 @@ const styles = StyleSheet.create({
   // last msg in the group so the next speaker's bubble has clear visual
   // separation (~8dp, WhatsApp standard).
   msgRow: { maxWidth: '85%', marginBottom: 1 },
-  msgRowGroupEnd: { marginBottom: 10 },
+  msgRowGroupEnd: { marginBottom: 7 },
   msgRowOwn: { alignSelf: 'flex-end', marginRight: 10 },
   msgRowOther: { alignSelf: 'flex-start', marginLeft: 10 },
   // [beauty 2026-05-31] marginBottom 6→5 + tiny marginTop so the group-sender
@@ -31563,9 +31563,10 @@ const styles = StyleSheet.create({
     // rounder corners for a WhatsApp/Telegram-grade feel. Vertical padding
     // is symmetric (8/8) so the text block sits centered and the meta row
     // beneath it never looks cramped against the bottom edge.
-    borderRadius: 20, paddingHorizontal: 13,
-    paddingTop: 8, paddingBottom: 7,
-    minWidth: 82,
+    // DENSIDADE 2026: bolha mais enxuta (menos padding, raio um pouco menor).
+    borderRadius: 16, paddingHorizontal: 11,
+    paddingTop: 6, paddingBottom: 6,
+    minWidth: 74,
     // flexShrink + alignSelf so Yoga measures the Text intrinsic width
     // BEFORE applying minWidth — without these, the first render in a
     // freshly mounted conversation laid the bubble out against a stale
@@ -31598,18 +31599,18 @@ const styles = StyleSheet.create({
   // bubble edge instead of being hard-clipped mid-word.
   bubbleWithReply: { minWidth: 200 },
   bubbleOwn: {
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    borderBottomLeftRadius: 20, borderBottomRightRadius: 6,
+    borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    borderBottomLeftRadius: 16, borderBottomRightRadius: 5,
   },
   bubbleOther: {
-    borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    borderBottomLeftRadius: 6, borderBottomRightRadius: 20,
+    borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    borderBottomLeftRadius: 5, borderBottomRightRadius: 16,
     borderWidth: 0, borderColor: 'transparent',
   },
   // [beauty 2026-05-31] Match the live bubble's horizontal padding (13) so a
   // deleted-message bubble lines up exactly with its neighbours instead of
   // sitting 1px narrower.
-  bubbleDeleted: { opacity: 0.55, paddingHorizontal: 13, paddingVertical: 8 },
+  bubbleDeleted: { opacity: 0.55, paddingHorizontal: 11, paddingVertical: 6 },
   // [beauty 2026-05-31] lineHeight 20.5→21 — a hair more leading so multi-line
   // message bodies breathe and don't pack tight against the meta row below.
   msgText: { fontSize: 15.5, lineHeight: 21, letterSpacing: -0.08 },

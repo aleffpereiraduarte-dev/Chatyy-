@@ -328,7 +328,12 @@ function EmailRow({
     <TouchableOpacity
       style={[
         s.row,
-        { backgroundColor: bgColor, borderBottomColor: colors.borderLight, paddingVertical: dc.paddingV, minHeight: dc.rowMinHeight },
+        // DENSIDADE 2026: na WEB (tela grande) apertamos um pouco mais a linha
+        // pra caber mais e-mails por tela, estilo Gmail web denso. No app fica
+        // no valor da densidade escolhida.
+        { backgroundColor: bgColor, borderBottomColor: colors.borderLight,
+          paddingVertical: Platform.OS === 'web' ? Math.max(4, dc.paddingV - 2) : dc.paddingV,
+          minHeight: Platform.OS === 'web' ? Math.max(44, dc.rowMinHeight - 8) : dc.rowMinHeight },
         Platform.OS === 'web' && s.rowTransition,
         Platform.OS === 'web' && hovered && {
           boxShadow: '0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.04)',
@@ -650,7 +655,7 @@ const s = StyleSheet.create({
       default: {},
     }),
   },
-  leftArea: { marginRight: 14 },
+  leftArea: { marginRight: 11 },
   content: { flex: 1, minWidth: 0 },
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 },
   senderRow: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0, marginRight: Spacing.sm },
