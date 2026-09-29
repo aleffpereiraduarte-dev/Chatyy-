@@ -2486,15 +2486,15 @@ const s = StyleSheet.create({
     borderBottomWidth: 0,
     ...Platform.select({
       web: {
-        background: 'linear-gradient(135deg, #111111 0%, #111111 100%)',
-        boxShadow: '0 2px 12px rgba(17, 17, 17, 0.25)',
+        background: '#111111',
+        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.12)',
       },
       default: {
-        elevation: 4,
+        elevation: 2,
         shadowColor: '#111111',
-        shadowOpacity: 0.25,
-        shadowRadius: 10,
-        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
+        shadowOffset: { width: 0, height: 1 },
       },
     }),
   },
@@ -2522,16 +2522,15 @@ const s = StyleSheet.create({
       web: {
         cursor: 'pointer',
         transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
-        // Beefier shadow lift — send is the primary CTA, should feel
-        // weighty/premium when sitting on the purple header gradient.
-        boxShadow: '0 6px 16px rgba(17, 17, 17, 0.45), 0 2px 4px rgba(17, 17, 17, 0.3)',
+        // Clean, flat CTA — subtle lift only (Uber/Gmail style), no heavy glow.
+        boxShadow: '0 2px 8px rgba(17, 17, 17, 0.22)',
       },
       default: {
-        elevation: 6,
+        elevation: 3,
         shadowColor: '#111111',
-        shadowOpacity: 0.25,
-        shadowRadius: 12,
-        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.18,
+        shadowRadius: 8,
+        shadowOffset: { width: 0, height: 2 },
       },
     }),
   },
@@ -2778,7 +2777,7 @@ const s = StyleSheet.create({
     ...Platform.select({
       web: {
         animation: 'successPop 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)',
-        boxShadow: '0 8px 32px rgba(22, 163, 74, 0.2)',
+        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.08)',
       },
       default: {},
     }),

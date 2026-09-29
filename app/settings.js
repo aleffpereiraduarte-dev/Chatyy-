@@ -4624,7 +4624,7 @@ function SettingsScreenInner() {
               backgroundColor: colors.surface,
               borderRadius: 20,
               padding: 24,
-              ...(Platform.OS === 'web' ? { boxShadow: '0 20px 50px rgba(0,0,0,0.25)' } : {}),
+              ...(Platform.OS === 'web' ? { boxShadow: '0 8px 28px rgba(0,0,0,0.16)' } : {}),
             }}
           >
             <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text, marginBottom: 4 }}>
@@ -4825,7 +4825,7 @@ function SettingsScreenInner() {
               backgroundColor: colors.surface,
               borderRadius: 20,
               padding: 24,
-              ...(Platform.OS === 'web' ? { boxShadow: '0 20px 50px rgba(0,0,0,0.25)' } : {}),
+              ...(Platform.OS === 'web' ? { boxShadow: '0 8px 28px rgba(0,0,0,0.16)' } : {}),
             }}
           >
             <View style={{ alignItems: 'center', marginBottom: 14 }}>
@@ -4969,7 +4969,7 @@ function SettingsScreenInner() {
               backgroundColor: colors.surface,
               borderRadius: 20,
               padding: 24,
-              ...(Platform.OS === 'web' ? { boxShadow: '0 20px 50px rgba(0,0,0,0.25)' } : {}),
+              ...(Platform.OS === 'web' ? { boxShadow: '0 8px 28px rgba(0,0,0,0.16)' } : {}),
             }}
           >
             <View style={{ alignItems: 'center', marginBottom: 14 }}>
@@ -5297,11 +5297,11 @@ const s = StyleSheet.create({
   backBtn: { padding: Spacing.sm, marginRight: Spacing.xs, borderRadius: 12, marginLeft: -Spacing.xs },
   headerTitle: { flex: 1, fontSize: FontSize.xxl, fontWeight: '800', letterSpacing: -0.5 },
   saveBtn: {
-    borderRadius: 22, paddingVertical: Spacing.sm + 2, paddingHorizontal: Spacing.lg + 2,
+    borderRadius: 10, paddingVertical: Spacing.sm + 2, paddingHorizontal: Spacing.lg + 2,
     ...Platform.select({
-      web: { background: 'linear-gradient(135deg, #111111 0%, #111111 100%)', boxShadow: '0 4px 12px rgba(17, 17, 17,0.3)' },
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.28, shadowRadius: 8 },
-      android: { elevation: 2 },
+      web: { background: '#111111', boxShadow: '0 1px 3px rgba(17, 17, 17,0.18)' },
+      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.14, shadowRadius: 4 },
+      android: { elevation: 1 },
     }),
   },
   saveBtnDisabled: { opacity: 0.6 },
@@ -5315,14 +5315,14 @@ const s = StyleSheet.create({
   // more inner breathing room (paddingVertical) so grouped rows read like
   // iOS inset-grouped cards; horizontal padding kept tight for label reach.
   section: {
-    borderRadius: 20, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg + 2,
-    marginBottom: Spacing.lg,
+    borderRadius: 14, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
+    marginBottom: Spacing.md,
     ...Platform.select({
       web: {
         transition: 'box-shadow 0.2s ease',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.03), 0 6px 20px rgba(0,0,0,0.035)',
+        boxShadow: '0 1px 2px rgba(0,0,0,0.03), 0 1px 3px rgba(0,0,0,0.04)',
       },
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 14 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6 },
       android: { elevation: 1 },
     }),
   },

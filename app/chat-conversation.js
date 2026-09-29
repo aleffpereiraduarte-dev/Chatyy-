@@ -12541,8 +12541,15 @@ function ChatConversationInner() {
                   // Reactions aren't carried in events yet — if any reaction
                   // event fired while we were offline, pull the affected
                   // messages fresh once so counts come in right. Also refetch
-                  // whenever has_more (gap too big for delta to catch up).
-                  if (c.has_more || c.events.some(e => e.type === 'reaction')) {
+                  // whenever has_more (gap too big for delta to catch up) OR
+                  // needsFullReload — the latter is set by chatSync's
+                  // hydration-gap guard when a `new_message` event arrived
+                  // whose row wasn't hydrated (has_more can be false in that
+                  // case). The reopen + foreground delta paths already honor
+                  // needsFullReload; without it here a message missed during
+                  // the offline window could stay absent after reconnect until
+                  // some other trigger fired.
+                  if (c.has_more || c.needsFullReload || c.events.some(e => e.type === 'reaction')) {
                     try { loadMessages(false); } catch {}
                   }
                 } else if (c && c.has_more) {
@@ -25101,13 +25108,18 @@ function ChatConversationInner() {
           carries the message and has a retry CTA.  Reconnecting (network
           is up, WS is down) IS still surfaced inline because that's a
           chat-specific concern OfflineNotice does NOT know about. */}
-      {!netReachable ? null : !wsConnected ? (
+      {/* WhatsApp parity (2026-09-29): NEVER paint "Conectando..." on cold open.
+          WhatsApp shows cached content instantly and connects silently — the
+          user only sees a status if a PREVIOUSLY-live connection drops (real
+          reconnect). Gating on hasEverConnectedRef means the first WS handshake
+          (1-2s on open / on return from background) is invisible; the messages
+          are already on screen from SQLite. Only a genuine mid-session drop —
+          after the 5s grace timer — surfaces the subtle "Reconectando..." row. */}
+      {(!netReachable || !wsConnected && !hasEverConnectedRef.current) ? null : !wsConnected ? (
         <View style={{ backgroundColor: isDark ? 'rgba(245,158,11,0.10)' : 'rgba(245,158,11,0.10)', paddingVertical: 6, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
           <ActivityIndicator size={12} color="#f59e0b" />
           <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '500' }}>
-            {hasEverConnectedRef.current
-              ? (t('chat.reconnecting') || 'Reconectando...')
-              : (t('chat.connecting') || 'Conectando...')}
+            {t('chat.reconnecting') || 'Reconectando...'}
           </Text>
         </View>
       ) : null}

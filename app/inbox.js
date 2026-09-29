@@ -1304,8 +1304,8 @@ function InboxScreenInner() {
       <Animated.View style={[
         s.header,
         { ...(Platform.OS === 'web'
-            ? { background: isDark ? 'linear-gradient(180deg, #161618 0%, #0a0a0a 100%)' : 'linear-gradient(180deg, #111111 0%, #111111 100%)' }
-            : { backgroundColor: isDark ? '#0d0a14' : '#111111' }),
+            ? { background: isDark ? '#161618' : '#111111' }
+            : { backgroundColor: isDark ? '#0d0d0d' : '#111111' }),
           borderBottomColor: 'transparent',
           borderBottomWidth: 0,
           opacity: headerAnim,
@@ -1993,10 +1993,10 @@ function InboxScreenInner() {
             <Pressable
               style={{
                 backgroundColor: colors.surface,
-                borderRadius: 16,
+                borderRadius: 14,
                 padding: 24,
                 width: Math.min(width - 40, 380),
-                ...(Platform.OS === 'web' ? { boxShadow: '0 8px 32px rgba(0,0,0,0.3)' } : {}),
+                ...(Platform.OS === 'web' ? { boxShadow: '0 8px 28px rgba(0,0,0,0.14)' } : {}),
               }}
               onPress={() => {}}
             >
@@ -2410,11 +2410,11 @@ const s = StyleSheet.create({
   headerAvatarText: { fontSize: FontSize.xl, fontWeight: '600' },
   dropMenu: {
     position: 'absolute', top: 56, right: Spacing.lg,
-    borderRadius: 20, paddingVertical: Spacing.sm, minWidth: 280, maxWidth: 360,
+    borderRadius: 12, paddingVertical: Spacing.sm, minWidth: 280, maxWidth: 360,
     zIndex: 110, borderWidth: 1,
   },
   dropMenuGlass: Platform.OS === 'web' ? {
-    boxShadow: '0 16px 48px rgba(0,0,0,0.16), 0 4px 12px rgba(0,0,0,0.06), 0 0 0 1px rgba(255,255,255,0.06)',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.05)',
     backdropFilter: 'blur(28px) saturate(200%)',
     WebkitBackdropFilter: 'blur(28px) saturate(200%)',
     animation: 'dropdownIn 0.22s cubic-bezier(0.34, 1.56, 0.64, 1)',
@@ -2511,16 +2511,16 @@ const s = StyleSheet.create({
     borderRadius: 20, width: 62, height: 62,
     ...Platform.select({
       web: {
-        boxShadow: '0 8px 28px rgba(17, 17, 17, 0.45), 0 2px 8px rgba(17, 17, 17, 0.2), 0 0 0 4px rgba(17, 17, 17, 0.08)',
+        boxShadow: '0 4px 14px rgba(17, 17, 17, 0.22), 0 1px 4px rgba(17, 17, 17, 0.12)',
         transition: 'box-shadow 0.3s ease, transform 0.2s ease',
-        background: 'linear-gradient(135deg, #111111 0%, #111111 100%)',
+        background: '#111111',
       },
       default: {
-        elevation: 14,
+        elevation: 8,
         shadowColor: '#111111',
-        shadowOffset: { width: 0, height: 8 },
-        shadowOpacity: 0.45,
-        shadowRadius: 18,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.24,
+        shadowRadius: 12,
       },
     }),
   },
@@ -2529,11 +2529,11 @@ const s = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', padding: 24,
   },
   moveCard: {
-    width: '100%', maxWidth: 360, borderRadius: 20, borderWidth: 1,
+    width: '100%', maxWidth: 360, borderRadius: 14, borderWidth: 1,
     overflow: 'hidden',
     ...Platform.select({
-      web: { boxShadow: '0 16px 48px rgba(0,0,0,0.2), 0 0 0 1px rgba(255,255,255,0.06)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
-      default: { elevation: 12 },
+      web: { boxShadow: '0 8px 28px rgba(0,0,0,0.14), 0 0 0 1px rgba(0,0,0,0.05)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
+      default: { elevation: 8 },
     }),
   },
   moveHeader: {

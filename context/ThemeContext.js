@@ -31,9 +31,9 @@ function _broadcastSetting(key, value) {
 // e-mails por tela sem perder o preview/snippet. Quem quiser mais respiro
 // escolhe `spacious` nas configurações; quem quiser ainda mais denso, `compact`.
 export const DENSITY_CONFIG = {
-  compact: { rowMinHeight: 44, paddingV: 5, avatarSize: 28, showPreview: false, fontSize: 13 },
-  comfortable: { rowMinHeight: 60, paddingV: 9, avatarSize: 40, showPreview: true, fontSize: 14 },
-  spacious: { rowMinHeight: 84, paddingV: 14, avatarSize: 46, showPreview: true, fontSize: 15 },
+  compact: { rowMinHeight: 42, paddingV: 4, avatarSize: 28, showPreview: false, fontSize: 13 },
+  comfortable: { rowMinHeight: 54, paddingV: 7, avatarSize: 38, showPreview: true, fontSize: 14 },
+  spacious: { rowMinHeight: 76, paddingV: 12, avatarSize: 44, showPreview: true, fontSize: 15 },
 };
 
 // NEUTRAL 2026: default accent is the sober WhatsApp-style action green (was

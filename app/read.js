@@ -350,7 +350,7 @@ export default function ReadScreen() {
     return (
       <View style={[s.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         {Platform.OS !== 'web' && (
-          <View style={[s.navBar, { backgroundColor: isDark ? '#0d0a14' : '#111111', borderBottomColor: 'transparent', borderBottomWidth: 0 }]}>
+          <View style={[s.navBar, { backgroundColor: isDark ? '#0d0d0d' : '#111111', borderBottomColor: 'transparent', borderBottomWidth: 0 }]}>
             <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }}>
               <IconChevronLeft size={22} color="#fff" />
               <Text style={[s.backText, { color: '#fff' }]}>{t('reader.back')}</Text>
@@ -367,7 +367,7 @@ export default function ReadScreen() {
   // entre Conversas/Inbox/Read — todas usam o mesmo brand purple gradient.
   const navBar = Platform.OS !== 'web' ? (
     <View style={[s.navBar, {
-      backgroundColor: isDark ? '#0d0a14' : '#111111',
+      backgroundColor: isDark ? '#0d0d0d' : '#111111',
       borderBottomColor: 'transparent',
       borderBottomWidth: 0,
     }]}>
@@ -604,7 +604,7 @@ const s = StyleSheet.create({
       web: {
         transformOrigin: 'left',
         transition: 'opacity 0.3s ease',
-        background: 'linear-gradient(90deg, #111111 0%, #111111 100%)',
+        background: '#111111',
       },
       default: {},
     }),
@@ -627,7 +627,7 @@ const s = StyleSheet.create({
   backText: { fontSize: FontSize.lg, fontWeight: '700', marginLeft: 4, letterSpacing: -0.2 },
   navArrows: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   navArrowBtn: {
-    padding: 12, borderRadius: 22,
+    padding: 10, borderRadius: 10,
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 160ms ease' } : {}),
   },
   actionBar: {

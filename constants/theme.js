@@ -191,7 +191,7 @@ export const Colors = {
   authBtnGradientStart: '#111111',
   authBtnGradientEnd: '#111111',
   authSecondaryBtn: 'rgba(17, 17, 17, 0.04)',
-  authSecondaryBtnBorder: '#DCEFEA',
+  authSecondaryBtnBorder: '#E6E8EB',
   authSecondaryBtnHover: 'rgba(17, 17, 17, 0.08)',
   authAccentGlow: 'rgba(17, 17, 17, 0.08)',
   authAccentLine: 'rgba(17, 17, 17, 0.15)',
@@ -202,7 +202,7 @@ export const Colors = {
   authStepConnectorDone: '#111111',
   authSuccessGreen: '#10b981',
   authChipBg: '#F2F3F5',
-  authChipBorder: '#DCEFEA',
+  authChipBorder: '#E6E8EB',
   authLeftPanelBg: '#F2F3F5',
   authLeftPanelAccent: '#111111',
   authGridColor: 'rgba(17, 17, 17, 0.04)',
@@ -213,11 +213,11 @@ export const DarkColors = {
   // consistent everywhere. ThemeContext's accent override applies one hex to
   // both modes, so light and dark must share it. Kept muted/"sóbrio" per brief.
   primary: '#111111',
-  primaryLight: '#10352A',
-  primaryDark: '#45C9B4',
-  primaryContainer: '#10352A',
+  primaryLight: '#202022',
+  primaryDark: '#3A3A3D',
+  primaryContainer: '#202022',
   onPrimary: '#ffffff',
-  onPrimaryContainer: '#CFF3EA',
+  onPrimaryContainer: '#F0F1F3',
 
   // Background / Surface — NEUTRAL near-black, layered depth
   background: '#0B0B0D',
@@ -254,9 +254,9 @@ export const DarkColors = {
   warningBg: '#451a03',
 
   // Email states — active/selected = subtle green; star = action green
-  unreadBg: '#0F1F17',
+  unreadBg: '#161618',
   unreadAccent: '#111111',
-  selectedBg: '#10352A',
+  selectedBg: '#202022',
   starColor: '#111111',
   starEmpty: '#4A4D52',
 
@@ -295,7 +295,7 @@ export const DarkColors = {
   checkboxColor: '#9BA0A6',
   selectedCheckbox: '#111111',
   focusBorder: '#111111',
-  bulkToolbarBg: '#10352A',
+  bulkToolbarBg: '#202022',
   gradientStart: '#111111',
   gradientEnd: '#111111',
   loginPanelBg: '#000000',
@@ -305,11 +305,11 @@ export const DarkColors = {
 
   // Secondary & Tertiary accents — collapsed onto the single action green
   secondary: '#111111',
-  secondaryLight: '#10352A',
-  secondaryDark: '#45C9B4',
+  secondaryLight: '#202022',
+  secondaryDark: '#3A3A3D',
   tertiary: '#111111',
-  tertiaryLight: '#10352A',
-  tertiaryDark: '#45C9B4',
+  tertiaryLight: '#202022',
+  tertiaryDark: '#3A3A3D',
 
   // Brand colors — all point at the action green; danger stays
   brandPrimary: '#111111',
@@ -393,12 +393,12 @@ export const DarkColors = {
 // conteúdo por tela sem parecer apertado. Todas as chaves mantidas.
 export const Spacing = {
   xs: moderateScale(3),    // era 4
-  sm: moderateScale(6),    // era 8
-  md: moderateScale(10),   // era 12
-  lg: moderateScale(13),   // era 16
-  xl: moderateScale(16),   // era 20
-  xxl: moderateScale(20),  // era 24
-  xxxl: moderateScale(26), // era 32
+  sm: moderateScale(5),    // era 6 (2ª passada compacta)
+  md: moderateScale(8),    // era 10
+  lg: moderateScale(11),   // era 13
+  xl: moderateScale(14),   // era 16
+  xxl: moderateScale(17),  // era 20
+  xxxl: moderateScale(22), // era 26
 };
 
 // Tipografia — escala COM a tela (scaleSize, clamp [0.85,1.15] em utils).
@@ -411,10 +411,10 @@ export const FontSize = {
   base: scaleSize(14),
   lg: scaleSize(15),
   xl: scaleSize(16),
-  xxl: scaleSize(18),
-  title: scaleSize(20),
-  heading: scaleSize(24),
-  hero: scaleSize(32),
+  xxl: scaleSize(17),   // era 18 (2ª passada: cabeçalhos mais leves)
+  title: scaleSize(19), // era 20
+  heading: scaleSize(22), // era 24
+  hero: scaleSize(28),  // era 32
 };
 
 export const FontFamily = {
@@ -456,13 +456,13 @@ export const Motion = {
 // DENSIDADE 2026: bolhas mais enxutas (menos padding, gaps menores, raio um
 // pouco menor) pra caber mais conversa por tela sem apertar a leitura.
 export const ChatBubble = {
-  radius: 16,        // era 20 — cantos arredondados uniformes
-  tailRadius: 16,    // era 20 — tail-less (sem canto pontudo)
-  gap: 2,            // era 3 — between consecutive messages from same sender
-  gapGroup: 6,       // era 8 — between speaker changes
-  paddingX: 11,      // era 13
-  paddingY: 7,       // era 9
-  maxWidth: '82%',   // era 80% — um tiquinho mais largo compensa menos padding
+  radius: 14,        // era 16 — cantos arredondados uniformes (mais reto/clean)
+  tailRadius: 14,    // era 16 — tail-less (sem canto pontudo)
+  gap: 2,            // between consecutive messages from same sender
+  gapGroup: 5,       // era 6 — between speaker changes
+  paddingX: 10,      // era 11
+  paddingY: 6,       // era 7
+  maxWidth: '83%',   // era 82% — compensa o padding menor
 };
 
 // ── Haptic helper — never throws on web, single import point ──────────
@@ -489,8 +489,8 @@ export const BorderRadius = {
   sm: 3,    // era 4
   md: 6,    // era 8
   lg: 8,    // era 12
-  xl: 12,   // era 16
-  xxl: 18,  // era 24
+  xl: 10,   // era 12 (Uber ~6-8, cartões maiores ~10)
+  xxl: 14,  // era 18
   full: 999,
 };
 

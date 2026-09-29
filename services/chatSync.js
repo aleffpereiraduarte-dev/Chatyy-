@@ -275,6 +275,28 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
         if (ev?.actor) {
           chatCache.updateCachedMessage?.(convId, mid, { read_at: ev.created_at, _readStatus: 2 }, { senderNot: ev.actor }).catch?.(() => {});
         }
+      } else if (ev.type === 'delivered') {
+        // Mirror the grey ✓✓ to disk so a delivery learned ONLY via a delta
+        // sync (reconnect catch-up — never via a full chat_messages refetch)
+        // doesn't regress back to a single ✓ on the next cold reopen. The live
+        // WS `chat_delivered` handler already flips the in-memory bubble; this
+        // is the persistence twin of the `read` mirror above.
+        //
+        // The 'delivered' event coalesces a burst into payload.message_ids[]
+        // (no singular message_id — so `mid` above is 0 here). Stamp ONLY
+        // `delivered_at`: the cold-load enrichment (chat-conversation ~18720)
+        // checks read state BEFORE delivered, so an already-read bubble can
+        // never be downgraded by this — read_at/_read/maxReadId always win.
+        // We never touch `status`/`_read`/`read_at`, so there is no way to
+        // regress a blue ✓✓. convId may be absent — the SQLite path keys by
+        // message id regardless; convId only feeds the MMKV mirror key.
+        const convId = ev?.payload?.conversation_id;
+        const dids = Array.isArray(ev?.payload?.message_ids)
+          ? ev.payload.message_ids.map(Number).filter(n => n > 0)
+          : [];
+        for (const did of dids) {
+          chatCache.updateCachedMessage?.(convId, did, { delivered_at: ev.created_at, _delivered: true }).catch?.(() => {});
+        }
       }
     }
   } catch (e) {

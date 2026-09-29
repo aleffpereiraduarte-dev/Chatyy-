@@ -898,13 +898,13 @@ const s = StyleSheet.create({
   // [beauty2 2026-05-31] softer brand-tinted shadow + a touch more breathing room
   composeBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    borderRadius: 28, paddingVertical: 15, paddingHorizontal: 24,
-    marginBottom: Spacing.lg, marginHorizontal: Spacing.sm,
+    borderRadius: 12, paddingVertical: 12, paddingHorizontal: 22,
+    marginBottom: Spacing.md, marginHorizontal: Spacing.sm,
     ...Platform.select({
       web: {
         transition: 'all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)',
         cursor: 'pointer',
-        boxShadow: '0 4px 14px rgba(17, 17, 17,0.28)',
+        boxShadow: '0 1px 3px rgba(17, 17, 17,0.18)',
         backgroundColor: '#111111',
       },
       default: {},
@@ -913,9 +913,9 @@ const s = StyleSheet.create({
   composeBtnText: { fontSize: 15, fontWeight: '700', letterSpacing: 0.3 },
   folderItem: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 11, paddingHorizontal: Spacing.lg,
-    borderRadius: 14, borderTopRightRadius: 26, borderBottomRightRadius: 26,
-    marginBottom: 3, marginRight: Spacing.xs,
+    paddingVertical: 9, paddingHorizontal: Spacing.lg,
+    borderRadius: 12, borderTopRightRadius: 22, borderBottomRightRadius: 22,
+    marginBottom: 2, marginRight: Spacing.xs,
     position: 'relative',
     overflow: 'hidden',
   },
@@ -948,9 +948,9 @@ const s = StyleSheet.create({
   badgeWrap: {
     borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, minWidth: 24, alignItems: 'center',
     ...(Platform.OS === 'web' ? {
-      boxShadow: '0 2px 6px rgba(0,0,0,0.15)',
+      boxShadow: '0 1px 3px rgba(0,0,0,0.10)',
     } : {
-      shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4, elevation: 3,
+      shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.10, shadowRadius: 2, elevation: 1,
     }),
   },
   badgeWrapInbox: {
@@ -1012,12 +1012,12 @@ const s = StyleSheet.create({
   collapsedContent: { alignItems: 'center', paddingTop: Spacing.md, paddingBottom: Spacing.xxl, paddingHorizontal: 4 },
   // [beauty2 2026-05-31] brand-tinted shadow matches expanded compose CTA
   collapsedComposeBtn: {
-    width: 44, height: 44, borderRadius: 15,
+    width: 44, height: 44, borderRadius: 12,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: Spacing.md,
     ...(Platform.OS === 'web' ? {
       cursor: 'pointer',
-      boxShadow: '0 4px 12px rgba(17, 17, 17,0.28)',
+      boxShadow: '0 1px 3px rgba(17, 17, 17,0.18)',
       backgroundColor: '#111111',
       transition: 'transform 0.15s ease, box-shadow 0.15s ease',
     } : {}),
