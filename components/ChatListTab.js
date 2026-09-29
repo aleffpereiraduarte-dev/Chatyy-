@@ -578,6 +578,22 @@ const ConversationRow = React.memo(function ConversationRow({
         else if (typeof parsed.text === 'string') content = parsed.text;
         else if (typeof parsed.body === 'string') content = parsed.body;
         else if (typeof parsed.caption === 'string') content = parsed.caption;
+        // Envelope-leak guard (founder print 2026-09-29): some server events
+        // double-wrap the row, so `content` was the WHOLE message object
+        // {id, conversation_id, sender_email, content:"Oi", ...} with the real
+        // text under `.content` or `.message`. None of the keys above matched
+        // → the raw JSON `{"id":11273,"conversation_id":934,...}` leaked into
+        // the preview row. Extract those keys too, unwrapping one more level
+        // when the value is itself an envelope.
+        else if (typeof parsed.content === 'string') {
+          const inner = parsed.content.trim();
+          if (inner.startsWith('{')) {
+            try { const p2 = JSON.parse(inner); content = p2.text || p2.body || p2.caption || p2.content || p2.message || ''; }
+            catch { content = ''; }
+          } else content = parsed.content;
+          if (typeof content !== 'string') content = '';
+        }
+        else if (typeof parsed.message === 'string') content = parsed.message;
         if (!caption && typeof parsed.caption === 'string' && parsed.caption.trim()) {
           caption = parsed.caption.trim();
         }
@@ -609,6 +625,17 @@ const ConversationRow = React.memo(function ConversationRow({
     // Fallback: if content is a raw tenor/giphy URL (legacy gif sent as text), show "GIF"
     else if (typeof content === 'string' && /^https?:\/\/(media[0-9]*\.)?(tenor|giphy)\.com\//i.test(content.trim())) {
       content = '\uD83C\uDFAC GIF';
+    }
+
+    // Hard guard (founder print 2026-09-29): if after ALL extraction the
+    // preview STILL looks like a raw JSON envelope, never render it verbatim \u2014
+    // try one last unwrap for a text-bearing key, else a clean generic label.
+    if (typeof content === 'string' && /^\{[\s\S]*\}$/.test(content.trim())) {
+      try {
+        const p = JSON.parse(content.trim());
+        const inner = p.text || p.body || p.caption || p.content || p.message;
+        content = (typeof inner === 'string' && inner.trim()) ? inner : (t('chat.message') || 'Mensagem');
+      } catch { content = (t('chat.message') || 'Mensagem'); }
     }
 
     if (lastMsg.type === 'system') {
@@ -3967,6 +3994,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // conversations + updated last-message previews land immediately.
       let wasConnected = true;
       let bannerTimer = null;
+      // WhatsApp parity (founder 2026-09-29 "toda vez que abro fica
+      // conectando"): the reconnect banner must NEVER paint before the very
+      // first successful auth of this session. Cold start / return-from-kill
+      // connects silently no matter how long the first handshake takes — the
+      // list already shows cached conversations. Only a drop AFTER we've been
+      // live once surfaces "Reconectando…".
+      let hasAuthedThisSession = false;
       // AppState bg→fg grace (2026-05-18 #1143, "never-fall" UX): every
       // time the app comes back to foreground we record the timestamp.
       // The very first WS close that lands inside the 3s window after a
@@ -3983,6 +4017,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       unsubs.push(mailWs.on('connection', (data) => {
         if (data?.status === 'authenticated') {
           setSocketUp(true);
+          hasAuthedThisSession = true;
           if (!wasConnected) {
             try { loadConversations(false); } catch {}
             // [#1211 2026-05-19] PHONE-FIRST CATCH-UP: pull every event missed
@@ -4042,7 +4077,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         } else if (data?.status === 'disconnected') {
           wasConnected = false;
           setSocketUp(false);
-          if (!bannerTimer) {
+          if (!bannerTimer && hasAuthedThisSession) {
             // Base suppress = 12s (most reconnects on flaky cellular heal
             // under 10s). If we JUST returned from background (<3s ago),
             // extend to 15s — sleep/wake blips need extra slack because

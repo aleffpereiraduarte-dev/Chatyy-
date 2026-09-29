@@ -121,10 +121,16 @@ export default function ChatyyOneAvatar({ size = 48, style, blink = true }) {
       accessibilityLabel="Chatyy One"
       accessibilityRole="image"
     >
-      <Image
-        source={ICON}
-        style={{ width: size, height: size, borderRadius: size / 2 }}
-        resizeMode="cover"
+      {/* Monochrome One (founder 2026-09-29): black bubble + two white eyes,
+          replacing the purple assets/icon.png so One reads as pure Uber
+          black&white. The blink eyelids below cover these pupils on scaleY=1. */}
+      <View
+        pointerEvents="none"
+        style={{ position: 'absolute', top: eyeTop, left: size / 2 - eyeOffsetX - eyeW / 2, width: eyeW, height: eyeH, borderRadius: eyeRadius, backgroundColor: '#FFFFFF' }}
+      />
+      <View
+        pointerEvents="none"
+        style={{ position: 'absolute', top: eyeTop, left: size / 2 + eyeOffsetX - eyeW / 2, width: eyeW, height: eyeH, borderRadius: eyeRadius, backgroundColor: '#FFFFFF' }}
       />
       {blink && (
         <>

@@ -205,8 +205,11 @@ function hashColor(name) {
   for (let i = 0; i < (name || '').length; i++) {
     hash = name.charCodeAt(i) + ((hash << 5) - hash);
   }
-  const hue = Math.abs(hash) % 360;
-  return `hsl(${hue}, 55%, 55%)`;
+  // Uber black&white (founder 2026-09-29): initials avatars are grayscale —
+  // vary only lightness so different contacts stay distinguishable while the
+  // wall of avatars reads as one monochrome identity (zero color).
+  const light = 20 + (Math.abs(hash) % 22);
+  return `hsl(0, 0%, ${light}%)`;
 }
 
 // ── Premium gradient palette for initials avatars ───────────────────
@@ -214,19 +217,22 @@ function hashColor(name) {
 // white initials. Brand-leaning (more violets/blues/teals) so a wall of
 // initials reads as ONE Chatyy identity instead of random hues. Replaces
 // the flat `hashColor()` fill that made avatars look generic/repeated.
+// Uber black&white (founder 2026-09-29): monochrome grayscale pairs only —
+// white initials on dark gray→black. Varying shades keep contacts visually
+// distinct without any color. Zero violet/blue/teal/pink.
 const AVATAR_GRADIENTS = [
-  ['#111111', '#111111'], // brand violet
-  ['#818CF8', '#4F46E5'], // indigo
-  ['#60A5FA', '#2563EB'], // blue
-  ['#38BDF8', '#0284C7'], // sky
-  ['#2DD4BF', '#0D9488'], // teal
-  ['#34D399', '#059669'], // emerald
-  ['#FBBF24', '#D97706'], // amber
-  ['#FB923C', '#EA580C'], // orange
-  ['#111111', '#DB2777'], // pink
-  ['#FB7185', '#E11D48'], // rose
-  ['#111111', '#111111'], // purple
-  ['#22D3EE', '#0891B2'], // cyan
+  ['#374151', '#111827'], // slate
+  ['#4B5563', '#1F2937'], // gray
+  ['#1F2937', '#0B0F14'], // near-black
+  ['#52525B', '#27272A'], // zinc
+  ['#3F3F46', '#18181B'], // zinc dark
+  ['#404040', '#171717'], // neutral
+  ['#525252', '#262626'], // neutral light
+  ['#2D2D2D', '#111111'], // charcoal
+  ['#434343', '#1A1A1A'], // graphite
+  ['#333333', '#0D0D0D'], // ink
+  ['#4A4A4A', '#222222'], // stone
+  ['#2A2A2A', '#000000'], // black
 ];
 function hashInt(s) {
   let h = 0;
