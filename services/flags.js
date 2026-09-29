@@ -26,7 +26,7 @@ export let USE_PHOENIX_HUB = false;
 // `/websocket?token=<bearer>&vsn=2.0.0`. Kept next to the flag so a rollback
 // is a one-line edit. (Dedicated WS host, bypasses the Cloudflare proxy that
 // breaks long-lived sockets — same reasoning as ws.chatyy.com.br.)
-export const PHOENIX_HUB_URL = 'wss://ws.chatyy.com.br/socket';
+export const PHOENIX_HUB_URL = 'wss://ws2.chatyy.com.br/socket';
 
 /**
  * Effective read of USE_PHOENIX_HUB. A truthy globalThis.__chatyy_use_phoenix
