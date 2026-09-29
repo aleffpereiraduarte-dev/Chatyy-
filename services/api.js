@@ -3464,6 +3464,16 @@ export async function meetDemote(roomId, targetEmail) {
 // ============================================================
 // CHAT API
 // ============================================================
+// WhatsApp-multi-device (founder 2026-09-29 "web demora demais pra puxar as
+// conversas"): the phone-relay read transport (web asks YOUR phone to read its
+// SQLite and reply over WS) added a 10s relay timeout + FCM wake + 2.5s retry
+// on every cold list/message load when the phone was asleep — the dominant
+// source of the "web is slow" complaint. Chatyy's PG (now in São Paulo) is the
+// authoritative source, so web reads the SERVER directly like modern WhatsApp
+// multi-device instead of depending on the phone being awake. Flip to true to
+// restore the legacy phone-relay transport.
+const WEB_PHONE_RELAY = false;
+
 export async function chatConversations(search = '', includeArchived = false) {
   const params = {};
   if (search) params.search = search;
@@ -3477,7 +3487,7 @@ export async function chatConversations(search = '', includeArchived = false) {
   // banner via globalThis.__chatyy_phone_offline.
   // Search/archived filters skip relay since relayResponder.get_conversations
   // returns the unfiltered list (filtering is server-side in PHP path).
-  if (Platform.OS === 'web' && !search && !includeArchived) {
+  if (WEB_PHONE_RELAY && Platform.OS === 'web' && !search && !includeArchived) {
     try {
       const relay = require('./relayClient');
       if (await relay.isAvailable()) {
@@ -3596,7 +3606,7 @@ export async function chatMessages(conversationId, limit = 20, beforeId = null, 
   // Skip relay when sinceId/topicId are set: relayResponder.get_messages only
   // implements limit + before_id; sinceId (delta) and topicId (threads) need
   // the PHP path until the phone-side handler grows those filters.
-  if (Platform.OS === 'web' && !sinceId && topicId === undefined) {
+  if (WEB_PHONE_RELAY && Platform.OS === 'web' && !sinceId && topicId === undefined) {
     try {
       const relay = require('./relayClient');
       if (await relay.isAvailable()) {
