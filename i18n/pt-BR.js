@@ -1905,6 +1905,8 @@ export default {
   'chat.tapToResize': 'Toque pra mudar tamanho',
   'chat.selected': '{count} selecionada(s)',
   'chat.empty': 'Nenhuma conversa',
+  'chat.search.noMessages': 'Nenhuma mensagem encontrada',
+  'chat.search.noMessagesSub': 'Tente outras palavras-chave',
   'chat.emptyDesc': 'Inicie uma nova conversa para começar',
   'chat.newConversation': 'Nova Conversa',
   'chat.direct': 'Direto',

@@ -1911,6 +1911,8 @@ export default {
   'chat.tapToResize': 'Tap to resize',
   'chat.selected': '{count} selected',
   'chat.empty': 'No conversations',
+  'chat.search.noMessages': 'No messages found',
+  'chat.search.noMessagesSub': 'Try other keywords',
   'chat.emptyDesc': 'Start a new conversation to begin',
   'chat.newConversation': 'New Conversation',
   'chat.direct': 'Direct',

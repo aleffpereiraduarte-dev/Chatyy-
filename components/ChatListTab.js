@@ -57,6 +57,8 @@ import LiveBar from './LiveBar';
 import { useLanguage } from '../context/LanguageContext';
 import ScreenEmptyState from './ScreenEmptyState';
 import { ChatListSkeleton } from './SkeletonLoader';
+import { SkeletonRow as SkeletonRowPrimitive } from './Skeleton';
+import PressableScale from './PressableScale';
 import { haptic } from '../constants/theme';
 
 let NativeSwipeable = null;
@@ -6434,10 +6436,30 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           </Text>
           {searchingMessages && <ActivityIndicator size="small" color={isDark ? '#111111' : '#111111'} />}
         </View>
+        {/* Loading: shimmer skeleton rows instead of a lone spinner — reads
+            "results are coming" rather than "nothing here". Loading-state JSX
+            only; no data/handler logic touched. */}
+        {searchingMessages && messageHits.length === 0 && (
+          <View>
+            {[0, 1, 2].map(i => (
+              <SkeletonRowPrimitive key={`msk-${i}`} delay={i * 40} avatarSize={40} />
+            ))}
+          </View>
+        )}
         {messageHits.length === 0 && !searchingMessages && (
-          <View style={{ paddingHorizontal: 16, paddingVertical: 12 }}>
-            <Text style={{ fontSize: 14, color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.4)' }}>
-              {'Nenhuma mensagem encontrada'}
+          <View style={{ alignItems: 'center', paddingHorizontal: 24, paddingVertical: 28 }}>
+            <View style={{
+              width: 56, height: 56, borderRadius: 28,
+              backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+              alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+            }}>
+              <IconSearch size={24} color={colors.textTertiary} />
+            </View>
+            <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text, textAlign: 'center' }}>
+              {t('chat.search.noMessages') || 'Nenhuma mensagem encontrada'}
+            </Text>
+            <Text style={{ fontSize: 13, color: colors.textTertiary, textAlign: 'center', marginTop: 4 }}>
+              {t('chat.search.noMessagesSub') || 'Tente outras palavras-chave'}
             </Text>
           </View>
         )}
@@ -6452,7 +6474,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           const hitType = hit.conv_type || hit.conversation_type || hit.type || 'direct';
           const peerEmail = hit.peer_email || hit.other_email || hit.contact_email || hit.sender_email || '';
           return (
-            <TouchableOpacity
+            <PressableScale
               key={`hit-${hit.id}`}
               onPress={() => router.push({
                 pathname: '/chat-conversation',
@@ -6493,7 +6515,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                   {snippet}
                 </Text>
               </View>
-            </TouchableOpacity>
+            </PressableScale>
           );
         })}
       </View>
