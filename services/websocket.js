@@ -943,6 +943,23 @@ class MailWebSocket {
   }
 
   _send(data) {
+    // ─── Phoenix parallel transport (flag-gated, ADDITIVE) ───
+    // When USE_PHOENIX_HUB is ON and the adapter claims this frame (chat/call/
+    // presence/typing/receipt signaling), it is pushed over the Phoenix hub
+    // INSTEAD of the Go WS and we return early. Go-WS protocol frames
+    // (ping/auth/ack/resume/subscribe/…) are never claimed, so the Go WS stays
+    // fully functional for email real-time + liveness. When the flag is OFF,
+    // isPhoenixHubEnabled() short-circuits and this block is a no-op — the path
+    // below is byte-for-byte unchanged.
+    try {
+      const { isPhoenixHubEnabled } = require('./flags');
+      if (isPhoenixHubEnabled()) {
+        const pa = require('./phoenixAdapter');
+        if (pa && typeof pa.phoenixOutbound === 'function' && pa.phoenixOutbound(data)) {
+          return;
+        }
+      }
+    } catch {}
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(this._encodeOutbound(data));
     } else if (data && (
@@ -1933,6 +1950,27 @@ class MailWebSocket {
   // Relay a chat message with delivery guarantee
   // Returns a promise that resolves when server ACKs, or rejects after max retries
   relayChatMessage(conversationId, message, tempId, memberEmails) {
+    // ─── Phoenix parallel transport (flag-gated, ADDITIVE) ───
+    // When USE_PHOENIX_HUB is ON, route the optimistic real-time relay over the
+    // Phoenix hub instead of the Go WS. Durable delivery is unchanged (HTTP
+    // chat_send). We still track our own message id so a Phoenix `new_message`
+    // echo of it is de-duplicated. Resolves benignly for any awaiting caller.
+    // Flag OFF → this block is skipped and the legacy relay below is unchanged.
+    try {
+      const { isPhoenixHubEnabled } = require('./flags');
+      if (isPhoenixHubEnabled()) {
+        const pa = require('./phoenixAdapter');
+        if (pa && typeof pa.phoenixRelayChat === 'function' && pa.isPhoenixActive && pa.isPhoenixActive()) {
+          // Only short-circuit the Go relay if the Phoenix push actually went
+          // out (socket open). If not, fall through to the legacy relay below.
+          const okViaPhoenix = pa.phoenixRelayChat(conversationId, message, tempId, memberEmails);
+          if (okViaPhoenix) {
+            try { if (message && message.id) this._trackMsgId(message.id); } catch {}
+            return Promise.resolve({ viaPhoenix: true, msg_id: message && message.id });
+          }
+        }
+      }
+    } catch {}
     const msgId = this._genMsgId();
     const data = {
       type: 'chat_message_relay',

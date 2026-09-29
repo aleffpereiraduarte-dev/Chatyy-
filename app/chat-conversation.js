@@ -11434,6 +11434,11 @@ function ChatConversationInner() {
       const tcpClient = require('../services/tcp-client').getTCPClient();
       // Subscribe to this conversation via TCP (replaces MQTT)
       mailWs.subscribe(`chat_${conversationId}`);  // Keep WS for presence/typing
+      // Phoenix parallel transport (flag-gated, additive). No-op when OFF.
+      try {
+        const { isPhoenixHubEnabled } = require('../services/flags');
+        if (isPhoenixHubEnabled()) require('../services/phoenixAdapter').phoenixJoinConversation(conversationId);
+      } catch {}
       // [2026-07-03 iOS realtime] Thread is open → switch the WS to aggressive
       // ping cadence (8s/10s) so an iOS zombie socket is caught + reconnected
       // within ~10s instead of ~18s. This is exactly where the user notices
@@ -12495,6 +12500,11 @@ function ChatConversationInner() {
       const unsubConn = mailWs.on('connection', (data) => {
         if (data.status === 'authenticated') {
           mailWs.subscribe(`chat_${conversationId}`);
+          // Phoenix parallel transport (flag-gated, additive). No-op when OFF.
+          try {
+            const { isPhoenixHubEnabled } = require('../services/flags');
+            if (isPhoenixHubEnabled()) require('../services/phoenixAdapter').phoenixJoinConversation(conversationId);
+          } catch {}
           if (conversationType === 'direct' && params.email) {
             mailWs.watchPresence([params.email]);
           }

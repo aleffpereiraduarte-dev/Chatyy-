@@ -1321,10 +1321,21 @@ export function MailProvider({ children }) {
         lastConnectedEmailRef.current = user.email;
         mailWs.reset();
         mailWs.connect(token);
+        // ─── Phoenix parallel transport (flag-gated, ADDITIVE) ───
+        // Started IN PARALLEL with the Go WS (which stays connected for email
+        // real-time). When USE_PHOENIX_HUB is OFF (default / shipped), this is
+        // a no-op and nothing about the legacy path changes.
+        try {
+          const { isPhoenixHubEnabled } = require('../services/flags');
+          if (isPhoenixHubEnabled()) {
+            require('../services/phoenixAdapter').startPhoenix(token, user.email);
+          }
+        } catch {}
       }
     } else if (!user?.email) {
       lastConnectedEmailRef.current = null;
       mailWs.disconnect();
+      try { require('../services/phoenixAdapter').stopPhoenix(); } catch {}
     }
     // No cleanup — the socket should outlive provider re-renders.
   }, [user?.email]);
