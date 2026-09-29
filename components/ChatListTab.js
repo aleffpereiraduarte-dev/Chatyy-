@@ -2795,6 +2795,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const [filter, setFilter] = useState('all');
   const presencesRef = useRef(new Map());
   const [presenceVersion, setPresenceVersion] = useState(0);
+  // Ghost-online guard: while OUR socket is down we can't receive presence
+  // updates, so any cached "online" is untrustworthy and the green dot would
+  // be a lie. Mirrors the conversation header (which already hides "online"
+  // when the socket is down). Starts optimistically true; the WS 'connection'
+  // event corrects it, and reconnect re-queries presence to repaint the truth.
+  const [socketUp, setSocketUp] = useState(true);
   const [showArchived, setShowArchived] = useState(false);
   const [lockedIds, setLockedIds] = useState(new Set());
   const [unlockedIds, setUnlockedIds] = useState(new Set());
@@ -2905,8 +2911,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // Memoize FlatList extraData so it doesn't get a fresh object every render.
   // Was a perf gap — every keystroke / presence event re-invalidated row diffs.
   const extraDataMemo = React.useMemo(
-    () => ({ typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, presenceVersion }),
-    [typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, presenceVersion]
+    () => ({ typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, presenceVersion, socketUp }),
+    [typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, presenceVersion, socketUp]
   );
   const [selectedIds, setSelectedIds] = useState(new Set());
   // Contact-discovery banner (WhatsApp pattern: surface "X amigos no Chatyy"
@@ -3542,6 +3548,32 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               _lastNotifyAt = now;
               try { require('../services/notificationSound').playChatReceiveSound(); } catch {}
             }
+            // WhatsApp parity: a delivered message means the sender stopped
+            // typing — drop their "digitando…" on this row instantly instead of
+            // letting it linger up to the 3s typing-expiry timer (read as
+            // "stuck typing"). The open conversation already does this on
+            // receive; the list row did not, so the preview updated while the
+            // subtitle still said "digitando…". Removes only the sender's name
+            // so other typers in a group keep their indicator.
+            try {
+              const _typerName = emailToDisplayName(data.sender_name || data.sender_email || data.sender || '');
+              const _tkey = `${data.conversation_id}::${_typerName}`;
+              if (typingTimeoutsRef.current[_tkey]) {
+                clearTimeout(typingTimeoutsRef.current[_tkey]);
+                delete typingTimeoutsRef.current[_tkey];
+              }
+              setTypingUsers(prev => {
+                const cur = prev[data.conversation_id];
+                if (cur == null) return prev;
+                const arr = Array.isArray(cur) ? cur : [cur];
+                const left = arr.filter(n => n !== _typerName);
+                if (left.length === arr.length) return prev; // nothing to clear
+                const nextTU = { ...prev };
+                if (left.length) nextTU[data.conversation_id] = left;
+                else delete nextTU[data.conversation_id];
+                return nextTU;
+              });
+            } catch {}
           }
           // Spring LayoutAnimation when conversation moves to top
           try {
@@ -3950,6 +3982,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       unsubs.push(() => { try { fgGraceAppStateSub.remove(); } catch {} });
       unsubs.push(mailWs.on('connection', (data) => {
         if (data?.status === 'authenticated') {
+          setSocketUp(true);
           if (!wasConnected) {
             try { loadConversations(false); } catch {}
             // [#1211 2026-05-19] PHONE-FIRST CATCH-UP: pull every event missed
@@ -4008,6 +4041,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           }
         } else if (data?.status === 'disconnected') {
           wasConnected = false;
+          setSocketUp(false);
           if (!bannerTimer) {
             // Base suppress = 12s (most reconnects on flaky cellular heal
             // under 10s). If we JUST returned from background (<3s ago),
@@ -5997,7 +6031,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         if (p instanceof Map) presenceVal = p.get(otherEmail);
       }
     }
-    const isOnline = !!(presenceVal && (presenceVal.status === 'online' || presenceVal === 'online'));
+    // Only trust "online" while our own socket is up — otherwise we can't be
+    // receiving live presence and a green dot would be a ghost (matches the
+    // conversation-header guard). Reconnect re-queries and repaints the truth.
+    const isOnline = socketUp && !!(presenceVal && (presenceVal.status === 'online' || presenceVal === 'online'));
     const lastSeen = (presenceVal && presenceVal.last_seen) || null;
     const noteText = (item.type === 'direct' && otherEmail) ? (notesMap[otherEmail] || null) : null;
     return (
@@ -6030,7 +6067,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         onAvatarPress={setAvatarLightbox}
       />
     );
-  }, [isDark, colors, t, language, handleConversationPress, rowPrefetch, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, handleMarkUnreadConversation, handleEmailConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, showLongPressMenu, rowToggleSelect, drafts, draftTimes, notesMap, setAvatarLightbox]);
+  }, [isDark, colors, t, language, handleConversationPress, rowPrefetch, handleDeleteConversation, handleArchiveConversation, handleMuteConversation, handlePinConversation, handleMarkUnreadConversation, handleEmailConversation, user?.email, lockedIds, unlockedIds, typingUsers, selectionMode, selectedIds, showLongPressMenu, rowToggleSelect, drafts, draftTimes, notesMap, setAvatarLightbox, socketUp]);
   // NOTE: presenceVersion removed from deps to prevent 15s flicker cycle
   // isOnline calculated inside ConversationRow using presencesRef directly
 
