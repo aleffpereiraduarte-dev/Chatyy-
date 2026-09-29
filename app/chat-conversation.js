@@ -38,7 +38,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useConfirm } from '../components/ConfirmModal';
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
-import { BorderRadius, FontSize, Spacing, Shadow, RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, Shadow, ChatBubble, LetterSpacing, RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import { SCAN_DOCUMENT_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
@@ -19418,7 +19418,7 @@ function ChatConversationInner() {
           {/* Date pill — harmonized to the purple brand (was WhatsApp green
               #E1F2DA, which clashed with the violet header/bubbles). Light:
               soft lavender wash + violet ink. Dark: deep glass + muted text. */}
-          <Text style={[styles.dateText, { color: isDark ? 'rgba(221,214,254,0.85)' : '#111111', backgroundColor: isDark ? 'rgba(17, 17, 17,0.55)' : 'rgba(17, 17, 17,0.10)' }]}>
+          <Text style={[styles.dateText, { color: isDark ? 'rgba(240,241,243,0.88)' : '#111111', backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)' }]}>
             {item._label || formatDateSeparator(item.date, t)}
           </Text>
         </View>
@@ -23501,7 +23501,7 @@ function ChatConversationInner() {
               // from the wallpaper — bump the hairline border opacity
               // 0.05→0.08 (paired with the shadow bump in styles.bubbleOther)
               // so it reads as a distinct surface. Dark unchanged.
-              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#262135' : '#FFFFFF'), ...(isDark ? {} : { borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.08)', ...(Platform.OS === 'ios' ? { shadowOpacity: 0.08, shadowRadius: 5 } : {}) }) }],
+              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#26282C' : '#FFFFFF'), ...(isDark ? {} : { borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.08)', ...(Platform.OS === 'ios' ? { shadowOpacity: 0.08, shadowRadius: 5 } : {}) }) }],
             // Bubble shape (settings.js `bubble_shape`). Layered AFTER the
             // default bubbleOwn/bubbleOther corner radii so it overrides them,
             // but BEFORE the isFirstInGroup tail override below so the tail
@@ -23540,7 +23540,7 @@ function ChatConversationInner() {
                   : 'M8,0 L0,0 C0,0 0,3 1,5.5 C3,9.5 8,13 8,13 Z'}
                 fill={isOwn
                   ? (isDark ? '#111111' : '#F1F3F5')
-                  : (isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#262135' : '#FFFFFF'))}
+                  : (isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#26282C' : '#FFFFFF'))}
               />
             </Svg>
           )}
@@ -24531,14 +24531,12 @@ function ChatConversationInner() {
       ) : (
       /* Header with presence — gradient on web for premium feel */
       <View style={[styles.header, {
-        backgroundColor: isDark ? '#110a1f' : '#111111',
+        backgroundColor: isDark ? '#0d0d0d' : '#111111',
         paddingTop: insets.top,
         ...(Platform.OS === 'web'
           ? {
-              background: isDark
-                ? 'linear-gradient(180deg, #161618 0%, #0d0a14 100%)'
-                : 'linear-gradient(180deg, #111111 0%, #111111 100%)',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+              background: isDark ? '#141416' : '#111111',
+              boxShadow: '0 1px 0 rgba(255,255,255,0.04)',
             }
           : {}),
       }]}>
@@ -24612,7 +24610,7 @@ function ChatConversationInner() {
               <Text style={[styles.headerTitle, { color: '#fff' }]} numberOfLines={1}>
                 {conversationName}
               </Text>
-              {e2eEnabled && <IconLock size={12} color="rgba(165,243,216,0.9)" />}
+              {e2eEnabled && <IconLock size={12} color="rgba(255,255,255,0.72)" />}
             </View>
             {(presenceText !== '') && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -25220,7 +25218,7 @@ function ChatConversationInner() {
             return `${messages.length}_${messages[messages.length - 1]?.id || 0}_${voteSum}_${txCount}_${reactSum}_${editSum}`;
           })()}
           ownBubbleColor={isDark ? '#111111' : '#F1F3F5'}
-          otherBubbleColor={isDark ? '#262135' : '#ffffff'}
+          otherBubbleColor={isDark ? '#26282C' : '#ffffff'}
           listBackgroundColor={isDark ? '#0E0A18' : '#F6F0FE'}
           textColor={isDark ? '#f0f2f5' : '#111b21'}
           metaColor={isDark ? 'rgba(240,242,245,0.55)' : 'rgba(17, 17, 17,0.55)'}
@@ -26516,7 +26514,7 @@ function ChatConversationInner() {
             {...composerSwipeHandlers}
             style={{
             flex: 1, flexDirection: 'row', alignItems: 'flex-end',
-            backgroundColor: isDark ? '#1a1625' : '#ffffff',
+            backgroundColor: isDark ? '#161618' : '#ffffff',
             borderRadius: 26, minHeight: 48,
             paddingLeft: 6, paddingRight: 4, paddingVertical: 2,
             borderWidth: 1,
@@ -31437,13 +31435,15 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md + 2, paddingBottom: 9, paddingTop: 6,
+    paddingHorizontal: Spacing.md + 4, paddingBottom: 8, paddingTop: 6,
     borderBottomWidth: 0,
     zIndex: 10,
+    // Flatter chrome — a single, barely-there lift (the dark bar already reads
+    // as a distinct layer against the message field).
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.06, shadowRadius: 6 },
-      android: { elevation: 3 },
-      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.06)' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.05)' },
     }),
   },
   headerBtn: {
@@ -31459,8 +31459,8 @@ const styles = StyleSheet.create({
   headerInfo: { flex: 1, marginHorizontal: 8 },
   // [beauty 2026-05-31] Tighter tracking (-0.3→-0.35) at 800 weight reads as a
   // confident, condensed name (matches iMessage/WhatsApp header typography).
-  headerTitle: { fontSize: 16.5, fontWeight: '800', letterSpacing: -0.35 },
-  headerSubtitle: { fontSize: 12, marginTop: 2.5, opacity: 0.9, fontWeight: '500', letterSpacing: 0.1 },
+  headerTitle: { fontSize: 16.5, fontWeight: '800', letterSpacing: LetterSpacing.tighter },
+  headerSubtitle: { fontSize: 12, marginTop: 2, opacity: 0.9, fontWeight: '500', letterSpacing: 0.1 },
   disappearingBanner: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     paddingVertical: 8, paddingHorizontal: 14, gap: 6,
@@ -31488,16 +31488,15 @@ const styles = StyleSheet.create({
     // [beauty 2026-05-31] Slightly wider tracking (0.4→0.5) + a touch more
     // horizontal padding (14→15) so short labels ("Hoje"/"Ontem") sit centered
     // and read as an intentional pill, not a tight tag.
-    fontSize: 11.5, fontWeight: '700', letterSpacing: 0.5,
-    paddingHorizontal: 15, paddingVertical: 6,
+    // Clean, flat day-divider pill — the subtle gray wash carries it; no drop
+    // shadow (2026: dividers read as quiet structure, not floating chips).
+    fontSize: 11.5, fontWeight: '700', letterSpacing: 0.4,
+    paddingHorizontal: 12, paddingVertical: 5,
     borderRadius: 999, overflow: 'hidden',
     ...Platform.select({
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 6 },
-      android: { elevation: 1 },
       web: {
-        boxShadow: '0 2px 10px rgba(17, 17, 17,0.10)',
-        backdropFilter: 'blur(20px) saturate(180%)',
-        WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+        backdropFilter: 'blur(12px) saturate(160%)',
+        WebkitBackdropFilter: 'blur(12px) saturate(160%)',
       },
     }),
   },
@@ -31511,9 +31510,9 @@ const styles = StyleSheet.create({
     // Brand-tinted lift: a faint violet halo (was pure black) so the FAB
     // reads as part of the purple system instead of a generic grey button.
     ...Platform.select({
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.22, shadowRadius: 18 },
-      android: { elevation: 10 },
-      web: { boxShadow: '0 6px 24px rgba(17, 17, 17,0.18), 0 2px 6px rgba(0,0,0,0.08)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', transition: 'transform 0.2s ease, box-shadow 0.2s ease' },
+      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.16, shadowRadius: 12 },
+      android: { elevation: 6 },
+      web: { boxShadow: '0 4px 16px rgba(17,17,17,0.14), 0 1px 4px rgba(0,0,0,0.06)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', transition: 'transform 0.2s ease, box-shadow 0.2s ease' },
     }),
     zIndex: 10,
   },
@@ -31536,8 +31535,8 @@ const styles = StyleSheet.create({
   // WhatsApp ~2-3dp mid-group). `msgRowGroupEnd` bumps this up for the
   // last msg in the group so the next speaker's bubble has clear visual
   // separation (~8dp, WhatsApp standard).
-  msgRow: { maxWidth: '85%', marginBottom: 1 },
-  msgRowGroupEnd: { marginBottom: 7 },
+  msgRow: { maxWidth: ChatBubble.maxWidth, marginBottom: ChatBubble.gap },
+  msgRowGroupEnd: { marginBottom: ChatBubble.gapGroup + 2 },
   msgRowOwn: { alignSelf: 'flex-end', marginRight: 10 },
   msgRowOther: { alignSelf: 'flex-start', marginLeft: 10 },
   // [beauty 2026-05-31] marginBottom 6→5 + tiny marginTop so the group-sender
@@ -31575,9 +31574,10 @@ const styles = StyleSheet.create({
     // rounder corners for a WhatsApp/Telegram-grade feel. Vertical padding
     // is symmetric (8/8) so the text block sits centered and the meta row
     // beneath it never looks cramped against the bottom edge.
-    // DENSIDADE 2026: bolha mais enxuta (menos padding, raio um pouco menor).
-    borderRadius: 16, paddingHorizontal: 11,
-    paddingTop: 6, paddingBottom: 6,
+    // DENSIDADE 2026: bolha mais enxuta — geometria vinda do token ChatBubble
+    // (raio 14, padding 10×6) pra bater com todo bubble do app.
+    borderRadius: ChatBubble.radius, paddingHorizontal: ChatBubble.paddingX,
+    paddingTop: ChatBubble.paddingY, paddingBottom: ChatBubble.paddingY,
     minWidth: 74,
     // flexShrink + alignSelf so Yoga measures the Text intrinsic width
     // BEFORE applying minWidth — without these, the first render in a
@@ -31611,12 +31611,12 @@ const styles = StyleSheet.create({
   // bubble edge instead of being hard-clipped mid-word.
   bubbleWithReply: { minWidth: 200 },
   bubbleOwn: {
-    borderTopLeftRadius: 16, borderTopRightRadius: 16,
-    borderBottomLeftRadius: 16, borderBottomRightRadius: 5,
+    borderTopLeftRadius: ChatBubble.radius, borderTopRightRadius: ChatBubble.radius,
+    borderBottomLeftRadius: ChatBubble.radius, borderBottomRightRadius: 5,
   },
   bubbleOther: {
-    borderTopLeftRadius: 16, borderTopRightRadius: 16,
-    borderBottomLeftRadius: 5, borderBottomRightRadius: 16,
+    borderTopLeftRadius: ChatBubble.radius, borderTopRightRadius: ChatBubble.radius,
+    borderBottomLeftRadius: 5, borderBottomRightRadius: ChatBubble.radius,
     borderWidth: 0, borderColor: 'transparent',
   },
   // [beauty 2026-05-31] Match the live bubble's horizontal padding (13) so a
@@ -31731,12 +31731,13 @@ const styles = StyleSheet.create({
     width: 48, height: 48, borderRadius: 24,
     alignItems: 'center', justifyContent: 'center',
     alignSelf: 'flex-end', marginBottom: 2,
+    // Solid monochrome action button — one calm lift, no heavy halo (2026).
     ...Platform.select({
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.45, shadowRadius: 16 },
-      android: { elevation: 8 },
+      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.20, shadowRadius: 8 },
+      android: { elevation: 4 },
       web: {
-        background: 'linear-gradient(145deg, #111111 0%, #111111 50%, #111111 100%)',
-        boxShadow: '0 6px 20px rgba(17, 17, 17,0.45), 0 2px 6px rgba(17, 17, 17,0.25), inset 0 1px 0 rgba(255,255,255,0.18)',
+        backgroundColor: '#111111',
+        boxShadow: '0 3px 10px rgba(17,17,17,0.20), inset 0 1px 0 rgba(255,255,255,0.12)',
         transition: 'transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.2s ease',
         cursor: 'pointer',
       },

@@ -1357,7 +1357,7 @@ function InboxScreenInner() {
           {unreadCount > 0 && (
             <TouchableOpacity
               onPress={handleMarkAllRead}
-              style={{ padding: 8, marginRight: 2, flexDirection: 'row', alignItems: 'center', gap: 4 }}
+              style={s.hdrTextBtn}
               accessibilityLabel={t('contextMenu.markRead') || 'Mark all read'}
               accessibilityRole="button"
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -1372,7 +1372,7 @@ function InboxScreenInner() {
           )}
           <TouchableOpacity
             onPress={() => { setShowLayoutMenu(true); setShowMenu(false); }}
-            style={{ padding: 8, marginRight: 2 }}
+            style={s.hdrIconBtn}
             accessibilityLabel={t('inbox.layout') || 'Layout'}
             accessibilityRole="button"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -1381,7 +1381,7 @@ function InboxScreenInner() {
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => { setShowNotifHub(true); setShowMenu(false); }}
-            style={{ padding: 8, marginRight: 4 }}
+            style={s.hdrIconBtn}
             accessibilityLabel={t('notifications.title') || 'Notificações'}
             accessibilityRole="button"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -1746,13 +1746,30 @@ function InboxScreenInner() {
         }]}>
         {/* AI Briefing card (top of inbox) */}
         {currentFolder === 'INBOX' && aiBriefing && (
-          <View style={{ marginHorizontal:12, marginTop:12, backgroundColor:colors.primary+'15', borderLeftWidth:4, borderLeftColor:colors.primary, padding:14, borderRadius:8 }}>
-            <View style={{ flexDirection:'row', alignItems:'center', marginBottom:6 }}>
-              <IconSparkles size={18} color={colors.primary} style={{ marginRight:8 }} />
-              <Text style={{ fontWeight:'700', color:colors.text, flex:1 }}>Briefing AI</Text>
-              <TouchableOpacity onPress={() => setAiBriefing(null)}><Text style={{ color:colors.textSecondary, fontSize:18 }}>×</Text></TouchableOpacity>
+          <View style={{
+            marginHorizontal: Spacing.lg, marginTop: Spacing.md,
+            flexDirection: 'row', gap: Spacing.md,
+            backgroundColor: colors.surface,
+            borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border,
+            borderRadius: BorderRadius.xl, padding: Spacing.lg,
+            ...Shadow.cardRest,
+          }}>
+            <View style={{
+              width: 32, height: 32, borderRadius: BorderRadius.md,
+              backgroundColor: colors.primaryLight,
+              alignItems: 'center', justifyContent: 'center',
+            }}>
+              <IconSparkles size={17} color={colors.primary} />
             </View>
-            <Text style={{ color:colors.text, fontSize:13, lineHeight:18 }}>{aiBriefing}</Text>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection:'row', alignItems:'center', marginBottom: 4 }}>
+                <Text style={{ flex:1, fontWeight:'700', color:colors.text, fontSize: FontSize.base, letterSpacing: -0.2 }}>Briefing AI</Text>
+                <TouchableOpacity onPress={() => setAiBriefing(null)} hitSlop={{ top:8, bottom:8, left:8, right:8 }} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'}>
+                  <IconX size={16} color={colors.textTertiary} />
+                </TouchableOpacity>
+              </View>
+              <Text style={{ color:colors.textSecondary, fontSize: FontSize.sm, lineHeight: 19 }}>{aiBriefing}</Text>
+            </View>
           </View>
         )}
         <EmailList
@@ -2403,7 +2420,11 @@ const s = StyleSheet.create({
     paddingBottom: 6,
     borderBottomWidth: StyleSheet.hairlineWidth, // [beauty2 2026-05-31] hairline divider — softer Gmail/Spark feel
   },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  // Uniform 38px circular hit targets so the header actions sit on an even
+  // rhythm (the container gap handles spacing — no ad-hoc per-button margins).
+  hdrIconBtn: { width: 38, height: 38, borderRadius: 19, alignItems: 'center', justifyContent: 'center' },
+  hdrTextBtn: { height: 38, paddingHorizontal: 10, borderRadius: 19, flexDirection: 'row', alignItems: 'center', gap: 4 },
   headerIconBtn: {
     width: 38, height: 38, borderRadius: 19,
     alignItems: 'center', justifyContent: 'center',

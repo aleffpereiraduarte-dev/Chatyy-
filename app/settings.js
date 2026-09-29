@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
-import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
+import { FontSize, Spacing, BorderRadius, Shadow, LetterSpacing } from '../constants/theme';
 import {
   IconArrowLeft, IconSparkles, IconMessageSquare, IconPenTool, IconDraft,
   IconFilter, IconChevronRight, IconGlobe, IconTrash, IconBell, IconForward,
@@ -5287,17 +5287,18 @@ const s = StyleSheet.create({
   // so the title sits closer to iOS large-title settings density.
   header: {
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
+    paddingHorizontal: 16, paddingVertical: Spacing.md,
+    minHeight: 56,
     borderBottomWidth: StyleSheet.hairlineWidth,
     ...Platform.select({
       web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' },
       default: {},
     }),
   },
-  backBtn: { padding: Spacing.sm, marginRight: Spacing.xs, borderRadius: 12, marginLeft: -Spacing.xs },
-  headerTitle: { flex: 1, fontSize: FontSize.xxl, fontWeight: '800', letterSpacing: -0.5 },
+  backBtn: { padding: Spacing.sm, marginRight: Spacing.xs, borderRadius: BorderRadius.md, marginLeft: -Spacing.xs },
+  headerTitle: { flex: 1, fontSize: FontSize.title, fontWeight: '800', letterSpacing: LetterSpacing.tighter },
   saveBtn: {
-    borderRadius: 10, paddingVertical: Spacing.sm + 2, paddingHorizontal: Spacing.lg + 2,
+    borderRadius: BorderRadius.md, paddingVertical: Spacing.sm + 2, paddingHorizontal: Spacing.lg + 2,
     ...Platform.select({
       web: { background: '#111111', boxShadow: '0 1px 3px rgba(17, 17, 17,0.18)' },
       ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.14, shadowRadius: 4 },
@@ -5310,13 +5311,13 @@ const s = StyleSheet.create({
   // perigosa) não ficar colado no safe-area inferior do iPhone, e pro modal
   // de confirmação não ser cortado quando aparece. User reportou: "embaixo
   // zona perigosa quebra fica tudo cortando".
-  scroll: { padding: Spacing.lg, paddingBottom: 80 },
+  scroll: { paddingHorizontal: 16, paddingTop: Spacing.lg, paddingBottom: 80 },
   // Section — [beauty2 2026-05-31] slightly calmer corner radius + a touch
   // more inner breathing room (paddingVertical) so grouped rows read like
   // iOS inset-grouped cards; horizontal padding kept tight for label reach.
   section: {
-    borderRadius: 14, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
-    marginBottom: Spacing.md,
+    borderRadius: BorderRadius.xl, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
+    marginBottom: Spacing.lg,
     ...Platform.select({
       web: {
         transition: 'box-shadow 0.2s ease',
@@ -5344,7 +5345,7 @@ const s = StyleSheet.create({
   },
   // Multi-account switcher entry — full-width pill under "Alterar foto".
   switchAccountBtn: {
-    marginTop: Spacing.sm, borderWidth: 1, borderRadius: 14,
+    marginTop: Spacing.sm, borderWidth: 1, borderRadius: BorderRadius.xl,
     paddingHorizontal: Spacing.lg, paddingVertical: Spacing.md,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     alignSelf: 'stretch',
@@ -5363,7 +5364,7 @@ const s = StyleSheet.create({
   // -0.5) so it doesn't look squashed at this size.
   // [beauty2 2026-05-31] dialed the card heading down to 18px/700 — closer to
   // iOS Settings group-header weight; calmer, less shouty than 20/800.
-  sectionTitle: { fontSize: 18, fontWeight: '700', marginBottom: Spacing.md + 2, letterSpacing: -0.4 },
+  sectionTitle: { fontSize: FontSize.xxl, fontWeight: '700', marginBottom: Spacing.md + 2, letterSpacing: LetterSpacing.tighter },
   // Eyebrow label — small uppercase brand-color tag rendered above a section
   // title for screens that want extra navigability (iOS Settings pattern).
   // Currently only used internally; rows opt in via <Text style={[s.sectionEyebrow, { color: colors.primary }]}/>.
@@ -5376,6 +5377,7 @@ const s = StyleSheet.create({
   // lighter iOS-Settings separator; comfortable ~14px vertical density.
   settingRow: {
     flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8,
+    minHeight: 48,
     paddingVertical: Spacing.md + 5, borderBottomWidth: StyleSheet.hairlineWidth,
     ...Platform.select({
       web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
@@ -5387,14 +5389,14 @@ const s = StyleSheet.create({
     paddingVertical: Spacing.md + 4, borderBottomWidth: StyleSheet.hairlineWidth,
   },
   settingInfo: { flex: 1, minWidth: 0 },
-  settingLabel: { fontSize: 15.5, fontWeight: '600', letterSpacing: -0.2 },
-  settingDesc: { fontSize: 13, marginTop: 3, opacity: 0.72, lineHeight: 18, letterSpacing: -0.05 },
+  settingLabel: { fontSize: FontSize.lg, fontWeight: '600', letterSpacing: LetterSpacing.tight },
+  settingDesc: { fontSize: FontSize.sm, marginTop: 3, opacity: 0.72, lineHeight: 18, letterSpacing: LetterSpacing.normal },
   // Per page
   // [beauty2 2026-05-31] segmented-pill selectors — slightly rounder + tighter
   // gap so the row of options reads as one cohesive iOS segmented control.
   perPageBtns: { flexDirection: 'row', gap: 6, flexShrink: 0 },
   perPageBtn: {
-    borderWidth: 1.5, borderRadius: 11,
+    borderWidth: 1.5, borderRadius: BorderRadius.lg,
     paddingHorizontal: Spacing.md, paddingVertical: 8,
     ...Platform.select({
       web: { transition: 'all 0.15s ease', cursor: 'pointer' },
@@ -5403,14 +5405,14 @@ const s = StyleSheet.create({
   },
   perPageText: { fontSize: FontSize.base, fontWeight: '600', letterSpacing: -0.1 },
   // Signature
-  sigCard: { borderWidth: 1, borderRadius: 14, padding: Spacing.md, marginBottom: Spacing.sm },
+  sigCard: { borderWidth: 1, borderRadius: BorderRadius.xl, padding: Spacing.md, marginBottom: Spacing.sm },
   sigHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   sigNameInput: {
     flex: 1, fontSize: FontSize.sm, borderBottomWidth: 1, paddingVertical: 2, fontWeight: '500',
     ...Platform.select({ web: { outlineStyle: 'none' }, default: {} }),
   },
   defaultBtn: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: BorderRadius.xxl },
-  addSigBtn: { borderWidth: 1.5, borderStyle: 'dashed', borderRadius: 14, paddingVertical: 12, alignItems: 'center' },
+  addSigBtn: { borderWidth: 1.5, borderStyle: 'dashed', borderRadius: BorderRadius.xl, paddingVertical: 12, alignItems: 'center' },
   signatureInput: {
     borderWidth: 1, borderRadius: BorderRadius.md,
     padding: Spacing.md, fontSize: FontSize.base,

@@ -169,7 +169,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
           style={[
             s.folderActiveBg,
             {
-              backgroundColor: folderColor + '12',
+              backgroundColor: colors.folderActive,
               opacity: bgOpacity,
               borderTopRightRadius: BorderRadius.xxl,
               borderBottomRightRadius: BorderRadius.xxl,
@@ -207,7 +207,7 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
               s.activeIndicator,
               {
                 width: activeIndicatorWidth,
-                backgroundColor: colors.primary,
+                backgroundColor: colors.text,
                 borderRadius: 2,
               },
             ]}
@@ -215,12 +215,12 @@ function FolderItem({ folder, isActive, onPress, colors, t, dragOverFolder, setD
           {/* Colored icon background pill — keep dimensions stable on activate so
               the label doesn't jump; only the tinted fill fades in. [beauty2 2026-05-31] */}
           <View style={[s.folderIconWrap, isActive && { backgroundColor: folderBgColor }]}>
-            <FolderIcon size={18} color={isActive ? folderColor : folderColor + '99'} />
+            <FolderIcon size={18} color={isActive ? colors.text : colors.textSecondary} />
           </View>
           <Text style={[
             s.folderLabel,
             { color: colors.text },
-            isActive && { fontWeight: '700', color: folderColor },
+            isActive && { fontWeight: '700', color: colors.text },
           ]}>
             {folder.name === 'INBOX' ? (t('folder.allMail') || 'Todos os emails') : (FOLDER_KEYS[folder.name] ? t(FOLDER_KEYS[folder.name]) : folder.name)}
           </Text>
@@ -391,7 +391,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           const isActive = item.route === '/inbox'
             ? !activeSidePanel?.length
             : (Array.isArray(activeSidePanel) ? activeSidePanel.includes(item.route) : activeSidePanel === item.route);
-          const iconColor = colors.primary; // monochrome: ignore per-item accent
+          const iconColor = colors.text; // monochrome + visible on the dark rail
           return (
             <CollapsedItem
               key={item.route}
@@ -439,7 +439,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
       {/* Quick Access — 5 primary items + More overflow.
           Split keeps the sidebar scannable; "Mais" expands to the rest
           without bloating the rail with 10+ icons the user rarely taps. */}
-      <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
+      <View style={[s.divider, { borderTopColor: colors.divider }]} />
       <Text style={[s.sectionLabel, { color: colors.textTertiary }]}>{t('sidebar.quickAccess')}</Text>
       {(() => {
         // Minimal default: utility (Search/Notif) + chat (most common pivot
@@ -505,7 +505,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           </>
         );
       })()}
-      <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
+      <View style={[s.divider, { borderTopColor: colors.divider }]} />
 
       {folderList.map((f, index) => {
         const isActive = currentFolder === f.name;
@@ -548,7 +548,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
       {/* Custom folders */}
       {customFolders.length > 0 && (
         <>
-          <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
+          <View style={[s.divider, { borderTopColor: colors.divider }]} />
           <Text style={[s.sectionLabel, { color: colors.textTertiary }]}>{t('sidebar.folders')}</Text>
           {customFolders.map(f => (
             <View key={f.name} style={s.customFolderRow}>
@@ -612,7 +612,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
       )}
 
       {/* Labels section — collapsible (chevron rotate spring) */}
-      <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
+      <View style={[s.divider, { borderTopColor: colors.divider }]} />
       <CollapsibleSection
         title={t('sidebar.labels')}
         colors={colors}
@@ -643,7 +643,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           Replaces the old text-only logout row. Logout moves to a small icon
           on the right so the rail still has a one-tap escape, but the primary
           action is "view/edit my profile" (Gmail/Outlook pattern). */}
-      <View style={[s.divider, { borderTopColor: colors.borderLight }]} />
+      <View style={[s.divider, { borderTopColor: colors.divider }]} />
       <UserPill
         user={user}
         colors={colors}
@@ -824,8 +824,10 @@ function QuickAccessItem({ item, colors, onPress, isActive }) {
     onMouseLeave: () => setHovered(false),
   } : {};
 
-  // MONOCHROME 2026: ignore per-item accent — one neutral system.
-  const iconColor = colors.primary;
+  // MONOCHROME 2026: ignore per-item accent — one neutral system. Use
+  // colors.text (not colors.primary #111111, which is invisible on the dark
+  // rail) so the active tint/icon/label read correctly in BOTH themes.
+  const iconColor = colors.text;
 
   return (
     <TouchableOpacity
@@ -948,7 +950,7 @@ const s = StyleSheet.create({
     transform: [{ translateX: 2 }],
   } : {},
   folderIconWrap: { marginRight: 14, width: 30, height: 30, alignItems: 'center', justifyContent: 'center', borderRadius: 9 },
-  folderLabel: { fontSize: 14, flex: 1, fontWeight: '600', letterSpacing: -0.15 },
+  folderLabel: { fontSize: 14, flex: 1, fontWeight: '500', letterSpacing: -0.15 },
   folderCount: { fontSize: 11, fontWeight: '600', marginRight: 6, minWidth: 18, textAlign: 'right' },
   badgeWrap: {
     borderRadius: 12, paddingHorizontal: 8, paddingVertical: 3, minWidth: 24, alignItems: 'center',
@@ -969,7 +971,7 @@ const s = StyleSheet.create({
   quickBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
   // Labels section
   // [beauty2 2026-05-31] lighter hairline divider, calmer rhythm
-  divider: { borderTopWidth: 1, marginVertical: Spacing.md, marginHorizontal: Spacing.lg, opacity: 0.7 },
+  divider: { borderTopWidth: StyleSheet.hairlineWidth, marginVertical: Spacing.md, marginHorizontal: Spacing.lg },
   // [beauty2 2026-05-31] crisper, more premium uppercase header
   sectionLabel: {
     fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8,
@@ -1010,8 +1012,9 @@ const s = StyleSheet.create({
   newFolderBtn: { padding: 6 },
   customFolderRow: { flexDirection: 'row', alignItems: 'center' },
   deleteFolderBtn: { padding: 6, marginRight: Spacing.sm },
-  // [beauty2 2026-05-31] align under the folder label (16 padding + 30 icon + 14 gap = 60)
-  emptyTrashBtn: { paddingLeft: 60, paddingVertical: 4, paddingBottom: 8 },
+  // Align exactly under the folder label: row side padding (Spacing.lg) + icon
+  // wrap (30) + gap (14). Was a hardcoded 60 that drifted from the real offset.
+  emptyTrashBtn: { paddingLeft: Spacing.lg + 44, paddingVertical: 4, paddingBottom: 8 },
   emptyTrashText: { fontSize: FontSize.xs, fontWeight: '600', letterSpacing: 0.1 },
   // Collapsed sidebar styles
   collapsedContent: { alignItems: 'center', paddingTop: Spacing.md, paddingBottom: Spacing.xxl, paddingHorizontal: 4 },

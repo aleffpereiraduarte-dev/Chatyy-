@@ -5927,8 +5927,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             esfumado blob — this is a thin-stroke SVG sized to match the caps).
             Tinted brand purple so the PINNED group feels like a first-class
             section, WhatsApp/Telegram-style. */}
-        <IconPin size={11} color={isDark ? '#111111' : '#111111'} />
-        <Text style={[s.sectionLabelText, { color: isDark ? 'rgba(17, 17, 17,0.85)' : 'rgba(17, 17, 17,0.85)' }]}>
+        <IconPin size={11} color={isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)'} />
+        <Text style={[s.sectionLabelText, { color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)' }]}>
           {(() => { const v = t('chat.pinned'); return v && v !== 'chat.pinned' ? v : 'FIXADAS'; })()}
         </Text>
       </View>
@@ -7869,8 +7869,8 @@ const s = StyleSheet.create({
   filtersRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     gap: 8,
   },
   // Filter pills — taller + rounder so they read like real WhatsApp/Telegram
@@ -7880,27 +7880,29 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 16,
-    paddingVertical: 7,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
-    height: 37,
+    height: 34,
     justifyContent: 'center',
     flexShrink: 0,
   },
+  // Active chip — solid monochrome fill with one subtle, neutral lift (the old
+  // heavy 0.34–0.36 glow read as dated bloom; 2026 clean = flat + a whisper).
   chipActive: {
     backgroundColor: '#111111',
     borderColor: '#111111',
     ...Platform.select({
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.34, shadowRadius: 9 },
-      android: { elevation: 4 },
-      web: { boxShadow: '0 3px 12px rgba(17, 17, 17,0.36)' },
+      ios: { shadowColor: '#101114', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.16, shadowRadius: 4 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 1px 4px rgba(16,17,20,0.18)' },
     }),
   },
   chipText: {
     fontSize: 13,
     fontWeight: '600',
-    letterSpacing: 0.05,
+    letterSpacing: -0.1,
   },
   chipBadge: {
     minWidth: 20,
@@ -7940,9 +7942,9 @@ const s = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    minHeight: 62,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    minHeight: 64,
     ...(Platform.OS === 'web' ? {
       transition: 'background-color 0.18s ease, box-shadow 0.18s ease',
       cursor: 'pointer',
@@ -7950,7 +7952,7 @@ const s = StyleSheet.create({
   },
   avatarWrap: {
     position: 'relative',
-    marginRight: 11,
+    marginRight: 12,
     // Subtle lift under the avatar so it reads as a layered token, iMessage-
     // style. Soft + tight so it never looks like a heavy drop shadow.
     ...Platform.select({

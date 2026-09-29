@@ -15,7 +15,7 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Animated, Easing, Platform, AppState } from 'react-native';
 import Svg, { Path, Circle, Rect, Line, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
-import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
+import { FontSize, Spacing, BorderRadius, Shadow, LetterSpacing } from '../constants/theme';
 import { getFolders, taskList, calEvents } from '../services/api';
 
 // Local YYYY-MM-DDT00:00:00 stamp (matches what the calendar API expects).
@@ -87,18 +87,24 @@ function Glyph({ kind, color }) {
   );
 }
 
+// MONOCHROME 2026 — no colored tiles. Every launcher tile is one neutral
+// near-black surface (light) / elevated gray (dark), decided at render from
+// `isDark`. The c1/c2 keys are kept (unused decorative hints) so nothing that
+// reads the array breaks; the actual fill is a single solid, theme-aware.
 const TILES = [
   { kind: 'ai', route: '/one', c1: '#111111', c2: '#111111', key: 'home.hub.ai', fallback: 'One' },
-  { kind: 'email', route: '/inbox', c1: '#60A5FA', c2: '#2563EB', key: 'home.hub.email', fallback: 'E-mail' },
-  { kind: 'calendar', route: '/calendar', c1: '#34D399', c2: '#059669', key: 'home.hub.calendar', fallback: 'Agenda' },
-  { kind: 'drive', route: '/drive', c1: '#FBBF24', c2: '#D97706', key: 'home.hub.drive', fallback: 'Drive' },
-  { kind: 'tasks', route: '/tasks', c1: '#22D3EE', c2: '#0891B2', key: 'home.hub.tasks', fallback: 'Tarefas' },
-  { kind: 'photos', route: '/photos', c1: '#111111', c2: '#DB2777', key: 'home.hub.photos', fallback: 'Fotos' },
+  { kind: 'email', route: '/inbox', c1: '#111111', c2: '#111111', key: 'home.hub.email', fallback: 'E-mail' },
+  { kind: 'calendar', route: '/calendar', c1: '#111111', c2: '#111111', key: 'home.hub.calendar', fallback: 'Agenda' },
+  { kind: 'drive', route: '/drive', c1: '#111111', c2: '#111111', key: 'home.hub.drive', fallback: 'Drive' },
+  { kind: 'tasks', route: '/tasks', c1: '#111111', c2: '#111111', key: 'home.hub.tasks', fallback: 'Tarefas' },
+  { kind: 'photos', route: '/photos', c1: '#111111', c2: '#111111', key: 'home.hub.photos', fallback: 'Fotos' },
 ];
 
-function HubTile({ tile, colors, t, badge, onPress }) {
+function HubTile({ tile, colors, isDark, t, badge, onPress }) {
   const scale = useRef(new Animated.Value(1)).current;
-  const gid = `hub${tile.c1.slice(1)}${tile.c2.slice(1)}`;
+  // Monochrome tile surface: solid near-black in light, one elevated neutral in
+  // dark so tiles read as intentional against the card surface (no gradient).
+  const tileBg = isDark ? '#26282C' : '#111111';
   const hasBadge = typeof badge === 'number' && badge > 0;
   return (
     <TouchableOpacity
@@ -110,17 +116,11 @@ function HubTile({ tile, colors, t, badge, onPress }) {
     >
       <Animated.View style={[styles.tileIcon, { transform: [{ scale }] }, Shadow.cardRest]}>
         <Svg width={48} height={48} viewBox="0 0 48 48" style={StyleSheet.absoluteFill}>
-          <Defs>
-            <SvgLinearGradient id={gid} x1="0" y1="0" x2="1" y2="1">
-              <Stop offset="0" stopColor={tile.c1} />
-              <Stop offset="1" stopColor={tile.c2} />
-            </SvgLinearGradient>
-          </Defs>
-          <Rect x="0" y="0" width="48" height="48" rx="15" fill={`url(#${gid})`} />
+          <Rect x="0" y="0" width="48" height="48" rx="16" fill={tileBg} />
         </Svg>
         <Glyph kind={tile.kind} color="#fff" />
         {hasBadge && (
-          <View style={[styles.badge, { borderColor: colors.surface }]}>
+          <View style={[styles.badge, { backgroundColor: colors.badge, borderColor: colors.surface }]}>
             <Text style={styles.badgeText} numberOfLines={1}>{badge > 99 ? '99+' : badge}</Text>
           </View>
         )}
@@ -167,6 +167,7 @@ export default function HomeHubCard({ colors, isDark, t, router, user }) {
         <View style={styles.header}>
           <Text style={[styles.title, { color: colors.text }]} numberOfLines={1}>{greeting}</Text>
         </View>
+        <View style={[styles.headerRule, { backgroundColor: colors.border }]} />
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -174,7 +175,7 @@ export default function HomeHubCard({ colors, isDark, t, router, user }) {
           contentContainerStyle={styles.row}
         >
           {TILES.map((tile) => (
-            <HubTile key={tile.kind} tile={tile} colors={colors} t={t} badge={counts[tile.kind]} onPress={() => go(tile.route)} />
+            <HubTile key={tile.kind} tile={tile} colors={colors} isDark={isDark} t={t} badge={counts[tile.kind]} onPress={() => go(tile.route)} />
           ))}
         </ScrollView>
       </View>
@@ -183,22 +184,26 @@ export default function HomeHubCard({ colors, isDark, t, router, user }) {
 }
 
 const styles = StyleSheet.create({
-  wrap: { paddingHorizontal: 12, paddingTop: 10, paddingBottom: 4 },
-  card: { borderRadius: BorderRadius.xl, borderWidth: StyleSheet.hairlineWidth, paddingVertical: 12, paddingHorizontal: 4 },
-  header: { paddingHorizontal: 12, marginBottom: 8 },
-  title: { fontSize: FontSize.lg, fontWeight: '800', letterSpacing: -0.2 },
+  // 16px side gutter, 4px-grid vertical rhythm.
+  wrap: { paddingHorizontal: 16, paddingTop: 12, paddingBottom: 8 },
+  card: { borderRadius: BorderRadius.xl, borderWidth: StyleSheet.hairlineWidth, paddingTop: 12, paddingBottom: 12 },
+  header: { paddingHorizontal: 16, marginBottom: 10 },
+  // confident, tight-tracked greeting
+  title: { fontSize: FontSize.lg, fontWeight: '800', letterSpacing: LetterSpacing.tighter },
   subtitle: { fontSize: FontSize.sm, marginTop: 1 },
-  row: { paddingHorizontal: 8, gap: 6, ...(Platform.OS === 'web' ? {} : {}) },
-  tile: { alignItems: 'center', width: 64, marginHorizontal: 2 },
+  // hairline separates greeting from the launcher rail (calm, intentional)
+  headerRule: { height: StyleSheet.hairlineWidth, marginBottom: 12, opacity: 0.9 },
+  row: { paddingHorizontal: 12, gap: 8, ...(Platform.OS === 'web' ? {} : {}) },
+  tile: { alignItems: 'center', width: 64 },
   // overflow stays visible so the count badge can sit just outside the icon's
-  // top-right corner (WhatsApp/iOS launcher pattern). The gradient Rect is
-  // already clipped to the rounded icon by its own viewBox, so nothing leaks.
-  tileIcon: { width: 48, height: 48, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  // top-right corner (WhatsApp/iOS launcher pattern). The Rect is clipped to the
+  // rounded icon by its own viewBox, so nothing leaks.
+  tileIcon: { width: 48, height: 48, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   badge: {
     position: 'absolute', top: -5, right: -6, minWidth: 18, height: 18,
-    borderRadius: 9, paddingHorizontal: 4, backgroundColor: '#EF4444',
+    borderRadius: 9, paddingHorizontal: 4,
     alignItems: 'center', justifyContent: 'center', borderWidth: 2,
   },
   badgeText: { color: '#fff', fontSize: 10, fontWeight: '800', lineHeight: 13 },
-  tileLabel: { fontSize: FontSize.xs, fontWeight: '600', marginTop: 6, textAlign: 'center' },
+  tileLabel: { fontSize: FontSize.xs, fontWeight: '600', marginTop: 8, textAlign: 'center' },
 });
