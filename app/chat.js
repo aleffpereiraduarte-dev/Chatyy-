@@ -934,7 +934,7 @@ function ChatHub() {
           {/* Content - lazy mount: only mount tab once visited, then keep mounted hidden */}
           <Animated.View style={{ flex: 1, opacity: contentOpacity }}>
             <View style={{ display: activeTab === 'chats' ? 'flex' : 'none', flex: activeTab === 'chats' ? 1 : undefined }}>
-              <ChatErrorBoundary><ChatListTab {...tabProps} /></ChatErrorBoundary>
+              <ChatErrorBoundary><ChatListTab key={'cl_' + (user?.email || 'anon')} {...tabProps} /></ChatErrorBoundary>
             </View>
             {mountedTabs.has('calls') && <View style={{ display: activeTab === 'calls' ? 'flex' : 'none', flex: activeTab === 'calls' ? 1 : undefined }}>
               <ChatErrorBoundary><ChatCallsTab {...tabProps} /></ChatErrorBoundary>
@@ -1040,7 +1040,7 @@ function ChatHub() {
       {/* Tab content with fade - lazy mount: only mount tab once visited */}
       <Animated.View style={{ flex: 1, opacity: contentOpacity }}>
         <View style={{ display: activeTab === 'chats' ? 'flex' : 'none', flex: activeTab === 'chats' ? 1 : undefined }}>
-          <ChatErrorBoundary><ChatListTab {...tabProps} /></ChatErrorBoundary>
+          <ChatErrorBoundary><ChatListTab key={'cl_' + (user?.email || 'anon')} {...tabProps} /></ChatErrorBoundary>
         </View>
         {mountedTabs.has('calls') && <View style={{ display: activeTab === 'calls' ? 'flex' : 'none', flex: activeTab === 'calls' ? 1 : undefined }}>
           <ChatErrorBoundary><ChatCallsTab {...tabProps} /></ChatErrorBoundary>

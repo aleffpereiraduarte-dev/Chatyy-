@@ -36,11 +36,22 @@ try {
   Contacts = require('expo-contacts');
 } catch {}
 
+// [perf] getAvatarColor is a pure function of `name` but was string-hashing
+// the name on EVERY row render (device/family/contact rows call it inline).
+// Memoize the result per name in a module-level Map so scrolling never
+// recomputes the hash for a name already seen. Output is byte-for-byte
+// identical to the original — same hash, same palette index — so behavior is
+// unchanged; this only skips redundant work.
+const _avatarColorCache = new Map();
 function getAvatarColor(name) {
   if (!name) return Colors.avatarBg;
+  const cached = _avatarColorCache.get(name);
+  if (cached !== undefined) return cached;
   let hash = 0;
   for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-  return Colors.avatarColors[Math.abs(hash) % Colors.avatarColors.length];
+  const color = Colors.avatarColors[Math.abs(hash) % Colors.avatarColors.length];
+  _avatarColorCache.set(name, color);
+  return color;
 }
 
 // ---------- vCard helpers ----------
@@ -1473,6 +1484,9 @@ function ContactsScreenInner() {
           renderItem={renderMyContactItem}
           renderSectionHeader={renderSectionHeader}
           removeClippedSubviews={Platform.OS !== 'web'}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={11}
           stickySectionHeadersEnabled
           ListHeaderComponent={
             <>
@@ -1511,6 +1525,9 @@ function ContactsScreenInner() {
             keyExtractor={deviceKeyExtractor}
             renderItem={renderDeviceItem}
             renderSectionHeader={renderDeviceSectionHeader}
+            initialNumToRender={12}
+            maxToRenderPerBatch={12}
+            windowSize={11}
             stickySectionHeadersEnabled
             ListEmptyComponent={renderDeviceEmpty}
             ListFooterComponent={
@@ -1539,6 +1556,9 @@ function ContactsScreenInner() {
             ListFooterComponent={renderDeviceFooter}
             contentContainerStyle={[s.list, { paddingBottom: 40 + insets.bottom }]}
             removeClippedSubviews={Platform.OS !== 'web'}
+            initialNumToRender={12}
+            maxToRenderPerBatch={12}
+            windowSize={11}
           />
         )
       ) : (
@@ -1549,6 +1569,10 @@ function ContactsScreenInner() {
           ListHeaderComponent={renderFamilyHeader}
           ListEmptyComponent={renderFamilyEmpty}
           contentContainerStyle={[s.list, { paddingBottom: 40 + insets.bottom }]}
+          removeClippedSubviews={Platform.OS !== 'web'}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={11}
         />
       )}
       </FadeSlideIn>

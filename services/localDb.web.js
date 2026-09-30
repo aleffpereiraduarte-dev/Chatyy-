@@ -4,10 +4,12 @@
 // chat cache on desktop: messages vanished on reload because only the 5 MB
 // localStorage fallback kept them and silently dropped old entries.
 
+import { IDB_VERSION, IDB_STORES } from './chatStore/schema';
+
 const IDB_NAME = 'chatyy_v2';
-// v4 (2026-05-16): mirror native localDb.js — add local_seq + client_temp_id
-// indexes to the `messages` store. See localDb.js for full context.
-const IDB_VERSION = 4;
+// Version + store list come from chatStore/schema (single source of truth).
+// v5 (2026-09-30): add `cursors` + `conv_read_state` stores (IndexedDB mirror
+// of the native SQLite tables). v4 added local_seq + client_temp_id indexes.
 let _idb = null;
 
 function getIDB() {
@@ -39,11 +41,64 @@ function getIDB() {
           try { msgStore.createIndex('client_temp_id', 'client_temp_id', { unique: false }); } catch {}
         }
         if (!d.objectStoreNames.contains('contacts')) d.createObjectStore('contacts', { keyPath: 'email' });
+        // v5: additive chatStore mirror stores (cursors + conv_read_state).
+        for (const st of IDB_STORES) {
+          if (!d.objectStoreNames.contains(st.name)) {
+            try { d.createObjectStore(st.name, { keyPath: st.keyPath }); } catch {}
+          }
+        }
       };
       req.onsuccess = (e) => { _idb = e.target.result; resolve(_idb); };
       req.onerror = () => resolve(null);
     } catch { resolve(null); }
   });
+}
+
+// ── chatStore mirror: cursors + per-conversation read state (web/IndexedDB) ──
+export async function webGetCursor(scope) {
+  try {
+    const d = await getIDB(); if (!d) return null;
+    return new Promise((r) => {
+      const req = d.transaction('cursors', 'readonly').objectStore('cursors').get(String(scope));
+      req.onsuccess = () => r(req.result || null);
+      req.onerror = () => r(null);
+    });
+  } catch { return null; }
+}
+export async function webSetCursor(scope, cursor) {
+  try {
+    const d = await getIDB(); if (!d) return;
+    await _quotaAwareWrite(d, 'cursors', (s, track) => {
+      track(s.put({
+        scope: String(scope),
+        last_pts: Number(cursor?.last_pts || 0) || 0,
+        last_msg_id: Number(cursor?.last_msg_id || 0) || 0,
+        updated_at: new Date().toISOString(),
+      }));
+    });
+  } catch {}
+}
+export async function webGetReadState(conversationId) {
+  try {
+    const d = await getIDB(); if (!d) return null;
+    return new Promise((r) => {
+      const req = d.transaction('conv_read_state', 'readonly').objectStore('conv_read_state').get(Number(conversationId));
+      req.onsuccess = () => r(req.result || null);
+      req.onerror = () => r(null);
+    });
+  } catch { return null; }
+}
+export async function webSetReadState(conversationId, state) {
+  try {
+    const d = await getIDB(); if (!d) return;
+    await _quotaAwareWrite(d, 'conv_read_state', (s, track) => {
+      track(s.put({
+        conversation_id: Number(conversationId),
+        last_read_message_id: Number(state?.last_read_message_id || 0) || 0,
+        last_read_at: state?.last_read_at || new Date().toISOString(),
+      }));
+    });
+  } catch {}
 }
 
 // ── Quota-aware write helper ──

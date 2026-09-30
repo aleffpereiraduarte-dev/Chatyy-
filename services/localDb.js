@@ -4,16 +4,17 @@
 // All public functions work on any platform
 
 import { Platform } from 'react-native';
+import { IDB_VERSION, IDB_STORES } from './chatStore/schema';
 
 // ═══════════════════════════════════════════
 // IndexedDB Layer (Web) — cache everything locally
 // ═══════════════════════════════════════════
 const IDB_NAME = 'chatyy_v2';
-// v4 (2026-05-16): add `local_seq` + `client_temp_id` to the messages store so
-// the SQLite-first chat migration (Stage 1) has parity with native. The
-// messages object store gets two new indexes; existing rows survive — only the
-// schema bumps. Older builds opening v4 just see the new fields as undefined.
-const IDB_VERSION = 4;
+// IDB_VERSION + IDB_STORES come from chatStore/schema (single source of truth,
+// shared with localDb.web.js so both agree on the shared `chatyy_v2` DB).
+// v5 (2026-09-30): add `cursors` + `conv_read_state` mirror stores. v4 added
+// local_seq + client_temp_id indexes. (This IDB block only runs on web; native
+// uses expo-sqlite below.)
 let _idb = null;
 
 function getIDB() {
@@ -48,6 +49,12 @@ function getIDB() {
           try { msgStore.createIndex('client_temp_id', 'client_temp_id', { unique: false }); } catch {}
         }
         if (!d.objectStoreNames.contains('contacts')) d.createObjectStore('contacts', { keyPath: 'email' });
+        // v5: additive chatStore mirror stores (cursors + conv_read_state).
+        for (const st of IDB_STORES) {
+          if (!d.objectStoreNames.contains(st.name)) {
+            try { d.createObjectStore(st.name, { keyPath: st.keyPath }); } catch {}
+          }
+        }
       };
       req.onsuccess = (e) => { _idb = e.target.result; resolve(_idb); };
       req.onerror = () => resolve(null);

@@ -43,6 +43,7 @@
 //   isReady() / reset()
 
 import { Platform } from 'react-native';
+import { CREATE_CURSORS_SQL, normAccount } from './chatStore/schema';
 
 const isWeb = Platform.OS === 'web';
 const DB_NAME = 'chatyy.db'; // MUST match services/db.js
@@ -55,6 +56,37 @@ if (!isWeb) {
 let _db = null;        // sync handle
 let _openTried = false; // don't retry a hard failure every call
 let _tableOk = false;   // messages table confirmed present
+let _cursorsOk = false; // cursors table ensured present
+let _hasAccountColCache = null; // null=unknown, true/false once probed
+
+// ── Multi-account isolation ──────────────────────────────────────────────────
+// Active account email. When set (via the facade's setActiveAccount, wired from
+// AuthContext), every sync read filters by `account_email = ?` and every sync
+// write stamps it. Defaults '' → no filtering / no stamping → identical to the
+// pre-isolation behaviour until AuthContext wires it.
+let _activeAccount = '';
+export function setActiveAccount(email) { _activeAccount = normAccount(email); }
+export function getActiveAccount() { return _activeAccount; }
+
+// Probe (once) whether the shared messages table already carries the
+// account_email column db.js adds at init. Reads/writes only reference the
+// column when it truly exists, so a sync call that races db.js's ALTER never
+// throws — it just runs unscoped for that one frame.
+function _hasAccountCol(db) {
+  if (_hasAccountColCache != null) return _hasAccountColCache;
+  try {
+    const cols = db.getAllSync('PRAGMA table_info(messages)') || [];
+    _hasAccountColCache = cols.some(c => c && c.name === 'account_email');
+  } catch { _hasAccountColCache = false; }
+  return _hasAccountColCache;
+}
+function _acctFilter(db) {
+  // Returns { sql, params } fragment to AND into a messages query, or empty.
+  if (_activeAccount && _hasAccountCol(db)) {
+    return { sql: ' AND account_email = ?', params: [_activeAccount] };
+  }
+  return { sql: '', params: [] };
+}
 
 // Media-bearing message types (mirrors db.js getSyncStats / getMissingMedia).
 const MEDIA_TYPES = "'image','video','audio','voice','short_video','gif','sticker','file','document'";
@@ -139,6 +171,8 @@ export function getMessagesSync(convId, limit = 50, beforeId = null) {
   let query = 'SELECT raw_json FROM messages WHERE conversation_id = ?';
   const params = [convId];
   if (beforeId) { query += ' AND id < ?'; params.push(beforeId); }
+  const af = _acctFilter(db);
+  if (af.sql) { query += af.sql; params.push(...af.params); }
   query += ' ORDER BY id DESC LIMIT ?';
   params.push(limit);
   let rows;
@@ -163,11 +197,134 @@ export function getLastMessageIdSync(convId) {
   const db = _getDb();
   if (!db || !_ensureTable(db)) return 0;
   try {
+    const af = _acctFilter(db);
     const row = db.getFirstSync(
-      'SELECT MAX(id) AS max_id FROM messages WHERE conversation_id = ?', [convId]
+      `SELECT MAX(id) AS max_id FROM messages WHERE conversation_id = ?${af.sql}`,
+      [convId, ...af.params]
     );
     return Number(row?.max_id || 0);
   } catch { return 0; }
+}
+
+/**
+ * Synchronous conversation-list read (mirrors db.js dbGetConversations). Reads
+ * the shared `conversations` table ordered by last-message time DESC and
+ * returns parsed rows. Honors the account scope + cache-scope lock and returns
+ * [] on any failure / while locked so a cold ChatList paints from frame 1
+ * without ever surfacing another account's rows.
+ * @returns {object[]} parsed conversations (pinned first, newest first)
+ */
+export function getConversationsSync() {
+  if (isWeb) return [];
+  if (_isLocked()) return []; // account switch in progress
+  const db = _getDb();
+  if (!db) return [];
+  // Confirm the conversations table is present (db.js may not have finished
+  // init on a very first cold launch).
+  try {
+    const t = db.getFirstSync(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='conversations'"
+    );
+    if (!t) return [];
+  } catch { return []; }
+  const clauses = ['archived = 0'];
+  const params = [];
+  if (_activeAccount && _hasAccountColConv(db)) { clauses.push('account_email = ?'); params.push(_activeAccount); }
+  const where = 'WHERE ' + clauses.join(' AND ');
+  let rows;
+  try {
+    rows = db.getAllSync(
+      `SELECT raw_json FROM conversations ${where} ORDER BY pinned DESC, last_message_time DESC LIMIT 200`,
+      params
+    );
+  } catch (e) {
+    if (__DEV__) console.warn('[sqliteStore] getConversationsSync failed:', e?.message);
+    return [];
+  }
+  const out = [];
+  for (const r of rows) {
+    if (!r || !r.raw_json) continue;
+    try { out.push(JSON.parse(r.raw_json)); } catch {}
+  }
+  return out;
+}
+
+// conversations has its own account_email column (added by db.js). Probe once.
+let _hasAccountColConvCache = null;
+function _hasAccountColConv(db) {
+  if (_hasAccountColConvCache != null) return _hasAccountColConvCache;
+  try {
+    const cols = db.getAllSync('PRAGMA table_info(conversations)') || [];
+    _hasAccountColConvCache = cols.some(c => c && c.name === 'account_email');
+  } catch { _hasAccountColConvCache = false; }
+  return _hasAccountColConvCache;
+}
+
+// ── Delta-sync cursor (native, synchronous) ──────────────────────────────────
+// Ensure the cursors table exists. db.js also creates it during init; we
+// idempotently CREATE TABLE IF NOT EXISTS here so a sync setCursor in the
+// pre-init window still works. Never drops/alters anything.
+function _ensureCursors(db) {
+  if (_cursorsOk) return true;
+  try { db.execSync(CREATE_CURSORS_SQL); _cursorsOk = true; }
+  catch (e) { if (__DEV__) console.warn('[sqliteStore] ensure cursors failed:', e?.message); _cursorsOk = false; }
+  return _cursorsOk;
+}
+
+/**
+ * Read a delta-sync cursor by scope. The facade namespaces `scope` with the
+ * active account so accounts never collide. Always returns an object; zeros
+ * when unset.
+ * @returns {{scope:string,last_pts:number,last_msg_id:number,updated_at:?string}}
+ */
+export function getCursorSync(scope) {
+  const empty = { scope: scope != null ? String(scope) : '', last_pts: 0, last_msg_id: 0, updated_at: null };
+  if (isWeb || scope == null) return empty;
+  const db = _getDb();
+  if (!db || !_ensureCursors(db)) return empty;
+  try {
+    const row = db.getFirstSync(
+      'SELECT scope, last_pts, last_msg_id, updated_at FROM cursors WHERE scope = ?', [String(scope)]
+    );
+    if (!row) return empty;
+    return {
+      scope: row.scope,
+      last_pts: Number(row.last_pts || 0),
+      last_msg_id: Number(row.last_msg_id || 0),
+      updated_at: row.updated_at || null,
+    };
+  } catch (e) {
+    if (__DEV__) console.warn('[sqliteStore] getCursorSync failed:', e?.message);
+    return empty;
+  }
+}
+
+/**
+ * Upsert a delta-sync cursor. MONOTONIC — a watermark never moves backward, so
+ * an out-of-order/stale write can't drag last_pts / last_msg_id down.
+ * @returns {boolean} true on success
+ */
+export function setCursor(scope, cursor = {}) {
+  if (isWeb || scope == null) return false;
+  const db = _getDb();
+  if (!db || !_ensureCursors(db)) return false;
+  const lastPts = Number(cursor.last_pts || 0) || 0;
+  const lastMsgId = Number(cursor.last_msg_id || 0) || 0;
+  try {
+    db.runSync(
+      `INSERT INTO cursors (scope, last_pts, last_msg_id, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(scope) DO UPDATE SET
+         last_pts = MAX(cursors.last_pts, excluded.last_pts),
+         last_msg_id = MAX(cursors.last_msg_id, excluded.last_msg_id),
+         updated_at = excluded.updated_at`,
+      [String(scope), lastPts, lastMsgId, new Date().toISOString()]
+    );
+    return true;
+  } catch (e) {
+    if (__DEV__) console.warn('[sqliteStore] setCursor failed:', e?.message);
+    return false;
+  }
 }
 
 /**
@@ -216,6 +373,9 @@ export function upsertMessagesSync(convId, messages) {
   const db = _getDb();
   if (!db || !_ensureTable(db)) return 0;
   let written = 0;
+  // Only reference account_email when the column truly exists (db.js adds it at
+  // init). Keeps sync writes safe on a DB that hasn't finished migrating yet.
+  const withAcct = _hasAccountCol(db);
   try {
     db.execSync('BEGIN');
     const stmt = db.prepareSync(
@@ -224,13 +384,13 @@ export function upsertMessagesSync(convId, messages) {
           file_url, file_name, file_size, reply_to_id, message_id,
           read_at, edited_at, deleted, deleted_at, reactions, read_by,
           created_at, sync_seq, local_seq, client_temp_id, pending_state,
-          local_path, media_width, media_height, media_duration, raw_json)
+          local_path, media_width, media_height, media_duration, raw_json${withAcct ? ', account_email' : ''})
        VALUES
          ($id, $convId, $sender, $senderName, $content, $type,
           $fileUrl, $fileName, $fileSize, $replyTo, $messageId,
           $readAt, $edited, $deleted, $deletedAt, $reactions, $readBy,
           $created, $syncSeq, $localSeq, $clientTempId, $pendingState,
-          $localPath, $mediaW, $mediaH, $mediaDur, $raw)`
+          $localPath, $mediaW, $mediaH, $mediaDur, $raw${withAcct ? ', $account' : ''})`
     );
     try {
       for (const m of messages) {
@@ -263,6 +423,7 @@ export function upsertMessagesSync(convId, messages) {
           $mediaH: m.media_height || (m.media && m.media.height) || null,
           $mediaDur: m.media_duration || (m.media && m.media.duration) || null,
           $raw: JSON.stringify(m),
+          ...(withAcct ? { $account: m.account_email || _activeAccount || null } : {}),
         });
         written++;
       }
@@ -328,14 +489,22 @@ export function reset() {
   _db = null;
   _openTried = false;
   _tableOk = false;
+  _cursorsOk = false;
+  _hasAccountColCache = null;
+  _hasAccountColConvCache = null;
 }
 
 export default {
   getMessagesSync,
+  getConversationsSync,
   getLastMessageIdSync,
   getSyncStatsSync,
+  getCursorSync,
+  setCursor,
   upsertMessagesSync,
   setMediaLocalPathSync,
+  setActiveAccount,
+  getActiveAccount,
   isReady,
   reset,
 };

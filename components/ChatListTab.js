@@ -1382,6 +1382,21 @@ const _readNativeConversationsSync = () => {
     return Array.isArray(list) && list.length > 0 ? list : null;
   } catch { return null; }
 };
+// Durable store facade (Builder 1 — services/chatStore). Read from the durable
+// SQLite mirror FIRST so frame-1 paint survives MMKV/localStorage eviction and
+// is never served the wrong account's rows (the facade returns [] while locked
+// or on the wrong account). Guarded require so an absent/partial facade can
+// never break the first render — falls back to the legacy MMKV path.
+const _chatStore = (() => {
+  try { return require('../services/chatStore'); } catch { return null; }
+})();
+const _readDurableConversationsSync = () => {
+  if (!_chatStore?.getConversationsSync) return null;
+  try {
+    const list = _chatStore.getConversationsSync();
+    return Array.isArray(list) && list.length > 0 ? list : null;
+  } catch { return null; }
+};
 const _saveNativeConversations = (convs) => {
   if (!Array.isArray(convs)) return;
   try { _SmartCache?.cacheConversations?.(convs); } catch {}
@@ -2683,6 +2698,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // Both reads are synchronous so the very first render already has data,
   // eliminating the empty-list flash that was happening before.
   const _initialConvs = (() => {
+    // DURABLE-FIRST (Builder 2): try the durable SQLite store (services/chatStore)
+    // before the MMKV/localStorage preload. The durable mirror survives cache
+    // eviction and is account-isolated, so frame-1 paint is instant AND never
+    // shows a stale/other-account list. Falls back to the legacy MMKV/localStorage
+    // preload, then the SmartCache native read, exactly as before.
+    const durable = _readDurableConversationsSync();
+    if (durable?.length) return durable;
     if (_preloadedConversations?.length) return _preloadedConversations;
     const native = _readNativeConversationsSync();
     return native || [];

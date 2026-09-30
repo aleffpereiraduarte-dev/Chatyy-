@@ -19,25 +19,75 @@ import * as api from './api';
 
 const LAST_PTS_KEY = (convId) => `chat_last_pts_${convId}`;
 
+// ─── Unified cursor facade (Builder 1 owns ./chatStore) ───────────────
+// The cursor lives in ONE place — chatStore.getCursor/setCursor — so the
+// sync path (this file) and the conversation-open path (Builder 3) share a
+// single watermark of `{last_pts, last_msg_id}` per scope ('conv:'+id or
+// 'list'). The facade may not exist yet mid-migration, so every access is
+// defensive: require it lazily, tolerate a default OR named export, and fall
+// back to the legacy MMKV pts below when it's absent. isLocked() gates every
+// write so we never persist another account's data (multi-account isolation).
+function chatStore() {
+  try {
+    const m = require('./chatStore');
+    return (m && (m.default || m)) || null;
+  } catch { return null; }
+}
+function storeLocked(cs) {
+  try { return !!(cs && typeof cs.isLocked === 'function' && cs.isLocked()); }
+  catch { return false; }
+}
+
 // ─── Last-seen pts persistence ────────────────────────────────────────
 export function getLastPts(convId) {
+  // Prefer the unified cursor when the facade is present so the sync path and
+  // the conversation-open path read the SAME watermark. Fall back to the
+  // legacy MMKV read so nothing breaks before/while chatStore lands.
+  try {
+    const cs = chatStore();
+    if (cs && typeof cs.getCursor === 'function') {
+      const cur = cs.getCursor('conv:' + convId);
+      const p = cur && Number(cur.last_pts);
+      if (Number.isFinite(p) && p > 0) return p;
+    }
+  } catch {}
   try {
     const v = getString(LAST_PTS_KEY(convId));
     const n = v ? parseInt(v, 10) : 0;
     return Number.isFinite(n) && n > 0 ? n : 0;
   } catch { return 0; }
 }
-export function setLastPts(convId, pts) {
+export function setLastPts(convId, pts, msgId) {
   if (!convId || !Number.isFinite(pts) || pts <= 0) return;
+  // (1) Legacy MMKV write — kept working (additive) so the fallback path in
+  // getLastPts stays valid even if the facade is cleared. Guard against
+  // regression using the MMKV value DIRECTLY (not getLastPts, which may now
+  // read a facade cursor that's ahead) so MMKV never starves.
   try {
-    const current = getLastPts(convId);
-    if (pts > current) setString(LAST_PTS_KEY(convId), String(pts));
+    const raw = getString(LAST_PTS_KEY(convId));
+    const mmkvCur = raw ? parseInt(raw, 10) : 0;
+    if (!(Number.isFinite(mmkvCur) && mmkvCur >= pts)) setString(LAST_PTS_KEY(convId), String(pts));
+  } catch {}
+  // (2) Unified cursor write — pts AND last_msg_id in one place. Monotonic
+  // per field; preserves an existing last_msg_id when this caller has none.
+  try {
+    const cs = chatStore();
+    if (cs && typeof cs.setCursor === 'function' && !storeLocked(cs)) {
+      const prev = (typeof cs.getCursor === 'function') ? cs.getCursor('conv:' + convId) : null;
+      const prevPts = (prev && Number(prev.last_pts)) || 0;
+      const prevMsg = (prev && Number(prev.last_msg_id)) || 0;
+      const nextPts = Math.max(prevPts, pts);
+      const nextMsg = Math.max(prevMsg, Number(msgId) || 0);
+      if (nextPts > prevPts || nextMsg > prevMsg) {
+        cs.setCursor('conv:' + convId, { last_pts: nextPts, last_msg_id: nextMsg });
+      }
+    }
   } catch {}
 }
 // Called whenever the client processes any message/event for a conv —
 // tracks the highest observed pts so future syncs know the watermark.
-export function observePts(convId, pts) {
-  if (Number.isFinite(pts) && pts > 0) setLastPts(convId, pts);
+export function observePts(convId, pts, msgId) {
+  if (Number.isFinite(pts) && pts > 0) setLastPts(convId, pts, msgId);
 }
 
 // ─── Sync call ────────────────────────────────────────────────────────
@@ -121,7 +171,16 @@ async function _runSync(convIds) {
         }
         let wm = c.has_more ? evMax : latest;
         if (hydCapPts !== Infinity) wm = Math.min(wm, hydCapPts - 1);
-        if (wm > 0) setLastPts(c.id, wm);
+        // last_msg_id companion for the unified cursor: the highest message id
+        // we actually hydrated for this conv. When a hydration gap held the pts
+        // watermark back (hydCapPts), DON'T advance the msg cursor either —
+        // pass 0 so setLastPts keeps the previous value and the full-reload
+        // safety net (needsFullReload) re-fetches the hole.
+        const msgMax = Array.isArray(c.messages)
+          ? c.messages.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0)
+          : 0;
+        const wmMsg = hydCapPts !== Infinity ? 0 : msgMax;
+        if (wm > 0) setLastPts(c.id, wm, wmMsg);
         if (c.has_more) {
           const n = (gapStreak.get(c.id) || 0) + 1;
           gapStreak.set(c.id, n);
@@ -130,6 +189,30 @@ async function _runSync(convIds) {
           gapStreak.delete(c.id);
         }
       }
+      // ─── List cursor (additive) ───────────────────────────────────────
+      // A single global watermark across every conv we just reconciled, so
+      // the conversation list can do a cheap delta on cold start instead of a
+      // full re-pull. Highest latest_pts + highest hydrated message id.
+      // Written through the facade only; monotonic; gated by isLocked().
+      try {
+        const cs = chatStore();
+        if (cs && typeof cs.setCursor === 'function' && !storeLocked(cs)) {
+          let gPts = 0, gMsg = 0;
+          for (const c of out) {
+            if (c?.denied) continue;
+            gPts = Math.max(gPts, Number(c.latest_pts) || 0);
+            if (Array.isArray(c.messages)) {
+              for (const r of c.messages) gMsg = Math.max(gMsg, Number(r.id) || 0);
+            }
+          }
+          const prev = (typeof cs.getCursor === 'function') ? cs.getCursor('list') : null;
+          const pPts = (prev && Number(prev.last_pts)) || 0;
+          const pMsg = (prev && Number(prev.last_msg_id)) || 0;
+          if (gPts > pPts || gMsg > pMsg) {
+            cs.setCursor('list', { last_pts: Math.max(gPts, pPts), last_msg_id: Math.max(gMsg, pMsg) });
+          }
+        }
+      } catch {}
       return out;
     } catch (e) {
       lastErr = e;
@@ -230,7 +313,14 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
   // errors — best-effort mirror.
   try {
     const chatCache = require('./chatCache');
+    // Route disk writes through the facade when it's present; it owns the
+    // SQLite mirror AND the durable web (IndexedDB) store. When the store is
+    // LOCKED (account switch / another account active) we skip every disk
+    // write — the React state patch below is in-memory only and harmless.
+    const cs = chatStore();
+    const diskLocked = cs && storeLocked(cs);
     for (const ev of events) {
+      if (diskLocked) break;
       const mid = Number(ev?.payload?.message_id) || 0;
       if (!mid) continue;
       if (ev.type === 'new_message' || ev.type === 'member_join' || ev.type === 'member_leave') {
@@ -239,7 +329,14 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
         // message so the sysmsg survives a cold reopen.
         const hyd = hydratedMap.get(mid);
         if (hyd && hyd.conversation_id) {
-          chatCache.cacheSingleMessage?.(hyd.conversation_id, hyd).catch?.(() => {});
+          // Prefer the facade (single write path); fall back to chatCache
+          // directly only when the facade isn't there yet. NEVER both — the
+          // facade wraps chatCache internally, so calling both double-writes.
+          if (cs && typeof cs.upsertMessages === 'function') {
+            try { const p = cs.upsertMessages(hyd.conversation_id, [hyd]); p?.catch?.(() => {}); } catch {}
+          } else {
+            chatCache.cacheSingleMessage?.(hyd.conversation_id, hyd).catch?.(() => {});
+          }
         }
       } else if (ev.type === 'edit') {
         const newContent = ev?.payload?.content;
@@ -249,7 +346,11 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
         }
       } else if (ev.type === 'delete') {
         const convId = ev?.payload?.conversation_id;
-        if (convId) {
+        // Soft-delete → facade tombstone (keyed by id) when present; else the
+        // legacy chatCache soft-delete (which needs convId). One path only.
+        if (cs && typeof cs.tombstoneMessage === 'function') {
+          try { const p = cs.tombstoneMessage(mid); p?.catch?.(() => {}); } catch {}
+        } else if (convId) {
           chatCache.updateCachedMessage?.(convId, mid, { deleted_at: ev.created_at, content: '', file_url: '', file_name: '' }).catch?.(() => {});
         }
       } else if (ev.type === 'reaction') {

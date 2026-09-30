@@ -19,6 +19,9 @@
  *   - Full-text search on messages/emails
  */
 import { Platform } from 'react-native';
+import {
+  CHATSTORE_MIGRATIONS, ACCOUNT_COLUMN_ALTERS, normAccount,
+} from './chatStore/schema';
 
 // Only import SQLite on native — web doesn't support it
 let SQLite = null;
@@ -33,6 +36,18 @@ const _readyPromise = new Promise(r => { _readyResolve = r; });
 
 // Web fallback — use MMKV/localStorage (SQLite not available on web)
 const isWeb = Platform.OS === 'web';
+
+// ── Multi-account isolation ──────────────────────────────────────────────────
+// The active account email. Writes stamp it into `account_email`; account-scoped
+// reads filter by it. Defaults to '' → NO filtering / NO stamping, so behaviour
+// is byte-for-byte identical to before until AuthContext wires dbSetActiveAccount
+// on login/switch. `_accountColReady` guards the WHERE-clause so we never
+// reference the column before the idempotent ALTER has landed.
+let _activeAccount = '';
+let _accountColReady = false;
+export function dbSetActiveAccount(email) { _activeAccount = normAccount(email); }
+export function dbGetActiveAccount() { return _activeAccount; }
+function _acctScoped() { return _accountColReady && !!_activeAccount; }
 
 export function getDb() { return _db; }
 export function isDbReady() { return _ready; }
@@ -327,6 +342,10 @@ export async function initDatabase() {
       "ALTER TABLE messages ADD COLUMN media_width INTEGER",
       "ALTER TABLE messages ADD COLUMN media_height INTEGER",
       "ALTER TABLE messages ADD COLUMN media_duration INTEGER",
+      // Multi-account isolation: nullable owner tag. Stamped by dbSaveMessages
+      // with the active account; account-scoped reads filter by it. Idempotent
+      // (swallowed on "duplicate column").
+      "ALTER TABLE messages ADD COLUMN account_email TEXT",
     ];
     for (const sql of ADDITIVE_COLUMNS) {
       try { await _db.execAsync(sql); }
@@ -376,6 +395,8 @@ export async function initDatabase() {
     // without the column. dbUpdateConversationLastReadMessageId() writes it.
     const CONV_ADDITIVE_COLUMNS = [
       "ALTER TABLE conversations ADD COLUMN last_read_message_id INTEGER DEFAULT 0",
+      // Multi-account isolation owner tag (mirrors messages.account_email).
+      "ALTER TABLE conversations ADD COLUMN account_email TEXT",
     ];
     for (const sql of CONV_ADDITIVE_COLUMNS) {
       try { await _db.execAsync(sql); }
@@ -386,6 +407,27 @@ export async function initDatabase() {
         }
       }
     }
+
+    // ── chatStore additive tables (cursors + conv_read_state) ──
+    // Delta-sync cursor watermark + per-conversation read state. Idempotent
+    // CREATE TABLE IF NOT EXISTS — never drops/alters existing tables or data.
+    for (const sql of CHATSTORE_MIGRATIONS) {
+      try { await _db.execAsync(sql); }
+      catch (e) { console.warn('[DB] chatStore migration failed:', e?.message); }
+    }
+    // Belt-and-suspenders: ensure the account_email columns exist even if an
+    // older ADDITIVE_COLUMNS block above was edited out of order. Shared source
+    // of truth = schema.ACCOUNT_COLUMN_ALTERS.
+    for (const sql of ACCOUNT_COLUMN_ALTERS) {
+      try { await _db.execAsync(sql); }
+      catch (e) {
+        const msg = String(e?.message || '');
+        if (!/duplicate column/i.test(msg)) console.warn('[DB] account column migration:', sql, msg);
+      }
+    }
+    // From here the account_email columns are guaranteed present, so
+    // account-scoped reads may reference them.
+    _accountColReady = true;
 
     // ── Self-check: blow up loud if schema is still missing required cols ──
     // This is the diagnostic that would have caught the localDb/db.js race
@@ -492,8 +534,8 @@ export async function dbSaveConversations(conversations) {
   if (isWeb || !_db || !conversations?.length) return;
   await _db.withTransactionAsync(async () => {
     const stmt = await _db.prepareAsync(
-      `INSERT OR REPLACE INTO conversations (id, name, type, last_message, last_message_time, last_message_sender, unread_count, avatar_url, pinned, muted, archived, is_group, member_count, description, updated_at, raw_json)
-       VALUES ($id, $name, $type, $lastMsg, $lastTime, $lastSender, $unread, $avatar, $pinned, $muted, $archived, $isGroup, $members, $desc, $updated, $raw)`
+      `INSERT OR REPLACE INTO conversations (id, name, type, last_message, last_message_time, last_message_sender, unread_count, avatar_url, pinned, muted, archived, is_group, member_count, description, updated_at, raw_json, account_email)
+       VALUES ($id, $name, $type, $lastMsg, $lastTime, $lastSender, $unread, $avatar, $pinned, $muted, $archived, $isGroup, $members, $desc, $updated, $raw, $account)`
     );
     try {
       for (const c of conversations) {
@@ -514,6 +556,9 @@ export async function dbSaveConversations(conversations) {
           $desc: c.description || '',
           $updated: c.updated_at || '',
           $raw: JSON.stringify(c),
+          // Owner tag: prefer an explicit tag on the row, else the active
+          // account, else null (legacy / pre-wiring → unscoped behaviour).
+          $account: c.account_email || _activeAccount || null,
         });
       }
     } finally { await stmt.finalizeAsync(); }
@@ -522,9 +567,14 @@ export async function dbSaveConversations(conversations) {
 
 export async function dbGetConversations(includeArchived = false) {
   if (isWeb || !_db) return [];
-  const where = includeArchived ? '' : 'WHERE archived = 0';
+  const clauses = [];
+  const params = [];
+  if (!includeArchived) clauses.push('archived = 0');
+  if (_acctScoped()) { clauses.push('account_email = ?'); params.push(_activeAccount); }
+  const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
   const rows = await _db.getAllAsync(
-    `SELECT raw_json FROM conversations ${where} ORDER BY pinned DESC, last_message_time DESC LIMIT 200`
+    `SELECT raw_json FROM conversations ${where} ORDER BY pinned DESC, last_message_time DESC LIMIT 200`,
+    params
   );
   return rows.map(r => { try { return JSON.parse(r.raw_json); } catch { return null; } }).filter(Boolean);
 }
@@ -583,13 +633,15 @@ export async function dbSaveMessages(conversationId, messages) {
           file_url, file_name, file_size, reply_to_id, message_id,
           read_at, edited_at, deleted, deleted_at, reactions, read_by,
           created_at, sync_seq, local_seq, client_temp_id, pending_state,
-          local_path, media_width, media_height, media_duration, raw_json)
+          local_path, media_width, media_height, media_duration, raw_json,
+          account_email)
        VALUES
          ($id, $convId, $sender, $senderName, $content, $type,
           $fileUrl, $fileName, $fileSize, $replyTo, $messageId,
           $readAt, $edited, $deleted, $deletedAt, $reactions, $readBy,
           $created, $syncSeq, $localSeq, $clientTempId, $pendingState,
-          $localPath, $mediaW, $mediaH, $mediaDur, $raw)`
+          $localPath, $mediaW, $mediaH, $mediaDur, $raw,
+          $account)`
     );
     // [#1206 2026-05-19] Surface row-level executeAsync failures via crash
     // beacon. Outer caller still gets the throw (existing semantics) — this
@@ -634,6 +686,8 @@ export async function dbSaveMessages(conversationId, messages) {
             $mediaH: m.media_height || (m.media && m.media.height) || null,
             $mediaDur: m.media_duration || (m.media && m.media.duration) || null,
             $raw: JSON.stringify(m),
+            // Multi-account owner tag — active account stamps every write.
+            $account: m.account_email || _activeAccount || null,
           });
         } catch (rowErr) {
           try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbSaveMessages_row', message: `id=${m?.id} ${rowErr?.message}`, stack: rowErr?.stack }); } catch {}
@@ -652,6 +706,7 @@ export async function dbGetMessages(conversationId, limit = 50, beforeId = null)
     query += ' AND id < ?';
     params.push(beforeId);
   }
+  if (_acctScoped()) { query += ' AND account_email = ?'; params.push(_activeAccount); }
   query += ' ORDER BY id DESC LIMIT ?';
   params.push(limit);
   // [#1206 2026-05-19] Wrap the read so a sudden getAllAsync failure (DB
@@ -678,9 +733,10 @@ export async function dbGetMessages(conversationId, limit = 50, beforeId = null)
 
 export async function dbGetLastMessageId(conversationId) {
   if (isWeb || !_db) return 0;
-  const row = await _db.getFirstAsync(
-    'SELECT MAX(id) as max_id FROM messages WHERE conversation_id = ?', [conversationId]
-  );
+  let sql = 'SELECT MAX(id) as max_id FROM messages WHERE conversation_id = ?';
+  const params = [conversationId];
+  if (_acctScoped()) { sql += ' AND account_email = ?'; params.push(_activeAccount); }
+  const row = await _db.getFirstAsync(sql, params);
   return row?.max_id || 0;
 }
 

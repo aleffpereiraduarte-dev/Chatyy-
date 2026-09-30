@@ -18,12 +18,24 @@
 
 import { Platform } from 'react-native';
 import { getString, setString, remove, getAllKeys, getJSON, setJSON, waitForCacheReady } from './mmkv';
+import { normAccount, accountKeyHash } from './chatStore/schema';
 
 // ─── Configuration ─────────────────────────────────────────────────────────
+// These are BASE roots. When an active account is set (via setActiveAccount,
+// wired from AuthContext) every persisted key gains a per-account suffix so two
+// accounts on the same device never share a blob. While no account is set the
+// keys equal the legacy ones → byte-for-byte identical behaviour.
 const MSG_KEY_PREFIX = 'chat_msgs_v2_';
 const CONV_KEY = 'chat_convs_v2';
 const INDEX_KEY = 'chat_index_v2';
 const MIGRATION_FLAG = 'chat_migrate_v2_done';
+
+// ─── Active-account scoping ──────────────────────────────────────────────────
+let _acct = '';          // normalized active account email ('' = unscoped/legacy)
+let _acctSuffix = '';    // cached '_<hash>' suffix for the active account
+function _msgKey(convId) { return MSG_KEY_PREFIX + (_acctSuffix ? _acctSuffix + '_' : '') + convId; }
+function _convKey() { return CONV_KEY + _acctSuffix; }
+function _indexKey() { return INDEX_KEY + _acctSuffix; }
 
 // [2026-09-28] Bump grande p/ o celular guardar MUITO mais localmente, mais perto
 // do WhatsApp (histórico offline). Antes: 200 msgs/conv, teto 5MB. Agora: 1500
@@ -57,11 +69,11 @@ let _convTimer = null;
 // first pass missed due to the race.
 function _doHydrate() {
   try {
-    const convRaw = getString(CONV_KEY);
+    const convRaw = getString(_convKey());
     if (convRaw) {
       try { _convs = JSON.parse(convRaw) || []; } catch { _convs = []; }
     }
-    const idxRaw = getString(INDEX_KEY);
+    const idxRaw = getString(_indexKey());
     if (idxRaw) {
       try {
         const parsed = JSON.parse(idxRaw);
@@ -74,7 +86,7 @@ function _doHydrate() {
     }
     for (const idStr of Object.keys(_index.lru)) {
       const convId = Number(idStr) || idStr;
-      const raw = getString(MSG_KEY_PREFIX + idStr);
+      const raw = getString(_msgKey(idStr));
       if (!raw) continue;
       try {
         const parsed = JSON.parse(raw);
@@ -182,7 +194,7 @@ function _flushOne(convId) {
     // Only persist confirmed (numeric-id) messages, capped to MAX_MSGS_PER_CONV newest.
     const persistable = arr.filter(m => _isPersistableId(m.id)).slice(-MAX_MSGS_PER_CONV);
     if (persistable.length === 0) {
-      remove(MSG_KEY_PREFIX + convId);
+      remove(_msgKey(convId));
       // Decrementa totalBytes e remove a entrada do bytes — antes só zerava
       // bytes[convId] sem decrementar totalBytes, fazendo o orçamento
       // de evicção ficar inflado.
@@ -194,7 +206,7 @@ function _flushOne(convId) {
       return;
     }
     const json = JSON.stringify(persistable);
-    setString(MSG_KEY_PREFIX + convId, json);
+    setString(_msgKey(convId), json);
     const bytes = json.length;
     const prev = _index.bytes[convId] || 0;
     _index.bytes[convId] = bytes;
@@ -207,7 +219,7 @@ function _flushOne(convId) {
 
 function _writeIndex() {
   try {
-    setString(INDEX_KEY, JSON.stringify({
+    setString(_indexKey(), JSON.stringify({
       lru: _index.lru,
       bytes: _index.bytes,
       totalBytes: _index.totalBytes,
@@ -222,7 +234,7 @@ function _maybeEvict() {
   for (const [convId] of sorted) {
     if (_index.totalBytes <= EVICT_DOWN_TO) break;
     try {
-      remove(MSG_KEY_PREFIX + convId);
+      remove(_msgKey(convId));
       // [2026-07-03] _index.lru keys are always STRING (object-property
       // coercion) but _msgs is keyed by the raw convId (a Number in practice),
       // so `_msgs.delete(convId)` with the string key never matched → evicted
@@ -269,7 +281,7 @@ export function getCachedMessagesSync(convId, limit = 50) {
   // cold for this conv.
   if (arr.length === 0) {
     try {
-      const raw = getString(MSG_KEY_PREFIX + String(convId));
+      const raw = getString(_msgKey(String(convId)));
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && parsed.length) {
@@ -345,7 +357,7 @@ export function cacheConversations(convs) {
   if (_convTimer) clearTimeout(_convTimer);
   _convTimer = setTimeout(() => {
     _convTimer = null;
-    try { setString(CONV_KEY, JSON.stringify(_convs)); } catch {}
+    try { setString(_convKey(), JSON.stringify(_convs)); } catch {}
   }, FLUSH_DEBOUNCE_MS);
 }
 
@@ -359,7 +371,7 @@ export function flushPendingWrites() {
   if (_convTimer) {
     try { clearTimeout(_convTimer); } catch {}
     _convTimer = null;
-    try { setString(CONV_KEY, JSON.stringify(_convs)); } catch {}
+    try { setString(_convKey(), JSON.stringify(_convs)); } catch {}
   }
 }
 
@@ -374,7 +386,7 @@ export function clearConversation(convId) {
   const bytes = _index.bytes[convId] || 0;
   _index.totalBytes = Math.max(0, _index.totalBytes - bytes);
   delete _index.bytes[convId];
-  try { remove(MSG_KEY_PREFIX + convId); } catch {}
+  try { remove(_msgKey(convId)); } catch {}
   _writeIndex();
 }
 
@@ -387,12 +399,43 @@ export function clearChatCache() {
   try {
     const keys = getAllKeys() || [];
     for (const k of keys) {
-      if (k.startsWith(MSG_KEY_PREFIX) || k === CONV_KEY || k === INDEX_KEY) {
+      // startsWith on the BASE roots catches every per-account variant
+      // (chat_convs_v2, chat_convs_v2_<hash>, chat_msgs_v2_<hash>_<id>, …) so a
+      // logout/clear wipes ALL accounts' accelerator blobs.
+      if (k.startsWith(MSG_KEY_PREFIX) || k.startsWith(CONV_KEY) || k.startsWith(INDEX_KEY)) {
         remove(k);
       }
     }
   } catch {}
 }
+
+// ─── Active-account scoping ──────────────────────────────────────────────────
+// Switch the accelerator to a different account. On a real change we flush the
+// outgoing account's pending writes, drop ALL in-memory authoritative state
+// (so a read can never serve the previous account, not even for one frame), then
+// re-hydrate from the new account's scoped keys. Wired from AuthContext on
+// login / account switch. Idempotent for the same account.
+export function setActiveAccount(email) {
+  const next = normAccount(email);
+  if (next === _acct) return;
+  // Flush the outgoing account so nothing queued is lost, then wipe memory.
+  try { flushPendingWrites(); } catch {}
+  _msgs.clear();
+  _convs = [];
+  _index.lru = {};
+  _index.bytes = {};
+  _index.totalBytes = 0;
+  _acct = next;
+  _acctSuffix = next ? ('_' + accountKeyHash(next)) : '';
+  // Re-hydrate synchronously from the new account's keys so the next sync read
+  // paints the correct account from frame 1. Async MMKV layer retries below.
+  try { _doHydrate(); } catch {}
+  if (Platform.OS !== 'web' && typeof waitForCacheReady === 'function') {
+    try { waitForCacheReady().then(() => { try { _doHydrate(); } catch {} }).catch(() => {}); } catch {}
+  }
+}
+
+export function getActiveAccount() { return _acct; }
 
 // Install lifecycle flushers (AppState + web beforeunload) so we never lose
 // the last ~500ms of writes.

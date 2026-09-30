@@ -64,6 +64,44 @@ export async function runInitialSync(api, options = {}) {
   // pull. NO visible banner.
   if (Platform.OS === 'web') {
     try { markSyncComplete(); } catch {}
+    // WEB DURABLE-STORE HYDRATION (2026-09-30): the web path stays SILENT (no
+    // SyncBar, no "Sincronizando…" banner — #1131), but web reads still need to
+    // work offline. The durable web store is IndexedDB behind the chatStore
+    // facade (Builder 1). Pull the conversation list once and upsert it into
+    // the facade in the BACKGROUND — fire-and-forget so the function still
+    // returns immediately and no banner ever paints. Per-screen lazy fetch +
+    // WS delta handle steady-state from here. Facade absent (pre-migration) →
+    // no-op, exactly the old behavior. isLocked() → skip (account isolation).
+    (async () => {
+      try {
+        const mod = require('./chatStore');
+        const cs = (mod && (mod.default || mod)) || null;
+        if (!cs || typeof cs.upsertConversations !== 'function') return;
+        if (typeof cs.isLocked === 'function' && cs.isLocked()) return;
+        const convResult = await api.chatConversations('', true);
+        const allConvs = convResult?.success
+          ? (Array.isArray(convResult.data) ? convResult.data : (convResult.data?.conversations || []))
+          : [];
+        if (allConvs.length > 0) {
+          await cs.upsertConversations(allConvs);
+          // Seed the 'list' cursor so a later cold start can delta cheaply.
+          // last_msg_id is best-effort from the conv row (0 = safe/full pull).
+          if (typeof cs.setCursor === 'function') {
+            let gMsg = 0;
+            for (const c of allConvs) {
+              const id = Number(c?.last_message?.id || c?.last_message_id || 0) || 0;
+              if (id > gMsg) gMsg = id;
+            }
+            try {
+              const prev = (typeof cs.getCursor === 'function') ? cs.getCursor('list') : null;
+              const pMsg = (prev && Number(prev.last_msg_id)) || 0;
+              const pPts = (prev && Number(prev.last_pts)) || 0;
+              if (gMsg > pMsg) cs.setCursor('list', { last_pts: pPts, last_msg_id: gMsg });
+            } catch {}
+          }
+        }
+      } catch {}
+    })();
     // Emit nothing — SyncBar would only show on a 'start' anyway. Return
     // synthetic skipped so the chat.js gate seals the per-email flag.
     return { skipped: true, web: true };

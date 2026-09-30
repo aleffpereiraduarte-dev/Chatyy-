@@ -103,6 +103,27 @@ function _lockCacheScopeSync(ms = 500) {
   } catch {}
 }
 
+// ── Builder 2: durable chat store (services/chatStore) account isolation ─────
+// The durable store facade (Builder 1) is the source the chat list reads on
+// frame 1. It MUST be told the active account — and told to purge the account
+// we are leaving — BEFORE any chat UI reads, or the list could paint the
+// previous account's conversations for a frame after a switch. These calls
+// COMPLEMENT (never replace) the existing clearLocalChatStore/lockCacheScope
+// logic above. Both are guarded so an absent/partial/older facade (e.g. built
+// before Builder 1 lands) can never crash a login/switch/logout.
+function _chatStoreSetActiveAccount(email) {
+  try {
+    const mod = require('../services/chatStore');
+    mod?.setActiveAccount?.((email || '').toLowerCase());
+  } catch {}
+}
+function _chatStoreClearForSwitch(prevEmail) {
+  try {
+    const mod = require('../services/chatStore');
+    mod?.clearForAccountSwitch?.(prevEmail ? String(prevEmail).toLowerCase() : undefined);
+  } catch {}
+}
+
 const AuthContext = createContext(null);
 
 // Module-level interval ref so it persists across re-renders
@@ -1016,6 +1037,9 @@ export function AuthProvider({ children }) {
         // Fail-closed: if the clear throws, the cache scope stays locked so no
         // reader paints the previous account's rows until a retry succeeds.
         await clearLocalChatStoreFailClosed();
+        // Builder 2: purge the durable store facade for the OUTGOING account so
+        // getConversationsSync() can never serve it, even for one frame.
+        _chatStoreClearForSwitch(_prevEmail);
       }
       // Account swap: gate any sync getter for the next 500ms. We used to
       // also drop user to null here so chat screens unmounted before the new
@@ -1032,6 +1056,9 @@ export function AuthProvider({ children }) {
       await clearAllCache();
       const clearChatCache = await getLazyClearChatCache(); await clearChatCache();
       setCacheUser(r.data?.email || email);
+      // Builder 2: point the durable store facade at the new identity BEFORE
+      // setUser paints the chat UI, so frame-1 reads are already scoped.
+      _chatStoreSetActiveAccount(r.data?.email || email);
       setUser(r.data);
       try {
         const { setReporterIdentity, reportStep } = require('../services/crashReporter');
@@ -1143,6 +1170,8 @@ export function AuthProvider({ children }) {
       // P0 PRIVACY: wipe native SQLite chat store on identity change.
       // Fail-closed so a throwing clear can't leave prior messages readable.
       await clearLocalChatStoreFailClosed();
+      // Builder 2: purge the durable store facade for the OUTGOING account.
+      _chatStoreClearForSwitch(_prevEmail);
     }
     // Same paint-race fence as login() — see lockCacheScope. setUser(null)
     // removed (root cause 3 of reconnect storm fix 2026-05-19): the dual
@@ -1154,6 +1183,8 @@ export function AuthProvider({ children }) {
     await clearAllCache();
     const _clearChat = await getLazyClearChatCache(); await _clearChat();
     setCacheUser(data?.email);
+    // Builder 2: scope the durable store to the new identity before paint.
+    _chatStoreSetActiveAccount(data?.email);
     setUser(data);
     // Register the challenge-login account into the switcher + active marker
     // (parity with login()/loginWithToken(); this path skipped it, so the
@@ -1258,6 +1289,10 @@ export function AuthProvider({ children }) {
       // pinned. (Native-only; the web nuke is handled just below.) Fail-closed:
       // a throwing clear keeps the cache scope locked until a retry succeeds.
       await clearLocalChatStoreFailClosed();
+      // Builder 2: purge the durable store facade for the account being left
+      // (prevEmail may be '' on a brand-new signup — clearForAccountSwitch
+      // treats an absent arg as "clear whatever is scoped now").
+      _chatStoreClearForSwitch(prevEmail);
       // WEB: clearAccountScopedMmkv() doesn't reach the SW CacheStorage or
       // IndexedDB. On an account switch (or cold start onto a different
       // identity) the SW would otherwise serve the previous account's cached
@@ -1268,6 +1303,8 @@ export function AuthProvider({ children }) {
       }
     }
     setCacheUser(data.email || email);
+    // Builder 2: scope the durable store to the new identity before paint.
+    _chatStoreSetActiveAccount(data.email || email);
     setUser(data);
     if (data.is_child) {
       _childRestrictions = data.child_restrictions || {};
@@ -1415,6 +1452,11 @@ export function AuthProvider({ children }) {
     const _outgoingEmail = (user?.email || api.getActiveAccountEmail?.() || '').toLowerCase();
     setUser(null);
     setCacheUser(null);
+    // Builder 2: purge the durable store facade for the account being logged
+    // out and clear its active-account pointer so the next reader (login
+    // screen / a stray chat getter) can never paint this account's list.
+    _chatStoreClearForSwitch(_outgoingEmail);
+    _chatStoreSetActiveAccount('');
     // SECURITY (P1): drop the biometric lock state on the way out so the
     // outgoing identity's unlocked overlay can't carry into whoever signs in
     // next on this device (the lock will re-arm + re-challenge for them).
@@ -1628,6 +1670,13 @@ export function AuthProvider({ children }) {
             // messages/conversations straight off disk. Wipe it here, BEFORE
             // setUser, and fail-closed so a throwing clear holds the cache
             // scope locked rather than painting the prior account's rows.
+            // Builder 2: the active-account marker is still the OUTGOING one
+            // here (setActiveAccountEmail runs after setUser below), so purge
+            // the durable store facade for it before the new identity paints.
+            try {
+              const _prevEmail = (api.getActiveAccountEmail?.() || '').toLowerCase();
+              _chatStoreClearForSwitch(_prevEmail);
+            } catch {}
             await clearLocalChatStoreFailClosed();
             // P0 PRIVACY: the api.js SWR memory cache (get_profile, contacts,
             // feed_list, chat_list…) is keyed by action+params with NO account
@@ -1637,6 +1686,9 @@ export function AuthProvider({ children }) {
             // same wipe cluster, before setUser paints the new account.
             try { api.swrInvalidate(); } catch {}
             setCacheUser(check.data.email);
+            // Builder 2: scope the durable store to the switched-to identity
+            // BEFORE setUser so frame-1 reads never serve the prior account.
+            _chatStoreSetActiveAccount(check.data.email);
             setUser(check.data);
             // SECURITY (P1): identity changed → force the biometric app-lock
             // to re-fire so the new account can't ride in on the previous

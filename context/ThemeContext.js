@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Platform, useColorScheme } from 'react-native';
+import { Platform, useColorScheme, InteractionManager } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, DarkColors, FontFamily } from '../constants/theme';
 
@@ -105,34 +105,46 @@ export function ThemeProvider({ children }) {
         }
       } catch {}
     } else {
-      Promise.all([
-        AsyncStorage.getItem('theme_mode'),
-        AsyncStorage.getItem('theme_dark'),
-        AsyncStorage.getItem('density'),
-        AsyncStorage.getItem('inbox_type'),
-        AsyncStorage.getItem('theme_accent'),
-      ]).then(([savedMode, saved, savedDensity, savedInbox, savedAccent]) => {
-        if (savedMode && THEME_MODES.has(savedMode)) {
-          setThemeModeState(savedMode);
-          if (savedMode === 'system') setIsDark(systemScheme === 'dark');
-          else setIsDark(savedMode === 'dark');
-        } else if (saved !== null) {
-          // Legacy install: map the old boolean override to a forced mode.
-          setThemeModeState(saved === 'true' ? 'dark' : 'light');
-          setIsDark(saved === 'true');
-        } else {
-          setThemeModeState('system');
-          setIsDark(systemScheme === 'dark');
-        }
-        if (savedDensity && DENSITY_CONFIG[savedDensity]) setDensityState(savedDensity);
-        if (savedInbox) setInboxTypeState(savedInbox);
-        if (savedAccent && ACCENT_HEX_SET.has(savedAccent)) setAccentColorState(savedAccent);
-      }).catch(() => {});
-      try {
-        const { getString } = require('../services/mmkv');
-        const mmkvAccent = getString?.('theme_accent');
-        if (mmkvAccent && ACCENT_HEX_SET.has(mmkvAccent)) setAccentColorState(mmkvAccent);
-      } catch {}
+      // [COLD-START 2026-09-30] These ~5 AsyncStorage reads hit the native
+      // bridge at mount and compete with AuthContext for it during the cold
+      // start. First paint already uses the in-memory DEFAULT theme (isDark
+      // starts false / themeMode 'system'), so the persisted values are pure
+      // hydration — nothing renders waiting on them. Defer them behind
+      // InteractionManager so auth/routing get the bridge first; the stored
+      // theme then applies a beat later (masked by the branded splash overlay,
+      // so no visible flash). Persistence on CHANGE is untouched (setThemeMode
+      // et al. still write synchronously). The handle is cancelled on unmount.
+      const task = InteractionManager.runAfterInteractions(() => {
+        Promise.all([
+          AsyncStorage.getItem('theme_mode'),
+          AsyncStorage.getItem('theme_dark'),
+          AsyncStorage.getItem('density'),
+          AsyncStorage.getItem('inbox_type'),
+          AsyncStorage.getItem('theme_accent'),
+        ]).then(([savedMode, saved, savedDensity, savedInbox, savedAccent]) => {
+          if (savedMode && THEME_MODES.has(savedMode)) {
+            setThemeModeState(savedMode);
+            if (savedMode === 'system') setIsDark(systemScheme === 'dark');
+            else setIsDark(savedMode === 'dark');
+          } else if (saved !== null) {
+            // Legacy install: map the old boolean override to a forced mode.
+            setThemeModeState(saved === 'true' ? 'dark' : 'light');
+            setIsDark(saved === 'true');
+          } else {
+            setThemeModeState('system');
+            setIsDark(systemScheme === 'dark');
+          }
+          if (savedDensity && DENSITY_CONFIG[savedDensity]) setDensityState(savedDensity);
+          if (savedInbox) setInboxTypeState(savedInbox);
+          if (savedAccent && ACCENT_HEX_SET.has(savedAccent)) setAccentColorState(savedAccent);
+        }).catch(() => {});
+        try {
+          const { getString } = require('../services/mmkv');
+          const mmkvAccent = getString?.('theme_accent');
+          if (mmkvAccent && ACCENT_HEX_SET.has(mmkvAccent)) setAccentColorState(mmkvAccent);
+        } catch {}
+      });
+      return () => { try { task && task.cancel && task.cancel(); } catch {} };
     }
   }, []);
 

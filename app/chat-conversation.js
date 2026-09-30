@@ -7868,6 +7868,35 @@ function ChatConversationInner() {
   // gives us Telegram-like instant paint on chat open — zero I/O in this frame.
   const _initialCached = (() => {
     if (!conversationId) return null;
+    // [local-first 2026-09-30] Primary synchronous source: the chatStore
+    // facade (services/chatStore) — a native sync SQLite read over the
+    // canonical local store (web → []). Falls through to SmartCache /
+    // sqliteStore below when the facade is absent, locked (account switch),
+    // or cold. Mirrors the sqlite branch's _localUri hydrate so media
+    // bubbles paint file:// from disk on frame 1 (no remote→file flash).
+    try {
+      const _cs = require('../services/chatStore');
+      if (!_cs.isLocked?.()) {
+        const rows = _cs.getMessagesSync(conversationId, 50);
+        if (Array.isArray(rows) && rows.length > 0) {
+          try {
+            const _hydrate = require('../services/mediaCache').getLocalUriSyncJs;
+            if (_hydrate) {
+              for (const m of rows) {
+                if (m && !m._localUri && m.file_url && ['image','video','audio','voice','gif','sticker','file'].includes(m.type)) {
+                  try {
+                    const abs = api.getMediaUrl(m.file_url);
+                    const local = _hydrate(abs);
+                    if (local) m._localUri = local;
+                  } catch {}
+                }
+              }
+            }
+          } catch {}
+          return rows;
+        }
+      }
+    } catch {}
     try {
       const cached = SmartCache.getCachedMessagesSync(conversationId, 50);
       if (Array.isArray(cached) && cached.length > 0) return cached;
@@ -10196,13 +10225,32 @@ function ChatConversationInner() {
     let sinceId = 0;
     let alreadyHasVisible = _messagesCountRef.current > 0;
 
-    // SIMPLIFIED: Always fetch fresh from server. The complex cache/sinceId
-    // logic had too many race conditions causing blank screens on iOS+web.
-    // Cache is used for DISPLAY only (initial paint from _initialCached),
-    // never for determining what to fetch from server.
+    // [local-first delta open 2026-09-30] When the durable local store already
+    // holds this conversation AND carries a cursor from a prior sync, open with
+    // a DELTA fetch (server: id > since_id, EXCLUSIVE — verified chat.php:3357)
+    // instead of re-downloading the whole last page on every open. The store's
+    // rows already paint from frame 1 (_initialCached); this only tops them up
+    // with what's new. We fall back to the full last-PAGE_SIZE fetch
+    // (since_id=0) whenever the store is empty (first-ever open, or just after
+    // a "clear history" wipe) OR the cursor is missing — so a cold thread never
+    // opens on a partial window. Scroll-up pagination (beforeId) is untouched.
+    // Message-loss-safe: the merge below keeps every local row older than the
+    // batch (keptOlder) and dedups by numeric id, and chat.php returns block /
+    // read-receipt metadata regardless of since_id — a delta open drops neither
+    // messages nor banner/tick state.
     if (!beforeId) {
+      try {
+        const _cs = require('../services/chatStore');
+        if (!_cs.isLocked?.()) {
+          const _have = _cs.getMessagesSync(conversationId, 1);
+          const _storeHasMsgs = Array.isArray(_have) && _have.length > 0;
+          const _cur = _cs.getCursor('conv:' + conversationId);
+          const _lastId = Number(_cur?.last_msg_id || 0);
+          if (_storeHasMsgs && _lastId > 0) sinceId = _lastId; // delta-only
+        }
+      } catch {}
       if (showLoader && !alreadyHasVisible) setLoading(true);
-      // sinceId stays 0 = always get last PAGE_SIZE messages from server
+      // sinceId=0 (fallback) = get last PAGE_SIZE; sinceId>0 = delta only
     }
     if (beforeId) setLoadingMore(true);
     try {
@@ -10298,6 +10346,11 @@ function ChatConversationInner() {
           if (confirmedOlder.length > 0) {
             cacheMessages(conversationId, confirmedOlder).catch(e => console.warn('[chat] paginate cacheMessages fail:', e?.message));
             try { SmartCache.cacheMessages(conversationId, confirmedOlder); } catch {}
+            // [local-first 2026-09-30] Older page → chatStore too, so a future
+            // delta open paints full depth from the local store. Scroll-up is
+            // OLDER history, so we NEVER advance the cursor here (it tracks the
+            // newest id only) — this only keeps the store complete.
+            try { require('../services/chatStore').upsertMessages(conversationId, confirmedOlder); } catch {}
             try {
               const cleanConfirmed = confirmedOlder.map(_sanitizeNativeMsg).filter(Boolean);
               _NativeChatCache?.saveMessages?.(conversationId, cleanConfirmed);
@@ -10485,6 +10538,28 @@ function ChatConversationInner() {
             try {
               const { clearPendingMessages } = require('../services/chatCache');
               clearPendingMessages?.(conversationId)?.catch(() => {});
+            } catch {}
+            // [local-first delta open 2026-09-30] Persist through the chatStore
+            // facade and advance the conversation cursor to the newest id in the
+            // batch, so the NEXT open fetches only the delta (since_id = last_msg_id).
+            // upsertMessages dedups by id (tombstones flow through as rows). The
+            // cursor advance is MONOTONIC — fold the prior cursor (preserving any
+            // last_pts) and only move forward, so a delta batch, an out-of-order
+            // refresh, or a full-history sync can never push it backwards. Because
+            // we upsert the very rows we advance the cursor past, cursor.last_msg_id
+            // is always ≤ the store's max id → the next delta can't skip anything.
+            try {
+              const _cs = require('../services/chatStore');
+              _cs.upsertMessages(conversationId, confirmedMsgs);
+              let _maxId = 0;
+              for (const m of confirmedMsgs) { if (typeof m.id === 'number' && m.id > _maxId) _maxId = m.id; }
+              if (_maxId > 0) {
+                const _scope = 'conv:' + conversationId;
+                let _prev = null;
+                try { _prev = _cs.getCursor(_scope); } catch {}
+                const _prevLast = Number(_prev?.last_msg_id || 0);
+                if (_maxId >= _prevLast) _cs.setCursor(_scope, { ...(_prev || {}), last_msg_id: _maxId });
+              }
             } catch {}
           }
           try {

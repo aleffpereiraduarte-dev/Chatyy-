@@ -36,8 +36,31 @@ export default function AnimatedSplash({ onFinish }) {
     SplashScreen.hideAsync().catch(() => {});
   }, []);
 
+  // [COLD-START 2026-09-30] The branded JS splash used to HOLD a hardcoded
+  // ~900ms + 220ms fade (~1120ms) on top of the native splash, and app/index.js
+  // blocks routing on `splashDone` — so this fixed hold added a full second to
+  // every cold start. Now the splash finishes on READINESS: onFinish fires as
+  // soon as the entrance (scale+fade) completes, with a short safety cap so it
+  // can never hang and never outlast auth/cache readiness. The blink still
+  // plays; if it's mid-wink when the hand-off starts it simply fades out with
+  // the rest. onFinish is fired exactly once (finishedRef guard).
+  const finishedRef = useRef(false);
+  const finish = useCallback(() => {
+    if (finishedRef.current) return;
+    finishedRef.current = true;
+    Animated.timing(fadeOut, {
+      toValue: 0,
+      duration: 220,
+      useNativeDriver: true,
+    }).start(() => {
+      onFinish?.();
+    });
+  }, [onFinish, fadeOut]);
+
   useEffect(() => {
-    // Logo entrance: scale + fade up over 280ms with a soft ease-out.
+    // Logo entrance: scale + fade up over 280ms with a soft ease-out. Fire the
+    // hand-off as soon as this entrance settles so the branded splash overlaps
+    // readiness instead of adding a fixed hold on top of it.
     Animated.parallel([
       Animated.timing(logoOpacity, {
         toValue: 1,
@@ -51,7 +74,7 @@ export default function AnimatedSplash({ onFinish }) {
         friction: 9,
         useNativeDriver: true,
       }),
-    ]).start();
+    ]).start(() => { finish(); });
 
     // Wink: 300ms into the splash (logo has settled), close fast (80ms),
     // hold 60ms so the closed eyes register, then open slower (110ms) for
@@ -63,20 +86,14 @@ export default function AnimatedSplash({ onFinish }) {
       Animated.timing(eyelid, { toValue: 0, duration: 110, easing: Easing.out(Easing.quad), useNativeDriver: true }),
     ]).start();
 
-    // Hold ~900ms (entrance + blink + a beat) then fade out 220ms.
-    // Was 650ms — bumped so the blink isn't cut short on slow devices.
-    const timer = setTimeout(() => {
-      Animated.timing(fadeOut, {
-        toValue: 0,
-        duration: 220,
-        useNativeDriver: true,
-      }).start(() => {
-        onFinish?.();
-      });
-    }, 900);
+    // Safety cap: NEVER let the splash hang. If the entrance animation's
+    // completion callback doesn't fire (reduced-motion, backgrounded during
+    // boot, a dropped frame), this short cap forces the hand-off. ~360ms keeps
+    // the perceived branded moment while slashing the old ~1120ms floor.
+    const cap = setTimeout(() => { finish(); }, 360);
 
-    return () => clearTimeout(timer);
-  }, []);
+    return () => clearTimeout(cap);
+  }, [finish]);
 
   return (
     <Animated.View

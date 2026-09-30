@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { AppState, Platform, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
+import { AppState, Platform, View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, InteractionManager } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
 import { usePathname } from 'expo-router';
 import { useLanguage } from './LanguageContext';
@@ -123,35 +123,54 @@ export function BiometricProvider({ children }) {
   const backgroundTimeRef = useRef(null);
   const appStateRef = useRef(AppState.currentState);
 
-  // Check hardware availability on mount
+  // Check hardware availability on mount.
+  //
+  // [COLD-START 2026-09-30] These 2 LocalAuthentication probes + 2 SecureStore
+  // reads (keychain = the slowest storage) were a cold-start long pole, running
+  // at mount in contention with auth on the native bridge. They are deferred
+  // behind InteractionManager so routing/auth get the bridge first.
+  //
+  // SECURITY — this does NOT weaken the auto-lock. The lock is engaged by
+  // RUNTIME events, never by these mount reads: on cold start the app opens
+  // UNLOCKED by design (`isLocked` initial state is false — there is no
+  // cold-launch lock gate), and the actual lock is armed by the AppState
+  // background→foreground handler and by `lockNow()` (identity change). Those
+  // paths re-subscribe / re-check on `biometricEnabled`, so once this deferred
+  // hydration flips it on, the background auto-lock arms itself. Deferring only
+  // slides the arming of the CURRENT fresh session's background-lock by the
+  // sub-second interaction window — during which the user is actively opening
+  // the app, not backgrounding it — and never exposes anything that was locked.
   useEffect(() => {
     if (Platform.OS === 'web') return; // Biometrics only on native
-    (async () => {
-      try {
-        const hasHw = await LocalAuthentication.hasHardwareAsync();
-        const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-        setBiometricAvailable(hasHw && isEnrolled);
-
-        // Load saved preference
-        const stored = await getStoredPref(BIOMETRIC_PREF_KEY);
-        if (stored === 'true' && hasHw && isEnrolled) {
-          setBiometricEnabled(true);
-        }
-        // Load saved auto-lock interval pref. Accept both numeric strings
-        // and the literal 'never'.
+    const task = InteractionManager.runAfterInteractions(() => {
+      (async () => {
         try {
-          const ival = await getStoredPref(AUTO_LOCK_INTERVAL_KEY);
-          if (ival === 'never') {
-            setAutoLockIntervalState('never');
-          } else if (ival != null && /^\d+$/.test(String(ival))) {
-            const n = parseInt(ival, 10);
-            if (Number.isFinite(n) && n >= 0) setAutoLockIntervalState(n);
+          const hasHw = await LocalAuthentication.hasHardwareAsync();
+          const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+          setBiometricAvailable(hasHw && isEnrolled);
+
+          // Load saved preference
+          const stored = await getStoredPref(BIOMETRIC_PREF_KEY);
+          if (stored === 'true' && hasHw && isEnrolled) {
+            setBiometricEnabled(true);
           }
-        } catch {}
-      } catch {
-        setBiometricAvailable(false);
-      }
-    })();
+          // Load saved auto-lock interval pref. Accept both numeric strings
+          // and the literal 'never'.
+          try {
+            const ival = await getStoredPref(AUTO_LOCK_INTERVAL_KEY);
+            if (ival === 'never') {
+              setAutoLockIntervalState('never');
+            } else if (ival != null && /^\d+$/.test(String(ival))) {
+              const n = parseInt(ival, 10);
+              if (Number.isFinite(n) && n >= 0) setAutoLockIntervalState(n);
+            }
+          } catch {}
+        } catch {
+          setBiometricAvailable(false);
+        }
+      })();
+    });
+    return () => { try { task && task.cancel && task.cancel(); } catch {} };
   }, []);
 
   // Force-lock now. Called on identity changes (account switch / logout) via

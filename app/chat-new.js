@@ -122,6 +122,242 @@ function AlphabetSidebar({ letters, onPress, colors }) {
   );
 }
 
+// Format last seen time — hoisted to module scope so the memoized ContactRow
+// below (which lives outside the screen component) can call it. Pure helper;
+// takes `t` for i18n. Behavior identical to the previous in-component version.
+function formatLastSeen(dateStr, t) {
+  if (!dateStr) return '';
+  try {
+    let d;
+    // Handle numeric timestamps (milliseconds since epoch)
+    if (typeof dateStr === 'number') {
+      d = new Date(dateStr);
+    } else {
+      let s = String(dateStr);
+      // Ensure UTC timestamp is properly parsed
+      if (!s.includes('T')) s = s.replace(' ', 'T');
+      if (!s.includes('Z') && !s.includes('+')) s += 'Z';
+      d = new Date(s);
+    }
+    if (isNaN(d.getTime())) return '';
+    const now = new Date();
+    const diffMin = Math.floor((now - d) / 60000);
+    if (diffMin < 0) return t('time.now'); // future = treat as now
+    if (diffMin < 1) return t('time.now');
+    if (diffMin < 60) return (t('time.min') || '{n} min').replace('{n}', diffMin);
+    const diffH = Math.floor(diffMin / 60);
+    const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (diffH < 24) {
+      return `${t('time.today') || 'today'} ${timeStr}`;
+    }
+    if (diffH < 48) {
+      return `${t('time.yesterday') || 'yesterday'} ${timeStr}`;
+    }
+    return `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${timeStr}`;
+  } catch { return ''; }
+}
+
+// Memoized contact row — extracted from the old inline `renderContact` arrow so
+// the SectionList/FlatList can recycle rows without re-rendering every visible
+// cell on each keystroke/selection. React.memo + stable callbacks (passed from
+// the screen via useRef-backed wrappers) mean a row only re-renders when its own
+// props actually change (its item, `selected`, `invitingEmail`, `searchText`,
+// `mode`, `colors`). Behavior/markup are byte-for-byte identical to the previous
+// inline renderer — this is purely memoization + style hoisting.
+const ContactRow = React.memo(function ContactRow({
+  item, colors, searchText, mode, selected, invitingEmail, t,
+  onMessageYourself, onSelect, onInviteByEmail, onInviteShare, onInviteViaWhatsApp, onShowInviteInput,
+}) {
+  // "Message yourself" pinned row — WhatsApp parity (print 7175 top entry).
+  if (item._isMessageYourself) {
+    return (
+      <TouchableOpacity
+        style={[sty.contactRow, { borderBottomColor: colors.border }]}
+        onPress={onMessageYourself}
+        activeOpacity={0.7}
+        accessibilityLabel={t('chat.messageYourself') || 'Message yourself'}
+        accessibilityRole="button"
+      >
+        <View style={sty.contactAvatarRing}>
+          <AvatarCircle email={item.email} name={item.name} size={40} colors={colors} />
+        </View>
+        <View style={sty.contactInfo}>
+          <View style={sty.rowCenterGap6}>
+            <Text style={[sty.contactName, { color: colors.text, fontWeight: '700' }]} numberOfLines={1}>
+              {item.name} {''}
+              <Text style={{ color: colors.textTertiary, fontWeight: '500' }}>
+                ({t('chat.youSelf') || t('common.you') || 'Você'})
+              </Text>
+            </Text>
+          </View>
+          <Text style={[sty.contactSub, { color: colors.textTertiary }]} numberOfLines={1}>
+            {t('chat.messageYourself') || 'Message yourself'}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  }
+
+  // Placeholder item for web invite section
+  if (item._isInvitePlaceholder) {
+    return (
+      <View style={[sty.contactRow, { borderBottomColor: colors.border, paddingVertical: 16 }]}>
+        <View style={[sty.quickActionIcon, { backgroundColor: '#111111', marginRight: 12 }]}>
+          <IconUserPlus size={18} color="#fff" />
+        </View>
+        <View style={sty.flex1}>
+          <Text style={[sty.contactName, { color: colors.text }]}>{t('chat.inviteFriend')}</Text>
+          <Text style={[sty.contactSub, { color: colors.textTertiary }]}>{t('chat.inviteFriendDesc')}</Text>
+        </View>
+        <InvitePill
+          style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#111111' }]}
+          onPress={() => onShowInviteInput(true)}
+          accessibilityLabel={t('chat.invite')}
+        >
+          <IconUserPlus size={13} color="#fff" />
+          <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
+        </InvitePill>
+      </View>
+    );
+  }
+
+  const isChatyyUser = item.isRegistered === true;
+
+  // Non-registered contact - show invite options
+  if (!isChatyyUser) {
+    // Unified single-pill invite. Was 3 stacked pills (email + share + W)
+    // which the user flagged as cluttered (print 2). Now: ONE pill that
+    // picks the best channel automatically; long-press surfaces choices.
+    // Email wins when available (higher delivery, less noise);
+    // otherwise share-sheet on native, copy-link on web.
+    const hasEmail = !!item.email;
+    const hasPhone = !!item.phone && Platform.OS !== 'web';
+    const onTap = () => {
+      if (hasEmail) onInviteByEmail(item.email, item.name);
+      else onInviteShare(item);
+    };
+    const onHold = () => {
+      if (Platform.OS === 'ios') {
+        const opts = [];
+        const actions = [];
+        if (hasEmail) { opts.push(t('chat.inviteByEmail') || 'Convidar por email'); actions.push(() => onInviteByEmail(item.email, item.name)); }
+        if (hasPhone) { opts.push('WhatsApp'); actions.push(() => onInviteViaWhatsApp(item)); }
+        opts.push(t('chat.inviteShare') || 'Compartilhar link');
+        actions.push(() => onInviteShare(item));
+        opts.push(t('common.cancel') || 'Cancelar');
+        ActionSheetIOS.showActionSheetWithOptions(
+          { options: opts, cancelButtonIndex: opts.length - 1 },
+          (idx) => { if (idx >= 0 && idx < actions.length) actions[idx](); }
+        );
+      } else {
+        onInviteShare(item);
+      }
+    };
+    return (
+      <View style={[sty.contactRow, { borderBottomColor: colors.border }]}>
+        <AvatarCircle email={item.email || ''} name={item.name || item.phone || '?'} size={48} colors={colors} />
+        <View style={sty.contactInfo}>
+          <HighlightText
+            text={item.name || item.phone || '?'}
+            highlight={searchText}
+            style={[sty.contactName, { color: colors.text }]}
+            highlightStyle={{ backgroundColor: '#11111130', fontWeight: '700' }}
+          />
+          <Text style={[sty.contactSub, { color: colors.textTertiary }]} numberOfLines={1}>
+            {item.email || item.phone || ''}
+          </Text>
+        </View>
+        <InvitePill
+          style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#111111' }]}
+          onPress={onTap}
+          onLongPress={onHold}
+          disabled={invitingEmail === item.email}
+          accessibilityLabel={t('chat.invite')}
+        >
+          {invitingEmail === item.email ? (
+            <ActivityIndicator size={14} color="#fff" />
+          ) : (
+            <>
+              <IconUserPlus size={13} color="#fff" />
+              <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
+            </>
+          )}
+        </InvitePill>
+      </View>
+    );
+  }
+
+  // Registered Chatyy user
+  return (
+    <TouchableOpacity
+      style={[sty.contactRow, { borderBottomColor: colors.border }]}
+      onPress={() => onSelect(item)}
+      activeOpacity={0.7}
+    >
+      <View style={sty.contactAvatarRing}>
+        <AvatarCircle email={item.email} name={item.name || prettifyHandle(item.email)} size={40} colors={colors} />
+        {item.online && <View style={[sty.onlineDotSmall, { borderColor: colors.background }]} />}
+      </View>
+      <View style={sty.contactInfo}>
+        <View style={sty.rowCenterGap6Min}>
+          <HighlightText
+            text={item.name && !item.name.includes('@') ? item.name : prettifyHandle(item.email || item.name || '')}
+            highlight={searchText}
+            style={[sty.contactName, { color: colors.text, fontWeight: '700', flexShrink: 1 }]}
+            highlightStyle={{ backgroundColor: '#11111130', fontWeight: '700' }}
+          />
+          {/* Tiny Chatyy badge — purple check circle SVG, signals registered user.
+              Less noisy than a pill, more affirmative than nothing. Wrapped in a
+              flexShrink:0 View so the long name (flexShrink:1) truncates instead
+              of pushing this icon off-screen / onto the checkbox. */}
+          <View style={sty.shrink0}>
+            <IconChatyyOnChat size={13} color="#111111" />
+          </View>
+          {/* "NOVO" badge — WhatsApp-style pill for contacts that just joined
+              Chatyy (last 7d via _justJoined flag, populated by friend_suggestions
+              backend + contact_joined WS event). Brand purple so it stands out
+              without screaming. */}
+          {item._justJoined && (
+            <View style={sty.novoBadge}>
+              <Text style={sty.novoBadgeText}>
+                {t('chat.newOnChatyy') || 'NOVO'}
+              </Text>
+            </View>
+          )}
+        </View>
+        <View style={sty.rowCenterGap6Min}>
+          <HighlightText
+            text={item.email}
+            highlight={searchText}
+            style={[sty.contactSub, { color: colors.textTertiary, flexShrink: 1 }]}
+            highlightStyle={{ backgroundColor: '#11111130' }}
+          />
+          {item.username ? (
+            <Text style={sty.usernameInline} numberOfLines={1}>@{item.username}</Text>
+          ) : null}
+        </View>
+        {item.about ? (
+          <Text style={[sty.contactAbout, { color: colors.textSecondary }]} numberOfLines={1}>
+            {item.about}
+          </Text>
+        ) : item.last_seen ? (
+          <Text style={[sty.contactAbout, { color: colors.textTertiary }]} numberOfLines={1}>
+            {t('chat.lastSeen')} {formatLastSeen(item.last_seen, t)}
+          </Text>
+        ) : null}
+      </View>
+      {(mode === 'group' || mode === 'channel') && item.email && (
+        <View style={[sty.checkbox, {
+          backgroundColor: selected ? colors.primary : 'transparent',
+          borderColor: selected ? colors.primary : colors.border,
+        }]}>
+          {selected && <IconCheck size={14} color="#fff" />}
+        </View>
+      )}
+    </TouchableOpacity>
+  );
+});
+
 export default function ChatNewScreen() {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
@@ -634,7 +870,23 @@ export default function ChatNewScreen() {
     return sections;
   }, [allChatyyUsers, otherContacts, phoneContacts, suggestions, pickMode, user?.email, user?.name, t]);
 
-  const sections = buildSections();
+  // Memoize the built sections so the A-Z sort + bucketing only runs when its
+  // real inputs change (contacts/suggestions/pickMode/user/t) — NOT on every
+  // render or keystroke. `buildSections` is a useCallback whose deps already
+  // capture those inputs, so depending on its identity is exact. This is the
+  // core fix for the picker jank (was re-sorting on every setSearchText).
+  const sections = useMemo(() => buildSections(), [buildSections]);
+
+  // Volatile per-row inputs bundled for the list's `extraData`. Now that
+  // `sections` is a stable memo, the list no longer gets a fresh `sections`
+  // reference on selection/typing — so we must tell it when a visible cell's
+  // derived state (checkbox selection, invite spinner, highlight, mode)
+  // changed. The memoized ContactRow still skips rows whose own props are
+  // unchanged, so this only re-renders the cells that actually differ.
+  const listExtraData = useMemo(
+    () => ({ selectedMembers, invitingEmail, mode, searchText, colors }),
+    [selectedMembers, invitingEmail, mode, searchText, colors]
+  );
 
   const handleSearch = useCallback((text) => {
     setSearchText(text);
@@ -1118,7 +1370,9 @@ export default function ChatNewScreen() {
   // requested letter.
   const handleAlphabetPress = useCallback((letter) => {
     if (!sectionListRef.current) return;
-    const built = buildSections();
+    // Read the already-memoized sections instead of rebuilding (re-sorting)
+    // the whole list on every alphabet tap.
+    const built = sections;
     // Native: jump straight to phone_chatyy_<L> letter bucket.
     const letterSectionIdx = built.findIndex(s => s.key === `phone_chatyy_${letter}`);
     if (letterSectionIdx >= 0) {
@@ -1150,7 +1404,7 @@ export default function ChatNewScreen() {
         });
       } catch {}
     }
-  }, [buildSections]);
+  }, [sections]);
 
   // ---- Render public channel discovery card ----
   const renderChannelCard = (channel) => {
@@ -1336,244 +1590,67 @@ export default function ChatNewScreen() {
     } catch {}
   }, [router, t]);
 
+  // Stable callback wrappers for the memoized ContactRow. We keep the latest
+  // handler in a ref and expose an identity-stable function, so React.memo can
+  // skip untouched rows (a fresh inline arrow every render would defeat it)
+  // while still always invoking the current handler (no stale closures — the
+  // ref is updated on each render below).
+  const rowHandlersRef = useRef({});
+  rowHandlersRef.current.select = handleSelectContact;
+  rowHandlersRef.current.inviteByEmail = handleInviteByEmail;
+  rowHandlersRef.current.inviteShare = handleInviteShare;
+  rowHandlersRef.current.inviteWhatsApp = handleInviteViaWhatsApp;
+  const onSelectRow = useCallback((c) => rowHandlersRef.current.select(c), []);
+  const onInviteByEmailRow = useCallback((e, n) => rowHandlersRef.current.inviteByEmail(e, n), []);
+  const onInviteShareRow = useCallback((c) => rowHandlersRef.current.inviteShare(c), []);
+  const onInviteViaWhatsAppRow = useCallback((c) => rowHandlersRef.current.inviteWhatsApp(c), []);
+
   // ---- Render contact row ----
-  const renderContact = ({ item }) => {
-    // "Message yourself" pinned row — WhatsApp parity (print 7175 top entry).
-    // Renders as a Chatyy-styled contact row with the brand purple ring and
-    // a "(You)" suffix so it's unambiguous.
-    if (item._isMessageYourself) {
-      return (
-        <TouchableOpacity
-          style={[sty.contactRow, { borderBottomColor: colors.border }]}
-          onPress={handleMessageYourself}
-          activeOpacity={0.7}
-          accessibilityLabel={t('chat.messageYourself') || 'Message yourself'}
-          accessibilityRole="button"
-        >
-          <View style={sty.contactAvatarRing}>
-            <AvatarCircle email={item.email} name={item.name} size={40} colors={colors} />
-          </View>
-          <View style={sty.contactInfo}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-              <Text style={[sty.contactName, { color: colors.text, fontWeight: '700' }]} numberOfLines={1}>
-                {item.name} {''}
-                <Text style={{ color: colors.textTertiary, fontWeight: '500' }}>
-                  ({t('chat.youSelf') || t('common.you') || 'Você'})
-                </Text>
-              </Text>
-            </View>
-            <Text style={[sty.contactSub, { color: colors.textTertiary }]} numberOfLines={1}>
-              {t('chat.messageYourself') || 'Message yourself'}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      );
-    }
-
-    // Placeholder item for web invite section
-    if (item._isInvitePlaceholder) {
-      return (
-        <View style={[sty.contactRow, { borderBottomColor: colors.border, paddingVertical: 16 }]}>
-          <View style={[sty.quickActionIcon, { backgroundColor: '#111111', marginRight: 12 }]}>
-            <IconUserPlus size={18} color="#fff" />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={[sty.contactName, { color: colors.text }]}>{t('chat.inviteFriend')}</Text>
-            <Text style={[sty.contactSub, { color: colors.textTertiary }]}>{t('chat.inviteFriendDesc')}</Text>
-          </View>
-          <InvitePill
-            style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#111111' }]}
-            onPress={() => setShowInviteInput(true)}
-            accessibilityLabel={t('chat.invite')}
-          >
-            <IconUserPlus size={13} color="#fff" />
-            <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
-          </InvitePill>
-        </View>
-      );
-    }
-
-    const selected = isSelected(item.email);
-    const isChatyyUser = item.isRegistered === true;
-
-    // Non-registered contact - show invite options
-    if (!isChatyyUser) {
-      return (
-        <View style={[sty.contactRow, { borderBottomColor: colors.border }]}>
-          <AvatarCircle email={item.email || ''} name={item.name || item.phone || '?'} size={48} colors={colors} />
-          <View style={sty.contactInfo}>
-            <HighlightText
-              text={item.name || item.phone || '?'}
-              highlight={searchText}
-              style={[sty.contactName, { color: colors.text }]}
-              highlightStyle={{ backgroundColor: '#11111130', fontWeight: '700' }}
-            />
-            <Text style={[sty.contactSub, { color: colors.textTertiary }]} numberOfLines={1}>
-              {item.email || item.phone || ''}
-            </Text>
-          </View>
-          {(() => {
-            // Unified single-pill invite. Was 3 stacked pills (email + share + W)
-            // which the user flagged as cluttered (print 2). Now: ONE pill that
-            // picks the best channel automatically; long-press surfaces choices.
-            // Email wins when available (higher delivery, less noise);
-            // otherwise share-sheet on native, copy-link on web.
-            const hasEmail = !!item.email;
-            const hasPhone = !!item.phone && Platform.OS !== 'web';
-            const onTap = () => {
-              if (hasEmail) handleInviteByEmail(item.email, item.name);
-              else handleInviteShare(item);
-            };
-            const onHold = () => {
-              if (Platform.OS === 'ios') {
-                const opts = [];
-                const actions = [];
-                if (hasEmail) { opts.push(t('chat.inviteByEmail') || 'Convidar por email'); actions.push(() => handleInviteByEmail(item.email, item.name)); }
-                if (hasPhone) { opts.push('WhatsApp'); actions.push(() => handleInviteViaWhatsApp(item)); }
-                opts.push(t('chat.inviteShare') || 'Compartilhar link');
-                actions.push(() => handleInviteShare(item));
-                opts.push(t('common.cancel') || 'Cancelar');
-                ActionSheetIOS.showActionSheetWithOptions(
-                  { options: opts, cancelButtonIndex: opts.length - 1 },
-                  (idx) => { if (idx >= 0 && idx < actions.length) actions[idx](); }
-                );
-              } else {
-                handleInviteShare(item);
-              }
-            };
-            return (
-              <InvitePill
-                style={[sty.inviteBtn, sty.inviteBtnWithIcon, { backgroundColor: '#111111' }]}
-                onPress={onTap}
-                onLongPress={onHold}
-                disabled={invitingEmail === item.email}
-                accessibilityLabel={t('chat.invite')}
-              >
-                {invitingEmail === item.email ? (
-                  <ActivityIndicator size={14} color="#fff" />
-                ) : (
-                  <>
-                    <IconUserPlus size={13} color="#fff" />
-                    <Text style={sty.inviteBtnText}>{t('chat.invite')}</Text>
-                  </>
-                )}
-              </InvitePill>
-            );
-          })()}
-        </View>
-      );
-    }
-
-    // Registered Chatyy user
+  // Thin adapter: computes the per-row `selected` flag and hands the row its
+  // props. The heavy markup + invite-pill logic now lives in the memoized
+  // module-level ContactRow, so typing/scrolling no longer re-renders every cell.
+  const renderContact = useCallback(({ item }) => {
+    const selected = selectedMembers.some(m => m.email === item.email);
     return (
-      <TouchableOpacity
-        style={[sty.contactRow, { borderBottomColor: colors.border }]}
-        onPress={() => handleSelectContact(item)}
-        activeOpacity={0.7}
-      >
-        <View style={sty.contactAvatarRing}>
-          <AvatarCircle email={item.email} name={item.name || prettifyHandle(item.email)} size={40} colors={colors} />
-          {item.online && <View style={[sty.onlineDotSmall, { borderColor: colors.background }]} />}
-        </View>
-        <View style={sty.contactInfo}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 }}>
-            <HighlightText
-              text={item.name && !item.name.includes('@') ? item.name : prettifyHandle(item.email || item.name || '')}
-              highlight={searchText}
-              style={[sty.contactName, { color: colors.text, fontWeight: '700', flexShrink: 1 }]}
-              highlightStyle={{ backgroundColor: '#11111130', fontWeight: '700' }}
-            />
-            {/* Tiny Chatyy badge — purple check circle SVG, signals registered user.
-                Less noisy than a pill, more affirmative than nothing. Wrapped in a
-                flexShrink:0 View so the long name (flexShrink:1) truncates instead
-                of pushing this icon off-screen / onto the checkbox. */}
-            <View style={{ flexShrink: 0 }}>
-              <IconChatyyOnChat size={13} color="#111111" />
-            </View>
-            {/* "NOVO" badge — WhatsApp-style pill for contacts that just joined
-                Chatyy (last 7d via _justJoined flag, populated by friend_suggestions
-                backend + contact_joined WS event). Brand purple so it stands out
-                without screaming. */}
-            {item._justJoined && (
-              <View style={{
-                backgroundColor: '#111111',
-                paddingHorizontal: 6,
-                paddingVertical: 2,
-                borderRadius: 8,
-                marginLeft: 2,
-                flexShrink: 0,
-              }}>
-                <Text style={{ color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 0.5 }}>
-                  {t('chat.newOnChatyy') || 'NOVO'}
-                </Text>
-              </View>
-            )}
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 }}>
-            <HighlightText
-              text={item.email}
-              highlight={searchText}
-              style={[sty.contactSub, { color: colors.textTertiary, flexShrink: 1 }]}
-              highlightStyle={{ backgroundColor: '#11111130' }}
-            />
-            {item.username ? (
-              <Text style={{ fontSize: 12, color: '#111111', fontWeight: '600', flexShrink: 0 }} numberOfLines={1}>@{item.username}</Text>
-            ) : null}
-          </View>
-          {item.about ? (
-            <Text style={[sty.contactAbout, { color: colors.textSecondary }]} numberOfLines={1}>
-              {item.about}
-            </Text>
-          ) : item.last_seen ? (
-            <Text style={[sty.contactAbout, { color: colors.textTertiary }]} numberOfLines={1}>
-              {t('chat.lastSeen')} {formatLastSeen(item.last_seen)}
-            </Text>
-          ) : null}
-        </View>
-        {(mode === 'group' || mode === 'channel') && item.email && (
-          <View style={[sty.checkbox, {
-            backgroundColor: selected ? colors.primary : 'transparent',
-            borderColor: selected ? colors.primary : colors.border,
-          }]}>
-            {selected && <IconCheck size={14} color="#fff" />}
-          </View>
-        )}
-      </TouchableOpacity>
+      <ContactRow
+        item={item}
+        colors={colors}
+        searchText={searchText}
+        mode={mode}
+        selected={selected}
+        invitingEmail={invitingEmail}
+        t={t}
+        onMessageYourself={handleMessageYourself}
+        onSelect={onSelectRow}
+        onInviteByEmail={onInviteByEmailRow}
+        onInviteShare={onInviteShareRow}
+        onInviteViaWhatsApp={onInviteViaWhatsAppRow}
+        onShowInviteInput={setShowInviteInput}
+      />
     );
-  };
+  }, [colors, searchText, mode, selectedMembers, invitingEmail, t, handleMessageYourself, onSelectRow, onInviteByEmailRow, onInviteShareRow, onInviteViaWhatsAppRow]);
 
-  // Format last seen time
-  function formatLastSeen(dateStr) {
-    if (!dateStr) return '';
-    try {
-      let d;
-      // Handle numeric timestamps (milliseconds since epoch)
-      if (typeof dateStr === 'number') {
-        d = new Date(dateStr);
-      } else {
-        let s = String(dateStr);
-        // Ensure UTC timestamp is properly parsed
-        if (!s.includes('T')) s = s.replace(' ', 'T');
-        if (!s.includes('Z') && !s.includes('+')) s += 'Z';
-        d = new Date(s);
-      }
-      if (isNaN(d.getTime())) return '';
-      const now = new Date();
-      const diffMin = Math.floor((now - d) / 60000);
-      if (diffMin < 0) return t('time.now'); // future = treat as now
-      if (diffMin < 1) return t('time.now');
-      if (diffMin < 60) return (t('time.min') || '{n} min').replace('{n}', diffMin);
-      const diffH = Math.floor(diffMin / 60);
-      const timeStr = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      if (diffH < 24) {
-        return `${t('time.today') || 'today'} ${timeStr}`;
-      }
-      if (diffH < 48) {
-        return `${t('time.yesterday') || 'yesterday'} ${timeStr}`;
-      }
-      return `${d.toLocaleDateString([], { day: 'numeric', month: 'short' })} ${timeStr}`;
-    } catch { return ''; }
-  }
+  // Section header renderer — hoisted to a stable useCallback (was an inline
+  // arrow on the SectionList). Only depends on isDark.
+  const renderSectionHeader = useCallback(({ section }) => {
+    // Slim A-Z letter bucket — single letter, lighter background, smaller
+    // padding so the on-Chatyy list breathes between letters.
+    if (section._letterBucket) {
+      return (
+        <View style={[sty.letterHeader, { backgroundColor: isDark ? '#0d0d0d' : '#fafafc' }]}>
+          <Text style={[sty.letterHeaderText, { color: isDark ? '#111111' : '#111111' }]}>
+            {section.title}
+          </Text>
+        </View>
+      );
+    }
+    return (
+      <View style={[sty.sectionHeader, { backgroundColor: isDark ? '#111' : '#f8f8fa' }]}>
+        <View style={sty.sectionAccentLine} />
+        <Text style={[sty.sectionTitle, { color: isDark ? '#111111' : '#111111' }]}>{section.title}</Text>
+      </View>
+    );
+  }, [isDark]);
 
   // sections and buildSections moved before handleSearch to avoid TDZ
 
@@ -1761,6 +1838,12 @@ export default function ChatNewScreen() {
             data={searchResults}
             keyExtractor={(item, i) => item.email || String(i)}
             renderItem={renderContact}
+            extraData={listExtraData}
+            removeClippedSubviews
+            windowSize={10}
+            initialNumToRender={12}
+            maxToRenderPerBatch={10}
+            updateCellsBatchingPeriod={50}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
             ListHeaderComponent={(searchChannelResults && searchChannelResults.length > 0)
@@ -1841,28 +1924,13 @@ export default function ChatNewScreen() {
               sections={sections}
               keyExtractor={(item, idx) => item.email || item.phone || String(idx)}
               renderItem={renderContact}
-              renderSectionHeader={({ section }) => {
-                // Slim A-Z letter bucket — single letter, lighter background,
-                // smaller padding so the on-Chatyy list breathes between
-                // letters without dominating the page.
-                if (section._letterBucket) {
-                  return (
-                    <View style={[sty.letterHeader, { backgroundColor: isDark ? '#0d0d0d' : '#fafafc' }]}>
-                      <Text style={[sty.letterHeaderText, { color: isDark ? '#111111' : '#111111' }]}>
-                        {section.title}
-                      </Text>
-                    </View>
-                  );
-                }
-                return (
-                  <View style={[sty.sectionHeader, { backgroundColor: isDark ? '#111' : '#f8f8fa' }]}>
-                    <View style={sty.sectionAccentLine} />
-                    {/* Brand subtle in dark mode (rgba), full brand in light. Matches
-                        the polish spec for "uppercase letter-spacing 0.5 brand subtle". */}
-                    <Text style={[sty.sectionTitle, { color: isDark ? '#111111' : '#111111' }]}>{section.title}</Text>
-                  </View>
-                );
-              }}
+              renderSectionHeader={renderSectionHeader}
+              extraData={listExtraData}
+              removeClippedSubviews
+              windowSize={10}
+              initialNumToRender={12}
+              maxToRenderPerBatch={10}
+              updateCellsBatchingPeriod={50}
               contentContainerStyle={sty.contactList}
               stickySectionHeadersEnabled
               ListHeaderComponent={
@@ -2595,6 +2663,22 @@ const sty = StyleSheet.create({
   contactName: { fontSize: 16, fontWeight: '500' },
   contactSub: { fontSize: 12, marginTop: 2, opacity: 0.7 },
   contactAbout: { fontSize: 12, marginTop: 3, fontStyle: 'italic' },
+  // Hoisted static inline objects from the old inline row renderer — keeps the
+  // memoized ContactRow from allocating fresh style objects on every render.
+  flex1: { flex: 1 },
+  shrink0: { flexShrink: 0 },
+  rowCenterGap6: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rowCenterGap6Min: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
+  usernameInline: { fontSize: 12, color: '#111111', fontWeight: '600', flexShrink: 0 },
+  novoBadge: {
+    backgroundColor: '#111111',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    marginLeft: 2,
+    flexShrink: 0,
+  },
+  novoBadgeText: { color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 0.5 },
   chatyyBadge: {
     paddingHorizontal: 7, paddingVertical: 2, borderRadius: 10,
   },
