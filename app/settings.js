@@ -5315,16 +5315,19 @@ const s = StyleSheet.create({
   // Section — [beauty2 2026-05-31] slightly calmer corner radius + a touch
   // more inner breathing room (paddingVertical) so grouped rows read like
   // iOS inset-grouped cards; horizontal padding kept tight for label reach.
+  // [light 2026] inset-grouped card: clean white surface + subtle hairline
+  // (border comes from theme inline). Shadow softened to a whisper so the
+  // hairline does the separating — calmer, airier, less scroll.
   section: {
-    borderRadius: BorderRadius.xl, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.lg,
-    marginBottom: Spacing.lg,
+    borderRadius: BorderRadius.xl, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md + 2,
+    marginBottom: Spacing.md,
     ...Platform.select({
       web: {
         transition: 'box-shadow 0.2s ease',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.03), 0 1px 3px rgba(0,0,0,0.04)',
+        boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
       },
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 6 },
-      android: { elevation: 1 },
+      ios: { shadowColor: '#101114', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.03, shadowRadius: 5 },
+      android: { elevation: 0 },
     }),
   },
   profileSection: {
@@ -5364,7 +5367,7 @@ const s = StyleSheet.create({
   // -0.5) so it doesn't look squashed at this size.
   // [beauty2 2026-05-31] dialed the card heading down to 18px/700 — closer to
   // iOS Settings group-header weight; calmer, less shouty than 20/800.
-  sectionTitle: { fontSize: FontSize.xxl, fontWeight: '700', marginBottom: Spacing.md + 2, letterSpacing: LetterSpacing.tighter },
+  sectionTitle: { fontSize: FontSize.xl, fontWeight: '700', marginBottom: Spacing.sm + 2, letterSpacing: LetterSpacing.tighter },
   // Eyebrow label — small uppercase brand-color tag rendered above a section
   // title for screens that want extra navigability (iOS Settings pattern).
   // Currently only used internally; rows opt in via <Text style={[s.sectionEyebrow, { color: colors.primary }]}/>.
@@ -5375,10 +5378,12 @@ const s = StyleSheet.create({
   // a more relaxed iOS-Settings density.
   // [beauty2 2026-05-31] hairline dividers (was 1px solid) for a crisper,
   // lighter iOS-Settings separator; comfortable ~14px vertical density.
+  // [light 2026] tighter iOS-Settings density — ~46-50px rows, hairline
+  // dividers so the list reads compact and calm without feeling crammed.
   settingRow: {
     flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8,
-    minHeight: 48,
-    paddingVertical: Spacing.md + 5, borderBottomWidth: StyleSheet.hairlineWidth,
+    minHeight: 46,
+    paddingVertical: Spacing.md + 2, borderBottomWidth: StyleSheet.hairlineWidth,
     ...Platform.select({
       web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
       default: {},
@@ -5386,7 +5391,7 @@ const s = StyleSheet.create({
   },
   settingRowColumn: {
     flexDirection: 'column', alignItems: 'flex-start',
-    paddingVertical: Spacing.md + 4, borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: Spacing.md + 2, borderBottomWidth: StyleSheet.hairlineWidth,
   },
   settingInfo: { flex: 1, minWidth: 0 },
   settingLabel: { fontSize: FontSize.lg, fontWeight: '600', letterSpacing: LetterSpacing.tight },

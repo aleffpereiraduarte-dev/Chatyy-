@@ -24416,12 +24416,12 @@ function ChatConversationInner() {
   if (chatLocked && !chatUnlocked) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-        <View style={[styles.header, { backgroundColor: isDark ? '#0a0a0a' : '#111111', paddingTop: insets.top, position: 'absolute', top: 0, left: 0, right: 0 }]}>
+        <View style={[styles.header, { backgroundColor: isDark ? '#111b21' : '#ffffff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#1a2730' : '#eef0f1', paddingTop: insets.top, position: 'absolute', top: 0, left: 0, right: 0 }]}>
           <TouchableOpacity onPress={goBack} style={styles.headerBtn}>
-            <IconArrowLeft size={22} color="#fff" />
+            <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
           <View style={styles.headerInfo}>
-            <Text style={[styles.headerTitle, { color: '#fff' }]} numberOfLines={1}>{conversationName}</Text>
+            <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>{conversationName}</Text>
           </View>
         </View>
         <IconLock size={48} color={colors.textTertiary} />
@@ -24465,7 +24465,7 @@ function ChatConversationInner() {
       // by setting keyboardHeight=0 on keyboardDidHide in the listener,
       // which already runs (line ~7160).
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      style={[styles.container, { backgroundColor: isDark ? '#0E0A18' : '#F3EFF8' }]}
+      style={[styles.container, { backgroundColor: isDark ? '#0b141a' : '#f0f2f5' }]}
       keyboardVerticalOffset={0}
     >
       {/* Drag-and-drop overlay (web only) — appears while the user is
@@ -24512,19 +24512,21 @@ function ChatConversationInner() {
       {/* Selection header (replaces main header when in multi-select mode) */}
       {selectionMode ? (
         <View style={[styles.header, {
-          backgroundColor: isDark ? '#1a2c2a' : '#0b6e60',
+          backgroundColor: isDark ? '#111b21' : '#ffffff',
+          borderBottomWidth: StyleSheet.hairlineWidth,
+          borderBottomColor: isDark ? '#1a2730' : '#eef0f1',
           paddingTop: insets.top,
         }]}>
           <TouchableOpacity onPress={handleClearSelection} style={styles.headerBtn} accessibilityLabel={t('common.cancel') || 'Cancelar'} accessibilityRole="button">
-            <IconX size={22} color="#fff" />
+            <IconX size={22} color={colors.text} />
           </TouchableOpacity>
           <View style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center' }]}>
-            <Text style={[styles.headerTitle, { color: '#fff', fontSize: 18 }]}>
+            <Text style={[styles.headerTitle, { color: colors.text, fontSize: 18 }]}>
               {selectedIds.size}
             </Text>
             {messages.length > selectedIds.size && (
               <TouchableOpacity onPress={handleSelectAll} style={{ marginLeft: 16 }} hitSlop={8}>
-                <Text style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '600' }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 13, fontWeight: '600' }}>
                   {t('chatConv.selectAll') || 'Selecionar tudo'}
                 </Text>
               </TouchableOpacity>
@@ -24536,32 +24538,34 @@ function ChatConversationInner() {
             setSelectedIds(new Set());
             setSelectionMode(false);
           }} style={styles.headerBtn} accessibilityLabel={t('chatConv.star') || 'Favoritar'}>
-            <IconStar size={20} color="#fff" />
+            <IconStar size={20} color={colors.text} />
           </TouchableOpacity>
           <TouchableOpacity onPress={handleForwardSelected} style={styles.headerBtn} accessibilityLabel={t('chatConv.forward') || 'Encaminhar'}>
-            <IconForward size={20} color="#fff" />
+            <IconForward size={20} color={colors.text} />
           </TouchableOpacity>
           <TouchableOpacity onPress={handleCopySelected} style={styles.headerBtn} accessibilityLabel={t('chatConv.copy') || 'Copiar'}>
-            <IconCopy size={19} color="#fff" />
+            <IconCopy size={19} color={colors.text} />
           </TouchableOpacity>
           <TouchableOpacity onPress={handleDeleteSelected} style={styles.headerBtn} accessibilityLabel={t('common.delete') || 'Excluir'}>
-            <IconTrash size={19} color="#fff" />
+            <IconTrash size={19} color={colors.error || '#EF4444'} />
           </TouchableOpacity>
         </View>
       ) : (
       /* Header with presence — gradient on web for premium feel */
       <View style={[styles.header, {
-        backgroundColor: isDark ? '#0d0d0d' : '#111111',
+        backgroundColor: isDark ? '#111b21' : '#ffffff',
+        borderBottomWidth: StyleSheet.hairlineWidth,
+        borderBottomColor: isDark ? '#1a2730' : '#eef0f1',
         paddingTop: insets.top,
         ...(Platform.OS === 'web'
           ? {
-              background: isDark ? '#141416' : '#111111',
-              boxShadow: '0 1px 0 rgba(255,255,255,0.04)',
+              background: isDark ? '#111b21' : '#ffffff',
+              boxShadow: isDark ? '0 1px 0 rgba(255,255,255,0.05)' : '0 1px 0 rgba(0,0,0,0.05)',
             }
           : {}),
       }]}>
         <TouchableOpacity onPress={goBack} style={[styles.headerBtn, { marginRight: 2 }]} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
-          <IconArrowLeft size={22} color="#fff" />
+          <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <TouchableOpacity style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center', gap: 8 }]} onPress={() => {
           if (conversationType === 'group') {
@@ -24627,10 +24631,10 @@ function ChatConversationInner() {
           </View>
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
-              <Text style={[styles.headerTitle, { color: '#fff' }]} numberOfLines={1}>
+              <Text style={[styles.headerTitle, { color: colors.text }]} numberOfLines={1}>
                 {conversationName}
               </Text>
-              {e2eEnabled && <IconLock size={12} color="rgba(255,255,255,0.72)" />}
+              {e2eEnabled && <IconLock size={12} color={colors.textSecondary} />}
             </View>
             {(presenceText !== '') && (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -24651,12 +24655,12 @@ function ChatConversationInner() {
                 <PresenceTextFade
                   text={presenceText}
                   style={[styles.headerSubtitle, {
-                    color: presence?.status === 'online' && !isTyping && wsConnected ? '#4ade80' : 'rgba(255,255,255,0.7)',
+                    color: presence?.status === 'online' && !isTyping && wsConnected ? (isDark ? '#4ade80' : '#0b8a4a') : colors.textSecondary,
                     ...(isTyping ? { fontStyle: 'italic' } : {}),
                     flexShrink: 1,
                   }]}
                 />
-                <TypingDotsFade visible={isTyping} color="rgba(255,255,255,0.7)" />
+                <TypingDotsFade visible={isTyping} color={colors.textSecondary} />
               </View>
             )}
           </View>
@@ -24692,8 +24696,8 @@ function ChatConversationInner() {
             accessibilityRole="button"
             hitSlop={{ top: 6, bottom: 6, left: 4, right: 4 }}
           >
-            <IconSparkles size={15} color="rgba(255,255,255,0.95)" />
-            <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>
+            <IconSparkles size={15} color={colors.text} />
+            <Text style={{ color: colors.text, fontSize: 11, fontWeight: '700' }}>
               {initialUnreadCountRef.current > 99 ? '99+' : String(initialUnreadCountRef.current)}
             </Text>
           </TouchableOpacity>
@@ -24706,18 +24710,18 @@ function ChatConversationInner() {
           accessibilityLabel={t('chat.searchPlaceholder') || 'Buscar'}
           accessibilityRole="button"
         >
-          <IconSearch size={17} color="rgba(255,255,255,0.95)" />
+          <IconSearch size={17} color={colors.text} />
         </TouchableOpacity>
         <TouchableOpacity onPress={handleStartAudioCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('call.callingAudio') || 'Audio call'} accessibilityRole="button">
-          <IconPhone size={17} color="rgba(255,255,255,0.95)" />
+          <IconPhone size={17} color={colors.text} />
         </TouchableOpacity>
         <TouchableOpacity onPress={handleStartVideoCall} disabled={startingCall} style={styles.headerBtn} accessibilityLabel={t('call.callingVideo') || 'Video call'} accessibilityRole="button">
           {startingCall
-            ? <ActivityIndicator size="small" color="#fff" />
-            : <IconVideo size={18} color="rgba(255,255,255,0.95)" />}
+            ? <ActivityIndicator size="small" color={colors.text} />
+            : <IconVideo size={18} color={colors.text} />}
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setShowHeaderMenu(true)} style={styles.headerBtn} accessibilityLabel={t('common.more') || 'More options'} accessibilityRole="button">
-          <IconMoreVert size={20} color="rgba(255,255,255,0.9)" />
+          <IconMoreVert size={20} color={colors.text} />
         </TouchableOpacity>
       </View>
       )}
@@ -25239,7 +25243,7 @@ function ChatConversationInner() {
           })()}
           ownBubbleColor={isDark ? '#111111' : '#F1F3F5'}
           otherBubbleColor={isDark ? '#26282C' : '#ffffff'}
-          listBackgroundColor={isDark ? '#0E0A18' : '#F6F0FE'}
+          listBackgroundColor={isDark ? '#0b141a' : '#f0f2f5'}
           textColor={isDark ? '#f0f2f5' : '#111b21'}
           metaColor={isDark ? 'rgba(240,242,245,0.55)' : 'rgba(17, 17, 17,0.55)'}
           isGroupChat={conversationType === 'group'}
@@ -25798,17 +25802,17 @@ function ChatConversationInner() {
           <View style={{
             flexDirection: 'row', alignItems: 'center', gap: 12,
             paddingHorizontal: 16, paddingVertical: 12,
-            borderBottomWidth: 1, borderBottomColor: colors.border,
-            backgroundColor: isDark ? '#0a0a0a' : '#111111',
+            borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#1a2730' : '#eef0f1',
+            backgroundColor: isDark ? '#111b21' : '#ffffff',
           }}>
             <TouchableOpacity onPress={() => setShowContactPicker(false)} hitSlop={12}>
-              <IconArrowLeft size={22} color="#fff" />
+              <IconArrowLeft size={22} color={colors.text} />
             </TouchableOpacity>
             <View style={{ flex: 1 }}>
-              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>
+              <Text style={{ color: colors.text, fontSize: 18, fontWeight: '700' }}>
                 {t('chatConv.selectContact') || 'Selecionar contato'}
               </Text>
-              <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, marginTop: 1 }}>
+              <Text style={{ color: colors.textSecondary, fontSize: 12, marginTop: 1 }}>
                 {(contactPickerList.length || 0) + ' contatos'}
               </Text>
             </View>
@@ -26506,7 +26510,7 @@ function ChatConversationInner() {
         )}
 
         <View pointerEvents={(blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 'none' : 'auto'} style={[styles.inputBar, {
-          backgroundColor: isDark ? '#0E0A18' : '#F3EFF8',
+          backgroundColor: isDark ? '#111b21' : '#f0f2f5',
           opacity: (blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 0.4 : 1,
           // Android edge-to-edge w/ transparent navigationBar: insets.bottom
           // ≈ 48px for gesture indicator. When keyboard opens, OS draws

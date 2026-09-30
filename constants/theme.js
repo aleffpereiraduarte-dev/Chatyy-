@@ -41,28 +41,37 @@ export const Colors = {
   onPrimary: '#ffffff',
   onPrimaryContainer: '#111111',
 
-  // Background / Surface — white + barely-there gray. Maximum breathing room.
-  background: '#F7F8FA',
+  // Background / Surface — clean WHITE (2026-09-30 "much less black, more
+  // white"): page is pure white now, not off-gray, for a lighter, airier feel.
+  background: '#ffffff',
   surface: '#ffffff',
   surfaceVariant: '#F0F1F3',
   surfaceHover: '#F2F3F5',
 
-  // Header
+  // Header — WhitE header with dark text/icons (WhatsApp 2026). Was already
+  // white at the token level; the components used to hardcode a black header
+  // and now read these tokens / use colors.text on a white surface.
   headerBg: 'rgba(255, 255, 255, 0.95)',
   headerBgSolid: '#ffffff',
-  headerBorder: 'rgba(0, 0, 0, 0.06)',
+  headerBorder: '#eef0f1',
   sidebarActiveBg: 'rgba(17, 17, 17, 0.10)',
 
-  // Text — NEUTRAL gray ramp, near-black on top. textTertiary kept ≥AA.
-  text: '#111315',
-  textSecondary: '#606468',
-  textTertiary: '#787C82',
+  // Text — WhatsApp ink ramp. name/text #111b21, muted/secondary #667781.
+  text: '#111b21',
+  textSecondary: '#667781',
+  textTertiary: '#8696a0',
   textOnPrimary: '#ffffff',
 
-  // Border — neutral hairline (2026: crisp 1px separators, #EAEAEC)
-  border: '#EAEAEC',
-  borderLight: '#F0F1F3',
-  divider: '#EAEAEC',
+  // Border — very light hairline (#eef0f1) so rows/sections read as airy.
+  border: '#eef0f1',
+  borderLight: '#F4F5F6',
+  divider: '#eef0f1',
+
+  // Chips (filter pills) — inactive = light gray fill, active = small black.
+  chipBg: '#f0f2f5',
+  chipText: '#667781',
+  chipActiveBg: '#111111',
+  chipActiveText: '#ffffff',
 
   // Status — functional only, kept saturated so meaning still reads
   error: '#dc2626',
@@ -219,33 +228,39 @@ export const DarkColors = {
   onPrimary: '#ffffff',
   onPrimaryContainer: '#F0F1F3',
 
-  // Background / Surface — refined NEUTRAL near-blacks (2026: not pure #000),
-  // layered depth: page #0B0B0C → surface #141416 → variant #202022.
-  background: '#0B0B0C',
-  surface: '#141416',
-  surfaceVariant: '#202022',
-  surfaceHover: '#1C1C1E',
-  surfaceElevated: '#202022',
-  surfaceGlass: 'rgba(22, 22, 24, 0.78)',
+  // Background / Surface — WhatsApp-dark blue-charcoal (2026-09-30): page
+  // #0e1621 → surface #111b21, so dark mode matches the new light palette's
+  // cool neutral (not pure black).
+  background: '#0e1621',
+  surface: '#111b21',
+  surfaceVariant: '#1c2a35',
+  surfaceHover: '#18222c',
+  surfaceElevated: '#1c2a35',
+  surfaceGlass: 'rgba(17, 27, 33, 0.78)',
   surfaceGlassBorder: 'rgba(255, 255, 255, 0.08)',
 
-  // Header dark
-  headerBg: 'rgba(13, 13, 13, 0.97)',
-  headerBgSolid: '#0d0d0d',
-  headerBorder: 'rgba(255, 255, 255, 0.06)',
-  sidebarActiveBg: 'rgba(17, 17, 17, 0.14)',
+  // Header dark — surface #111b21 with light text/icons.
+  headerBg: 'rgba(17, 27, 33, 0.97)',
+  headerBgSolid: '#111b21',
+  headerBorder: '#1a2730',
+  sidebarActiveBg: 'rgba(233, 237, 239, 0.08)',
 
-  // Text — NEUTRAL gray ramp; tertiary kept ≥AA on OLED
-  text: '#F0F1F3',
-  textSecondary: '#9BA0A6',
-  textTertiary: '#868B91',
+  // Text — WhatsApp dark ink ramp. text #e9edef, muted #8696a0.
+  text: '#e9edef',
+  textSecondary: '#8696a0',
+  textTertiary: '#6b7b88',
   textOnPrimary: '#ffffff',
 
-  // Border — solid hairline for OLED (2026: crisp #232326 instead of near-
-  // invisible alpha), so cards/rows read as intentional in dark mode.
-  border: '#232326',
-  borderLight: 'rgba(255, 255, 255, 0.03)',
-  divider: 'rgba(255, 255, 255, 0.08)',
+  // Border — cool hairline #1a2730 (matches WhatsApp dark dividers).
+  border: '#1a2730',
+  borderLight: 'rgba(255, 255, 255, 0.04)',
+  divider: '#1a2730',
+
+  // Chips — inactive = dark surface, active = light accent (small).
+  chipBg: '#1c2a35',
+  chipText: '#8696a0',
+  chipActiveBg: '#e9edef',
+  chipActiveText: '#0e1621',
 
   // Status — functional
   error: '#f87171',

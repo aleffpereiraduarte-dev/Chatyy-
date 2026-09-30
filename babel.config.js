@@ -21,5 +21,17 @@ module.exports = function (api) {
       // the single-session AR camera (StatusCamera.js).
       'react-native-worklets-core/plugin',
     ],
+    // Strip console.* from PRODUCTION bundles only (OTA / store builds set
+    // BABEL_ENV/NODE_ENV=production). Dev keeps all logs. console.error and
+    // console.warn are preserved so genuine failures still surface in prod.
+    // ~1,098 console.* calls across the app are removed at build time — less
+    // JS shipped, no runtime log overhead on device.
+    env: {
+      production: {
+        plugins: [
+          ['transform-remove-console', { exclude: ['error', 'warn'] }],
+        ],
+      },
+    },
   };
 };

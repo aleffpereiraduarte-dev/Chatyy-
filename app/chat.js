@@ -187,7 +187,7 @@ function BrandTitle({ colors, size = 22, light }) {
             <Path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" fill="#111111" opacity={0.9} />
             <Path d="M9 12l2 2 4-4" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
           </Svg>
-          <Text style={[styles.brandTitle, { color: '#fff', fontSize: size }]}>Chatyy</Text>
+          <Text style={[styles.brandTitle, { color: colors.text, fontSize: size }]}>Chatyy</Text>
           <View style={{ backgroundColor: '#111111', borderRadius: 8, paddingHorizontal: 6, paddingVertical: 2 }}>
             <Text style={{ color: '#fff', fontSize: size - 6, fontWeight: '800' }}>Kids</Text>
           </View>
@@ -736,8 +736,9 @@ function ChatHub() {
   };
 
   const renderHeaderAction = () => {
-    const headerIconColor = '#fff';
-    const btnStyle = [styles.headerIconBtn, { backgroundColor: 'rgba(255,255,255,0.12)', borderRadius: 20 }];
+    const headerIconColor = colors.text;
+    const headerBtnBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)';
+    const btnStyle = [styles.headerIconBtn, { backgroundColor: headerBtnBg, borderRadius: 20 }];
     if (activeTab === 'chats') {
       return (
         <>
@@ -759,7 +760,7 @@ function ChatHub() {
     if (activeTab === 'calls') {
       return (
         <TouchableOpacity onPress={() => router.push('/chat-new')} activeOpacity={0.6}
-          style={[styles.headerIconBtn, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
+          style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]}>
           <IconPhone size={17} color={headerIconColor} />
         </TouchableOpacity>
       );
@@ -770,7 +771,7 @@ function ChatHub() {
         // R2). Reusa o fluxo do strip "+ status": requestNewStatus() flipa
         // autoNewStatus e o ChatStatusTab abre o composer canônico.
         <TouchableOpacity onPress={requestNewStatus} activeOpacity={0.6}
-          style={[styles.headerIconBtn, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
+          style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]}>
           <IconCameraHeader size={18} color={headerIconColor} />
         </TouchableOpacity>
       );
@@ -778,7 +779,7 @@ function ChatHub() {
     if (activeTab === 'feed') {
       return (
         <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6}
-          style={[styles.headerIconBtn, { backgroundColor: 'rgba(255,255,255,0.1)' }]}>
+          style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]}>
           <IconSearch size={18} color={headerIconColor} />
         </TouchableOpacity>
       );
@@ -811,20 +812,24 @@ function ChatHub() {
   const searchHeight = searchAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 52] });
   const searchOpacity = searchAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0, 1] });
 
-  // WhatsApp 2026 header style — premium gradient
-  // [MONO 2026-09-30] Kids header neutralized — was an indigo #6366f1 +
-  // linear-gradient (banned: purple + gradients). Now solid monochrome,
-  // same black surface as the standard header.
-  const glassHeader = { backgroundColor: isDark ? '#111111' : '#111111' };
+  // WhatsApp 2026 header style — CLEAN WHITE (2026-09-30 "much less black").
+  // Was a solid black surface (#111 in both modes). Now a white (light) /
+  // surface (dark) header with dark text + a hairline separator, so the top
+  // chrome reads airy instead of a heavy black bar.
+  const glassHeader = {
+    backgroundColor: isDark ? '#111b21' : '#ffffff',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: isDark ? '#1a2730' : '#eef0f1',
+  };
 
   const glassTabBar = {
-    backgroundColor: isDark ? '#0a0a0a' : '#ffffff',
+    backgroundColor: isDark ? '#111b21' : '#ffffff',
   };
 
   // ── DESKTOP LAYOUT (side rail + content) ──
   if (isDesktop) {
     return (
-      <View style={[styles.container, { backgroundColor: isDark ? '#000000' : '#f0f2f5', flexDirection: 'row' }]}>
+      <View style={[styles.container, { backgroundColor: isDark ? '#0e1621' : '#f0f2f5', flexDirection: 'row' }]}>
         {/* Side Rail */}
         <View style={[styles.desktopRail, {
           backgroundColor: isDark ? '#0a0a0a' : '#111111',
@@ -879,10 +884,9 @@ function ChatHub() {
           {/* Desktop header with glass */}
           <View style={[styles.desktopHeader, {
             ...glassHeader,
-            borderBottomWidth: 0,
           }]}>
             <View style={styles.titleWrap}>
-              <Text style={[styles.title, { color: '#fff' }]}>{titles[activeTab]}</Text>
+              <Text style={[styles.title, { color: colors.text }]}>{titles[activeTab]}</Text>
             </View>
             <View style={styles.headerActions}>
               {renderHeaderAction()}
@@ -966,13 +970,12 @@ function ChatHub() {
   // ── MOBILE LAYOUT (bottom tab bar) ──
   return (
     <View style={[styles.container, {
-      backgroundColor: isDark ? '#000000' : '#ffffff',
+      backgroundColor: isDark ? '#0e1621' : '#ffffff',
       paddingTop: insets.top,
     }]}>
       {/* WhatsApp-style header — no back arrow on mobile (Chatyy IS home) */}
       <View style={[styles.header, {
         ...glassHeader,
-        borderBottomWidth: 0,
         paddingLeft: 14,
       }]}>
         {/* Profile avatar — opens the unified profile (/u/{me}).
@@ -990,13 +993,13 @@ function ChatHub() {
         )}
         <View style={[styles.titleWrap, { flex: 1 }]}>
           {activeTab === 'chats' ? (
-            <BrandTitle colors={colors} light />
+            <BrandTitle colors={colors} />
           ) : (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <TouchableOpacity onPress={() => handleTabPress('chats')} hitSlop={10}>
-                <IconArrowLeft size={18} color="rgba(255,255,255,0.8)" />
+                <IconArrowLeft size={18} color={colors.text} />
               </TouchableOpacity>
-              <Text style={[styles.title, { color: '#fff' }]}>{titles[activeTab]}</Text>
+              <Text style={[styles.title, { color: colors.text }]}>{titles[activeTab]}</Text>
             </View>
           )}
         </View>
@@ -1062,7 +1065,7 @@ function ChatHub() {
 
       {/* Bottom tab bar — floating premium (rounded top + soft elevation) */}
       <View style={[styles.tabBar, {
-        backgroundColor: isDark ? '#0a0a0a' : '#ffffff',
+        backgroundColor: isDark ? '#111b21' : '#ffffff',
         borderTopColor: 'transparent',
         paddingBottom: insets.bottom || 10,
         borderTopLeftRadius: 22,
@@ -1077,7 +1080,7 @@ function ChatHub() {
         } : {
           backdropFilter: 'blur(24px) saturate(200%)',
           WebkitBackdropFilter: 'blur(24px) saturate(200%)',
-          backgroundColor: isDark ? 'rgba(10, 10, 10, 0.92)' : 'rgba(255, 255, 255, 0.92)',
+          backgroundColor: isDark ? 'rgba(17, 27, 33, 0.92)' : 'rgba(255, 255, 255, 0.92)',
           boxShadow: isDark
             ? '0 -2px 6px rgba(0,0,0,0.35), 0 -1px 0 rgba(255,255,255,0.04)'
             : '0 -1px 3px rgba(0,0,0,0.06), 0 -1px 0 rgba(0,0,0,0.04)',
@@ -1328,17 +1331,18 @@ function AppTile({ item, badge, onPress, colors, isDark }) {
       accessibilityRole="button"
       accessibilityLabel={item.label + (badge ? `, ${badge} novos` : '')}
     >
-      <Animated.View style={{ width: 56, height: 56, transform: [{ scale }] }}>
-        {/* [MONO 2026-09-30] Strict Uber monochrome — the per-app accent
+      <Animated.View style={{ width: 60, height: 60, transform: [{ scale }] }}>
+        {/* [MONO 2026-09-30] Strict monochrome — the per-app accent
             (item.ic.c: green/red/blue/orange/yellow/…) is intentionally
             IGNORED for rendering so every tile reads as one black&white set:
-            a neutral gray tile with a black (light) / white (dark) glyph. */}
+            a soft light-gray tile (#f5f6f8 / #18222c) with a black (light) /
+            white (dark) glyph. 60×60 radius-18 for a cleaner, roomier grid. */}
         <View style={{
-          width: 56, height: 56, borderRadius: 16,
-          backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)',
+          width: 60, height: 60, borderRadius: 18,
+          backgroundColor: isDark ? '#18222c' : '#f5f6f8',
           alignItems: 'center', justifyContent: 'center',
         }}>
-          <item.ic.Comp size={26} color={isDark ? '#F2F3F5' : '#111111'} />
+          <item.ic.Comp size={26} color={isDark ? '#e9edef' : '#111111'} />
         </View>
         {!!badge && (
           <Animated.View style={{
@@ -1511,7 +1515,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
           activeOpacity={1}
           onPress={() => {}}
           style={{
-            backgroundColor: isDark ? '#0f0f14' : '#fff',
+            backgroundColor: isDark ? '#111b21' : '#fff',
             borderTopLeftRadius: 24,
             borderTopRightRadius: 24,
             paddingTop: 10,
@@ -1533,16 +1537,16 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
               <Text style={{ fontSize: 24, color: isDark ? '#888' : '#888' }}>×</Text>
             </TouchableOpacity>
           </View>
-          {/* Search */}
+          {/* Search — prominent light pill at the top of the sheet */}
           <View style={{
             flexDirection: 'row',
             alignItems: 'center',
-            backgroundColor: isDark ? '#1a1a22' : '#f3f4f6',
-            borderRadius: 12,
+            backgroundColor: isDark ? '#18222c' : '#f0f2f5',
+            borderRadius: 14,
             paddingHorizontal: 12,
-            marginBottom: 12,
+            marginBottom: 14,
           }}>
-            <IconSearch size={16} color={isDark ? '#666' : '#888'} />
+            <IconSearch size={16} color={isDark ? '#8696a0' : '#8696a0'} />
             <TextInput
               value={q}
               onChangeText={setQ}
@@ -1562,6 +1566,43 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
           >
+            {/* Featured "Chatyy One" card \u2014 the app's personal AI, front and
+                center. Small black surface (accent) in light, light surface in
+                dark, with a bubble + two eyes glyph. Reuses the existing 'one'
+                route via handlePress so navigation logic is untouched. */}
+            {!qLower && (
+              <Pressable
+                onPress={() => { const one = itemByKey.get('one'); if (one) { handlePress(one); } else { onClose(); try { router.push('/one'); } catch (e) { console.warn('[chat] router.push failed:', e); } } }}
+                style={({ pressed }) => ({
+                  flexDirection: 'row', alignItems: 'center', gap: 14,
+                  backgroundColor: isDark ? '#e9edef' : '#111111',
+                  borderRadius: 18, paddingVertical: 14, paddingHorizontal: 16, marginBottom: 18,
+                  transform: [{ scale: pressed ? 0.985 : 1 }],
+                })}
+                accessibilityRole="button"
+                accessibilityLabel="Chatyy One"
+              >
+                {/* Bubble + eyes avatar */}
+                <View style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: isDark ? '#111b21' : '#ffffff', alignItems: 'center', justifyContent: 'center' }}>
+                  <View style={{ flexDirection: 'row', gap: 6 }}>
+                    <View style={{ width: 5, height: 9, borderRadius: 3, backgroundColor: isDark ? '#e9edef' : '#111111' }} />
+                    <View style={{ width: 5, height: 9, borderRadius: 3, backgroundColor: isDark ? '#e9edef' : '#111111' }} />
+                  </View>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                    <Text style={{ fontSize: 17, fontWeight: '700', color: isDark ? '#111b21' : '#ffffff', letterSpacing: -0.2 }}>Chatyy One</Text>
+                    <View style={{ backgroundColor: isDark ? 'rgba(17,27,33,0.12)' : 'rgba(255,255,255,0.20)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
+                      <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 0.5, color: isDark ? '#111b21' : '#ffffff' }}>AI</Text>
+                    </View>
+                  </View>
+                  <Text style={{ fontSize: 13, color: isDark ? 'rgba(17,27,33,0.7)' : 'rgba(255,255,255,0.75)', marginTop: 2 }} numberOfLines={1}>
+                    {t('one.subtitle') || 'Sua IA pessoal'}
+                  </Text>
+                </View>
+                <Text style={{ fontSize: 22, fontWeight: '300', color: isDark ? 'rgba(17,27,33,0.5)' : 'rgba(255,255,255,0.6)' }}>\u203a</Text>
+              </Pressable>
+            )}
             {/* Recently opened \u2014 only when not searching, only when MRU
                 actually has entries. Mirrors iOS App Library "Recently
                 Added" + Android launcher recents pattern. */}
@@ -1573,7 +1614,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                 <Text style={{
                   fontSize: 11,
                   fontWeight: '700',
-                  color: isDark ? 'rgba(17, 17, 17,0.78)' : '#111111',
+                  color: isDark ? '#e9edef' : '#111111',
                   letterSpacing: 0.5,
                   textTransform: 'uppercase',
                   marginBottom: 12,

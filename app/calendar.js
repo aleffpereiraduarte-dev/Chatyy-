@@ -23,7 +23,7 @@ import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { CalendarSkeleton } from '../components/SkeletonLoader';
 import useIsMounted from '../hooks/useIsMounted';
-import { formatTime } from '../services/dateFormat';
+import { formatTime } from '../utils/dateFormat';
 import * as DocumentPicker from 'expo-document-picker';
 let FileSystem = null;
 try { FileSystem = require('expo-file-system/legacy'); } catch { try { FileSystem = require('expo-file-system'); } catch (e) {} }

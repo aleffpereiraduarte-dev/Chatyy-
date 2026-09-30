@@ -11,7 +11,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
-import { formatTime } from '../services/dateFormat';
+import { formatTime } from '../utils/dateFormat';
 import {
   IconCalendar, IconClock, IconArrowLeft, IconCheck, IconX,
   IconEdit, IconTrash, IconMapPin, IconRepeat, IconUsers, IconSmartphone,

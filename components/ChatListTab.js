@@ -5512,11 +5512,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         style={[
           s.chip,
           active
-            ? [s.chipActive]
+            ? [s.chipActive, isDark && { backgroundColor: '#e9edef', borderColor: '#e9edef' }]
             : {
-                backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : '#ffffff',
-                borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
-                ...(isWeb ? { boxShadow: isDark ? 'none' : '0 1px 2px rgba(0,0,0,0.04)' } : {}),
+                backgroundColor: isDark ? '#1c2a35' : '#f0f2f5',
+                borderColor: 'transparent',
               },
           isWeb && { transition: 'all 0.18s cubic-bezier(0.4,0,0.2,1)', cursor: 'pointer' },
         ]}
@@ -5525,17 +5524,17 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         delayLongPress={350}
         activeOpacity={0.7}
       >
-        <Text style={[s.chipText, active ? { color: '#fff' } : { color: isDark ? '#AEAEB2' : '#5A5A5F' }]}>
+        <Text style={[s.chipText, active ? { color: isDark ? '#0e1621' : '#fff' } : { color: isDark ? '#8696a0' : '#667781' }]}>
           {label}
         </Text>
         {count > 0 ? (
           <View style={[
             s.chipBadge,
             {
-              backgroundColor: active ? 'rgba(255,255,255,0.28)' : (isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.12)'),
+              backgroundColor: active ? (isDark ? 'rgba(14,22,33,0.15)' : 'rgba(255,255,255,0.28)') : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.08)'),
             },
           ]}>
-            <Text style={[s.chipBadgeText, { color: active ? '#fff' : '#111111' }]}>{count > 99 ? '99+' : count}</Text>
+            <Text style={[s.chipBadgeText, { color: active ? (isDark ? '#0e1621' : '#fff') : (isDark ? '#8696a0' : '#667781') }]}>{count > 99 ? '99+' : count}</Text>
           </View>
         ) : null}
       </TouchableOpacity>
@@ -6314,10 +6313,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 {t?.('one.title') || 'Chatyy One'}
               </Text>
               <View style={{
-                backgroundColor: isDark ? 'rgba(17, 17, 17,0.22)' : 'rgba(17, 17, 17,0.14)',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17, 17, 17,0.08)',
                 borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1,
               }}>
-                <Text style={{ color: '#111111', fontSize: 9, fontWeight: '800', letterSpacing: 0.6 }}>AI</Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 9, fontWeight: '800', letterSpacing: 0.6 }}>AI</Text>
               </View>
             </View>
             <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
@@ -6415,7 +6414,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       {renderPinnedLabel()}
       {(searchQuery || '').trim().length >= 2 && filteredConversations.length > 0 && (
         <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 6 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#111111' : '#111111', letterSpacing: 0.3 }}>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.3 }}>
             CONVERSAS
           </Text>
         </View>
@@ -6430,10 +6429,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     return (
       <View style={{ paddingTop: 8 }}>
         <View style={{ paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-          <Text style={{ fontSize: 13, fontWeight: '700', color: isDark ? '#111111' : '#111111', letterSpacing: 0.3 }}>
+          <Text style={{ fontSize: 13, fontWeight: '700', color: colors.textSecondary, letterSpacing: 0.3 }}>
             MENSAGENS
           </Text>
-          {searchingMessages && <ActivityIndicator size="small" color={isDark ? '#111111' : '#111111'} />}
+          {searchingMessages && <ActivityIndicator size="small" color={colors.textSecondary} />}
         </View>
         {/* Loading: shimmer skeleton rows instead of a lone spinner — reads
             "results are coming" rather than "nothing here". Loading-state JSX
@@ -6496,10 +6495,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             >
               <View style={{
                 width: 40, height: 40, borderRadius: 20,
-                backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.1)',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17, 17, 17,0.06)',
                 alignItems: 'center', justifyContent: 'center',
               }}>
-                <IconSearch size={18} color={isDark ? '#111111' : '#111111'} />
+                <IconSearch size={18} color={colors.textSecondary} />
               </View>
               <View style={{ flex: 1 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>

@@ -55,6 +55,16 @@ import { canNavigateNow } from '../services/navGuard';
 
 const MUTED_UIDS_KEY = '@onemundo_muted_uids';
 
+// [2026-09-30] Persistent AI-classification result stores. The two background
+// AI effects on /inbox (importance + smart-categorize) each POST to a
+// php-fpm-bound Claude call (1-3s/worker). Persisting their RESULTS keyed by
+// the STABLE message_id lets a fresh session (or a MailContext rebuild of the
+// `emails` array) restore prior answers WITHOUT re-firing the calls — killing
+// the ~30-call burst that was starving the backend (live 502/504 churn).
+const AI_PRIORITY_STORE_KEY = '@onemundo_ai_priority_v1';
+const AI_CATEGORY_STORE_KEY = '@onemundo_ai_category_v1';
+const AI_STORE_MAX = 2000; // cap persisted entries (insertion-ordered → keep most recent)
+
 // MONOCHROME 2026: side-panel header accents unified to the single neutral
 // accent (#111111) — no per-route color. Tints derive from this one hex.
 const SIDE_PANEL_ROUTES = {
@@ -306,6 +316,67 @@ function InboxScreenInner() {
   const [aiPriority, setAiPriority] = useState({});
   const aiPriorityClassifyingRef = useRef(false);
 
+  // --- Persistent AI-result stores (keyed by STABLE message_id) ---
+  // These survive across inbox opens and MailContext `emails` rebuilds. The
+  // in-memory maps above (aiPriority / aiCategories) are keyed by IMAP `uid`
+  // for display; these ref Maps are keyed by message_id so results persist
+  // even when a uid churns. Their presence is ALSO the "already classified"
+  // guard: an email whose message_id is in the store is never re-classified.
+  const aiPriorityStoreRef = useRef(new Map()); // message_id -> 'high'|'normal'|'low'
+  const aiCategoryStoreRef = useRef(new Map()); // message_id -> category
+  const [aiStoreHydrated, setAiStoreHydrated] = useState(false);
+
+  // Stable per-email key. message_id is stable across sessions; uid can churn,
+  // so it is only a last-resort fallback.
+  const aiEmailKey = useCallback((e) => String(e?.message_id || e?.uid || ''), []);
+
+  // Hydrate the stores once on mount. Until this resolves the classify effects
+  // no-op (gated on aiStoreHydrated) so we never re-blast the backend with work
+  // already done in a previous session.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [p, c] = await Promise.all([
+          AsyncStorage.getItem(AI_PRIORITY_STORE_KEY),
+          AsyncStorage.getItem(AI_CATEGORY_STORE_KEY),
+        ]);
+        if (!alive) return;
+        if (p) { try { aiPriorityStoreRef.current = new Map(Object.entries(JSON.parse(p))); } catch {} }
+        if (c) { try { aiCategoryStoreRef.current = new Map(Object.entries(JSON.parse(c))); } catch {} }
+      } catch {} finally {
+        if (alive) setAiStoreHydrated(true);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  // Persist a store (insertion-ordered → keep the most recent AI_STORE_MAX).
+  const persistAiStore = useCallback((storageKey, map) => {
+    try {
+      let entries = [...map.entries()];
+      if (entries.length > AI_STORE_MAX) entries = entries.slice(entries.length - AI_STORE_MAX);
+      AsyncStorage.setItem(storageKey, JSON.stringify(Object.fromEntries(entries))).catch(() => {});
+    } catch {}
+  }, []);
+
+  // Seed the uid-keyed display maps from the persisted (message_id-keyed)
+  // stores so the importance + category UI shows instantly on a fresh session
+  // WITHOUT any network call. Runs on emails change; only fills gaps, so it
+  // cannot loop (guarded by the `=== undefined` checks).
+  useEffect(() => {
+    if (!aiStoreHydrated || !emails?.length) return;
+    const pUpd = {};
+    const cUpd = {};
+    for (const e of emails) {
+      const k = aiEmailKey(e);
+      if (aiPriority[e.uid] === undefined && aiPriorityStoreRef.current.has(k)) pUpd[e.uid] = aiPriorityStoreRef.current.get(k);
+      if (aiCategories[e.uid] === undefined && aiCategoryStoreRef.current.has(k)) cUpd[e.uid] = aiCategoryStoreRef.current.get(k);
+    }
+    if (Object.keys(pUpd).length > 0) setAiPriority(prev => ({ ...prev, ...pUpd }));
+    if (Object.keys(cUpd).length > 0) setAiCategories(prev => ({ ...prev, ...cUpd }));
+  }, [emails, aiStoreHydrated, aiEmailKey]);
+
   // Decide whether an email belongs in the Importantes tab. Combination of:
   //   - flagged (\Flagged) — user explicitly marked it important
   //   - server-side priority === 'high'
@@ -338,23 +409,31 @@ function InboxScreenInner() {
   // caches per (user, message_id) so re-runs are cheap. Throttled to 5 in
   // parallel and 15 per refresh to avoid blasting GPT on big inboxes.
   useEffect(() => {
+    if (!aiStoreHydrated) return; // wait for the persisted store so we don't re-classify
     if (currentFolder !== 'INBOX' || !emails?.length || aiPriorityClassifyingRef.current) return;
-    const pending = emails.filter(e => aiPriority[e.uid] === undefined).slice(0, 15);
+    // Diff against the persistent store (stable message_id) AND the in-memory
+    // result map — NOT the identity of the `emails` array — so a MailContext
+    // rebuild of `emails` never re-fires work already done this or a prior
+    // session.
+    const pending = emails.filter(e => (
+      aiPriority[e.uid] === undefined &&
+      !aiPriorityStoreRef.current.has(aiEmailKey(e))
+    )).slice(0, 15);
     if (pending.length === 0) return;
     aiPriorityClassifyingRef.current = true;
     let alive = true;
     (async () => {
       try {
         const updates = {};
-        // [2026-09-29] Throttle gentler (3 concurrent + 250ms gap) so the AI
+        let dirty = false;
+        // [2026-09-30] Cap concurrency at 4 in-flight (+250ms gap) so the AI
         // importance classifier (Claude Haiku, 1-3s/call, holds a php-fpm
-        // worker) doesn't burst-starve the backend and 504/522 the chat sync
-        // that runs in parallel on inbox open. 80 workers absorve, mas não
-        // precisa competir com o chat.
-        for (let i = 0; i < pending.length; i += 3) {
+        // worker) never bursts ~15 calls at once and 504/522s the chat sync
+        // that runs in parallel on inbox open.
+        for (let i = 0; i < pending.length; i += 4) {
           if (!alive) return;
           if (i > 0) await new Promise(r => setTimeout(r, 250));
-          const batch = pending.slice(i, i + 3);
+          const batch = pending.slice(i, i + 4);
           const results = await Promise.all(batch.map(async (e) => {
             try {
               // message_id is preferred (cache key); fallback to uid so the
@@ -366,36 +445,55 @@ function InboxScreenInner() {
                 from: e.from || '',
                 snippet: (e.snippet || e.body_preview || '').slice(0, 500),
               });
-              return { uid: e.uid, level: r?.data?.level };
+              return { uid: e.uid, key: aiEmailKey(e), level: r?.data?.level };
             } catch { return null; }
           }));
           for (const res of results) {
-            if (res?.level) updates[res.uid] = res.level;
+            if (res?.level) {
+              updates[res.uid] = res.level;
+              // Record in the persistent store as results return → this key is
+              // never classified again.
+              aiPriorityStoreRef.current.set(res.key, res.level);
+              dirty = true;
+            }
           }
         }
         if (alive && Object.keys(updates).length > 0) {
           setAiPriority(prev => ({ ...prev, ...updates }));
         }
+        if (dirty) persistAiStore(AI_PRIORITY_STORE_KEY, aiPriorityStoreRef.current);
       } catch {} finally {
         aiPriorityClassifyingRef.current = false;
       }
     })();
     return () => { alive = false; };
-  }, [emails, currentFolder]);
+  }, [emails, currentFolder, aiStoreHydrated, aiEmailKey, persistAiStore]);
 
   // AI smart-categorize emails that don't have a category yet (run in background, throttled)
   useEffect(() => {
+    if (!aiStoreHydrated) return; // wait for the persisted store so we don't re-categorize
     if (currentFolder !== 'INBOX' || !emails?.length || aiCategorizingRef.current) return;
-    const uncategorized = emails.filter(e => !aiCategories[e.uid] && !e.category).slice(0, 15);
+    // Diff against the persistent store (stable message_id) so a rebuilt
+    // `emails` array or a fresh session never re-fires categorization already
+    // done.
+    const uncategorized = emails.filter(e => (
+      !aiCategories[e.uid] && !e.category &&
+      !aiCategoryStoreRef.current.has(aiEmailKey(e))
+    )).slice(0, 15);
     if (uncategorized.length === 0) return;
     aiCategorizingRef.current = true;
     let alive = true;
     (async () => {
       try {
         const updates = {};
-        for (let i = 0; i < uncategorized.length; i += 5) {
+        let dirty = false;
+        // [2026-09-30] Cap concurrency at 4 in-flight (was 5) + 250ms gap —
+        // same rationale as the importance classifier: don't burst-starve
+        // php-fpm with a fan-out of Claude calls on inbox open.
+        for (let i = 0; i < uncategorized.length; i += 4) {
           if (!alive) return;
-          const batch = uncategorized.slice(i, i + 5);
+          if (i > 0) await new Promise(r => setTimeout(r, 250));
+          const batch = uncategorized.slice(i, i + 4);
           const results = await Promise.all(batch.map(async (e) => {
             try {
               const r = await api.aiSmartCategorize(
@@ -403,22 +501,27 @@ function InboxScreenInner() {
                 (e.snippet || e.body_preview || '').slice(0, 500),
                 e.from || ''
               );
-              return { uid: e.uid, category: r?.data?.category };
+              return { uid: e.uid, key: aiEmailKey(e), category: r?.data?.category };
             } catch { return null; }
           }));
           for (const res of results) {
-            if (res?.category) updates[res.uid] = res.category;
+            if (res?.category) {
+              updates[res.uid] = res.category;
+              aiCategoryStoreRef.current.set(res.key, res.category);
+              dirty = true;
+            }
           }
         }
         if (alive && Object.keys(updates).length > 0) {
           setAiCategories(prev => ({ ...prev, ...updates }));
         }
+        if (dirty) persistAiStore(AI_CATEGORY_STORE_KEY, aiCategoryStoreRef.current);
       } catch {} finally {
         aiCategorizingRef.current = false;
       }
     })();
     return () => { alive = false; };
-  }, [emails, currentFolder]);
+  }, [emails, currentFolder, aiStoreHydrated, aiEmailKey, persistAiStore]);
 
   const unreadCount = useMemo(() => emails.filter(e => !e.seen).length, [emails]);
 
@@ -1305,17 +1408,16 @@ function InboxScreenInner() {
         </View>
       )}
 
-      {/* Header — unified Chatyy solid black (matches /chat header).
-          Wave 3 consolidation 2026-05-08: era branco glassmorphism, ficava
-          parecendo "outro app" depois do chat roxo. Agora todas as superfícies
-          top-level (Conversas/Email/Reels/Ligações) compartilham o mesmo brand. */}
+      {/* Header — 2026 LIGHT: clean WHITE bar with a light hairline, dark
+          iconography. Matches /chat, /read and compose so all top-level
+          surfaces share one calm light chrome (black lives only in accents). */}
       <Animated.View style={[
         s.header,
         { ...(Platform.OS === 'web'
-            ? { background: isDark ? '#161618' : '#111111' }
-            : { backgroundColor: isDark ? '#0d0d0d' : '#111111' }),
-          borderBottomColor: 'transparent',
-          borderBottomWidth: 0,
+            ? { background: colors.headerBgSolid }
+            : { backgroundColor: colors.headerBgSolid }),
+          borderBottomColor: colors.border,
+          borderBottomWidth: StyleSheet.hairlineWidth,
           opacity: headerAnim,
           transform: [{ translateY: headerAnim.interpolate({ inputRange: [0, 1], outputRange: [-40, 0] }) }],
         },
@@ -1323,28 +1425,28 @@ function InboxScreenInner() {
         {!isDesktop && (
           <TouchableOpacity onPress={() => { setShowSidebar(!showSidebar); if (!showSidebar) setShowMenu(false); }} style={s.menuBtn} accessibilityLabel={showSidebar ? 'Close menu' : 'Open menu'} accessibilityRole="button">
             {showSidebar ? (
-              <IconX size={22} color="#fff" />
+              <IconX size={22} color={colors.text} />
             ) : (
-              <IconMenu size={22} color="#fff" />
+              <IconMenu size={22} color={colors.text} />
             )}
           </TouchableOpacity>
         )}
 
-        {/* Logo / Greeting — texto branco no header roxo */}
+        {/* Logo / Greeting — dark text on the white header */}
         <View style={s.logoWrap}>
           <View style={{ position: 'relative' }}>
-            <IconMail size={24} color="#fff" style={{ marginRight: 6 }} />
-            <View style={[s.wsDot, { borderColor: '#111111', backgroundColor: wsStatus === 'authenticated' ? colors.connectionGood : wsStatus === 'connected' ? colors.connectionWarn : colors.connectionBad }]} />
+            <IconMail size={24} color={colors.text} style={{ marginRight: 6 }} />
+            <View style={[s.wsDot, { borderColor: colors.headerBgSolid, backgroundColor: wsStatus === 'authenticated' ? colors.connectionGood : wsStatus === 'connected' ? colors.connectionWarn : colors.connectionBad }]} />
           </View>
           {isDesktop ? (
-            <Text style={[s.logoText, { color: '#fff' }]}>Chatyy</Text>
+            <Text style={[s.logoText, { color: colors.text }]}>Chatyy</Text>
           ) : (
             <View>
-              <Text style={[s.greetingText, { color: '#fff' }]}>
+              <Text style={[s.greetingText, { color: colors.text }]}>
                 {getGreeting()}{user?.name ? `, ${user.name.split(' ')[0]}` : ''}
               </Text>
               {unreadCount > 0 && (
-                <Text style={[s.unreadHint, { color: 'rgba(255,255,255,0.7)' }]}>
+                <Text style={[s.unreadHint, { color: colors.textSecondary }]}>
                   {unreadCount > 1 ? t('inbox.unreadPlural', { count: unreadCount }) : t('inbox.unread', { count: unreadCount })}
                 </Text>
               )}
@@ -1362,9 +1464,9 @@ function InboxScreenInner() {
               accessibilityRole="button"
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             >
-              <IconCheck size={18} color="#fff" />
+              <IconCheck size={18} color={colors.text} />
               {isDesktop && (
-                <Text style={{ fontSize: 12, color: '#fff', fontWeight: '500' }} numberOfLines={1}>
+                <Text style={{ fontSize: 12, color: colors.text, fontWeight: '500' }} numberOfLines={1}>
                   {t('contextMenu.markRead') || 'Marcar como lido'}
                 </Text>
               )}
@@ -1377,7 +1479,7 @@ function InboxScreenInner() {
             accessibilityRole="button"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <IconFilter size={20} color={inboxLayout !== 'default' ? '#fff' : 'rgba(255,255,255,0.7)'} />
+            <IconFilter size={20} color={inboxLayout !== 'default' ? colors.text : colors.textSecondary} />
           </TouchableOpacity>
           <TouchableOpacity
             onPress={() => { setShowNotifHub(true); setShowMenu(false); }}
@@ -1386,7 +1488,7 @@ function InboxScreenInner() {
             accessibilityRole="button"
             hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           >
-            <IconBell size={22} color="rgba(255,255,255,0.85)" />
+            <IconBell size={22} color={colors.textSecondary} />
           </TouchableOpacity>
           <TouchableOpacity onPress={() => { setShowMenu(!showMenu); if (!showMenu) setShowSidebar(false); }} style={s.avatarBtn}>
             <AvatarCircle name={user?.name || user?.email || '?'} email={user?.email} size={32} />

@@ -350,10 +350,10 @@ export default function ReadScreen() {
     return (
       <View style={[s.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
         {Platform.OS !== 'web' && (
-          <View style={[s.navBar, { backgroundColor: isDark ? '#0d0d0d' : '#111111', borderBottomColor: 'transparent', borderBottomWidth: 0 }]}>
+          <View style={[s.navBar, { backgroundColor: colors.headerBgSolid, borderBottomColor: colors.border }]}>
             <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }}>
-              <IconChevronLeft size={22} color="#fff" />
-              <Text style={[s.backText, { color: '#fff' }]}>{t('reader.back')}</Text>
+              <IconChevronLeft size={22} color={colors.text} />
+              <Text style={[s.backText, { color: colors.text }]}>{t('reader.back')}</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -362,18 +362,17 @@ export default function ReadScreen() {
     );
   }
 
-  // Back nav bar (mobile) — solid monochrome black (#111111) igual ao /chat e
-  // /inbox. Header não muda mais a paleta visual entre Conversas/Inbox/Read —
-  // todas usam o mesmo preto sólido (2026: zero cor, zero gradiente).
+  // Back nav bar (mobile) — 2026 LIGHT: clean WHITE bar with a light hairline,
+  // dark icons/label. Same white chrome as /chat, /inbox and compose so the
+  // whole app reads as one calm light system (black lives only in accents).
   const navBar = Platform.OS !== 'web' ? (
     <View style={[s.navBar, {
-      backgroundColor: isDark ? '#0d0d0d' : '#111111',
-      borderBottomColor: 'transparent',
-      borderBottomWidth: 0,
+      backgroundColor: colors.headerBgSolid,
+      borderBottomColor: colors.border,
     }]}>
       <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }} accessibilityLabel={t('reader.back')} accessibilityRole="button">
-        <IconChevronLeft size={22} color="#fff" />
-        <Text style={[s.backText, { color: '#fff' }]}>{t('reader.back')}</Text>
+        <IconChevronLeft size={22} color={colors.text} />
+        <Text style={[s.backText, { color: colors.text }]}>{t('reader.back')}</Text>
       </TouchableOpacity>
       <View style={{ flex: 1 }} />
       <View style={s.navArrows}>
@@ -385,7 +384,7 @@ export default function ReadScreen() {
           accessibilityLabel={t('reader.prevEmail')}
           accessibilityRole="button"
         >
-          <IconChevronLeft size={20} color="rgba(255,255,255,0.85)" />
+          <IconChevronLeft size={20} color={colors.textSecondary} />
         </TouchableOpacity>
         <TouchableOpacity
           onPress={() => navigateToEmail(nextUid)}
@@ -395,7 +394,7 @@ export default function ReadScreen() {
           accessibilityLabel={t('reader.nextEmail')}
           accessibilityRole="button"
         >
-          <IconChevronRight size={20} color="rgba(255,255,255,0.85)" />
+          <IconChevronRight size={20} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
     </View>

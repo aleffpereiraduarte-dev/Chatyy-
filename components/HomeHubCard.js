@@ -102,9 +102,11 @@ const TILES = [
 
 function HubTile({ tile, colors, isDark, t, badge, onPress }) {
   const scale = useRef(new Animated.Value(1)).current;
-  // Monochrome tile surface: solid near-black in light, one elevated neutral in
-  // dark so tiles read as intentional against the card surface (no gradient).
-  const tileBg = isDark ? '#26282C' : '#111111';
+  // [light 2026] clean WHITE tiles: white surface + light hairline border in
+  // light mode, an elevated neutral surface in dark. The glyph carries the only
+  // ink (dark accent) — no heavy black fills on the launcher.
+  const tileBg = isDark ? colors.surfaceVariant : '#ffffff';
+  const glyphColor = colors.text;
   const hasBadge = typeof badge === 'number' && badge > 0;
   return (
     <TouchableOpacity
@@ -116,9 +118,9 @@ function HubTile({ tile, colors, isDark, t, badge, onPress }) {
     >
       <Animated.View style={[styles.tileIcon, { transform: [{ scale }] }, Shadow.cardRest]}>
         <Svg width={48} height={48} viewBox="0 0 48 48" style={StyleSheet.absoluteFill}>
-          <Rect x="0" y="0" width="48" height="48" rx="16" fill={tileBg} />
+          <Rect x="0.75" y="0.75" width="46.5" height="46.5" rx="15" fill={tileBg} stroke={colors.border} strokeWidth="1.5" />
         </Svg>
-        <Glyph kind={tile.kind} color="#fff" />
+        <Glyph kind={tile.kind} color={glyphColor} />
         {hasBadge && (
           <View style={[styles.badge, { backgroundColor: colors.badge, borderColor: colors.surface }]}>
             <Text style={styles.badgeText} numberOfLines={1}>{badge > 99 ? '99+' : badge}</Text>

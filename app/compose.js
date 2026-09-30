@@ -1558,18 +1558,11 @@ export default function ComposeScreen() {
     // (functional). All readable on the solid black header.
     const isSaved = draftStatus === 'saved';
     const isError = draftStatus === 'error';
-    const pillBg = isSaved
-      ? 'rgba(255, 255, 255, 0.22)'
-      : isError
-        ? 'rgba(239, 68, 68, 0.22)'
-        : 'rgba(255, 255, 255, 0.18)';
-    const pillBorder = isSaved
-      ? 'rgba(255, 255, 255, 0.45)'
-      : isError
-        ? 'rgba(252, 165, 165, 0.55)'
-        : 'rgba(255, 255, 255, 0.28)';
-    const tickColor = isSaved ? '#fff' : '#fff';
-    const labelColor = isSaved ? '#fff' : isError ? '#fecaca' : 'rgba(255,255,255,0.92)';
+    // Light-header pills: neutral chip for saved/saving, soft-red for error.
+    const pillBg = isError ? 'rgba(220, 38, 38, 0.10)' : colors.surfaceVariant;
+    const pillBorder = isError ? 'rgba(220, 38, 38, 0.30)' : colors.border;
+    const tickColor = colors.text;
+    const labelColor = isError ? colors.error : colors.textSecondary;
     return (
       <View
         style={{
@@ -2007,16 +2000,16 @@ export default function ComposeScreen() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
       >
         <View style={[s.container, { paddingTop: insets.top }]}>
-          {/* Header — solid black, white iconography */}
-          <View style={[s.header, Platform.OS !== 'web' && { backgroundColor: '#111111' }]}>
+          {/* Header — clean WHITE bar, dark iconography (2026 light) */}
+          <View style={[s.header, { backgroundColor: colors.headerBgSolid, borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth }]}>
             <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-              <IconArrowLeft size={20} color="#fff" />
+              <IconArrowLeft size={20} color={colors.text} />
             </TouchableOpacity>
             <View style={s.headerTitleCol}>
-              <Text style={[s.headerTitle, { color: '#fff' }]} numberOfLines={1}>
+              <Text style={[s.headerTitle, { color: colors.text }]} numberOfLines={1}>
                 {isReplyAll ? t('compose.replyAll') : t('compose.reply')}
               </Text>
-              <Text style={[s.headerSubject, { color: 'rgba(255,255,255,0.8)' }]} numberOfLines={1}>
+              <Text style={[s.headerSubject, { color: colors.textSecondary }]} numberOfLines={1}>
                 {origSubject}
               </Text>
             </View>
@@ -2190,21 +2183,21 @@ export default function ComposeScreen() {
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + HEADER_HEIGHT : 0}
     >
       <View style={[s.container, { paddingTop: insets.top }]}>
-        {/* ── Modern Header — solid black, white iconography ── */}
-        <View style={[s.header, { flex: undefined, marginLeft: 0 }, Platform.OS !== 'web' && { backgroundColor: '#111111' }]}>
+        {/* ── Modern Header — clean WHITE bar, dark iconography (2026 light) ── */}
+        <View style={[s.header, { flex: undefined, marginLeft: 0, backgroundColor: colors.headerBgSolid, borderBottomColor: colors.border, borderBottomWidth: StyleSheet.hairlineWidth }]}>
           <TouchableOpacity onPress={handleClose} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
-            <IconX size={20} color="#fff" />
+            <IconX size={20} color={colors.text} />
           </TouchableOpacity>
-          <Text style={[s.headerTitle, { color: '#fff', flex: 1, marginLeft: Spacing.sm }]} numberOfLines={1}>
+          <Text style={[s.headerTitle, { color: colors.text, flex: 1, marginLeft: Spacing.sm }]} numberOfLines={1}>
             {isForward ? t('compose.forward') : t('compose.title')}
           </Text>
           <View style={s.headerRight}>
             {renderDraftStatusIndicator()}
-            <TouchableOpacity onPress={() => setShowSchedule(true)} style={[s.headerActionBtn, { backgroundColor: 'rgba(255,255,255,0.18)' }]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <IconClock size={16} color="#fff" />
+            <TouchableOpacity onPress={() => setShowSchedule(true)} style={[s.headerActionBtn, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <IconClock size={16} color={colors.text} />
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => setShowTemplates(true)} style={[s.headerActionBtn, { backgroundColor: 'rgba(255,255,255,0.18)' }]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <IconFileText size={16} color="#fff" />
+            <TouchableOpacity onPress={() => setShowTemplates(true)} style={[s.headerActionBtn, { backgroundColor: colors.surfaceVariant }]} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+              <IconFileText size={16} color={colors.text} />
             </TouchableOpacity>
             {renderSendButton()}
           </View>
@@ -2477,22 +2470,21 @@ const s = StyleSheet.create({
   container: { flex: 1 },
 
   // ── Header ──
-  // Brand: solid monochrome black (#111111) — moment-of-intent screen deserves
-  // a confident, on-brand hero. Flat black bar (2026: zero gradient) with a
-  // subtle 1px elevation so it floats above scroll content.
+  // 2026 LIGHT: clean WHITE bar with a light hairline divider and a whisper of
+  // elevation (background + border come from theme tokens inline). Dark text +
+  // icons ride on top; black lives only in the send CTA.
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: Spacing.md, height: 56,
-    borderBottomWidth: 0,
     ...Platform.select({
       web: {
-        background: '#111111',
-        boxShadow: '0 1px 3px rgba(0, 0, 0, 0.12)',
+        background: '#ffffff',
+        boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
       },
       default: {
-        elevation: 2,
-        shadowColor: '#111111',
-        shadowOpacity: 0.08,
+        elevation: 1,
+        shadowColor: '#101114',
+        shadowOpacity: 0.05,
         shadowRadius: 4,
         shadowOffset: { width: 0, height: 1 },
       },

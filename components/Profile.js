@@ -205,21 +205,21 @@ const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors,
   const onPressOut = useCallback(() => {
     Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 8 }).start();
   }, [scale]);
-  // Outline color: brand tint on light mode, lighter brand on dark. Falls
-  // back to colors.border when the brand isn't appropriate (e.g. very dim
-  // surfaces) — but we generally want the secondary to hint at brand.
-  const outlineColor = isDark ? 'rgba(17, 17, 17,0.55)' : 'rgba(17, 17, 17,0.30)';
+  // "MUCH LESS BLACK" 2026: secondary buttons are a clean light hairline
+  // (colors.border), not a heavy dark outline. Black lives ONLY on the
+  // primary CTA fill — everything around it stays airy/white.
+  const outlineColor = colors?.border || (isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.12)');
   return (
     <Animated.View style={{
       flex: 1,
       transform: [{ scale }],
-      // Soft purple glow only for the primary CTA — Instagram-grade lift.
+      // Subtle lift only for the primary CTA — soft, no heavy black glow.
       ...(isPrimary && Platform.OS !== 'web' ? {
         shadowColor: '#111111',
-        shadowOpacity: isDark ? 0.45 : 0.30,
-        shadowRadius: 10,
-        shadowOffset: { width: 0, height: 4 },
-        elevation: 4,
+        shadowOpacity: isDark ? 0.22 : 0.12,
+        shadowRadius: 7,
+        shadowOffset: { width: 0, height: 3 },
+        elevation: 3,
       } : {}),
     }}>
       <TouchableOpacity
@@ -345,7 +345,8 @@ function LiveWatchCta({ label, onPress }) {
 // matches the FlatButton above so the action stack reads as one family.
 const ChipButton = memo(function ChipButton({ icon: Icon, label, onPress, colors, isDark }) {
   const scale = useRef(new Animated.Value(1)).current;
-  const outlineColor = isDark ? 'rgba(17, 17, 17,0.40)' : 'rgba(17, 17, 17,0.22)';
+  // Clean light hairline (colors.border) instead of a dark tinted outline.
+  const outlineColor = colors?.border || (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.10)');
   return (
     <Animated.View style={{ flex: 1, transform: [{ scale }] }}>
       <TouchableOpacity
@@ -2129,9 +2130,9 @@ export default function Profile({
             an empty grey rectangle. Profile-upgrade combo (2026-05-18). */}
         {coverUrl ? (
           <View style={{
-            width: '100%', height: 160, backgroundColor: 'rgba(17, 17, 17,0.06)',
+            width: '100%', height: 128, backgroundColor: colors?.surfaceVariant || 'rgba(17, 17, 17,0.05)',
             borderBottomWidth: StyleSheet.hairlineWidth,
-            borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)',
+            borderBottomColor: colors?.border || (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'),
             overflow: 'hidden',
           }}>
             {_ExpoImage ? (
@@ -2255,24 +2256,21 @@ export default function Profile({
             const AVATAR_SIZE = 86;
             const HALO_PAD = 5; // 3px stroke + 2px inner gap
             const HALO_SIZE = AVATAR_SIZE + HALO_PAD * 2;
-            const haloRadius = (HALO_SIZE / 2) - 1.5; // 3 / 2
+            const haloRadius = (HALO_SIZE / 2) - 0.75;
+            // "MUCH LESS BLACK" 2026: no heavy black ring on the avatar. When
+            // there are no stories the avatar sits inside a barely-there light
+            // hairline (colors.border) — WhatsApp/iOS clean, avatar prominent.
+            const haloColor = colors?.border || (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)');
             const renderHalo = () => {
-              if (_Svg && _SvgDefs && _SvgLinearGradient && _SvgStop && _SvgCircle) {
+              if (_Svg && _SvgCircle) {
                 return (
                   <_Svg width={HALO_SIZE} height={HALO_SIZE} style={{ position: 'absolute', top: 0, left: 0 }}>
-                    <_SvgDefs>
-                      <_SvgLinearGradient id="profileAvatarHalo" x1="0" y1="0" x2="1" y2="1">
-                        <_SvgStop offset="0" stopColor="#111111" />
-                        <_SvgStop offset="0.55" stopColor="#111111" />
-                        <_SvgStop offset="1" stopColor="#111111" />
-                      </_SvgLinearGradient>
-                    </_SvgDefs>
                     <_SvgCircle
                       cx={HALO_SIZE / 2}
                       cy={HALO_SIZE / 2}
                       r={haloRadius}
-                      stroke="url(#profileAvatarHalo)"
-                      strokeWidth={3}
+                      stroke={haloColor}
+                      strokeWidth={1.5}
                       fill="none"
                     />
                   </_Svg>
@@ -2282,7 +2280,7 @@ export default function Profile({
                 <View style={{
                   position: 'absolute', top: 0, left: 0,
                   width: HALO_SIZE, height: HALO_SIZE, borderRadius: HALO_SIZE / 2,
-                  borderWidth: 3, borderColor: '#111111',
+                  borderWidth: StyleSheet.hairlineWidth, borderColor: haloColor,
                 }} />
               );
             };
@@ -2629,8 +2627,8 @@ export default function Profile({
         {/* Top posts grid — 6 */}
         {posts.length > 0 && (
           <>
-            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 8, paddingVertical: 8 }}>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingTop: 12, paddingBottom: 7 }}>
+              <Text style={{ fontSize: 12, fontWeight: '600', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6 }}>
                 {t?.('profile.posts') || 'Posts'}
               </Text>
             </View>
@@ -2646,8 +2644,8 @@ export default function Profile({
         {/* Shared media */}
         {sharedMedia.length > 0 && (
           <>
-            <View style={{ paddingHorizontal: 8, paddingTop: 12, paddingBottom: 6 }}>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            <View style={{ paddingHorizontal: 14, paddingTop: 16, paddingBottom: 7 }}>
+              <Text style={{ fontSize: 12, fontWeight: '600', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6 }}>
                 {t?.('profile.sharedMedia') || 'Mídia compartilhada'}
               </Text>
             </View>
@@ -2662,27 +2660,33 @@ export default function Profile({
         {/* Common chats */}
         {commonChats.length > 0 && (
           <>
-            <View style={{ paddingHorizontal: 8, paddingTop: 14, paddingBottom: 6 }}>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            <View style={{ paddingHorizontal: 14, paddingTop: 16, paddingBottom: 7 }}>
+              <Text style={{ fontSize: 12, fontWeight: '600', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6 }}>
                 {t?.('profile.commonChats') || 'Grupos em comum'}
               </Text>
             </View>
-            {commonChats.slice(0, 5).map(c => (
-              <TouchableOpacity key={c.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 10 }} activeOpacity={0.7}
-                onPress={() => { router?.push(`/chat-conversation?id=${c.id}`); onClose?.(); }}>
-                <AvatarCircle name={c.name} size={36} />
-                <Text style={{ flex: 1, fontSize: 14, color: colors?.text, fontWeight: '500' }} numberOfLines={1}>{c.name}</Text>
-                <IconChevronRight size={18} color={colors?.textTertiary} />
-              </TouchableOpacity>
-            ))}
+            <View style={{
+              marginHorizontal: 12, borderRadius: 14, overflow: 'hidden',
+              borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border,
+              backgroundColor: colors?.surface,
+            }}>
+              {commonChats.slice(0, 5).map((c, i, arr) => (
+                <TouchableOpacity key={c.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 8, minHeight: 50, borderBottomWidth: i < arr.length - 1 ? StyleSheet.hairlineWidth : 0, borderBottomColor: colors?.border }} activeOpacity={0.7}
+                  onPress={() => { router?.push(`/chat-conversation?id=${c.id}`); onClose?.(); }}>
+                  <AvatarCircle name={c.name} size={36} />
+                  <Text style={{ flex: 1, fontSize: 15, color: colors?.text, fontWeight: '500' }} numberOfLines={1}>{c.name}</Text>
+                  <IconChevronRight size={18} color={colors?.textTertiary} />
+                </TouchableOpacity>
+              ))}
+            </View>
           </>
         )}
 
         {/* Common contacts (mutual address book) */}
         {!actions.is_self && (
           <>
-            <View style={{ paddingHorizontal: 8, paddingTop: 14, paddingBottom: 6, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
-              <Text style={{ fontSize: 13, fontWeight: '600', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            <View style={{ paddingHorizontal: 14, paddingTop: 16, paddingBottom: 7, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
+              <Text style={{ fontSize: 12, fontWeight: '600', color: colors?.textSecondary, textTransform: 'uppercase', letterSpacing: 0.6 }}>
                 {t?.('profile.commonContacts.title') || 'Contatos em comum'}
               </Text>
               {commonContactsData.length > 0 && (
@@ -2695,28 +2699,34 @@ export default function Profile({
               // TODO: backend `common_contacts` endpoint pending — until it
               // ships api.commonContacts returns [], so we surface a small
               // placeholder for parity with WhatsApp's "in common" row.
-              <View style={{ paddingHorizontal: 12, paddingVertical: 10 }}>
+              <View style={{ marginHorizontal: 12, borderRadius: 14, borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border, backgroundColor: colors?.surface, paddingHorizontal: 14, paddingVertical: 12 }}>
                 <Text style={{ fontSize: 13, color: colors?.textTertiary, fontStyle: 'italic' }}>
                   {t?.('common.comingSoon') || 'Em breve'}
                 </Text>
               </View>
             ) : (
-              commonContactsData.slice(0, 5).map((c) => (
-                <TouchableOpacity
-                  key={c.email || c.id}
-                  style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 10 }}
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    if (!c.email) return;
-                    if (mode === 'peek') onClose?.();
-                    router?.push(`/u/${encodeURIComponent(c.email)}`);
-                  }}
-                >
-                  <AvatarCircle name={c.name || c.email} email={c.email} size={36} />
-                  <Text style={{ flex: 1, fontSize: 14, color: colors?.text, fontWeight: '500' }} numberOfLines={1}>{c.name || c.email}</Text>
-                  <IconChevronRight size={18} color={colors?.textTertiary} />
-                </TouchableOpacity>
-              ))
+              <View style={{
+                marginHorizontal: 12, borderRadius: 14, overflow: 'hidden',
+                borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border,
+                backgroundColor: colors?.surface,
+              }}>
+                {commonContactsData.slice(0, 5).map((c, i, arr) => (
+                  <TouchableOpacity
+                    key={c.email || c.id}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 12, paddingVertical: 8, minHeight: 50, borderBottomWidth: i < arr.length - 1 ? StyleSheet.hairlineWidth : 0, borderBottomColor: colors?.border }}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      if (!c.email) return;
+                      if (mode === 'peek') onClose?.();
+                      router?.push(`/u/${encodeURIComponent(c.email)}`);
+                    }}
+                  >
+                    <AvatarCircle name={c.name || c.email} email={c.email} size={36} />
+                    <Text style={{ flex: 1, fontSize: 15, color: colors?.text, fontWeight: '500' }} numberOfLines={1}>{c.name || c.email}</Text>
+                    <IconChevronRight size={18} color={colors?.textTertiary} />
+                  </TouchableOpacity>
+                ))}
+              </View>
             )}
           </>
         )}
@@ -2724,10 +2734,10 @@ export default function Profile({
         {/* See full profile */}
         <TouchableOpacity
           onPress={handleOpenFullFromPeek}
-          activeOpacity={0.7}
-          style={{ marginTop: 14, marginHorizontal: 12, paddingVertical: 12, borderRadius: 10, borderWidth: 1, borderColor: colors?.border, alignItems: 'center' }}
+          activeOpacity={0.85}
+          style={{ marginTop: 16, marginHorizontal: 12, paddingVertical: 13, borderRadius: 12, backgroundColor: colors?.primary || '#111111', alignItems: 'center' }}
         >
-          <Text style={{ fontSize: 14, fontWeight: '600', color: colors?.text }}>
+          <Text style={{ fontSize: 14, fontWeight: '700', color: colors?.onPrimary || '#fff' }}>
             {t?.('profile.viewFull') || 'Ver perfil completo'}
           </Text>
         </TouchableOpacity>
@@ -2901,17 +2911,22 @@ export default function Profile({
       }
       if (activeTab === 'email') {
         return (
-          <View>
+          <View style={{
+            marginHorizontal: 12, marginTop: 10,
+            borderRadius: 14, overflow: 'hidden',
+            borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border,
+            backgroundColor: colors?.surface,
+          }}>
             {emailPreview.map((e, idx) => (
               <TouchableOpacity
                 key={`${e.folder}:${e.uid}:${idx}`}
                 onPress={() => router?.push(`/read?uid=${e.uid}&folder=${encodeURIComponent(e.folder)}`)}
-                style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 10, paddingHorizontal: 14, paddingVertical: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors?.border }}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 10, minHeight: 50, borderBottomWidth: idx < emailPreview.length - 1 ? StyleSheet.hairlineWidth : 0, borderBottomColor: colors?.border }}
                 activeOpacity={0.6}
               >
                 <View style={{
-                  width: 28, height: 28, borderRadius: 14, marginTop: 2,
-                  backgroundColor: e.from_me ? '#11111122' : (colors?.surface || '#f3f4f6'),
+                  width: 32, height: 32, borderRadius: 16,
+                  backgroundColor: e.from_me ? (colors?.surfaceVariant || '#11111211') : (colors?.surfaceVariant || '#f3f4f6'),
                   alignItems: 'center', justifyContent: 'center',
                 }}>
                   <IconMail size={14} color={e.from_me ? '#111111' : (colors?.text || '#111')} />
