@@ -652,27 +652,33 @@ function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
 // 20 distinct high-contrast colors, all chosen to read clearly against both the
 // purple own bubble (#111111 dark / #F1F3F5 light) AND the received bubble
 // (#FFFFFF light / #161618 dark). No near-duplicates, no near-purples.
+// [MONO 2026-09-30] Strict Uber monochrome — group-sender name labels were a
+// full rainbow (rose/orange/amber/lime/emerald/teal/cyan/sky/blue/indigo/…),
+// which clashed with the black&white identity. Replaced with 20 DISTINCT
+// grayscale shades so participants stay visually distinguishable in a busy
+// group without any hue. Light-theme values; the label sits on the light
+// bubble backdrop so mid-to-dark grays read cleanly.
 const SENDER_COLORS = [
-  '#E11D48', // rose
-  '#F97316', // orange
-  '#F59E0B', // amber
-  '#84CC16', // lime
-  '#10B981', // emerald
-  '#14B8A6', // teal
-  '#06B6D4', // cyan
-  '#0EA5E9', // sky
-  '#3B82F6', // blue
-  '#6366F1', // indigo
-  '#111111', // purple-light (distinct from #111111)
-  '#111111', // fuchsia
-  '#111111', // pink
-  '#F43F5E', // rose-dark
-  '#EAB308', // yellow
-  '#22C55E', // green
-  '#0891B2', // cyan-dark
-  '#7C2D12', // brown
-  '#BE185D', // pink-dark
-  '#15803D', // green-dark
+  '#111111',
+  '#2A2A2A',
+  '#3A3A3D',
+  '#4A4A4E',
+  '#525257',
+  '#5C5C61',
+  '#66666B',
+  '#6E6E74',
+  '#3F3F46',
+  '#27272A',
+  '#1F2937',
+  '#374151',
+  '#4B5563',
+  '#18181B',
+  '#71717A',
+  '#52525B',
+  '#0D0D0D',
+  '#333333',
+  '#444448',
+  '#5A5A5F',
 ];
 // djb2 hash — better distribution than charCodeAt sum (which collides on anagrams).
 // Cached at module scope (≈ useMemo by sender_email) — keeps the lookup O(1) per
@@ -1928,7 +1934,10 @@ function _lpHashColor(seed) {
   // devices. Saturation/lightness tuned to read on dark + light theme.
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = ((h << 5) - h + seed.charCodeAt(i)) | 0;
-  return `hsl(${Math.abs(h) % 360}, 65%, 55%)`;
+  // [MONO 2026-09-30] Grayscale only — vary lightness so different domains
+  // stay distinct while the link-preview letter fallback reads monochrome
+  // (was a saturated hsl(hue,65%,55%) rainbow).
+  return `hsl(0, 0%, ${28 + (Math.abs(h) % 20)}%)`;
 }
 
 function LinkPreview({ url, colors }) {
@@ -20059,7 +20068,7 @@ function ChatConversationInner() {
               delayLongPress={350}
               activeOpacity={0.9}
               style={{ marginHorizontal: -13, marginTop: -8, marginBottom: hasCaption ? 0 : -8 }}>
-              <View style={{ overflow: 'hidden', width: imgBoxW, height: imgBoxH, maxHeight: 380, maxWidth: 300, backgroundColor: (() => {
+              <View style={{ overflow: 'hidden', width: imgBoxW, height: imgBoxH, maxHeight: 320, maxWidth: 300, backgroundColor: (() => {
                 // [WAVE 77 2026-05-21] HSL base painted on the WRAPPER itself so
                 // that even when every internal layer is transparent (e.g. during
                 // ExpoImage's cross-dissolve transition on Android where the
@@ -20080,10 +20089,12 @@ function ChatConversationInner() {
                 // Drop saturation to 6% (basically neutral grey, just a hint of
                 // hue) and use 86% lightness so it reads as "loading skeleton"
                 // grey, never as "ROSA pink box". Same skeleton WhatsApp/IG use.
-                const u = String(msg.file_url || msg.id || '');
-                let h = 0;
-                for (let i = 0; i < u.length; i++) h = (h * 31 + u.charCodeAt(i)) & 0xffffffff;
-                return `hsl(${Math.abs(h) % 360}, 7%, 80%)`;
+                // [MONO 2026-09-30] Neutral gray loading skeleton — was a
+                // per-URL hsl(hue,7%,80%) that landed pale lavender/rosa for
+                // purple-range hashes (the "giant lavender rectangle" the
+                // founder reported). Strict Uber monochrome: flat neutral gray,
+                // theme-aware, matching the album cells (#000-family).
+                return isDark ? '#1E1E22' : '#F0F0F2';
               })() }}>
                 {/* [WAVE 45 2026-05-21] Photo thumb sumindo Android — root cause.
                     `ExpoImage` was aliased to react-native's <Image> which silently
@@ -20104,10 +20115,9 @@ function ChatConversationInner() {
                   // [WAVE 81 2026-05-21] Same neutral grey skeleton — see
                   // wrapper bg comment above. Eliminates the "rosa" complaint
                   // when the photo thumb fails to paint over.
-                  const u = String(msg.file_url || msg.id || '');
-                  let h = 0;
-                  for (let i = 0; i < u.length; i++) h = (h * 31 + u.charCodeAt(i)) & 0xffffffff;
-                  return `hsl(${Math.abs(h) % 360}, 7%, 80%)`;
+                  // [MONO 2026-09-30] Same neutral gray skeleton as the wrapper —
+                  // no hue, no lavender. See comment above.
+                  return isDark ? '#1E1E22' : '#F0F0F2';
                 })(), alignItems: 'center', justifyContent: 'center' }}>
                   {!imgUploading && !imgFailed && !msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && (
                     <>
@@ -20743,8 +20753,8 @@ function ChatConversationInner() {
                       look intentional instead of broken. The Image
                       layers on top with onError to hide cleanly if the
                       remote .thumb.jpg 404s. */}
-                  <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: _vbW, height: _vbH, backgroundColor: '#111827' }} />
-                  <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 100, backgroundColor: 'rgba(55,65,81,0.5)' }} />
+                  <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: _vbW, height: _vbH, backgroundColor: '#111111' }} />
+                  <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 100, backgroundColor: 'rgba(40,40,40,0.5)' }} />
                   <View pointerEvents="none" style={{ position: 'absolute', opacity: 0.18 }}>
                     <IconVideo size={64} color="#9ca3af" />
                   </View>
@@ -29780,8 +29790,8 @@ function ChatConversationInner() {
                 onPress={() => { setShowGroupInfo(false); setShowSearchBar(true); }}
                 style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: Spacing.sm, gap: 10 }}
               >
-                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: '#a855f718', alignItems: 'center', justifyContent: 'center' }}>
-                  <IconSearch size={18} color="#111111" />
+                <View style={{ width: 36, height: 36, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)', alignItems: 'center', justifyContent: 'center' }}>
+                  <IconSearch size={18} color={isDark ? '#F2F3F5' : '#111111'} />
                 </View>
                 <Text style={{ fontSize: FontSize.md, color: colors.text, fontWeight: '500', flex: 1 }}>
                   {t('chatConv.searchInConversation') || 'Buscar na conversa'}

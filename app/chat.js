@@ -812,11 +812,10 @@ function ChatHub() {
   const searchOpacity = searchAnim.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 0, 1] });
 
   // WhatsApp 2026 header style — premium gradient
-  const glassHeader = isKids
-    ? (Platform.OS === 'web'
-      ? { background: 'linear-gradient(135deg, #6366f1 0%, #111111 40%, #111111 100%)' }
-      : { backgroundColor: isDark ? '#161618' : '#6366f1' })
-    : { backgroundColor: isDark ? '#111111' : '#111111' };
+  // [MONO 2026-09-30] Kids header neutralized — was an indigo #6366f1 +
+  // linear-gradient (banned: purple + gradients). Now solid monochrome,
+  // same black surface as the standard header.
+  const glassHeader = { backgroundColor: isDark ? '#111111' : '#111111' };
 
   const glassTabBar = {
     backgroundColor: isDark ? '#0a0a0a' : '#ffffff',
@@ -828,7 +827,7 @@ function ChatHub() {
       <View style={[styles.container, { backgroundColor: isDark ? '#000000' : '#f0f2f5', flexDirection: 'row' }]}>
         {/* Side Rail */}
         <View style={[styles.desktopRail, {
-          backgroundColor: isKids ? (isDark ? '#161618' : '#6366f1') : (isDark ? '#0a0a0a' : '#111111'),
+          backgroundColor: isDark ? '#0a0a0a' : '#111111',
           borderRightColor: 'transparent',
         }]}>
           {/* Brand at top — icon only: 72px rail is too narrow for the "Chatyy" wordmark, which would overflow to the left. */}
@@ -1330,12 +1329,16 @@ function AppTile({ item, badge, onPress, colors, isDark }) {
       accessibilityLabel={item.label + (badge ? `, ${badge} novos` : '')}
     >
       <Animated.View style={{ width: 56, height: 56, transform: [{ scale }] }}>
+        {/* [MONO 2026-09-30] Strict Uber monochrome — the per-app accent
+            (item.ic.c: green/red/blue/orange/yellow/…) is intentionally
+            IGNORED for rendering so every tile reads as one black&white set:
+            a neutral gray tile with a black (light) / white (dark) glyph. */}
         <View style={{
           width: 56, height: 56, borderRadius: 16,
-          backgroundColor: item.ic.c + '14',
+          backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)',
           alignItems: 'center', justifyContent: 'center',
         }}>
-          <item.ic.Comp size={26} color={item.ic.c} />
+          <item.ic.Comp size={26} color={isDark ? '#F2F3F5' : '#111111'} />
         </View>
         {!!badge && (
           <Animated.View style={{

@@ -796,13 +796,13 @@ const ConversationRow = React.memo(function ConversationRow({
     const scale = dragX.interpolate({ inputRange: [0, 80], outputRange: [0.5, 1], extrapolate: 'clamp' });
     return (
       <View style={{ flexDirection: 'row' }}>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#6366F1' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMute?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#3F3F46' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMute?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconVolume2 size={20} color="#fff" /></Animated.View>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#F59E0B' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onPin?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#52525B' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onPin?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconPin size={20} color="#fff" /></Animated.View>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#0EA5E9' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onEmail?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#6B7280' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onEmail?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconMail size={20} color="#fff" /></Animated.View>
         </TouchableOpacity>
       </View>
@@ -812,7 +812,7 @@ const ConversationRow = React.memo(function ConversationRow({
     const scale = dragX.interpolate({ inputRange: [-80, 0], outputRange: [1, 0.5], extrapolate: 'clamp' });
     return (
       <View style={{ flexDirection: 'row' }}>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#3B82F6' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onArchive?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#4B5563' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onArchive?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconArchive size={20} color="#fff" /></Animated.View>
         </TouchableOpacity>
         <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#EF4444' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onDelete?.(conversation); }}>
@@ -922,10 +922,10 @@ const ConversationRow = React.memo(function ConversationRow({
             {isChannel ? (
               <View style={{
                 width: 46, height: 46, borderRadius: 23,
-                backgroundColor: isDark ? 'rgba(0,136,204,0.15)' : 'rgba(0,136,204,0.1)',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)',
                 alignItems: 'center', justifyContent: 'center',
               }}>
-                <Svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke="#0088cc" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <Svg width={24} height={24} viewBox="0 0 24 24" fill="none" stroke={isDark ? '#F2F3F5' : '#111111'} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                   <Path d="M3 11l18-5v12L3 13v-2z" />
                   <Path d="M11.6 16.8a3 3 0 11-5.8-1.6" />
                 </Svg>
@@ -1107,7 +1107,7 @@ const ConversationRow = React.memo(function ConversationRow({
                   >
                     {previewSender ? (
                       <>
-                        <Text style={{ fontWeight: '400', color: '#0088CC' }}>{previewSender}: </Text>
+                        <Text style={{ fontWeight: '600', color: colors.textSecondary }}>{previewSender}: </Text>
                         {preview}
                       </>
                     ) : (preview || t('chat.noMessages'))}
@@ -1195,17 +1195,17 @@ const ConversationRow = React.memo(function ConversationRow({
           <IconVolume2 size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{t('chat.mute') || 'Mute'}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#F59E0B' }]} onPress={() => { resetSwipe(); propsRef.current.onPin?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#52525B' }]} onPress={() => { resetSwipe(); propsRef.current.onPin?.(conversation); }}>
           <IconPin size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isPinned ? (t('chat.unpin') || 'Unpin') : (t('chat.pin') || 'Pin')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#0EA5E9' }]} onPress={() => { resetSwipe(); propsRef.current.onMarkUnread?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#6B7280' }]} onPress={() => { resetSwipe(); propsRef.current.onMarkUnread?.(conversation); }}>
           <IconMail size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{t('chat.markUnread') || 'Unread'}</Text>
         </TouchableOpacity>
       </Animated.View>
       <Animated.View style={[s.swipeActionsRight, { opacity: rightOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#3B82F6' }]} onPress={() => { resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#4B5563' }]} onPress={() => { resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
           <IconArchive size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isArchived ? (t('chat.unarchive') || 'Unarchive') : (t('chat.archive') || 'Archive')}</Text>
         </TouchableOpacity>
@@ -2182,7 +2182,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
             </Text>
             {[
               { key:'text',   icon:'T',  color:'#111111', label: t('status.typeText')  || 'Texto' },
-              { key:'camera', icon:'📷', color:'#10B981', label: t('status.typeCamera') || 'Câmera' },
+              { key:'camera', icon:'📷', color:'#111111', label: t('status.typeCamera') || 'Câmera' },
             ].map(opt => (
               <TouchableOpacity
                 key={opt.key}
@@ -5525,7 +5525,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         delayLongPress={350}
         activeOpacity={0.7}
       >
-        <Text style={[s.chipText, active ? { color: '#fff' } : { color: isDark ? '#cbd5e1' : '#475569' }]}>
+        <Text style={[s.chipText, active ? { color: '#fff' } : { color: isDark ? '#AEAEB2' : '#5A5A5F' }]}>
           {label}
         </Text>
         {count > 0 ? (
@@ -5868,10 +5868,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                         }}>
                           <View style={{
                             width: 18, height: 18, borderRadius: 9,
-                            backgroundColor: '#F59E0B',
+                            backgroundColor: isDark ? '#F2F3F5' : '#111111',
                             alignItems: 'center', justifyContent: 'center',
                           }}>
-                            <IconSparkles size={10} color="#fff" />
+                            <IconSparkles size={10} color={isDark ? '#111111' : '#fff'} />
                           </View>
                         </View>
                       )}
@@ -5880,11 +5880,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                           position: 'absolute', top: -2, right: -2,
                           minWidth: 22, height: 22, borderRadius: 11,
                           paddingHorizontal: 5,
-                          backgroundColor: '#EF4444',
+                          backgroundColor: isDark ? '#F2F3F5' : '#111111',
                           borderWidth: 2, borderColor: isDark ? '#0d1117' : '#fff',
                           alignItems: 'center', justifyContent: 'center',
                         }}>
-                          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>
+                          <Text style={{ color: isDark ? '#111111' : '#fff', fontSize: 11, fontWeight: '800' }}>
                             {unread > 99 ? '99+' : unread}
                           </Text>
                         </View>
@@ -5925,10 +5925,9 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     }
     return (
       <View style={[s.sectionLabel, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-        {/* Small crisp pin glyph reads as a real section marker (not the old
-            esfumado blob — this is a thin-stroke SVG sized to match the caps).
-            Tinted brand purple so the PINNED group feels like a first-class
-            section, WhatsApp/Telegram-style. */}
+        {/* Small crisp pin glyph reads as a real section marker (thin-stroke SVG
+            sized to match the caps). Neutral monochrome tint so the PINNED group
+            reads as a first-class section, WhatsApp/Telegram-style. */}
         <IconPin size={11} color={isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)'} />
         <Text style={[s.sectionLabelText, { color: isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.5)' }]}>
           {(() => { const v = t('chat.pinned'); return v && v !== 'chat.pinned' ? v : 'FIXADAS'; })()}
@@ -6384,10 +6383,10 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             ) : (
               <View style={{
                 width: 38, height: 38, borderRadius: 19,
-                backgroundColor: '#22c55e',
+                backgroundColor: isDark ? '#F2F3F5' : '#111111',
                 alignItems: 'center', justifyContent: 'center',
               }}>
-                <IconUserPlus size={20} color="#fff" />
+                <IconUserPlus size={20} color={isDark ? '#111111' : '#fff'} />
               </View>
             )}
             <View style={{ flex: 1 }}>
@@ -6402,7 +6401,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                   : (t?.('chat.foundFriendsHint') || `${contactBanner.count} contato${contactBanner.count === 1 ? '' : 's'} já no Chatyy — toque pra ver`)}
               </Text>
             </View>
-            {contactBannerSyncing ? <ActivityIndicator size="small" color="#22c55e" /> : null}
+            {contactBannerSyncing ? <ActivityIndicator size="small" color={colors.textSecondary} /> : null}
           </TouchableOpacity>
           <TouchableOpacity
             onPress={dismissContactBanner}
@@ -6537,7 +6536,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
 
   return (
     <View style={[{ flex: 1 }, isWeb && isDark && {
-      background: 'linear-gradient(180deg, rgba(13,17,23,1) 0%, rgba(10,14,20,1) 100%)',
+      backgroundColor: '#0D0D10',
     }]}>
       {/* Selection toolbar */}
       {selectionMode && (
@@ -6771,7 +6770,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               onPress={() => { toggleFabMenu(); setShowCreateChannel(true); }}
               activeOpacity={0.7}
             >
-              <View style={[s.fabMenuIcon, { backgroundColor: '#0088cc' }]}>
+              <View style={[s.fabMenuIcon, { backgroundColor: '#111111' }]}>
                 <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                   <Path d="M3 11l18-5v12L3 13v-2z" />
                   <Path d="M11.6 16.8a3 3 0 11-5.8-1.6" />
@@ -6789,7 +6788,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               onPress={() => { toggleFabMenu(); setShowDiscoverChannels(true); }}
               activeOpacity={0.7}
             >
-              <View style={[s.fabMenuIcon, { backgroundColor: '#6c5ce7' }]}>
+              <View style={[s.fabMenuIcon, { backgroundColor: '#111111' }]}>
                 <IconSearch size={18} color="#fff" />
               </View>
               <Text style={[s.fabMenuLabel, { color: colors.text }]}>{t('channel.discover')}</Text>
@@ -7896,22 +7895,22 @@ const s = StyleSheet.create({
     gap: 8,
   },
   // Filter pills — taller + rounder so they read like real WhatsApp/Telegram
-  // category chips. The active state gets a soft purple lift via chipActive
-  // (boxShadow on web, elevation native) so the selected filter pops.
+  // category chips. Monochrome segmented control (2026): pill, hairline border,
+  // active state = solid black fill with a single whisper-soft lift.
   chip: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingHorizontal: 14,
+    paddingHorizontal: 13,
     paddingVertical: 6,
     borderRadius: 999,
     borderWidth: 1,
-    height: 34,
+    height: 32,
     justifyContent: 'center',
     flexShrink: 0,
   },
-  // Active chip — solid monochrome fill with one subtle, neutral lift (the old
-  // heavy 0.34–0.36 glow read as dated bloom; 2026 clean = flat + a whisper).
+  // Active chip — solid monochrome fill with one subtle, neutral lift (flat +
+  // a whisper, never a colored bloom).
   chipActive: {
     backgroundColor: '#111111',
     borderColor: '#111111',
@@ -7945,7 +7944,7 @@ const s = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 16,
     paddingTop: 12,
-    paddingBottom: 5,
+    paddingBottom: 4,
   },
   sectionLabelText: {
     fontSize: 11,
