@@ -14,13 +14,39 @@ export default function OfflineNotice() {
   const wasOffline = useRef(false);
 
   useEffect(() => {
+    // [2026-09-30 WhatsApp-invisible-reconnect] Debounce SHOWING the offline
+    // bar. A brief network blip (carrier handoff, AP roam, radio sleep/wake,
+    // a single slow request) must NOT flash "sem conexão" — WhatsApp silently
+    // rides out sub-few-second outages. So we only paint the bar after the
+    // connection has been down for a SUSTAINED window; hiding is INSTANT so
+    // reconnect feels immediate (and so the offline-queue replay effect — which
+    // keys off `isOffline` going false — still fires the moment we're back).
+    const OFFLINE_SHOW_DELAY_MS = 4000;
+    let offlineTimer = null;
+    const applyConnectivity = (online) => {
+      if (online) {
+        // Back online → hide immediately + cancel any pending show.
+        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
+        setIsOffline(false);
+      } else {
+        // Went offline → arm the sustained-outage timer (don't stack timers
+        // if one is already pending; don't reset it on repeat offline events).
+        if (offlineTimer) return;
+        offlineTimer = setTimeout(() => {
+          offlineTimer = null;
+          setIsOffline(true);
+        }, OFFLINE_SHOW_DELAY_MS);
+      }
+    };
+
     if (Platform.OS === 'web') {
-      const handleOnline = () => setIsOffline(false);
-      const handleOffline = () => setIsOffline(true);
+      const handleOnline = () => applyConnectivity(true);
+      const handleOffline = () => applyConnectivity(false);
       window.addEventListener('online', handleOnline);
       window.addEventListener('offline', handleOffline);
-      setIsOffline(!navigator.onLine);
+      applyConnectivity(navigator.onLine);
       return () => {
+        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
         window.removeEventListener('online', handleOnline);
         window.removeEventListener('offline', handleOffline);
       };
@@ -34,29 +60,32 @@ export default function OfflineNotice() {
         try { NativeToolkit = require('../modules/expo-native-toolkit').Toolkit; } catch {}
       }
       if (NativeToolkit?.isOnlineSync) {
-        setIsOffline(!NativeToolkit.isOnlineSync());
+        applyConnectivity(NativeToolkit.isOnlineSync());
       }
       let NetInfo;
       try {
         NetInfo = require('@react-native-community/netinfo').default;
       } catch {
-        return;
+        return () => { if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } };
       }
       const unsub = NetInfo.addEventListener(state => {
         // Use the native value when available — more accurate than NetInfo's
         // event timing. NetInfo still drives the listener (event-based).
         if (NativeToolkit?.isOnlineSync) {
-          setIsOffline(!NativeToolkit.isOnlineSync());
+          applyConnectivity(NativeToolkit.isOnlineSync());
         } else {
           // [2026-06-28] Align with SyncBar: a radio that's "connected" to wifi
           // with no internet (isInternetReachable === false) IS offline. null
           // (unknown, right after connect) is treated as reachable to avoid a
           // false offline flash.
           const online = !!state.isConnected && state.isInternetReachable !== false;
-          setIsOffline(!online);
+          applyConnectivity(online);
         }
       });
-      return () => unsub();
+      return () => {
+        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
+        unsub();
+      };
     }
   }, []);
 
