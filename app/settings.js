@@ -1283,13 +1283,13 @@ function SettingsScreenInner() {
   // strings keep the labels correct without touching the i18n files.
   const categoryList = [
     { key: 'account',      Icon: IconUser,         title: 'Conta',                    sub: 'Perfil, foto, trocar conta' },
-    { key: 'appearance',   Icon: IconBrush,        title: 'Aparência',                sub: 'Tema, densidade, idioma' },
+    { key: 'appearance',   Icon: IconBrush,        title: 'Aparência',                sub: 'Tema e idioma' },
     { key: 'notifications',Icon: IconBell,         title: 'Notificações',             sub: 'Alertas e preferências' },
     { key: 'privacy',      Icon: IconShield,       title: 'Privacidade e segurança',  sub: 'Visto por último, bloqueio, encaminhamento' },
-    { key: 'chat',         Icon: IconMessageSquare,title: 'Chat',                     sub: 'Preferências, temporárias, papel de parede' },
+    { key: 'chat',         Icon: IconMessageSquare,title: 'Chat',                     sub: 'Preferências e temporárias' },
     { key: 'email',        Icon: IconMail,         title: 'Email',                    sub: 'Assinaturas, filtros, leitura' },
     { key: 'bia',          Icon: IconSparkles,     title: 'Bia',                      sub: 'Seu assistente de IA' },
-    { key: 'storage_data', Icon: IconDatabase,     title: 'Armazenamento e dados',    sub: 'Mídia, rede, armazenamento' },
+    { key: 'storage_data', Icon: IconDatabase,     title: 'Armazenamento e dados',    sub: 'Mídia e armazenamento' },
     { key: 'help',         Icon: IconHelpCircle,   title: 'Ajuda e sobre',            sub: 'Central de ajuda, sobre, legal' },
   ];
   const activeCategoryTitle = (categoryList.find(c => c.key === activeCategory) || {}).title || t('settings.title');
@@ -1406,19 +1406,19 @@ function SettingsScreenInner() {
                     backgroundColor: colors.surface,
                     borderColor: colors.borderLight,
                     borderWidth: 1,
-                    borderRadius: 14,
-                    paddingVertical: 14,
-                    paddingHorizontal: 14,
-                    marginBottom: 10,
+                    borderRadius: 12,
+                    paddingVertical: 10,
+                    paddingHorizontal: 12,
+                    marginBottom: 7,
                   }]}
                 >
                   <View style={{
-                    width: 38, height: 38, borderRadius: 19,
+                    width: 32, height: 32, borderRadius: 16,
                     backgroundColor: colors.primary + '18',
                     alignItems: 'center', justifyContent: 'center',
-                    marginRight: 14,
+                    marginRight: 11,
                   }}>
-                    <CatIcon size={20} color={colors.primary} />
+                    <CatIcon size={18} color={colors.primary} />
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={[s.settingLabel, { color: colors.text, fontWeight: '700' }]}>{cat.title}</Text>
@@ -1481,7 +1481,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Appearance */}
-        {(searching || activeCategory === 'appearance') && sectionMatches(t('settings.appearance'), t('settings.theme.light'), t('settings.theme.dark'), t('settings.theme.system'), t('settings.density')) && (
+        {(searching || activeCategory === 'appearance') && sectionMatches(t('settings.appearance'), t('settings.theme.light'), t('settings.theme.dark'), t('settings.theme.system')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.appearance')}</Text>
 
@@ -1528,6 +1528,7 @@ function SettingsScreenInner() {
           </View>
 
           {/* Density */}
+          {false && (
           <View style={[s.settingRowColumn, { borderBottomColor: colors.borderLight }]}>
             <View style={{ width: '100%' }}>
               <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.density')}</Text>
@@ -1560,6 +1561,7 @@ function SettingsScreenInner() {
               ))}
             </View>
           </View>
+          )}
         </View>
         )}
 
@@ -2381,7 +2383,7 @@ function SettingsScreenInner() {
             the notification channel. The native module reads
             `notif_led_color` on push delivery. Branded swatches with
             labels + a hero preview dot showing the live selection. */}
-        {(searching || activeCategory === 'chat') && Platform.OS === 'android' && sectionMatches(
+        {false && (searching || activeCategory === 'chat') && Platform.OS === 'android' && sectionMatches(
           t('settings.led.title') || 'Cor do LED',
           'led',
         ) && (
@@ -2470,7 +2472,7 @@ function SettingsScreenInner() {
             chat-conversation.js can render it via backgroundColor; the
             gradient swatches here are visual previews only. Custom photo
             upload remains supported (stored as the image URI). */}
-        {(searching || activeCategory === 'chat') && sectionMatches(t('settings.wallpaperDefault.title') || 'Papel de parede padrão', 'wallpaper', 'papel de parede') && (
+        {false && (searching || activeCategory === 'chat') && sectionMatches(t('settings.wallpaperDefault.title') || 'Papel de parede padrão', 'wallpaper', 'papel de parede') && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.wallpaperDefault.title') || 'Papel de parede padrão'}</Text>
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
@@ -2587,7 +2589,7 @@ function SettingsScreenInner() {
             reused by that row. */}
 
         {/* Network usage stats — lifetime up/down bytes for chat media. */}
-        {(searching || activeCategory === 'storage_data') && sectionMatches(t('settings.networkUsage.title') || 'Uso de rede', 'network usage', 'uso de rede') && (
+        {false && (searching || activeCategory === 'storage_data') && sectionMatches(t('settings.networkUsage.title') || 'Uso de rede', 'network usage', 'uso de rede') && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconDatabase size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -5424,8 +5426,8 @@ const s = StyleSheet.create({
   // separating (shadow dropped to none), calmer radius, tighter inner
   // padding + smaller inter-card gap for an iOS-Settings density.
   section: {
-    borderRadius: BorderRadius.lg, paddingHorizontal: Spacing.lg + 3, paddingVertical: Spacing.md,
-    marginBottom: Spacing.sm + 1,
+    borderRadius: BorderRadius.lg, paddingHorizontal: Spacing.lg + 1, paddingVertical: Spacing.sm,
+    marginBottom: Spacing.sm,
     ...Platform.select({
       web: { boxShadow: 'none' },
       ios: { shadowOpacity: 0 },
@@ -5469,12 +5471,12 @@ const s = StyleSheet.create({
   // -0.5) so it doesn't look squashed at this size.
   // [beauty2 2026-05-31] dialed the card heading down to 18px/700 — closer to
   // iOS Settings group-header weight; calmer, less shouty than 20/800.
-  sectionTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.sm, letterSpacing: LetterSpacing.tight },
+  sectionTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.xs, letterSpacing: LetterSpacing.tight },
   // Eyebrow label — small uppercase brand-color tag rendered above a section
   // title for screens that want extra navigability (iOS Settings pattern).
   // Currently only used internally; rows opt in via <Text style={[s.sectionEyebrow, { color: colors.primary }]}/>.
   sectionEyebrow: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4, opacity: 0.85 },
-  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm },
+  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.xs },
   // Setting row — adds a soft hover state on web so each row reads as
   // "tappable" without an explicit border. Spacing bumped slightly for
   // a more relaxed iOS-Settings density.
@@ -5484,8 +5486,8 @@ const s = StyleSheet.create({
   // dividers so the list reads compact and calm without feeling crammed.
   settingRow: {
     flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8,
-    minHeight: 42,
-    paddingVertical: Spacing.sm + 2, borderBottomWidth: StyleSheet.hairlineWidth,
+    minHeight: 38,
+    paddingVertical: Spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth,
     ...Platform.select({
       web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
       default: {},
@@ -5493,11 +5495,11 @@ const s = StyleSheet.create({
   },
   settingRowColumn: {
     flexDirection: 'column', alignItems: 'flex-start',
-    paddingVertical: Spacing.sm + 2, borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: Spacing.sm, borderBottomWidth: StyleSheet.hairlineWidth,
   },
   settingInfo: { flex: 1, minWidth: 0 },
   settingLabel: { fontSize: FontSize.lg, fontWeight: '600', letterSpacing: LetterSpacing.tight },
-  settingDesc: { fontSize: FontSize.sm, marginTop: 3, opacity: 0.72, lineHeight: 18, letterSpacing: LetterSpacing.normal },
+  settingDesc: { fontSize: FontSize.sm, marginTop: 2, opacity: 0.72, lineHeight: 17, letterSpacing: LetterSpacing.normal },
   // Per page
   // [beauty2 2026-05-31] segmented-pill selectors — slightly rounder + tighter
   // gap so the row of options reads as one cohesive iOS segmented control.
