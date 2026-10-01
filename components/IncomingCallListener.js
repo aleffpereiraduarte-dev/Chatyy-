@@ -1411,7 +1411,11 @@ function IncomingCallListenerWeb() {
                 // (NOT isCaller), and the backend call_id IS the LK room
                 // (`group_<conversationId>`), so pass it straight through as
                 // `room`; group-call.js mints its own token for that room.
-                router.push(`/group-call?conversation_id=${encodeURIComponent(finalConversationId)}&room=${encodeURIComponent(callId)}&video=${isVideo}`);
+                // [group-native 2026-09-30] Native group grid lives in /call.js
+                // now (isGroupCall branch). Route the answerer there instead of
+                // the WebView /group-call. Same params as the 1:1 push below +
+                // groupCall=1 (mirrors app/call/[id].js:112-116).
+                router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0&groupCall=1`);
               } else {
                 router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(finalCallerName)}&contactEmail=${encodeURIComponent(finalCallerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(finalConversationId)}&isCaller=0`);
               }
@@ -1655,7 +1659,10 @@ function IncomingCallListenerWeb() {
                 // [#1359 group-answer routing] Route group answers to the
                 // LiveKit grid screen, not the 1:1 single-video /call. Answerer
                 // joins (no isCaller); backend call_id IS the LK room.
-                router.push(`/group-call?conversation_id=${encodeURIComponent(conversationId)}&room=${encodeURIComponent(callId)}&video=${isVideo}`);
+                // [group-native 2026-09-30] Native group grid in /call.js —
+                // route here instead of the WebView /group-call. Mirrors the
+                // 1:1 push below + groupCall=1.
+                router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1&groupCall=1`);
               } else {
                 router.push(`/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&autoAccepted=1`);
               }
@@ -1878,8 +1885,11 @@ function IncomingCallListenerWeb() {
         // group call saw a single peer. Answerer is a joiner (no isCaller);
         // the backend call_id IS the LK room (`group_<conversationId>`), so
         // pass it through as `room` — group-call.js mints its own token.
+        // [group-native 2026-09-30] Group answers now render the native N-tile
+        // grid inside /call.js (isGroupCall branch) instead of the WebView
+        // /group-call. Same native /call params as the 1:1 branch + groupCall=1.
         const url = _routeGroup
-          ? `/group-call?conversation_id=${encodeURIComponent(conversationId)}&room=${encodeURIComponent(callId)}&video=${isVideo}`
+          ? `/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&callerVerified=${callerVerifiedParam}&groupCall=1`
           : `/call?callId=${encodeURIComponent(callId)}&contactName=${encodeURIComponent(callerName)}&contactEmail=${encodeURIComponent(callerEmail)}&isVideo=${isVideo}&conversationId=${encodeURIComponent(conversationId)}&isCaller=0&callerVerified=${callerVerifiedParam}`;
         router.push(url);
       } catch {}

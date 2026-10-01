@@ -91,7 +91,7 @@ export default function CallScheduleScreen() {
       }
       const room = r.data?.room_id || call.room_id;
       const cid = r.data?.conversation_id || call.conversation_id || 0;
-      router.push(`/group-call?room=${encodeURIComponent(room)}&conversation_id=${cid}&video=0`);
+      router.push(`/call?callId=${encodeURIComponent(room)}&conversationId=${cid}&isVideo=0&isCaller=1&groupCall=1`);
     } catch (e) {
       if (Platform.OS === 'web') window.alert(e?.message || 'Erro');
       else Alert.alert(t('common.error') || 'Erro', e?.message || 'Erro');

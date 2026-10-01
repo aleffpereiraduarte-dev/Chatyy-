@@ -17,8 +17,25 @@ import {
   dbSaveContacts, dbSaveEmails, dbSaveEvents, dbSaveFiles,
   dbSet, dbSetSyncState, isDbReady,
 } from './db';
+// Real cache the SCREENS actually read (services/cache.js). The db.js tables
+// warmed by the dbSave* calls below are never read by any screen, so a
+// never-before-visited page (contacts / calendar / meetings / files) still hit
+// the network on its FIRST open. Warming these exact keys+shapes during the
+// initial sync makes that first open paint instantly from cache.
+import { setCache, setCacheUser } from './cache';
 let mailWs = null;
 try { mailWs = require('./websocket').default; } catch {}
+
+// Byte size → human string. Mirrors formatSize() in app/files.js so the
+// `files_root` cache we warm here has the EXACT same item shape the Files
+// screen stores (it reads the cache verbatim, without re-normalizing).
+function _fmtSize(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
 
 const SYNC_KEY = 'initial_sync_done';
 const SYNC_VERSION_KEY = 'sync_version';
@@ -110,6 +127,20 @@ export async function runInitialSync(api, options = {}) {
   const isNative = Platform.OS !== 'web';
   const stats = { conversations: 0, messages: 0, contacts: 0, emails: 0, events: 0, files: 0 };
 
+  // ACCOUNT SCOPING: services/cache.js scopes every key to the active user
+  // (setCache → prefix built from _userHash). AuthContext already calls
+  // setCacheUser() at login, but re-assert it defensively from the active
+  // account email before we warm any user-scoped keys, so a warm write can
+  // never land in the wrong (or empty) slot. Re-asserting the same email is a
+  // no-op; we SKIP entirely when no email is known rather than clobber the
+  // hash with '' (which would unscope + clear the mem cache).
+  try {
+    const activeEmail = (typeof api.getActiveAccountEmail === 'function')
+      ? api.getActiveAccountEmail()
+      : '';
+    if (activeEmail) setCacheUser(activeEmail);
+  } catch {}
+
   try {
     emit('start', 0);
 
@@ -143,6 +174,17 @@ export async function runInitialSync(api, options = {}) {
           await dbSaveContacts(contacts);
         }
         stats.contacts = contacts.length;
+      }
+    } catch {}
+    // WARM REAL CACHE — contacts. app/contacts.js loadContacts() reads
+    // getCached('contacts') and renders `cached.data`, and stores the raw
+    // api.getContactsList() response ({ success, data: [...] }). Warm that
+    // exact key/shape with the same endpoint the screen uses so a first-ever
+    // visit to Contacts paints instantly from cache.
+    try {
+      const rc = await api.getContactsList();
+      if (rc && rc.success) {
+        await setCache('contacts', rc);
       }
     } catch {}
     emit('progress', 65);
@@ -181,6 +223,35 @@ export async function runInitialSync(api, options = {}) {
         }
       }
     } catch {}
+    // WARM REAL CACHE — calendar. app/calendar.js loadEvents() reads
+    // getCached('calendar_events') and renders `cached.data.events`, storing
+    // the raw api.calEvents() response ({ success, data: { events: [...] } }).
+    // Warm that exact key/shape (same endpoint) so the first-ever Calendar
+    // visit paints instantly. Range = previous month through +2 months, i.e.
+    // the same window loadEvents() fetches for the current month.
+    try {
+      const nowC = new Date();
+      const cStart = new Date(nowC.getFullYear(), nowC.getMonth() - 1, 1);
+      const cEnd = new Date(nowC.getFullYear(), nowC.getMonth() + 2, 0);
+      const rcal = await api.calEvents(
+        cStart.toISOString().slice(0, 10),
+        cEnd.toISOString().slice(0, 10),
+      );
+      if (rcal && rcal.success) {
+        await setCache('calendar_events', rcal);
+      }
+    } catch {}
+    // WARM REAL CACHE — meetings. app/meetings.js loadMeetings() reads
+    // getCached('meetings_<tab>') (default tab 'upcoming') and uses the cached
+    // value directly as the meetings ARRAY, storing `r.data?.meetings || []`.
+    // No existing phase fetched meetings, so a first visit always hit the
+    // network — warm the plain-array shape under 'meetings_upcoming'.
+    try {
+      const rm = await api.meetList('upcoming', 50, 0);
+      if (rm && rm.success) {
+        await setCache('meetings_upcoming', rm.data?.meetings || []);
+      }
+    } catch {}
     emit('progress', 85);
 
     // ══════ Phase 6: Files/Cloud listing (85-92%) ══════
@@ -193,6 +264,32 @@ export async function runInitialSync(api, options = {}) {
           await dbSaveFiles(files);
           stats.files = files.length;
         }
+      }
+    } catch {}
+    // WARM REAL CACHE — files (root folder). app/files.js loadAllFiles() reads
+    // getCached('files_root') and renders `cached.folders` + `cached.files`,
+    // storing a normalized { folders, files, breadcrumbs, storage } object.
+    // Rebuild that exact shape from api.fileList(null) (same endpoint the
+    // screen uses for root), applying the same normalize/split, so a first
+    // visit to Files paints instantly.
+    try {
+      const rf = await api.fileList(null);
+      if (rf && rf.success) {
+        const raw = rf.data || {};
+        const normalize = (f) => ({
+          ...f,
+          is_starred: f.is_starred ?? f.starred ?? 0,
+          original_name: f.original_name || f.name || '',
+          size_formatted: f.size_formatted || _fmtSize(f.size || 0),
+        });
+        const allItems = (raw.files || []).map(normalize);
+        const data = {
+          folders: (raw.folders || allItems.filter(f => f.is_folder)).map(normalize),
+          files: (raw.files_only || allItems.filter(f => !f.is_folder)).map(normalize),
+          breadcrumbs: raw.breadcrumbs,
+          storage: raw.storage,
+        };
+        await setCache('files_root', data);
       }
     } catch {}
     emit('progress', 92);

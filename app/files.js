@@ -12,7 +12,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
-import { getCached, setCache } from '../services/cache';
+import { getCached, getCachedSync, setCache } from '../services/cache';
 import { safeAlert } from '../services/alerts';
 import { mapApiError } from '../services/errorMap';
 import {
@@ -1059,10 +1059,41 @@ function FilesScreenInner() {
   const [tab, setTab] = useState('all');
   const [currentFolderId, setCurrentFolderId] = useState(null);
   // ALL data lives in these 3 arrays - loaded once, filtered locally
-  const [allFolders, setAllFolders] = useState([]);
-  const [allFiles, setAllFiles] = useState([]);
+  // [cache-first] Seed the root folder synchronously from MMKV so Files paints
+  // on frame 1 (no spinner). loadAllFiles() below still revalidates + keeps the
+  // in-memory folderCache. Guard on the active account so account A never
+  // flashes under account B before AuthContext sets the cache user
+  // (getCachedSync falls back to _noacct otherwise). The persist shape written
+  // by loadAllFiles is { folders, files, breadcrumbs, storage } under key
+  // `files_root` (currentFolderId === null → 'root'). Mirrors notifications.js.
+  const [allFolders, setAllFolders] = useState(() => {
+    try {
+      if (api.getActiveAccountEmail && api.getActiveAccountEmail()) {
+        const cached = getCachedSync('files_root');
+        if (cached) return cached.folders || [];
+      }
+    } catch {}
+    return [];
+  });
+  const [allFiles, setAllFiles] = useState(() => {
+    try {
+      if (api.getActiveAccountEmail && api.getActiveAccountEmail()) {
+        const cached = getCachedSync('files_root');
+        if (cached) return cached.files || [];
+      }
+    } catch {}
+    return [];
+  });
   const [allTrash, setAllTrash] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    try {
+      if (api.getActiveAccountEmail && api.getActiveAccountEmail()) {
+        const cached = getCachedSync('files_root');
+        if (cached) return false;
+      }
+    } catch {}
+    return true;
+  });
   const [refreshing, setRefreshing] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadingFile, setUploadingFile] = useState('');

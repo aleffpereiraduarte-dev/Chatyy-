@@ -144,6 +144,127 @@ function formatLikeCount(count, t) {
   return `${count} ${t?.('feed.likes') || 'likes'}`;
 }
 
+// expo-video (SDK 55+) — native inline player. Replaces the old per-post
+// WebView (<video> inside react-native-webview) that spun up a whole
+// WKWebView/Chromium view PER feed video → that was the scroll jank. Loaded
+// lazily + cached so older binaries without the module degrade to the poster.
+let _expoVideoMod = null;
+function loadExpoVideo() {
+  if (_expoVideoMod !== null) return _expoVideoMod;
+  try { _expoVideoMod = require('expo-video'); } catch { _expoVideoMod = false; }
+  return _expoVideoMod;
+}
+
+// Native inline feed video (expo-video). Mounted only while the post is in
+// the "playing" state, so useVideoPlayer's lifecycle maps to the visible
+// playback session and the player is released on close / scroll-away. A
+// dedicated component means useVideoPlayer is always called at this
+// component's top level (Rules-of-Hooks safe) — mirrors ShortVideoBubble's
+// ExpoVideoFallback and VideoNotePlayer.
+const NativeFeedVideoPlayer = memo(function NativeFeedVideoPlayer({ uri, isActive, onClose, t }) {
+  const ev = loadExpoVideo();
+  const useVideoPlayer = ev && ev.useVideoPlayer;
+  const VideoView = ev && ev.VideoView;
+  // Module presence is constant for the app's lifetime, so this early return
+  // before the hook can't change hook order across renders — the same guard
+  // the other expo-video players in the app use.
+  if (!useVideoPlayer || !VideoView) return null;
+
+  const [paused, setPaused] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const player = useVideoPlayer(resolveMediaUrl(uri), (p) => {
+    // Autoplay with sound + loop, matching the old WebView (v.muted=false).
+    // If iOS rejects an unmuted autoplay, retry muted so it still plays.
+    try {
+      p.loop = true;
+      p.muted = false;
+      const r = p.play?.();
+      if (r?.catch) r.catch(() => { try { p.muted = true; p.play?.(); } catch {} });
+    } catch {}
+  });
+
+  // Pause the instant the post scrolls out of view (feed audio-leak guard);
+  // resume when it's the active row again and the user hasn't paused it.
+  useEffect(() => {
+    if (!player) return;
+    try {
+      if (isActive === false) { player.pause?.(); }
+      else if (!paused) { const r = player.play?.(); if (r?.catch) r.catch(() => {}); }
+    } catch {}
+  }, [isActive, paused, player]);
+
+  const togglePlay = useCallback(() => {
+    setPaused((prev) => {
+      const next = !prev;
+      try {
+        if (next) player.pause?.();
+        else { const r = player.play?.(); if (r?.catch) r.catch(() => {}); }
+      } catch {}
+      return next;
+    });
+  }, [player]);
+
+  const toggleMute = useCallback(() => {
+    setMuted((prev) => {
+      const next = !prev;
+      try { player.muted = next; } catch {}
+      return next;
+    });
+  }, [player]);
+
+  return (
+    <View style={styles.mediaFrame}>
+      <VideoView
+        player={player}
+        style={{ flex: 1, backgroundColor: '#000' }}
+        contentFit="contain"
+        nativeControls={false}
+        allowsFullscreen
+        allowsPictureInPicture={false}
+      />
+      {/* Play/Pause overlay (tap anywhere) */}
+      <TouchableOpacity
+        style={styles.nativeVideoOverlay}
+        onPress={togglePlay}
+        activeOpacity={1}
+        accessibilityLabel={t?.('feed.togglePlay') || 'Play or pause video'}
+      >
+        {paused && (
+          <View style={styles.playButton}>
+            <IconPlay size={28} color="#fff" />
+          </View>
+        )}
+      </TouchableOpacity>
+      {/* Mute toggle */}
+      <TouchableOpacity
+        style={styles.muteButton}
+        onPress={toggleMute}
+        activeOpacity={0.7}
+        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+        accessibilityLabel={muted ? (t?.('feed.unmute') || 'Unmute') : (t?.('feed.mute') || 'Mute')}
+      >
+        <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+          <Path d="M11 5L6 9H2v6h4l5 4V5z" />
+          {muted ? (
+            <><Path d="M23 9l-6 6" /><Path d="M17 9l6 6" /></>
+          ) : (
+            <><Path d="M19.07 4.93a10 10 0 010 14.14" /><Path d="M15.54 8.46a5 5 0 010 7.07" /></>
+          )}
+        </Svg>
+      </TouchableOpacity>
+      {/* Close button */}
+      <TouchableOpacity
+        style={{ position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 16, width: 32, height: 32, alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
+        onPress={onClose}
+        accessibilityLabel={t?.('common.close') || 'Close'}
+        accessibilityRole="button"
+      >
+        <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>X</Text>
+      </TouchableOpacity>
+    </View>
+  );
+});
+
 // Video player component with play/pause overlay, mute toggle, progress bar
 // `isActive` (default true) comes from the feed's onViewableItemsChanged — when
 // the post scrolls out of view we pass false so the video pauses (kills the
@@ -297,95 +418,23 @@ const VideoPlayer = memo(function VideoPlayer({ uri, poster, colors, isDark, t, 
     );
   }
 
-  // Native: use WebView to play video inline with JS-controlled play/pause/mute
+  // Native: play inline with expo-video (was a per-post WebView — the jank).
   const [nativePlaying, setNativePlaying] = useState(false);
-  const [nativeMuted, setNativeMuted] = useState(false);
-  const webViewRef = useRef(null);
-  const handleNativeTogglePlay = useCallback(() => {
-    if (webViewRef.current) {
-      webViewRef.current.injectJavaScript(`var v=document.getElementById("v");if(v.paused)v.play().catch(function(){});else v.pause();true;`);
-    }
-  }, []);
-  const handleNativeToggleMute = useCallback(() => {
-    setNativeMuted(prev => {
-      const next = !prev;
-      if (webViewRef.current) {
-        webViewRef.current.injectJavaScript(`document.getElementById("v").muted=${next};true;`);
-      }
-      return next;
-    });
-  }, []);
   const handleNativeClose = useCallback(() => setNativePlaying(false), []);
-  const handleNativeOpen = useCallback(() => setNativePlaying(true), []);
-  const videoUrl = resolveMediaUrl(uri);
-
-  // Pause the inline WebView video the moment this post scrolls out of view.
-  // Without this, tapping play and then scrolling away kept the audio playing
-  // in the background (the feed audio-leak bug). When the post becomes active
-  // again the user can tap to resume.
-  useEffect(() => {
-    if (isWeb) return;
-    if (isActive === false && webViewRef.current) {
-      try {
-        webViewRef.current.injectJavaScript('var v=document.getElementById("v");if(v){v.pause();}true;');
-      } catch {}
-    }
-  }, [isActive, isWeb]);
+  const handleNativeOpen = useCallback(() => {
+    // Only enter the player if expo-video is on this build; otherwise stay on
+    // the poster (older binaries degrade gracefully — no WebView fallback).
+    if (loadExpoVideo()) setNativePlaying(true);
+  }, []);
 
   if (nativePlaying) {
-    const WebView = require('react-native-webview').WebView;
-    const videoHtml = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"><style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain}</style></head><body><video id="v" autoplay playsinline webkit-playsinline loop preload="auto"></video><script>var v=document.getElementById("v");v.src=${JSON.stringify(videoUrl)};v.muted=false;v.play().catch(function(){v.muted=true;v.play().catch(function(){})});window.addEventListener("message",function(e){try{var d=JSON.parse(e.data);if(d.cmd==="pause")v.pause();if(d.cmd==="play"){v.play().catch(function(){});}if(d.cmd==="mute")v.muted=true;if(d.cmd==="unmute"){v.muted=false;}}catch(ex){}});</script></body></html>`;
     return (
-      <View style={styles.mediaFrame}>
-        <WebView
-          ref={webViewRef}
-          source={{ html: videoHtml, baseUrl: BASE_URL }}
-          style={{ flex: 1, backgroundColor: '#000' }}
-          allowsInlineMediaPlayback={true}
-          mediaPlaybackRequiresUserAction={false}
-          javaScriptEnabled={true}
-          originWhitelist={['*']}
-          setSupportMultipleWindows={false}
-          allowsFullscreenVideo={true}
-          onShouldStartLoadWithRequest={(req) => {
-            if (req.url === 'about:blank' || req.url.startsWith(BASE_URL)) return true;
-            return false;
-          }}
-        />
-        {/* Play/Pause overlay */}
-        <TouchableOpacity
-          style={styles.nativeVideoOverlay}
-          onPress={handleNativeTogglePlay}
-          activeOpacity={1}
-          accessibilityLabel={t('feed.togglePlay') || 'Play or pause video'}
-        />
-        {/* Mute toggle */}
-        <TouchableOpacity
-          style={styles.muteButton}
-          onPress={handleNativeToggleMute}
-          activeOpacity={0.7}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          accessibilityLabel={nativeMuted ? (t('feed.unmute') || 'Unmute') : (t('feed.mute') || 'Mute')}
-        >
-          <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-            <Path d="M11 5L6 9H2v6h4l5 4V5z" />
-            {nativeMuted ? (
-              <><Path d="M23 9l-6 6" /><Path d="M17 9l6 6" /></>
-            ) : (
-              <><Path d="M19.07 4.93a10 10 0 010 14.14" /><Path d="M15.54 8.46a5 5 0 010 7.07" /></>
-            )}
-          </Svg>
-        </TouchableOpacity>
-        {/* Close button */}
-        <TouchableOpacity
-          style={{ position: 'absolute', top: 10, right: 10, backgroundColor: 'rgba(0,0,0,0.6)', borderRadius: 16, width: 32, height: 32, alignItems: 'center', justifyContent: 'center', zIndex: 10 }}
-          onPress={handleNativeClose}
-          accessibilityLabel={t('common.close') || 'Close'}
-          accessibilityRole="button"
-        >
-          <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>X</Text>
-        </TouchableOpacity>
-      </View>
+      <NativeFeedVideoPlayer
+        uri={uri}
+        isActive={isActive}
+        onClose={handleNativeClose}
+        t={t}
+      />
     );
   }
 

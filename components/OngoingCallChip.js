@@ -109,13 +109,20 @@ export default function OngoingCallChip({ conversationId, refreshKey }) {
         const d = r?.data || r;
         if (d?.token) preToken = d.token;
       } catch {}
+      // [group-native 2026-09-30] Join into the native N-tile group grid in
+      // /call.js (isGroupCall branch) instead of the WebView /group-call.
+      // callId=room, isCaller=0 (joiner), groupCall=1. Extra params
+      // (joining/__t) are harmless — call.js reads callId/conversationId/
+      // isVideo/isCaller/groupCall and ignores the rest.
       router.push({
-        pathname: '/group-call',
+        pathname: '/call',
         params: {
-          conversation_id: String(conversationId),
-          room: String(room || ''),
+          callId: String(room || ''),
+          conversationId: String(conversationId),
+          isVideo: state?.video ? '1' : '0',
+          isCaller: '0',
+          groupCall: '1',
           joining: '1',
-          video: state?.video ? '1' : '0',
           ...(preToken ? { __t: preToken } : {}),
         },
       });

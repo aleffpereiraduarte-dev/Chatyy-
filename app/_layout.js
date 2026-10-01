@@ -81,6 +81,10 @@ try {
 // before React/components so the monkey-patch is installed before any screen
 // mounts and schedules a LayoutAnimation. Android is left untouched.
 import '../services/disableLayoutAnimationIOS';
+// Suspende a renderização de telas empilhadas fora de tela → menos trabalho no
+// thread JS e menos memória (react-native-screens já está no bundle nativo).
+import { enableFreeze } from 'react-native-screens';
+try { enableFreeze(true); } catch {}
 import React, { Suspense } from "react";
 import { Platform, View as RNView, Text as RNText, Linking, Alert, Animated as _RNAnimated, InteractionManager, useColorScheme as _useColorScheme } from 'react-native';
 // ─── Sentry crash reporting ───

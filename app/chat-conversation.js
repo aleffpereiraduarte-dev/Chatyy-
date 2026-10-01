@@ -2714,6 +2714,7 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
     a._failed === b._failed &&
     a._queued === b._queued &&
     a._uploading === b._uploading &&
+    a._compressing === b._compressing &&
     a._isLastInGroup === b._isLastInGroup &&
     a._isFirstInGroup === b._isFirstInGroup &&
     a._e2e === b._e2e &&
@@ -5362,6 +5363,52 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
     setActiveIdx(i);
   };
 
+  // [MEDIA-POLISH 2026-09-30] "Add more" (+) tile — append extra photos/videos
+  // to the open batch (WhatsApp parity). Fully self-contained: it picks via
+  // expo-image-picker and merges the new assets into the LOCAL `files` list,
+  // so it never round-trips through the parent (whose seed effect keys on
+  // filesProp and would reset edits/captions). Mirrors the parent gallery
+  // picker's file-descriptor shape. Guarded end-to-end — a no-op on cancel,
+  // denied permission, or any error.
+  const addMore = async () => {
+    try {
+      const ImagePicker = require('expo-image-picker');
+      const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!perm.granted) return;
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'],
+        quality: 1.0,
+        allowsMultipleSelection: true,
+        selectionLimit: 30,
+        videoMaxDuration: 300,
+      });
+      if (result.canceled || !result.assets?.length) return;
+      const mimeMap = {
+        jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+        webp: 'image/webp', heic: 'image/heic', heif: 'image/heif', bmp: 'image/bmp',
+        mp4: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm', avi: 'video/x-msvideo',
+        mkv: 'video/x-matroska', m4v: 'video/x-m4v', '3gp': 'video/3gpp',
+      };
+      const built = result.assets.map((asset, idx) => {
+        const uri = asset.uri || '';
+        const fname = asset.fileName || '';
+        const mimeHint = asset.mimeType || '';
+        const isVideo = asset.type === 'video' || /\.(mp4|mov|webm|avi|mkv|m4v)(\?|$)/i.test(uri) || mimeHint.startsWith('video/');
+        let ext = '';
+        const mm = (fname || uri).match(/\.([a-z0-9]{2,5})(?:\?|$)/i);
+        if (mm) ext = mm[1].toLowerCase();
+        if (!ext) ext = isVideo ? 'mp4' : 'jpg';
+        const type = mimeHint || mimeMap[ext] || (isVideo ? 'video/mp4' : 'image/jpeg');
+        const name = fname || `media_${Date.now()}_${idx}.${ext}`;
+        const size = asset.fileSize || asset.size || 0;
+        return { uri, name, type, blob: asset.blob || null, size };
+      }).filter(f => f.uri);
+      if (built.length) setFiles(prev => [...prev, ...built]);
+    } catch (e) {
+      console.warn('[MediaPreview addMore]', e?.message);
+    }
+  };
+
   const handleSendPress = async () => {
     // Hand the whole (possibly-edited, possibly-pruned) batch to the parent
     // so it can fire one uploadAndSendFile per file with the shared batch id.
@@ -5581,6 +5628,22 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
                   </View>
                 );
               })}
+              {/* [MEDIA-POLISH 2026-09-30] "Add more" (+) tile — picks extra
+                  photos/videos and appends them to the batch (WhatsApp parity). */}
+              <TouchableOpacity
+                onPress={addMore}
+                accessibilityLabel={t('chatConv.addMore') || 'Adicionar mais'}
+                accessibilityRole="button"
+                style={{
+                  width: 60, height: 60, borderRadius: 8,
+                  borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)',
+                  borderStyle: 'dashed',
+                  alignItems: 'center', justifyContent: 'center',
+                  backgroundColor: 'rgba(255,255,255,0.06)',
+                }}
+              >
+                <IconPlus size={26} color="rgba(255,255,255,0.85)" />
+              </TouchableOpacity>
             </ScrollView>
           )}
 
@@ -5685,13 +5748,22 @@ const previewStyles = StyleSheet.create({
     // bottom inset, not a hardcoded 16px that fails on phones with
     // 48px gesture indicators.
     paddingBottom: Platform.OS === 'ios' ? 34 : 24,
-    paddingTop: 8,
+    paddingTop: 10,
+    // [MEDIA-POLISH 2026-09-30] Subtle dark scrim behind the caption row so
+    // the white caption pill, "1" view-once chip and SEND button stay legible
+    // over a bright photo (previously they floated on transparent black and
+    // vanished against a light image). Matches WhatsApp's caption bar.
+    backgroundColor: 'rgba(0,0,0,0.32)',
   },
   captionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   captionInput: {
-    flex: 1, color: '#fff', fontSize: 16, backgroundColor: 'rgba(255,255,255,0.12)',
-    borderRadius: 24, paddingHorizontal: 16, paddingVertical: 10,
-    maxHeight: 120,
+    // [MEDIA-POLISH 2026-09-30] Clean rounded WhatsApp-style caption pill:
+    // hairline border + slightly deeper translucency + a real min-height so a
+    // single-line legend sits centered instead of cramped.
+    flex: 1, color: '#fff', fontSize: 16, backgroundColor: 'rgba(255,255,255,0.10)',
+    borderRadius: 22, borderWidth: 1, borderColor: 'rgba(255,255,255,0.16)',
+    paddingHorizontal: 16, paddingVertical: Platform.OS === 'ios' ? 11 : 8,
+    minHeight: 44, maxHeight: 120,
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
   viewOnceBtn: {
@@ -5702,13 +5774,17 @@ const previewStyles = StyleSheet.create({
   viewOnceBtnText: { fontSize: 16, fontWeight: '800', color: 'rgba(255,255,255,0.5)' },
   viewOnceHint: { color: '#111111', fontSize: 12, textAlign: 'center', marginTop: 6, fontWeight: '500' },
   sendBtn: {
-    width: 48, height: 48, borderRadius: 24,
+    // [MEDIA-POLISH 2026-09-30] Clear circular accent send button — a hair
+    // larger with a faint white ring so it reads as the primary action against
+    // the dark scrim.
+    width: 50, height: 50, borderRadius: 25,
     alignItems: 'center', justifyContent: 'center',
     backgroundColor: '#111111',
-    shadowColor: '#111111',
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.35, shadowRadius: 6,
-    elevation: 4,
+    shadowOpacity: 0.4, shadowRadius: 7,
+    elevation: 5,
   },
   sendBadge: {
     position: 'absolute', top: -4, right: -4,
@@ -14795,6 +14871,15 @@ function ChatConversationInner() {
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images', 'videos'],
         quality: 0.8,
+        // [video-compress 2026-09-30] Camera captures at the picker's default
+        // (High) land a 60s 1080p clip at 100-200MB BEFORE our native transcode
+        // even runs — and if ExpoNativeVideo isn't available in the build, that
+        // raw file is what uploads. Medium records a much smaller source on iOS
+        // (the native transcode below still shrinks it further). Optional-chained
+        // so an older expo-image-picker without the enum just ignores it. No
+        // "sem perder qualidade" intent here (camera already uses quality:0.8),
+        // unlike the gallery picker which keeps 1.0 for the HD toggle.
+        videoQuality: ImagePicker.UIImagePickerControllerQualityType?.Medium,
         videoMaxDuration: 60,
       });
       if (result.canceled || !result.assets?.[0]) return;
@@ -15052,6 +15137,29 @@ function ChatConversationInner() {
         } catch {}
       })();
     }
+    // [POSTER 2026-09-30] Instant LOCAL poster frame for REGULAR gallery videos.
+    // Mirrors the video-NOTE path (handleSendVideoNote → _videoSendPipeline),
+    // which already lands a poster in its optimistic bubble. Regular videos go
+    // through THIS function and, until now, sat on a flat gray #1f2937 box
+    // until the backend ffmpeg cron wrote <key>.thumb.jpg (1-10s lag) — the
+    // "sending video looks broken" complaint. We extract the ~0.5s frame
+    // natively and stamp poster_url/_posterUri on the optimistic row so the
+    // OUTGOING bubble shows a real preview immediately. Fire-and-forget so the
+    // instant local preview (file_url) is NEVER delayed; never-worse — on any
+    // failure (web, missing native module, decode error) the bubble is exactly
+    // as it was before.
+    if (fileType === 'video' && file?.uri && _videoSendPipeline?.preparePoster) {
+      (async () => {
+        try {
+          const poster = await _videoSendPipeline.preparePoster(file.uri, file.duration || null);
+          const pUri = poster?.posterUri || null;
+          if (!pUri || !mountedRef.current) return;
+          setMessages(prev => prev.map(m => (m.id === tempId && !m._posterUri)
+            ? { ...m, poster_url: m.poster_url || pUri, _posterUri: pUri }
+            : m));
+        } catch {}
+      })();
+    }
     // [receipt-sync media 2026-06-04] Echo the outbound MEDIA to the chat
     // list (text already does this in _handleSendInner via the same event).
     // Without it the list row kept the PREVIOUS message as preview, so the
@@ -15286,6 +15394,75 @@ function ChatConversationInner() {
           }
         } catch (e) {
           console.warn('[video] native compress failed, uploading raw:', e?.message);
+        }
+      }
+
+      // Web video compression — the browser twin of the native
+      // AVAssetExportSession / MediaCodec step above. A phone-recorded 1080p
+      // clip picked in the web app lands at 50–200MB and either times out or
+      // trips the server cap; compressVideoWeb() re-encodes it down to ~720p
+      // @1.5Mbps (typically 5–15MB) using canvas.captureStream + MediaRecorder
+      // — the same compress-before-upload move WhatsApp Web makes. It is
+      // strictly best-effort: on ANY failure (unsupported browser, decode
+      // error, autoplay block, already-small clip) it returns the original
+      // blob, so a compression problem can NEVER stop the video from sending.
+      // It runs at playback speed (~1s per second of footage, up to ~60s), so
+      // we flip the bubble into a "comprimindo…" state and drive the EXISTING
+      // upload ring from its progress callback — the user sees live motion,
+      // not a frozen spinner. Gate on uploadAttempt===1 so a transient-retry
+      // doesn't re-encode the already-compressed blob.
+      const _webVidBlob = file?.blob || (typeof Blob !== 'undefined' && file instanceof Blob ? file : null);
+      const _shouldCompressVideoWeb = Platform.OS === 'web'
+        && fileType === 'video'
+        && uploadAttempt === 1
+        && _webVidBlob instanceof Blob
+        && (_webVidBlob.size || 0) > 2 * 1024 * 1024;
+      if (_shouldCompressVideoWeb && !isAborted()) {
+        try {
+          const { compressVideoWeb } = require('../services/webVideoCompressor');
+          if (mountedRef.current) {
+            setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _compressing: true } : m));
+            setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
+          }
+          // Match the native quality profile: HD toggle → higher bitrate, both
+          // capped to a 1280px "HD ready" width. getQualityProfile is optional
+          // (older pipeline builds) so we fall back to sane 720p defaults.
+          const _qpW = (_videoSendPipeline?.getQualityProfile?.(hdMode ? '1080p' : '720p')) || null;
+          const compressed = await compressVideoWeb(_webVidBlob, {
+            maxWidth: _qpW?.maxWidth || 1280,
+            bitrate: _qpW?.bitrate || (hdMode ? 3_000_000 : 1_500_000),
+            onProgress: (p) => {
+              if (mountedRef.current) setUploadProgress(prev => ({ ...prev, [tempId]: Math.round((Number(p) || 0) * 100) }));
+            },
+          });
+          // Only adopt the result if it genuinely shrank the clip. On fallback
+          // compressVideoWeb hands back the SAME blob reference; a pathological
+          // re-encode could also come back larger — in both cases we upload the
+          // original untouched.
+          if (compressed instanceof Blob
+            && compressed !== _webVidBlob
+            && compressed.size > 0
+            && compressed.size < (_webVidBlob.size || Infinity)) {
+            const _outType = compressed.type || 'video/webm';
+            const _ext = /mp4/i.test(_outType) ? '.mp4' : '.webm';
+            file = {
+              ...file,
+              blob: compressed,
+              _raw: compressed,
+              type: _outType,
+              name: (file.name && file.name.replace(/\.\w+$/, _ext)) || ('video' + _ext),
+              size: compressed.size,
+            };
+          }
+        } catch (e) {
+          // Never block the send on compression — fall through with the original.
+        } finally {
+          if (mountedRef.current) {
+            setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _compressing: false } : m));
+            // Reset the ring to 0 so the real upload starts its own 0→100 pass
+            // (same visual language as the Rust→PHP fallback restart).
+            setUploadProgress(prev => ({ ...prev, [tempId]: 0 }));
+          }
         }
       }
 
@@ -18332,7 +18509,7 @@ function ChatConversationInner() {
       try { await api.callNotify(conversationId, roomId, videoEnabled, roomId); } catch {}
       setStartingCall(true);
       try {
-        router.push(`/group-call?conversation_id=${conversationId}&room=${encodeURIComponent(roomId)}&video=${videoEnabled ? '1' : '0'}`);
+        router.push(`/call?callId=${encodeURIComponent(roomId)}&conversationId=${conversationId}&isVideo=${videoEnabled ? '1' : '0'}&isCaller=1&groupCall=1`);
       } catch {} finally { setTimeout(() => setStartingCall(false), 2000); }
       return;
     }
@@ -19878,11 +20055,24 @@ function ChatConversationInner() {
 
     // Pre-computed deleted label (reused so view-once can still return it
     // without unmounting its ViewOnceMessage wrapper — hook-count-stable).
+    // [DELETE-POLISH 2026-09-30] Clean WhatsApp-style tombstone. Differentiates
+    // "Você apagou esta mensagem" (your own retracted message) from "Esta
+    // mensagem foi apagada" (the peer retracted theirs), and uses a crisp
+    // no-entry/prohibited glyph (inline SVG — memory rule: never emoji in UI)
+    // instead of the padlock, which read as "protected" rather than "deleted".
+    const _delTint = isOwn ? 'rgba(255,255,255,0.55)' : colors.textTertiary;
     const renderDeletedLabel = () => (
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 1 }}>
-        <IconLock size={13} color={isOwn ? 'rgba(255,255,255,0.45)' : colors.textTertiary} />
-        <Text style={{ fontSize: 13, fontStyle: 'italic', color: isOwn ? 'rgba(255,255,255,0.45)' : colors.textTertiary, letterSpacing: 0.1 }}>
-          {t('chatConv.deletedMessage') || 'Esta mensagem foi apagada'}
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 2 }}>
+        <Svg width={14} height={14} viewBox="0 0 24 24">
+          <Path
+            d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 2c1.85 0 3.55.63 4.9 1.69L5.69 16.9A7.96 7.96 0 014 12a8 8 0 018-8zm0 16a7.96 7.96 0 01-4.9-1.69L18.31 7.1A7.96 7.96 0 0120 12a8 8 0 01-8 8z"
+            fill={_delTint}
+          />
+        </Svg>
+        <Text style={{ fontSize: 13, fontStyle: 'italic', color: _delTint, letterSpacing: 0.1 }}>
+          {isOwn
+            ? (t('chatConv.deletedMessageOwn') || 'Você apagou esta mensagem')
+            : (t('chatConv.deletedMessage') || 'Esta mensagem foi apagada')}
         </Text>
       </View>
     );
@@ -20659,6 +20849,10 @@ function ChatConversationInner() {
           const vidUploading = !!msg._uploading;
           const vidProgress = msg._uploadPct || 0;
           const vidIndeterminate = vidUploading && (msg._uploadPct === undefined);
+          // Web pre-upload re-encode (compressVideoWeb): while this runs the
+          // ring shows compression progress, not bytes sent — so we swap the
+          // "X / Y MB" counter for a "comprimindo…" label to stay honest.
+          const vidCompressing = !!msg._compressing;
           const vidDuration = msg.duration || 0;
           // [WAVE 73 2026-05-21] Bumped to H:MM:SS for ≥1h videos. Before:
           // a 1h30m video showed "90:00" (looked like an absurd 90-minute
@@ -20792,11 +20986,15 @@ function ChatConversationInner() {
                         <CircularProgressArc pct={vidProgress} size={68} strokeWidth={3.5} style={{ position: 'absolute' }} />
                         <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>{Math.round(vidProgress)}%</Text>
                       </View>
-                      {msg.file_size > 0 && (
+                      {vidCompressing ? (
+                        <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 8, fontWeight: '500' }}>
+                          {(t('chatConv.compressingVideo') || 'Comprimindo…')}
+                        </Text>
+                      ) : (msg.file_size > 0 && (
                         <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 8, fontWeight: '500' }}>
                           {((msg.file_size * vidProgress / 100) / 1048576).toFixed(1)} / {(msg.file_size / 1048576).toFixed(1)} MB
                         </Text>
-                      )}
+                      ))}
                       <TouchableOpacity
                         activeOpacity={0.7}
                         onPress={(e) => { e.stopPropagation?.(); cancelUpload(msg.id); }}
@@ -20871,17 +21069,36 @@ function ChatConversationInner() {
                       />
                     );
                   })()}
+                  {/* [POSTER 2026-09-30] Instant LOCAL poster frame for an
+                      OUTGOING video — set by uploadAndSendFile via
+                      _videoSendPipeline.preparePoster() before/while upload runs.
+                      Painted ON TOP of the gradient/server-thumb layers and
+                      rendered even DURING upload so the real captured frame shows
+                      immediately instead of the flat gray box, until the server
+                      thumbnail lands (and the row is swapped, dropping _posterUri). */}
+                  {msg._posterUri ? (
+                    <ExpoImage
+                      source={{ uri: msg._posterUri }}
+                      style={{ position: 'absolute', top: 0, left: 0, width: _vbW, height: _vbH }}
+                      contentFit="cover"
+                      transition={{ duration: 180, effect: 'cross-dissolve' }}
+                    />
+                  ) : null}
                   {vidUploading ? (
                     <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' }}>
                       <View style={{ width: 68, height: 68, borderRadius: 34, borderWidth: 3, borderColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' }}>
                         <CircularProgressArc pct={vidProgress} size={68} strokeWidth={3.5} style={{ position: 'absolute' }} />
                         <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>{Math.round(vidProgress)}%</Text>
                       </View>
-                      {msg.file_size > 0 && (
+                      {vidCompressing ? (
+                        <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 8, fontWeight: '500' }}>
+                          {(t('chatConv.compressingVideo') || 'Comprimindo…')}
+                        </Text>
+                      ) : (msg.file_size > 0 && (
                         <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 8, fontWeight: '500' }}>
                           {((msg.file_size * vidProgress / 100) / 1048576).toFixed(1)} / {(msg.file_size / 1048576).toFixed(1)} MB
                         </Text>
-                      )}
+                      ))}
                       <TouchableOpacity
                         activeOpacity={0.7}
                         onPress={(e) => { e.stopPropagation?.(); cancelUpload(msg.id); }}

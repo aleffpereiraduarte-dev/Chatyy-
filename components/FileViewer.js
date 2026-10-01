@@ -18,6 +18,16 @@ try { FileSystemModule = require('expo-file-system/legacy'); } catch { try { Fil
 let SharingModule = null;
 try { SharingModule = require('expo-sharing'); } catch {}
 
+// expo-video (SDK 55+) — native video preview. Replaces the WebView that
+// wrapped an HTML5 <video> per file (spun up a whole WKWebView). Lazy +
+// cached so a build without the module degrades to the download fallback.
+let _fvExpoVideo = null;
+function loadFvExpoVideo() {
+  if (_fvExpoVideo !== null) return _fvExpoVideo;
+  try { _fvExpoVideo = require('expo-video'); } catch { _fvExpoVideo = false; }
+  return _fvExpoVideo;
+}
+
 const IMAGE_EXT = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'bmp', 'ico'];
 const VIDEO_EXT = ['mp4', 'mov', 'webm', 'avi', 'mkv'];
 const AUDIO_EXT = ['mp3', 'wav', 'm4a', 'ogg', 'aac', 'flac'];
@@ -153,7 +163,38 @@ function DocxPreview({ url, colors, fileName }) {
   );
 }
 
-// --- Video Preview (WebView on native, <video> on web) ---
+// --- Native video preview via expo-video (hooks-safe sub-component so
+//     useVideoPlayer is always called at its top level). Native AVPlayer /
+//     ExoPlayer controls (scrub, fullscreen, PiP) + autoplay with sound,
+//     mirroring the old WebView <video controls autoplay>. ---
+function NativeVideoPreview({ url, colors }) {
+  const ev = loadFvExpoVideo();
+  const useVideoPlayer = ev && ev.useVideoPlayer;
+  const VideoView = ev && ev.VideoView;
+  // Module presence is constant for the app's lifetime → stable early return
+  // before the hook (Rules-of-Hooks safe). No WebView fallback — a build
+  // without expo-video degrades to the download affordance.
+  if (!useVideoPlayer || !VideoView) {
+    return <FallbackView label="Reprodutor não disponível" colors={colors} url={url} />;
+  }
+  const player = useVideoPlayer(url, (p) => {
+    try { p.loop = false; p.muted = false; const r = p.play?.(); if (r?.catch) r.catch(() => {}); } catch {}
+  });
+  return (
+    <View style={{ flex: 1, backgroundColor: '#000' }}>
+      <VideoView
+        player={player}
+        style={{ flex: 1 }}
+        contentFit="contain"
+        nativeControls
+        allowsFullscreen
+        allowsPictureInPicture
+      />
+    </View>
+  );
+}
+
+// --- Video Preview (expo-video on native, <video> on web) ---
 function VideoPreview({ url, colors, fileName }) {
   if (Platform.OS === 'web') {
     return (
@@ -162,30 +203,7 @@ function VideoPreview({ url, colors, fileName }) {
       </View>
     );
   }
-  if (!WebView) {
-    return <FallbackView label="Reprodutor não disponível" colors={colors} url={url} />;
-  }
-  const html = `
-    <!DOCTYPE html>
-    <html><head>
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <style>
-      body { margin:0; background:#000; display:flex; align-items:center; justify-content:center; min-height:100vh; }
-      video { max-width:100%; max-height:100vh; border-radius:8px; }
-    </style>
-    </head><body>
-    <video src="${url}" controls playsinline autoplay style="width:100%"></video>
-    </body></html>
-  `;
-  return (
-    <WebView
-      source={{ html }}
-      style={{ flex: 1, backgroundColor: '#000' }}
-      allowsInlineMediaPlayback
-      mediaPlaybackRequiresUserAction={false}
-      javaScriptEnabled
-    />
-  );
+  return <NativeVideoPreview url={url} colors={colors} />;
 }
 
 // --- Audio Preview (WebView on native, <audio> on web) ---

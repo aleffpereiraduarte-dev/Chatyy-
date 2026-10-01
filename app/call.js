@@ -622,6 +622,10 @@ function CallScreenInner() {
   // The 1:1 UI ignores this; the group renderer can read it.
   const [groupPeers, setGroupPeers] = useState(new Map());
   const groupPeersRef = useRef(new Map());
+  // [group-grid 2026-09-30] Tap-to-pin (grid focus) for the native N-tile group
+  // grid. Render-only: selects which tile spans full-width; never touches
+  // publish/subscribe. 1:1 path ignores this entirely.
+  const [pinnedPeerKey, setPinnedPeerKey] = useState(null);
 
   // [WAVE 68 2026-05-21] Progressive connect-phase state machine.
   // Previously a single 8s timer flipped showSlowConnectOverlay — too
@@ -4542,7 +4546,7 @@ function CallScreenInner() {
           other person should appear to the local user the same way they
           appear to themselves in a real mirror would distort. Only the
           LOCAL preview gets mirror={facingFront} below. */}
-      {LK_VideoView && remoteVideoTrack && isVideoCall && peerConnected && peerVideoEnabled && (
+      {!isGroupCall && LK_VideoView && remoteVideoTrack && isVideoCall && peerConnected && peerVideoEnabled && (
         <Animated.View
           {...(!isGroupCall ? remotePinchResponder.panHandlers : {})}
           style={[StyleSheet.absoluteFill, { opacity: remoteVideoFadeAnim, transform: [{ scale: remoteZoomScale }] }]}
@@ -4556,6 +4560,111 @@ function CallScreenInner() {
           />
         </Animated.View>
       )}
+
+      {/* [group-grid 2026-09-30] NATIVE group video grid — replaces the WebView
+          group renderer. Gated on isGroupCall; the 1:1 path above is untouched.
+          Renders one LK_VideoView tile per already-populated groupPeers entry
+          (the group state machine at ~:2029/2166/2236 fills these) PLUS the
+          local participant, MIRRORING the single-tile remote render above
+          (~:4545 — same videoTrack/objectFit/zOrder/mirror wiring). Each tile
+          is wired to the existing active-speaker ring (RoomEvent.
+          ActiveSpeakersChanged marks entry.isSpeaking at ~:2335) and tap-to-pin
+          (grid focus). Raise-hand / reactions / screen-share / recording UI is
+          the EXISTING shared UI below — not rebuilt here.
+
+          Touch model: box-none layer at zIndex 6 sits above the transparent
+          audioOverlay tap-catcher (zIndex 5) so individual tiles receive their
+          pin taps, while gaps fall through to the existing toggle-controls
+          overlay. Content is inset (top/bottom padding) so the existing top bar
+          / status strip (zIndex 10/11 inside the overlay) and the control bar
+          (zIndex 20, root sibling) stay visible and on top. */}
+      {isGroupCall && LK_VideoView && peerConnected && (() => {
+        const tiles = [];
+        // Local participant first (self-view). Video only when the camera is on.
+        tiles.push({
+          key: '__self__',
+          isLocal: true,
+          name: user?.name || (user?.email || '').split('@')[0] || (t('call.you') || 'Você'),
+          email: user?.email || '',
+          videoTrack: (videoEnabled && localVideoTrack) ? localVideoTrack : null,
+          mirror: facingFront,
+          isSpeaking: false,
+        });
+        for (const [ident, p] of groupPeers.entries()) {
+          const vt = p?.videoTrack || null;
+          tiles.push({
+            key: ident,
+            isLocal: false,
+            name: p?.name || (ident || '').split('@')[0],
+            email: ident,
+            // Mirror the single-tile guard: show video when a live, unmuted
+            // camera track exists; otherwise fall back to the avatar.
+            videoTrack: (vt && !vt.isMuted) ? vt : null,
+            mirror: false,
+            isSpeaking: !!p?.isSpeaking,
+          });
+        }
+
+        // Responsive columns: 2 for ≤4 peers, 3 for more (per spec).
+        const cols = groupPeers.size <= 4 ? 2 : 3;
+        const gap = 6;
+        const topPad = insets.top + 52;
+        const botPad = insets.bottom + 150;
+        const availW = SCREEN_W - gap * 2;
+        const rows = Math.max(1, Math.ceil(tiles.length / cols));
+        const availH = Math.max(160, SCREEN_H - topPad - botPad);
+        const tileW = Math.floor((availW - gap * (cols - 1)) / cols);
+        const tileH = Math.max(90, Math.min(Math.round(tileW * 1.35), Math.floor((availH - gap * (rows - 1)) / rows)));
+
+        return (
+          <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 6 }]}>
+            <View
+              pointerEvents="box-none"
+              style={[styles.groupGridContent, { paddingTop: topPad, paddingBottom: botPad, paddingHorizontal: gap }]}
+            >
+              {tiles.map((tile) => {
+                const pinned = pinnedPeerKey === tile.key;
+                const w = pinned ? availW : tileW;
+                const h = pinned ? Math.round(availH * 0.55) : tileH;
+                const avatarSize = Math.min(84, Math.round(Math.min(w, h) * 0.42));
+                return (
+                  <TouchableOpacity
+                    key={tile.key}
+                    activeOpacity={0.9}
+                    onPress={() => setPinnedPeerKey(prev => (prev === tile.key ? null : tile.key))}
+                    style={[
+                      styles.groupTile,
+                      { width: w, height: h, margin: gap / 2 },
+                      tile.isSpeaking && styles.groupTileSpeaking,
+                      pinned && styles.groupTilePinned,
+                    ]}
+                  >
+                    {tile.videoTrack ? (
+                      <LK_VideoView
+                        videoTrack={tile.videoTrack}
+                        style={StyleSheet.absoluteFill}
+                        objectFit="cover"
+                        zOrder={0}
+                        mirror={tile.mirror}
+                      />
+                    ) : (
+                      <View style={styles.groupTileAvatar}>
+                        <AvatarCircle email={tile.email} name={tile.name} size={avatarSize} />
+                      </View>
+                    )}
+                    <View pointerEvents="none" style={styles.groupTileLabelWrap}>
+                      {tile.isSpeaking && <View style={styles.groupTileSpeakingDot} />}
+                      <Text style={styles.groupTileName} numberOfLines={1}>
+                        {tile.isLocal ? (t('call.you') || 'Você') : tile.name}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        );
+      })()}
 
       {/* Vignette */}
       {showRemoteVideo && (
@@ -5093,7 +5202,7 @@ function CallScreenInner() {
               NOT mirrored (see above) so the peer's perspective is preserved.
             • flipCameraFadeAnim — cross-fades to 30% opacity for 150ms during
               switchCamera() to avoid the hard cut when facing flips. */}
-      {LK_VideoView && localVideoTrack && videoEnabled && (
+      {LK_VideoView && localVideoTrack && videoEnabled && (!isGroupCall || !peerConnected) && (
         <Animated.View
           {...pipPanResponder.panHandlers}
           style={[
@@ -6069,6 +6178,54 @@ const styles = StyleSheet.create({
     shadowColor: '#000', shadowOpacity: 0.45, shadowRadius: 16, shadowOffset: { width: 0, height: 8 },
   },
   localVideo: { flex: 1 },
+  // [group-grid 2026-09-30] Native N-tile group video grid.
+  groupGridContent: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignContent: 'center',
+    justifyContent: 'center',
+  },
+  groupTile: {
+    borderRadius: 14,
+    overflow: 'hidden',
+    backgroundColor: '#14121e',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  groupTileSpeaking: { borderColor: '#34d399' },
+  groupTilePinned: { borderColor: 'rgba(255,255,255,0.55)' },
+  groupTileAvatar: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1a1725',
+  },
+  groupTileLabelWrap: {
+    position: 'absolute',
+    left: 6,
+    bottom: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    maxWidth: '90%',
+    gap: 5,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  groupTileSpeakingDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
+    backgroundColor: '#10b981',
+  },
+  groupTileName: {
+    color: '#fff',
+    fontSize: 11.5,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
   pipFlipBtn: {
     position: 'absolute', bottom: 6, right: 6,
     width: 28, height: 28, borderRadius: 14,

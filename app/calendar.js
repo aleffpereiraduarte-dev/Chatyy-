@@ -20,7 +20,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow, haptic } from '../constants/theme';
 import * as api from '../services/api';
-import { getCached, setCache } from '../services/cache';
+import { getCached, getCachedSync, setCache } from '../services/cache';
 import { CalendarSkeleton } from '../components/SkeletonLoader';
 import useIsMounted from '../hooks/useIsMounted';
 import { formatTime } from '../utils/dateFormat';
@@ -2004,9 +2004,33 @@ function CalendarScreenInner() {
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
   const [currentMonth, setCurrentMonth] = useState(today.getMonth());
   const [selectedDate, setSelectedDate] = useState(today);
-  const [events, setEvents] = useState([]);
+  // [INSTANT-OPEN] Seed synchronously from the device cache so the list paints
+  // on frame 1 (no empty-list spinner). Reads the SAME keys/shape loadEvents
+  // reads ('calendar_events' → per-month 'calendar_events_<Y>_<M>', shape
+  // r.data.events). Idiom copied from app/notifications.js:399-404. The render
+  // layer (dayEvents useMemo) re-sorts by start_at, so no seed-time sort is
+  // needed. MULTI-ACCOUNT GUARD: only seed when an account is known, else
+  // getCachedSync would fall back to the _noacct slot for one frame (mirrors
+  // chatStore.isLocked() returning []). The existing getCached + revalidate in
+  // loadEvents stays untouched (belt-and-suspenders).
+  const [events, setEvents] = useState(() => {
+    try {
+      if (!api.getActiveAccountEmail()) return [];
+      const cached = getCachedSync('calendar_events') || getCachedSync(`calendar_events_${currentYear}_${currentMonth}`);
+      if (cached?.data?.events) return cached.data.events;
+    } catch {}
+    return [];
+  });
   const [calendars, setCalendars] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    try {
+      if (api.getActiveAccountEmail()) {
+        const cached = getCachedSync('calendar_events') || getCachedSync(`calendar_events_${currentYear}_${currentMonth}`);
+        if (cached?.data?.events?.length) return false;
+      }
+    } catch {}
+    return true;
+  });
   const [refreshing, setRefreshing] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [aiReminders, setAiReminders] = useState([]);

@@ -13,7 +13,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
-import { getCached, setCache } from '../services/cache';
+import { getCached, getCachedSync, setCache } from '../services/cache';
 import { syncMeetingReminders } from '../services/meetingReminders';
 import { ListSkeleton } from '../components/SkeletonLoader';
 import AvatarCircle from '../components/AvatarCircle';
@@ -390,8 +390,30 @@ function MeetingsScreenInner() {
   const [tab, setTab] = useState('today');
   // For "today" we use 'upcoming' from backend (and live), filtered locally.
   const apiTab = tab === 'past' ? 'past' : 'upcoming';
-  const [meetings, setMeetings] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // [INSTANT-OPEN] Seed synchronously from the device cache so the list paints
+  // on frame 1 (no empty-list spinner). Reads the SAME key/shape loadMeetings
+  // reads ('meetings_<apiTab>', which stores the meetings ARRAY directly).
+  // Idiom mirrors app/notifications.js:399-404. MULTI-ACCOUNT GUARD: only seed
+  // when an account is known, else getCachedSync would fall back to the
+  // _noacct slot for one frame (mirrors chatStore.isLocked() returning []).
+  // The existing getCached + revalidate in loadMeetings stays untouched.
+  const [meetings, setMeetings] = useState(() => {
+    try {
+      if (!api.getActiveAccountEmail()) return [];
+      const cached = getCachedSync(`meetings_${apiTab}`);
+      if (Array.isArray(cached)) return cached;
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = useState(() => {
+    try {
+      if (api.getActiveAccountEmail()) {
+        const cached = getCachedSync(`meetings_${apiTab}`);
+        if (Array.isArray(cached) && cached.length) return false;
+      }
+    } catch {}
+    return true;
+  });
   const [refreshing, setRefreshing] = useState(false);
   const [creating, setCreating] = useState(false);
   const [copiedId, setCopiedId] = useState(null);

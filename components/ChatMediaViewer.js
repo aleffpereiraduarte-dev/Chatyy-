@@ -1011,28 +1011,10 @@ function VideoPlayer({ url }) {
     return <NativeVideoPlayer url={url} />;
   }
 
-  // Fallback: WebView with video tag. Escape the URL for HTML attribute
-  // context — without escaping, a sender-supplied URL containing `"`
-  // would close the src attribute and let arbitrary markup/JS execute
-  // inside the WebView.
-  const safeUrl = String(url || '')
-    .replace(/&/g, '&amp;')
-    .replace(/"/g, '&quot;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-  const { WebView } = require('react-native-webview');
-  return (
-    <View style={s.mediaContainer}>
-      <WebView
-        source={{ html: `<html><body style="margin:0;background:#000;display:flex;align-items:center;justify-content:center;height:100vh"><video controls autoplay playsinline style="max-width:100%;max-height:100%;object-fit:contain"><source src="${safeUrl}" type="video/mp4" /><source src="${safeUrl}" type="video/quicktime" /></video></body></html>` }}
-        style={s.fullVideo}
-        allowsInlineMediaPlayback
-        mediaPlaybackRequiresUserAction={false}
-        onLoad={() => setLoading(false)}
-      />
-      {loading && <ActivityIndicator size="large" color="#fff" style={s.loader} />}
-    </View>
-  );
+  // No expo-video module on this build — fall back to the native AVPlayer
+  // view (iOS) via NativeVideoPlayer. No more per-video WebView (that was the
+  // jank the video players were migrated off of).
+  return <NativeVideoPlayer url={url} />;
 }
 
 // ============================================================

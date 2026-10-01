@@ -14,7 +14,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { Colors } from '../constants/theme';
 import * as api from '../services/api';
-import { getCached, setCache } from '../services/cache';
+import { getCached, getCachedSync, setCache } from '../services/cache';
 import { ListSkeleton } from '../components/SkeletonLoader';
 import {
   IconArrowLeft, IconUser, IconMail, IconPhone, IconPlus,
@@ -303,8 +303,29 @@ function ContactsScreenInner() {
   const insets = useSafeAreaInsets();
 
   const [activeTab, setActiveTab] = useState('my');
-  const [contacts, setContacts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // [cache-first] Seed synchronously from MMKV so the address book paints on
+  // frame 1 (no spinner). loadContacts() below still revalidates. Guard on the
+  // active account so account A never flashes under account B during the window
+  // before AuthContext sets the cache user (getCachedSync falls back to
+  // _noacct otherwise). Mirrors app/notifications.js:399-404.
+  const [contacts, setContacts] = useState(() => {
+    try {
+      if (api.getActiveAccountEmail && api.getActiveAccountEmail()) {
+        const cached = getCachedSync('contacts');
+        if (cached?.data) return cached.data || [];
+      }
+    } catch {}
+    return [];
+  });
+  const [loading, setLoading] = useState(() => {
+    try {
+      if (api.getActiveAccountEmail && api.getActiveAccountEmail()) {
+        const cached = getCachedSync('contacts');
+        if (cached?.data) return false;
+      }
+    } catch {}
+    return true;
+  });
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [editContact, setEditContact] = useState(null);
