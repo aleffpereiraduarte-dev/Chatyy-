@@ -8774,6 +8774,23 @@ function ChatConversationInner() {
   // no fallback UI, just an empty 280x220 box. Keyed by msg.id; cleared on
   // successful retry / load-end.
   const [mediaErrors, setMediaErrors] = useState({});
+  // [BUG-1 2026-10-01] Track which image bubbles have finished painting the
+  // FULL-resolution bytes (ChatMedia onLoadEnd). Root cause of "foto fica
+  // borrada e pede pra baixar de novo": the blurred backdrop layers AND the
+  // download-progress ring were gated ONLY on "no local file" (msg._localUri /
+  // imgLocalPath / fullUri file://). A RECEIVED photo that loads from the CDN
+  // never flips any of those to true at render time — resolveMediaUri
+  // intentionally does NOT re-render the row to the file:// path after the
+  // background cacheMedia write (avoids a flicker). So after the sharp image
+  // was already painted by ChatMedia (z=3), the blur backdrops (z=1) stayed
+  // mounted behind it and the loading ring fell through to a PERMANENT spinner
+  // (downloadProgress cleared → hasPct false → ActivityIndicator, not null),
+  // dimming the photo and showing a "download" affordance over an image that
+  // was already on screen. We now also hide those once the full bytes paint,
+  // so the blur is only ever a BRIEF placeholder WHILE loading. Keyed by
+  // msg.id; set on onLoadEnd, cleared on onError (evicted/corrupt → let the
+  // backdrop + retry path show again).
+  const [loadedImages, setLoadedImages] = useState({});
   // [WAVE 34 2026-05-20] Shared shimmer animation for media skeletons. Single
   // Animated.Value driven by a global loop so every loading bubble pulses in
   // sync (cheaper than N independent loops, and visually feels more cohesive
@@ -18953,6 +18970,35 @@ function ChatConversationInner() {
     const cache = _enrichCacheRef.current;
     const out = new Array(reversedMessages.length);
     const newCache = new Map();
+    // [BUG-2 2026-10-01] Monotonic read watermark for 1:1 chats. Read receipts
+    // are monotonic by nature: if the peer read my message N, they have read
+    // every earlier message of mine too. But the per-message _read / read_at
+    // flags can land out of order — a chat_read WS event (or a cold-load
+    // enrichment hop) may stamp a LATER message while an EARLIER one still
+    // carries only delivered — which rendered as "Oi" gray ✓✓ above
+    // "Fecha o app..." blue ✓✓. The readReceipts-derived maxReadId was meant
+    // to cover this but is empty/stale whenever the peer's last_read_id hasn't
+    // propagated into readReceipts yet, so it couldn't backfill the earlier
+    // rows. Fix: also derive the highest id among MY OWN messages that are
+    // individually marked read (max(id where _read || read_at)), combine it
+    // with maxReadId, and treat ANY of my messages with id <= that watermark
+    // as read below. Direct chats only (single peer = unambiguous); groups
+    // keep their per-member _read semantics untouched.
+    let ownReadWatermark = -1;
+    if (conversationType !== 'group') {
+      for (let i = 0; i < reversedMessages.length; i++) {
+        const m = reversedMessages[i];
+        if (!m || m._type === 'separator') continue;
+        if (m.sender_email !== currentEmail) continue;
+        if (m._read === true || m.read_at) {
+          const idN = Number(m.id);
+          if (Number.isFinite(idN) && idN > ownReadWatermark) ownReadWatermark = idN;
+        }
+      }
+    }
+    // Effective watermark = the higher of the readReceipts last_read_id and
+    // the per-message own-read max. >= 0 only when at least one source is live.
+    const readWatermark = Math.max(maxReadId, ownReadWatermark);
     for (let i = 0; i < reversedMessages.length; i++) {
       const item = reversedMessages[i];
       if (item._type === 'separator') { out[i] = item; continue; }
@@ -18969,7 +19015,7 @@ function ChatConversationInner() {
         else if (isOwnA) {
           if (item._read === true) albumStatus = 2;
           else if (conversationType !== 'group' && item.read_at) albumStatus = 2;
-          else if (conversationType !== 'group' && maxReadId >= 0 && Number(item.id) > 0 && Number(item.id) <= maxReadId) albumStatus = 2;
+          else if (conversationType !== 'group' && readWatermark >= 0 && Number(item.id) > 0 && Number(item.id) <= readWatermark) albumStatus = 2;
           else if (item._delivered) albumStatus = 1.5;
           else if (conversationType !== 'group' && item.delivered_at) albumStatus = 1.5;
         }
@@ -19013,7 +19059,7 @@ function ChatConversationInner() {
       // (single peer = unambiguous). NOT applied to groups because the old
       // version of this check turned ticks purple after the first member
       // read, violating WhatsApp's "all members" semantics.
-      else if (isOwn && conversationType !== 'group' && maxReadId >= 0 && Number(item.id) > 0 && Number(item.id) <= maxReadId) readStatus = 2;
+      else if (isOwn && conversationType !== 'group' && readWatermark >= 0 && Number(item.id) > 0 && Number(item.id) <= readWatermark) readStatus = 2;
       else if (isOwn && item._delivered) readStatus = 1.5;
       else if (isOwn && conversationType !== 'group' && item.delivered_at) readStatus = 1.5;
       const isHighlighted = item.id === highlightedMsgId;
@@ -19043,7 +19089,7 @@ function ChatConversationInner() {
     }
     _enrichCacheRef.current = newCache; // drop stale entries
     return out;
-  }, [reversedMessages, highlightedMsgId, heartPopMsg, maxReadId, currentEmail]);
+  }, [reversedMessages, highlightedMsgId, heartPopMsg, maxReadId, currentEmail, conversationType]);
 
   // [perf] Overlay live upload progress onto ONLY the row(s) currently
   // uploading. uploadProgress ticks ~60×/s during a media send; folding it
@@ -20191,6 +20237,10 @@ function ChatConversationInner() {
           // top. When onError fires AND there's no local cache to fall back
           // to, we render a tap-to-retry placeholder instead of the bare box.
           const imgFailed = !!mediaErrors[msg.id];
+          // [BUG-1 2026-10-01] True once ChatMedia has painted the full bytes.
+          // Used to retire the blur backdrops + loading ring so they behave as
+          // a brief placeholder WHILE loading only (see loadedImages state).
+          const imgLoaded = !!loadedImages[msg.id];
           const thumbUri = msg.image_variants
             ? (() => { try { const v = typeof msg.image_variants === 'string' ? JSON.parse(msg.image_variants) : msg.image_variants; return v?.thumb ? (v.thumb.startsWith('http') ? v.thumb : `https://chatyy.com.br${v.thumb}`) : null; } catch { return null; } })()
             : null;
@@ -20409,7 +20459,7 @@ function ChatConversationInner() {
                   // no hue, no lavender. See comment above.
                   return isDark ? '#1E1E22' : '#F0F0F2';
                 })(), alignItems: 'center', justifyContent: 'center' }}>
-                  {!imgUploading && !imgFailed && !msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && (
+                  {!imgUploading && !imgFailed && !imgLoaded && !msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && (
                     <>
                       <ActivityIndicator size="small" color="rgba(60,60,60,0.55)" />
                       <Text style={{ marginTop: 6, fontSize: 11, fontWeight: '500', color: 'rgba(60,60,60,0.65)' }}>
@@ -20433,7 +20483,7 @@ function ChatConversationInner() {
                     stable per-msg so FlashList recycling doesn't carry a stale
                     blurhash from a previous row. resizeMode hint helps Android
                     skip the auto-detect path that occasionally returned 0×0. */}
-                {msg.blurhash && !msg._localUri && (
+                {msg.blurhash && !msg._localUri && !imgLoaded && (
                   <ExpoImage
                     key={`bh-${msg.id}`}
                     source={{ blurhash: msg.blurhash }}
@@ -20444,7 +20494,7 @@ function ChatConversationInner() {
                     {...(Platform.OS === 'android' ? { allowDownscaling: true } : {})}
                   />
                 )}
-                {!msg.blurhash && lqipUri && !msg._localUri && (
+                {!msg.blurhash && lqipUri && !msg._localUri && !imgLoaded && (
                   <ExpoImage
                     key={`lqip-${msg.id}`}
                     source={{ uri: lqipUri }}
@@ -20468,7 +20518,7 @@ function ChatConversationInner() {
                     onError now sets a state flag so we KEEP the layer painted
                     (showing transparent over HSL) instead of disappearing —
                     fallback chain: blurhash → lqip → thumb → HSL wrapper bg. */}
-                {!msg.blurhash && !lqipUri && thumbUri && !msg._localUri && (
+                {!msg.blurhash && !lqipUri && thumbUri && !msg._localUri && !imgLoaded && (
                   <ExpoImage
                     key={`thumb-${msg.id}-${thumbUri.split('?')[0]}`}
                     source={{ uri: thumbUri }}
@@ -20501,7 +20551,7 @@ function ChatConversationInner() {
                     AND we have a remote file_url. msg._localUri / imgLocalPath
                     skip this layer because the file:// path already paints
                     instantly via ChatMedia. */}
-                {!imgUploading && !imgFailed && !msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && msg.file_url && (
+                {!imgUploading && !imgFailed && !msg.blurhash && !lqipUri && !thumbUri && !msg._localUri && !imgLocalPath && msg.file_url && !imgLoaded && (
                   <ExpoImage
                     key={`remote-bd-${msg.id}`}
                     source={{ uri: typeof fullUri === 'string' && fullUri.startsWith('http') ? fullUri : (msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`) }}
@@ -20529,7 +20579,7 @@ function ChatConversationInner() {
                     above the remote blurred bg) so we never see only the
                     skeleton. Gated on no local file (file:// renders instantly
                     via ChatMedia, no backdrop needed) and no upload-in-flight. */}
-                {Platform.OS === 'ios' && !imgUploading && !imgFailed && !msg._localUri && !imgLocalPath && msg.file_url && (msg.blurhash || lqipUri || thumbUri) && (
+                {Platform.OS === 'ios' && !imgUploading && !imgFailed && !msg._localUri && !imgLocalPath && msg.file_url && (msg.blurhash || lqipUri || thumbUri) && !imgLoaded && (
                   <ExpoImage
                     key={`ios-bd-${msg.id}`}
                     source={{ uri: typeof fullUri === 'string' && fullUri.startsWith('http') ? fullUri : (msg.file_url.startsWith('http') ? msg.file_url : `https://chatyy.com.br${msg.file_url}`) }}
@@ -20628,6 +20678,13 @@ function ChatConversationInner() {
                     // flag so a retry from the tap-to-retry placeholder leaves
                     // the bubble in the normal "loaded" visual state.
                     setMediaErrors(prev => { if (!prev[msg.id]) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
+                    // [BUG-1 2026-10-01] Full-res bytes are now painted by
+                    // ChatMedia (z=3). Mark the row loaded so the blur backdrops
+                    // (z=1) and the loading ring retire — they're a WHILE-loading
+                    // placeholder only. Without this the backdrops + a permanent
+                    // spinner lingered OVER an already-sharp received photo,
+                    // which read as "foto borrada que pede pra baixar de novo".
+                    setLoadedImages(prev => prev[msg.id] ? prev : ({ ...prev, [msg.id]: true }));
                   }}
                   onError={() => {
                     setDownloadProgress(prev => { if (prev[msg.id] === undefined) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
@@ -20635,6 +20692,11 @@ function ChatConversationInner() {
                     // Cleared on successful re-load (onLoadEnd above) or on
                     // an explicit retry tap from the placeholder UI.
                     setMediaErrors(prev => prev[msg.id] ? prev : ({ ...prev, [msg.id]: true }));
+                    // [BUG-1 2026-10-01] The bytes we thought were painted are
+                    // gone (evicted/corrupt/CDN rotated). Clear the loaded flag
+                    // so the blur backdrop + retry path can show again instead
+                    // of a bare box.
+                    setLoadedImages(prev => { if (!prev[msg.id]) return prev; const n = { ...prev }; delete n[msg.id]; return n; });
                     // Optimistic local path guess falhou (arquivo evictado do
                     // documentDirectory ou nunca gravado). WhatsApp recupera
                     // silenciosamente: re-baixa do origin; se o origin tb 404
@@ -20772,7 +20834,7 @@ function ChatConversationInner() {
                     user previously saw a flat HSL square with NO indication
                     that anything was happening. Spinner shape when progress=0,
                     real % when it's been populated. */}
-                {!imgUploading && !imgFailed && !msg._localUri && !imgLocalPath && !(typeof fullUri === 'string' && fullUri.startsWith('file://')) && msg.file_url && (() => {
+                {!imgUploading && !imgFailed && !imgLoaded && !msg._localUri && !imgLocalPath && !(typeof fullUri === 'string' && fullUri.startsWith('file://')) && msg.file_url && (() => {
                   const hasPct = downloadProgress[msg.id] !== undefined;
                   const dlPct = hasPct ? (downloadProgress[msg.id] || 0) : 0;
                   if (hasPct && dlPct >= 100) return null;
