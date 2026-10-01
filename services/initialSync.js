@@ -181,12 +181,9 @@ export async function runInitialSync(api, options = {}) {
     // api.getContactsList() response ({ success, data: [...] }). Warm that
     // exact key/shape with the same endpoint the screen uses so a first-ever
     // visit to Contacts paints instantly from cache.
-    try {
-      const rc = await api.getContactsList();
-      if (rc && rc.success) {
-        await setCache('contacts', rc);
-      }
-    } catch {}
+    // Fire-and-forget: warming these caches must NOT prolong the "Sincronizando…"
+    // banner (emit start→done). Run the network write in the background.
+    try { api.getContactsList().then(rc => { if (rc && rc.success) setCache('contacts', rc).catch(() => {}); }).catch(() => {}); } catch {}
     emit('progress', 65);
 
     // ══════ Phase 4: Emails — last 100 per main folder (65-75%) ══════
@@ -233,25 +230,15 @@ export async function runInitialSync(api, options = {}) {
       const nowC = new Date();
       const cStart = new Date(nowC.getFullYear(), nowC.getMonth() - 1, 1);
       const cEnd = new Date(nowC.getFullYear(), nowC.getMonth() + 2, 0);
-      const rcal = await api.calEvents(
-        cStart.toISOString().slice(0, 10),
-        cEnd.toISOString().slice(0, 10),
-      );
-      if (rcal && rcal.success) {
-        await setCache('calendar_events', rcal);
-      }
+      api.calEvents(cStart.toISOString().slice(0, 10), cEnd.toISOString().slice(0, 10))
+        .then(rcal => { if (rcal && rcal.success) setCache('calendar_events', rcal).catch(() => {}); }).catch(() => {});
     } catch {}
     // WARM REAL CACHE — meetings. app/meetings.js loadMeetings() reads
     // getCached('meetings_<tab>') (default tab 'upcoming') and uses the cached
     // value directly as the meetings ARRAY, storing `r.data?.meetings || []`.
     // No existing phase fetched meetings, so a first visit always hit the
     // network — warm the plain-array shape under 'meetings_upcoming'.
-    try {
-      const rm = await api.meetList('upcoming', 50, 0);
-      if (rm && rm.success) {
-        await setCache('meetings_upcoming', rm.data?.meetings || []);
-      }
-    } catch {}
+    try { api.meetList('upcoming', 50, 0).then(rm => { if (rm && rm.success) setCache('meetings_upcoming', rm.data?.meetings || []).catch(() => {}); }).catch(() => {}); } catch {}
     emit('progress', 85);
 
     // ══════ Phase 6: Files/Cloud listing (85-92%) ══════
@@ -273,8 +260,8 @@ export async function runInitialSync(api, options = {}) {
     // screen uses for root), applying the same normalize/split, so a first
     // visit to Files paints instantly.
     try {
-      const rf = await api.fileList(null);
-      if (rf && rf.success) {
+      api.fileList(null).then(rf => {
+        if (!rf || !rf.success) return;
         const raw = rf.data || {};
         const normalize = (f) => ({
           ...f,
@@ -289,8 +276,8 @@ export async function runInitialSync(api, options = {}) {
           breadcrumbs: raw.breadcrumbs,
           storage: raw.storage,
         };
-        await setCache('files_root', data);
-      }
+        setCache('files_root', data).catch(() => {});
+      }).catch(() => {});
     } catch {}
     emit('progress', 92);
 
