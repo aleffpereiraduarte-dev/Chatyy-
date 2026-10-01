@@ -3,6 +3,7 @@ import { memo, useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
   Switch, ActivityIndicator, Platform, Alert, Image, Linking, Share, Modal, Pressable,
+  BackHandler,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as Haptics from 'expo-haptics';
@@ -21,7 +22,7 @@ import {
   IconFilter, IconChevronRight, IconGlobe, IconTrash, IconBell, IconForward,
   IconShield, IconFileText, IconUser, IconUsers, IconPlus, IconShare, IconCheck,
   IconMail, IconPhone, IconAlertTriangle, IconCopy, IconDatabase, IconRefresh,
-  IconX, IconChevronDown,
+  IconX, IconChevronDown, IconBrush, IconHelpCircle,
 } from '../components/Icons';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Rect as SvgRect, Circle as SvgCircle } from 'react-native-svg';
 import { useBiometric } from '../context/BiometricContext';
@@ -482,6 +483,13 @@ function SettingsScreenInner() {
   // making the user remember which sub-section a toggle lives in.
   const [searchQuery, setSearchQuery] = useState('');
   const _q = (searchQuery || '').trim().toLowerCase();
+  // `searching` = user typed something in the search box. When true the
+  // category layer is bypassed and every section that matches the query is
+  // shown (search works ACROSS all categories).
+  const searching = !!_q;
+  // Category navigation (WhatsApp/iOS style). null = show the category LIST
+  // (home). A value = show only the sections that belong to that category.
+  const [activeCategory, setActiveCategory] = useState(null);
   // Collect every label string we know about (gathered DURING render via
   // sectionMatches calls below) so the next render can show a flat
   // "results" strip at the top of the scroll. We use useRef to span
@@ -1045,6 +1053,17 @@ function SettingsScreenInner() {
     };
   }, []);
 
+  // Android hardware back: if we're inside a category sub-page, pop back to
+  // the category list instead of leaving the screen.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (activeCategory !== null) { setActiveCategory(null); return true; }
+      return false;
+    });
+    return () => { try { sub.remove(); } catch {} };
+  }, [activeCategory]);
+
   // Load referral code
   useEffect(() => {
     api.getReferralCode().then(r => {
@@ -1130,6 +1149,9 @@ function SettingsScreenInner() {
     try { return initialSettingsRef.current && JSON.stringify(settings) !== initialSettingsRef.current; } catch { return false; }
   };
   const handleBack = () => {
+    // Inside a category sub-page: back returns to the category LIST first,
+    // not out of the screen.
+    if (activeCategory !== null) { setActiveCategory(null); return; }
     if (isDirty()) {
       Alert.alert(
         t('settings.unsavedTitle') || 'Alterações não salvas',
@@ -1179,6 +1201,26 @@ function SettingsScreenInner() {
       setSaving(false);
     }
   };
+
+  // Auto-save: the former "Salvar" button in the header was removed. The
+  // fields that live in the `settings` blob (signature, emails_per_page,
+  // notifications, notification_sound, notification_vibration, language,
+  // font_size…) are mutated in place by their rows and now persist
+  // automatically here, debounced, whenever `settings` changes. Fields that
+  // already had their own server round-trip (vacation/auto-reply,
+  // forwarding, notif prefs, chat prefs, theme, biometric) persist on change
+  // via their own handlers and are unaffected by this.
+  const _autoSaveTimer = useRef(null);
+  const _autoSaveArmed = useRef(false);
+  useEffect(() => {
+    if (loading) return undefined;
+    // Skip the first run after the initial load so hydrating server data
+    // doesn't immediately echo straight back to the server.
+    if (!_autoSaveArmed.current) { _autoSaveArmed.current = true; return undefined; }
+    if (_autoSaveTimer.current) clearTimeout(_autoSaveTimer.current);
+    _autoSaveTimer.current = setTimeout(() => { handleSave(); }, 700);
+    return () => { if (_autoSaveTimer.current) clearTimeout(_autoSaveTimer.current); };
+  }, [settings, loading]);
 
   const handleChangePhoto = async () => {
     try {
@@ -1231,6 +1273,27 @@ function SettingsScreenInner() {
     }
   };
 
+  // ── Category catalog (WhatsApp/iOS-style home list) ──────────────────
+  // Each entry maps to the `activeCategory` key used by the section gates
+  // below. `icon` is an already-imported SVG component. Subtitles are short
+  // pt-BR hints. Falls back to inline strings when an i18n key is absent.
+  // Titles/subtitles are inline pt-BR strings on purpose: i18n has no
+  // `settings.cat.*` keys and this file's `t()` returns the raw key (not a
+  // falsy) for misses, so `t(...) || fallback` would leak the key. Inline
+  // strings keep the labels correct without touching the i18n files.
+  const categoryList = [
+    { key: 'account',      Icon: IconUser,         title: 'Conta',                    sub: 'Perfil, foto, trocar conta' },
+    { key: 'appearance',   Icon: IconBrush,        title: 'Aparência',                sub: 'Tema, densidade, idioma' },
+    { key: 'notifications',Icon: IconBell,         title: 'Notificações',             sub: 'Alertas e preferências' },
+    { key: 'privacy',      Icon: IconShield,       title: 'Privacidade e segurança',  sub: 'Visto por último, bloqueio, encaminhamento' },
+    { key: 'chat',         Icon: IconMessageSquare,title: 'Chat',                     sub: 'Preferências, temporárias, papel de parede' },
+    { key: 'email',        Icon: IconMail,         title: 'Email',                    sub: 'Assinaturas, filtros, leitura' },
+    { key: 'bia',          Icon: IconSparkles,     title: 'Bia',                      sub: 'Seu assistente de IA' },
+    { key: 'storage_data', Icon: IconDatabase,     title: 'Armazenamento e dados',    sub: 'Mídia, rede, armazenamento' },
+    { key: 'help',         Icon: IconHelpCircle,   title: 'Ajuda e sobre',            sub: 'Central de ajuda, sobre, legal' },
+  ];
+  const activeCategoryTitle = (categoryList.find(c => c.key === activeCategory) || {}).title || t('settings.title');
+
   return (
     <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
       {/* Header */}
@@ -1238,18 +1301,10 @@ function SettingsScreenInner() {
         <TouchableOpacity onPress={handleBack} style={s.backBtn} accessibilityLabel={t('common.back') || 'Voltar'} accessibilityRole="button">
           <IconArrowLeft size={24} color={colors.textSecondary} />
         </TouchableOpacity>
-        <Text style={[s.headerTitle, { color: colors.text }]} numberOfLines={1}>{t('settings.title')}</Text>
-        <PressableScale
-          style={[s.saveBtn, { backgroundColor: colors.primary }, saving && s.saveBtnDisabled]}
-          onPress={handleSave}
-          disabled={saving}
-        >
-          {saving ? (
-            <ActivityIndicator size="small" color="#fff" />
-          ) : (
-            <Text style={s.saveBtnText}>{saved ? t('settings.saved') : t('settings.save')}</Text>
-          )}
-        </PressableScale>
+        <Text style={[s.headerTitle, { color: colors.text }]} numberOfLines={1}>{activeCategory !== null ? activeCategoryTitle : t('settings.title')}</Text>
+        {/* Save button removed — settings now persist automatically (see the
+            auto-save effect). Spacer keeps the title centered. */}
+        <View style={s.backBtn} />
       </View>
 
       {loading ? (
@@ -1333,10 +1388,53 @@ function SettingsScreenInner() {
           </View>
         )}
 
+        {/* ── Category home list. Shown only when no category is selected and
+            the user isn't searching. Tapping a row opens that category's
+            sub-page (sets activeCategory); the section gates below then
+            reveal only that category's blocks. ── */}
+        {activeCategory === null && !searching && (
+          <View>
+            {categoryList.map((cat) => {
+              const CatIcon = cat.Icon;
+              return (
+                <PressableScale
+                  key={cat.key}
+                  onPress={() => { setActiveCategory(cat.key); try { scrollRef.current?.scrollTo?.({ y: 0, animated: false }); } catch {} }}
+                  accessibilityRole="button"
+                  accessibilityLabel={cat.title}
+                  style={[s.settingRow, {
+                    backgroundColor: colors.surface,
+                    borderColor: colors.borderLight,
+                    borderWidth: 1,
+                    borderRadius: 14,
+                    paddingVertical: 14,
+                    paddingHorizontal: 14,
+                    marginBottom: 10,
+                  }]}
+                >
+                  <View style={{
+                    width: 38, height: 38, borderRadius: 19,
+                    backgroundColor: colors.primary + '18',
+                    alignItems: 'center', justifyContent: 'center',
+                    marginRight: 14,
+                  }}>
+                    <CatIcon size={20} color={colors.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[s.settingLabel, { color: colors.text, fontWeight: '700' }]}>{cat.title}</Text>
+                    <Text style={[s.settingDesc, { color: colors.textTertiary }]} numberOfLines={1}>{cat.sub}</Text>
+                  </View>
+                  <IconChevronRight size={20} color={colors.textTertiary} />
+                </PressableScale>
+              );
+            })}
+          </View>
+        )}
+
         {/* Profile Photo — wrap avatar in a subtle brand-color ring so the
             account header reads as the "you" anchor on the settings screen
             (matches the /u/[username] header treatment). */}
-        {sectionMatches(t('settings.profile') || 'profile', user?.email) && (
+        {(searching || activeCategory === 'account') && sectionMatches(t('settings.profile') || 'profile', user?.email) && (
         <View style={[s.section, s.profileSection, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={{
             padding: 3, borderRadius: 50, borderWidth: 2, borderColor: colors.primary + '55',
@@ -1383,7 +1481,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Appearance */}
-        {sectionMatches(t('settings.appearance'), t('settings.theme.light'), t('settings.theme.dark'), t('settings.theme.system'), t('settings.density')) && (
+        {(searching || activeCategory === 'appearance') && sectionMatches(t('settings.appearance'), t('settings.theme.light'), t('settings.theme.dark'), t('settings.theme.system'), t('settings.density')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.appearance')}</Text>
 
@@ -1468,7 +1566,8 @@ function SettingsScreenInner() {
         {/* ── GROUP: Email (Phase-1 collapsible). Wraps the contiguous
             email-related blocks: Undo Send, Email prefs, Morning Briefing,
             Signatures, Email tools. forceOpen when searching. ── */}
-        <CollapsibleGroup title={t('settings.group.email') || 'Email'} icon={IconMail} forceOpen={!!_q}>
+        {(searching || activeCategory === 'email') && (
+        <CollapsibleGroup title={t('settings.group.email') || 'Email'} icon={IconMail} forceOpen={!!_q || activeCategory === 'email'}>
 
         {/* Undo Send */}
         {sectionMatches(t('settings.undoSend'), t('settings.undoSendDesc')) && (
@@ -1680,7 +1779,9 @@ function SettingsScreenInner() {
         )}
 
         {/* Morning Briefing */}
-        {sectionMatches(t('settings.morningBriefing') || 'Bom dia diário', t('settings.morningEnabled') || 'Resumo matinal') && (
+        {/* "Bom dia diário" removido da UI por decisão do founder (nicho).
+            Mantido fora da renderização; conteúdo preservado abaixo. */}
+        {false && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.morningBriefing') || 'Bom dia diário'}</Text>
           <View style={[s.settingRow, { borderBottomColor: colors.borderLight }]}>
@@ -1773,7 +1874,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Email tools — Importar / PGP / Tarefas (round-6 gap-closer) */}
-        {sectionMatches(
+        {(searching || activeCategory === 'email') && sectionMatches(
           t('settings.emailToolsTitle') || 'Ferramentas de email',
           t('settings.importFromOthers') || 'Importar de outras contas',
           t('settings.pgpKeys') || 'Chave PGP',
@@ -1851,10 +1952,11 @@ function SettingsScreenInner() {
         )}
 
         </CollapsibleGroup>
+        )}
         {/* ── END GROUP: Email ── */}
 
         {/* Language */}
-        {sectionMatches(t('settings.language'), t('settings.languageLabel'), t('settings.language.autoDetect')) && (
+        {(searching || activeCategory === 'appearance') && sectionMatches(t('settings.language'), t('settings.languageLabel'), t('settings.language.autoDetect')) && (
         <View ref={registerSectionRef('language')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconGlobe size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -2001,7 +2103,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Auto-reply */}
-        {sectionMatches(t('settings.autoReply'), t('settings.autoReplyEnable'), t('settings.autoReplyDesc')) && (
+        {(searching || activeCategory === 'email') && sectionMatches(t('settings.autoReply'), t('settings.autoReplyEnable'), t('settings.autoReplyDesc')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.autoReply')}</Text>
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
@@ -2049,7 +2151,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Filters & Rules */}
-        {sectionMatches(t('settings.filters'), t('settings.manageFilters')) && (
+        {(searching || activeCategory === 'email') && sectionMatches(t('settings.filters'), t('settings.manageFilters')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.filters')}</Text>
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
@@ -2074,7 +2176,7 @@ function SettingsScreenInner() {
         )}
 
         {/* AI Features */}
-        {sectionMatches(t('settings.ai'), t('settings.aiSmartReply'), t('settings.aiDrafts'), t('settings.aiSummary'), t('settings.aiEnhance'), t('settings.smartCompose')) && (
+        {(searching || activeCategory === 'email') && sectionMatches(t('settings.ai'), t('settings.aiSmartReply'), t('settings.aiDrafts'), t('settings.aiSummary'), t('settings.aiEnhance'), t('settings.smartCompose')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconSparkles size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -2128,7 +2230,7 @@ function SettingsScreenInner() {
             persisted via setStorage; consumers (chat-conversation, voice
             player, message bubbles, image upload pipeline) read these on
             mount. Beta gates experimental features behind a flag. */}
-        {sectionMatches(
+        {(searching || activeCategory === 'chat') && sectionMatches(
           t('settings.chatPrefs.title') || 'Preferências do chat',
           t('settings.enterSends.title') || 'Enter envia',
           t('settings.autocorrect.title') || 'Auto-correção',
@@ -2279,7 +2381,7 @@ function SettingsScreenInner() {
             the notification channel. The native module reads
             `notif_led_color` on push delivery. Branded swatches with
             labels + a hero preview dot showing the live selection. */}
-        {Platform.OS === 'android' && sectionMatches(
+        {(searching || activeCategory === 'chat') && Platform.OS === 'android' && sectionMatches(
           t('settings.led.title') || 'Cor do LED',
           'led',
         ) && (
@@ -2368,7 +2470,7 @@ function SettingsScreenInner() {
             chat-conversation.js can render it via backgroundColor; the
             gradient swatches here are visual previews only. Custom photo
             upload remains supported (stored as the image URI). */}
-        {sectionMatches(t('settings.wallpaperDefault.title') || 'Papel de parede padrão', 'wallpaper', 'papel de parede') && (
+        {(searching || activeCategory === 'chat') && sectionMatches(t('settings.wallpaperDefault.title') || 'Papel de parede padrão', 'wallpaper', 'papel de parede') && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.wallpaperDefault.title') || 'Papel de parede padrão'}</Text>
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
@@ -2485,7 +2587,7 @@ function SettingsScreenInner() {
             reused by that row. */}
 
         {/* Network usage stats — lifetime up/down bytes for chat media. */}
-        {sectionMatches(t('settings.networkUsage.title') || 'Uso de rede', 'network usage', 'uso de rede') && (
+        {(searching || activeCategory === 'storage_data') && sectionMatches(t('settings.networkUsage.title') || 'Uso de rede', 'network usage', 'uso de rede') && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconDatabase size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -2527,7 +2629,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Help center — opens the support page via Linking. */}
-        {sectionMatches(t('settings.help.title') || 'Central de ajuda', 'help', 'ajuda', 'support') && (
+        {(searching || activeCategory === 'help') && sectionMatches(t('settings.help.title') || 'Central de ajuda', 'help', 'ajuda', 'support') && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconMail size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -2559,7 +2661,7 @@ function SettingsScreenInner() {
         )}
 
         {/* About — opens a modal with app version, build, and legal links. */}
-        {sectionMatches(t('settings.about.title') || 'Sobre', 'about', 'sobre', 'version') && (
+        {(searching || activeCategory === 'help') && sectionMatches(t('settings.about.title') || 'Sobre', 'about', 'sobre', 'version') && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconFileText size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -2601,13 +2703,13 @@ function SettingsScreenInner() {
         )}
 
         {/* One AI Assistant */}
-        {sectionMatches(t('settings.oneAssistant'), t('settings.oneEnabled'), t('settings.oneNotifPrefs'), 'one ai', 'assistant') && (
+        {(searching || activeCategory === 'bia') && sectionMatches('Bia', t('settings.oneAssistant'), t('settings.oneEnabled'), t('settings.oneNotifPrefs'), 'one ai', 'assistant', 'bia') && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}>
-              <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '800' }}>O</Text>
+              <Text style={{ color: colors.onPrimary || '#fff', fontSize: 12, fontWeight: '800' }}>B</Text>
             </View>
-            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.oneAssistant')}</Text>
+            <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>Bia</Text>
           </View>
           <Text style={[s.settingDesc, { color: colors.textSecondary, marginTop: Spacing.sm }]}>
             {t('settings.oneAssistantDesc')}
@@ -2670,7 +2772,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Desktop Notifications */}
-        {Platform.OS === 'web' && sectionMatches(t('settings.desktopNotifs'), t('settings.desktopNotifsDesc'), 'desktop', 'browser') && (
+        {(searching || activeCategory === 'notifications') && Platform.OS === 'web' && sectionMatches(t('settings.desktopNotifs'), t('settings.desktopNotifsDesc'), 'desktop', 'browser') && (
           <View ref={registerSectionRef('notifications')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
             <View style={s.sectionTitleRow}>
               <IconBell size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -2711,7 +2813,7 @@ function SettingsScreenInner() {
             existem no app), então quem usa o chatyy.com.br não tinha COMO
             trocar a senha. Este bloco web-only reusa o MESMO ChangePasswordModal
             (RN Modal puro, web-safe, já montado no fim da tela). */}
-        {Platform.OS === 'web' && sectionMatches(t('settings.security'), 'segurança', 'senha', 'password', t('settings.changePassword')) && (
+        {(searching || activeCategory === 'privacy') && Platform.OS === 'web' && sectionMatches(t('settings.security'), 'segurança', 'senha', 'password', t('settings.changePassword')) && (
           <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
             <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.security') || 'Segurança'}</Text>
             <TouchableOpacity
@@ -2733,7 +2835,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Security — Biometric Lock + Parental Controls (native only; biometric items below self-gate on biometricAvailable) */}
-        {Platform.OS !== 'web' && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança', 'senha', 'password', t('settings.changePassword'), '2fa', t('settings.twoFactor'), 'pin', 'backup', t('settings.e2eBackup'), t('settings.backupKey.rotate'), t('settings.activityLog'), 'byok', t('settings.advancedKey')) && (
+        {(searching || activeCategory === 'privacy') && Platform.OS !== 'web' && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança', 'senha', 'password', t('settings.changePassword'), '2fa', t('settings.twoFactor'), 'pin', 'backup', t('settings.e2eBackup'), t('settings.backupKey.rotate'), t('settings.activityLog'), 'byok', t('settings.advancedKey')) && (
           <View ref={registerSectionRef('security')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
             {/* Família — Apple Family Sharing-style hub */}
             <TouchableOpacity
@@ -3069,7 +3171,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Forwarding */}
-        {sectionMatches(t('settings.forwarding'), t('settings.forwardingEnable'), t('settings.forwardingDesc')) && (
+        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.forwarding'), t('settings.forwardingEnable'), t('settings.forwardingDesc')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconForward size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -3107,7 +3209,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Reading */}
-        {sectionMatches(t('settings.reading'), t('settings.fontSize'), t('settings.readReceipts'), t('settings.referrals') || 'referral') && (
+        {(searching || activeCategory === 'email') && sectionMatches(t('settings.reading'), t('settings.fontSize'), t('settings.readReceipts'), t('settings.referrals') || 'referral') && (
         <View ref={registerSectionRef('reading')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.reading')}</Text>
 
@@ -3149,7 +3251,7 @@ function SettingsScreenInner() {
             chat_user_privacy via chat_privacy_get/set. The 4 dropdown rows
             (last_seen / profile_photo / status / groups) open a bottom-sheet
             picker; read_receipts is a simple Switch since it's boolean. */}
-        {sectionMatches(t('settings.privacyTitle'), t('settings.privacyLastSeen'), t('settings.privacyProfilePhoto'), t('settings.privacyReadReceipts'), t('settings.privacyStatus'), t('settings.privacyGroups'), 'privacy', 'privacidade') && (
+        {(searching || activeCategory === 'privacy') && sectionMatches(t('settings.privacyTitle'), t('settings.privacyLastSeen'), t('settings.privacyProfilePhoto'), t('settings.privacyReadReceipts'), t('settings.privacyStatus'), t('settings.privacyGroups'), 'privacy', 'privacidade') && (
         <View ref={registerSectionRef('privacy_granular')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -3369,7 +3471,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Legal — Privacy & Terms */}
-        {sectionMatches(t('settings.legal'), t('settings.privacyPolicy'), t('settings.termsOfService')) && (
+        {(searching || activeCategory === 'help') && sectionMatches(t('settings.legal'), t('settings.privacyPolicy'), t('settings.termsOfService')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconFileText size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -3400,7 +3502,7 @@ function SettingsScreenInner() {
             (was set in code but no UI exposed it — GAP 11). Three radio rows:
             all / urgent / silent. Persisted via setStorage (mirrors One
             Assistant section pattern). */}
-        {sectionMatches(t('settings.notificationsTitle'), t('settings.notifAll'), t('settings.notifUrgent'), t('settings.notifSilent')) && (
+        {(searching || activeCategory === 'notifications') && sectionMatches(t('settings.notificationsTitle'), t('settings.notifAll'), t('settings.notifUrgent'), t('settings.notifSilent')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconBell size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -3443,8 +3545,8 @@ function SettingsScreenInner() {
 
         {/* ── GROUP: Armazenamento e dados (native only — both child blocks
             are Platform.OS !== 'web'). Wraps Media auto-download + Storage. ── */}
-        {Platform.OS !== 'web' && (
-        <CollapsibleGroup title={t('settings.group.storage') || 'Armazenamento e dados'} icon={IconDatabase} forceOpen={!!_q}>
+        {(searching || activeCategory === 'storage_data') && Platform.OS !== 'web' && (
+        <CollapsibleGroup title={t('settings.group.storage') || 'Armazenamento e dados'} icon={IconDatabase} forceOpen={!!_q || activeCategory === 'storage_data'}>
 
         {/* Mídia automática — WhatsApp Settings → Storage and Data parity.
             4 buckets (photos, audio, videos, docs) × 3 modes (Wi-Fi / Wi-Fi+Móvel
@@ -3812,7 +3914,7 @@ function SettingsScreenInner() {
         {/* Mensagens temporárias por padrão — WhatsApp Settings → Privacy →
             Default Disappearing Messages. Applied at chat_create time only
             (existing convs unaffected). 4 options: Off / 24h / 7d / 90d. */}
-        {sectionMatches(t('settings.defaultDisappearing'), t('settings.disappearingOff'), t('settings.disappearing24h'), t('settings.disappearing7d'), t('settings.disappearing90d'), 'privacy', 'disappearing') && (
+        {(searching || activeCategory === 'chat') && sectionMatches(t('settings.defaultDisappearing'), t('settings.disappearingOff'), t('settings.disappearing24h'), t('settings.disappearing7d'), t('settings.disappearing90d'), 'privacy', 'disappearing') && (
         <View ref={registerSectionRef('defaultDisappearing')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -3855,7 +3957,7 @@ function SettingsScreenInner() {
             caption contains any of the listed words. Matched server-side in
             feed_list via LOWER(caption) NOT LIKE '%word%'. Soft-fails on
             backend down: an empty list shows the empty hint. */}
-        {sectionMatches(t('settings.mutedWords') || 'Palavras silenciadas', 'muted words', 'palavras silenciadas', 'mute', 'silenciar', 'privacy') && (
+        {(searching || activeCategory === 'chat') && sectionMatches(t('settings.mutedWords') || 'Palavras silenciadas', 'muted words', 'palavras silenciadas', 'mute', 'silenciar', 'privacy') && (
         <View ref={registerSectionRef('mutedWords')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <View style={s.sectionTitleRow}>
             <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -3946,7 +4048,7 @@ function SettingsScreenInner() {
             título + descrição + GB ganhos, código grande tappable, botão
             Compartilhar largo, contador no rodapé. Saiu de "uma row apertada"
             pra um card que parece feature de growth. */}
-        {sectionMatches(t('referral.inviteFriends') || 'Convidar amigos', t('referral.subtitle') || 'GB grátis', 'invite', 'amigos', 'referral') && (
+        {(searching || activeCategory === 'account') && sectionMatches(t('referral.inviteFriends') || 'Convidar amigos', t('referral.subtitle') || 'GB grátis', 'invite', 'amigos', 'referral') && (
         <View style={{
           marginBottom: Spacing.lg,
           borderRadius: 18,
@@ -4059,7 +4161,7 @@ function SettingsScreenInner() {
         )}
 
         {/* Danger Zone */}
-        {sectionMatches(t('settings.dangerZone'), t('settings.emptyTrash'), t('settings.deleteAccount')) && (
+        {(searching || activeCategory === 'account') && sectionMatches(t('settings.dangerZone'), t('settings.emptyTrash'), t('settings.deleteAccount')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.error }]}>{t('settings.dangerZone')}</Text>
           <TouchableOpacity
