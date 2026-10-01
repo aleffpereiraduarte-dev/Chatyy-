@@ -4046,7 +4046,7 @@ function PeekSheet({ visible, onClose, colors, isDark, body, extras }) {
           <TouchableOpacity onPress={_commitClose} style={{ position: 'absolute', right: 12, top: 10, padding: 8, zIndex: 10 }}>
             <IconX size={20} color={colors?.textSecondary || '#888'} />
           </TouchableOpacity>
-          <ScrollView showsVerticalScrollIndicator={false} onScrollBeginDrag={gridRenderLimit === Infinity ? undefined : expandGridRenderLimit}>{body}</ScrollView>
+          <ScrollView showsVerticalScrollIndicator={false}>{body}</ScrollView>
         </Animated.View>
       </Animated.View>
       {extras}
