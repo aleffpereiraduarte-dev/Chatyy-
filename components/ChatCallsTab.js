@@ -325,6 +325,18 @@ function _writeCallHistoryCache(arr) {
     // mirror, optimistic adds disappear after app restart.
     setString('chat_calls', JSON.stringify(trimmed));
   } catch {}
+  // ALSO mirror into the ACCOUNT-SCOPED cache (services/cache → MMKV key hashed
+  // by the logged-in email). This is the PRIMARY source the first-paint seed
+  // reads, so it must stay fresh on EVERY write — including optimistic adds
+  // (addCallToHistory) and deletes — not only on the mount-effect setCache.
+  // Writing it here means: (1) the cold-start seed is instant AND can never
+  // surface another account's log (P0 privacy — the key is per-account), and
+  // (2) a call made this session is already on-device for the next cold start.
+  // Fire-and-forget; setCache writes MMKV synchronously under the hood.
+  try {
+    const { setCache } = require('../services/cache');
+    setCache('call_history', trimmed, 2592000000).catch(() => {});
+  } catch {}
 }
 
 export async function getCallHistory() {
@@ -2797,28 +2809,55 @@ function _callsFingerprint(arr) {
   return arr.map(c => `${c.id}:${c.status ?? c.type ?? ''}:${c.duration ?? 0}:${c.created_at ?? c.timestamp ?? ''}`).join('|');
 }
 
+// ── Synchronous, account-scoped first-paint seed ────────────────────────────
+// Local-first (WhatsApp-style): the Calls tab must paint from on-device storage
+// BEFORE any network, and must NEVER wait on a BR→NY fetch to show the list.
+// Sources, in priority order:
+//   1. services/cache `call_history` — PER-ACCOUNT (key hashed by the logged-in
+//      email). Privacy-safe (P0: never another account's log) + instant + it
+//      persists to disk (MMKV→AsyncStorage, hydrated by the splash gate).
+//   2. legacy unscoped `omc_call_history` (getCallHistoryCached) — kept as a
+//      fallback for installs that haven't written the scoped key yet; it is
+//      wiped on account switch (AuthContext.clearAccountScopedMmkv) so it can't
+//      leak across accounts.
+//   3. the module-load `chat_calls` snapshot — last resort.
+// All three are synchronous, so the very first render already has rows and the
+// loading spinner is skipped whenever anything is cached. This runs at mount,
+// after the splash cache-ready gate, so the stores are hydrated by now.
+function _seedCallHistorySync() {
+  try {
+    const { getCachedSync } = require('../services/cache');
+    const scoped = getCachedSync('call_history');
+    if (Array.isArray(scoped) && scoped.length) return scoped;
+  } catch {}
+  try {
+    const c = getCallHistoryCached();
+    if (Array.isArray(c) && c.length) return c;
+  } catch {}
+  return Array.isArray(_preloadedCalls) ? _preloadedCalls : [];
+}
+
 function ChatCallsTab({ colors, isDark, t, user, router }) {
   const { language } = useLanguage();
   const [activeTab, setActiveTab] = useState('recent');
   const [minutesInfo, setMinutesInfo] = useState(null);
   const [loadingMinutes, setLoadingMinutes] = useState(true);
   const [voipHistory, setVoipHistory] = useState([]);
-  // Initialize from MMKV preload so the very first render already has data.
-  // Seed from a FRESH synchronous cache read at mount (not the module-load
-  // snapshot `_preloadedCalls`, which can be empty if the module loaded before
-  // MMKV hydrated → every tab open fell to the slow spinner+network path =
-  // "demora carregar"). getCallHistoryCached() reads chat_calls synchronously
-  // and, by the time the user taps the tab, the cache is hydrated.
-  const [chatCalls, setChatCalls] = useState(() => {
-    try { const c = getCallHistoryCached(); if (Array.isArray(c) && c.length) return c; } catch {}
-    return (Array.isArray(_preloadedCalls) ? _preloadedCalls : []);
-  });
-  // Skip the loading spinner if we already painted from cache.
+  // Seed the first render from on-device storage via _seedCallHistorySync()
+  // (account-scoped call_history → legacy omc_call_history → chat_calls preload,
+  // all synchronous). This runs at mount — after the splash cache-ready gate —
+  // so the stores are hydrated and the list paints instantly without waiting on
+  // the BR→NY network fetch. Not the module-load snapshot `_preloadedCalls`,
+  // which can be empty if the module loaded before MMKV hydrated.
+  const [chatCalls, setChatCalls] = useState(() => _seedCallHistorySync());
+  // Skip the loading spinner if we already painted from cache. Never show a
+  // blocking skeleton when there's ANY on-device log — the network refresh
+  // below is silent (SWR), so a warm cache = instant, flicker-free open.
   const [loadingHistory, setLoadingHistory] = useState(() => {
-    try { const c = getCallHistoryCached(); if (Array.isArray(c) && c.length) return false; } catch {}
-    return !(Array.isArray(_preloadedCalls) && _preloadedCalls.length > 0);
+    try { const c = _seedCallHistorySync(); if (Array.isArray(c) && c.length) return false; } catch {}
+    return true;
   });
-  const lastCallsFpRef = useRef(_callsFingerprint(_preloadedCalls));
+  const lastCallsFpRef = useRef(_callsFingerprint(_seedCallHistorySync()));
   const [dialerVisible, setDialerVisible] = useState(false);
   const [dialerPrefill, setDialerPrefill] = useState('');
   const [dialerAutoDial, setDialerAutoDial] = useState(false);
@@ -2827,6 +2866,30 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
   const [showCallerIdModal, setShowCallerIdModal] = useState(false);
   const [callerIdVerified, setCallerIdVerified] = useState(false);
   const [phoneContactsList, setPhoneContactsList] = useState([]);
+
+  // Progressive render window. A warm cache holds up to 200 rows, and the list
+  // is a plain (non-virtualized) ScrollView — rendering all of them in one
+  // synchronous pass was a visible hitch the instant the user tapped the Calls
+  // tab ("ainda demora a página ligação"). Paint the first screenful right away
+  // (covers the viewport), then expand to the full list once the mount
+  // interaction settles — one frame later, imperceptible. Segment-tab switches
+  // and later refreshes render in full (the limit only clamps the first paint).
+  const [renderLimit, setRenderLimit] = useState(24);
+  const expandRenderLimit = useCallback(() => setRenderLimit(Infinity), []);
+  useEffect(() => {
+    let timer = null;
+    let task = null;
+    try {
+      const { InteractionManager } = require('react-native');
+      task = InteractionManager.runAfterInteractions(expandRenderLimit);
+    } catch {
+      timer = setTimeout(expandRenderLimit, 120);
+    }
+    return () => {
+      try { task?.cancel?.(); } catch {}
+      if (timer) clearTimeout(timer);
+    };
+  }, [expandRenderLimit]);
 
   useEffect(() => {
     let alive = true;
@@ -2848,8 +2911,8 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
   // entirely and go straight to a silent background delta sync (no flicker).
   // Otherwise fall back to the async cache and then the network fetch.
   useEffect(() => {
-    const _cachedNow = (() => { try { return getCallHistoryCached(); } catch { return null; } })();
-    const alreadyHasVisible = (Array.isArray(_cachedNow) && _cachedNow.length > 0) || (Array.isArray(_preloadedCalls) && _preloadedCalls.length > 0);
+    const _cachedNow = (() => { try { return _seedCallHistorySync(); } catch { return null; } })();
+    const alreadyHasVisible = (Array.isArray(_cachedNow) && _cachedNow.length > 0);
 
     // Minutes info loads independently (doesn't affect history flicker)
     setLoadingMinutes(true);
@@ -3199,11 +3262,11 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         await callHistoryClear();
         lastCallsFpRef.current = '';
         setChatCalls([]);
-        setCache('call_history', [], 2592000000).catch(() => {});
-        try {
-          const { setString } = require('../services/mmkv');
-          setString('chat_calls', '[]');
-        } catch {}
+        // Clear ALL three on-device stores together (scoped call_history +
+        // legacy omc_call_history + chat_calls). Clearing only two left the
+        // unscoped mirror populated, so the cold-start seed resurrected the
+        // just-cleared list on the next open.
+        try { _writeCallHistoryCache([]); } catch {}
       } catch {}
     };
     if (Platform.OS === 'web') {
@@ -3373,7 +3436,11 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     const yesterday = new Date(today);
     yesterday.setDate(yesterday.getDate() - 1);
 
-    for (const call of filteredHistory) {
+    // First paint renders only the viewport window (see renderLimit); the
+    // effect expands it to Infinity a frame after mount. filteredHistory is
+    // already sorted desc, so slicing the head preserves correct grouping.
+    const rows = renderLimit === Infinity ? filteredHistory : filteredHistory.slice(0, renderLimit);
+    for (const call of rows) {
       const d = new Date(call.timestamp);
       let groupLabel;
       if (d.toDateString() === today.toDateString()) {
@@ -3396,7 +3463,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       currentGroup.data.push(call);
     }
     return groups;
-  }, [filteredHistory, t]);
+  }, [filteredHistory, t, renderLimit]);
 
   const bgColor = isDark ? '#000000' : '#f2f2f7';
   const textColor = isDark ? '#ffffff' : '#000000';
@@ -3530,6 +3597,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         style={s.scrollView}
         contentContainerStyle={s.scrollContent}
         showsVerticalScrollIndicator={false}
+        onScrollBeginDrag={renderLimit === Infinity ? undefined : expandRenderLimit}
       >
         {isLoading ? (
           <CallListSkeleton count={6} />

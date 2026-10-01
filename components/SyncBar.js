@@ -94,6 +94,40 @@ export default function SyncBar() {
       });
     };
 
+    // [2026-10-01 WA-parity cold-start flash fix] The SINGLE place that may
+    // ever surface "Conectando…". It NEVER shows synchronously — it only arms
+    // a grace timer and, when that timer fires, shows the bar IFF we are still
+    // not authenticated (and the device still has internet). This is what makes
+    // a normal cold start silent: the WS authenticates within 1-5s (incl. the
+    // BR→NY handshake), which clears this timer long before it fires.
+    //
+    // Grace length is cold-start-aware:
+    //   • first connect of the session (hasConnectedOnceRef === false): 12s —
+    //     a normal cold open must NEVER flash the banner, so we wait out the
+    //     whole realistic handshake window.
+    //   • a real reconnect after a prior success: 3s native / 5s web — brief
+    //     flaps (sub-second on web, a moment on mobile radios) stay invisible.
+    //
+    // CRITICAL: callers must NOT call show('connecting') directly. Both the WS
+    // 'disconnected' event AND the network-came-online path funnel through here
+    // so neither can bypass the cold-start grace (the old bug: the NetInfo
+    // listener fired on mount and painted 'connecting' instantly, before the
+    // socket had any chance to connect silently).
+    const scheduleConnecting = () => {
+      clearTimeout(graceTimer.current);
+      // Already authed? nothing to announce.
+      if (mailWs?.authenticated) return;
+      const grace = hasConnectedOnceRef.current ? (Platform.OS === 'web' ? 5000 : 3000) : 12000;
+      graceTimer.current = setTimeout(() => {
+        if (!mountedRef.current || mailWs?.authenticated) return;
+        // [WA-parity 2026-05-31] Honest copy: only say "Conectando…" when the
+        // device actually has internet and it's the server we can't reach. If
+        // the device itself is offline, surface "Sem internet" instead so we
+        // don't blame the server for a local radio drop.
+        show(deviceOnlineRef.current ? 'connecting' : 'offline');
+      }, grace);
+    };
+
     const handleConnection = ({ status: s }) => {
       clearTimeout(graceTimer.current);
       if (s === 'authenticated' || s === 'connected') {
@@ -101,27 +135,7 @@ export default function SyncBar() {
         // Connected — hide after tiny delay
         graceTimer.current = setTimeout(hide, 500);
       } else if (s === 'disconnected') {
-        // Only show "Connecting..." after a grace period of being disconnected
-        // so brief reconnects don't flash a banner at the user. Web uses a
-        // longer grace (5s) because reconnects there are sub-second in 95%
-        // of cases (WS just resumes on next tick). Native keeps 3s because
-        // backgrounded radios legitimately take a moment.
-        // 2026-05-18 (#1131): bumped web grace to 5s.
-        // WhatsApp-parity: the FIRST connect of the session (cold open) connects
-        // SILENTLY — use a long grace so a normal cold start (1-5s, incl. the
-        // BR→NY handshake) never flashes "Conectando". Only a real reconnect
-        // after a prior successful connect (3s native / 5s web) or a genuinely
-        // stuck cold start (>12s) surfaces the bar.
-        const grace = hasConnectedOnceRef.current ? (Platform.OS === 'web' ? 5000 : 3000) : 12000;
-        graceTimer.current = setTimeout(() => {
-          if (mountedRef.current && !mailWs?.authenticated) {
-            // [WA-parity 2026-05-31] Honest copy: only say "Conectando…" when
-            // the device actually has internet and it's the server we can't
-            // reach. If the device itself is offline, surface "Sem internet"
-            // instead so we don't blame the server for a local radio drop.
-            show(deviceOnlineRef.current ? 'connecting' : 'offline');
-          }
-        }, grace);
+        scheduleConnecting();
       }
     };
 
@@ -214,15 +228,20 @@ export default function SyncBar() {
     //                       (server now reachable — we're retrying the WS).
     let netUnsub;
     if (Platform.OS === 'web') {
-      const onOff = () => { deviceOnlineRef.current = false; show('offline'); };
+      const onOff = () => { clearTimeout(graceTimer.current); deviceOnlineRef.current = false; show('offline'); };
       const onOn = () => {
         deviceOnlineRef.current = true;
+        // Server not reachable yet → arm the SAME grace path instead of
+        // flashing 'connecting' instantly, so a fast reconnect stays silent.
         if (mailWs?.authenticated) hide();
-        else show('connecting');
+        else scheduleConnecting();
       };
       window.addEventListener('offline', onOff);
       window.addEventListener('online', onOn);
       deviceOnlineRef.current = !!navigator.onLine;
+      // Initial prime: only a genuinely-offline device surfaces anything on
+      // mount. An online cold start stays silent — the WS connects in the
+      // background and scheduleConnecting() (if ever armed) is grace-gated.
       if (!navigator.onLine) show('offline');
       netUnsub = () => {
         window.removeEventListener('offline', onOff);
@@ -237,9 +256,14 @@ export default function SyncBar() {
           // but a hard false (connected to wifi w/ no internet) IS offline.
           const online = !!st.isConnected && st.isInternetReachable !== false;
           deviceOnlineRef.current = online;
-          if (!online) show('offline');
+          if (!online) { clearTimeout(graceTimer.current); show('offline'); }
           else if (mailWs?.authenticated) hide();
-          else show('connecting');
+          // [2026-10-01] WAS `show('connecting')` — NetInfo fires this listener
+          // immediately on subscribe (cold-start mount) with online=true and
+          // WS not yet authed, which painted "Conectando" instantly every open.
+          // Funnel through the grace timer instead so the cold-start handshake
+          // (1-5s) stays silent and only a genuinely stuck connect surfaces.
+          else scheduleConnecting();
         });
       } catch {}
     }

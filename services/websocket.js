@@ -429,6 +429,56 @@ class MailWebSocket {
     } catch {}
   }
 
+  // [2026-10-01 instant-open] Eager bootstrap connect — WhatsApp-tier cold
+  // open. The WS singleton is created at module import, but the legacy flow
+  // only calls connect() from MailContext's effect, which fires AFTER the JS
+  // bundle evals → React mounts → AuthContext finishes its async
+  // SecureStore/AsyncStorage hydrate → user.email is set. That chain serialized
+  // the very first socket open BEHIND React hydration, so the user stared at
+  // "Conectando…" for the whole handshake + hydrate window.
+  //
+  // api.js hydrates the bearer into memory at ITS import (web: synchronous;
+  // native: a short async SecureStore read) — independently of React. So the
+  // token is usually signable within a few hundred ms of process start, well
+  // before AuthContext/MailContext mount. We poll api.getAuthToken() on a tight
+  // bounded loop and kick connect() the instant a token exists, opening the
+  // socket IN PARALLEL with hydration instead of after it. By the time the UI
+  // (SyncBar) mounts, the socket is typically already authenticated, so the
+  // "Conectando…" bar never paints.
+  //
+  // Safety:
+  //   • No token (logged out / fresh install) → never connects. Pure no-op.
+  //   • The later MailContext connect() with the same token is absorbed by the
+  //     idempotency guard in connect() (keeps this eager socket).
+  //   • A stale/expired stored token just takes the normal auth_error → refresh
+  //     path; multi-account + orphan-bearer self-heal are untouched (we read the
+  //     active account's token from api, exactly like MailContext does).
+  //   • Runs at most once per process (_eagerBootstrapStarted).
+  _eagerBootstrapConnect() {
+    if (this._eagerBootstrapStarted) return;
+    this._eagerBootstrapStarted = true;
+    const MAX_TRIES = 40;      // ~2.4s ceiling (native hydrate lands long before)
+    const STEP_MS = 60;
+    const tryConnect = (triesLeft) => {
+      if (this.destroyed) return;
+      // Someone (MailContext) already drove a connect, or a socket is live —
+      // nothing to bootstrap.
+      if (this.ws || this.connected) return;
+      if (this._authReloginStopped) return;
+      let token = '';
+      try { token = require('./api').getAuthToken?.() || ''; } catch {}
+      if (token && typeof token === 'string') {
+        try { this.connect(token); } catch {}
+        return;
+      }
+      if (triesLeft > 0) {
+        setTimeout(() => tryConnect(triesLeft - 1), STEP_MS);
+      }
+    };
+    // Defer one tick so the singleton + listeners settle, then poll.
+    try { setTimeout(() => tryConnect(MAX_TRIES), 0); } catch {}
+  }
+
   connect(token) {
     if (this.destroyed) return;
     // [P0 2026-05-25] In the auth-reject "needs re-login" stopped state, do NOT
@@ -452,6 +502,28 @@ class MailWebSocket {
       const fresh = apiMod.getAuthToken?.();
       if (fresh && typeof fresh === 'string' && fresh.length > 0) liveToken = fresh;
     } catch {}
+
+    // [2026-10-01 instant-open] Idempotent connect. A socket may already be
+    // in flight for THIS exact token — most importantly the eager bootstrap
+    // socket we open at module load (see _eagerBootstrapConnect), which races
+    // ahead of React/AuthContext hydration. The legacy path unconditionally
+    // `_cleanup()`+reopened here, which would throw that eager socket away
+    // (and its in-progress auth) and re-pay the full connect RTT — exactly the
+    // "Conectando…" flash on open we're killing. If we already have a
+    // CONNECTING/OPEN socket on the same token, keep it and just make sure the
+    // heartbeat is running. Only reconnect when the token changed (slide /
+    // account switch) or the socket is actually dead. `this.token` still holds
+    // the previous (eager) token at this point since we assign liveToken below;
+    // both come from api.getAuthToken(), so they match on a clean cold start.
+    try {
+      if (this.ws && !this.destroyed && this.token === liveToken &&
+          typeof WebSocket !== 'undefined' &&
+          (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+        if (this.connected && this.authenticated && !this.pingTimer) this._startPing();
+        return;
+      }
+    } catch {}
+
     this.token = liveToken;
 
     // Re-add visibility listener if it was removed by disconnect()
@@ -2377,4 +2449,13 @@ class MailWebSocket {
 // endless "3 consecutive ACK fails → forcing resurrect" tug-of-war. Same
 // idiom already used for globalThis.__chatyy_cwp_ws above.
 const mailWs = globalThis.__chatyy_mailWs || (globalThis.__chatyy_mailWs = new MailWebSocket());
+
+// [2026-10-01 instant-open] Kick the eager bootstrap connect the moment this
+// module loads — in parallel with React/AuthContext hydration — so a cold open
+// finds the socket already connected/authenticated instead of waiting on the
+// MailContext effect. No-op when there's no stored token (logged out). Guarded
+// so a double module-eval (web code-splitting) can't start it twice (the flag
+// lives on the shared globalThis-pinned singleton).
+try { mailWs._eagerBootstrapConnect(); } catch {}
+
 export default mailWs;
