@@ -257,9 +257,22 @@ export function syncConversations(convIds) {
       }
 
       const ids = Array.from(batch.ids);
+      // [2026-10-01] Captura a conta ativa no momento em que o sync dispara.
+      let _syncAcct = '';
+      try { _syncAcct = require('./sqliteStore').getActiveAccount(); } catch {}
       _inFlight = _runSync(ids).finally(() => { _inFlight = null; });
       try {
-        const out = await _inFlight;
+        let out = await _inFlight;
+        // [2026-10-01] GUARDA MULTI-CONTA (privacidade): se o usuário trocou de
+        // conta enquanto este sync estava em voo, DESCARTA o resultado. A trava
+        // de escopo de 800ms pode expirar no meio de um sync lento; aplicar os
+        // eventos da conta A depois da troca pra B espelharia as mensagens de A
+        // no SQLite/tela de B (carimbadas com a conta ativa). applyEvents faz
+        // no-op em array vazio (chatSync.js:301), então [] é um descarte seguro.
+        try {
+          const _nowAcct = require('./sqliteStore').getActiveAccount();
+          if (_syncAcct && _nowAcct && _syncAcct !== _nowAcct) out = [];
+        } catch {}
         // Filter the per-caller result to only convs they asked about.
         // For now we just hand everyone the same merged result — callers
         // already filter by id downstream.

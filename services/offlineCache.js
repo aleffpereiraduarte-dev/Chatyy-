@@ -1298,7 +1298,7 @@ export async function replayOfflineQueue(api) {
       // dropa da fila silenciosamente em vez de bater no servidor pra
       // sempre. Ainda chama emitSendFail pro balão refletir o estado.
       if (err && err.isHardError) {
-        if ((action.type === 'chat_file_upload' || action.type === 'chat_send') && action.temp_id) {
+        if ((action.type === 'chat_file_upload' || action.type === 'chat_send' || action.type === 'chat_voice_upload') && action.temp_id) {
           try {
             const evt = require('./sendFailEvents');
             evt.emitSendFail?.(action.conversation_id, action.temp_id, action.client_message_id);
@@ -1339,7 +1339,12 @@ export async function replayOfflineQueue(api) {
       // bubble persists in the message store; the user's tap-to-retry re-enqueues
       // a fresh action (retries=0). This is what finally kills the recurring ghost.
       const MAX_SEND_ATTEMPTS = 8;
-      if (action.type === 'chat_send' && attempts >= MAX_SEND_ATTEMPTS) {
+      // [2026-10-01] Cap vale pra TODOS os tipos de envio (texto, foto, áudio).
+      // Antes só `chat_send` era capado → uma mídia que falhava em erro SOFT
+      // (timeout/5xx/rejeição não-classificada) re-enfileirava pra sempre E
+      // adicionava o conversation_id em blockedConvIds abaixo, travando TODA a
+      // conversa (head-of-line). Mesma classe do fantasma de 2026-07-06.
+      if ((action.type === 'chat_send' || action.type === 'chat_file_upload' || action.type === 'chat_voice_upload') && attempts >= MAX_SEND_ATTEMPTS) {
         if (action.temp_id) {
           try {
             const evt = require('./sendFailEvents');
