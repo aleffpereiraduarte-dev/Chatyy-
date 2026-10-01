@@ -795,8 +795,21 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
     ? (thumbIsImage ? resolveMedia(rawThumb) : resolveMedia(rawThumb + '.thumb.jpg'))
     : null;
   const [posterFailed, setPosterFailed] = React.useState(false);
+  // Grid media can 404 permanently — legacy posts whose R2 objects were lost in
+  // the pre-migration media purge (old `/data/feed-files/<id>/…` layout). When
+  // the thumb/poster never loads we must fall back to a neutral placeholder
+  // instead of leaving a pure-black tile (user reported @aleffduarte's grid as
+  // all-black squares). Theme-agnostic mid-gray + faint glyph reads as "media
+  // unavailable" on both light and dark, and ONLY shows on real load failure —
+  // a working thumbnail still paints normally (never a permanent placeholder).
+  const [imgFailed, setImgFailed] = React.useState(false);
+  const placeholder = (
+    <View style={{ width: '100%', height: '100%', borderRadius: 3, backgroundColor: '#8e8e93', alignItems: 'center', justifyContent: 'center' }}>
+      <IconGrid size={20} color="rgba(255,255,255,0.6)" />
+    </View>
+  );
   const renderImg = () => {
-    if (!url) return <View style={{ width: '100%', height: '100%', backgroundColor: '#222', borderRadius: 3 }} />;
+    if (!url || imgFailed) return placeholder;
     if (WEB) {
       if (looksLikeVideo) {
         return (
@@ -806,16 +819,17 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
             muted
             playsInline
             poster={guessedPosterUrl || undefined}
+            onError={() => setImgFailed(true)}
             style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 3, background: '#111' }}
           />
         );
       }
-      return <img src={url} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 3 }} alt="" loading="lazy" decoding="async" />;
+      return <img src={url} onError={() => setImgFailed(true)} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 3 }} alt="" loading="lazy" decoding="async" />;
     }
     if (looksLikeVideo) {
       // Try the ffmpeg-generated sibling poster (`<video>.thumb.jpg`). If
       // that 404s (legacy reel uploaded before the backfill ran), fall
-      // back to a dark placeholder — the video badge is rendered above it.
+      // back to the neutral placeholder — the video badge is rendered above it.
       if (guessedPosterUrl && !posterFailed && _ExpoImage) {
         return (
           <_ExpoImage
@@ -828,7 +842,7 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
           />
         );
       }
-      return <View style={{ width: '100%', height: '100%', backgroundColor: '#1a1a1a', borderRadius: 3 }} />;
+      return placeholder;
     }
     if (_ExpoImage) {
       return (
@@ -838,10 +852,11 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
           contentFit="cover"
           cachePolicy="memory-disk"
           transition={120}
+          onError={() => setImgFailed(true)}
         />
       );
     }
-    return <Image source={{ uri: url }} style={{ width: '100%', height: '100%', borderRadius: 3 }} resizeMode="cover" />;
+    return <Image source={{ uri: url }} onError={() => setImgFailed(true)} style={{ width: '100%', height: '100%', borderRadius: 3 }} resizeMode="cover" />;
   };
   // Instagram-grade grid: full-bleed 1:1 cells with hairline 0.5px gutters
   // (vs. the previous 1px padding which doubled to 2px between siblings and

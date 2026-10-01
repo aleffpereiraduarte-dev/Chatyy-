@@ -1571,7 +1571,33 @@ function _renderBlocks(text, style, colors) {
   );
 }
 
-function FormattedText({ text, style, colors }) {
+// Output of FormattedText is a pure function of (text, style, colors) — the
+// regex parse + custom-emoji split depend only on `text`, and `style`/`colors`
+// only flow into the rendered <Text>/<View>. So memoize it: without this the
+// component rebuilt a /g regex and re-parsed on EVERY row re-render, including
+// tick/read-status-only updates that don't touch the text. `style` arrives as
+// a freshly-built array each render (e.g. [styles.msgText, { color }]), so a
+// referential check would never hit — compare flattened style by value; `text`
+// is a primitive and `colors` is a stable theme-context reference.
+function _ftStyleEqual(a, b) {
+  if (a === b) return true;
+  const fa = StyleSheet.flatten(a) || {};
+  const fb = StyleSheet.flatten(b) || {};
+  const ka = Object.keys(fa);
+  const kb = Object.keys(fb);
+  if (ka.length !== kb.length) return false;
+  for (let i = 0; i < ka.length; i++) {
+    const k = ka[i];
+    if (fa[k] !== fb[k]) return false;
+  }
+  return true;
+}
+function _formattedTextPropsEqual(prev, next) {
+  return prev.text === next.text
+    && prev.colors === next.colors
+    && _ftStyleEqual(prev.style, next.style);
+}
+const FormattedText = React.memo(function FormattedText({ text, style, colors }) {
   if (!text) return <Text style={style}>{''}</Text>;
   // Block-level formatting (quote / bullet / numbered list). Skipped when a
   // fenced ``` code block is present (those span lines and are handled inline
@@ -1683,7 +1709,7 @@ function FormattedText({ text, style, colors }) {
       })}
     </Text>
   );
-}
+}, _formattedTextPropsEqual);
 
 // ============================================================
 // TEXT WITH CLICKABLE LINKS + @MENTIONS + #HASHTAGS
@@ -13504,11 +13530,12 @@ function ChatConversationInner() {
     // blocks the JS thread for ~800ms on big conversations and the drag freezes.
     const run = async () => {
       try {
-        // Ask cache for JUST the older slice (limited to PAGE), not 500-row sweep.
-        // Falls back to the 500 scan if the cache helper doesn't support beforeId.
+        // Ask cache for JUST the older slice: pass the oldest-loaded id as
+        // beforeId so the read returns ~PAGE rows (id < oldestId) instead of
+        // a 500-row (web: full-thread) sweep that we then filter client-side.
         let olderCached = [];
         try {
-          const allCached = await getCachedMessages(conversationId, 500);
+          const allCached = await getCachedMessages(conversationId, PAGE, oldestId);
           // Pick the NEAREST older window, not the oldest. The previous
           // version iterated from index 0 and grabbed the first PAGE rows
           // with id < oldestId — if the cache was sorted ascending, that's
@@ -18942,6 +18969,19 @@ function ChatConversationInner() {
   // Memoize reversed array to avoid re-creating every render
   const reversedMessages = useMemo(() => [...messagesWithSeparators].reverse(), [messagesWithSeparators]);
 
+  // id → message index for O(1) reply-target resolution. Replaces a per-row
+  // `messages.find()` linear scan that ran for EVERY reply bubble rendered
+  // (O(n) × replies). First-write-wins so the resolved reference is the exact
+  // same object `.find()` would have returned (first match on duplicate ids).
+  const messagesById = useMemo(() => {
+    const byId = new Map();
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      if (m && m.id != null && !byId.has(m.id)) byId.set(m.id, m);
+    }
+    return byId;
+  }, [messages]);
+
   // Enrich messages with per-item derived state. CRITICAL for perf: we keep a
   // WeakMap cache so messages that don't need updating reuse their exact same
   // wrapper object (same reference) across renders. Without this, the spread
@@ -24038,7 +24078,7 @@ function ChatConversationInner() {
             //   2. A lookup in the local messages array by reply_to.id
             //   3. emailToDisplayName of whichever email we resolved
             //   4. "Desconhecido" only when truly nothing is known
-            const localRef = msg.reply_to?.id ? messages.find(m => m.id === msg.reply_to.id) : null;
+            const localRef = msg.reply_to?.id ? (messagesById.get(msg.reply_to.id) || null) : null;
             const resolvedEmail = (msg.reply_to?.sender_email || localRef?.sender_email || '').trim();
             const resolvedName  = (msg.reply_to?.sender_name?.trim() || localRef?.sender_name?.trim() || '');
             const replyDisplayName = resolvedEmail === currentEmail

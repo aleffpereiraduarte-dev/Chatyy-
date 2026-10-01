@@ -11,7 +11,7 @@ import { useAuth, isChildAccount } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
-import { getCached, setCache } from '../services/cache';
+import { getCached, getCachedSync, setCache } from '../services/cache';
 import { syncContacts } from '../services/contactSync';
 import { prettifyHandle } from '../services/displayName';
 import {
@@ -21,6 +21,7 @@ import {
 } from '../components/Icons';
 import AvatarCircle from '../components/AvatarCircle';
 import BroadcastModal from '../components/BroadcastModal';
+import { ListSkeleton } from '../components/SkeletonLoader';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -370,6 +371,19 @@ export default function ChatNewScreen() {
   const pickMode = !!addMemberConvId;
   const insets = useSafeAreaInsets();
 
+  // ── Instant-open cache keys (per-user scoped by services/cache) ──────────
+  // Seeding these synchronously at mount lets the contact list paint on the
+  // very first frame (no blank white screen) while the network refresh runs
+  // in the background. recents/directory differ by pickMode, so their keys
+  // carry a suffix to avoid showing the "add member" variant in New Chat.
+  const CK_PHONE = 'chatnew:phone';
+  const CK_OTHER = 'chatnew:other';
+  const CK_SUG = 'chatnew:suggestions';
+  const CK_REC = pickMode ? 'chatnew:recents:pick' : 'chatnew:recents';
+  const CK_DIR = 'chatnew:directory';
+  const CK_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days — contacts change slowly
+  const _seed = (k) => { try { const v = getCachedSync(k); return Array.isArray(v) ? v : null; } catch { return null; } };
+
   const safeAlert = (title, message, buttons) => {
     if (Platform.OS === 'web') {
       if (buttons?.length) {
@@ -399,15 +413,17 @@ export default function ChatNewScreen() {
   const [groupName, setGroupName] = useState('');
   const [creating, setCreating] = useState(false);
 
-  // Contact lists
-  const [phoneContacts, setPhoneContacts] = useState([]);
-  const [otherContacts, setOtherContacts] = useState([]);
+  // Contact lists — seeded synchronously from cache (instant first paint).
+  const [phoneContacts, setPhoneContacts] = useState(() => _seed(CK_PHONE) || []);
+  const [otherContacts, setOtherContacts] = useState(() => _seed(CK_OTHER) || []);
   const [syncingContacts, setSyncingContacts] = useState(false);
-  const [directoryUsers, setDirectoryUsers] = useState([]); // All Chatyy users
-  const [recentContacts, setRecentContacts] = useState([]); // Recent chats
-  const [suggestions, setSuggestions] = useState([]); // "Pessoas que você pode conhecer"
-  const [loadingRecents, setLoadingRecents] = useState(true);
-  const [loadingDirectory, setLoadingDirectory] = useState(true);
+  const [directoryUsers, setDirectoryUsers] = useState(() => _seed(CK_DIR) || []); // All Chatyy users
+  const [recentContacts, setRecentContacts] = useState(() => _seed(CK_REC) || []); // Recent chats
+  const [suggestions, setSuggestions] = useState(() => _seed(CK_SUG) || []); // "Pessoas que você pode conhecer"
+  // Loading flags start false when cache already seeded something, so the
+  // skeleton/blank branch is skipped and the cached list shows immediately.
+  const [loadingRecents, setLoadingRecents] = useState(() => (_seed(CK_REC) || []).length === 0);
+  const [loadingDirectory, setLoadingDirectory] = useState(() => (_seed(CK_DIR) || []).length === 0);
 
   // Invite states
   const [invitingEmail, setInvitingEmail] = useState(null);
@@ -461,8 +477,11 @@ export default function ChatNewScreen() {
     hasSyncedRef.current = true;
     setSyncingContacts(true);
     syncContacts(false, t).then(result => {
-      setPhoneContacts(result.chatyContacts || []);
-      setOtherContacts(result.otherContacts || []);
+      const pc = result.chatyContacts || [];
+      const oc = result.otherContacts || [];
+      setPhoneContacts(pc);
+      setOtherContacts(oc);
+      try { setCache(CK_PHONE, pc, CK_TTL); setCache(CK_OTHER, oc, CK_TTL); } catch {}
     }).catch(() => {}).finally(() => setSyncingContacts(false));
   }, [t]);
 
@@ -471,8 +490,11 @@ export default function ChatNewScreen() {
     if (Platform.OS === 'web') return;
     setSyncingContacts(true);
     syncContacts(true, t).then(result => {
-      setPhoneContacts(result.chatyContacts || []);
-      setOtherContacts(result.otherContacts || []);
+      const pc = result.chatyContacts || [];
+      const oc = result.otherContacts || [];
+      setPhoneContacts(pc);
+      setOtherContacts(oc);
+      try { setCache(CK_PHONE, pc, CK_TTL); setCache(CK_OTHER, oc, CK_TTL); } catch {}
       if (result.error === 'permission_denied') {
         Alert.alert(
           t('chat.contactPermissionDeniedTitle') || 'Permissão negada',
@@ -527,6 +549,7 @@ export default function ChatNewScreen() {
         }).filter(r => r.email);
 
         setRecentContacts(recents);
+        try { setCache(CK_REC, recents, CK_TTL); } catch {}
       }
     }).catch(() => {}).finally(() => setLoadingRecents(false));
   }, [user?.email]);
@@ -543,8 +566,10 @@ export default function ChatNewScreen() {
     setLoadingDirectory(true);
     api.chatyyUsers('', 200).then(r => {
       if (r.success) {
-        const users = (r.data?.users || []).filter(u => u.email !== user?.email);
-        setDirectoryUsers(users.map(u => ({ ...u, isRegistered: true })));
+        const users = (r.data?.users || []).filter(u => u.email !== user?.email)
+          .map(u => ({ ...u, isRegistered: true }));
+        setDirectoryUsers(users);
+        try { setCache(CK_DIR, users, CK_TTL); } catch {}
       }
     }).catch(() => {}).finally(() => setLoadingDirectory(false));
   }, [user?.email, pickMode]);
@@ -567,6 +592,7 @@ export default function ChatNewScreen() {
           _justJoined: !!s._justJoined,
         }));
         setSuggestions(items);
+        try { setCache(CK_SUG, items, CK_TTL); } catch {}
       }
     }).catch(() => {});
   }, [user?.email]);
@@ -1655,38 +1681,47 @@ export default function ChatNewScreen() {
   // sections and buildSections moved before handleSearch to avoid TDZ
 
   const isLoading = syncingContacts || (loadingRecents && loadingDirectory);
+  // Subtle neutral header-button background — matches the white-header pass
+  // used across chat.js / inbox.js (light tap target on a white bar).
+  const headerBtnBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)';
 
   return (
     <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={[sty.header, { backgroundColor: isDark ? '#1F2C33' : '#111111' }]}>
-        <TouchableOpacity onPress={() => router.back()} style={[sty.headerBtn, { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20 }]}>
-          <IconArrowLeft size={22} color="#fff" />
+      {/* Header — WHITE / clean (WhatsApp 2026 redesign): surface bg, dark
+          text + icons, hairline bottom border. Was a solid black bar that got
+          missed in the white-header pass across the rest of the app. */}
+      <View style={[sty.header, {
+        backgroundColor: colors.headerBgSolid,
+        borderBottomColor: colors.headerBorder,
+        borderBottomWidth: StyleSheet.hairlineWidth,
+      }]}>
+        <TouchableOpacity onPress={() => router.back()} style={[sty.headerBtn, { backgroundColor: headerBtnBg, borderRadius: 20 }]} accessibilityLabel={t('common.back') || 'Voltar'} accessibilityRole="button">
+          <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
-        <Text style={[sty.headerTitle, { color: '#fff' }]}>{t('chat.newConversation')}</Text>
+        <Text style={[sty.headerTitle, { color: colors.text }]}>{t('chat.newConversation')}</Text>
         <View style={{ flexDirection: 'row', gap: 4 }}>
           {/* QR Code button */}
           <TouchableOpacity
             onPress={handleQrPress}
-            style={[sty.headerBtn, { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20 }]}
+            style={[sty.headerBtn, { backgroundColor: headerBtnBg, borderRadius: 20 }]}
             accessibilityLabel={t('chat.qrCode')}
             accessibilityRole="button"
           >
-            <IconQrCode size={22} color="#fff" />
+            <IconQrCode size={22} color={colors.text} />
           </TouchableOpacity>
           {/* Manual refresh button (native only) */}
           {Platform.OS !== 'web' && (
             <TouchableOpacity
               onPress={doContactSync}
-              style={[sty.headerBtn, { backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20 }]}
+              style={[sty.headerBtn, { backgroundColor: headerBtnBg, borderRadius: 20 }]}
               disabled={syncingContacts}
               accessibilityLabel={t('chat.refreshContacts')}
               accessibilityRole="button"
             >
               {syncingContacts ? (
-                <ActivityIndicator size={18} color="rgba(255,255,255,0.6)" />
+                <ActivityIndicator size={18} color={colors.textTertiary} />
               ) : (
-                <IconRefresh size={20} color="#fff" />
+                <IconRefresh size={20} color={colors.text} />
               )}
             </TouchableOpacity>
           )}
@@ -1825,8 +1860,11 @@ export default function ChatNewScreen() {
       </Animated.View>
 
       {/* Content */}
-      {isLoading && !searchText && recentContacts.length === 0 ? (
-        <View style={sty.loaderWrap} />
+      {isLoading && !searchText && recentContacts.length === 0 && phoneContacts.length === 0 && suggestions.length === 0 && directoryUsers.length === 0 ? (
+        /* Tasteful skeleton instead of a blank white screen on cold open.
+           With the cache-seed above this branch is skipped whenever we have
+           anything to paint; it only runs on a true first-ever load. */
+        <ListSkeleton count={9} />
       ) : searchText.length >= 1 ? (
         /* Search results */
         searching ? (

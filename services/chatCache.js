@@ -276,7 +276,22 @@ export async function cacheSingleMessage(conversationId, msg) {
 //     even though the underlying IndexedDB rows were still there. That
 //     defeated the whole point of having a persistent local cache.
 //   • Native paths already had no TTL; this aligns the web behaviour.
-export async function getCachedMessages(conversationId, limit = 50) {
+// Keep only rows strictly older than `beforeId`. Mirrors the native SQLite
+// `id < ?` predicate. Numeric ids compare numerically (server ids); mixed/
+// string ids (optimistic temp rows) fall back to lexical compare so the
+// helper never throws on a non-numeric id.
+function _filterBeforeId(msgs, beforeId) {
+  if (!Array.isArray(msgs) || beforeId == null) return msgs;
+  const nb = Number(beforeId);
+  const nbNum = Number.isFinite(nb);
+  return msgs.filter(m => {
+    const na = Number(m?.id);
+    if (nbNum && Number.isFinite(na)) return na < nb;
+    return String(m?.id) < String(beforeId);
+  });
+}
+
+export async function getCachedMessages(conversationId, limit = 50, beforeId = null) {
   // Account-switch window: refuse to surface any cached payload while the
   // scope is locked — otherwise the previous user's messages flash on the
   // new user's screen during the ~500ms clear race.
@@ -293,7 +308,7 @@ export async function getCachedMessages(conversationId, limit = 50) {
     }
     if (isDbReady()) {
       try {
-        const msgs = await dbGetMessages(conversationId, limit);
+        const msgs = await dbGetMessages(conversationId, limit, beforeId);
         if (msgs.length > 0) return msgs;
       } catch (e) {
         try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbGetMessages', message: `conv=${conversationId} ${e?.message}`, stack: e?.stack }); } catch {}
@@ -307,8 +322,12 @@ export async function getCachedMessages(conversationId, limit = 50) {
   if (Platform.OS === 'web') {
     try {
       const { webGetMessages } = require('./localDb');
-      const msgs = await webGetMessages(conversationId);
+      let msgs = await webGetMessages(conversationId);
       if (Array.isArray(msgs) && msgs.length > 0) {
+        // Window to the older slice (id < beforeId) BEFORE slicing so a
+        // load-older page processes ~30 rows, not the full thread. No-op
+        // when beforeId is absent (back-compat for all other callers).
+        if (beforeId != null) msgs = _filterBeforeId(msgs, beforeId);
         return msgs.slice(-limit);
       }
     } catch {}
@@ -317,7 +336,8 @@ export async function getCachedMessages(conversationId, limit = 50) {
   // Fallback to MMKV (native non-DB) / localStorage (web)
   const key = `chat_msgs_${conversationId}`;
   try {
-    const msgs = _readMessages(key);
+    let msgs = _readMessages(key);
+    if (beforeId != null) msgs = _filterBeforeId(msgs, beforeId);
     return msgs.slice(-limit);
   } catch { return []; }
 }
