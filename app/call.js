@@ -1743,7 +1743,12 @@ function CallScreenInner() {
       audioCaptureDefaults: audioOpts.audioCaptureDefaults,
       videoCaptureDefaults: {
         facingMode: 'user',
-        resolution: { width: 1280, height: 720, frameRate: 30 },
+        // [2026-10-01] Em GRUPO os tiles são pequenos num grid — capturar/publicar
+        // 720p é desperdício. 540p dá qualidade ótima no tamanho real e alivia
+        // encode/CPU/bateria. 1:1 (tela cheia) mantém 720p.
+        resolution: isGroupCall
+          ? { width: 960, height: 540, frameRate: 30 }
+          : { width: 1280, height: 720, frameRate: 30 },
       },
       publishDefaults: {
         ...audioOpts.publishDefaults,
@@ -1768,7 +1773,14 @@ function CallScreenInner() {
         // dynacast + maintain-framerate still shed resolution under congestion).
         videoCodec: 'h264',
         simulcast: false,
-        videoEncoding: { maxBitrate: 1_800_000, maxFramerate: 30 },
+        // [2026-10-01] GRUPO cap bitrate MUITO menor. Sem simulcast, cada
+        // receptor baixa N× o bitrate do publisher; 1.8Mbps×N estoura banda em
+        // grupo e não degrada p/ quem está em rede fraca. 600kbps/540p por tile
+        // dá qualidade boa no tamanho real do tile e escala muito melhor. 1:1
+        // (tela cheia) mantém 1.8Mbps.
+        videoEncoding: isGroupCall
+          ? { maxBitrate: 600_000, maxFramerate: 30 }
+          : { maxBitrate: 1_800_000, maxFramerate: 30 },
         // [HD tuning] maintain-framerate — WhatsApp/FaceTime-like default for a
         // 1:1 talking head: under congestion drop RESOLUTION first, keep fps
         // smooth (motion fidelity on a face > sharpness).
