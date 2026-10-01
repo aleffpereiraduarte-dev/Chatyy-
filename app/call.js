@@ -1863,6 +1863,31 @@ function CallScreenInner() {
         setE2eeActive(false);
       }
     }
+    // [2026-10-01] MOBILE E2EE (experimental) via o frame-cryptor nativo do
+    // @livekit/react-native. As superfícies nativas nunca implementaram
+    // setCallE2EEKey, então o Room JS (usado no mobile) fia aqui. TOTALMENTE
+    // guardado + flag-gated (CALL_E2EE_ENABLED default OFF): qualquer falha →
+    // pula o e2ee e a chamada ainda conecta por DTLS-SRTP (NUNCA quebra). A
+    // chave simétrica compartilhada vem de getOrAwaitCallKey (idêntica nos dois
+    // peers). ⚠️ PRECISA QA em chamada real de 2 aparelhos num build nativo
+    // antes de ligar a flag p/ qualquer usuário.
+    else if (CALL_E2EE_ENABLED && Platform.OS !== 'web' && _e2eeKeyB64) {
+      try {
+        const lkrn = require('@livekit/react-native');
+        if (lkrn && lkrn.RNKeyProvider && lkrn.RNE2EEManager) {
+          const keyProvider = new lkrn.RNKeyProvider({ sharedKey: true });
+          Promise.resolve(keyProvider.setSharedKey(_e2eeKeyB64)).catch(() => {});
+          const e2eeManager = new lkrn.RNE2EEManager(keyProvider);
+          roomOpts.e2ee = { keyProvider, worker: e2eeManager };
+          try { _diag('e2ee_mobile_wired'); } catch {}
+        } else {
+          setE2eeActive(false);
+        }
+      } catch (e) {
+        try { console.warn('[CALL-E2EE] mobile e2ee setup failed (non-fatal):', e?.message || e); } catch {}
+        setE2eeActive(false);
+      }
+    }
     let r;
     try {
       r = new Room(roomOpts);
