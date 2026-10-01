@@ -20,7 +20,7 @@
 // Default OFF. A runtime override on globalThis wins so an OTA payload, a
 // settings screen, or an A-B bucket can flip it without a rebuild — same
 // idiom the WS client already uses for globalThis.__chatyy_cwp_ws / _msgpack_ws.
-export let USE_PHOENIX_HUB = true; // [2026-10-01] cutover: Phoenix hub primário p/ chat+chamadas (Go segue em paralelo p/ email/status/fallback). Rollback: voltar p/ false + OTA.
+export let USE_PHOENIX_HUB = false; // [2026-10-01] ROLLBACK: Phoenix recusava TODA conexão (UserSocket REFUSED — token do cliente não bate com o esperado pelo hub). Volta pro Go (estável) enquanto conserto o token do phoenixClient. Re-flip só após provar connect real no app.
 
 // Where the Phoenix hub lives. Standard Phoenix endpoint: the client appends
 // `/websocket?token=<bearer>&vsn=2.0.0`. Kept next to the flag so a rollback
