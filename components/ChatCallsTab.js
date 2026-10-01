@@ -2778,9 +2778,20 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
   const [loadingMinutes, setLoadingMinutes] = useState(true);
   const [voipHistory, setVoipHistory] = useState([]);
   // Initialize from MMKV preload so the very first render already has data.
-  const [chatCalls, setChatCalls] = useState(() => (Array.isArray(_preloadedCalls) ? _preloadedCalls : []));
+  // Seed from a FRESH synchronous cache read at mount (not the module-load
+  // snapshot `_preloadedCalls`, which can be empty if the module loaded before
+  // MMKV hydrated → every tab open fell to the slow spinner+network path =
+  // "demora carregar"). getCallHistoryCached() reads chat_calls synchronously
+  // and, by the time the user taps the tab, the cache is hydrated.
+  const [chatCalls, setChatCalls] = useState(() => {
+    try { const c = getCallHistoryCached(); if (Array.isArray(c) && c.length) return c; } catch {}
+    return (Array.isArray(_preloadedCalls) ? _preloadedCalls : []);
+  });
   // Skip the loading spinner if we already painted from cache.
-  const [loadingHistory, setLoadingHistory] = useState(!(Array.isArray(_preloadedCalls) && _preloadedCalls.length > 0));
+  const [loadingHistory, setLoadingHistory] = useState(() => {
+    try { const c = getCallHistoryCached(); if (Array.isArray(c) && c.length) return false; } catch {}
+    return !(Array.isArray(_preloadedCalls) && _preloadedCalls.length > 0);
+  });
   const lastCallsFpRef = useRef(_callsFingerprint(_preloadedCalls));
   const [dialerVisible, setDialerVisible] = useState(false);
   const [dialerPrefill, setDialerPrefill] = useState('');
@@ -2811,7 +2822,8 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
   // entirely and go straight to a silent background delta sync (no flicker).
   // Otherwise fall back to the async cache and then the network fetch.
   useEffect(() => {
-    const alreadyHasVisible = Array.isArray(_preloadedCalls) && _preloadedCalls.length > 0;
+    const _cachedNow = (() => { try { return getCallHistoryCached(); } catch { return null; } })();
+    const alreadyHasVisible = (Array.isArray(_cachedNow) && _cachedNow.length > 0) || (Array.isArray(_preloadedCalls) && _preloadedCalls.length > 0);
 
     // Minutes info loads independently (doesn't affect history flicker)
     setLoadingMinutes(true);
