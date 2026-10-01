@@ -92,7 +92,7 @@ function Glyph({ kind, color }) {
 // `isDark`. The c1/c2 keys are kept (unused decorative hints) so nothing that
 // reads the array breaks; the actual fill is a single solid, theme-aware.
 const TILES = [
-  { kind: 'ai', route: '/one', c1: '#111111', c2: '#111111', key: 'home.hub.ai', fallback: 'One' },
+  { kind: 'ai', route: '/one', c1: '#111111', c2: '#111111', key: 'home.hub.ai', fallback: 'Bia' },
   { kind: 'email', route: '/inbox', c1: '#111111', c2: '#111111', key: 'home.hub.email', fallback: 'E-mail' },
   { kind: 'calendar', route: '/calendar', c1: '#111111', c2: '#111111', key: 'home.hub.calendar', fallback: 'Agenda' },
   { kind: 'drive', route: '/drive', c1: '#111111', c2: '#111111', key: 'home.hub.drive', fallback: 'Drive' },

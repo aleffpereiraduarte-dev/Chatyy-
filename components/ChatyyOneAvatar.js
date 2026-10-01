@@ -118,7 +118,7 @@ export default function ChatyyOneAvatar({ size = 48, style, blink = true }) {
         },
         style,
       ]}
-      accessibilityLabel="Chatyy One"
+      accessibilityLabel="Bia"
       accessibilityRole="image"
     >
       {/* Monochrome One (founder 2026-09-29): black bubble + two white eyes,

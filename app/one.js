@@ -1549,7 +1549,7 @@ function MessageRow({ item, colors, isDark, onSpeak, speakingId, t, onCopy, onRe
         {/* WAVE 46 (2026-05-21): real app icon avatar w/ blinking eyes (random 4-8s).
             Sized 18px to match the existing aiHeaderAvatar footprint. */}
         <ChatyyOneAvatar size={18} />
-        <Text style={[st.aiHeaderLabel, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>One</Text>
+        <Text style={[st.aiHeaderLabel, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>Bia</Text>
       </TouchableOpacity>
 
       {/* Tool chips only while AI is mid-flight. After the response lands we hide
@@ -3549,7 +3549,7 @@ export default function OneScreen() {
         </TouchableOpacity>
 
         <View style={st.headerCleanCenter}>
-          <Text style={[st.headerCleanTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>One</Text>
+          <Text style={[st.headerCleanTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>Bia</Text>
         </View>
 
         <View style={{ flexDirection: 'row' }}>
@@ -3600,7 +3600,7 @@ export default function OneScreen() {
                 <View style={{ paddingHorizontal: 4, marginTop: 8 }}>
                   <View style={st.aiHeaderRow}>
                     <ChatyyOneAvatar size={18} />
-                    <Text style={[st.aiHeaderLabel, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>One</Text>
+                    <Text style={[st.aiHeaderLabel, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>Bia</Text>
                   </View>
                   <InlineStreamingDots isDark={isDark} />
                 </View>
@@ -3681,7 +3681,7 @@ export default function OneScreen() {
 
             <TextInput
               style={[st.inputClean, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}
-              placeholder={isListening ? (t('one.voiceListening') || 'Listening…') : (t('one.placeholder') || 'Message One…')}
+              placeholder={isListening ? (t('one.voiceListening') || 'Listening…') : (t('one.placeholder') || 'Message Bia…')}
               placeholderTextColor={isDark ? '#6B7280' : '#9CA3AF'}
               value={inputText}
               onChangeText={setInputText}
@@ -3821,8 +3821,8 @@ export default function OneScreen() {
               setHistoryOpen(false);
             } catch {}
           };
-          if (Platform.OS === 'web') { if (window.confirm(t('one.clearAllConfirm') || 'Apagar TODO o histórico do One?')) doAll(); }
-          else Alert.alert(t('one.clearAll') || 'Limpar histórico', t('one.clearAllConfirm') || 'Apagar TODO o histórico do One? Isso não pode ser desfeito.', [
+          if (Platform.OS === 'web') { if (window.confirm(t('one.clearAllConfirm') || 'Apagar TODO o histórico da Bia?')) doAll(); }
+          else Alert.alert(t('one.clearAll') || 'Limpar histórico', t('one.clearAllConfirm') || 'Apagar TODO o histórico da Bia? Isso não pode ser desfeito.', [
             { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
             { text: t('one.clearAll') || 'Limpar', style: 'destructive', onPress: doAll },
           ]);

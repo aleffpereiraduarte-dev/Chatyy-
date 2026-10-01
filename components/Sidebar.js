@@ -369,7 +369,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
       { label: t('sidebar.contacts'), icon: IconUser, route: '/contacts', color: '#111111' },
       { label: t('sidebar.documents'), icon: IconGlobe, route: '/documentos', color: '#111111' },
       { label: t('sidebar.notes'), icon: IconStickyNote, route: '/notes', color: '#111111' },
-      { label: 'One', icon: IconZap, route: '/one', color: '#111111' },
+      { label: 'Bia', icon: IconZap, route: '/one', color: '#111111' },
       { label: t('snapmap.sidebar') || 'Mapa', icon: IconMapPin, route: '/snap-map', color: '#111111' },
     ];
     return (
@@ -452,7 +452,7 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           { label: t('sidebar.messages'), icon: IconMessageSquare, route: '/chat', badge: chatUnread },
         ];
         const secondary = [
-          { label: 'One',                  icon: IconZap,        route: '/one',       color: '#111111' },
+          { label: 'Bia',                  icon: IconZap,        route: '/one',       color: '#111111' },
           { label: t('photos.title'),      icon: IconCamera,     route: '/photos',    color: '#111111' },
           { label: 'Chatyy Cloud',         icon: IconFolder,     route: '/drive',     color: '#111111' },
           { label: t('sidebar.meetings'),  icon: IconFilm,       route: '/meetings' },
@@ -874,8 +874,8 @@ function LabelItem({ name, labelStyle, colors, onPress, isActive, unreadCount, t
       activeOpacity={0.6}
       {...webHover}
     >
-      <View style={[s.labelDot, { backgroundColor: labelStyle.text }, isActive && { width: 12, height: 12, borderRadius: 6 }]} />
-      <Text style={[s.labelText, { color: isActive ? labelStyle.text : colors.text }, isActive && { fontWeight: '700' }]} numberOfLines={1}>
+      <View style={[s.labelDot, { backgroundColor: labelStyle.text }, isActive && { width: 10, height: 10, borderRadius: 5 }]} />
+      <Text style={[s.labelText, { color: isActive ? labelStyle.text : colors.textSecondary }, isActive && { fontWeight: '700' }]} numberOfLines={1}>
         {name.charAt(0).toUpperCase() + name.slice(1)}
       </Text>
       {unreadCount > 0 && (
@@ -979,15 +979,15 @@ const s = StyleSheet.create({
   },
   labelItem: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: 8, paddingHorizontal: Spacing.lg,
+    paddingVertical: 6, paddingHorizontal: Spacing.lg,
     borderRadius: 10, marginBottom: 1,
     ...(Platform.OS === 'web' ? {
       transition: 'background-color 0.15s ease, transform 0.12s ease',
       cursor: 'pointer',
     } : {}),
   },
-  labelDot: { width: 10, height: 10, borderRadius: 5, marginRight: 12 },
-  labelText: { fontSize: 14, flex: 1, fontWeight: '500', letterSpacing: -0.1 },
+  labelDot: { width: 7, height: 7, borderRadius: 3.5, marginRight: 11 },
+  labelText: { fontSize: 13.5, flex: 1, fontWeight: '500', letterSpacing: -0.1 },
   labelBadge: {
     borderRadius: 10, paddingHorizontal: 6, paddingVertical: 2, minWidth: 20, alignItems: 'center',
   },

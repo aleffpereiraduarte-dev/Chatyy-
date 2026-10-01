@@ -567,8 +567,16 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
               gated by `loading` which we drive ourselves via onLoad). */}
         <_PlaceholderImage
           key={retryEpoch}
+          // [2026-10-01] Fill the whole available area (flex:1) instead of a
+          // fixed SCREEN_H*0.75 box. The fixed box left ~12.5% black above and
+          // below; the top gap hid behind the opaque header bar while the
+          // bottom gap stayed visible, so the photo READ as "stuck to the top
+          // with a big black gap below". Filling the container + contentFit
+          // 'contain' centers any photo (tall or short) with balanced spacing.
+          // Pinch-zoom / swipe-dismiss / paging are unaffected — they live on
+          // the wrapping Animated.View's transform, not on the image size.
           source={{ uri: effectiveUrl }}
-          style={s.fullImage}
+          style={[s.fullImage, { height: undefined, flex: 1 }]}
           contentFit="contain"
           resizeMode="contain"
           cachePolicy="memory-disk"
@@ -1354,6 +1362,13 @@ function GenericFileViewer({ url, filename, fileSize, messageId, t }) {
   );
 }
 
+// The AI assistant (one@chatyy.ai, local-part "one") is branded "Bia". Map any
+// derived sender label so the media viewer never shows the raw "one".
+function isAssistantSender(name, email) {
+  const lp = (email || '').split('@')[0].toLowerCase();
+  return lp === 'one' || (name || '').trim().toLowerCase() === 'one';
+}
+
 // ============================================================
 // MAIN MODAL
 // ============================================================
@@ -1941,13 +1956,13 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             {(senderName || senderEmail) ? (
               <View style={s.senderRow}>
                 <View style={[s.avatar, { backgroundColor: colorFromString(senderEmail || senderName || '') }]}>
-                  <Text style={s.avatarText}>{senderInitials(senderName, senderEmail)}</Text>
+                  <Text style={s.avatarText}>{isAssistantSender(senderName, senderEmail) ? 'B' : senderInitials(senderName, senderEmail)}</Text>
                 </View>
                 <View style={{ flex: 1, minWidth: 0 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                     {viewOnce && <IconLock size={12} color="#fff" />}
                     <Text style={s.senderName} numberOfLines={1}>
-                      {senderName || (senderEmail || '').split('@')[0]}
+                      {isAssistantSender(senderName, senderEmail) ? 'Bia' : (senderName || (senderEmail || '').split('@')[0])}
                     </Text>
                   </View>
                   <Text style={s.senderMeta} numberOfLines={1}>
@@ -2231,7 +2246,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
                   {!!(senderName || senderEmail) && (
                     <View style={s.infoRow}>
                       <Text style={s.infoKey}>{(typeof t === 'function' && t('viewer.sentBy')) || 'Enviado por'}</Text>
-                      <Text style={s.infoVal} numberOfLines={1}>{senderName || senderEmail}</Text>
+                      <Text style={s.infoVal} numberOfLines={1}>{isAssistantSender(senderName, senderEmail) ? 'Bia' : (senderName || senderEmail)}</Text>
                     </View>
                   )}
                   {!!(createdAt || _active?.createdAt || _active?.created_at) && (

@@ -5,7 +5,11 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconX, IconTag, IconCheck, IconPlus, IconChevronDown, IconChevronRight } from './Icons';
 import * as api from '../services/api';
 
-// Gmail-style: 12 clean colors (compact, no clutter)
+// Gmail-style color palette. This is a COLOR LOOKUP map (name → chip style),
+// NOT the list of labels shown in the UI. It keeps the raw palette-color keys
+// (roxo/rosa/azul/… ) so chips and EmailRow can still resolve a color by name
+// (e.g. EmailRow's LABEL_COLORS.cinza fallback), but those palette names are
+// NOT rendered as default labels — see LABEL_NAMES below.
 export const LABEL_COLORS = {
   trabalho:    { bg: '#e8f0fe', text: '#1a73e8', border: '#1a73e8' },
   pessoal:     { bg: '#e6f4ea', text: '#34a853', border: '#34a853' },
@@ -13,6 +17,7 @@ export const LABEL_COLORS = {
   financeiro:  { bg: '#fef7e0', text: '#ea8600', border: '#ea8600' },
   social:      { bg: '#f3e8fd', text: '#111111', border: '#111111' },
   viagem:      { bg: '#e0f7f5', text: '#1a9988', border: '#1a9988' },
+  // Raw palette colors — kept ONLY for color resolution, never shown as labels.
   roxo:        { bg: '#f3e5f5', text: '#111111', border: '#111111' },
   rosa:        { bg: '#fce4ec', text: '#c2185b', border: '#c2185b' },
   azul:        { bg: '#e3f2fd', text: '#1565c0', border: '#1565c0' },
@@ -21,7 +26,11 @@ export const LABEL_COLORS = {
   marrom:      { bg: '#efebe9', text: '#4e342e', border: '#4e342e' },
 };
 
-export const LABEL_NAMES = Object.keys(LABEL_COLORS);
+// Default labels shown in the sidebar/picker. Only the meaningful set — the
+// raw palette-color names (roxo/rosa/azul/laranja/cinza/marrom) were showing
+// up as ugly placeholder labels, so they're excluded here. User-created labels
+// (from PG label_list / customLabels) are merged in separately by the picker.
+export const LABEL_NAMES = ['trabalho', 'pessoal', 'importante', 'financeiro', 'social', 'viagem'];
 
 export function LabelChip({ label, small }) {
   // Normalize: label can be string or {name, color} object

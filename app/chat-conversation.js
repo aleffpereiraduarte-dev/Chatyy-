@@ -18923,6 +18923,24 @@ function ChatConversationInner() {
           read_at: last.read_at,
           delivered_at: last.delivered_at,
           status: last.status,
+          // [2026-10-01 Bug A/C] Roll the send + receipt state up from the
+          // album's items so the single album bubble reflects reality:
+          //  • _pending / _uploading → a CLOCK while ANY photo is still
+          //    sending (was: album showed a premature ✓ because it carried no
+          //    pending flag), and it flips to ✓ the moment every item swaps to
+          //    its server row.
+          //  • _failed → the failed state if any item failed.
+          //  • _read / _delivered → the ✓✓ (delivered/read) tick, taken from
+          //    the LAST item's per-message receipt flags. Without these the
+          //    album copied only read_at/delivered_at and never showed "visto"
+          //    when the WS receipt stamped _read/_delivered on the row — the
+          //    "manda imagem e não aparece o ✓✓ de visto" report.
+          _pending: items.some(it => it && it._pending),
+          _uploading: items.some(it => it && it._uploading),
+          _queued: items.some(it => it && it._queued),
+          _failed: items.some(it => it && it._failed),
+          _read: last._read,
+          _delivered: last._delivered,
         };
         result.push(albumMsg);
         continue;
@@ -19143,13 +19161,43 @@ function ChatConversationInner() {
     const out = _enrichedMessagesBase.slice();
     for (let i = 0; i < out.length; i++) {
       const it = out[i];
-      if (!it || it._type === 'separator' || it._type === 'album') continue;
+      if (!it || it._type === 'separator') continue;
+      // [2026-10-01 Bug A] Albums were skipped here, so a multi-photo send
+      // never showed byte-progress on its cells and looked frozen. Fold the
+      // per-item progress into the album's _items so each cell can draw its
+      // own ring; it clears automatically the moment the item swaps to its
+      // confirmed server row (uploadProgress key is deleted on success).
+      if (it._type === 'album') {
+        const items = it._items;
+        if (Array.isArray(items) && items.some(m => m && Object.prototype.hasOwnProperty.call(uploadProgress, m.id))) {
+          out[i] = { ...it, _items: items.map(m => (m && Object.prototype.hasOwnProperty.call(uploadProgress, m.id)) ? { ...m, _uploadPct: uploadProgress[m.id] } : m) };
+        }
+        continue;
+      }
       if (Object.prototype.hasOwnProperty.call(uploadProgress, it.id)) {
         out[i] = { ...it, _uploadPct: uploadProgress[it.id] };
       }
     }
     return out;
   }, [_enrichedMessagesBase, uploadProgress]);
+
+  // [2026-10-01 Bug A] Safety net for the composer "Enviando…" indicator.
+  // Each uploadAndSendFile toggles the single `uploading` boolean (true on
+  // entry, false in its finally). An ALBUM fans out through a 4-wide worker
+  // pool, so several sends share that one flag; a raced/missed clear (or a
+  // chat_send that stalls on the PHP session lock while the bytes already hit
+  // 100%) could leave the spinner up with nothing actually in flight — the
+  // "chega a 100% e fica Enviando pra sempre" report. Reconcile from the
+  // source of truth: if NO message still carries _uploading AND the byte-
+  // progress map is empty, the indicator must be off. This only ever turns it
+  // OFF — a real send sets `uploading` synchronously alongside its optimistic
+  // _uploading row, so this can never hide a genuinely in-flight upload.
+  useEffect(() => {
+    if (!uploading) return;
+    const anyUploading = Array.isArray(messages) && messages.some(m => m && m._uploading);
+    const anyProgress = uploadProgress && Object.keys(uploadProgress).length > 0;
+    if (!anyUploading && !anyProgress) setUploading(false);
+  }, [uploading, messages, uploadProgress]);
 
   // Pre-compute smart quick-reply suggestions so the render path doesn't do a
   // linear messages.find() scan on every keystroke/state update.
@@ -19901,6 +19949,19 @@ function ChatConversationInner() {
                 <Text style={{ color: '#fff', fontSize: 28, fontWeight: '700' }}>+{overlay}</Text>
               </View>
             )}
+            {/* [2026-10-01 Bug A] Per-cell upload ring. Driven by the item's
+                own _uploading flag + the folded _uploadPct, so a sending album
+                shows live progress and each cell clears the ring the instant
+                its message swaps to the confirmed server row (no more "stuck
+                at 100%"). */}
+            {m._uploading && !m.deleted_at && (
+              <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.4)' }}>
+                <View style={{ width: 44, height: 44, borderRadius: 22, borderWidth: 2.5, borderColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center' }}>
+                  <CircularProgressArc pct={m._uploadPct || 0} size={44} strokeWidth={3} style={{ position: 'absolute' }} />
+                  <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{Math.round(m._uploadPct || 0)}%</Text>
+                </View>
+              </View>
+            )}
           </TouchableOpacity>
         );
       };
@@ -20020,7 +20081,11 @@ function ChatConversationInner() {
               paddingHorizontal: 8, paddingBottom: 4, paddingTop: 2, gap: 4,
             }}>
               <Text style={{ fontSize: 10, color: albumTickColor, fontVariant: ['tabular-nums'] }}>{albumTime}</Text>
-              {isOwn && <AnimatedCheckStatus status={item._readStatus} color={albumTickColor} />}
+              {/* [2026-10-01 Bug A] pending → clock (⏱) while any photo is
+                  still uploading. Without the prop, status 0 rendered a bare
+                  single ✓ (AnimatedCheckStatus treats <1.5 as "sent"), so a
+                  still-sending album looked already-sent. */}
+              {isOwn && <AnimatedCheckStatus status={item._readStatus} color={albumTickColor} pending={item._readStatus === 0} />}
             </View>
           </View>
         </View>

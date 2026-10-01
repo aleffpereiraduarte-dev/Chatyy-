@@ -637,19 +637,13 @@ function ParentalScreenInner() {
     return (now - last) < 3 * 60000;
   };
 
-  // Stable per-child gradient (for the avatar halo). Hash the email so
-  // the same child always gets the same colors across sessions.
+  // Avatar halo ring. Redesign uses a NEUTRAL monochrome ring (the clean
+  // white/gray system) instead of the old rainbow gradient — the AvatarCircle
+  // itself is already grayscale. Kept as a function (same call site) so this
+  // stays a pure style change.
   const childGradient = (email) => {
-    const palettes = [
-      ['#111111', '#111111'], // purple → pink
-      ['#3B82F6', '#06B6D4'], // blue → cyan
-      ['#10B981', '#84CC16'], // green → lime
-      ['#F59E0B', '#EF4444'], // amber → red
-      ['#111111', '#3B82F6'], // violet → blue
-    ];
-    let h = 0;
-    for (let i = 0; i < (email || '').length; i++) h = (h * 31 + email.charCodeAt(i)) | 0;
-    return palettes[Math.abs(h) % palettes.length];
+    const neutral = isDark ? '#2d3748' : '#eef0f1';
+    return [neutral, neutral];
   };
 
   // Bedtime helpers. Backend stores HH:MM strings. Returns whether the kid
@@ -1482,12 +1476,14 @@ function ParentalScreenInner() {
 
   // ─── Child Card Renderer ───
   // Quick-action row config — 5 actions per WhatsApp/Snapchat parent app pattern.
+  // Monochrome action row — only the destructive "Pausar" (lock) keeps a
+  // semantic red. Everything else is neutral and theme-aware.
   const CHILD_QUICK_ACTIONS = [
-    { key: 'messages', Icon: IconMessageSquare, color: '#22c55e', labelKey: 'parental.messages', fallback: 'Mensagens' },
-    { key: 'screenTime', Icon: IconClock, color: '#3b82f6', labelKey: 'parental.screenTime', fallback: 'Tempo' },
-    { key: 'location', Icon: IconHome, color: '#06b6d4', labelKey: 'parental.location', fallback: 'Local' },
-    { key: 'lock', Icon: IconLock, color: '#ef4444', labelKey: 'parental.lockNow', fallback: 'Pausar' },
-    { key: 'bonus', Icon: IconStar, color: '#f59e0b', labelKey: 'parental.bonus15', fallback: '+15min' },
+    { key: 'messages', Icon: IconMessageSquare, labelKey: 'parental.messages', fallback: 'Mensagens' },
+    { key: 'screenTime', Icon: IconClock, labelKey: 'parental.screenTime', fallback: 'Tempo' },
+    { key: 'location', Icon: IconHome, labelKey: 'parental.location', fallback: 'Local' },
+    { key: 'lock', Icon: IconLock, labelKey: 'parental.lockNow', fallback: 'Pausar', danger: true },
+    { key: 'bonus', Icon: IconStar, labelKey: 'parental.bonus15', fallback: '+15min' },
   ];
   // tWithFallback — when the i18n key isn't found, t() returns the key string
   // itself (which is truthy), so the `||` fallback never fires. Detect that
@@ -1608,8 +1604,8 @@ function ParentalScreenInner() {
 
         {/* Bedtime active banner — countdown updates via `now` heartbeat */}
         {isActive && bedtime.active && (
-          <View style={[s.bedtimeBanner, { backgroundColor: isDark ? '#1e1b3a' : '#F1F3F5', borderTopColor: isDark ? '#2d3748' : '#F1F3F5' }]}>
-            <IconMoon size={16} color="#111111" />
+          <View style={[s.bedtimeBanner, { backgroundColor: isDark ? '#1c2a35' : '#F1F3F5', borderTopColor: isDark ? '#2d3748' : '#F1F3F5' }]}>
+            <IconMoon size={16} color={isDark ? '#F1F3F5' : '#111111'} />
             <Text style={[s.bedtimeText, { color: isDark ? '#F1F3F5' : '#111111' }]} numberOfLines={1}>
               {t('parental.bedtimeActive') || 'Em modo noturno até'} {bedtime.endLabel}
               {bedtime.minsLeft > 0 ? ` · ${bedtime.minsLeft} min` : ''}
@@ -1648,24 +1644,25 @@ function ParentalScreenInner() {
           <View style={[s.childActions, { borderTopColor: isDark ? '#2d3748' : '#f1f5f9' }]}>
             {CHILD_QUICK_ACTIONS.map((a, i) => {
               const showBadge = a.key === 'messages' && meta.messages_today > 0;
+              const tone = a.danger ? '#ef4444' : colors.textSecondary;
               return (
                 <TouchableOpacity
                   key={a.key}
                   style={[s.childQuickAction, i > 0 && { borderLeftColor: isDark ? '#2d3748' : '#f1f5f9', borderLeftWidth: 1 }]}
                   onPress={() => handleChildAction(a.key, item)}
-                  activeOpacity={0.7}
+                  activeOpacity={0.6}
                   accessibilityLabel={tWithFallback(a.labelKey, a.fallback)}
                   accessibilityRole="button"
                 >
                   <View style={{ position: 'relative' }}>
-                    <a.Icon size={18} color={a.color} />
+                    <a.Icon size={18} color={tone} />
                     {showBadge && (
                       <View style={s.miniBadge}>
                         <Text style={s.miniBadgeText}>{meta.messages_today > 99 ? '99+' : meta.messages_today}</Text>
                       </View>
                     )}
                   </View>
-                  <Text style={[s.childActionText, { color: a.color, fontSize: 11 }]} numberOfLines={1}>
+                  <Text style={[s.childActionText, { color: tone, fontSize: 11 }]} numberOfLines={1}>
                     {tWithFallback(a.labelKey, a.fallback)}
                   </Text>
                 </TouchableOpacity>
@@ -1940,11 +1937,14 @@ function ParentalScreenInner() {
   );
 
   // Quick actions config
+  // Monochrome quick actions — only the destructive "Pausar" (lock) keeps a
+  // semantic red. Icon/label colors are computed at render from the theme so
+  // they stay legible in dark mode.
   const quickActions = [
-    { key: 'screenTime', label: t('parental.screenTime'), icon: IconBarChart, color: '#3b82f6', emoji: <IconClock size={24} color="#3b82f6" /> },
-    { key: 'lock', label: t('parental.lockDevice'), icon: IconShield, color: '#ef4444', emoji: <IconShield size={24} color="#ef4444" /> },
-    { key: 'message', label: t('parental.sendMessage'), icon: IconMessageSquare, color: '#22c55e', emoji: <IconMessageSquare size={24} color="#22c55e" /> },
-    { key: 'summary', label: t('parental.aiSummary'), icon: IconBarChart, color: '#111111', emoji: <IconSparkles size={24} color="#111111" /> },
+    { key: 'screenTime', label: t('parental.screenTime'), Icon: IconClock },
+    { key: 'lock', label: t('parental.lockDevice'), Icon: IconShield, danger: true },
+    { key: 'message', label: t('parental.sendMessage'), Icon: IconMessageSquare },
+    { key: 'summary', label: t('parental.aiSummary'), Icon: IconSparkles },
   ];
 
   const handleQuickAction = (action, child) => {
@@ -1998,21 +1998,17 @@ function ParentalScreenInner() {
     <View style={[s.container, { backgroundColor: colors.background }]}>
       {renderSummaryModal()}
 
-      {/* Colorful gradient header */}
-      <View style={[s.header,
-        Platform.OS === 'web'
-          ? { background: 'linear-gradient(135deg, #059669 0%, #10b981 50%, #34d399 100%)' }
-          : { backgroundColor: ACCENT }
-      ]}>
+      {/* Clean white header — matches app redesign (hairline border, dark text) */}
+      <View style={[s.header, { backgroundColor: colors.headerBgSolid, borderBottomWidth: 1, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityLabel="Back" accessibilityRole="button">
-          <IconArrowLeft size={24} color="#fff" />
+          <IconArrowLeft size={24} color={colors.text} />
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={[s.headerTitle, { color: '#fff' }]}>{t('parental.dashboard')}</Text>
-          <Text style={[s.headerSub, { color: 'rgba(255,255,255,0.8)' }]}>{t('parental.dashboardSub')}</Text>
+          <Text style={[s.headerTitle, { color: colors.text }]}>{t('parental.dashboard')}</Text>
+          <Text style={[s.headerSub, { color: colors.textSecondary }]}>{t('parental.dashboardSub')}</Text>
         </View>
-        <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.2)', alignItems: 'center', justifyContent: 'center' }}>
-          <IconShield size={24} color="#fff" />
+        <View style={{ width: 44, height: 44, borderRadius: 14, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : colors.chipBg, alignItems: 'center', justifyContent: 'center' }}>
+          <IconShield size={22} color={colors.text} />
         </View>
       </View>
 
@@ -2078,22 +2074,28 @@ function ParentalScreenInner() {
                     {(t('parental.quickActions')).toUpperCase()}
                   </Text>
                   <View style={s.quickActionsGrid}>
-                    {quickActions.map(action => (
-                      <TouchableOpacity
-                        key={action.key}
-                        style={[s.quickActionCard, {
-                          backgroundColor: isDark ? action.color + '15' : action.color + '10',
-                          borderColor: action.color + '30',
-                        }]}
-                        onPress={() => children[0] && handleQuickAction(action.key, children[0])}
-                        activeOpacity={0.7}
-                        accessibilityLabel={action.label}
-                        accessibilityRole="button"
-                      >
-                        {action.emoji}
-                        <Text style={[s.quickActionLabel, { color: action.color }]}>{action.label}</Text>
-                      </TouchableOpacity>
-                    ))}
+                    {quickActions.map(action => {
+                      const tone = action.danger ? '#ef4444' : colors.text;
+                      const chipBg = action.danger ? '#ef444415' : (isDark ? 'rgba(255,255,255,0.06)' : colors.chipBg);
+                      return (
+                        <TouchableOpacity
+                          key={action.key}
+                          style={[s.quickActionCard, {
+                            backgroundColor: colors.surface,
+                            borderColor: colors.border,
+                          }]}
+                          onPress={() => children[0] && handleQuickAction(action.key, children[0])}
+                          activeOpacity={0.6}
+                          accessibilityLabel={action.label}
+                          accessibilityRole="button"
+                        >
+                          <View style={[s.quickActionIcon, { backgroundColor: chipBg }]}>
+                            <action.Icon size={22} color={tone} />
+                          </View>
+                          <Text style={[s.quickActionLabel, { color: action.danger ? '#ef4444' : colors.text }]}>{action.label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                 </View>
               ) : null
@@ -2325,10 +2327,11 @@ const s = StyleSheet.create({
   quickActionsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   quickActionCard: {
     width: '48%', flexGrow: 1, flexBasis: '45%',
-    alignItems: 'center', justifyContent: 'center', gap: 8,
-    paddingVertical: 18, paddingHorizontal: 12, borderRadius: 20, borderWidth: 2,
-    minHeight: 80,
+    alignItems: 'center', justifyContent: 'center', gap: 9,
+    paddingVertical: 16, paddingHorizontal: 12, borderRadius: 18, borderWidth: 1,
+    minHeight: 84,
   },
+  quickActionIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   quickActionLabel: { fontSize: 13, fontWeight: '700', textAlign: 'center' },
 
   // Hero
@@ -2339,8 +2342,8 @@ const s = StyleSheet.create({
   heroBtnText: { color: '#fff', fontWeight: '800', fontSize: 17 },
 
   // Child cards
-  childCard: { borderRadius: 22, borderWidth: 1.5, marginBottom: 14, overflow: 'hidden' },
-  childCardMain: { flexDirection: 'row', alignItems: 'center', padding: 18, gap: 14 },
+  childCard: { borderRadius: 18, borderWidth: 1, marginBottom: 12, overflow: 'hidden' },
+  childCardMain: { flexDirection: 'row', alignItems: 'center', padding: 16, gap: 14 },
   childAvatar: { width: 56, height: 56, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   childName: { fontSize: 18, fontWeight: '800' },
   childEmail: { fontSize: 12, marginTop: 2, fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' },

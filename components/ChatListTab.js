@@ -6320,7 +6320,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           <View style={{ flex: 1 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
               <Text style={{ fontSize: 16, fontWeight: '700', color: colors.text }}>
-                {t?.('one.title') || 'Chatyy One'}
+                {t?.('one.title') || 'Bia'}
               </Text>
               <View style={{
                 backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17, 17, 17,0.08)',

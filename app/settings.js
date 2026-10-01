@@ -1400,7 +1400,7 @@ function SettingsScreenInner() {
                 {t('settings.darkModeDesc')}
               </Text>
             </View>
-            <View style={[s.perPageBtns, { marginTop: 10, flexWrap: 'wrap' }]}>
+            <View style={[s.perPageBtns, { marginTop: 8, flexWrap: 'wrap' }]}>
               {[
                 { val: 'light',  label: t('settings.theme.light') || 'Claro' },
                 { val: 'dark',   label: t('settings.theme.dark') || 'Escuro' },
@@ -1437,7 +1437,7 @@ function SettingsScreenInner() {
                 {t('settings.densityDesc')}
               </Text>
             </View>
-            <View style={[s.perPageBtns, { marginTop: 10, flexWrap: 'wrap' }]}>
+            <View style={[s.perPageBtns, { marginTop: 8, flexWrap: 'wrap' }]}>
               {[
                 { val: 'compact', label: t('settings.densityCompact') },
                 { val: 'comfortable', label: t('settings.densityComfortable') },
@@ -2180,7 +2180,7 @@ function SettingsScreenInner() {
                 {t('settings.voiceSpeed.subtitle') || 'Aplica a todos os áudios recebidos. Você pode trocar individual no chat.'}
               </Text>
             </View>
-            <View style={[s.perPageBtns, { marginTop: 10, flexWrap: 'wrap' }]}>
+            <View style={[s.perPageBtns, { marginTop: 8, flexWrap: 'wrap' }]}>
               {[
                 { val: 0.5, label: t('settings.voiceSpeed.option_0_5') || '0.5×' },
                 { val: 1,   label: t('settings.voiceSpeed.option_1')   || '1×' },
@@ -2215,7 +2215,7 @@ function SettingsScreenInner() {
                 {t('settings.bubble.subtitle') || 'Formato visual das mensagens.'}
               </Text>
             </View>
-            <View style={[s.perPageBtns, { marginTop: 10, flexWrap: 'wrap' }]}>
+            <View style={[s.perPageBtns, { marginTop: 8, flexWrap: 'wrap' }]}>
               {[
                 { val: 'rounded', label: t('settings.bubble.rounded') || 'Arredondado' },
                 { val: 'square',  label: t('settings.bubble.square')  || 'Quadrado' },
@@ -5311,30 +5311,30 @@ const s = StyleSheet.create({
   // perigosa) não ficar colado no safe-area inferior do iPhone, e pro modal
   // de confirmação não ser cortado quando aparece. User reportou: "embaixo
   // zona perigosa quebra fica tudo cortando".
-  scroll: { paddingHorizontal: 16, paddingTop: Spacing.lg, paddingBottom: 80 },
+  scroll: { paddingHorizontal: 16, paddingTop: Spacing.md, paddingBottom: 80 },
   // Section — [beauty2 2026-05-31] slightly calmer corner radius + a touch
   // more inner breathing room (paddingVertical) so grouped rows read like
   // iOS inset-grouped cards; horizontal padding kept tight for label reach.
   // [light 2026] inset-grouped card: clean white surface + subtle hairline
   // (border comes from theme inline). Shadow softened to a whisper so the
   // hairline does the separating — calmer, airier, less scroll.
+  // [clean 2026-10] flat inset-grouped card — subtle hairline does the
+  // separating (shadow dropped to none), calmer radius, tighter inner
+  // padding + smaller inter-card gap for an iOS-Settings density.
   section: {
-    borderRadius: BorderRadius.xl, paddingHorizontal: Spacing.xl, paddingVertical: Spacing.md + 2,
-    marginBottom: Spacing.md,
+    borderRadius: BorderRadius.lg, paddingHorizontal: Spacing.lg + 3, paddingVertical: Spacing.md,
+    marginBottom: Spacing.sm + 1,
     ...Platform.select({
-      web: {
-        transition: 'box-shadow 0.2s ease',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.03)',
-      },
-      ios: { shadowColor: '#101114', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.03, shadowRadius: 5 },
+      web: { boxShadow: 'none' },
+      ios: { shadowOpacity: 0 },
       android: { elevation: 0 },
     }),
   },
   profileSection: {
-    alignItems: 'center', paddingVertical: Spacing.xxl,
+    alignItems: 'center', paddingVertical: Spacing.lg,
   },
   profileEmail: {
-    fontSize: FontSize.lg, marginTop: Spacing.md + 2, marginBottom: Spacing.md,
+    fontSize: FontSize.lg, marginTop: Spacing.sm + 2, marginBottom: Spacing.sm + 1,
     fontWeight: '600', letterSpacing: -0.3,
   },
   // [beauty2 2026-05-31] pill button gets a hairline border + brand-tinted
@@ -5367,12 +5367,12 @@ const s = StyleSheet.create({
   // -0.5) so it doesn't look squashed at this size.
   // [beauty2 2026-05-31] dialed the card heading down to 18px/700 — closer to
   // iOS Settings group-header weight; calmer, less shouty than 20/800.
-  sectionTitle: { fontSize: FontSize.xl, fontWeight: '700', marginBottom: Spacing.sm + 2, letterSpacing: LetterSpacing.tighter },
+  sectionTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.sm, letterSpacing: LetterSpacing.tight },
   // Eyebrow label — small uppercase brand-color tag rendered above a section
   // title for screens that want extra navigability (iOS Settings pattern).
   // Currently only used internally; rows opt in via <Text style={[s.sectionEyebrow, { color: colors.primary }]}/>.
   sectionEyebrow: { fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 4, opacity: 0.85 },
-  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md + 2 },
+  sectionTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm },
   // Setting row — adds a soft hover state on web so each row reads as
   // "tappable" without an explicit border. Spacing bumped slightly for
   // a more relaxed iOS-Settings density.
@@ -5382,8 +5382,8 @@ const s = StyleSheet.create({
   // dividers so the list reads compact and calm without feeling crammed.
   settingRow: {
     flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8,
-    minHeight: 46,
-    paddingVertical: Spacing.md + 2, borderBottomWidth: StyleSheet.hairlineWidth,
+    minHeight: 42,
+    paddingVertical: Spacing.sm + 2, borderBottomWidth: StyleSheet.hairlineWidth,
     ...Platform.select({
       web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
       default: {},
@@ -5391,7 +5391,7 @@ const s = StyleSheet.create({
   },
   settingRowColumn: {
     flexDirection: 'column', alignItems: 'flex-start',
-    paddingVertical: Spacing.md + 2, borderBottomWidth: StyleSheet.hairlineWidth,
+    paddingVertical: Spacing.sm + 2, borderBottomWidth: StyleSheet.hairlineWidth,
   },
   settingInfo: { flex: 1, minWidth: 0 },
   settingLabel: { fontSize: FontSize.lg, fontWeight: '600', letterSpacing: LetterSpacing.tight },
@@ -5401,8 +5401,8 @@ const s = StyleSheet.create({
   // gap so the row of options reads as one cohesive iOS segmented control.
   perPageBtns: { flexDirection: 'row', gap: 6, flexShrink: 0 },
   perPageBtn: {
-    borderWidth: 1.5, borderRadius: BorderRadius.lg,
-    paddingHorizontal: Spacing.md, paddingVertical: 8,
+    borderWidth: 1, borderRadius: BorderRadius.lg,
+    paddingHorizontal: Spacing.md, paddingVertical: 6,
     ...Platform.select({
       web: { transition: 'all 0.15s ease', cursor: 'pointer' },
       default: {},
