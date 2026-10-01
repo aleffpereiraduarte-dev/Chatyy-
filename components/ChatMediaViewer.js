@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, TouchableWithoutFeedback, StyleSheet, Modal, Image, Platform,
-  Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar, Alert, FlatList, Share,
+  Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar, Alert, FlatList, Share, ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconX, IconDownload, IconPlay, IconPause, IconLock, IconCheck, IconShare, IconStar, IconStarFilled, IconMoreHorizontal, IconInfo, IconForward } from './Icons';
@@ -245,7 +245,12 @@ function NativeImageViewerWithLoading({ url }) {
   );
 }
 
-function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, blurhash, thumbUri }) {
+// Passthrough used when react-native-gesture-handler's PinchGestureHandler
+// isn't on the path (keeps the image rendering without pinch instead of
+// crashing). Defined at module scope so it isn't remounted each render.
+function _PinchPassthrough({ children }) { return children; }
+
+function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, blurhash, thumbUri, onDismissMove, onDismissEnd }) {
   // We deliberately DO NOT use `_NativeImageZoomView` here even on iOS. The
   // native view downloads via raw URLSession which (a) lacks the loading
   // indicator the user expects and (b) silently fails for some CDN routes.
@@ -310,11 +315,31 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
   const lastTranslateX = useRef(0);
   const lastTranslateY = useRef(0);
   const lastTap = useRef(0);
+  // Swipe-DOWN-to-dismiss (WhatsApp/IG signature). Only fires when the image
+  // is NOT zoomed and the drag is predominantly vertical + downward. In an
+  // album the horizontal drags fall through to the parent paging FlatList;
+  // when zoomed, drags pan the image (handled above). Callbacks are read
+  // through a ref so the once-created PanResponder never captures a stale
+  // closure of the parent's handlers.
+  const isDismissing = useRef(false);
+  const _dismissCb = useRef({});
+  _dismissCb.current = { onDismissMove, onDismissEnd };
+
+  const resetTransform = useCallback(() => {
+    Animated.spring(scale, { toValue: 1, useNativeDriver: false, friction: 8, tension: 60 }).start();
+    Animated.spring(translateX, { toValue: 0, useNativeDriver: false, friction: 8, tension: 60 }).start();
+    Animated.spring(translateY, { toValue: 0, useNativeDriver: false, friction: 8, tension: 60 }).start();
+    lastTranslateX.current = 0;
+    lastTranslateY.current = 0;
+  }, [scale, translateX, translateY]);
 
   const panResponder = useRef(
     PanResponder.create({
-      onStartShouldSetPanResponder: () => true,
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 2 || Math.abs(g.dy) > 2,
+      // Only own SINGLE-finger gestures. Two-finger pinch is handled by the
+      // RNGH PinchGestureHandler wrapping the image, so the two gesture
+      // systems don't fight over the same touch stream.
+      onStartShouldSetPanResponder: (e) => ((e?.nativeEvent?.touches?.length || 1) < 2),
+      onMoveShouldSetPanResponder: (e, g) => ((e?.nativeEvent?.touches?.length || 1) < 2) && (Math.abs(g.dx) > 2 || Math.abs(g.dy) > 2),
       onPanResponderGrant: () => {
         // Double-tap to zoom
         const now = Date.now();
@@ -330,19 +355,81 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
           lastScale.current = target;
         }
         lastTap.current = now;
+        isDismissing.current = false;
       },
       onPanResponderMove: (_, g) => {
         if (lastScale.current > 1) {
+          // Zoomed → pan the image.
           translateX.setValue(lastTranslateX.current + g.dx);
           translateY.setValue(lastTranslateY.current + g.dy);
+          return;
+        }
+        // Not zoomed → swipe-down-to-dismiss. The image tracks the finger and
+        // shrinks slightly; the parent fades the black backdrop via the
+        // progress callback so the chat shows through underneath (IG/WA feel).
+        if (g.dy > 0 && Math.abs(g.dy) > Math.abs(g.dx)) {
+          isDismissing.current = true;
+          translateY.setValue(g.dy);
+          scale.setValue(Math.max(0.82, 1 - g.dy / (SCREEN_H * 1.5)));
+          try { _dismissCb.current.onDismissMove && _dismissCb.current.onDismissMove(g.dy); } catch {}
         }
       },
       onPanResponderRelease: (_, g) => {
-        lastTranslateX.current += g.dx;
-        lastTranslateY.current += g.dy;
+        if (lastScale.current > 1) {
+          lastTranslateX.current += g.dx;
+          lastTranslateY.current += g.dy;
+          return;
+        }
+        if (isDismissing.current) {
+          isDismissing.current = false;
+          // Past ~120px OR a fast flick → dismiss. Otherwise spring back.
+          const shouldDismiss = g.dy > 120 || g.vy > 0.8;
+          if (shouldDismiss) {
+            try { _dismissCb.current.onDismissEnd && _dismissCb.current.onDismissEnd(true); } catch {}
+          } else {
+            Animated.spring(translateY, { toValue: 0, useNativeDriver: false, friction: 8, tension: 60 }).start();
+            Animated.spring(scale, { toValue: 1, useNativeDriver: false, friction: 8, tension: 60 }).start();
+            try { _dismissCb.current.onDismissEnd && _dismissCb.current.onDismissEnd(false); } catch {}
+          }
+        }
+      },
+      onPanResponderTerminate: () => {
+        if (isDismissing.current) {
+          isDismissing.current = false;
+          Animated.spring(translateY, { toValue: 0, useNativeDriver: false }).start();
+          Animated.spring(scale, { toValue: 1, useNativeDriver: false }).start();
+          try { _dismissCb.current.onDismissEnd && _dismissCb.current.onDismissEnd(false); } catch {}
+        }
       },
     })
   ).current;
+
+  // Pinch-to-zoom via react-native-gesture-handler. Composes with the
+  // single-finger PanResponder above (see the touches-length guard). Scale is
+  // clamped to [1, 4]; releasing below ~1 springs back to fit and recenters.
+  let _GH = null, _PinchHandler = null;
+  try { _GH = require('react-native-gesture-handler'); _PinchHandler = _GH.PinchGestureHandler; } catch {}
+  const _PinchWrap = _PinchHandler || _PinchPassthrough;
+  const _pinchBase = useRef(1);
+  const onPinchEvent = useCallback((ev) => {
+    const next = Math.max(1, Math.min(4, _pinchBase.current * (ev?.nativeEvent?.scale || 1)));
+    scale.setValue(next);
+  }, [scale]);
+  const onPinchStateChange = useCallback((ev) => {
+    const st = ev?.nativeEvent?.state;
+    const S = _GH?.State;
+    if (!S) return;
+    if (st === S.BEGAN || st === S.ACTIVE) {
+      if (st === S.BEGAN) _pinchBase.current = lastScale.current || 1;
+    } else if (st === S.END || st === S.CANCELLED || st === S.FAILED) {
+      const committed = Math.max(1, Math.min(4, _pinchBase.current * (ev?.nativeEvent?.scale || 1)));
+      lastScale.current = committed;
+      if (committed <= 1.01) {
+        lastScale.current = 1;
+        resetTransform();
+      }
+    }
+  }, [_GH, resetTransform]);
 
   // Instant blurred placeholder backdrop. Painted BEHIND the high-res photo
   // (and behind the spinner) so the user sees "the right photo, just fuzzy"
@@ -454,6 +541,7 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
           )}
         </View>
       )}
+      <_PinchWrap onGestureEvent={onPinchEvent} onHandlerStateChange={onPinchStateChange}>
       <Animated.View
         {...panResponder.panHandlers}
         style={[s.mediaContainer, {
@@ -533,6 +621,7 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
           }}
         />
       </Animated.View>
+      </_PinchWrap>
     </View>
   );
 }
@@ -1268,7 +1357,7 @@ function GenericFileViewer({ url, filename, fileSize, messageId, t }) {
 // ============================================================
 // MAIN MODAL
 // ============================================================
-export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, videoDuration, videoWidth, videoHeight, mimeType, onForward, t, colors }) {
+export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fileName, fileSize, type, viewOnce, mediaList, initialIndex, conversationId, messageId, senderName, senderEmail, createdAt, caption, videoDuration, videoWidth, videoHeight, mimeType, onForward, t, colors }) {
   const insets = useSafeAreaInsets();
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -1282,6 +1371,28 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   const [_infoSheetOpen, _setInfoSheetOpen] = useState(false);
   const [_starred, _setStarred] = useState(false);
   const _chromeOpacity = useRef(new Animated.Value(1)).current;
+  // Open animation (subtle scale-in behind the Modal's fade) + swipe-down
+  // dismiss backdrop. _bgOpacity drives a full-black layer so a downward drag
+  // reveals the chat underneath (WhatsApp/IG). _openScale gives the "no hard
+  // cut" entrance the founder asked for ("quando abre foto").
+  const _bgOpacity = useRef(new Animated.Value(1)).current;
+  const _openScale = useRef(new Animated.Value(1)).current;
+  const _onDismissMove = useCallback((dy) => {
+    const p = Math.max(0, Math.min(1, dy / (SCREEN_H * 0.6)));
+    _bgOpacity.setValue(1 - p * 0.92);
+    // Fade chrome out as the drag grows (only if it was visible).
+    _chromeOpacity.setValue(Math.max(0, 1 - dy / 90) * (_chromeVisible ? 1 : 0));
+  }, [_bgOpacity, _chromeOpacity, _chromeVisible]);
+  const _onDismissEnd = useCallback((dismiss) => {
+    if (dismiss) {
+      Animated.timing(_bgOpacity, { toValue: 0, duration: 160, useNativeDriver: true }).start(() => {
+        try { onClose && onClose(); } catch {}
+      });
+    } else {
+      Animated.spring(_bgOpacity, { toValue: 1, useNativeDriver: true, friction: 8, tension: 60 }).start();
+      Animated.timing(_chromeOpacity, { toValue: _chromeVisible ? 1 : 0, duration: 160, useNativeDriver: true }).start();
+    }
+  }, [_bgOpacity, _chromeOpacity, _chromeVisible, onClose]);
   const _toggleChrome = useCallback(() => {
     _setChromeVisible(v => {
       const next = !v;
@@ -1300,7 +1411,10 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
     _setChromeVisible(true);
     _setInfoSheetOpen(false);
     _chromeOpacity.setValue(1);
-  }, [visible, _chromeOpacity]);
+    _bgOpacity.setValue(1);
+    _openScale.setValue(0.96);
+    Animated.spring(_openScale, { toValue: 1, useNativeDriver: true, friction: 7, tension: 70 }).start();
+  }, [visible, _chromeOpacity, _bgOpacity, _openScale]);
 
   // Build the effective array. When the caller passes mediaList we render
   // FlatList horizontal with paging + neighbor preload (Instagram pattern).
@@ -1544,6 +1658,9 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // recipients know the format up front. Falls back to no badge when unset.
   const _activeMediaKind = _active?.mediaKind || _active?.media_kind || null;
   const _multi = _list.length > 1;
+  // Caption shown over the bottom chrome (WhatsApp/IG). Per-item in an album,
+  // falls back to the single-item prop. Empty string → nothing renders.
+  const _activeCaption = String((_active?.caption != null ? _active.caption : caption) || '').trim();
 
   const handleDownload = async () => {
     if (viewOnce) return;
@@ -1760,6 +1877,13 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         style={[s.backdrop, viewOnceStyle]}
         onContextMenu={viewOnce ? (e) => e.preventDefault?.() : undefined}
       >
+        {/* Full-black backdrop layer. Opacity is driven by _bgOpacity so a
+            swipe-down fades it out and reveals the chat behind (the Modal is
+            transparent). pointerEvents=none so it never swallows touches. */}
+        <Animated.View
+          pointerEvents="none"
+          style={[StyleSheet.absoluteFill, { backgroundColor: '#000', opacity: _bgOpacity }]}
+        />
         {/* View-once watermark — appears after a screenshot is detected
             (iOS) so the captured image carries the viewer's email +
             timestamp. The overlay is intentionally semi-transparent so
@@ -1891,7 +2015,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             gestures inside ImageViewer still win because PanResponder
             captures movement; only the unmodified tap reaches us here. */}
         <TouchableWithoutFeedback onPress={_toggleChrome} accessible={false}>
-        <View style={{ flex: 1 }}>
+        <Animated.View style={{ flex: 1, transform: [{ scale: _openScale }] }}>
         {_multi ? (
           <FlatList
             data={_list}
@@ -1914,7 +2038,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               const isPrv = PREVIEWABLE_EXTS.includes(e);
               return (
                 <View style={{ width: SCREEN_W, flex: 1 }}>
-                  {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} /> :
+                  {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} onDismissMove={_onDismissMove} onDismissEnd={_onDismissEnd} /> :
                    isVid ? <VideoPlayer url={u} /> :
                    isPrv ? <PreviewViewer url={u} filename={item?.fileName} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} t={t} /> :
                    <GenericFileViewer url={u} filename={item?.fileName} fileSize={item?.fileSize} messageId={item?.messageId || item?.id || 0} t={t} />}
@@ -1949,6 +2073,8 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
                 placeholderUri={_active?.placeholderUri || _active?.thumbB64Uri}
                 blurhash={_active?.blurhash}
                 thumbUri={_active?.thumbUri}
+                onDismissMove={_onDismissMove}
+                onDismissEnd={_onDismissEnd}
               />
             )
           ) : isVideo ? (
@@ -1983,8 +2109,32 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             />
           )
         )}
-        </View>
+        </Animated.View>
         </TouchableWithoutFeedback>
+
+        {/* Caption — the text the sender attached to the photo (WhatsApp/IG).
+            Sits just above the action bar, fades with the rest of the chrome,
+            and scrolls internally when long so it never covers the photo. */}
+        {!!_activeCaption && (
+          <Animated.View
+            pointerEvents={_chromeVisible ? 'auto' : 'none'}
+            style={[
+              s.captionWrap,
+              {
+                bottom: Math.max(insets.bottom, 12) + 6 + 60,
+                opacity: _chromeOpacity,
+              },
+            ]}
+          >
+            <ScrollView
+              style={{ maxHeight: 112 }}
+              showsVerticalScrollIndicator={false}
+              bounces={false}
+            >
+              <Text style={s.captionText}>{_activeCaption}</Text>
+            </ScrollView>
+          </Animated.View>
+        )}
 
         {/* WAVE 60: Bottom action bar — Share / Download / Star (WhatsApp/IG
             grade). Lives in its own row at the bottom, fades with the top
@@ -2166,7 +2316,18 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
 const s = StyleSheet.create({
   backdrop: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.92)',
+    // The visible black is painted by the animated _bgOpacity layer so the
+    // swipe-down dismiss can fade it; this container stays transparent.
+    backgroundColor: 'transparent',
+  },
+  captionWrap: {
+    position: 'absolute', left: 0, right: 0,
+    paddingHorizontal: 18,
+    zIndex: 20,
+  },
+  captionText: {
+    color: '#fff', fontSize: 15, lineHeight: 21,
+    textShadowColor: 'rgba(0,0,0,0.75)', textShadowRadius: 5,
   },
   header: {
     flexDirection: 'row',

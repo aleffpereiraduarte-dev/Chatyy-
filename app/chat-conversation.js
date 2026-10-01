@@ -25590,6 +25590,12 @@ function ChatConversationInner() {
             // never reopen their own view-once)
             const _isVOnce = !!(msg.is_view_once || msg.isViewOnce);
             if (!_isVOnce && (msg.type === 'image' || msg.type === 'video') && msg.file_url) {
+              // Caption = sender's attached text (same guard as the bubble).
+              let _cap = '';
+              try {
+                const c = String(msg.content || '').trim();
+                if (c && c !== (msg.file_name || '') && !/^https?:\/\//i.test(c) && !/^\{/.test(c)) _cap = c;
+              } catch {}
               setMediaViewer({
                 visible: true,
                 fileUrl: msg.file_url,
@@ -25597,6 +25603,10 @@ function ChatConversationInner() {
                 fileSize: msg.file_size || 0,
                 type: msg.type,
                 messageId: msg.id,
+                senderName: msg.sender_name || (msg.sender_email || '').split('@')[0] || '',
+                senderEmail: msg.sender_email || '',
+                createdAt: msg.created_at || msg.createdAt || null,
+                caption: _cap,
               });
               return;
             }
@@ -28912,6 +28922,14 @@ function ChatConversationInner() {
                     if (v?.thumb) _thumbUri = v.thumb.startsWith('http') ? v.thumb : `https://chatyy.com.br${v.thumb}`;
                   } catch {}
                 }
+                // Caption = the text the sender attached to the media. Same
+                // guard the bubble uses: ignore when it's just the filename or
+                // a bare URL so the viewer doesn't show noise.
+                let _cap = '';
+                try {
+                  const c = String(m.content || '').trim();
+                  if (c && c !== (m.file_name || '') && !/^https?:\/\//i.test(c) && !/^\{/.test(c)) _cap = c;
+                } catch {}
                 return {
                   fileUrl: m.file_url,
                   hlsUrl: m.hls_url || null,
@@ -28919,6 +28937,7 @@ function ChatConversationInner() {
                   fileSize: m.file_size || 0,
                   type: m.type,
                   messageId: m.id,
+                  caption: _cap,
                   // Carry LQIP / blurhash / thumb through so swipe between
                   // photos paints an instant blurred preview for each
                   // neighbor as the user swipes — never a black screen.
@@ -28960,6 +28979,7 @@ function ChatConversationInner() {
             senderName={mv.senderName}
             senderEmail={mv.senderEmail}
             createdAt={mv.createdAt}
+            caption={mv.caption}
             onForward={(item) => {
               // Reuse the existing forward flow: find the message for the
               // currently-open media item and open the forward picker.

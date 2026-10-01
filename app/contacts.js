@@ -1249,7 +1249,7 @@ function ContactsScreenInner() {
 
   // Device/family empty component
   const renderDeviceEmpty = useCallback(() => {
-    if (loadingDevice) return null;
+    if (loadingDevice) return <ListSkeleton count={6} />;
     if (devicePermission === 'denied') {
       return (
         <View style={s.emptyContainer}>
@@ -1289,7 +1289,7 @@ function ContactsScreenInner() {
   }, [loadingDevice, devicePermission, filteredItems.length, debouncedSearch, colors, t]);
 
   const renderFamilyEmpty = useCallback(() => {
-    if (loadingFamily) return null;
+    if (loadingFamily) return <ListSkeleton count={6} />;
     if (filteredItems.length === 0) {
       return (
         <View style={s.emptyContainer}>

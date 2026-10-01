@@ -1027,7 +1027,7 @@ function PhotosTimelineView({
           onEndReached={hasMore ? onLoadMore : undefined}
           onEndReachedThreshold={0.5}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
           }
           contentContainerStyle={{ paddingBottom: 20 }}
           initialNumToRender={3}
@@ -1035,7 +1035,7 @@ function PhotosTimelineView({
         />
       ) : (
         <ScrollView
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />}
           contentContainerStyle={{ flex: 1 }}
         >
           {renderEmpty()}
@@ -2844,7 +2844,7 @@ function FilesScreenInner() {
             contentContainerStyle={[styles.list, listData.length === 0 && styles.listEmpty]}
             columnWrapperStyle={viewMode === 'grid' ? styles.gridRow : undefined}
             refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
             }
             getItemLayout={viewMode === 'list' ? (data, index) => ({
               length: 76,

@@ -3125,7 +3125,7 @@ function CalendarScreenInner() {
           ListEmptyComponent={renderEmpty}
           contentContainerStyle={[styles.list, { paddingBottom: Spacing.xl + insets.bottom }, dayEvents.length === 0 && styles.listEmpty]}
           refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
           }
         />
       )}

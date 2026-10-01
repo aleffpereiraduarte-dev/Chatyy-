@@ -6254,12 +6254,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           style={{
             flexDirection: 'row', alignItems: 'center', gap: 8,
             paddingHorizontal: 14, paddingVertical: 5,
-            backgroundColor: isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.06)',
+            backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(17, 17, 17,0.06)',
             borderBottomWidth: StyleSheet.hairlineWidth,
-            borderBottomColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.14)',
+            borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17, 17, 17,0.14)',
           }}>
-          <ActivityIndicator size="small" color={isDark ? 'rgba(17, 17, 17,0.85)' : '#111111'} />
-          <Text style={{ flex: 1, fontSize: 11.5, color: isDark ? 'rgba(17, 17, 17,0.85)' : '#111111', fontWeight: '500' }}>
+          <ActivityIndicator size="small" color={isDark ? 'rgba(255,255,255,0.5)' : '#111111'} />
+          <Text style={{ flex: 1, fontSize: 11.5, color: isDark ? 'rgba(255,255,255,0.6)' : '#111111', fontWeight: '500' }}>
             {t?.('chat.syncing') || 'Sincronizando...'}
           </Text>
         </View>
