@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
-  TextInput, Alert, ActivityIndicator, Switch, Image as RNImage, Share, Modal, Linking, Animated,
+  TextInput, Alert, ActivityIndicator, Switch, Image as RNImage, Share, Modal, Linking, Animated, FlatList,
 } from 'react-native';
 import { Image as ExpoImage } from 'expo-image';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -2222,8 +2222,20 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               {addBlockLoading ? (
                 <ActivityIndicator style={{ padding: 30 }} color={colors.primary} />
               ) : (
-                <ScrollView style={{ maxHeight: 380 }} keyboardShouldPersistTaps="handled">
-                  {addBlockManualEmail ? (
+                /* [PERF] The block picker lists the user's ENTIRE contact list.
+                   A ScrollView + .map mounted every row (each an AvatarCircle)
+                   at once — a stutter when opening the picker for a large
+                   address book. Virtualize with FlatList; the manual-email row
+                   and empty state move to header/empty slots. */
+                <FlatList
+                  style={{ maxHeight: 380 }}
+                  keyboardShouldPersistTaps="handled"
+                  data={addBlockFiltered}
+                  keyExtractor={(c) => String(c.email).toLowerCase()}
+                  initialNumToRender={12}
+                  windowSize={10}
+                  removeClippedSubviews={Platform.OS !== 'web'}
+                  ListHeaderComponent={addBlockManualEmail ? (
                     <TouchableOpacity
                       onPress={() => handleBlockAdd(addBlockManualEmail)}
                       disabled={!!addBlockBusy}
@@ -2240,34 +2252,32 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                         : <IconLock size={18} color="#dc2626" />}
                     </TouchableOpacity>
                   ) : null}
-                  {addBlockFiltered.length === 0 && !addBlockManualEmail ? (
+                  ListEmptyComponent={!addBlockManualEmail ? (
                     <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', textAlign: 'center', padding: 30 }}>
                       {t?.('config.noContacts') || 'Nenhum contato'}
                     </Text>
-                  ) : (
-                    addBlockFiltered.map((c) => {
-                      const em = String(c.email).toLowerCase();
-                      return (
-                        <TouchableOpacity
-                          key={em}
-                          onPress={() => handleBlockAdd(em)}
-                          disabled={!!addBlockBusy}
-                          style={styles.blockedRowModern}
-                          activeOpacity={0.7}
-                        >
-                          <AvatarCircle name={c.name || emailToDisplayName(em)} email={em} size={42} />
-                          <View style={{ flex: 1 }}>
-                            <Text style={[styles.blockedEmail, { color: colors.text }]} numberOfLines={1}>{c.name || emailToDisplayName(em)}</Text>
-                            <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{em}</Text>
-                          </View>
-                          {addBlockBusy === em
-                            ? <ActivityIndicator color="#dc2626" />
-                            : <IconLock size={18} color="#dc2626" />}
-                        </TouchableOpacity>
-                      );
-                    })
-                  )}
-                </ScrollView>
+                  ) : null}
+                  renderItem={({ item: c }) => {
+                    const em = String(c.email).toLowerCase();
+                    return (
+                      <TouchableOpacity
+                        onPress={() => handleBlockAdd(em)}
+                        disabled={!!addBlockBusy}
+                        style={styles.blockedRowModern}
+                        activeOpacity={0.7}
+                      >
+                        <AvatarCircle name={c.name || emailToDisplayName(em)} email={em} size={42} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.blockedEmail, { color: colors.text }]} numberOfLines={1}>{c.name || emailToDisplayName(em)}</Text>
+                          <Text style={{ color: isDark ? '#6b7280' : '#9ca3af', fontSize: 12, marginTop: 2 }} numberOfLines={1}>{em}</Text>
+                        </View>
+                        {addBlockBusy === em
+                          ? <ActivityIndicator color="#dc2626" />
+                          : <IconLock size={18} color="#dc2626" />}
+                      </TouchableOpacity>
+                    );
+                  }}
+                />
               )}
             </View>
           </View>

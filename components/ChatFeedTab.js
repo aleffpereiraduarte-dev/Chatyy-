@@ -1566,7 +1566,14 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
             progressBackgroundColor={isDark ? '#1f1b2e' : '#fff'}
           />
         }
-        ListHeaderComponent={() => <>{renderSearchBar()}{renderTabBar()}{renderAlgorithmTabs()}<StoriesStrip user={user} colors={colors} isDark={isDark} t={t} router={router} />{renderLiveHeader()}</>}
+        /* [PERF] Pass the header as an ELEMENT, not an inline `() => <>…</>`
+           function component. A fresh arrow is a NEW component type every render,
+           so the list unmounted+remounted the whole header — including
+           <StoriesStrip>, which re-ran its useStatuses subscription/refetch — on
+           every feed re-render (unread poll, live poll, activePostId flipping on
+           each scroll viewability change, search keystrokes). As an element React
+           reconciles it by position and just re-renders it. Same visual output. */
+        ListHeaderComponent={<>{renderSearchBar()}{renderTabBar()}{renderAlgorithmTabs()}<StoriesStrip user={user} colors={colors} isDark={isDark} t={t} router={router} />{renderLiveHeader()}</>}
         ListEmptyComponent={renderEmpty}
         ListFooterComponent={renderFooter}
         showsVerticalScrollIndicator={false}

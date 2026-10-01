@@ -91,6 +91,12 @@ const INBOUND_PASSTHROUGH = [
 const INBOUND_ALIAS = {
   new_message: 'chat_message',
   read: 'message_read',
+  // [2026-10-01] ChatChannel + chat.php phoenixMirror emit BARE 'delivered' and
+  // 'stop_typing' (see chat_channel.ex handle_in + chat.php:19629/1099). The app
+  // listens for 'chat_delivered'/'stopped_typing'. Without these aliases the ✓✓
+  // delivery tick and typing-stop were silently dropped over the Phoenix path.
+  delivered: 'chat_delivered',
+  stop_typing: 'stopped_typing',
 };
 
 // Feed a legacy-shaped frame through the SAME dispatch the Go WS uses so all

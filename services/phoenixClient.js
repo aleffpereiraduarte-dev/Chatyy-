@@ -161,32 +161,102 @@ class PhoenixSocket {
     this.bearer = null;
     this.hubUrl = null;
     this.connected = false;
+    // `authenticated` mirrors websocket.js so consumers that read the mailWs
+    // contract (SyncBar's `mailWs?.authenticated`, the 'authenticated'
+    // connection status) behave identically if phoenixClient ever stands in for
+    // the WS directly. Phoenix validates the bearer at the socket HANDSHAKE
+    // (UserSocket.connect) — an invalid token is refused before onopen fires —
+    // so a socket that successfully OPENS is, by definition, authenticated.
+    this.authenticated = false;
     this.destroyed = false;
+    this._hidden = false;             // backgrounded tab / app (pauses heartbeat + reconnect)
     this._refCounter = 0;
     this._heartbeatTimer = null;
     this._pendingHeartbeatRef = null; // set when a heartbeat is outstanding
     this._reconnectTimer = null;
     this._reconnectAttempt = 0;
+    this._fgWatchdog = null;          // foreground zombie-probe watchdog timer
     this._channels = new Map();        // topic -> PhoenixChannel
     this._replyHandlers = new Map();   // ref -> cb(status, response)
     this._listeners = new Map();       // event -> Set<cb> (global, cross-channel)
     this._appStateHandler = null;
+    this._visibilityHandler = null;
 
-    // Native: rejoin when app returns to foreground (iOS suspends sockets in
-    // background). Mirrors websocket.js AppState handling; ignore 'inactive'.
+    // Native: foreground/background lifecycle. Mirrors websocket.js —
+    //   • 'inactive'  (shade pull / control-center / system dialog) → IGNORE,
+    //     treating it as background tore the socket down every few seconds.
+    //   • 'background' → pause heartbeat + reconnect (iOS suspends the socket).
+    //   • 'active'     → zombie-probe (iOS keeps readyState OPEN for a socket
+    //     the radio already killed) and reconnect if dead.
     if (Platform.OS !== 'web') {
       try {
         this._appStateHandler = AppState.addEventListener('change', (next) => {
           if (next === 'inactive') return;
+          if (next === 'background') {
+            this._hidden = true;
+            this._stopHeartbeat();
+            clearTimeout(this._reconnectTimer);
+            this._reconnectTimer = null;
+            if (this._fgWatchdog) { clearTimeout(this._fgWatchdog); this._fgWatchdog = null; }
+            return;
+          }
           if (next === 'active' && this.bearer && !this.destroyed) {
-            if (!this._isOpen()) {
-              this._reconnectAttempt = 0;
-              this.connect(this.bearer, this.hubUrl);
-            }
+            this._hidden = false;
+            this._foregroundProbe();
           }
         });
       } catch {}
+    } else if (typeof document !== 'undefined') {
+      // Web: a backgrounded tab can be frozen by the browser with the socket
+      // silently dead but readyState still OPEN. Pause heartbeat while hidden
+      // and probe on return to visible (same reasoning as websocket.js).
+      try {
+        this._visibilityHandler = () => {
+          if (document.hidden) {
+            this._hidden = true;
+            this._stopHeartbeat();
+            clearTimeout(this._reconnectTimer);
+            this._reconnectTimer = null;
+          } else {
+            this._hidden = false;
+            if (this.bearer && !this.destroyed) this._foregroundProbe();
+          }
+        };
+        document.addEventListener('visibilitychange', this._visibilityHandler);
+      } catch {}
     }
+  }
+
+  // Foreground/visibility zombie-socket probe. On return to foreground we send
+  // a heartbeat immediately and, if its reply never lands within the watchdog
+  // window, force a clean reconnect. Without this an iOS zombie socket (or a
+  // frozen browser tab) leaves a new chat event invisible until the 30s
+  // heartbeat catches it — the "só aparece quando saio e volto" symptom.
+  _foregroundProbe() {
+    if (this.destroyed || !this.bearer) return;
+    if (!this._isOpen()) {
+      // Socket already dead → reconnect now (fast lane).
+      this._reconnectAttempt = 0;
+      this.connect(this.bearer, this.hubUrl);
+      return;
+    }
+    // Socket claims OPEN — probe it with a heartbeat and watch for the reply.
+    const ref = this._makeRef();
+    this._pendingHeartbeatRef = ref;
+    this._pushRaw(null, ref, 'phoenix', 'heartbeat', {});
+    if (this._fgWatchdog) clearTimeout(this._fgWatchdog);
+    this._fgWatchdog = setTimeout(() => {
+      this._fgWatchdog = null;
+      if (this.destroyed || this._hidden) return;
+      // _handleFrame clears _pendingHeartbeatRef on the reply. Still pending →
+      // the socket is a zombie; close it so onclose drives _scheduleReconnect.
+      if (this._pendingHeartbeatRef === ref) {
+        this._reconnectAttempt = 0;
+        try { if (this.ws) this.ws.close(); } catch {}
+        // Belt-and-suspenders: if the socket was already detached, reconnect.
+        if (!this._isOpen() && !this.destroyed) this.connect(this.bearer, this.hubUrl);
+      }
+    }, 5000);
   }
 
   _makeRef() { this._refCounter += 1; return String(this._refCounter); }
@@ -205,9 +275,25 @@ class PhoenixSocket {
    */
   connect(bearer, hubUrl) {
     if (this.destroyed) this.destroyed = false; // an explicit connect lifts a prior disconnect()
+    const prevBearer = this.bearer;
     if (bearer) this.bearer = bearer;
     this.hubUrl = hubUrl || this.hubUrl || PHOENIX_HUB_URL;
     if (!this.bearer) { try { console.warn('[Phoenix] connect() without bearer — ignored'); } catch {} return; }
+
+    // Idempotent: a socket already OPEN/CONNECTING on the SAME bearer is kept
+    // (mirrors websocket.js connect()). The adapter calls connect() again on
+    // every sliding-token refresh for the same account; without this guard each
+    // call would needlessly drop + reopen the socket — a visible real-time beat
+    // and a redundant auth RTT. A changed bearer (slide/account switch) falls
+    // through to the teardown + re-auth below.
+    try {
+      if (this.ws && typeof WebSocket !== 'undefined' &&
+          (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN) &&
+          this.bearer === prevBearer) {
+        if (this.connected && !this._heartbeatTimer) this._startHeartbeat();
+        return;
+      }
+    } catch {}
 
     this._cleanupSocket();
 
@@ -224,8 +310,15 @@ class PhoenixSocket {
 
     this.ws.onopen = () => {
       this.connected = true;
+      // Socket opened ⇒ the hub accepted the bearer (see `authenticated` note
+      // in the constructor). Emit BOTH 'connected' and 'authenticated' so the
+      // status contract is byte-identical to websocket.js, whose SyncBar
+      // consumer hides the bar on either and reads `.authenticated`.
+      this.authenticated = true;
+      this._hidden = false;
       this._reconnectAttempt = 0;
       this._emit('connection', { status: 'connected' });
+      this._emit('connection', { status: 'authenticated' });
       this._startHeartbeat();
       // Rejoin every channel we had (join is what authorizes topic access).
       for (const ch of this._channels.values()) {
@@ -242,6 +335,7 @@ class PhoenixSocket {
 
     this.ws.onclose = () => {
       this.connected = false;
+      this.authenticated = false;
       this._stopHeartbeat();
       this._emit('connection', { status: 'disconnected' });
       if (!this.destroyed) this._scheduleReconnect();
@@ -374,11 +468,17 @@ class PhoenixSocket {
   // Full-jitter backoff, fast lane for the first few attempts — copied shape
   // from websocket.js so reconnect feel is identical.
   _scheduleReconnect() {
-    if (this.destroyed) return;
+    // Don't reconnect while backgrounded/hidden — the AppState/visibility
+    // 'active' handler probes + reconnects on return (mirrors websocket.js,
+    // which also bails here on this._hidden).
+    if (this.destroyed || this._hidden) return;
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
-      // Wait for connectivity; don't burn retries offline.
+      // Wait for connectivity; don't burn retries offline. Surface the same
+      // 'offline' connection status websocket.js emits so a consumer can show
+      // "Sem internet" instead of a spinning "Reconectando…".
       clearTimeout(this._reconnectTimer);
       this._reconnectTimer = null;
+      this._emit('connection', { status: 'offline', attempt: this._reconnectAttempt });
       if (typeof window !== 'undefined' && !this._onlineListenerAdded) {
         this._onlineListenerAdded = true;
         const onOnline = () => {
@@ -408,6 +508,7 @@ class PhoenixSocket {
   _cleanupSocket() {
     clearTimeout(this._reconnectTimer);
     this._reconnectTimer = null;
+    if (this._fgWatchdog) { clearTimeout(this._fgWatchdog); this._fgWatchdog = null; }
     this._stopHeartbeat();
     if (this.ws) {
       try { this.ws.onopen = null; } catch {}
@@ -418,6 +519,7 @@ class PhoenixSocket {
       this.ws = null;
     }
     this.connected = false;
+    this.authenticated = false;
   }
 
   /** Close everything and stop auto-reconnect. connect() revives it. */
@@ -431,7 +533,51 @@ class PhoenixSocket {
     this._replyHandlers.clear();
     this._cleanupSocket();
     if (this._appStateHandler) { try { this._appStateHandler.remove(); } catch {} this._appStateHandler = null; }
+    if (this._visibilityHandler && typeof document !== 'undefined') {
+      try { document.removeEventListener('visibilitychange', this._visibilityHandler); } catch {}
+    }
     this._emit('connection', { status: 'disconnected' });
+  }
+
+  /**
+   * API-parity with websocket.js reset(): lift a prior disconnect() tombstone so
+   * connect() works again (logout→login, account switch). `fullWipe` also clears
+   * global listeners + channel handles so a previous account's handlers can't
+   * fire on the next account. The phoenixAdapter does NOT call this — it drives
+   * the transport with disconnect()/connect() and owns its own listener unsubs.
+   * It exists only so phoenixClient can stand in for the mailWs API directly if
+   * a future full cutover points call sites here instead of at the adapter.
+   */
+  reset(fullWipe = false) {
+    this.destroyed = false;
+    this._reconnectAttempt = 0;
+    if (fullWipe) {
+      try { this._listeners.forEach((set) => set.clear()); } catch {}
+      try { this._channels.clear(); } catch {}
+      this.bearer = null;
+    }
+  }
+
+  /**
+   * API-parity with websocket.js isZombie(): true when the socket SHOULD be live
+   * but isn't. MailContext's 10s watchdog calls mailWs.isZombie()+resurrect();
+   * provided so a direct cutover keeps that self-heal working. resurrect() maps
+   * to a fast reconnect here (Phoenix has no separate auth frame to replay).
+   */
+  isZombie() {
+    if (this.destroyed) return true;
+    if (!this._isOpen()) return true;
+    if (!this.authenticated) return true;
+    return false;
+  }
+
+  resurrect(/* reason */) {
+    if (this.isConnected && this.authenticated && !this.destroyed) return false;
+    if (!this.bearer) return false;
+    this.destroyed = false;
+    this._reconnectAttempt = 0;
+    this.connect(this.bearer, this.hubUrl);
+    return true;
   }
 
   get isConnected() { return this.connected && this._isOpen(); }

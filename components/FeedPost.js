@@ -633,7 +633,10 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   const { language: _appLang } = useLanguage();
   const _relTime = useMemo(() => timeAgo(post.created_at, t, _appLang), [post.created_at, t, _appLang]);
 
-  const mediaUrls = parseMediaUrls(post.media_urls);
+  // [PERF] parseMediaUrls does a JSON.parse when media_urls is a string. This
+  // row re-renders often (like/bookmark/caption-expand local state, isActive
+  // flips, prop churn), so memoize to avoid re-parsing every render.
+  const mediaUrls = useMemo(() => parseMediaUrls(post.media_urls), [post.media_urls]);
   const isOwner = user?.email === post.author_email;
   const isWeb = Platform.OS === 'web';
   const cardWidth = Math.min(SCREEN_WIDTH, MAX_CARD_WIDTH);
@@ -1352,6 +1355,11 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     ) : (
                       <_CachedFeedImage
                         key={idx}
+                        // [perf] recyclingKey keyed on the URL so that when
+                        // FlashList recycles this row for a different post, the
+                        // carousel slide swaps to the new image instead of
+                        // briefly showing the recycled row's previous slide.
+                        recyclingKey={`carousel-${resolveMediaUrl(url)}`}
                         source={{ uri: resolveMediaUrl(url) }}
                         style={[styles.mediaFrame, { width: cardWidth }, getNativeFilterStyle(post.filter)]}
                         resizeMode="cover"

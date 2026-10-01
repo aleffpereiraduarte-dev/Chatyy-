@@ -400,9 +400,19 @@ function LikersSheet({ visible, post, colors, isDark, t, onClose }) {
                 </Text>
               </View>
             ) : (
-              <ScrollView style={styles.sheetList} showsVerticalScrollIndicator={false}>
-                {likers.map((liker, idx) => (
-                  <View key={liker.email || idx} style={styles.commentRow}>
+              /* [PERF] A viral reel can have thousands of likers. A ScrollView
+                 + .map mounted every row (each an AvatarCircle) at once — a
+                 stutter on open and heavy memory. Virtualize with FlatList. */
+              <FlatList
+                style={styles.sheetList}
+                data={likers}
+                showsVerticalScrollIndicator={false}
+                keyExtractor={(liker, idx) => liker.email || String(idx)}
+                initialNumToRender={14}
+                windowSize={10}
+                removeClippedSubviews={Platform.OS !== 'web'}
+                renderItem={({ item: liker }) => (
+                  <View style={styles.commentRow}>
                     <AvatarCircle email={liker.email} name={liker.name} size={32} />
                     <View style={styles.commentContent}>
                       <Text style={styles.commentAuthor}>
@@ -413,9 +423,9 @@ function LikersSheet({ visible, post, colors, isDark, t, onClose }) {
                       </Text>
                     </View>
                   </View>
-                ))}
-                <View style={{ height: 20 }} />
-              </ScrollView>
+                )}
+                ListFooterComponent={<View style={{ height: 20 }} />}
+              />
             )}
           </Pressable>
         </Animated.View>
@@ -531,13 +541,22 @@ const LiveBadgeRing = memo(function LiveBadgeRing({ size = 44, children }) {
 // audio actually being present (the reel is muted in the UI; this is
 // purely visual flair). 3 thin vertical bars, each on its own loop
 // with offset phase + duration so they look like real EQ levels.
-const MusicEqualizer = memo(function MusicEqualizer() {
+const MusicEqualizer = memo(function MusicEqualizer({ active = true }) {
   const bars = useRef([
     new Animated.Value(0.4),
     new Animated.Value(0.85),
     new Animated.Value(0.55),
   ]).current;
   useEffect(() => {
+    // [PERF] The bars animate `height` (a layout prop), so this loop runs on
+    // the JS thread with useNativeDriver:false. Only run it for the ACTIVE
+    // reel — otherwise the 2 off-screen pre-mounted ReelItems (windowSize) each
+    // spin their own JS loop forever, stealing frames from the swipe/scroll and
+    // the playing video. When inactive, rest the bars at their static values.
+    if (!active) {
+      bars.forEach((v, i) => v.setValue([0.4, 0.85, 0.55][i]));
+      return;
+    }
     const cfgs = [
       { dur: [280, 400], min: 0.25, max: 1 },
       { dur: [330, 450], min: 0.40, max: 0.95 },
@@ -554,7 +573,7 @@ const MusicEqualizer = memo(function MusicEqualizer() {
     });
     loops.forEach(l => l.start());
     return () => loops.forEach(l => l.stop());
-  }, []);
+  }, [active]);
   return (
     <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 1.5, height: 12, marginRight: 2 }}>
       {bars.map((v, i) => (
@@ -1327,8 +1346,10 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     }
   }, [reel, soundSaved, t]);
 
-  const mediaUrls = parseMediaUrls(reel.media_urls);
-  const videoUrl = resolveMediaUrl(mediaUrls[0]);
+  // [PERF] ReelItem re-renders ~10×/sec while playing (currentMs ticks), so
+  // avoid re-running JSON.parse on media_urls every tick — memoize it.
+  const mediaUrls = useMemo(() => parseMediaUrls(reel.media_urls), [reel.media_urls]);
+  const videoUrl = useMemo(() => resolveMediaUrl(mediaUrls[0]), [mediaUrls]);
   const authorDisplay = reel.author_name || reel.author_email?.split('@')[0] || '?';
   const commentCount = Number(reel.comment_count ?? reel.comments_count ?? reel.comments) || 0;
   const musicName = reel.audio_name || `${authorDisplay} - ${t('feed.originalAudio') || 'Audio original'}`;
@@ -2095,7 +2116,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             accessibilityRole="button"
           >
             <IconMusic size={12} color="#fff" />
-            <MusicEqualizer />
+            <MusicEqualizer active={isActive} />
             <MusicMarquee text={musicName} />
           </TouchableOpacity>
           {/* Reels P1 — save sound favorite. 💾 toggles persistence. */}

@@ -12,7 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, Pressable, Image,
-  ScrollView, ActivityIndicator, Platform, StyleSheet, RefreshControl,
+  ScrollView, FlatList, ActivityIndicator, Platform, StyleSheet, RefreshControl,
   Animated, Easing,
 } from 'react-native';
 import * as api from '../services/api';
@@ -140,7 +140,7 @@ function AvatarStack({ emails = [], size = 28 }) {
   );
 }
 
-function NotifRow({ item, colors, isDark, t, onPress, onAction }) {
+const NotifRow = React.memo(function NotifRow({ item, colors, isDark, t, onPress, onAction }) {
   const when = relativeTime(item.created_at, t);
   const isLikeGroup =
     item.type === 'like' &&
@@ -175,7 +175,7 @@ function NotifRow({ item, colors, isDark, t, onPress, onAction }) {
 
   return (
     <TouchableOpacity
-      onPress={onPress}
+      onPress={() => onPress?.(item)}
       activeOpacity={0.6}
       style={{
         flexDirection: 'row', alignItems: 'center', gap: 10,
@@ -296,7 +296,18 @@ function NotifRow({ item, colors, isDark, t, onPress, onAction }) {
       )}
     </TouchableOpacity>
   );
-}
+}, (prev, next) => {
+  // Re-render a row only when its data (not a fresh parent closure) changes.
+  if (prev.colors !== next.colors || prev.isDark !== next.isDark || prev.t !== next.t) return false;
+  const a = prev.item, b = next.item;
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.id === b.id
+    && (a.read === b.read)
+    && ((a.action_taken || '') === (b.action_taken || ''))
+    && ((a.title || '') === (b.title || ''))
+    && ((a.created_at || '') === (b.created_at || ''));
+});
 
 // Animated underline tabs
 function TabBar({ activeTab, onChange, colors, t, unreadCounts = {} }) {
@@ -375,7 +386,7 @@ function TabBar({ activeTab, onChange, colors, t, unreadCounts = {} }) {
   );
 }
 
-function SectionHeader({ label, colors }) {
+const SectionHeader = React.memo(function SectionHeader({ label, colors }) {
   return (
     <View style={{ paddingHorizontal: 16, paddingTop: 14, paddingBottom: 6 }}>
       <Text style={{ fontSize: 12.5, fontWeight: '700', color: colors?.text, letterSpacing: -0.1 }}>
@@ -383,7 +394,7 @@ function SectionHeader({ label, colors }) {
       </Text>
     </View>
   );
-}
+});
 
 function EmptyState({ colors, t }) {
   return (
@@ -584,6 +595,36 @@ export default function NotificationsHub({
 
   const hasUnread = items.some(n => !n.read);
 
+  // Stable per-row tap handler so the memoized NotifRow isn't invalidated by a
+  // fresh closure every render (the row receives `onPress={onRowPress}` and
+  // calls it with its own item).
+  const onRowPress = useCallback((it) => {
+    if (!it) return;
+    if (!it.read) {
+      try { api.notificationsRead?.({ ids: [it.id] }); } catch {}
+      setItems(prev => prev.map(n => n.id === it.id ? { ...n, read: true } : n));
+    }
+    if (it.route) go(it.route);
+  }, [go]);
+
+  // FlatList row renderer — `sectioned` is already a flat array of section
+  // headers (__section) interleaved with notification rows.
+  const renderNotif = useCallback(({ item: it }) => (
+    it.__section ? (
+      <SectionHeader label={it.label} colors={colors} />
+    ) : (
+      <NotifRow
+        item={it}
+        colors={colors}
+        isDark={isDark}
+        t={t}
+        onPress={onRowPress}
+        onAction={handleAction}
+      />
+    )
+  ), [colors, isDark, t, onRowPress, handleAction]);
+  const keyNotif = useCallback((it) => String(it.id), []);
+
   return (
     <Modal visible={!!visible} transparent animationType="fade" onRequestClose={close}>
       <Pressable
@@ -662,9 +703,16 @@ export default function NotificationsHub({
             unreadCounts={unreadCounts}
           />
 
-          <ScrollView
+          <FlatList
+            data={sectioned}
+            keyExtractor={keyNotif}
+            renderItem={renderNotif}
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
+            initialNumToRender={12}
+            windowSize={10}
+            maxToRenderPerBatch={10}
+            removeClippedSubviews={Platform.OS !== 'web'}
             refreshControl={
               Platform.OS === 'web'
                 ? undefined
@@ -676,54 +724,30 @@ export default function NotificationsHub({
                   />
                 )
             }
-          >
-            {/* Web: manual refresh affordance */}
-            {Platform.OS === 'web' && (
-              <TouchableOpacity
-                onPress={onRefresh}
-                disabled={refreshing}
-                style={{
-                  paddingVertical: 8, alignItems: 'center',
-                  borderBottomWidth: StyleSheet.hairlineWidth,
-                  borderBottomColor: colors?.border,
-                }}
-              >
-                <Text style={{ fontSize: 12, color: BRAND }}>
-                  {refreshing
-                    ? (t?.('common.loading') || 'Carregando...')
-                    : (t?.('common.refresh') || 'Atualizar')}
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            {!loading && sectioned.length === 0 && (
-              <EmptyState colors={colors} t={t} />
-            )}
-
-            {sectioned.map((it) =>
-              it.__section ? (
-                <SectionHeader key={it.id} label={it.label} colors={colors} />
-              ) : (
-                <NotifRow
-                  key={it.id}
-                  item={it}
-                  colors={colors}
-                  isDark={isDark}
-                  t={t}
-                  onPress={() => {
-                    if (!it.read) {
-                      try { api.notificationsRead?.({ ids: [it.id] }); } catch {}
-                      setItems(prev => prev.map(n => n.id === it.id ? { ...n, read: true } : n));
-                    }
-                    if (it.route) go(it.route);
+            ListHeaderComponent={
+              Platform.OS === 'web' ? (
+                <TouchableOpacity
+                  onPress={onRefresh}
+                  disabled={refreshing}
+                  style={{
+                    paddingVertical: 8, alignItems: 'center',
+                    borderBottomWidth: StyleSheet.hairlineWidth,
+                    borderBottomColor: colors?.border,
                   }}
-                  onAction={handleAction}
-                />
-              )
-            )}
-
-            <View style={{ height: 12 }} />
-          </ScrollView>
+                >
+                  <Text style={{ fontSize: 12, color: BRAND }}>
+                    {refreshing
+                      ? (t?.('common.loading') || 'Carregando...')
+                      : (t?.('common.refresh') || 'Atualizar')}
+                  </Text>
+                </TouchableOpacity>
+              ) : null
+            }
+            ListEmptyComponent={
+              !loading ? <EmptyState colors={colors} t={t} /> : null
+            }
+            ListFooterComponent={<View style={{ height: 12 }} />}
+          />
 
           {/* [follow-back-fix 2026-05-21] Toast pinned to bottom of the
               hub modal — non-blocking, auto-dismiss after ~2.4s. */}

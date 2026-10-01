@@ -1543,6 +1543,30 @@ export default function Profile({
       .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
   ), [posts, reels]);
 
+  // [PERF] Progressive render window for the media grids (posts/reels/media/
+  // lives). The grids live inside the main vertical ScrollView, so a profile
+  // with hundreds of posts mounted every GridItem (each an expo-image) up front
+  // — a heavy first paint that janks the profile open. Mirror the ChatCallsTab
+  // pattern: clamp the FIRST paint to a viewport-sized window, then expand to
+  // Infinity one frame later (InteractionManager) and on the first scroll. The
+  // final content is IDENTICAL — only the initial mount is staggered.
+  const [gridRenderLimit, setGridRenderLimit] = useState(15);
+  const expandGridRenderLimit = useCallback(() => setGridRenderLimit(Infinity), []);
+  useEffect(() => {
+    let timer = null;
+    let task = null;
+    try {
+      const { InteractionManager } = require('react-native');
+      task = InteractionManager.runAfterInteractions(expandGridRenderLimit);
+    } catch {
+      timer = setTimeout(expandGridRenderLimit, 120);
+    }
+    return () => {
+      try { task?.cancel?.(); } catch {}
+      if (timer) clearTimeout(timer);
+    };
+  }, [expandGridRenderLimit]);
+
   // Handlers
   const handleChat = useCallback(() => { onOpenChat?.(identity?.email); onClose?.(); }, [identity, onOpenChat, onClose]);
   const handleCall = useCallback(() => { onOpenCall?.(identity?.email, false); }, [identity, onOpenCall]);
@@ -2813,7 +2837,7 @@ export default function Profile({
         }
         return (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {combined.map(p => (
+            {(gridRenderLimit === Infinity ? combined : combined.slice(0, gridRenderLimit)).map(p => (
               <GridItem
                 key={`${p.id}-${p.type || ''}`}
                 item={p}
@@ -2843,7 +2867,7 @@ export default function Profile({
         }
         return (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {reels.map(r => <GridItem key={r.id} item={r} size={gridSize} isReel onPress={() => handleOpenPost(r, 'reels')} />)}
+            {(gridRenderLimit === Infinity ? reels : reels.slice(0, gridRenderLimit)).map(r => <GridItem key={r.id} item={r} size={gridSize} isReel onPress={() => handleOpenPost(r, 'reels')} />)}
           </View>
         );
       }
@@ -2905,7 +2929,7 @@ export default function Profile({
         };
         return (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {lives.map((rec) => (
+            {(gridRenderLimit === Infinity ? lives : lives.slice(0, gridRenderLimit)).map((rec) => (
               <LiveGridItem
                 key={rec.session_id}
                 rec={rec}
@@ -2920,7 +2944,7 @@ export default function Profile({
       if (activeTab === 'media') {
         return (
           <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-            {sharedMedia.map(m => <GridItem key={m.id} item={m} size={gridSize} onPress={() => handleOpenPost(m, 'media')} />)}
+            {(gridRenderLimit === Infinity ? sharedMedia : sharedMedia.slice(0, gridRenderLimit)).map(m => <GridItem key={m.id} item={m} size={gridSize} onPress={() => handleOpenPost(m, 'media')} />)}
           </View>
         );
       }
@@ -3897,6 +3921,7 @@ export default function Profile({
       <>
         <ScrollView style={{ flex: 1, backgroundColor: colors?.background }}
           contentContainerStyle={{ paddingBottom: 60 }}
+          onScrollBeginDrag={gridRenderLimit === Infinity ? undefined : expandGridRenderLimit}
         >
           {body}
         </ScrollView>
@@ -4021,7 +4046,7 @@ function PeekSheet({ visible, onClose, colors, isDark, body, extras }) {
           <TouchableOpacity onPress={_commitClose} style={{ position: 'absolute', right: 12, top: 10, padding: 8, zIndex: 10 }}>
             <IconX size={20} color={colors?.textSecondary || '#888'} />
           </TouchableOpacity>
-          <ScrollView showsVerticalScrollIndicator={false}>{body}</ScrollView>
+          <ScrollView showsVerticalScrollIndicator={false} onScrollBeginDrag={gridRenderLimit === Infinity ? undefined : expandGridRenderLimit}>{body}</ScrollView>
         </Animated.View>
       </Animated.View>
       {extras}
