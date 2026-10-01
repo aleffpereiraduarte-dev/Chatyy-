@@ -238,9 +238,30 @@ export default function MeetScreen() {
   }, [roomId]);
 
   const displayName = user?.name || user?.email || t('meetScreen.guest');
+
+  // [fix 2026-10-01] The meeting room is a WebView whose signaling WS auths with
+  // the token embedded in its URL. This used to capture `api.getAuthToken()`
+  // ONCE at render — if that bearer was stale (the recurring "fica Conectando"
+  // pattern), the room's WS auth failed silently → black room / stuck spinner,
+  // with no retry. Now we proactively refresh the bearer on mount and feed the
+  // fresh token into the URL via state. If the token was already valid,
+  // getAuthToken() returns the same string → meetUrl is unchanged → no reload;
+  // only a genuinely-stale token changes the URL and reloads the room with a
+  // working token (self-heal). ensureFreshBearer is single-flight over
+  // /auth_refresh (see services/api.js), so this is cheap.
+  const [authToken, setAuthToken] = useState(() => api.getAuthToken() || '');
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try { await api.ensureFreshBearer(); } catch {}
+      if (alive) setAuthToken(api.getAuthToken() || '');
+    })();
+    return () => { alive = false; };
+  }, []);
+
   // WAVE 61 (2026-05-21): backend nginx /signal -> 8095 fixed (was -> 8443 dead).
   // TURN URLs canonicalized to turn.chatyy.com.br. room.html WS now connects end-to-end.
-  const meetUrl = `${MEET_BASE}?id=${encodeURIComponent(roomId)}&token=${encodeURIComponent(api.getAuthToken() || '')}&name=${encodeURIComponent(displayName)}&webview=${Platform.OS !== 'web' ? '1' : '0'}&video=${video === 'off' ? '0' : '1'}&v=61`;
+  const meetUrl = `${MEET_BASE}?id=${encodeURIComponent(roomId)}&token=${encodeURIComponent(authToken)}&name=${encodeURIComponent(displayName)}&webview=${Platform.OS !== 'web' ? '1' : '0'}&video=${video === 'off' ? '0' : '1'}&v=61`;
 
   // Inject JS into WebView/iframe
   const injectJS = useCallback((code) => {

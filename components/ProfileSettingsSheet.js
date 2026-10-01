@@ -33,6 +33,8 @@ import {
 import * as api from '../services/api';
 import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
 import { useBiometric } from '../context/BiometricContext';
+import { useLanguage } from '../context/LanguageContext';
+import Svg, { Rect as SvgRect, Circle as SvgCircle, Polygon as SvgPolygon, G as SvgG, Defs as SvgDefs, ClipPath as SvgClipPath } from 'react-native-svg';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { WALLET_ENABLED, MONETIZATION_ENABLED } from '../constants/featureFlags';
 
@@ -655,21 +657,41 @@ function DevicesScreen({ colors, t, onClose, onLogout }) {
   }, []);
   useEffect(() => { load(); }, [load]);
 
-  const revokeOne = async (hash) => {
-    setRevokingHash(hash);
-    try {
-      const api = require('../services/api');
-      await api.revokeSession(hash);
-      setSessions(prev => (prev || []).filter(s => (s.token_hash || s.hash) !== hash));
-    } catch {} finally { setRevokingHash(null); }
+  // [fix 2026-10-01] Confirm before the destructive revoke — these instantly
+  // log a device out with no undo; a mis-tap used to kill a session silently.
+  const revokeOne = (hash) => {
+    Alert.alert(
+      t?.('settings.revokeDeviceTitle') || 'Desconectar aparelho?',
+      t?.('settings.revokeDeviceMsg') || 'Esse aparelho precisará entrar de novo.',
+      [
+        { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+        { text: t?.('settings.disconnect') || 'Desconectar', style: 'destructive', onPress: async () => {
+          setRevokingHash(hash);
+          try {
+            const api = require('../services/api');
+            await api.revokeSession(hash);
+            setSessions(prev => (prev || []).filter(s => (s.token_hash || s.hash) !== hash));
+          } catch {} finally { setRevokingHash(null); }
+        } },
+      ]
+    );
   };
 
-  const revokeAllOther = async () => {
-    try {
-      const api = require('../services/api');
-      await api.revokeAllSessions();
-      setSessions(prev => (prev || []).filter(s => s.is_current));
-    } catch {}
+  const revokeAllOther = () => {
+    Alert.alert(
+      t?.('settings.revokeAllTitle') || 'Sair de todos os outros aparelhos?',
+      t?.('settings.revokeAllMsg') || 'Todos os aparelhos, menos este, precisarão entrar de novo.',
+      [
+        { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+        { text: t?.('settings.disconnectAll') || 'Sair de todos', style: 'destructive', onPress: async () => {
+          try {
+            const api = require('../services/api');
+            await api.revokeAllSessions();
+            setSessions(prev => (prev || []).filter(s => s.is_current));
+          } catch {}
+        } },
+      ]
+    );
   };
 
   const fmtAgo = (ts) => {
@@ -1326,6 +1348,39 @@ function NotificationsScreen({ colors, t }) {
   );
 }
 
+// [fix 2026-10-01] SVG flag glyphs — replaces emoji flags (🇧🇷🇺🇸🇪🇸) which
+// violate the SVG-only UI rule and render inconsistently across platforms.
+function FlagGlyph({ flag }) {
+  const cid = 'flagclip-' + flag;
+  return (
+    <Svg width={24} height={18} viewBox="0 0 24 18" style={{ marginRight: 14 }}>
+      <SvgDefs><SvgClipPath id={cid}><SvgRect x="0" y="0" width="24" height="18" rx="3" /></SvgClipPath></SvgDefs>
+      <SvgG clipPath={`url(#${cid})`}>
+        {flag === 'BR' ? (
+          <>
+            <SvgRect x="0" y="0" width="24" height="18" fill="#009739" />
+            <SvgPolygon points="12,2.5 21.5,9 12,15.5 2.5,9" fill="#FEDD00" />
+            <SvgCircle cx="12" cy="9" r="3.3" fill="#012169" />
+          </>
+        ) : flag === 'US' ? (
+          <>
+            <SvgRect x="0" y="0" width="24" height="18" fill="#fff" />
+            {[0,1,2,3,4,5,6].map(i => (
+              <SvgRect key={i} x="0" y={i * (18 / 6.5)} width="24" height={18 / 13} fill="#B22234" />
+            ))}
+            <SvgRect x="0" y="0" width="10" height={18 * 7 / 13} fill="#3C3B6E" />
+          </>
+        ) : (
+          <>
+            <SvgRect x="0" y="0" width="24" height="18" fill="#AA151B" />
+            <SvgRect x="0" y="4.5" width="24" height="9" fill="#F1BF00" />
+          </>
+        )}
+      </SvgG>
+    </Svg>
+  );
+}
+
 // ─── Screen: Language ────────────────────────────────────────────────
 function LanguageScreen({ colors, t }) {
   const LANGS = [
@@ -1333,30 +1388,13 @@ function LanguageScreen({ colors, t }) {
     { code: 'en', label: 'English', flag: 'US' },
     { code: 'es', label: 'Español', flag: 'ES' },
   ];
-  // The app uses a LanguageContext but we avoid importing it here to keep
-  // the sheet drop-in. Read+write via AsyncStorage key the context uses.
-  const [current, setCurrent] = useState('pt-BR');
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-        const v = await AsyncStorage.getItem('language');
-        if (v) setCurrent(v);
-      } catch {}
-    })();
-  }, []);
-
-  const pick = async (code) => {
-    setCurrent(code);
-    try {
-      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-      await AsyncStorage.setItem('language', code);
-      // Let the language context reload via an app restart; show a hint
-      Alert.alert(t?.('settings.languageChanged') || 'Idioma alterado',
-        t?.('settings.languageRestart') || 'Feche e abra o app para aplicar em todos os textos.');
-    } catch {}
-  };
+  // [fix 2026-10-01] The picker used to write AsyncStorage key 'language' and
+  // tell the user to restart — but LanguageContext reads 'app_language_manual'
+  // via changeLanguage(), so NOTHING ever changed. Drive the real context: it
+  // live-updates every screen AND cross-device-syncs, no restart needed.
+  const { language, changeLanguage } = useLanguage();
+  const current = language || 'pt-BR';
+  const pick = (code) => { try { changeLanguage(code); } catch {} };
 
   return (
     <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
@@ -1368,7 +1406,7 @@ function LanguageScreen({ colors, t }) {
             activeOpacity={0.6}
             style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 14 }}
           >
-            <Text style={{ fontSize: 20, marginRight: 14 }}>{l.flag === 'BR' ? '🇧🇷' : l.flag === 'US' ? '🇺🇸' : '🇪🇸'}</Text>
+            <FlagGlyph flag={l.flag} />
             <Text style={{ flex: 1, fontSize: 15, color: colors?.text, fontWeight: current === l.code ? '700' : '500' }}>
               {l.label}
             </Text>
@@ -2307,7 +2345,7 @@ function ExportDataScreen({ colors, t }) {
                   <Icon size={18} color={ACCENT} />
                 </View>
                 <Text style={{ fontSize: 14, color: colors?.text, flex: 1 }}>{it.label}</Text>
-                <Text style={{ fontSize: 14, color: '#10B981', fontWeight: '600' }}>✓</Text>
+                <IconCheckCircle size={16} color="#16a34a" />
               </View>
             );
           })}

@@ -148,6 +148,7 @@ function buildMapHtml({ center, zoom, isDark, initialPins, initialMe }) {
   .pin.stale .ago{background:rgba(239,68,68,0.92);color:#fff}
   /* MapLibre centers this marker (anchor:'center'); no absolute transform. */
   .me{pointer-events:none}
+  .me .me-av{width:42px;height:42px;border-radius:50%;object-fit:cover;display:block;border:3px solid #3B82F6;box-shadow:0 2px 10px rgba(0,0,0,0.45),0 0 0 2px #fff;background:#111111}
   .me .dot{width:18px;height:18px;border-radius:50%;background:#3B82F6;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);position:relative}
   /* WhatsApp/Google-style breathing pulse around the blue dot. The outer
      ring expands+fades to telegraph "you are here, GPS live". */
@@ -374,7 +375,14 @@ function bootMap() {
     } else {
       var el = document.createElement('div');
       el.className = 'me';
-      el.innerHTML = '<div class="dot"></div>';
+      // [beauty 2026-10-01] Show my avatar on the "you are here" marker when
+      // available (Snapchat-style), falling back to the classic blue dot.
+      if (me.avatar_url) {
+        el.className = 'me me-has-av';
+        el.innerHTML = '<img class="me-av" src="' + me.avatar_url + '" onerror="this.style.display=\\'none\\';this.nextElementSibling&&(this.nextElementSibling.style.display=\\'block\\')"/><div class="dot" style="display:none"></div>';
+      } else {
+        el.innerHTML = '<div class="dot"></div>';
+      }
       __meMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
         .setLngLat([me.lng, me.lat])
         .addTo(__map);
@@ -385,6 +393,23 @@ function bootMap() {
     try { __map.panTo([lng, lat]); } catch (e) {}
   };
 
+  // [beauty 2026-10-01] Zoom to fit ALL friends (+ me) in view. Before, the map
+  // only centered on me/the first friend, so someone with scattered friends
+  // just saw their own dot — "incompleto". Reads live marker positions so the
+  // RN "Ver todos" affordance can call it anytime too.
+  window.__fitAll = function(animate) {
+    try {
+      var pts = [];
+      Object.keys(__overlays).forEach(function(em){ try { var ll = __overlays[em].getLngLat(); if (ll) pts.push([ll.lng, ll.lat]); } catch(_){} });
+      if (__meMarker) { try { var mll = __meMarker.getLngLat(); if (mll) pts.push([mll.lng, mll.lat]); } catch(_){} }
+      if (pts.length < 1) return;
+      if (pts.length === 1) { __map.easeTo({ center: pts[0], zoom: 15, duration: animate ? 500 : 0 }); return; }
+      var b = new maplibregl.LngLatBounds(pts[0], pts[0]);
+      pts.forEach(function(p){ b.extend(p); });
+      __map.fitBounds(b, { padding: 70, maxZoom: 15, duration: animate ? 600 : 0 });
+    } catch (e) {}
+  };
+
   // Surface "tiles drawn" so the host can dismiss its loading spinner + flush
   // any pins that landed before the map was ready. 'load' fires once the style
   // + first tiles are in; we also guard with a one-shot flag.
@@ -393,6 +418,8 @@ function bootMap() {
     __ready = true;
     window.__renderPins(INITIAL_PINS);
     if (INITIAL_ME) window.__renderMe(INITIAL_ME);
+    // Fit all friends + me into view on open (no animation on first paint).
+    try { window.__fitAll(false); } catch(_){}
     rnPost({ type: 'map_ready' });
   });
 }
@@ -991,6 +1018,13 @@ export default function SnapMapScreen() {
           is_stale: isStale,
           ago_label: ageMs !== null ? ago(s.updated_at) : '',
           avatar_url: s.email ? getAvatarUrlForEmail(s.email) : null,
+          // [beauty 2026-10-01] heading/speed/accuracy are already returned by
+          // the backend (chat_friends_map_shares) but were being discarded here.
+          // Forward them so the map can draw a direction cone (walking/driving
+          // that way, Snapchat-style) + a precision halo (Find-My-style).
+          heading: Number.isFinite(Number(s.heading)) ? Number(s.heading) : null,
+          speed: Number.isFinite(Number(s.speed)) ? Number(s.speed) : null,
+          accuracy: Number.isFinite(Number(s.accuracy)) ? Number(s.accuracy) : null,
         };
       })
   ), [filteredShares, nowTick]);
@@ -1065,8 +1099,10 @@ export default function SnapMapScreen() {
   }, [user]);
 
   const mePayload = useMemo(() => (
-    myLocation ? { lat: myLocation.lat, lng: myLocation.lng } : null
-  ), [myLocation]);
+    // [beauty 2026-10-01] Include my avatar so the "you are here" marker shows
+    // my photo (Snapchat-style) instead of a bare blue dot.
+    myLocation ? { lat: myLocation.lat, lng: myLocation.lng, avatar_url: user?.email ? getAvatarUrlForEmail(user.email) : null } : null
+  ), [myLocation, user?.email]);
 
   // HTML built once per mount. We avoid rebuilding on state change
   // because rebuilding the `source.html` would tear down the WebView
