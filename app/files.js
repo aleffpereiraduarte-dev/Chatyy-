@@ -661,10 +661,36 @@ class FilesErrorBoundary extends React.Component {
   }
 }
 
+// [cold-start 2026-10-01] This screen opens with a 'fade' transition and mounts
+// a heavy tree. Mounting during the fade hitched the first frame. Defer the
+// heavy mount until the transition's interaction settles (one frame later,
+// imperceptible), painting a solid themed placeholder meanwhile so the fade
+// runs clean. Mirrors ChatCallsTab's post-interaction render. Native-only —
+// web mounts immediately (no native stack transition to protect).
+function DeferHeavyMount({ children }) {
+  const { colors } = useTheme();
+  const [ready, setReady] = useState(Platform.OS === 'web');
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    let task = null; let timer = null;
+    try {
+      const { InteractionManager } = require('react-native');
+      task = InteractionManager.runAfterInteractions(() => setReady(true));
+    } catch {
+      timer = setTimeout(() => setReady(true), 120);
+    }
+    return () => { try { task?.cancel?.(); } catch {} if (timer) clearTimeout(timer); };
+  }, []);
+  if (!ready) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
+  return children;
+}
+
 export default function FilesScreenWrapper() {
   return (
     <FilesErrorBoundary>
-      <FilesScreenInner />
+      <DeferHeavyMount>
+        <FilesScreenInner />
+      </DeferHeavyMount>
     </FilesErrorBoundary>
   );
 }

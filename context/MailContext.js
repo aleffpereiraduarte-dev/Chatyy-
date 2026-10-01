@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Platform, LayoutAnimation, UIManager, AppState } from 'react-native';
+import { usePathname } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as api from '../services/api';
 let mailWs = null;
@@ -182,6 +183,41 @@ const POLL_DISCONNECTED = 10000;
 
 export function MailProvider({ children }) {
   const { user } = useAuth();
+
+  // ─── Email-activity gate (chat-first app) ────────────────────────────────
+  // The app is chat-first and lands on /chat. A user parked on /chat used to
+  // pay the full email background cost (silentRefresh every 30s + loadFolders
+  // every 120s) for a mailbox they never opened — wasted network/CPU/battery
+  // that also stole fluidity from chat. We gate the TIME-BASED email poll (the
+  // interval effect further down) so it only runs once the user shows intent to
+  // use email: either they're on an email screen (inbox/read/compose) right
+  // now, or they've opened one at least once this session (after which email
+  // behaves exactly as before — real-time poll — for the rest of the session).
+  //
+  // What stays ALWAYS on, so email never regresses:
+  //   • the WS `new_email` handlers + the `mail_{email}` channel subscription —
+  //     event-driven and cheap, so a real-time push still prepends the email
+  //     and refreshes folder counts (the unread badge) even while the poll is
+  //     paused on /chat;
+  //   • the WS zombie watchdog — it guards the shared realtime socket (chat
+  //     uses the same singleton), so gating it would risk breaking chat.
+  const pathname = usePathname();
+  const onEmailScreen = useMemo(() => {
+    const p = pathname || '';
+    return p === '/inbox' || p.startsWith('/inbox/')
+        || p === '/read' || p.startsWith('/read/')
+        || p === '/compose' || p.startsWith('/compose/');
+  }, [pathname]);
+  // Latches true on the first email-screen visit; once set, email stays live
+  // for the session so briefly navigating away (e.g. tapping a link) doesn't
+  // thrash the poll on/off.
+  const [emailEverActive, setEmailEverActive] = useState(false);
+  useEffect(() => {
+    if (onEmailScreen && !emailEverActive) setEmailEverActive(true);
+  }, [onEmailScreen, emailEverActive]);
+  const emailPollingEnabled = onEmailScreen || emailEverActive;
+  const emailPollingWasEnabledRef = useRef(false);
+
   // Use the native SQLite cache as the initial state so the inbox is rendered
   // with real emails on the very first frame (no empty list flash).
   const [emails, setEmails] = useState(() => _nativeReadEmailsSync('INBOX') || []);
@@ -1395,53 +1431,69 @@ export function MailProvider({ children }) {
     };
   }, [user?.email, silentRefresh, loadFolders]);
 
-  // Pauses when tab is hidden to save resources
-  // Always poll — even with empty inbox (new accounts need to detect first email)
+  // Adaptive email poll — GATED by email activity (see emailPollingEnabled).
+  // Pauses when the tab/app is hidden to save resources. When the user is
+  // parked on a non-email screen (e.g. /chat) and hasn't opened email this
+  // session, this whole effect stays torn down: no silentRefresh, no loadFolders
+  // poll, no AppState/visibility listeners — the chat-only session stops paying.
   const folderRefreshRef = useRef(null);
   useEffect(() => {
-    if (user?.email) {
-      const interval = wsStatus === 'authenticated' ? POLL_CONNECTED : POLL_DISCONNECTED;
-      const start = () => {
-        clearInterval(refreshRef.current);
-        clearInterval(folderRefreshRef.current);
-        refreshRef.current = setInterval(silentRefresh, interval);
-        // Refresh folder counts less frequently (every 2 min when WS connected, 30s otherwise)
-        const folderInterval = wsStatus === 'authenticated' ? 120000 : 30000;
-        folderRefreshRef.current = setInterval(loadFolders, folderInterval);
-      };
-      const stop = () => {
-        clearInterval(refreshRef.current);
-        clearInterval(folderRefreshRef.current);
-      };
-
-      start();
-
-      if (Platform.OS === 'web' && typeof document !== 'undefined') {
-        const onVis = () => {
-          if (document.hidden) { stop(); } else { silentRefresh(); loadFolders(); start(); }
-        };
-        document.addEventListener('visibilitychange', onVis);
-        return () => { stop(); document.removeEventListener('visibilitychange', onVis); };
-      }
-
-      // Native: when app returns to foreground (push tap, switch back from
-      // another app), immediately silent-refresh the inbox. Without this, a
-      // push for a new email fires while WS is disconnected (background),
-      // the broadcast lands with delivered=0, and the email only shows up
-      // on the next poll interval. AppState listener closes that gap.
-      if (Platform.OS !== 'web') {
-        const sub = AppState.addEventListener('change', (next) => {
-          if (next === 'active') {
-            try { silentRefresh(); } catch {}
-            try { loadFolders(); } catch {}
-          }
-        });
-        return () => { stop(); try { sub.remove(); } catch {} };
-      }
-
-      return stop;
+    if (!user?.email || !emailPollingEnabled) {
+      // Paused: clear the "was enabled" latch so re-entering email does an
+      // immediate catch-up refresh below instead of waiting for the first tick.
+      emailPollingWasEnabledRef.current = false;
+      return;
     }
-  }, [silentRefresh, loadFolders, emails.length, currentFolder, wsStatus]);
+
+    // Entered (or re-entered) an email screen → refresh right now so the list
+    // and folder counts never look stale while waiting for the first interval.
+    if (!emailPollingWasEnabledRef.current) {
+      emailPollingWasEnabledRef.current = true;
+      try { silentRefresh(); } catch {}
+      try { loadFolders(); } catch {}
+    }
+
+    const interval = wsStatus === 'authenticated' ? POLL_CONNECTED : POLL_DISCONNECTED;
+    const start = () => {
+      clearInterval(refreshRef.current);
+      clearInterval(folderRefreshRef.current);
+      refreshRef.current = setInterval(silentRefresh, interval);
+      // Refresh folder counts less frequently (every 2 min when WS connected, 30s otherwise)
+      const folderInterval = wsStatus === 'authenticated' ? 120000 : 30000;
+      folderRefreshRef.current = setInterval(loadFolders, folderInterval);
+    };
+    const stop = () => {
+      clearInterval(refreshRef.current);
+      clearInterval(folderRefreshRef.current);
+    };
+
+    start();
+
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      const onVis = () => {
+        if (document.hidden) { stop(); } else { silentRefresh(); loadFolders(); start(); }
+      };
+      document.addEventListener('visibilitychange', onVis);
+      return () => { stop(); document.removeEventListener('visibilitychange', onVis); };
+    }
+
+    // Native: when app returns to foreground (push tap, switch back from
+    // another app), immediately silent-refresh the inbox. Without this, a
+    // push for a new email fires while WS is disconnected (background),
+    // the broadcast lands with delivered=0, and the email only shows up
+    // on the next poll interval. AppState listener closes that gap.
+    if (Platform.OS !== 'web') {
+      const sub = AppState.addEventListener('change', (next) => {
+        if (next === 'active') {
+          try { silentRefresh(); } catch {}
+          try { loadFolders(); } catch {}
+        }
+      });
+      return () => { stop(); try { sub.remove(); } catch {} };
+    }
+
+    return stop;
+  }, [silentRefresh, loadFolders, emails.length, currentFolder, wsStatus, user?.email, emailPollingEnabled]);
 
   // Memoize the context value so consumers don't re-render on every internal
   // state change that doesn't affect the slice they read. Previously this was

@@ -819,13 +819,27 @@ function AppInit({ onNotification, setOtaToast }) {
         const end = new Date(now.getFullYear(), now.getMonth() + 2, 0);
         const fmt = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}T00:00:00`;
 
-        // Fire all in parallel
-        Promise.all([
-          prefetch('contacts', () => apiMod.getContactsList(), 600000).catch(() => {}),
-          prefetch('calendar_events', () => apiMod.calEvents(fmt(start), fmt(end)), 600000).catch(() => {}),
-          prefetch('files_root', () => apiMod.fileList(null), 600000).catch(() => {}),
-          prefetch('notes', () => apiMod.notesList({}), 600000).catch(() => {}),
-        ]).catch(() => {});
+        // [cold-start 2026-10-01] Chat-first boot: contacts/calendar/files/notes
+        // are NOT on the chat landing screen, so prewarming them in the first
+        // seconds stole network from the chat cold start (sync/media/WS). KEEP
+        // the prewarm — those tabs still open instantly later — but pay for it
+        // LATE and at low priority: wait for the mount interaction to settle,
+        // then a further idle delay, so it rides well behind chat's first
+        // paint. Same defer idiom the boot already uses for LiveKit/Sentry/
+        // webPush. NOT removed, just rescheduled out of the chat window.
+        const prewarmAncillary = () => {
+          prefetch('contacts', () => apiMod.getContactsList(), 600000).catch(() => {});
+          prefetch('calendar_events', () => apiMod.calEvents(fmt(start), fmt(end)), 600000).catch(() => {});
+          prefetch('files_root', () => apiMod.fileList(null), 600000).catch(() => {});
+          prefetch('notes', () => apiMod.notesList({}), 600000).catch(() => {});
+        };
+        try {
+          InteractionManager.runAfterInteractions(() => {
+            setTimeout(prewarmAncillary, 6000);
+          });
+        } catch {
+          setTimeout(prewarmAncillary, 8000);
+        }
 
         // WhatsApp-invisible-sync (2026-05-18): chat messages are now
         // fetched ON OPEN (lazy), not in a 7.5s bootstrap burst. We just

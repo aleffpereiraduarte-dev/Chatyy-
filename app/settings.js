@@ -5477,4 +5477,28 @@ const s = StyleSheet.create({
   deleteConfirmBtnText: { color: '#fff', fontSize: FontSize.base, fontWeight: '700' },
 });
 
-export default function SettingsScreen() { return <ErrorBoundary><SettingsScreenInner /></ErrorBoundary>; }
+// [cold-start 2026-10-01] Settings opens as a modal with a heavy tree. Mounting
+// it during the present transition hitched the first frame. Defer the heavy
+// mount until the transition's interaction settles (one frame later,
+// imperceptible), painting a solid themed placeholder meanwhile so the
+// transition runs clean. Mirrors ChatCallsTab's post-interaction render.
+// Native-only — web mounts immediately (no native stack transition to protect).
+function DeferHeavyMount({ children }) {
+  const { colors } = useTheme();
+  const [ready, setReady] = useState(Platform.OS === 'web');
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    let task = null; let timer = null;
+    try {
+      const { InteractionManager } = require('react-native');
+      task = InteractionManager.runAfterInteractions(() => setReady(true));
+    } catch {
+      timer = setTimeout(() => setReady(true), 120);
+    }
+    return () => { try { task?.cancel?.(); } catch {} if (timer) clearTimeout(timer); };
+  }, []);
+  if (!ready) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
+  return children;
+}
+
+export default function SettingsScreen() { return <ErrorBoundary><DeferHeavyMount><SettingsScreenInner /></DeferHeavyMount></ErrorBoundary>; }
