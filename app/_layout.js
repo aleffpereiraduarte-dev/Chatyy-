@@ -1437,7 +1437,37 @@ export default function RootLayout() {
   // (pior no modo escuro). Segue o esquema do sistema (themeMode padrão é
   // 'system'); usa useColorScheme direto pq RootLayout está acima do ThemeProvider.
   const _osScheme = _useColorScheme();
-  const _navBg = _osScheme === 'dark' ? '#0d0d0d' : '#ffffff';
+  // [2026-10-01] O fundo do container de transição deve seguir o tema do APP
+  // (theme_mode em AsyncStorage: 'light'/'dark'/'system'), não só o do SO.
+  // Sem isso, quem FORÇA dark com o OS no claro (ou vice-versa) via "pisca
+  // branco" nas transições. Default = esquema do OS (correto p/ 'system', que
+  // é o padrão) e corrige após ler o storage — isso roda atrás do splash, então
+  // não há flash visível. Defensivo: qualquer erro mantém o default do OS.
+  const [_navIsDark, _setNavIsDark] = useState(_osScheme === 'dark');
+  useEffect(() => {
+    let alive = true;
+    const resolve = (m, legacy) =>
+      m === 'dark' ? true : m === 'light' ? false
+      : legacy === 'true' ? true : legacy === 'false' ? false
+      : _osScheme === 'dark';
+    (async () => {
+      try {
+        if (Platform.OS === 'web') {
+          const ls = (typeof localStorage !== 'undefined') ? localStorage : null;
+          if (alive) _setNavIsDark(resolve(ls?.getItem('theme_mode'), ls?.getItem('theme_dark')));
+        } else {
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          const [m, legacy] = await Promise.all([
+            AsyncStorage.getItem('theme_mode'),
+            AsyncStorage.getItem('theme_dark'),
+          ]);
+          if (alive) _setNavIsDark(resolve(m, legacy));
+        }
+      } catch { if (alive) _setNavIsDark(_osScheme === 'dark'); }
+    })();
+    return () => { alive = false; };
+  }, [_osScheme]);
+  const _navBg = _navIsDark ? '#0d0d0d' : '#ffffff';
   // Cache-ready gate: services/mmkv.js hydrates the in-memory cache from
   // AsyncStorage asynchronously at module load. Before that finishes,
   // SmartCache.getCachedMessagesSync / getCachedConversationsSync return
