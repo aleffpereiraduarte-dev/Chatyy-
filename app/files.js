@@ -688,9 +688,7 @@ function DeferHeavyMount({ children }) {
 export default function FilesScreenWrapper() {
   return (
     <FilesErrorBoundary>
-      <DeferHeavyMount>
-        <FilesScreenInner />
-      </DeferHeavyMount>
+      <FilesScreenInner />
     </FilesErrorBoundary>
   );
 }

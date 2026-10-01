@@ -1998,9 +1998,7 @@ function DeferHeavyMount({ children }) {
 export default function CalendarScreenWrapper() {
   return (
     <CalendarErrorBoundary>
-      <DeferHeavyMount>
-        <CalendarScreenInner />
-      </DeferHeavyMount>
+      <CalendarScreenInner />
     </CalendarErrorBoundary>
   );
 }

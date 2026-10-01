@@ -241,11 +241,7 @@ function DeferHeavyMount({ children }) {
 }
 
 export default function PhotosScreen() {
-  return (
-    <DeferHeavyMount>
-      <PhotosScreenInner />
-    </DeferHeavyMount>
-  );
+  return <PhotosScreenInner />;
 }
 
 function PhotosScreenInner() {

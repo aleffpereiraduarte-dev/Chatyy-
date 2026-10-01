@@ -5501,4 +5501,4 @@ function DeferHeavyMount({ children }) {
   return children;
 }
 
-export default function SettingsScreen() { return <ErrorBoundary><DeferHeavyMount><SettingsScreenInner /></DeferHeavyMount></ErrorBoundary>; }
+export default function SettingsScreen() { return <ErrorBoundary><SettingsScreenInner /></ErrorBoundary>; }
