@@ -1421,7 +1421,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
       items: [
         { key: 'photos',   label: t('sidebar.photos') || 'Fotos',        ic: I(IconImage, '#111111'),    route: '/photos' },
         { key: 'live',     label: t('apps.goLive') || 'Ao vivo',         ic: I(IconVideo, '#ef4444'),    route: '/live-broadcast' },
-        { key: 'one',      label: 'One',                                 ic: I(IconSparkles, '#111111'), route: '/one' },
+        { key: 'one',      label: 'Bia',                                 ic: I(IconSparkles, '#111111'), route: '/one' },
       ],
     },
     {
@@ -1580,7 +1580,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                   transform: [{ scale: pressed ? 0.985 : 1 }],
                 })}
                 accessibilityRole="button"
-                accessibilityLabel="Chatyy One"
+                accessibilityLabel="Bia"
               >
                 {/* Bubble + eyes avatar */}
                 <View style={{ width: 46, height: 46, borderRadius: 23, backgroundColor: isDark ? '#111b21' : '#ffffff', alignItems: 'center', justifyContent: 'center' }}>
@@ -1591,7 +1591,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                 </View>
                 <View style={{ flex: 1 }}>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    <Text style={{ fontSize: 17, fontWeight: '700', color: isDark ? '#111b21' : '#ffffff', letterSpacing: -0.2 }}>Chatyy One</Text>
+                    <Text style={{ fontSize: 17, fontWeight: '700', color: isDark ? '#111b21' : '#ffffff', letterSpacing: -0.2 }}>Bia</Text>
                     <View style={{ backgroundColor: isDark ? 'rgba(17,27,33,0.12)' : 'rgba(255,255,255,0.20)', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 }}>
                       <Text style={{ fontSize: 9, fontWeight: '800', letterSpacing: 0.5, color: isDark ? '#111b21' : '#ffffff' }}>AI</Text>
                     </View>

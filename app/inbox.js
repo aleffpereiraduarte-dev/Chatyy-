@@ -74,7 +74,7 @@ const SIDE_PANEL_ROUTES = {
   '/meetings': { key: 'meetings', icon: IconFilm, label: 'sidebar.meetings', color: '#111111' },
   '/documentos': { key: 'documentos', icon: IconGlobe, label: 'sidebar.documents', color: '#111111' },
   '/contacts': { key: 'contacts', icon: IconUser, label: 'sidebar.contacts', color: '#111111' },
-  '/one': { key: 'one', icon: IconZap, label: 'One', color: '#111111' },
+  '/one': { key: 'one', icon: IconZap, label: 'Bia', color: '#111111' },
   '/photos': { key: 'photos', icon: IconImage, label: 'photos.title', color: '#111111' },
   '/backup': { key: 'backup', icon: IconArchive, label: 'Backup', color: '#111111' },
   '/notes': { key: 'notes', icon: IconStickyNote, label: 'sidebar.notes', color: '#111111' },

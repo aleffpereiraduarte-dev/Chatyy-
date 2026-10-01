@@ -27,8 +27,16 @@
 
 import React, { useEffect, useRef } from 'react';
 import { View, Image, Animated } from 'react-native';
+import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Circle as SvgCircle } from 'react-native-svg';
 
 const ICON = require('../assets/icon.png');
+
+// Per-instance gradient ids. react-native-svg resolves gradient `url(#id)`
+// references by id within the document, so two avatars mounted at once
+// (header size 18 + empty-state size 96 + streaming row) must not share an
+// id or web renders the wrong fill. A module counter gives each mounted
+// instance a stable, unique suffix (lazy-assigned once via a ref).
+let _avatarIdSeq = 0;
 
 // Eye positions are measured from the actual artwork in assets/icon.png
 // (1254×1254 source). Normalised to fractions of `size` so the overlay
@@ -44,12 +52,16 @@ const EYE_W_FRAC = 0.13;
 const EYE_H_FRAC = 0.17;
 const EYE_OFFSET_X_FRAC = 0.13; // distance of each eye from horizontal center
 const EYE_TOP_FRAC = 0.39; // top of eye relative to avatar height
-// Purple matching the bubble exactly (sampled from the icon centre).
-// When the eyelid is at scaleY=1 it fully covers the white pupils, giving
-// a clean "closed eyes" look. When scaleY=0.05 the eyes are essentially
-// open (we keep a 0.05 floor so the layer never disappears entirely —
-// Android occasionally relayouts a 0-height view with a flash).
-const EYELID_COLOR = '#111111';
+// Eyelid colour. It fully covers the white pupils at scaleY=1 for a clean
+// "closed eyes" look. The bubble now carries a soft charcoal→black gradient
+// (premium depth, still the founder's black&white mascot — no colour added),
+// so the lid is tuned to the gradient's value at eye height (~47% down) and
+// the blink (80ms close / 110ms open) is far too fast to read any seam.
+const EYELID_COLOR = '#191A1F';
+// Bubble gradient — subtle top-lit charcoal falling to near-black. Reads as a
+// soft, modern mascot rather than a flat black disc, while staying monochrome.
+const BUBBLE_TOP = '#2B2B31';
+const BUBBLE_BOTTOM = '#0A0A0C';
 
 // Random delay between 4s and 8s. Phase-offsetting blinks so two visible
 // avatars don't blink in lockstep.
@@ -63,6 +75,11 @@ export default function ChatyyOneAvatar({ size = 48, style, blink = true }) {
   // white pupils show through with a transform that compiles to identity.
   const lidScale = useRef(new Animated.Value(0)).current;
   const isMounted = useRef(true);
+  // Lazy, stable per-instance id so concurrent avatars never share a gradient.
+  const gradIdRef = useRef(null);
+  if (gradIdRef.current === null) gradIdRef.current = `biaAv${_avatarIdSeq++}`;
+  const gradId = gradIdRef.current;
+  const sheenId = `${gradId}s`;
 
   useEffect(() => {
     isMounted.current = true;
@@ -114,16 +131,36 @@ export default function ChatyyOneAvatar({ size = 48, style, blink = true }) {
           height: size,
           borderRadius: size / 2,
           overflow: 'hidden',
-          backgroundColor: '#111111',
+          backgroundColor: BUBBLE_BOTTOM,
         },
         style,
       ]}
       accessibilityLabel="Bia"
       accessibilityRole="image"
     >
-      {/* Monochrome One (founder 2026-09-29): black bubble + two white eyes,
-          replacing the purple assets/icon.png so One reads as pure Uber
-          black&white. The blink eyelids below cover these pupils on scaleY=1. */}
+      {/* Bubble fill — soft charcoal→black gradient + a faint top sheen for a
+          premium, lightly-lit mascot. Still monochrome (founder 2026-09-29:
+          pure Uber black&white), just with depth instead of a flat disc. */}
+      <Svg
+        width={size}
+        height={size}
+        style={{ position: 'absolute', top: 0, left: 0 }}
+        pointerEvents="none"
+      >
+        <Defs>
+          <SvgLinearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={BUBBLE_TOP} />
+            <Stop offset="1" stopColor={BUBBLE_BOTTOM} />
+          </SvgLinearGradient>
+          <SvgLinearGradient id={sheenId} x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor="#FFFFFF" stopOpacity="0.16" />
+            <Stop offset="0.55" stopColor="#FFFFFF" stopOpacity="0" />
+          </SvgLinearGradient>
+        </Defs>
+        <SvgCircle cx={size / 2} cy={size / 2} r={size / 2} fill={`url(#${gradId})`} />
+        <SvgCircle cx={size / 2} cy={size / 2} r={size / 2} fill={`url(#${sheenId})`} />
+      </Svg>
+      {/* Two white eyes. The blink eyelids below cover these pupils on scaleY=1. */}
       <View
         pointerEvents="none"
         style={{ position: 'absolute', top: eyeTop, left: size / 2 - eyeOffsetX - eyeW / 2, width: eyeW, height: eyeH, borderRadius: eyeRadius, backgroundColor: '#FFFFFF' }}

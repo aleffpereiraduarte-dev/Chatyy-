@@ -15,7 +15,7 @@ import {
   IconX, IconBell, IconMenu, IconMic, IconMicOff, IconVolume2, IconVolumeX,
   IconPhone, IconStop, IconFolder, IconUsers, IconCamera, IconEdit,
   IconChevronUp, IconChevronDown, IconTrash, IconCopy, IconRepeat,
-  IconThumbsDown, IconCheck,
+  IconThumbsDown, IconCheck, IconChevronRight,
 } from '../components/Icons';
 // SVG primitives for the send-button gradient + empty-state sparkle illustration.
 // Pure-SVG keeps us off expo-linear-gradient (not a dep) and renders identically
@@ -1472,28 +1472,36 @@ function SparkleIllustration({ size = 96, isDark }) {
 // outline 1px, transparent fill, press scale 0.96 with spring. Built as a
 // small inline component so each chip owns its own animated value (avoids
 // a shared scale flickering between presses).
-function PromptChip({ label, sub, onPress, isDark }) {
+function PromptChip({ label, sub, onPress, isDark, icon: Icon }) {
   const scale = useRef(new Animated.Value(1)).current;
-  const handleIn = () => Animated.spring(scale, { toValue: 0.96, tension: 320, friction: 14, useNativeDriver: true }).start();
+  const handleIn = () => Animated.spring(scale, { toValue: 0.975, tension: 320, friction: 14, useNativeDriver: true }).start();
   const handleOut = () => Animated.spring(scale, { toValue: 1, tension: 280, friction: 12, useNativeDriver: true }).start();
+  const fg = isDark ? '#ECECEC' : '#0D0D0D';
+  const muted = isDark ? '#9CA3AF' : '#6B7280';
   return (
     <TouchableOpacity
       onPress={onPress}
       onPressIn={handleIn}
       onPressOut={handleOut}
-      activeOpacity={0.85}
+      activeOpacity={0.88}
       accessibilityRole="button"
       accessibilityLabel={label}
     >
-      <Animated.View style={[st.promptChip, {
-        borderColor: isDark ? 'rgba(17, 17, 17,0.55)' : 'rgba(17, 17, 17,0.45)',
-        backgroundColor: isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.06)',
+      <Animated.View style={[st.promptCard, {
+        borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.07)',
+        backgroundColor: isDark ? 'rgba(255,255,255,0.045)' : '#FAFAFB',
         transform: [{ scale }],
       }]}>
-        <Text style={[st.promptChipLabel, { color: isDark ? '#ECECEC' : '#0D0D0D' }]} numberOfLines={1}>{label}</Text>
-        {sub ? (
-          <Text style={[st.promptChipSub, { color: isDark ? '#9CA3AF' : '#6B7280' }]} numberOfLines={1}>{sub}</Text>
-        ) : null}
+        <View style={[st.promptCardIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.09)' : 'rgba(17,17,17,0.055)' }]}>
+          {Icon ? <Icon size={18} color={fg} /> : null}
+        </View>
+        <View style={st.promptCardText}>
+          <Text style={[st.promptCardLabel, { color: fg }]} numberOfLines={1}>{label}</Text>
+          {sub ? (
+            <Text style={[st.promptCardSub, { color: muted }]} numberOfLines={1}>{sub}</Text>
+          ) : null}
+        </View>
+        <IconChevronRight size={16} color={isDark ? '#6B7280' : '#B8BBC2'} />
       </Animated.View>
     </TouchableOpacity>
   );
@@ -3465,9 +3473,9 @@ export default function OneScreen() {
     // because the typical Chatyy user isn't here to write code; Translate /
     // Summarize / Brainstorm cover 95% of real entry intents.
     const sugCards = [
-      { key: 'translate', label: t('one.promptTranslate') || 'Translate', sub: t('one.promptTranslateSub') || 'a phrase or paragraph', msg: t('one.promptTranslateMsg') || 'Translate this to English: ' },
-      { key: 'summarize', label: t('one.promptSummarize') || 'Summarize', sub: t('one.promptSummarizeSub') || 'an article or thread', msg: t('one.promptSummarizeMsg') || 'Summarize my unread emails today.' },
-      { key: 'brainstorm', label: t('one.promptBrainstorm') || 'Brainstorm', sub: t('one.promptBrainstormSub') || 'ideas with me', msg: t('one.promptBrainstormMsg') || 'Brainstorm 5 ideas for ' },
+      { key: 'translate', label: t('one.promptTranslate') || 'Translate', sub: t('one.promptTranslateSub') || 'a phrase or paragraph', msg: t('one.promptTranslateMsg') || 'Translate this to English: ', icon: IconMessageSquare },
+      { key: 'summarize', label: t('one.promptSummarize') || 'Summarize', sub: t('one.promptSummarizeSub') || 'an article or thread', msg: t('one.promptSummarizeMsg') || 'Summarize my unread emails today.', icon: IconMail },
+      { key: 'brainstorm', label: t('one.promptBrainstorm') || 'Brainstorm', sub: t('one.promptBrainstormSub') || 'ideas with me', msg: t('one.promptBrainstormMsg') || 'Brainstorm 5 ideas for ', icon: IconSparkles },
     ];
 
     return (
@@ -3478,16 +3486,19 @@ export default function OneScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View style={st.emptyCenter}>
-          {/* WAVE 46 (2026-05-21): real app icon avatar w/ blinking eyes
-              replaces the abstract sparkle composition. Reads more like a
-              mascot greeting the user on an empty canvas. */}
-          <View style={{ marginBottom: 18 }}>
-            <ChatyyOneAvatar size={96} />
+          {/* Mascot — Bia's blinking-eye bubble, now on a soft radial halo so
+              she reads as the warm centre of an otherwise calm, empty canvas
+              (ChatGPT/Claude/Gemini-style welcome). */}
+          <View style={st.emptyAvatarWrap}>
+            <View
+              pointerEvents="none"
+              style={[st.emptyAvatarHalo, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(17,17,17,0.045)' }]}
+            />
+            <ChatyyOneAvatar size={84} />
           </View>
-          {/* Title — "Como posso ajudar?" (i18n). Personalized greeting still
-              shown on top as a small eyebrow when we know the first name. */}
+          {/* Personalized greeting eyebrow above the big question. */}
           {firstName ? (
-            <Text style={[st.emptyGreeting, { color: isDark ? '#9CA3AF' : '#6B7280', fontSize: 14, fontWeight: '500', marginBottom: 6 }]}>
+            <Text style={[st.emptyEyebrow, { color: isDark ? '#9CA3AF' : '#6B7280' }]}>
               {`${getGreeting(t)}, ${firstName}`}
             </Text>
           ) : null}
@@ -3496,22 +3507,16 @@ export default function OneScreen() {
           </Text>
         </View>
 
-        {/* Horizontal scroll prompt chips — brand outline + press scale 0.96.
-            Replaces the old 2×2 grid; a scrollable rail surfaces more prompts
-            without crowding the empty canvas and reads more like a modern
-            ChatGPT/Claude entry. We keep the same sugCards source so adding
-            new prompts is one-line. */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 4, flexGrow: 1, justifyContent: 'center' }}
-          keyboardShouldPersistTaps="handled"
-        >
+        {/* Quick-start prompts — a calm vertical stack of premium cards
+            (icon + title + subtitle + chevron), press-scales for tactile
+            feedback. Same sugCards source so adding a prompt stays one line. */}
+        <View style={[st.promptList, isWide && { maxWidth: 520, alignSelf: 'center', width: '100%' }]}>
           {sugCards.map((item) => (
             <PromptChip
               key={item.key}
               label={item.label}
               sub={item.sub}
+              icon={item.icon}
               isDark={isDark}
               onPress={() => {
                 if (item.msg.endsWith(' ') || item.msg.endsWith(': ')) {
@@ -3522,7 +3527,7 @@ export default function OneScreen() {
               }}
             />
           ))}
-        </ScrollView>
+        </View>
       </ScrollView>
     );
   };
@@ -3981,6 +3986,27 @@ const st = StyleSheet.create({
   promptChipLabel: { fontSize: 13.5, fontWeight: '600', letterSpacing: -0.1 },
   promptChipSub: { fontSize: 11.5, fontWeight: '400', marginTop: 2 },
 
+  // Empty-state quick-start prompt cards — vertical stack, icon + title +
+  // subtitle + trailing chevron. Calm, roomy, premium (ChatGPT/Claude feel).
+  promptList: { paddingHorizontal: 20, gap: 10, width: '100%' },
+  promptCard: {
+    flexDirection: 'row', alignItems: 'center', gap: 13,
+    paddingHorizontal: 14, paddingVertical: 14,
+    borderRadius: 18, borderWidth: StyleSheet.hairlineWidth,
+    ...Platform.select({
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 8 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 2px 10px rgba(0,0,0,0.05)', transition: 'transform 140ms ease' },
+    }),
+  },
+  promptCardIcon: {
+    width: 40, height: 40, borderRadius: 13,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  promptCardText: { flex: 1 },
+  promptCardLabel: { fontSize: 15, fontWeight: '600', letterSpacing: -0.2 },
+  promptCardSub: { fontSize: 12.5, fontWeight: '400', marginTop: 2 },
+
   // ─── Bottom sheets (model picker + context menu) ───
   sheetDim: {
     flex: 1,
@@ -4178,16 +4204,30 @@ const st = StyleSheet.create({
   // Empty state — minimal ChatGPT-style
   // [beauty2 2026-05-31] more generous breathing room on the welcome canvas so
   // the mascot + greeting feel centered and unhurried.
-  emptyOuter: { flexGrow: 1, justifyContent: 'center', paddingVertical: 28 },
-  emptyCenter: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, marginBottom: 28 },
+  emptyOuter: { flexGrow: 1, justifyContent: 'center', paddingVertical: 32 },
+  emptyCenter: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, marginBottom: 34 },
   emptyLogoCircle: {
     width: 56, height: 56, borderRadius: 28,
     alignItems: 'center', justifyContent: 'center',
     marginBottom: 14,
   },
+  // Mascot + soft halo behind it.
+  emptyAvatarWrap: {
+    width: 120, height: 120, borderRadius: 60,
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 20,
+  },
+  emptyAvatarHalo: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    borderRadius: 60,
+  },
+  emptyEyebrow: {
+    fontSize: 14.5, fontWeight: '500', textAlign: 'center',
+    marginBottom: 7, letterSpacing: 0.1,
+  },
   emptyGreeting: {
-    fontSize: 23, fontWeight: '700', textAlign: 'center', marginBottom: 5,
-    letterSpacing: -0.4,
+    fontSize: 27, fontWeight: '700', textAlign: 'center', marginBottom: 5,
+    letterSpacing: -0.6,
   },
   emptySubtitle: {
     fontSize: 14.5, fontWeight: '400', textAlign: 'center', marginBottom: 8,
