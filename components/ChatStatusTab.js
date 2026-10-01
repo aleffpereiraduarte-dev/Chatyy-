@@ -1703,7 +1703,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
     // Slight delay so the tab finishes mounting/switching before the modal
     // appears. openCreator is declared below; the setTimeout closure resolves
     // the binding when it fires (after render) to avoid a TDZ in the deps array.
-    const _to = setTimeout(() => { try { openCreator('text'); } catch {} }, 250);
+    const _to = setTimeout(() => { try { openCreator(Platform.OS !== 'web' ? 'camera' : 'text'); } catch {} }, 250);
     return () => clearTimeout(_to);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoNewStatus]);
