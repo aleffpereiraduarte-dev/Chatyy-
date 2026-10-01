@@ -4620,7 +4620,7 @@ function CallScreenInner() {
           <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { zIndex: 6 }]}>
             <View
               pointerEvents="box-none"
-              style={[styles.groupGridContent, { paddingTop: topPad, paddingBottom: botPad, paddingHorizontal: gap }]}
+              style={[styles.groupGridContent, { paddingTop: topPad, paddingBottom: botPad, paddingHorizontal: gap, gap: gap }]}
             >
               {tiles.map((tile) => {
                 const pinned = pinnedPeerKey === tile.key;
@@ -4634,7 +4634,7 @@ function CallScreenInner() {
                     onPress={() => setPinnedPeerKey(prev => (prev === tile.key ? null : tile.key))}
                     style={[
                       styles.groupTile,
-                      { width: w, height: h, margin: gap / 2 },
+                      { width: w, height: h },
                       tile.isSpeaking && styles.groupTileSpeaking,
                       pinned && styles.groupTilePinned,
                     ]}
@@ -4995,7 +4995,7 @@ function CallScreenInner() {
               turns OFF their camera the remote hard-cuts to the avatar with no
               explanation — this small label says why. Suppressed while the peer
               is on hold (the hold overlay covers that case). */}
-          {isVideoCall && peerConnected && !peerVideoEnabled && !peerOnHold && !ended && (
+          {!isGroupCall && isVideoCall && peerConnected && !peerVideoEnabled && !peerOnHold && !ended && (
             <View style={styles.peerMutedBanner} pointerEvents="none">
               <IconVideoOff size={15} color="#fff" />
               <Text style={styles.peerMutedBannerText}>{t('call.peerCameraOff') || 'Câmera desligada'}</Text>
@@ -5005,15 +5005,18 @@ function CallScreenInner() {
           {/* [polish] Video loading placeholder. Peer's camera is ON but the
               remote track hasn't arrived yet (1-3s). Show "starting video"
               instead of a frozen avatar. */}
-          {isVideoCall && peerConnected && peerVideoEnabled && !remoteVideoAvailable && !peerOnHold && !ended && (
+          {!isGroupCall && isVideoCall && peerConnected && peerVideoEnabled && !remoteVideoAvailable && !peerOnHold && !ended && (
             <View style={styles.peerMutedBanner} pointerEvents="none">
               <ActivityIndicator size="small" color="#fff" />
               <Text style={styles.peerMutedBannerText}>{t('call.video.connecting') || 'Iniciando vídeo…'}</Text>
             </View>
           )}
 
-          {/* Center avatar (audio-only / pre-connect) */}
-          {!showRemoteVideo && (
+          {/* Center avatar (audio-only / pre-connect). In a GROUP call, hide it
+              once the tile grid is up (isGroupCall && peerConnected) so it never
+              overlaps the grid; still show it while the group call is ringing
+              (pre-connect) so the "calling…" UI isn't blank. */}
+          {!showRemoteVideo && !(isGroupCall && peerConnected) && (
             <View style={[styles.centerArea, { paddingTop: insets.top, paddingBottom: insets.bottom + 180 }]}>
               {!peerConnected && (
                 <>
