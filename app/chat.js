@@ -1600,7 +1600,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                     {t('one.subtitle') || 'Sua IA pessoal'}
                   </Text>
                 </View>
-                <Text style={{ fontSize: 22, fontWeight: '300', color: isDark ? 'rgba(17,27,33,0.5)' : 'rgba(255,255,255,0.6)' }}>\u203a</Text>
+                <Text style={{ fontSize: 22, fontWeight: '300', color: isDark ? 'rgba(17,27,33,0.5)' : 'rgba(255,255,255,0.6)' }}>{'\u203a'}</Text>
               </Pressable>
             )}
             {/* Recently opened \u2014 only when not searching, only when MRU

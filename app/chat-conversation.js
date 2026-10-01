@@ -1286,11 +1286,17 @@ function LiveLocationPulse({ size = 14, color = '#22c55e' }) {
 // fallback. Dots indicator below tracks the active page via onScroll.
 function AlbumCarousel({ items, slideW, slideH, renderCell, resolveMediaUri, isDark }) {
   const [active, setActive] = useState(0);
+  // [MONO 2026-09-30] Defensive clamp. If a non-finite/out-of-range slide
+  // size ever arrives (e.g. Dimensions returned NaN during a cold render),
+  // fall back to a small bounded square so the carousel can NEVER expand to
+  // fill the screen — the root of the "retângulo lilás gigante" report.
+  const _sw = (Number.isFinite(slideW) && slideW > 0) ? Math.min(slideW, 280) : 240;
+  const _sh = (Number.isFinite(slideH) && slideH > 0) ? Math.min(slideH, 320) : 240;
   const onScroll = useCallback((e) => {
     const x = e?.nativeEvent?.contentOffset?.x || 0;
-    const idx = Math.round(x / Math.max(1, slideW));
+    const idx = Math.round(x / Math.max(1, _sw));
     if (idx !== active && idx >= 0 && idx < items.length) setActive(idx);
-  }, [active, items.length, slideW]);
+  }, [active, items.length, _sw]);
   return (
     <View>
       <ScrollView
@@ -1299,11 +1305,11 @@ function AlbumCarousel({ items, slideW, slideH, renderCell, resolveMediaUri, isD
         showsHorizontalScrollIndicator={false}
         onScroll={onScroll}
         scrollEventThrottle={32}
-        style={{ width: slideW, height: slideH }}
+        style={{ width: _sw, height: _sh }}
       >
         {items.map((m, idx) => (
-          <View key={m?.id || idx} style={{ width: slideW, height: slideH }}>
-            {renderCell(m, slideW, slideH, idx)}
+          <View key={m?.id || idx} style={{ width: _sw, height: _sh }}>
+            {renderCell(m, _sw, _sh, idx)}
           </View>
         ))}
       </ScrollView>
@@ -19708,7 +19714,14 @@ function ChatConversationInner() {
       const isOwn = item.sender_email === currentEmail;
       // Grid geometry: small → full-bleed row, 2 → side-by-side, 3 → big-left + 2-right stack, 4+ → 2×2 with "+N" overlay on 4th if n > 4.
       const GAP = 4;
-      const maxW = Math.min(280, Dimensions.get('window').width - 100);
+      // [MONO 2026-09-30] Robust geometry. `Dimensions.get('window').width`
+      // can be undefined/NaN during a cold/background render → maxW became
+      // NaN → slideW/slideH NaN → the carousel ScrollView + cells lost their
+      // bounds and the (formerly lavender) bubble bg filled a full-screen box
+      // with no image (the "retângulo lilás gigante" the founder reported).
+      // Clamp to a finite, sane range so the album is ALWAYS a small bubble.
+      const _winW = Dimensions.get('window').width;
+      const maxW = Math.max(140, Math.min(280, (Number.isFinite(_winW) ? _winW : 390) - 100));
       const maxH = 320;
       const cellStyle = (w, h) => ({
         width: w, height: h, backgroundColor: '#000', overflow: 'hidden',
@@ -19880,11 +19893,23 @@ function ChatConversationInner() {
             maxWidth: maxW,
             borderRadius: 14,
             overflow: 'hidden',
+            // [MONO 2026-09-30] Own-bubble bg was #E8DEF8 (light lavender/
+            // violet) — the hue the founder saw when the album photos didn't
+            // paint over it. Neutralized to the same gray as the single-photo
+            // bubble skeleton (#F0F0F2 light / #1E1E22 dark). NO purple tints.
             backgroundColor: isOwn
-              ? (isDark ? '#161618' : '#E8DEF8')
+              ? (isDark ? '#1E1E22' : '#F0F0F2')
               : (isDark ? '#1a2330' : '#ffffff'),
           }}>
-            {grid}
+            {/* [MONO 2026-09-30] Hard height cap on the MEDIA region so the
+                album can never grow full-screen, even if the carousel/grid
+                geometry ever computes an out-of-range value. Mirrors the
+                single-image bubble's `maxHeight: 320`. overflow:hidden clips
+                any overflow; the caption/footer below are outside this cap so
+                they are never clipped. */}
+            <View style={{ maxHeight: maxH, overflow: 'hidden' }}>
+              {grid}
+            </View>
             {(() => {
               // Historical album rows built before the filename fix may
               // still carry a joined string of IMG_xxx.jpg filenames as
