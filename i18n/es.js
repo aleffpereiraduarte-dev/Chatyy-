@@ -4226,6 +4226,8 @@ export default {
   'status.cameraPermission': 'Para crear un estado con foto o video, Chatyy necesita acceso a tu cámara.',
   'status.retake': 'Repetir',
   'status.usePhoto': 'Usar',
+  'status.sendStatus': 'Enviar',
+  'status.video': 'Vídeo',
 
   // ===== CHATYY CONFIG =====
   'config.phoneNumber': 'Número de teléfono',

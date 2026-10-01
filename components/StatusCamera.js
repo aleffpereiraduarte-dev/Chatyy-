@@ -6,7 +6,7 @@ import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Animated, Dimensions,
   Platform, Image, Pressable, ScrollView, FlatList, Linking, Modal, Alert,
-  TextInput, PanResponder, LayoutAnimation,
+  TextInput, PanResponder, LayoutAnimation, ActivityIndicator,
 } from 'react-native';
 // Camera permission still comes from expo-camera's hook (lightweight, no
 // session) — the actual preview/capture now runs on react-native-vision-camera
@@ -209,6 +209,11 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
   // with a small floor so the chrome always clears the system UI.
   const insets = useSafeAreaInsets();
   const safeTop = Math.max(insets.top, Platform.OS === 'android' ? 12 : 44);
+  // Bottom safe-area — the capture bar + preview actions used fixed `bottom`
+  // offsets that tucked under the iOS home indicator / Android gesture pill.
+  // Floor keeps current spacing on inset-less devices; insets lift it clear
+  // of the system gesture bar on modern phones.
+  const safeBottom = insets.bottom || 0;
   const [permission, requestPermission] = useCameraPermissions();
   const [facing, setFacing] = useState('front');
   const [flash, setFlash] = useState('off');
@@ -240,6 +245,10 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     }
   }, [initialSeed?.uri]);
   const [filterIdx, setFilterIdx] = useState(0);
+  // Confirm/processing spinner — true while handleConfirm runs its best-effort
+  // ffmpeg passes (speed / voiceover mux) before emitting the capture, so the
+  // "Enviar" button shows a spinner instead of looking frozen.
+  const [confirming, setConfirming] = useState(false);
   const [timerDelay, setTimerDelay] = useState(0);
   const [counting, setCounting] = useState(false);
   const [countDown, setCountDown] = useState(0);
@@ -1054,7 +1063,8 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
   // emitting the capture. Both operations are best-effort; on failure we
   // forward the original uri so the user never loses media.
   const handleConfirm = useCallback(async () => {
-    if (!preview) return;
+    if (!preview || confirming) return;
+    setConfirming(true);
     let finalUri = preview.uri;
     let appliedSpeed = undefined;
     if (preview.type === 'video' && importSpeed !== 1) {
@@ -1097,7 +1107,8 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
     setFilterIdx(0);
     setImportSpeed(1);
     setVoiceoverUri(null);
-  }, [preview, activeFilter, onCapture, importSpeed, voiceoverUri, applySpeedToVideo, muxVoiceoverOntoVideo, arFilterIdx, musicTrack, beauty]);
+    setConfirming(false);
+  }, [preview, confirming, activeFilter, onCapture, importSpeed, voiceoverUri, applySpeedToVideo, muxVoiceoverOntoVideo, arFilterIdx, musicTrack, beauty]);
 
   // ─── Guards ───
   if (!visible) return null;
@@ -1161,8 +1172,9 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
           ) : (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
               <CachedImage source={{ uri: preview.uri }} style={s.previewImg} resizeMode="contain" />
-              <View style={{ position: 'absolute', top: 20, alignSelf: 'center', backgroundColor: 'rgba(255,0,0,0.7)', paddingHorizontal: 12, paddingVertical: 4, borderRadius: 12 }}>
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>VIDEO</Text>
+              <View style={[s.videoBadge, { top: safeTop + 8 }]}>
+                <View style={s.videoBadgeDot} />
+                <Text style={s.videoBadgeTxt}>{t?.('status.video') || 'Vídeo'}</Text>
               </View>
             </View>
           )}
@@ -1238,8 +1250,14 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
         )}
 
         {/* Bottom action bar */}
-        <View style={s.previewActions}>
-          <TouchableOpacity onPress={() => { setPreview(null); setFilterIdx(0); setImportSpeed(1); setVoiceoverUri(null); }} style={s.actionBtn}>
+        <View style={[s.previewActions, { bottom: Math.max(20, safeBottom + 12) }]}>
+          <TouchableOpacity
+            onPress={() => { if (confirming) return; setPreview(null); setFilterIdx(0); setImportSpeed(1); setVoiceoverUri(null); }}
+            style={s.actionBtn}
+            disabled={confirming}
+            accessibilityRole="button"
+            accessibilityLabel={t?.('status.retake') || 'Refazer'}
+          >
             <Text style={s.actionBtnTxt}>{t?.('status.retake') || 'Refazer'}</Text>
           </TouchableOpacity>
 
@@ -1250,8 +1268,22 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
             </View>
           )}
 
-          <TouchableOpacity onPress={handleConfirm} style={[s.actionBtn, s.confirmBtn]}>
-            <Text style={[s.actionBtnTxt, { color: '#fff' }]}>{t?.('status.usePhoto') || 'Usar'}</Text>
+          <TouchableOpacity
+            onPress={handleConfirm}
+            style={[s.actionBtn, s.confirmBtn, confirming && s.confirmBtnBusy]}
+            disabled={confirming}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel={t?.('status.sendStatus') || 'Enviar'}
+          >
+            {confirming ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <>
+                <IconCheck size={18} color="#fff" strokeWidth={3} />
+                <Text style={[s.actionBtnTxt, s.confirmBtnTxt]}>{t?.('status.sendStatus') || 'Enviar'}</Text>
+              </>
+            )}
           </TouchableOpacity>
         </View>
       </View>
@@ -1616,7 +1648,7 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
       </View>
 
       {/* Bottom bar: gallery thumb / big record button / spacer */}
-      <View style={s.botBar}>
+      <View style={[s.botBar, { bottom: Math.max(36, safeBottom + 20) }]}>
         {/* Gallery picker thumb (Feature 7) */}
         <TouchableOpacity
           onPress={() => { haptic('light'); openGallery(); }}
@@ -1758,8 +1790,8 @@ export default function StatusCamera({ visible, onClose, onCapture, t, initialSe
                 style={s.musicSearchInput}
               />
               {musicQuery ? (
-                <TouchableOpacity onPress={() => { setMusicQuery(''); loadMusicCatalog(''); }} style={s.musicSearchClear}>
-                  <Text style={s.musicSearchClearTxt}>×</Text>
+                <TouchableOpacity onPress={() => { setMusicQuery(''); loadMusicCatalog(''); }} style={s.musicSearchClear} accessibilityLabel="Limpar busca">
+                  <IconX size={16} color="rgba(255,255,255,0.75)" />
                 </TouchableOpacity>
               ) : null}
             </View>
@@ -2240,7 +2272,29 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.2)',
   },
   actionBtnTxt: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  confirmBtn: { backgroundColor: '#25D366' },
+  // Prominent primary send button — WhatsApp green, icon + label, soft lift so
+  // it reads as THE action (vs the ghost "Refazer").
+  confirmBtn: {
+    backgroundColor: '#25D366',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    minWidth: 140, paddingHorizontal: 32,
+    shadowColor: '#25D366', shadowOpacity: 0.45, shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 }, elevation: 6,
+  },
+  confirmBtnBusy: { opacity: 0.7 },
+  confirmBtnTxt: { color: '#fff', marginLeft: 8 },
+
+  // Video preview badge (preview mode) — subtle dark pill + red dot, replacing
+  // the old bright-red "VIDEO" box.
+  videoBadge: {
+    position: 'absolute', alignSelf: 'center',
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 12, paddingVertical: 5, borderRadius: 14,
+    borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)',
+  },
+  videoBadgeDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: '#FF3B30' },
+  videoBadgeTxt: { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.3 },
 
   filterBadge: {
     backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 16,

@@ -3516,6 +3516,23 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
         </Modal>
       )}
 
+      {/* ─── Publishing feedback overlay ─── */}
+      {/* The camera/voice/carousel paths close their composer the instant the
+          user confirms, then upload + publish in the background. Without this
+          the user got NO feedback until the status popped in (or an error
+          Alert). A tiny floating card (rendered as a Modal so it survives the
+          status surface's display:none wrapper) shows the publish is in
+          flight. Gated on !creatorVisible because the text/photo composer
+          already shows an inline send spinner. */}
+      <Modal visible={publishing && !creatorVisible} transparent animationType="fade" statusBarTranslucent onRequestClose={() => {}}>
+        <View style={styles.publishOverlay} pointerEvents="box-none">
+          <View style={[styles.publishCard, { backgroundColor: colors?.card || colors?.surface || '#fff' }]}>
+            <ActivityIndicator size="large" color={isDark ? '#fff' : ACCENT} />
+            <Text style={[styles.publishCardTxt, { color: colors?.text || '#111111' }]}>{t?.('status.publishing') || 'Publicando…'}</Text>
+          </View>
+        </View>
+      </Modal>
+
       {/* ─── Long-press Preview Modal ─── */}
       {/* Quick peek of the latest status item (Instagram pattern: hold to
           preview without marking as viewed). Tap anywhere → full viewer.
@@ -5880,6 +5897,21 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+
+  // Publishing feedback overlay (camera/voice/carousel background publish)
+  publishOverlay: {
+    flex: 1, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  publishCard: {
+    alignItems: 'center', justifyContent: 'center',
+    paddingHorizontal: 32, paddingVertical: 28, borderRadius: 20,
+    backgroundColor: '#fff',
+    shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 18,
+    shadowOffset: { width: 0, height: 6 }, elevation: 10,
+    minWidth: 160,
+  },
+  publishCardTxt: { marginTop: 14, fontSize: 15, fontWeight: '700', color: '#111111' },
 
   // Story horizontal scroller
   storyScrollerContainer: {
