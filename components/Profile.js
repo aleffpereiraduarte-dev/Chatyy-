@@ -205,10 +205,13 @@ const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors,
   const onPressOut = useCallback(() => {
     Animated.spring(scale, { toValue: 1, useNativeDriver: true, speed: 22, bounciness: 8 }).start();
   }, [scale]);
-  // "MUCH LESS BLACK" 2026: secondary buttons are a clean light hairline
-  // (colors.border), not a heavy dark outline. Black lives ONLY on the
-  // primary CTA fill — everything around it stays airy/white.
-  const outlineColor = colors?.border || (isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.12)');
+  // CLEAN 2026 premium: the secondary button is now a soft *filled* surface
+  // (not a thin outline) with a 12px rounded-rect corner — reads as a modern
+  // segmented control (Instagram "Editar perfil" / "Compartilhar") instead of
+  // a hollow pill. Black lives ONLY on the primary CTA fill; the neutral fill
+  // keeps the row airy while giving each button a tangible, tappable surface.
+  const secondaryFill = colors?.surfaceVariant
+    || (isDark ? 'rgba(255,255,255,0.09)' : 'rgba(15,23,42,0.055)');
   return (
     <Animated.View style={{
       flex: 1,
@@ -216,10 +219,10 @@ const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors,
       // Subtle lift only for the primary CTA — soft, no heavy black glow.
       ...(isPrimary && Platform.OS !== 'web' ? {
         shadowColor: '#111111',
-        shadowOpacity: isDark ? 0.22 : 0.12,
-        shadowRadius: 7,
-        shadowOffset: { width: 0, height: 3 },
-        elevation: 3,
+        shadowOpacity: isDark ? 0.28 : 0.16,
+        shadowRadius: 9,
+        shadowOffset: { width: 0, height: 4 },
+        elevation: 4,
       } : {}),
     }}>
       <TouchableOpacity
@@ -230,14 +233,13 @@ const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors,
         accessibilityRole="button"
         accessibilityLabel={label}
         style={{
-          paddingVertical: 11,
+          paddingVertical: 12,
           paddingHorizontal: 14,
-          borderRadius: 999, // pill
+          borderRadius: 12, // modern rounded-rect (segmented control feel)
           alignItems: 'center',
           justifyContent: 'center',
-          backgroundColor: isPrimary ? '#111111' : 'transparent',
-          borderWidth: isPrimary ? 0 : 1,
-          borderColor: isPrimary ? 'transparent' : outlineColor,
+          backgroundColor: isPrimary ? '#111111' : secondaryFill,
+          borderWidth: 0,
         }}
       >
         <Text style={{
@@ -361,9 +363,9 @@ const ChipButton = memo(function ChipButton({ icon: Icon, label, onPress, colors
           alignItems: 'center',
           justifyContent: 'center',
           gap: 6,
-          paddingVertical: 9,
+          paddingVertical: 10,
           paddingHorizontal: 12,
-          borderRadius: 999, // pill
+          borderRadius: 12, // rounded-rect — matches FlatButton family
           backgroundColor: 'transparent',
           borderWidth: 1,
           borderColor: outlineColor,
@@ -436,15 +438,15 @@ const Stat = memo(function Stat({ value, label, onPress, colors }) {
           locks digit width so 1.2K → 1.3K doesn't shift the column. */}
       <Animated.View style={{ alignItems: 'center', transform: [{ scale }] }}>
         <Text style={{
-          fontSize: 18, fontWeight: '700', color: colors?.text, letterSpacing: -0.3,
+          fontSize: 20, fontWeight: '800', color: colors?.text, letterSpacing: -0.6,
           fontVariant: ['tabular-nums'],
         }}>
           {formatCount(value)}
         </Text>
         <Text style={{
-          fontSize: 13, color: colors?.text, marginTop: 2,
-          letterSpacing: 0, fontWeight: '400',
-          opacity: 0.85,
+          fontSize: 11.5, color: colors?.textTertiary || colors?.textSecondary || colors?.text,
+          marginTop: 3, letterSpacing: 0.4, fontWeight: '600',
+          textTransform: 'uppercase',
         }}>
           {label}
         </Text>
@@ -688,9 +690,10 @@ function AnimatedTabBar({ tabs, activeKey, onChange, colors }) {
           </TouchableOpacity>
         );
       })}
-      {/* Sliding underline — Instagram-grade: full-slot width, brand purple
-          accent, slightly thicker (2.5px) so it reads from a glance. Lives
-          on the GPU via translateX. */}
+      {/* Sliding underline — Instagram-grade: full-slot width, theme-aware
+          accent (was hardcoded #111111 → invisible on dark backgrounds),
+          slightly thicker (2.5px) so it reads from a glance. Lives on the GPU
+          via translateX. */}
       {barW > 0 && (
         <Animated.View
           pointerEvents="none"
@@ -702,7 +705,7 @@ function AnimatedTabBar({ tabs, activeKey, onChange, colors }) {
             height: 2.5,
             transform: [{ translateX: indicatorX }],
             opacity: indicatorOpacity,
-            backgroundColor: '#111111',
+            backgroundColor: accent,
             borderTopLeftRadius: 2,
             borderTopRightRadius: 2,
           }}
@@ -1996,16 +1999,18 @@ export default function Profile({
           >
             <View style={{
               width: RING, height: RING, borderRadius: RING / 2,
-              // Brand-tinted ring + soft purple fill so the "+" tile reads as
-              // an inviting "add a highlight" affordance instead of an empty
-              // grey circle — matches the gradient rings on real tiles.
-              borderWidth: 1.5, borderColor: isDark ? 'rgba(17, 17, 17,0.45)' : 'rgba(17, 17, 17,0.30)',
+              // Dashed hairline ring reads as an inviting "add a highlight"
+              // affordance (premium/empty-slot grammar) instead of a solid
+              // grey circle. Soft neutral fill keeps it airy; the plus sits
+              // centered so the tile aligns perfectly with the covers beside it.
+              borderWidth: 1.5, borderStyle: 'dashed',
+              borderColor: isDark ? 'rgba(255,255,255,0.28)' : 'rgba(15,23,42,0.22)',
               alignItems: 'center', justifyContent: 'center',
-              backgroundColor: isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.07)',
+              backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(15,23,42,0.035)',
             }}>
-              <IconPlus size={28} color={isDark ? '#F1F3F5' : '#111111'} strokeWidth={2.2} />
+              <IconPlus size={26} color={isDark ? '#F1F3F5' : '#111111'} strokeWidth={2.2} />
             </View>
-            <Text style={{ fontSize: 12, color: colors?.text, marginTop: 6, fontWeight: '600', letterSpacing: 0.1 }} numberOfLines={1}>
+            <Text style={{ fontSize: 12, color: colors?.textSecondary || colors?.text, marginTop: 7, fontWeight: '600', letterSpacing: 0.1 }} numberOfLines={1}>
               {t?.('profile.newHighlight') || 'Novo'}
             </Text>
           </TouchableOpacity>
@@ -2131,7 +2136,7 @@ export default function Profile({
                   <View style={{ width: SIZE - 4, height: SIZE - 4, borderRadius: (SIZE - 4) / 2, backgroundColor: '#11111122' }} />
                 )}
               </View>
-              <Text style={{ fontSize: 12, color: colors?.text, marginTop: 6, fontWeight: '500', maxWidth: SIZE + 8, letterSpacing: 0.1 }} numberOfLines={1}>
+              <Text style={{ fontSize: 12, color: colors?.text, marginTop: 7, fontWeight: '600', maxWidth: SIZE + 8, letterSpacing: 0.1 }} numberOfLines={1}>
                 {h.title || ''}
               </Text>
             </TouchableOpacity>
@@ -2343,6 +2348,18 @@ export default function Profile({
               <View style={{
                 width: HALO_SIZE, height: HALO_SIZE,
                 alignItems: 'center', justifyContent: 'center',
+                // Soft depth so the avatar reads as a lifted, premium focal
+                // point instead of sitting flat on the background. Purely
+                // cosmetic — kept subtle so it never looks like a heavy halo.
+                ...(Platform.OS === 'web'
+                  ? { boxShadow: isDark ? '0 4px 16px rgba(0,0,0,0.45)' : '0 4px 16px rgba(15,23,42,0.12)' }
+                  : {
+                      shadowColor: '#000',
+                      shadowOpacity: isDark ? 0.35 : 0.14,
+                      shadowRadius: 10,
+                      shadowOffset: { width: 0, height: 4 },
+                      elevation: 4,
+                    }),
               }}>
                 {!isLive && renderHalo()}
                 <StoryRingAvatar

@@ -208,13 +208,28 @@ function ChatHub() {
   const insets = useSafeAreaInsets();
   const isKids = isChildAccount();
   // Valid tabs — anything else (legacy 'config'/'settings' deep links) falls back to 'chats' to avoid a blank page.
-  const VALID_TABS = ['chats','calls','feed','status','learn','tv','channels','communities'];
+  // [2026-10-01 STATUS CONSOLIDATION] 'status' is NO LONGER a navigable full-screen
+  // tab. The separate (ugly, redundant) Status screen is retired: status now lives
+  // ONLY in the feed/chat-list stories strip, which opens ChatStatusTab's StoryViewer
+  // + composer as portaled Modals (via requestOpenStatus / requestNewStatus) floating
+  // over the current tab — never as a visible tab body. A `?tab=status` deep-link
+  // therefore falls back to 'chats' (which still shows the stories strip); the
+  // composer deep-link (`?new=1`) still mounts the hidden status surface below.
+  const VALID_TABS = ['chats','calls','feed','learn','tv','channels','communities'];
   // ?tab=reels / ?tab=apps are special — they trigger handleTabPress side-effects
   // (setPendingReels+goto feed / openAppsDrawer) instead of mapping 1:1 to a
   // renderable tab. We start on 'chats' and let a useEffect below dispatch them.
   const _initialTab = VALID_TABS.includes(params.tab) ? params.tab : 'chats';
+  // Composer deep-link (`?new=1`, from the share sheet / UnifiedComposeFab /
+  // notifications) needs the hidden status surface mounted so ChatStatusTab's
+  // camera composer Modal can open over the current tab on first mount.
+  const _wantsStatusComposer = params.new === '1';
   const [activeTab, setActiveTab] = useState(_initialTab);
-  const [mountedTabs, setMountedTabs] = useState(() => new Set(['chats', _initialTab])); // lazy mount: include initial tab to avoid white screen on deep-link
+  const [mountedTabs, setMountedTabs] = useState(() => {
+    const s = new Set(['chats', _initialTab]); // lazy mount: include initial tab to avoid white screen on deep-link
+    if (_wantsStatusComposer) s.add('status');
+    return s;
+  });
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const searchAnim = useRef(new Animated.Value(0)).current;
@@ -627,7 +642,9 @@ function ChatHub() {
   }, [activeTab, handleTabPress, router, isKids, isDesktop]);
 
   const openFeedFromApps = useCallback(() => { setShowAppsDrawer(false); handleTabPress('feed'); }, [handleTabPress]);
-  const openStatusFromApps = useCallback(() => { setShowAppsDrawer(false); handleTabPress('status'); }, [handleTabPress]);
+  // [2026-10-01] openStatusFromApps removed — the Status screen is retired as a
+  // standalone tab (status lives in the feed/chat-list stories strip now). The
+  // Apps drawer already dropped its Status tile; this handler was dead wiring.
   const openChannelsFromApps = useCallback(() => { setShowAppsDrawer(false); handleTabPress('channels'); }, [handleTabPress]);
   const openCommunitiesFromApps = useCallback(() => { setShowAppsDrawer(false); handleTabPress('communities'); }, [handleTabPress]);
 
@@ -698,29 +715,26 @@ function ChatHub() {
   // de aba (Chats/Calls). Sem esse flag o ReelsViewer só checava useIsFocused
   // (route ainda é /chat = true) e o native ShortsPlayer mantinha tocando
   // áudio em background. Cada tab agora recebe `tabActive` próprio.
-  // requestOpenStatus(email): single entry point the chat-list strip calls to
-  // open a story on the canonical status tab. Switches tab + stashes the email;
-  // ChatStatusTab consumes openStatusEmail and clears it via onOpenStatusConsumed.
+  // requestOpenStatus(email): single entry point the feed + chat-list stories
+  // strips call to open a story. [2026-10-01] We NO LONGER switch activeTab to
+  // the retired 'status' screen — we just mount the hidden status surface so
+  // ChatStatusTab's StoryViewer Modal (which portals to the document body /
+  // native modal host) floats OVER the current tab. ChatStatusTab consumes
+  // openStatusEmail and clears it via onOpenStatusConsumed.
   const requestOpenStatus = useCallback((email) => {
     setOpenStatusEmail(email || null);
-    // [fix 2026-07-05 status-strip blank] The 'status' tab is NOT in the bottom
-    // tab bar, so tapping a story ring in the chat-list strip switched activeTab
-    // to 'status' but never MOUNTED it (only handleTabPress mounts) → blank
-    // screen. Mount it here so ChatStatusTab exists and its openStatusEmail
-    // effect can open the viewer.
     setMountedTabs(prev => prev.has('status') ? prev : new Set(prev).add('status'));
-    try { setActiveTab('status'); } catch {}
-  }, [setActiveTab]);
-  // requestNewStatus(): chat-list strip → open the canonical status composer.
-  // Switches to the status tab and flips autoNewStatus so ChatStatusTab opens
-  // its creator. Re-armable across taps (unlike the mount-only params.new path).
+    // Opening a story counts as "seen" for the unread badge. The old reset
+    // keyed on activeTab==='status' no longer fires since we never switch tabs.
+    setStatusBadge(0);
+  }, []);
+  // requestNewStatus(): stories strip "+" → open the canonical status composer
+  // as an overlay. Flips autoNewStatus so ChatStatusTab opens its creator Modal
+  // over the current tab. Re-armable across taps (chat.js resets it ~500ms later).
   const requestNewStatus = useCallback(() => {
-    // [fix 2026-07-05] same mount gate as requestOpenStatus — the composer
-    // entry point also bypassed handleTabPress, leaving 'status' unmounted.
     setMountedTabs(prev => prev.has('status') ? prev : new Set(prev).add('status'));
-    try { setActiveTab('status'); } catch {}
     setAutoNewStatus(true);
-  }, [setActiveTab]);
+  }, []);
   const tabProps = { colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, openStatusEmail, onOpenStatusConsumed: () => setOpenStatusEmail(null), requestOpenStatus, requestNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed: () => setPendingReels(false), tabActive: activeTab };
 
   const titles = {
@@ -1189,7 +1203,6 @@ function ChatHub() {
         t={t}
         userEmail={user?.email}
         onOpenFeed={openFeedFromApps}
-        onOpenStatus={openStatusFromApps}
         onOpenChannels={openChannelsFromApps}
         onOpenCommunities={openCommunitiesFromApps}
         badges={appsBadges}
@@ -1372,7 +1385,7 @@ function AppTile({ item, badge, onPress, colors, isDark }) {
   );
 }
 
-const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, userEmail, onOpenFeed, onOpenStatus, onOpenChannels, onOpenCommunities, badges }) {
+const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, router, colors, isDark, t, userEmail, onOpenFeed, onOpenChannels, onOpenCommunities, badges }) {
   const [q, setQ] = useState('');
   // MRU drawer bar — reflects the last 4 apps the user opened. Refreshes
   // whenever the drawer opens (cheap, list is at most 8 entries).
@@ -1444,7 +1457,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
         { key: 'backup',        label: t('sidebar.backup') || 'Backup',          ic: I(IconShield, '#0ea5e9'),   route: '/backup' },
       ],
     },
-  ]), [t, onOpenFeed, onOpenStatus, onOpenChannels, onOpenCommunities, onClose, router, userEmail]);
+  ]), [t, onOpenFeed, onOpenChannels, onOpenCommunities, onClose, router, userEmail]);
 
   const qLower = q.trim().toLowerCase();
   // Sort items within each section by usage count desc — most-used first,

@@ -251,12 +251,14 @@ function EmptyFeedIllustration({ isDark }) {
 
 
 // ── Stories strip (Instagram-style ribbon at the top of the feed) ──
-// Surfaces the same `useStatuses` data the chat tab uses, so a status
-// posted from any surface appears here without a refetch. Tapping a ring
-// jumps into the chat tab's status viewer (it owns the StoryViewer
-// modal — duplicating that 300-line surface here would drift). The "Seu
-// status" tile is always first; new content has the gradient ring.
-function StoriesStrip({ user, colors, isDark, t, router }) {
+// [2026-10-01 STATUS CONSOLIDATION] This strip is now the SINGLE entry point
+// for status. The separate full-screen Status tab is retired. Tapping a ring
+// opens the canonical StoryViewer DIRECTLY (as a portaled Modal floating over
+// the feed) via requestOpenStatus — no navigation to a separate screen. The
+// "Seu status" tile opens the viewer when you already have a story, otherwise
+// it opens the composer (requestNewStatus). Both reuse ChatStatusTab's existing
+// viewer/composer; we never duplicate that logic here.
+function StoriesStrip({ user, colors, isDark, t, requestOpenStatus, requestNewStatus }) {
   const { groups } = useStatuses(user?.email, { warmCacheVideos: false });
   const myEntry = (groups || []).find(g => String(g.email || '').toLowerCase() === String(user?.email || '').toLowerCase());
   const others = (groups || []).filter(g => String(g.email || '').toLowerCase() !== String(user?.email || '').toLowerCase());
@@ -267,9 +269,15 @@ function StoriesStrip({ user, colors, isDark, t, router }) {
   // glitch on a fresh account, and the FAB already covers post creation.
   if (!myEntry && others.length === 0) return null;
 
-  const open = () => {
-    try { router?.push('/chat?tab=status'); } catch {}
+  // Own tile: view your active story if you have one, else jump straight into
+  // the composer. Guards the calls so an older shell that didn't wire these
+  // props degrades gracefully (no-op) instead of crashing.
+  const openOwn = () => {
+    const hasItems = (myEntry?.items || []).length > 0;
+    if (hasItems) { try { requestOpenStatus?.(user?.email); } catch {} }
+    else { try { requestNewStatus?.(); } catch {} }
   };
+  const openGroup = (email) => { try { requestOpenStatus?.(email); } catch {} };
 
   return (
     <View style={{
@@ -280,7 +288,7 @@ function StoriesStrip({ user, colors, isDark, t, router }) {
     }}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 16 }}>
         {/* Your status — always first */}
-        <TouchableOpacity onPress={open} activeOpacity={0.75} style={{ alignItems: 'center', width: 72 }}>
+        <TouchableOpacity onPress={openOwn} activeOpacity={0.75} style={{ alignItems: 'center', width: 72 }}>
           <StoryRingAvatar
             name={myDisplay}
             email={user?.email}
@@ -298,7 +306,7 @@ function StoriesStrip({ user, colors, isDark, t, router }) {
         {others.map((g) => {
           const allViewed = (g.items || []).every(it => it.viewed);
           return (
-            <TouchableOpacity key={`fs-${g.email}`} onPress={open} activeOpacity={0.75} style={{ alignItems: 'center', width: 72 }}>
+            <TouchableOpacity key={`fs-${g.email}`} onPress={() => openGroup(g.email)} activeOpacity={0.75} style={{ alignItems: 'center', width: 72 }}>
               <StoryRingAvatar
                 name={g.name || g.email}
                 email={g.email}
@@ -319,7 +327,7 @@ function StoriesStrip({ user, colors, isDark, t, router }) {
   );
 }
 
-export default function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedModeConsumed, tabActive }) {
+export default function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedModeConsumed, tabActive, requestOpenStatus, requestNewStatus }) {
   // [#1247 2026-05-20] parentActive prop chega pro ReelsViewer. ChatFeedTab
   // fica mounted (display:none) quando user troca pra aba Chats — sem isso
   // o ShortsPlayer continuava tocando áudio em background. tabActive vem
@@ -1573,7 +1581,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
            every feed re-render (unread poll, live poll, activePostId flipping on
            each scroll viewability change, search keystrokes). As an element React
            reconciles it by position and just re-renders it. Same visual output. */
-        ListHeaderComponent={<>{renderSearchBar()}{renderTabBar()}{renderAlgorithmTabs()}<StoriesStrip user={user} colors={colors} isDark={isDark} t={t} router={router} />{renderLiveHeader()}</>}
+        ListHeaderComponent={<>{renderSearchBar()}{renderTabBar()}{renderAlgorithmTabs()}<StoriesStrip user={user} colors={colors} isDark={isDark} t={t} requestOpenStatus={requestOpenStatus} requestNewStatus={requestNewStatus} />{renderLiveHeader()}</>}
         ListEmptyComponent={renderEmpty}
         ListFooterComponent={renderFooter}
         showsVerticalScrollIndicator={false}
