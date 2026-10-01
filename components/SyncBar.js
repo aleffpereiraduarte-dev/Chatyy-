@@ -43,6 +43,10 @@ export default function SyncBar() {
   // ref kept current by an effect so the guard reflects the real status.
   const statusRef = useRef('hidden');
   useEffect(() => { statusRef.current = status; }, [status]);
+  // WhatsApp-parity: the INITIAL cold-start WS connect must be SILENT. Only
+  // after the socket has connected at least once this session does a later
+  // 'disconnected' count as a real reconnect worth surfacing.
+  const hasConnectedOnceRef = useRef(false);
 
   // Dot pulse for connecting/offline
   useEffect(() => {
@@ -93,6 +97,7 @@ export default function SyncBar() {
     const handleConnection = ({ status: s }) => {
       clearTimeout(graceTimer.current);
       if (s === 'authenticated' || s === 'connected') {
+        hasConnectedOnceRef.current = true;
         // Connected — hide after tiny delay
         graceTimer.current = setTimeout(hide, 500);
       } else if (s === 'disconnected') {
@@ -102,7 +107,12 @@ export default function SyncBar() {
         // of cases (WS just resumes on next tick). Native keeps 3s because
         // backgrounded radios legitimately take a moment.
         // 2026-05-18 (#1131): bumped web grace to 5s.
-        const grace = Platform.OS === 'web' ? 5000 : 3000;
+        // WhatsApp-parity: the FIRST connect of the session (cold open) connects
+        // SILENTLY — use a long grace so a normal cold start (1-5s, incl. the
+        // BR→NY handshake) never flashes "Conectando". Only a real reconnect
+        // after a prior successful connect (3s native / 5s web) or a genuinely
+        // stuck cold start (>12s) surfaces the bar.
+        const grace = hasConnectedOnceRef.current ? (Platform.OS === 'web' ? 5000 : 3000) : 12000;
         graceTimer.current = setTimeout(() => {
           if (mountedRef.current && !mailWs?.authenticated) {
             // [WA-parity 2026-05-31] Honest copy: only say "Conectando…" when

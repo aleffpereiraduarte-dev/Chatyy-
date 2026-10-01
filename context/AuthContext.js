@@ -1554,7 +1554,7 @@ export function AuthProvider({ children }) {
       try { require('../services/localDb').webClearAll?.(); } catch {}
     }
     // 4. Tear down background services so the NEXT account doesn't inherit
-    //    WebSocket listeners, MQTT subscriptions, push registrations, or the
+    //    WebSocket listeners, push registrations, or the
     //    edge-detection interval from the previous user.
     try { api.stopEdgeDetection?.(); } catch {}
     // Stop the WA-Web sync engines so the next user that signs in starts
@@ -1572,7 +1572,6 @@ export function AuthProvider({ children }) {
         try { ws.listeners.forEach((set) => set?.clear?.()); } catch {}
       }
     } catch {}
-    try { require('../services/mqtt').default?.disconnect?.(); } catch {}
     try { require('../services/tcpChat').default?.disconnect?.(); } catch {}
     // Local-only push cleanup (clears notification badge, dismisses any
     // pending local notifications). The server-side revoke already ran

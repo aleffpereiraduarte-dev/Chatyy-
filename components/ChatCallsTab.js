@@ -347,6 +347,32 @@ export function getCallHistoryCached() {
   return _readCallHistoryCache() || [];
 }
 
+// Startup prefetch (fire-and-forget) — called from services/initialSync.js.
+//
+// ROOT FIX for "parece que os dados não tá no celular": nothing EVER warmed the
+// call-history cache except the user OPENING the Calls tab. So the first open of
+// each app session was always a cold BR→NY network fetch (and a skeleton
+// spinner whenever the cache wasn't warm). This runs the SAME endpoint the tab
+// uses (callHistoryList via getCallHistory) and writes the SAME cache keys the
+// tab reads so the data is already on-device before the user taps Calls:
+//   • chat_calls        (MMKV string) — the module-level synchronous preload
+//   • omc_call_history  (MMKV JSON)   — getCallHistoryCached() / useState seed
+//     ↑ both written by getCallHistory()'s _writeCallHistoryCache()
+//   • call_history      (scoped cache) — the async slow-path fallback (getCached)
+// Account scoping: setCache uses the active user's hash (asserted by AuthContext
+// / initialSync before this runs). MUST NOT be awaited anywhere that gates the
+// "Sincronizando…" banner.
+export async function prefetchCallHistory() {
+  try {
+    const h = await getCallHistory(); // writes chat_calls + omc_call_history
+    if (Array.isArray(h)) {
+      try { setCache('call_history', h, 2592000000).catch(() => {}); } catch {}
+    }
+    return h;
+  } catch {}
+  return null;
+}
+
 // Flip every cached missed-call row to `read: true`. Tab badge derives its
 // count from the cache, so without this the number reappears the moment the
 // user navigates away from the Calls tab — the React state was zeroed but

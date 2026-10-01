@@ -1,7 +1,7 @@
 /**
  * Global chat persistence — WhatsApp-style local-first store.
  *
- * Listens to WebSocket + MQTT chat events at the APP level (not per-screen)
+ * Listens to WebSocket chat events at the APP level (not per-screen)
  * so every incoming msg/edit/delete/reaction lands in SQLite + SmartCache
  * the moment it arrives — regardless of which screen the user is on. Before
  * this, only `app/chat-conversation.js` persisted messages on receive; if a
@@ -27,8 +27,8 @@ function _safe(fn) {
 
 // [#1206 2026-05-19] Variant of _safe for the inner persist path where a
 // thrown error means we just dropped a message on the floor. Sends a beacon
-// instead of silently returning null. Keep _safe for the outer ws/mqtt wire-
-// up (where a missing module is expected on web/CI and shouldn't spam diag).
+// instead of silently returning null. Keep _safe for the outer ws wire-up
+// (where a missing module is expected on web/CI and shouldn't spam diag).
 function _safePersist(ctx, fn) {
   try { return fn(); } catch (e) {
     try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: `chatPersistence_${ctx}`, message: e?.message, stack: e?.stack }); } catch {}
@@ -36,11 +36,11 @@ function _safePersist(ctx, fn) {
   }
 }
 
-// Normalize the shape from chat_message / chat_summary / MQTT-msg variants.
+// Normalize the shape from chat_message / chat_summary variants.
 // Server uses 3 shapes:
 //   1. { type:'chat_message', data: { message: {...row}, conversation_id } }
 //   2. { type:'chat_summary', data: { ...row, conversation_id } }
-//   3. MQTT chat_message: { message: {...row}, conversation_id }
+//   3. bare chat_message: { message: {...row}, conversation_id }
 function _extractMessage(payload) {
   if (!payload) return null;
   const inner = payload.message || payload.data?.message || payload.data || payload;
@@ -317,16 +317,6 @@ export function startChatPersistence() {
       } catch {}
     };
     _unsubs.push(mailWs.on('envelope_available', onEnvelopeAvailableGlobal));
-  });
-
-  // ─── MQTT subscriptions (alternate transport — same events) ─────────────
-  _safe(() => {
-    const mqtt = require('./mqtt').default;
-    if (!mqtt?.on) return;
-    _unsubs.push(mqtt.on('chat_message', _onIncomingChatMessage));
-    _unsubs.push(mqtt.on('chat_reaction', _onReaction));
-    _unsubs.push(mqtt.on('chat_edit', _onEdit));
-    _unsubs.push(mqtt.on('chat_delete', _onDelete));
   });
 
   // ─── TCP client (signal-server fast lane) ───────────────────────────────

@@ -57,6 +57,25 @@ function emit(phase, progress = 0) {
   mailWs?._emit?.('sync_progress', { phase, progress });
 }
 
+// Call-history prefetch (fire-and-forget). ROOT FIX for the Calls tab "demora a
+// abrir / os dados não tá no celular": the only thing that ever warmed the
+// call-history cache was the user OPENING the Calls tab, so the first open of
+// each app session was a cold BR→NY fetch + skeleton spinner. Prewarm it in the
+// BACKGROUND on startup using the SAME endpoint + SAME cache keys the tab reads
+// (chat_calls + omc_call_history + the account-scoped `call_history`), so the
+// data is already on-device before the user taps Calls. ChatCallsTab is already
+// eagerly loaded by the chat screen, so the lazy require() just hits the module
+// cache (no extra cost). This MUST NEVER be awaited where it could prolong the
+// "Sincronizando…" banner.
+function _prefetchCallHistoryBg() {
+  try {
+    const mod = require('../components/ChatCallsTab');
+    const fn = mod && (mod.prefetchCallHistory
+      || (mod.default && mod.default.prefetchCallHistory));
+    if (typeof fn === 'function') { try { fn().catch(() => {}); } catch {} }
+  } catch {}
+}
+
 /**
  * Full initial sync — downloads EVERYTHING
  *
@@ -72,6 +91,12 @@ function emit(phase, progress = 0) {
  *   delta + per-screen lazy fetch handle steady-state from here.
  */
 export async function runInitialSync(api, options = {}) {
+  // Fire-and-forget BEFORE the skip gate so the call-history cache is warmed on
+  // EVERY invocation — including the `skipped` early-return below and the web
+  // fast-path — not only on the first-ever heavy sync. Never awaited → cannot
+  // prolong the sync banner.
+  _prefetchCallHistoryBg();
+
   if (!options.force && isSyncComplete()) {
     return { skipped: true };
   }
@@ -414,4 +439,30 @@ export async function runDeltaSync(api) {
 export function resetSync() {
   setString(SYNC_KEY, 'false');
   setString(SYNC_VERSION_KEY, '0');
+}
+
+// ── Every-session call-history warm (warm installs) ──────────────────────────
+// runInitialSync() is gated to once-per-account by its caller (chat.js seals
+// `initial_sync_done:<email>` and returns BEFORE calling us on warm starts), so
+// the in-flow prefetch above only covers the FIRST launch. This module is
+// imported by the chat screen on EVERY session, so kick a one-shot deferred
+// prefetch at import time too — then even an existing install that passed its
+// initial sync long ago (and never opened Calls) has the data on-device before
+// the user taps the tab. Guards: native-only (web keeps its silent model and
+// persists chat_calls in localStorage from the prior session anyway); require
+// an active account so it never fires pre-auth; deferred so it never competes
+// with first paint. Idempotent — writes the same keys regardless.
+if (Platform.OS !== 'web') {
+  try {
+    setTimeout(() => {
+      try {
+        const api = require('./api');
+        const email = (typeof api.getActiveAccountEmail === 'function')
+          ? api.getActiveAccountEmail() : '';
+        if (!email) return; // pre-auth → skip; first-login path covers it
+        try { setCacheUser(email); } catch {} // re-assert scope (no-op if set)
+        _prefetchCallHistoryBg();
+      } catch {}
+    }, 3000);
+  } catch {}
 }

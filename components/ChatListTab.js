@@ -22,15 +22,6 @@ import { prefetchAvatarsForList } from '../services/avatarCache';
 import { userScopedKey } from '../services/cache';
 import { RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import { getCachedMessagesSync } from '../services/smartChatCache';
-import mqttService from '../services/mqtt';
-
-// Subscribe all conversations to MQTT for real-time message delivery (Telegram-style)
-function mqttSubscribeAll(conversations) {
-  if (!conversations?.length) return;
-  for (const conv of conversations) {
-    if (conv.id) mqttService.subscribeConversation(conv.id);
-  }
-}
 import CachedImage from './CachedImage';
 import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell } from './Icons';
 import AvatarCircle from './AvatarCircle';
@@ -3188,7 +3179,6 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         setArchivedConversations(_arch);
         cacheConversations(convs).catch(() => {});
         _saveNativeConversations(convs);
-        mqttSubscribeAll(convs);
       }).catch((e) => {
         console.warn('[ChatList] background sync threw', e?.message);
       });
@@ -3220,7 +3210,6 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
             setArchivedConversations(convs.filter(c => c.archived));
             cacheConversations(convs).catch(() => {});
             _saveNativeConversations(convs);
-            mqttSubscribeAll(convs);
           }).catch(() => {});
         }
         setRefreshing(false);
@@ -3238,7 +3227,6 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         const convs = Array.isArray(r.data) ? r.data : (r.data?.conversations || []);
         setConversations(convs.filter(c => !c.archived));
         cacheConversations(convs).catch(() => {});
-        mqttSubscribeAll(convs);
         setLoadError(false);
       } else if (_convsCountRef.current === 0) {
         // [silent-fail-w3] Non-success on cold start with empty screen —

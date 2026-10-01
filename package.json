@@ -73,7 +73,6 @@
     "hls.js": "^1.6.16",
     "livekit-client": "^2.19.0",
     "lottie-react-native": "~7.3.4",
-    "mqtt": "^5.15.1",
     "openpgp": "^6.3.0",
     "pg": "^8.20.0",
     "react": "19.2.0",
