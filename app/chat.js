@@ -15,6 +15,7 @@ import {
 import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop } from 'react-native-svg';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { WALLET_ENABLED } from '../constants/featureFlags';
+import { haptic } from '../constants/theme';
 import ChatListTab from '../components/ChatListTab';
 import AvatarCircle from '../components/AvatarCircle';
 import ChatCallsTab from '../components/ChatCallsTab';
@@ -272,9 +273,11 @@ function ChatHub() {
   // bottom bar, desktop keeps the classic Feed/Status rail.
   const TAB_KEYS = isKids ? TAB_KEYS_KIDS : (isDesktop ? TAB_KEYS_DESKTOP : TAB_KEYS_FULL);
 
-  // Animated indicator position
+  // Animated indicator position. Width comes from the responsive `windowWidth`
+  // state (not a one-shot Dimensions.get) so the sliding indicator stays
+  // centered after rotation / split-view resize.
   const indicatorAnim = useRef(new Animated.Value(TAB_KEYS.indexOf('chats'))).current;
-  const screenWidth = Dimensions.get('window').width;
+  const screenWidth = windowWidth;
   const tabWidth = isDesktop ? 72 : screenWidth / TAB_KEYS.length;
 
   // Content fade animation
@@ -520,6 +523,8 @@ function ChatHub() {
     // should land on Posts so the feed feels like an Instagram-style home.
     if (tab === 'reels') { handleTabPress('feed'); return; }
     if (tab === activeTab) return;
+    // [beauty 2026-10-01] Tactile tap on a real tab switch (web-safe no-op).
+    try { haptic.select(); } catch {}
     const idx = TAB_KEYS.indexOf(tab);
 
     // Tabs in the bottom bar slide the indicator. Off-bar tabs (Feed/Status
@@ -535,11 +540,13 @@ function ChatHub() {
       }).start();
     }
 
-    // Premium crossfade: fast fade out, spring fade in
-    Animated.sequence([
-      Animated.timing(contentOpacity, { toValue: 0, duration: 60, useNativeDriver: true }),
-      Animated.spring(contentOpacity, { toValue: 1, useNativeDriver: true, tension: 100, friction: 18 }),
-    ]).start();
+    // [beauty 2026-10-01] Fade the INCOMING tab in only. The old sequence
+    // dropped the shared content wrapper to opacity 0 first, which blanked the
+    // whole content area for a frame (read as a flicker, not a crossfade, since
+    // tabs swap via display:none with no simultaneous out/in). Now it starts at
+    // 0.6 and springs to 1 — a quick settle-in with no blank frame.
+    contentOpacity.setValue(0.6);
+    Animated.spring(contentOpacity, { toValue: 1, useNativeDriver: true, tension: 100, friction: 18 }).start();
 
     setActiveTab(tab);
     setMountedTabs(prev => { const next = new Set(prev); next.add(tab); return next; });
@@ -751,7 +758,10 @@ function ChatHub() {
 
   const renderHeaderAction = () => {
     const headerIconColor = colors.text;
-    const headerBtnBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)';
+    // [beauty 2026-10-01] Header action icons are now bare (no filled chip) —
+    // WhatsApp's header icons sit on the plain white bar, which reads lighter
+    // and airier. Kept transparent on both themes.
+    const headerBtnBg = 'transparent';
     const btnStyle = [styles.headerIconBtn, { backgroundColor: headerBtnBg, borderRadius: 20 }];
     if (activeTab === 'chats') {
       return (
@@ -805,7 +815,7 @@ function ChatHub() {
   // length, and outputRange follows TAB_KEYS which is dynamic (3 kids/desktop, 4 full).
   const indicatorTranslateX = indicatorAnim.interpolate({
     inputRange: TAB_KEYS.map((_, i) => i),
-    outputRange: TAB_KEYS.map((_, i) => (i * tabWidth) + (tabWidth / 2) - 18),
+    outputRange: TAB_KEYS.map((_, i) => (i * tabWidth) + (tabWidth / 2) - 16),
   });
 
   const indicatorScale = (() => {
@@ -1100,6 +1110,19 @@ function ChatHub() {
             : '0 -1px 3px rgba(0,0,0,0.06), 0 -1px 0 rgba(0,0,0,0.04)',
         }),
       }]}>
+        {/* [beauty 2026-10-01] WhatsApp-style sliding active indicator. The
+            spring driving indicatorAnim already ran on every tab switch but no
+            view consumed it — now a 3px accent bar rides under the active tab.
+            Gated to the full/desktop bar (kids bar has its own 3-item layout). */}
+        {!isKids && (
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.tabIndicator, {
+              backgroundColor: isDark ? '#e9edef' : ACCENT,
+              transform: [{ translateX: indicatorTranslateX }, { scaleX: indicatorScale }],
+            }]}
+          />
+        )}
         {isKids ? (
           <>
             <TabBarItem
@@ -1547,7 +1570,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
               {t('chat.apps') || 'Apps'}
             </Text>
             <TouchableOpacity onPress={onClose} hitSlop={10}>
-              <Text style={{ fontSize: 24, color: isDark ? '#888' : '#888' }}>×</Text>
+              <IconClose size={22} color="#888" />
             </TouchableOpacity>
           </View>
           {/* Search — prominent light pill at the top of the sheet */}
@@ -1613,7 +1636,9 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                     {t('one.subtitle') || 'Sua IA pessoal'}
                   </Text>
                 </View>
-                <Text style={{ fontSize: 22, fontWeight: '300', color: isDark ? 'rgba(17,27,33,0.5)' : 'rgba(255,255,255,0.6)' }}>{'\u203a'}</Text>
+                <Svg width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={isDark ? 'rgba(17,27,33,0.5)' : 'rgba(255,255,255,0.6)'} strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                  <Path d="M9 18l6-6-6-6" />
+                </Svg>
               </Pressable>
             )}
             {/* Recently opened \u2014 only when not searching, only when MRU
@@ -1774,10 +1799,9 @@ function PulseBadge({ badge, isDark }) {
 function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const bounceAnim = useRef(new Animated.Value(0)).current;
-  // Active glow ring fades in when the tab activates — soft halo around
-  // the icon that gives the tab bar a more "tech" feel without adding
-  // any pixels to the layout footprint.
-  const glowAnim = useRef(new Animated.Value(active ? 1 : 0)).current;
+  // [beauty 2026-10-01] Removed the dead `glowAnim` — it ran a 220ms JS-thread
+  // (non-native) timing on every activation but was never referenced in the
+  // JSX, so it was pure wasted work on the exact frame the new tab paints.
   const isWeb = Platform.OS === 'web';
 
   useEffect(() => {
@@ -1787,11 +1811,6 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
         Animated.spring(bounceAnim, { toValue: 0, useNativeDriver: true, tension: 260, friction: 14 }),
       ]).start();
     }
-    Animated.timing(glowAnim, {
-      toValue: active ? 1 : 0,
-      duration: 220,
-      useNativeDriver: false,
-    }).start();
   }, [active]);
 
   const handlePressIn = () => {

@@ -534,21 +534,25 @@ const VideoPlayer = memo(function VideoPlayer({ uri, poster, colors, isDark, t, 
 const AnimatedCarouselDot = memo(function AnimatedCarouselDot({ active }) {
   const progress = useRef(new Animated.Value(active ? 1 : 0)).current;
   useEffect(() => {
+    // [perf 2026-10-01] Animate transform scale (native driver) instead of
+    // `width` (which forces useNativeDriver:false → JS thread). Same visual
+    // 6→8px grow, now off the JS thread.
     Animated.timing(progress, {
       toValue: active ? 1 : 0,
       duration: 220,
-      useNativeDriver: false,
+      useNativeDriver: true,
     }).start();
   }, [active, progress]);
-  const size = progress.interpolate({ inputRange: [0, 1], outputRange: [6, 8] });
+  const scale = progress.interpolate({ inputRange: [0, 1], outputRange: [1, 1.33] });
   const opacity = progress.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1] });
   return (
     <Animated.View
       style={{
-        width: size,
-        height: size,
-        borderRadius: 4,
+        width: 6,
+        height: 6,
+        borderRadius: 3,
         opacity,
+        transform: [{ scale }],
         backgroundColor: active ? ACCENT : '#ffffff',
       }}
     />
@@ -1345,6 +1349,11 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     // loader re-requests the URL instead of holding the failed
                     // attempt.
                     key={`img-${resolveMediaUrl(mediaUrls[0])}-${imageRetry}`}
+                    // [perf 2026-10-01] recyclingKey keyed on the URL so a
+                    // recycled FlashList cell doesn't flash the PREVIOUS post's
+                    // bitmap until this URL decodes (the carousel + video poster
+                    // paths already set this; the single-image path was missing it).
+                    recyclingKey={resolveMediaUrl(mediaUrls[0])}
                     source={{ uri: resolveMediaUrl(mediaUrls[0]) }}
                     style={[StyleSheet.absoluteFill, getNativeFilterStyle(post.filter)]}
                     resizeMode="cover"
@@ -2165,10 +2174,10 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   avatarRing: {
-    padding: 2,
-    borderRadius: 21,
-    borderWidth: 1.5,
-    borderColor: 'rgba(17, 17, 17,0.22)',
+    // [beauty 2026-10-01] Dropped the decorative grey ring around every post
+    // avatar (a ring universally reads as "has a story"). Plain avatar like
+    // IG/WhatsApp post headers; keep a touch of right spacing to the name.
+    marginRight: 2,
   },
   headerInfo: {
     flex: 1,
@@ -2405,7 +2414,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 8,
+    // [beauty 2026-10-01] 8→6 so the icon glyphs (which carry ~8px inner
+    // padding) line up with the 14px caption/header content gutter.
+    paddingHorizontal: 6,
     paddingTop: 8,
     paddingBottom: 4,
   },

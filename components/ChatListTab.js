@@ -23,7 +23,7 @@ import { userScopedKey } from '../services/cache';
 import { RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import { getCachedMessagesSync } from '../services/smartChatCache';
 import CachedImage from './CachedImage';
-import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell } from './Icons';
+import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
@@ -284,7 +284,7 @@ function PulsingOnlineDot({ colors, isDark }) {
   const innerScale = pulse.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 1.08, 1] });
   return (
     <Animated.View style={[s.onlineDot, {
-      borderColor: isDark ? '#0B141A' : colors.background,
+      borderColor: colors.background,
       transform: [{ scale: innerScale }],
       // [beauty 2026-05-31] Single soft halo instead of a stacked double-glow —
       // a crisp 2px-ringed presence pip with a calm green aura, never a neon blob.
@@ -842,15 +842,16 @@ const ConversationRow = React.memo(function ConversationRow({
   // base. The unread tint is intentionally lighter than the press-state so a
   // hover/press still reads as a distinct layer on top of it.
   const rowBg = hovered
-    // [beauty 2026-05-31] Web hover is a very light BRAND tint (hovered is only
-    // ever set on web via onMouseEnter — mobile never flips it), so the cursor
-    // leaves a subtle purple wash instead of a flat grey. Tasteful, low alpha.
+    // [beauty 2026-05-31] Web hover is a very light tint (hovered is only ever
+    // set on web via onMouseEnter — mobile never flips it), so the cursor leaves
+    // a subtle wash instead of a flat grey. Tasteful, low alpha.
     ? (isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.05)')
-    : (unread && !isMuted)
-      ? (isDark ? 'rgba(17, 17, 17,0.07)' : 'rgba(17, 17, 17,0.045)')
-      : isPinned
-        ? (isDark ? 'rgba(17, 17, 17,0.04)' : 'rgba(17, 17, 17,0.03)')
-        : colors.background;
+    // [beauty 2026-10-01] Unread rows are NO LONGER tinted — WhatsApp signals
+    // unread with the bold name + count pill on a plain white row, which reads
+    // much lighter/cleaner. Pinned keeps a whisper of tint.
+    : isPinned
+      ? (isDark ? 'rgba(17, 17, 17,0.04)' : 'rgba(17, 17, 17,0.03)')
+      : colors.background;
 
   // Native swipe row content
   const rowContent = (
@@ -924,29 +925,11 @@ const ConversationRow = React.memo(function ConversationRow({
             ) : isGroup ? (
               <GroupAvatarStack conversation={conversation} size={46} isDark={isDark} />
             ) : (
-              <View style={[
-                // Unread direct chats get a soft brand-purple gradient halo so
-                // the avatar visually "lifts" — the iMessage/Instagram cue that
-                // there's something new here. Muted chats skip it (the count
-                // pill already de-emphasizes to grey). Web uses a real conic-ish
-                // glow; native falls back to a colored shadow that reads as a ring.
-                (unread && !isMuted) && (isWeb
-                  ? { borderRadius: 28, boxShadow: `0 0 0 2px rgba(17, 17, 17,0.55), 0 2px 10px rgba(17, 17, 17,0.3)` }
-                  : {
-                      borderRadius: 28,
-                      shadowColor: '#111111',
-                      shadowOffset: { width: 0, height: 0 },
-                      shadowOpacity: 0.55,
-                      shadowRadius: 5,
-                      elevation: 4,
-                    }),
-                isWeb && isDark && !((unread && !isMuted)) ? {
-                  borderRadius: 28,
-                  boxShadow: isOnline
-                    ? `0 0 12px rgba(34,197,94,0.3), 0 2px 8px rgba(0,0,0,0.2)`
-                    : `0 2px 8px rgba(0,0,0,0.2)`,
-                } : null,
-              ]}>
+              <View>
+                {/* [beauty 2026-10-01] Removed the unread "halo" ring and the
+                    web-dark glow around avatars — WhatsApp avatars are flat.
+                    Unread is carried by the bold name + count pill. Flatter,
+                    cleaner column of avatars. */}
                 <AvatarCircle
                   name={displayName}
                   email={otherEmail}
@@ -1050,19 +1033,17 @@ const ConversationRow = React.memo(function ConversationRow({
                 })();
                 const muted = isDark ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.45)';
                 const tint = isFresh ? '#dc2626' : muted;
-                const bg = isFresh
-                  ? 'rgba(220,38,38,0.08)'
-                  : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)');
+                // [beauty 2026-10-01] Draft preview is now plain inline text
+                // (dropped the filled box) — WhatsApp shows a red "Draft:" prefix
+                // inline, no container, which keeps the row rhythm clean.
                 return (
                   <View style={{ flex: 1, marginRight: 10 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: bg, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1 }}>
-                      <Text style={[s.rowPreview, { color: tint, fontWeight: '500', flex: 1 }]} numberOfLines={1}>
-                        <Text style={{ color: tint, fontWeight: '700' }}>{t('chat.draft') || 'Rascunho'}: </Text>
-                        {draftText}
-                      </Text>
-                    </View>
+                    <Text style={[s.rowPreview, { color: tint, fontWeight: '500' }]} numberOfLines={1}>
+                      <Text style={{ color: tint, fontWeight: '700' }}>{t('chat.draft') || 'Rascunho'}: </Text>
+                      {draftText}
+                    </Text>
                     {ageLabel ? (
-                      <Text style={{ fontSize: 10, color: muted, marginTop: 2, marginLeft: 6 }}>{ageLabel}</Text>
+                      <Text style={{ fontSize: 10, color: muted, marginTop: 2 }}>{ageLabel}</Text>
                     ) : null}
                   </View>
                 );
@@ -1117,19 +1098,14 @@ const ConversationRow = React.memo(function ConversationRow({
                     <IconBellOff size={14} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} />
                   </Animated.View>
                 )}
-                {conversation.has_mention && unread && (
-                  <View style={[s.unreadBadge, s.unreadBadgeShadow, { backgroundColor: '#FF6B9D', minWidth: 24 }]}>
-                    <Text style={[s.unreadText, { fontWeight: '900' }]}>@</Text>
-                  </View>
-                )}
-                {/* Mention badge: @ indicator takes priority visually — stays
-                    even when the chat is muted so you never miss being called
-                    out. Paired with the unread count. Uses a warmer pink tone
-                    (#FF6B9D) + heavier weight so it reads instantly different
-                    from the green unread-count pill. Spring-pop scale when the
-                    count increases so a fresh @mention catches the eye. */}
+                {/* Mention badge: a single @ indicator (the duplicate
+                    has_mention pill was removed 2026-10-01). Stays even when the
+                    chat is muted so you never miss being called out. Recolored
+                    off the off-brand pink to the app's neutral accent (#111111)
+                    — it's differentiated from the count pill by the @ glyph +
+                    weight, not by a new hue. Spring-pops when the count rises. */}
                 {conversation.unread_mentions > 0 && (
-                  <Animated.View style={[s.unreadBadge, s.unreadBadgeShadow, { backgroundColor: '#FF6B9D', marginRight: 4, minWidth: 22, transform: [{ scale: mentionScale }] }]}>
+                  <Animated.View style={[s.unreadBadge, s.unreadBadgeShadow, { backgroundColor: ACCENT, marginRight: 4, minWidth: 22, transform: [{ scale: mentionScale }] }]}>
                     <Text style={[s.unreadText, { fontSize: 13, fontWeight: '900' }]}>@</Text>
                   </Animated.View>
                 )}
@@ -2187,8 +2163,8 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
               {t('status.createStatus') || 'Criar status'}
             </Text>
             {[
-              { key:'text',   icon:'T',  color:'#111111', label: t('status.typeText')  || 'Texto' },
-              { key:'camera', icon:'📷', color:'#111111', label: t('status.typeCamera') || 'Câmera' },
+              { key:'text',   Icon: IconType,   color:'#111111', label: t('status.typeText')  || 'Texto' },
+              { key:'camera', Icon: IconCamera, color:'#111111', label: t('status.typeCamera') || 'Câmera' },
             ].map(opt => (
               <TouchableOpacity
                 key={opt.key}
@@ -2203,7 +2179,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                 style={{ flexDirection:'row', alignItems:'center', paddingVertical:14, gap:14 }}
               >
                 <View style={{ width:42, height:42, borderRadius:21, backgroundColor: opt.color + '22', alignItems:'center', justifyContent:'center' }}>
-                  <Text style={{ fontSize: opt.key === 'text' ? 20 : 22, fontWeight:'700', color: opt.color }}>{opt.icon}</Text>
+                  <opt.Icon size={21} color={opt.color} />
                 </View>
                 <Text style={{ flex:1, fontSize:15.5, fontWeight:'600', color: colors.text }}>{opt.label}</Text>
               </TouchableOpacity>
@@ -6540,7 +6516,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   ), [loading, t, router]);
 
   const ItemSeparatorComponent = useCallback(() => (
-    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', marginLeft: 79, marginRight: 16 }]} />
+    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', marginLeft: 74, marginRight: 16 }]} />
   ), [isDark]);
 
   return (
@@ -6695,7 +6671,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         <ListComponent
           data={visibleConversations}
           keyExtractor={keyExtractor}
-          estimatedItemSize={80}
+          estimatedItemSize={72}
           ListHeaderComponent={ListHeaderComponent}
           ListFooterComponent={ListFooterComponent}
           renderItem={renderItem}
@@ -7983,14 +7959,8 @@ const s = StyleSheet.create({
   avatarWrap: {
     position: 'relative',
     marginRight: 12,
-    // Subtle lift under the avatar so it reads as a layered token, iMessage-
-    // style. Soft + tight so it never looks like a heavy drop shadow.
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 4 },
-      android: {},
-      web: {},
-      default: {},
-    }),
+    // [beauty 2026-10-01] Dropped the per-avatar drop shadow — WhatsApp avatars
+    // are flat. Keeps the avatar column calm and clean.
   },
   // [beauty 2026-05-31] Online dot tucked tight to the avatar's lower-right with
   // a clean 2px ring in the row background colour — reads as a crisp presence
@@ -8047,7 +8017,7 @@ const s = StyleSheet.create({
   // [beauty 2026-05-31] Unread jumps to 800 so the read(500)→unread(800) step is
   // an unmistakable iMessage/WhatsApp-style contrast — a glance reads which rows
   // are waiting on you, no squinting.
-  rowNameUnread: { fontWeight: '800', letterSpacing: -0.3 },
+  rowNameUnread: { fontWeight: '700', letterSpacing: -0.3 },
   // Timestamp sits flush-right, tabular-ish so the right column stays aligned
   // across rows regardless of "agora" vs "14:32" vs "Ontem".
   // [beauty 2026-05-31] Timestamp flush-right, tabular so the right column stays

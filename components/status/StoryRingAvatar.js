@@ -31,8 +31,9 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, Animated, Easing } from 'react-native';
 import Svg, { Defs, LinearGradient, Stop, Circle as SvgCircle } from 'react-native-svg';
 import AvatarCircle from '../AvatarCircle';
+import { IconPlus, IconReply } from '../Icons';
 
-export default function StoryRingAvatar({
+function StoryRingAvatar({
   name,
   email,
   size = 54,
@@ -330,15 +331,12 @@ export default function StoryRingAvatar({
               shadowOffset: { width: 0, height: 2 }, elevation: 4,
             }}
           >
-            <Text style={{
-              color: '#fff',
-              fontSize: badge === 'reply' ? 11 : 14,
-              fontWeight: badge === 'reply' ? '900' : '700',
-              lineHeight: badge === 'reply' ? 13 : undefined,
-              marginTop: badge === 'plus' ? -2 : 0,
-            }}>
-              {badge === 'reply' ? '↩' : '+'}
-            </Text>
+            {/* [beauty 2026-10-01] SVG glyphs instead of a text '+'/'↩' — the
+                '↩' could render as a color emoji on iOS (hard-rule violation),
+                and text plus-signs drift off-center across fonts. */}
+            {badge === 'reply'
+              ? <IconReply size={12} color="#fff" />
+              : <IconPlus size={14} color="#fff" />}
           </TouchableOpacity>
         ) : (
           <View style={{
@@ -352,10 +350,15 @@ export default function StoryRingAvatar({
             shadowColor: ringColor, shadowOpacity: 0.5, shadowRadius: 6,
             shadowOffset: { width: 0, height: 2 }, elevation: 4,
           }}>
-            <Text style={{ color: '#fff', fontSize: 15, fontWeight: '800', marginTop: -1, lineHeight: 17 }}>+</Text>
+            <IconPlus size={14} color="#fff" />
           </View>
         )
       ) : null}
     </View>
   );
 }
+
+// [beauty 2026-10-01] Memoized so the stories strip's rings (each an SVG
+// gradient + circle) stop re-rendering on every feed scroll tick when the
+// parent re-renders with stable props.
+export default React.memo(StoryRingAvatar);

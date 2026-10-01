@@ -2116,7 +2116,7 @@ const s = StyleSheet.create({
   segmentPillTxt: { color: '#fff', fontSize: 11, fontWeight: '800', marginLeft: 4 },
   segmentDoneBtn: {
     paddingHorizontal: 16, paddingVertical: 8, borderRadius: 16,
-    backgroundColor: '#25D366',
+    backgroundColor: '#111111',
   },
   segmentDoneTxt: { color: '#fff', fontSize: 13, fontWeight: '800' },
   segmentUndoBtn: {
@@ -2275,10 +2275,10 @@ const s = StyleSheet.create({
   // Prominent primary send button — WhatsApp green, icon + label, soft lift so
   // it reads as THE action (vs the ghost "Refazer").
   confirmBtn: {
-    backgroundColor: '#25D366',
+    backgroundColor: '#111111',
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     minWidth: 140, paddingHorizontal: 32,
-    shadowColor: '#25D366', shadowOpacity: 0.45, shadowRadius: 12,
+    shadowColor: '#111111', shadowOpacity: 0.45, shadowRadius: 12,
     shadowOffset: { width: 0, height: 4 }, elevation: 6,
   },
   confirmBtnBusy: { opacity: 0.7 },
@@ -2307,7 +2307,7 @@ const s = StyleSheet.create({
   permText: { color: '#fff', fontSize: 16, textAlign: 'center', marginBottom: 12 },
   permBtn: {
     paddingHorizontal: 28, paddingVertical: 14, borderRadius: 24,
-    backgroundColor: '#25D366', width: 200, alignItems: 'center',
+    backgroundColor: '#111111', width: 200, alignItems: 'center',
   },
   permBtnTxt: { color: '#fff', fontSize: 16, fontWeight: '700' },
 });

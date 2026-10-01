@@ -29,6 +29,9 @@ let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
 
 const ACCENT = '#111111';
+// [beauty 2026-10-01] Single source for the light-mode feed canvas off-white
+// (was a magic '#f6f8fa' literal repeated 9×). One const = no drift.
+const FEED_CANVAS = '#f6f8fa';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const useNative = Platform.OS !== 'web';
 
@@ -182,12 +185,14 @@ function TrendingHashtagsRail({ colors, isDark, t, router }) {
               paddingHorizontal: 12,
               paddingVertical: 6,
               borderRadius: 14,
-              backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.08)',
+              // [beauty 2026-10-01] Dark mode was a black-on-dark chip (bg/border
+              // rgba(17,17,17,…) + black text) → unreadable. Branch on isDark.
+              backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17, 17, 17,0.08)',
               borderWidth: 1,
-              borderColor: 'rgba(17, 17, 17,0.32)',
+              borderColor: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(17, 17, 17,0.32)',
             }}
           >
-            <Text style={{ color: '#111111', fontSize: 13, fontWeight: '600' }}>
+            <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
               #{row.hashtag} <Text style={{ color: colors.textSecondary, fontWeight: '500' }}>· {row.uses}</Text>
             </Text>
           </TouchableOpacity>
@@ -258,7 +263,7 @@ function EmptyFeedIllustration({ isDark }) {
 // "Seu status" tile opens the viewer when you already have a story, otherwise
 // it opens the composer (requestNewStatus). Both reuse ChatStatusTab's existing
 // viewer/composer; we never duplicate that logic here.
-function StoriesStrip({ user, colors, isDark, t, requestOpenStatus, requestNewStatus }) {
+const StoriesStrip = React.memo(function StoriesStrip({ user, colors, isDark, t, requestOpenStatus, requestNewStatus }) {
   const { groups } = useStatuses(user?.email, { warmCacheVideos: false });
   const myEntry = (groups || []).find(g => String(g.email || '').toLowerCase() === String(user?.email || '').toLowerCase());
   const others = (groups || []).filter(g => String(g.email || '').toLowerCase() !== String(user?.email || '').toLowerCase());
@@ -284,7 +289,7 @@ function StoriesStrip({ user, colors, isDark, t, requestOpenStatus, requestNewSt
       paddingVertical: 10,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-      backgroundColor: isDark ? colors.background : '#f6f8fa',
+      backgroundColor: isDark ? colors.background : FEED_CANVAS,
     }}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 16 }}>
         {/* Your status — always first */}
@@ -293,7 +298,13 @@ function StoriesStrip({ user, colors, isDark, t, requestOpenStatus, requestNewSt
             name={myDisplay}
             email={user?.email}
             size={58}
-            ringStyle={myEntry ? 'solid' : 'none'}
+            /* [beauty 2026-10-01] Segmented ring (IG/WhatsApp parity) so the own
+               tile shows how many items + which are seen, not a flat solid ring.
+               pulse off keeps the top of the feed calm/clean. */
+            ringStyle={myEntry ? 'segmented' : 'none'}
+            segments={(myEntry?.items || []).length || 1}
+            itemsViewed={(myEntry?.items || []).map(it => !!it.viewed)}
+            pulse={false}
             badge="plus"
             isDark={isDark}
             colors={colors}
@@ -311,8 +322,11 @@ function StoriesStrip({ user, colors, isDark, t, requestOpenStatus, requestNewSt
                 name={g.name || g.email}
                 email={g.email}
                 size={58}
-                ringStyle="solid"
+                ringStyle="segmented"
+                segments={(g.items || []).length || 1}
+                itemsViewed={(g.items || []).map(it => !!it.viewed)}
                 allViewed={allViewed}
+                pulse={false}
                 isDark={isDark}
                 colors={colors}
               />
@@ -325,7 +339,7 @@ function StoriesStrip({ user, colors, isDark, t, requestOpenStatus, requestNewSt
       </ScrollView>
     </View>
   );
-}
+});
 
 export default function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedModeConsumed, tabActive, requestOpenStatus, requestNewStatus }) {
   // [#1247 2026-05-20] parentActive prop chega pro ReelsViewer. ChatFeedTab
@@ -989,7 +1003,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   // ── Search bar ──
   const renderSearchBar = () => (
     <View style={[styles.searchBarContainer, {
-      backgroundColor: isDark ? colors.background : '#f6f8fa',
+      backgroundColor: isDark ? colors.background : FEED_CANVAS,
       borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
       flexDirection: 'row',
       alignItems: 'center',
@@ -1179,7 +1193,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
             <TouchableOpacity
               key={u.email}
               style={[styles.suggestionCard, {
-                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#f6f8fa',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : FEED_CANVAS,
                 borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
               }]}
               onPress={() => handlePressUser(u.email)}
@@ -1354,7 +1368,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
 
   const renderAlgorithmTabs = useCallback(() => (
     <View style={[styles.tabBar, {
-      backgroundColor: isDark ? colors.background : '#f6f8fa',
+      backgroundColor: isDark ? colors.background : FEED_CANVAS,
       borderBottomColor: 'transparent',
       paddingVertical: 2,
     }]}>
@@ -1400,7 +1414,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
 
   const renderTabBar = () => (
     <View style={[styles.tabBar, {
-      backgroundColor: isDark ? colors.background : '#f6f8fa',
+      backgroundColor: isDark ? colors.background : FEED_CANVAS,
       borderBottomColor: 'transparent',
     }]}>
       <Animated.View pointerEvents="none" style={{
@@ -1473,7 +1487,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   // ── Search mode ──
   if (isSearchActive && searchQuery.length > 0) {
     return (
-      <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
+      <View style={[styles.container, { backgroundColor: isDark ? colors.background : FEED_CANVAS }]}>
         {renderSearchBar()}
         {renderSearchContent()}
       </View>
@@ -1489,7 +1503,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   // etc. all go through the same code path as /u/[username].
   if (feedMode === 'profile') {
     return (
-      <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
+      <View style={[styles.container, { backgroundColor: isDark ? colors.background : FEED_CANVAS }]}>
         {renderSearchBar()}
         {renderTabBar()}
         <Profile
@@ -1531,7 +1545,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   // order stays stable when the user flips between search / profile / reels.
   if (loading) {
     return (
-      <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
+      <View style={[styles.container, { backgroundColor: isDark ? colors.background : FEED_CANVAS }]}>
         {renderSearchBar()}
         {renderTabBar()}
         {renderAlgorithmTabs()}
@@ -1541,7 +1555,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: isDark ? colors.background : '#f6f8fa' }]}>
+    <View style={[styles.container, { backgroundColor: isDark ? colors.background : FEED_CANVAS }]}>
       <ListComponent
         ref={feedListRef}
         data={interleavedPosts}
@@ -1569,9 +1583,12 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
           <RefreshControl
             refreshing={refreshing}
             onRefresh={handleRefresh}
-            tintColor="#111111"
-            colors={['#111111', '#111111']}
-            progressBackgroundColor={isDark ? '#1f1b2e' : '#fff'}
+            /* [beauty 2026-10-01] Was hardcoded #111111 (near-black) → invisible
+               on the dark feed canvas. Use the theme text color so the spinner
+               shows in both modes; Android puck uses the themed surface. */
+            tintColor={colors.text}
+            colors={[colors.text]}
+            progressBackgroundColor={isDark ? colors.surface : '#fff'}
           />
         }
         /* [PERF] Pass the header as an ELEMENT, not an inline `() => <>…</>`

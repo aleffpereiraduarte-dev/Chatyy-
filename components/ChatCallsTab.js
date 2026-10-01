@@ -26,10 +26,15 @@ const hangupPstnCall = _pstn?.hangupPstnCall || (() => {});
 const muteSipCall = _sip?.muteSipCall || (() => {});
 const sipSendDTMF = _sip?.sendDTMF || (() => {});
 
-const GREEN = '#34C759';
-const GREEN_DARK = '#30D158';
+// [beauty 2026-10-01] De-iOS'd the calls tab palette so it stops reading like a
+// different (blue/green system) app. GREEN now matches the theme success green
+// (call-status semantics kept — green answer/arrows is universal); BLUE, which
+// was iOS system blue on info/close/add/caller-id chrome, is now the app's
+// neutral accent (#111111).
+const GREEN = '#16a34a';
+const GREEN_DARK = '#15803d';
 const RED = '#E53935';
-const BLUE = '#007AFF';
+const BLUE = '#111111';
 const ACCENT = '#111111';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const MAX_DIALER_WIDTH = 400;
@@ -1752,7 +1757,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
           {/* Hero header */}
           <View style={{
             paddingHorizontal: 24, paddingTop: 28, paddingBottom: 22,
-            backgroundColor: step === 'done' ? '#34C759' : '#007AFF',
+            backgroundColor: step === 'done' ? '#16a34a' : '#111111',
             alignItems: 'center',
           }}>
             <View style={{
@@ -1791,7 +1796,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
               </Text>
               <TouchableOpacity
                 onPress={onClose}
-                style={{ height: 50, borderRadius: 12, backgroundColor: '#34C759', alignItems: 'center', justifyContent: 'center' }}
+                style={{ height: 50, borderRadius: 12, backgroundColor: '#16a34a', alignItems: 'center', justifyContent: 'center' }}
               >
                 <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Entendi</Text>
               </TouchableOpacity>
@@ -1802,9 +1807,9 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
               <View style={{
                 backgroundColor: isDark ? 'rgba(0,122,255,0.10)' : 'rgba(0,122,255,0.07)',
                 borderRadius: 12, padding: 14, marginBottom: 14,
-                borderLeftWidth: 3, borderLeftColor: '#007AFF',
+                borderLeftWidth: 3, borderLeftColor: '#111111',
               }}>
-                <Text style={{ fontSize: 12, fontWeight: '800', color: '#007AFF', marginBottom: 4, letterSpacing: 0.4 }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: '#111111', marginBottom: 4, letterSpacing: 0.4 }}>
                   POR QUE ISSO?
                 </Text>
                 <Text style={{ fontSize: 13, color: txt, lineHeight: 19 }}>
@@ -1815,7 +1820,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
               {/* How it works */}
               <View style={{ marginBottom: 14 }}>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 }}>
-                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
+                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
                     <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>1</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
@@ -1823,7 +1828,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start', marginBottom: 10 }}>
-                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
+                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
                     <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>2</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
@@ -1831,7 +1836,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                   </Text>
                 </View>
                 <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#007AFF', alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
+                  <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: '#111111', alignItems: 'center', justifyContent: 'center', marginRight: 10, marginTop: 1 }}>
                     <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800' }}>3</Text>
                   </View>
                   <Text style={{ flex: 1, fontSize: 13, color: txt, lineHeight: 19 }}>
@@ -1878,7 +1883,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                 <TouchableOpacity
                   disabled={loading}
                   onPress={handleStartVerify}
-                  style={{ flex: 1.4, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#007AFF', opacity: loading ? 0.6 : 1 }}
+                  style={{ flex: 1.4, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#111111', opacity: loading ? 0.6 : 1 }}
                 >
                   {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Iniciar verificação</Text>}
                 </TouchableOpacity>
@@ -1908,8 +1913,8 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                   backgroundColor: isDark ? '#1c1c1e' : '#f2f2f7',
                   borderRadius: 16, paddingVertical: 22, paddingHorizontal: 20,
                   textAlign: 'center', marginBottom: 16,
-                  borderWidth: 2, borderColor: '#007AFF',
-                  fontSize: 36, fontWeight: '900', color: '#007AFF',
+                  borderWidth: 2, borderColor: '#111111',
+                  fontSize: 36, fontWeight: '900', color: '#111111',
                   letterSpacing: 8, fontVariant: ['tabular-nums'],
                 }}
               />
@@ -1926,7 +1931,7 @@ export function CallerIdVerifyContent({ onClose, onVerified, isDark, t }) {
                 <TouchableOpacity
                   disabled={loading || pin.length !== 6}
                   onPress={handleSubmitPin}
-                  style={{ flex: 1.4, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#007AFF', opacity: (loading || pin.length !== 6) ? 0.4 : 1 }}
+                  style={{ flex: 1.4, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: '#111111', opacity: (loading || pin.length !== 6) ? 0.4 : 1 }}
                 >
                   {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15 }}>Confirmar</Text>}
                 </TouchableOpacity>
@@ -2377,7 +2382,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             activeOpacity={0.85}
             onPress={() => setActiveCall(prev => prev ? { ...prev, minimized: false } : prev)}
             style={{
-              backgroundColor: '#34C759',
+              backgroundColor: '#16a34a',
               flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
               paddingHorizontal: 16, paddingVertical: 10,
             }}
@@ -2422,8 +2427,8 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
               backgroundColor: callerIdVerified ? 'rgba(52,199,89,0.14)' : 'rgba(0,122,255,0.12)',
             }}
           >
-            {callerIdVerified ? <IconVerifiedBadge size={13} color="#34C759" /> : null}
-            <Text style={{ fontSize: 13, fontWeight: '700', color: callerIdVerified ? '#34C759' : BLUE }}>
+            {callerIdVerified ? <IconVerifiedBadge size={13} color="#16a34a" /> : null}
+            <Text style={{ fontSize: 13, fontWeight: '700', color: callerIdVerified ? '#16a34a' : BLUE }}>
               {callerIdVerified ? 'Verificado' : 'Verificar nº'}
             </Text>
           </TouchableOpacity>
@@ -2486,7 +2491,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
               {t9Suggestions.map((c, idx) => {
                 const fromPhone = c._src === 'phone';
                 const badgeText = fromPhone ? (t?.('calls.iphoneContact') || 'iPhone') : 'Chatyy';
-                const badgeColor = fromPhone ? (isDark ? '#8e8e93' : '#636366') : '#34C759';
+                const badgeColor = fromPhone ? (isDark ? '#8e8e93' : '#636366') : '#16a34a';
                 return (
                   <TouchableOpacity
                     key={'t9_' + (c.id || c.email || c.phone || idx)}
@@ -2719,7 +2724,7 @@ function DialerModal({ visible, onClose, isDark, t, minutesInfo, onCallPlaced, c
             onPress={() => setCallMode(prev => prev === 'internet' ? 'callback' : 'internet')}
             activeOpacity={0.7}
           >
-            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: callMode === 'internet' ? '#34C759' : '#FF9500' }} />
+            <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: callMode === 'internet' ? '#16a34a' : '#FF9500' }} />
             <Text style={{ fontSize: 13, color: isDark ? '#8e8e93' : '#636366' }}>
               {callMode === 'internet' ? (t?.('calls.callbackOff') || 'Call via internet (default)') : (t?.('calls.callbackOn') || 'Bad internet? Receive a free callback')}
             </Text>
