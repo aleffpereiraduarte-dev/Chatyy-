@@ -11,6 +11,51 @@ function _CachedFeedImage(props) {
   // Fallback: bare RN Image (no disk cache, but still renders).
   return <Image {...props} />;
 }
+
+// Neutral "media unavailable" placeholder. Shown when a post's photo/video (or
+// its poster thumbnail) 404s permanently — legacy media whose R2 objects were
+// lost in the pre-migration purge. The founder reported these posts rendering
+// as a pure-black video box or a gray image square; this replaces that with a
+// theme-neutral card (colors.surface + hairline colors.border) and a discreet
+// glyph + localized "Mídia indisponível" so a dead post reads as intentional on
+// both light and dark instead of looking broken. Pure props (colors, t) — no
+// hooks — so it is safe to render from any branch. Falls back to safe literals
+// when colors/t are missing so it never crashes on an older/edge caller.
+function MediaUnavailablePlaceholder({ colors, t, onRetry }) {
+  const bg = (colors && colors.surface) || '#2a2a2a';
+  const border = (colors && colors.border) || 'rgba(255,255,255,0.12)';
+  const fg = (colors && colors.textSecondary) || '#8696a0';
+  const label = (t && t('status.mediaUnavailable')) || 'Mídia indisponível';
+  const retryLabel = (t && (t('common.retry') || t('chat.retry'))) || 'Tentar novamente';
+  return (
+    <View
+      style={[StyleSheet.absoluteFill, {
+        backgroundColor: bg,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: border,
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 16,
+      }]}
+      accessibilityLabel={label}
+    >
+      <IconImage size={34} color={fg} />
+      <Text style={{ color: fg, fontSize: 13, fontWeight: '600', marginTop: 10, textAlign: 'center' }}>
+        {label}
+      </Text>
+      {onRetry ? (
+        <Pressable
+          onPress={onRetry}
+          accessibilityRole="button"
+          accessibilityLabel={retryLabel}
+          style={{ marginTop: 12, paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999, borderWidth: 1, borderColor: border }}
+        >
+          <Text style={{ color: fg, fontSize: 12, fontWeight: '600' }}>{retryLabel}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
 import {
   View, Text, TouchableOpacity, StyleSheet, Image, ScrollView,
   Dimensions, Animated, Platform, Alert, Share, Pressable, Linking,
@@ -21,7 +66,7 @@ import AvatarCircle from './AvatarCircle';
 import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
   IconBookmark, IconBookmarkFilled, IconMoreHorizontal, IconTrash,
-  IconMapPin, IconPlay, IconPause, IconPin, IconMusic,
+  IconMapPin, IconPlay, IconPause, IconPin, IconMusic, IconImage,
 } from './Icons';
 import * as api from '../services/api';
 import { useLanguage } from '../context/LanguageContext';
@@ -274,6 +319,11 @@ const VideoPlayer = memo(function VideoPlayer({ uri, poster, colors, isDark, t, 
   const [muted, setMuted] = useState(true);
   const [progress, setProgress] = useState(0);
   const [inView, setInView] = useState(false);
+  // Media-404 fallbacks: `videoFailed` → the web <video> source errored;
+  // `posterFailed` → the native poster thumbnail 404'd. Either case swaps the
+  // black frame for the neutral "Mídia indisponível" placeholder.
+  const [videoFailed, setVideoFailed] = useState(false);
+  const [posterFailed, setPosterFailed] = useState(false);
   const videoRef = useRef(null);
   const containerRef = useRef(null);
   const progressRef = useRef(null);
@@ -348,6 +398,15 @@ const VideoPlayer = memo(function VideoPlayer({ uri, poster, colors, isDark, t, 
   }, []);
 
   if (isWeb) {
+    // Permanent 404 (legacy media purged from R2) → the browser paints a black
+    // box with a dead play button. Swap it for the neutral placeholder instead.
+    if (videoFailed) {
+      return (
+        <View ref={containerRef} style={styles.mediaFrame}>
+          <MediaUnavailablePlaceholder colors={colors} t={t} />
+        </View>
+      );
+    }
     return (
       <View ref={containerRef} style={styles.mediaFrame}>
         <video
@@ -368,6 +427,7 @@ const VideoPlayer = memo(function VideoPlayer({ uri, poster, colors, isDark, t, 
           // the currently-visible one snappy.
           preload={inView ? 'auto' : 'metadata'}
           poster={poster ? resolveMediaUrl(poster) : undefined}
+          onError={() => setVideoFailed(true)}
           onPlay={() => { setPlaying(true); startProgress(); }}
           onPause={() => { setPlaying(false); stopProgress(); }}
           onLoadedData={() => {
@@ -438,6 +498,15 @@ const VideoPlayer = memo(function VideoPlayer({ uri, poster, colors, isDark, t, 
     );
   }
 
+  // Poster 404 (legacy reel whose thumbnail/video was purged) → neutral
+  // placeholder instead of a black frame with a dead play button.
+  if (posterFailed) {
+    return (
+      <View style={styles.mediaFrame}>
+        <MediaUnavailablePlaceholder colors={colors} t={t} />
+      </View>
+    );
+  }
   return (
     <TouchableOpacity style={styles.mediaFrame} onPress={handleNativeOpen} activeOpacity={0.8} accessibilityLabel={t('feed.playVideo') || 'Play video'}>
       <_CachedFeedImage
@@ -446,6 +515,7 @@ const VideoPlayer = memo(function VideoPlayer({ uri, poster, colors, isDark, t, 
         resizeMode="cover"
         accessibilityLabel={t?.('feed.video') || 'Video'}
         recyclingKey={`vidposter-${resolveMediaUrl(poster || uri)}`}
+        onError={() => setPosterFailed(true)}
       />
       <View style={styles.videoOverlay}>
         <View style={styles.playButton}>
@@ -1263,18 +1333,9 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     onLoad={() => { if (imageError) setImageError(false); }}
                   />
                   {imageError ? (
-                    <Pressable
-                      onPress={retryImage}
-                      style={styles.imageRetryOverlay}
-                      accessibilityRole="button"
-                      accessibilityLabel={t?.('common.retry') || t?.('chat.retry') || 'Tentar novamente'}
-                    >
-                      <View style={styles.imageRetryPill}>
-                        <Text style={styles.imageRetryText}>
-                          {t?.('common.retry') || t?.('chat.retry') || 'Tentar novamente'}
-                        </Text>
-                      </View>
-                    </Pressable>
+                    // Dominant visual is the neutral placeholder (opaque, covers
+                    // the broken img) — the small retry handles transient 404s.
+                    <MediaUnavailablePlaceholder colors={colors} t={t} onRetry={retryImage} />
                   ) : null}
                 </View>
               ) : (
@@ -1292,18 +1353,9 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     onLoad={() => { if (imageError) setImageError(false); }}
                   />
                   {imageError ? (
-                    <Pressable
-                      onPress={retryImage}
-                      style={styles.imageRetryOverlay}
-                      accessibilityRole="button"
-                      accessibilityLabel={t?.('common.retry') || t?.('chat.retry') || 'Tentar novamente'}
-                    >
-                      <View style={styles.imageRetryPill}>
-                        <Text style={styles.imageRetryText}>
-                          {t?.('common.retry') || t?.('chat.retry') || 'Tentar novamente'}
-                        </Text>
-                      </View>
-                    </Pressable>
+                    // Dominant visual is the neutral placeholder (opaque, covers
+                    // the broken img) — the small retry handles transient 404s.
+                    <MediaUnavailablePlaceholder colors={colors} t={t} onRetry={retryImage} />
                   ) : null}
                 </View>
               )

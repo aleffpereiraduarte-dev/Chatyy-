@@ -46,7 +46,7 @@ import HighlightShareSheet from './HighlightShareSheet';
 import {
   IconX, IconPhone, IconVideo, IconMail, IconMessageSquare, IconUserPlus,
   IconChevronRight, IconSettings, IconMoreHorizontal, IconShare, IconAlertTriangle, IconLock, IconEdit,
-  IconTrash, IconPlus, IconGrid, IconFilm, IconTag, IconCheck, IconEyeOff, IconLink, IconPlay,
+  IconTrash, IconPlus, IconGrid, IconFilm, IconTag, IconCheck, IconEyeOff, IconLink, IconPlay, IconImage,
   IconGiftBox, IconBrush, IconBriefcase,
 } from './Icons';
 const IconEdit3 = IconEdit;
@@ -805,7 +805,10 @@ const GridItem = memo(function GridItem({ item, size, onPress, isReel }) {
   const [imgFailed, setImgFailed] = React.useState(false);
   const placeholder = (
     <View style={{ width: '100%', height: '100%', borderRadius: 3, backgroundColor: '#8e8e93', alignItems: 'center', justifyContent: 'center' }}>
-      <IconGrid size={20} color="rgba(255,255,255,0.6)" />
+      {/* IconImage (photo glyph) reads as "media unavailable" better than the
+          generic grid glyph — a dead-media tile should look like a missing
+          photo, not a layout element. Neutral mid-gray (not black) on purpose. */}
+      <IconImage size={20} color="rgba(255,255,255,0.6)" />
     </View>
   );
   const renderImg = () => {
