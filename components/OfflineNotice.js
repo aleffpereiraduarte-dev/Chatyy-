@@ -5,6 +5,14 @@ import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconWifiOff, IconRefresh } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
 
+// [2026-10-01] Cruza a conectividade com o socket real: um WS conectado+
+// autenticado é PROVA de que o device tem internet funcionando, mesmo quando o
+// NetInfo/NWPathMonitor reporta "offline" por engano (sonda de alcançabilidade
+// bloqueada, VPN, captive-portal). Usado pra suprimir um falso "sem conexão"
+// (founder: "apareceu sem conexão mas o wifi não tinha caído").
+let mailWs = null;
+try { mailWs = require('../services/websocket').default; } catch {}
+
 export default function OfflineNotice() {
   const { colors } = useTheme();
   const { t } = useLanguage();
@@ -34,6 +42,10 @@ export default function OfflineNotice() {
         if (offlineTimer) return;
         offlineTimer = setTimeout(() => {
           offlineTimer = null;
+          // O socket vivo sobrepõe um falso-offline do NetInfo/NWPathMonitor
+          // (wifi ok, mas a sonda de alcançabilidade falhou). Só pinta "sem
+          // conexão" se o socket real TAMBÉM estiver caído.
+          if (mailWs && mailWs.authenticated) return;
           setIsOffline(true);
         }, OFFLINE_SHOW_DELAY_MS);
       }
