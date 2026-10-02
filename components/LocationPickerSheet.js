@@ -29,9 +29,31 @@ import {
   View, Text, TouchableOpacity, Modal, Pressable, ActivityIndicator,
   Image, Platform, KeyboardAvoidingView, TextInput,
 } from 'react-native';
+import { WebView } from 'react-native-webview';
 import { IconMapPin, IconX } from './Icons';
 import * as api from '../services/api';
-import { boraStaticMapUrl } from './BoraMap';
+import { boraStaticMapUrl, boraMapHtml } from './BoraMap';
+
+// [fix 2026-10-01] The BoraUm STATIC-image map endpoint (/maptiles/.../static/
+// …png) went 404 (tileserver running -light, no raster renderer), so the <Image>
+// preview rendered as a gray box ("mapazinho cinza"). The interactive MapLibre
+// vector endpoints are still healthy, so we render a NON-interactive MapLibre
+// WebView instead (react-native-webview is already bundled → OTA-safe). It draws
+// its own centered marker, so no overlay pin is needed.
+function BoraMapPreview({ lat, lng, height }) {
+  return (
+    <WebView
+      source={{ html: boraMapHtml({ lat, lng, zoom: 16, interactive: false, markerColor: '#dc2626' }) }}
+      style={{ width: '100%', height, position: 'absolute', top: 0, left: 0, backgroundColor: 'transparent' }}
+      originWhitelist={['*']}
+      scrollEnabled={false}
+      pointerEvents="none"
+      androidLayerType="hardware"
+      javaScriptEnabled
+      domStorageEnabled
+    />
+  );
+}
 
 // [2026-06-24] Google Maps REMOVIDO. Preview do mapa vem da Static Image API do
 // nosso tile server self-hosted (BoraUm / OpenStreetMap) — sem chave, sem billing.
@@ -359,20 +381,9 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
             <>
               {/* Map preview */}
               <View style={{ borderRadius: 14, overflow: 'hidden', backgroundColor: colors.border + '20', marginBottom: 14 }}>
-                {mapUrl ? (
-                  <View style={{ width: '100%', height: 180, alignItems: 'center', justifyContent: 'center' }}>
-                    <Image
-                      key={mapUrl}
-                      source={{ uri: mapUrl }}
-                      style={{ width: '100%', height: 180, position: 'absolute', top: 0, left: 0 }}
-                      resizeMode="cover"
-                      onError={onMapError}
-                    />
-                    <View style={{ marginTop: -10 }} pointerEvents="none">
-                      <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: '#dc2626', borderWidth: 2, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
-                        <IconMapPin size={16} color="#fff" />
-                      </View>
-                    </View>
+                {coords ? (
+                  <View style={{ width: '100%', height: 180 }}>
+                    <BoraMapPreview lat={coords.latitude} lng={coords.longitude} height={180} />
                   </View>
                 ) : null}
               </View>
@@ -471,20 +482,9 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
           {coords && liveConfirm && (
             <>
               <View style={{ borderRadius: 14, overflow: 'hidden', backgroundColor: colors.border + '20', marginBottom: 14 }}>
-                {mapUrl ? (
-                  <View style={{ width: '100%', height: 160, alignItems: 'center', justifyContent: 'center' }}>
-                    <Image
-                      key={mapUrl}
-                      source={{ uri: mapUrl }}
-                      style={{ width: '100%', height: 160, position: 'absolute', top: 0, left: 0 }}
-                      resizeMode="cover"
-                      onError={onMapError}
-                    />
-                    <View style={{ marginTop: -10 }} pointerEvents="none">
-                      <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: '#dc2626', borderWidth: 2, borderColor: '#fff', alignItems: 'center', justifyContent: 'center' }}>
-                        <IconMapPin size={16} color="#fff" />
-                      </View>
-                    </View>
+                {coords ? (
+                  <View style={{ width: '100%', height: 160 }}>
+                    <BoraMapPreview lat={coords.latitude} lng={coords.longitude} height={160} />
                   </View>
                 ) : null}
               </View>

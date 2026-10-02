@@ -1841,6 +1841,14 @@ export default function ChatNewScreen() {
           // 2026-05-12 print 3.
           keyboardType="default"
           autoCapitalize="none"
+          // [fix 2026-10-01] autoCorrect/autoComplete OFF — on Android the IME
+          // composing region, combined with the controlled value re-applying
+          // while the JS thread is busy filtering, resets the cursor to 0 and
+          // each char gets prepended → "letras de trás pra frente". Turning off
+          // the composing region fixes the reversed typing.
+          autoCorrect={false}
+          autoComplete="off"
+          importantForAutofill="no"
           returnKeyType="search"
           blurOnSubmit
         />
@@ -1964,6 +1972,12 @@ export default function ChatNewScreen() {
               renderItem={renderContact}
               renderSectionHeader={renderSectionHeader}
               extraData={listExtraData}
+              // [fix 2026-10-01] Match the search FlatList: on Android, without
+              // persistTaps the first tap on a contact just dismisses the open
+              // keyboard instead of selecting (the "two-tap / teclado quebrado"
+              // symptom). persist-taps = single tap selects.
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
               removeClippedSubviews
               windowSize={10}
               initialNumToRender={12}
