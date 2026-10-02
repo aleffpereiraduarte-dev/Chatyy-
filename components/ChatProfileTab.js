@@ -806,7 +806,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
       { label: 'Trocar senha', allowed: !!restrictions.can_change_password, Icon: KidsIconKeyPerm },
     ];
     return (
-      <View style={[styles.container, { backgroundColor: isDark ? '#1a1025' : '#faf5ff' }]}>
+      <View style={[styles.container, { backgroundColor: isDark ? '#0e1621' : '#f6f8fa' }]}>
         <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
           {/* Profile card with gradient */}
           <View style={{ margin: 16, borderRadius: 24, overflow: 'hidden', backgroundColor: isDark ? '#161618' : '#fff',
@@ -818,7 +818,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               </View>
             </View>
             <View style={{ alignItems: 'center', padding: 16 }}>
-              <Text style={{ fontSize: 22, fontWeight: '800', color: isDark ? '#F1F3F5' : '#1e1b4b' }}>{name}</Text>
+              <Text style={{ fontSize: 22, fontWeight: '800', color: isDark ? '#F1F3F5' : '#111111' }}>{name}</Text>
               <View style={{ marginTop: 8, flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : '#F1F3F5', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 20 }}>
                 <KidsIconShieldUser size={14} color="#111111" />
                 <Text style={{ fontSize: 13, fontWeight: '700', color: '#111111' }}>Chatyy Kids</Text>
@@ -873,7 +873,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={{ fontSize: 12, fontWeight: '600', color: '#6b7280', textTransform: 'uppercase', letterSpacing: 0.5 }}>Responsavel</Text>
-                <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#F1F3F5' : '#1e1b4b', marginTop: 2 }}>{parentEmail}</Text>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: isDark ? '#F1F3F5' : '#111111', marginTop: 2 }}>{parentEmail}</Text>
               </View>
               <IconShield size={20} color="#111111" />
             </View>
@@ -887,10 +887,10 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             </View>
             {PERM_ITEMS.map((item, idx) => (
               <View key={idx} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: idx > 0 ? 0.5 : 0, borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
-                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : '#f3e8ff', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17,17,17,0.06)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
                   <item.Icon size={16} color={isDark ? '#111111' : '#111111'} />
                 </View>
-                <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#F1F3F5' : '#1e1b4b' }}>{item.label}</Text>
+                <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#F1F3F5' : '#111111' }}>{item.label}</Text>
                 <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: item.allowed ? (isDark ? 'rgba(16,185,129,0.15)' : '#dcfce7') : (isDark ? 'rgba(239,68,68,0.15)' : '#fee2e2'), alignItems: 'center', justifyContent: 'center' }}>
                   {item.allowed ? <KidsIconCheckCircle size={16} color={isDark ? '#34d399' : '#10b981'} /> : <KidsIconXCircle size={16} color={isDark ? '#f87171' : '#ef4444'} />}
                 </View>
@@ -898,10 +898,10 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             ))}
             {restrictions.bedtime_start && (
               <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 0.5, borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)' }}>
-                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : '#f3e8ff', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
+                <View style={{ width: 32, height: 32, borderRadius: 10, backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17,17,17,0.06)', alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
                   <KidsIconMoon size={16} color={isDark ? '#111111' : '#111111'} />
                 </View>
-                <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#F1F3F5' : '#1e1b4b' }}>Hora de dormir</Text>
+                <Text style={{ flex: 1, fontSize: 15, fontWeight: '500', color: isDark ? '#F1F3F5' : '#111111' }}>Hora de dormir</Text>
                 <Text style={{ fontSize: 13, fontWeight: '600', color: '#111111' }}>{restrictions.bedtime_start} - {restrictions.bedtime_end}</Text>
               </View>
             )}

@@ -862,7 +862,7 @@ const s = StyleSheet.create({
     ...Platform.select({
       web: {
         cursor: 'pointer', transition: 'all 0.2s ease',
-        boxShadow: '0 2px 6px rgba(37,99,235,0.35), 0 6px 20px rgba(37,99,235,0.2)',
+        boxShadow: '0 8px 22px rgba(17,17,17,0.35), 0 2px 6px rgba(17,17,17,0.20)',
       },
       default: {
         shadowColor: '#111111', shadowOffset: { width: 0, height: 3 },

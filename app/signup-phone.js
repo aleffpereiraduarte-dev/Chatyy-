@@ -30,7 +30,7 @@ import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../ser
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
 import useIsMounted from '../hooks/useIsMounted';
 import { COUNTRIES, formatPhone } from '../constants/countries';
-import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, IconAtSign, IconAlertTriangle, IconPhone, IconShield, IconSparkles, IconZap, IconCamera, IconChevronRight, IconLock, IconEye, IconEyeOff } from '../components/Icons';
+import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, IconAtSign, IconAlertTriangle, IconPhone, IconShield, IconSparkles, IconZap, IconCamera, IconChevronRight, IconLock, IconEye, IconEyeOff, IconX } from '../components/Icons';
 import SignupIntro from '../components/SignupIntro';
 import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
 
@@ -905,7 +905,7 @@ export default function SignupPhone() {
                       hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                       style={{ marginLeft: 8 }}
                     >
-                      <Text style={{ color: colors.primary, fontSize: 18, fontWeight: '600' }}>×</Text>
+                      <IconX size={16} color={colors.primary} />
                     </TouchableOpacity>
                   </View>
                 )}

@@ -4,26 +4,29 @@ import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconInbox, IconUsers, IconTag, IconBell, IconMail, IconMailOpen, IconStarFilled } from './Icons';
 
+// [beauty 2026-10-01] Monochrome pills (one accent #111111 for every active
+// tab) — the per-category rainbow (pink/amber/green/blue) fought the app's
+// neutral palette and read dated. Each category still reads distinctly via its
+// SVG icon; the active fill is the single brand accent, Gmail/WhatsApp-style.
 const CATEGORIES = [
   { key: 'all', i18nKey: 'category.all', icon: IconMail, color: '#111111' },
-  { key: 'unread', i18nKey: 'category.unread', icon: IconMailOpen, color: '#f43f5e' },
+  { key: 'unread', i18nKey: 'category.unread', icon: IconMailOpen, color: '#111111' },
   // "Importantes" — driven by the AI importance classifier (level === 'high')
   // OR a flagged message. Sits second so users see prioritized work first.
-  { key: 'important', i18nKey: 'inbox.tabImportant', icon: IconStarFilled, color: '#f59e0b' },
+  { key: 'important', i18nKey: 'inbox.tabImportant', icon: IconStarFilled, color: '#111111' },
   { key: 'primary', i18nKey: 'category.primary', icon: IconInbox, color: '#111111' },
   { key: 'social', i18nKey: 'category.social', icon: IconUsers, color: '#111111' },
-  { key: 'promotions', i18nKey: 'category.promotions', icon: IconTag, color: '#10b981' },
-  { key: 'updates', i18nKey: 'category.updates', icon: IconBell, color: '#3b82f6' },
+  { key: 'promotions', i18nKey: 'category.promotions', icon: IconTag, color: '#111111' },
+  { key: 'updates', i18nKey: 'category.updates', icon: IconBell, color: '#111111' },
 ];
 
-// Color/icon palette for backend-supplied bundles (Gmail-style category
-// grouping — compras / viagens / financas / foruns / notificacoes / …).
+// Backend-supplied bundles (Gmail-style grouping) — also mono now.
 const BUNDLE_COLORS = {
-  compras: '#0ea5e9',
-  viagens: '#06b6d4',
-  financas: '#16a34a',
+  compras: '#111111',
+  viagens: '#111111',
+  financas: '#111111',
   foruns: '#111111',
-  notificacoes: '#3b82f6',
+  notificacoes: '#111111',
 };
 function defaultBundleIcon() { return IconTag; }
 
@@ -42,7 +45,7 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
       key: b.id,
       label: b.label || b.id,
       icon: defaultBundleIcon(),
-      color: BUNDLE_COLORS[b.id] || '#94a3b8',
+      color: BUNDLE_COLORS[b.id] || '#111111',
       isBundle: true,
       bundleCount: b.count || 0,
     }));

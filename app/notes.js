@@ -695,7 +695,7 @@ function BoardView({
         }]}
         activeOpacity={0.8}
       >
-        <Text style={boardStyles.fabText}>+</Text>
+        <IconPlus size={24} color="#fff" />
       </TouchableOpacity>
     </View>
   );

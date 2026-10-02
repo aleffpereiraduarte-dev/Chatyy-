@@ -2951,7 +2951,7 @@ export default function LoginScreen() {
               renderItem={({ item }) => (
                 <TouchableOpacity
                   style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: 0.5, borderBottomColor: colors.borderLight,
-                    backgroundColor: item.code === phoneCountryCode ? (isDark ? 'rgba(0,122,255,0.15)' : 'rgba(0,122,255,0.08)') : 'transparent' }}
+                    backgroundColor: item.code === phoneCountryCode ? (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17,17,17,0.06)') : 'transparent' }}
                   onPress={() => { setPhoneCountryCode(item.code); setShowCountryPicker(false); }}
                   activeOpacity={0.6}
                 >

@@ -376,12 +376,10 @@ function EmailRow({
           ) : (
             <IconCheckbox size={22} color={colors.checkboxColor || colors.textSecondary} />
           )
-        ) : isUnread ? (
-          // Unread: 2px colored ring around avatar (Instagram-story style)
-          <View style={{ padding: 2, borderRadius: (Math.min(44, dc.avatarSize) + 6) / 2, borderWidth: 2, borderColor: colors.primary }}>
-            <AvatarCircle name={email.from_name || email.from} email={email.from} size={Math.min(44, dc.avatarSize) - 4} />
-          </View>
         ) : (
+          // [beauty 2026-10-01] Dropped the unread "story ring" around the avatar
+          // — the row already signals unread with the left accent bar + bold
+          // sender, so the ring was redundant emphasis (busy). Flat avatar now.
           <AvatarCircle name={email.from_name || email.from} email={email.from} size={Math.min(44, dc.avatarSize)} />
         )}
       </TouchableOpacity>
@@ -650,10 +648,8 @@ const s = StyleSheet.create({
   unreadDotLeft: {
     position: 'absolute', left: 6, top: 8, bottom: 8,
     width: 3, borderRadius: 2,
-    ...Platform.select({
-      web: { boxShadow: '0 0 8px rgba(37, 99, 235, 0.35)' },
-      default: {},
-    }),
+    // [beauty 2026-10-01] Dropped the blue glow (off-palette rgba(37,99,235))
+    // — the accent bar itself carries the unread cue, no glow needed.
   },
   leftArea: { marginRight: 11 },
   content: { flex: 1, minWidth: 0 },

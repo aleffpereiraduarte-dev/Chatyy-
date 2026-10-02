@@ -311,7 +311,7 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
                         onPress={() => handleInsertOperator(op.label)}
                         style={[
                           st.opSuggestChip,
-                          { backgroundColor: isDark ? 'rgba(99,102,241,0.12)' : 'rgba(99,102,241,0.08)' },
+                          { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.06)' },
                         ]}
                         activeOpacity={0.7}
                       >
@@ -511,7 +511,7 @@ export default function SearchBar({ value, onChange, onSubmit, onClear, onFocus 
                       accessibilityRole="button"
                       accessibilityLabel={row.label}
                     >
-                      <Text style={[st.opHintCode, { color: colors.primary, backgroundColor: isDark ? 'rgba(37,99,235,0.10)' : 'rgba(37,99,235,0.08)' }]}>{row.code}</Text>
+                      <Text style={[st.opHintCode, { color: colors.primary, backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.06)' }]}>{row.code}</Text>
                       <Text style={[st.opHintLabel, { color: colors.textSecondary }]} numberOfLines={1}>{row.label}</Text>
                     </TouchableOpacity>
                   ))}

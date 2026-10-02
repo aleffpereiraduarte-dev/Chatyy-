@@ -154,7 +154,7 @@ const s = StyleSheet.create({
       web: {
         cursor: 'pointer',
         transition: 'transform 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease',
-        boxShadow: '0 2px 12px rgba(37, 99, 235, 0.25)',
+        boxShadow: '0 2px 12px rgba(17, 17, 17, 0.18)',
       },
       default: {},
     }),
