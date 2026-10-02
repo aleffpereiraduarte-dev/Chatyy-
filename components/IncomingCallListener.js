@@ -172,6 +172,44 @@ function _bufferPendingIce(callId, candidate) {
 // thing that may flip this back to false.
 let _callActive = false;
 let _activeCallId = null;
+
+// [web re-ring fix 2026-10-02] Module-level guard: callIds we've already
+// accepted/declined/ended, with a timestamp. The component-level `callRef`
+// / `acceptedRef` dedup is lost whenever the listener remounts (e.g. web
+// navigates to /call after answering) OR when a second listener instance
+// mounts (web code-splitting double-mount). In those cases a re-delivered
+// `call_invite` for the SAME call — hub replay on the fresh socket, or the
+// duplicate socket — slipped past every guard (`_callActive` isn't set yet,
+// fresh refs are empty) and the incoming UI rang AGAIN after the user had
+// already answered on web. This map lives at module scope (one per JS VM,
+// survives remounts, shared across both mounts via the globalThis pin) so
+// the dedup holds regardless of component lifecycle.
+const _recentlyHandledCallIds = new Map(); // callId(String) -> epoch ms
+const _HANDLED_TTL_MS = 90 * 1000;
+function markCallHandled(callId) {
+  if (!callId) return;
+  try {
+    const now = Date.now();
+    _recentlyHandledCallIds.set(String(callId), now);
+    // Prune stale entries so the map can't grow unbounded over a long session.
+    for (const [k, ts] of _recentlyHandledCallIds) {
+      if (now - ts > _HANDLED_TTL_MS) _recentlyHandledCallIds.delete(k);
+    }
+  } catch {}
+}
+function wasCallRecentlyHandled(callId) {
+  if (!callId) return false;
+  try {
+    const ts = _recentlyHandledCallIds.get(String(callId));
+    if (ts == null) return false;
+    if (Date.now() - ts > _HANDLED_TTL_MS) {
+      _recentlyHandledCallIds.delete(String(callId));
+      return false;
+    }
+    return true;
+  } catch { return false; }
+}
+
 // Callback set by the mounted component so external code (call.js teardown)
 // can reset the internal `acceptedRef` / `handlingRef`. Without this, after a
 // call ends the refs stayed `true` forever and the next incoming `call_invite`
@@ -184,7 +222,7 @@ export function setCallActive(active, callId = null) {
   // Scope active flag to a specific callId so subsequent invites for the
   // SAME call don't get rejected, but invites for a DIFFERENT call also
   // don't slip through while the first is live. Codex GPT-5.5-pro #842.
-  if (_callActive && callId) _activeCallId = String(callId);
+  if (_callActive && callId) { _activeCallId = String(callId); markCallHandled(callId); }
   if (!_callActive && (!callId || !_activeCallId || String(callId) === _activeCallId)) {
     _activeCallId = null;
   }
@@ -722,6 +760,22 @@ function IncomingCallListenerWeb() {
         } catch {}
         try { stopAllAudio(); } catch {}
 
+        // [web re-ring fix 2026-10-02] Hard dedup across remounts/double-mounts:
+        // if THIS call was already accepted/declined/ended on this VM, never
+        // show the ring again — even if the component refs are fresh and
+        // _callActive hasn't flipped true yet (the window right after a web
+        // answer, while navigating to /call). Fixes "atendi no web e tocou de
+        // novo". Safe because call_ids are unique per call, so a legitimately
+        // new invite can never collide with a handled one.
+        {
+          const _inviteCallId = data?.call_id || data?.room_id || '';
+          if (_inviteCallId && wasCallRecentlyHandled(_inviteCallId)) {
+            voipDiag('ws_call_invite_skipped', _inviteCallId, { reason: 'already_handled' });
+            try { stopRingtone(); } catch {}
+            return;
+          }
+        }
+
         // If already accepted/handling (e.g. CallKit), still capture caller data but don't show UI
         // CRITICAL: acceptedRef/handlingRef can leak across calls — they're set to true
         // when CallKit answer / handleAccept runs, but never reset when /call ends
@@ -1073,6 +1127,9 @@ function IncomingCallListenerWeb() {
       // this event, the existing call_end handler still covers the hangup
       // path via WS — this is purely additive for multi-device parity.
       unsubs.push(mailWs.on('call_cancel', (data) => {
+        // [web re-ring fix 2026-10-02] Cancel is terminal for the ring — a later
+        // replayed invite for this call must stay silent across remounts.
+        if (data?.call_id || data?.room_id) markCallHandled(data.call_id || data.room_id);
         // [multi-device answered_elsewhere] Same guard as call_dismissed: the
         // device that already accepted this call must ignore its own cancel/
         // dismiss fan-out so the just-answered call isn't torn down.
@@ -1141,6 +1198,11 @@ function IncomingCallListenerWeb() {
       unsubs.push(mailWs.on('call_accepted', (data) => {
         // This is for when ANOTHER device accepts a call we were receiving
         // Only process if it's NOT our device (i.e., someone else accepted)
+        // [web re-ring fix 2026-10-02] Mark handled: once any of our devices
+        // answered, a replayed invite to a reconnecting socket must stay silent.
+        if (data?.email && data.email === user?.email && (data?.call_id || data?.room_id)) {
+          markCallHandled(data.call_id || data.room_id);
+        }
         if (callRef.current?.call_id === data?.call_id && data.email && data.email === user?.email && !acceptedRef.current) {
           console.log('[IncomingCall] Another device accepted:', data.email);
           if (data?.call_id) _pendingIceByCallId.delete(String(data.call_id));
@@ -1157,6 +1219,9 @@ function IncomingCallListenerWeb() {
 
       // If the caller ends before we answer
       unsubs.push(mailWs.on('call_end', (data) => {
+        // [web re-ring fix 2026-10-02] A finished call must never ring again if
+        // the hub replays its invite to a reconnecting/second socket.
+        if (data?.call_id || data?.room_id) markCallHandled(data.call_id || data.room_id);
         if (callRef.current?.call_id === data?.call_id && !acceptedRef.current) {
           // Caller ended before we answered - log as missed
           const c = callRef.current;
@@ -1770,6 +1835,11 @@ function IncomingCallListenerWeb() {
     if (timeoutRef.current) { clearTimeout(timeoutRef.current); timeoutRef.current = null; }
 
     const callId = currentCall.call_id || currentCall.room_id;
+    // [web re-ring fix 2026-10-02] Mark handled NOW so a re-delivered invite
+    // for this same call (hub replay on the /call socket, or the web
+    // double-mount) can't re-ring while we navigate — _callActive flips true
+    // only later, once call.js connects media.
+    markCallHandled(callId);
 
     // Dismiss the native IncomingCallActivity (Android) / CallKit (iOS) when
     // the user accepts from the JS overlay — otherwise the native screen
@@ -1912,6 +1982,7 @@ function IncomingCallListenerWeb() {
       const currentCall = callStateRef.current || call;
       if (currentCall) {
         const callId = currentCall.call_id || currentCall.room_id;
+        markCallHandled(callId);
         try {
           const mailWs = require('../services/websocket').default;
           if (mailWs.isConnected) {
@@ -1947,6 +2018,7 @@ function IncomingCallListenerWeb() {
     const currentCall = callStateRef.current || call;
     if (currentCall) {
       const callId = currentCall.call_id || currentCall.room_id;
+      markCallHandled(callId);
       // Dismiss native IncomingCallActivity/CallKit when user declines from JS overlay
       try { callKeep.endCall(callId); } catch {}
       // Log declined call as missed in history
