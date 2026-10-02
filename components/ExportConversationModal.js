@@ -107,9 +107,10 @@ export default function ExportConversationModal({
   };
 
   const formatLabel = useMemo(() => ({
+    // [beauty 2026-10-02] All three format icons mono (were blue/green) — matches the brand.
     zip: { Icon: IconPackage, color: PURPLE, title: t('chatConv.exportZipTitle') || 'Backup completo (.zip)', sub: t('chatConv.exportZipSub') || 'Mensagens, mídia e HTML — pronto pra importar' },
-    txt: { Icon: IconFileText, color: '#3b82f6', title: t('chatConv.exportTxtTitle') || 'Texto (.txt)', sub: t('chatConv.exportTxtSub') || 'Conversa em texto puro, sem mídia' },
-    json: { Icon: IconImage, color: '#10b981', title: t('chatConv.exportJsonTitle') || 'Dados (.json)', sub: t('chatConv.exportJsonSub') || 'Estruturado, pra desenvolvedores' },
+    txt: { Icon: IconFileText, color: PURPLE, title: t('chatConv.exportTxtTitle') || 'Texto (.txt)', sub: t('chatConv.exportTxtSub') || 'Conversa em texto puro, sem mídia' },
+    json: { Icon: IconImage, color: PURPLE, title: t('chatConv.exportJsonTitle') || 'Dados (.json)', sub: t('chatConv.exportJsonSub') || 'Estruturado, pra desenvolvedores' },
   }), [t]);
 
   const handleExport = async () => {
@@ -300,7 +301,7 @@ export default function ExportConversationModal({
 
               {status === 'success' ? (
                 <View style={{ alignItems: 'center', paddingVertical: 28 }}>
-                  <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: 'rgba(16,185,129,0.14)', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
+                  <View style={{ width: 64, height: 64, borderRadius: 32, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)', alignItems: 'center', justifyContent: 'center', marginBottom: 14 }}>
                     <Svg width={34} height={34} viewBox="0 0 24 24"><Path d="M5 12l5 5L20 7" stroke="#10b981" strokeWidth={2.6} strokeLinecap="round" strokeLinejoin="round" fill="none" /></Svg>
                   </View>
                   <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>

@@ -31412,10 +31412,10 @@ function ChatConversationInner() {
         <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' }}>
           <Pressable style={{ flex: 1 }} onPress={() => setShowStatsModal(false)} />
           <View style={{ backgroundColor: colors.background, borderTopLeftRadius: 24, borderTopRightRadius: 24, paddingBottom: 34, maxHeight: '85%', overflow: 'hidden' }}>
-            {/* Gradient-style header */}
-            <View style={{ paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, backgroundColor: isDark ? 'rgba(16,185,129,0.10)' : 'rgba(16,185,129,0.08)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(16,185,129,0.22)' : 'rgba(16,185,129,0.18)' }}>
+            {/* [beauty 2026-10-02] Header neutralized (was green wash + green circle) */}
+            <View style={{ paddingHorizontal: 22, paddingTop: 20, paddingBottom: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(17,17,17,0.03)', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
               <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: '#10B981', alignItems: 'center', justifyContent: 'center', marginRight: 12, shadowColor: '#10B981', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 5 }}>
+                <View style={{ width: 38, height: 38, borderRadius: 19, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
                   <IconBarChart size={20} color="#fff" />
                 </View>
                 <Text style={{ flex: 1, fontSize: 18, fontWeight: '800', color: colors.text, letterSpacing: -0.3 }}>
@@ -31475,12 +31475,16 @@ function ChatConversationInner() {
                   other: IconBarChart,
                 };
 
-                const HeroCard = ({ label, value, sub, color, IconCmp }) => (
+                // [beauty 2026-10-02] Mono + theme-aware. The per-card color
+                // (green/amber) is intentionally ignored now so the stats read
+                // on-brand, and the number uses colors.text so it stays visible
+                // in dark mode (the old hardcoded hex vanished on dark).
+                const HeroCard = ({ label, value, sub, IconCmp }) => (
                   <View style={{ flex: 1, padding: 14, borderRadius: 16, backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff', borderWidth: StyleSheet.hairlineWidth, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
-                    <View style={{ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: (color || colors.primary) + '18' }}>
-                      <IconCmp size={18} color={color || colors.primary} />
+                    <View style={{ width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center', backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)' }}>
+                      <IconCmp size={18} color={colors.text} />
                     </View>
-                    <Text style={{ fontSize: 24, fontWeight: '800', color: color || colors.text, marginTop: 10, letterSpacing: -0.5 }}>{value}</Text>
+                    <Text style={{ fontSize: 24, fontWeight: '800', color: colors.text, marginTop: 10, letterSpacing: -0.5 }}>{value}</Text>
                     <Text style={{ fontSize: 11, color: colors.textSecondary, fontWeight: '700', marginTop: 2, textTransform: 'uppercase', letterSpacing: 0.3 }}>{label}</Text>
                     {sub ? <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>{sub}</Text> : null}
                   </View>
@@ -31534,8 +31538,8 @@ function ChatConversationInner() {
                       {sorted.slice(0, 8).map(([email, count], i) => {
                         const pct = total > 0 ? Math.round((count / total) * 100) : 0;
                         const name = email === currentEmail ? (t('chatConv.statsYou') || 'Você') : (email.split('@')[0] || email);
-                        const palette = ['#111111', '#111111', '#F59E0B', '#10B981', '#3B82F6', '#EF4444', '#06B6D4', '#111111'];
-                        const barColor = palette[i % palette.length];
+                        // [beauty 2026-10-02] Mono bars (was a rainbow palette) + theme-aware.
+                        const barColor = colors.text;
                         return (
                           <View key={email} style={{ paddingVertical: 8 }}>
                             <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 }}>
@@ -31557,11 +31561,12 @@ function ChatConversationInner() {
                     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                       {Object.entries(byType).filter(([,c]) => c > 0).sort((a, b) => b[1] - a[1]).map(([tp, c]) => {
                         const IconCmp = typeIcons[tp] || IconBarChart;
-                        const color = typeColors[tp] || '#64748B';
+                        // [beauty 2026-10-02] Mono chips (was rainbow per-type) + theme-aware.
+                        const chipBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)';
                         return (
-                          <View key={tp} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 12, backgroundColor: color + '18', borderWidth: StyleSheet.hairlineWidth, borderColor: color + '40', gap: 6 }}>
-                            <IconCmp size={14} color={color} />
-                            <Text style={{ fontSize: 13, color, fontWeight: '700' }}>
+                          <View key={tp} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 10, paddingVertical: 7, borderRadius: 12, backgroundColor: chipBg, gap: 6 }}>
+                            <IconCmp size={14} color={colors.text} />
+                            <Text style={{ fontSize: 13, color: colors.text, fontWeight: '700' }}>
                               {typeLabels[tp] || tp} · {c}
                             </Text>
                           </View>

@@ -270,9 +270,20 @@ export function ScheduledMessagesModal({ visible, onClose, messages, onCancel, c
           </View>
           <ScrollView style={{ padding: 16 }}>
             {messages.length === 0 ? (
-              <Text style={{ color: colors.textTertiary, textAlign: 'center', paddingVertical: 20 }}>
-                {t('chat.noScheduledMessages')}
-              </Text>
+              /* [beauty 2026-10-02] Proper empty state (was a bare line of gray
+                 text floating in a huge white modal) — centered icon + title +
+                 hint, WhatsApp/IG style. */
+              <View style={{ alignItems: 'center', paddingTop: 48, paddingBottom: 32, paddingHorizontal: 32 }}>
+                <View style={{ width: 72, height: 72, borderRadius: 36, backgroundColor: colors.surfaceVariant || 'rgba(127,127,127,0.12)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+                  <IconClock size={32} color={colors.textSecondary} />
+                </View>
+                <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700', textAlign: 'center', marginBottom: 6 }}>
+                  {t('chat.noScheduledMessages') || 'Nenhuma mensagem agendada'}
+                </Text>
+                <Text style={{ color: colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 18 }}>
+                  {t('chat.scheduledHint') || 'Segure o botão de enviar pra agendar uma mensagem e ela aparece aqui.'}
+                </Text>
+              </View>
             ) : messages.map(sm => (
               <View key={sm.id} style={{
                 backgroundColor: colors.background, borderRadius: 10, padding: 12, marginBottom: 10,
