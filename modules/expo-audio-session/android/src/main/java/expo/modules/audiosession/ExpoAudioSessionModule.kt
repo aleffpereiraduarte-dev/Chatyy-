@@ -21,7 +21,8 @@ import expo.modules.kotlin.modules.ModuleDefinition
  * Lifecycle, in order:
  *   1. Incoming → activateForRingtone() (MODE_RINGTONE — respects ringer settings)
  *   2. Accepted → activateForCall(useSpeaker) (MODE_IN_COMMUNICATION + audio focus)
- *   3. Toggle  → setSpeaker(enabled) (AudioManager.setSpeakerphoneOn)
+ *   3. Toggle  → setSpeaker(enabled) (setCommunicationDevice on API 31+,
+ *               AudioManager.setSpeakerphoneOn fallback on older devices)
  *   4. End     → deactivate() (MODE_NORMAL + release focus + release proximity lock)
  */
 class ExpoAudioSessionModule : Module() {
@@ -55,7 +56,7 @@ class ExpoAudioSessionModule : Module() {
           previousMode = am.mode
           requestVoipFocus(am)
           am.mode = AudioManager.MODE_IN_COMMUNICATION
-          am.isSpeakerphoneOn = useSpeaker
+          applySpeaker(am, useSpeaker)
           // Don't force mic mute — WebRTC manages its own mic state.
           am.isMicrophoneMute = false
           true
@@ -73,7 +74,7 @@ class ExpoAudioSessionModule : Module() {
           previousMode = am.mode
           requestVoipFocus(am)
           am.mode = AudioManager.MODE_IN_COMMUNICATION
-          am.isSpeakerphoneOn = true
+          applySpeaker(am, true)
           am.isMicrophoneMute = false
           true
         } catch (t: Throwable) {
@@ -84,12 +85,8 @@ class ExpoAudioSessionModule : Module() {
     }
 
     AsyncFunction("setSpeaker") { enabled: Boolean ->
-      try {
-        audioManager.isSpeakerphoneOn = enabled
-        true
-      } catch (t: Throwable) {
-        android.util.Log.w("AudioSession", "setSpeaker failed: ${t.message}")
-        false
+      synchronized(this@ExpoAudioSessionModule) {
+        applySpeaker(audioManager, enabled)
       }
     }
 
@@ -98,7 +95,10 @@ class ExpoAudioSessionModule : Module() {
         try {
           releaseProximityLock()
           val am = audioManager
-          am.isSpeakerphoneOn = false
+          applySpeaker(am, false)
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try { am.clearCommunicationDevice() } catch (_: Throwable) {}
+          }
           am.mode = previousMode.coerceAtLeast(AudioManager.MODE_NORMAL)
           abandonVoipFocus(am)
           true
@@ -129,7 +129,7 @@ class ExpoAudioSessionModule : Module() {
           AudioManager.MODE_IN_COMMUNICATION -> "in_communication"
           else -> "mode_$mode"
         }
-        val speaker = if (audioManager.isSpeakerphoneOn) "speaker" else "earpiece"
+        val speaker = if (isSpeakerOn(audioManager)) "speaker" else "earpiece"
         "$name / $speaker"
       } catch (t: Throwable) {
         "unknown"
@@ -163,7 +163,7 @@ class ExpoAudioSessionModule : Module() {
         val am = audioManager
         var routeType = "receiver"
         var portName = ""
-        if (am.isSpeakerphoneOn) {
+        if (isSpeakerOn(am)) {
           routeType = "speaker"
           portName = "Speakerphone"
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -192,6 +192,72 @@ class ExpoAudioSessionModule : Module() {
       } catch (t: Throwable) {
         mapOf("type" to "unknown", "name" to "", "isBluetooth" to false)
       }
+    }
+  }
+
+  /**
+   * Route audio to the speaker (true) or back to the default earpiece/headset
+   * (false). On Android 12+ (API 31) `setSpeakerphoneOn` is deprecated and on
+   * many OEM builds (Samsung/Xiaomi on 12–14) it silently no-ops — the "viva
+   * voz" button appeared to do nothing. Routing MUST go through
+   * setCommunicationDevice()/clearCommunicationDevice() there; we keep the
+   * legacy call as a fallback for API < 31 and for any failure path.
+   */
+  private fun applySpeaker(am: AudioManager, enabled: Boolean): Boolean {
+    return try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (enabled) {
+          val speaker = am.availableCommunicationDevices.firstOrNull {
+            it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+          }
+          if (speaker != null) {
+            am.setCommunicationDevice(speaker)
+          } else {
+            @Suppress("DEPRECATION")
+            am.isSpeakerphoneOn = true
+          }
+        } else {
+          // Clearing lets the platform pick the best non-speaker route
+          // (wired/BT headset if present, otherwise the earpiece).
+          am.clearCommunicationDevice()
+          val hasExternal = am.availableCommunicationDevices.any {
+            it.type == android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+              it.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+              it.type == android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+              it.type == android.media.AudioDeviceInfo.TYPE_USB_HEADSET
+          }
+          if (!hasExternal) {
+            am.availableCommunicationDevices.firstOrNull {
+              it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+            }?.let { am.setCommunicationDevice(it) }
+          }
+        }
+      } else {
+        @Suppress("DEPRECATION")
+        am.isSpeakerphoneOn = enabled
+      }
+      true
+    } catch (t: Throwable) {
+      android.util.Log.w("AudioSession", "applySpeaker($enabled) failed: ${t.message}")
+      try {
+        @Suppress("DEPRECATION")
+        am.isSpeakerphoneOn = enabled
+      } catch (_: Throwable) {}
+      false
+    }
+  }
+
+  /** True when audio is currently routed to the built-in speaker. */
+  private fun isSpeakerOn(am: AudioManager): Boolean {
+    return try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        am.communicationDevice?.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+      } else {
+        @Suppress("DEPRECATION")
+        am.isSpeakerphoneOn
+      }
+    } catch (t: Throwable) {
+      false
     }
   }
 
