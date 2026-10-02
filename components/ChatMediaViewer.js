@@ -645,16 +645,24 @@ if (Platform.OS === 'ios') {
   try { _NativeVideoPlayerView = require('../modules/expo-native-toolkit').VideoPlayer; } catch {}
 }
 
-function NativeVideoPlayer({ url }) {
+function NativeVideoPlayer({ url, isActive = true }) {
   // Prefer expo-video — has native AVPlayerViewController controls,
   // PiP, fullscreen, scrubbing, captions. Custom AVPlayerLayer view
   // exists for perf-sensitive inline playback but has no UI chrome
   // (was leaving the viewer black on first open because props ordering
   // could land uri before autoplay, so no play() ever fired).
   if (useVideoPlayer && ExpoVideo) {
+    // [fix 2026-10-02] Do NOT auto-play on mount. The viewer FlatList preloads
+    // the neighbor slides, so playing on mount made the NEXT video start playing
+    // before you swiped to it ("o vídeo toca antes de abrir, passando de lado").
+    // Only play the slide that's actually active; pause the rest.
     const player = useVideoPlayer(url, (p) => {
-      try { p.loop = false; p.muted = false; p.play(); } catch {}
+      try { p.loop = false; p.muted = false; } catch {}
     });
+    useEffect(() => {
+      if (!player) return;
+      try { if (isActive) player.play(); else player.pause(); } catch {}
+    }, [isActive, player]);
 
     // Wave 14 — pinch-to-scrub. Uses react-native-gesture-handler's
     // PinchGestureHandler so the gesture composes cleanly with the
@@ -1078,7 +1086,7 @@ const ctlBtn = {
 };
 
 // ============================================================
-function VideoPlayer({ url }) {
+function VideoPlayer({ url, isActive = true }) {
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState(0);
@@ -1105,13 +1113,13 @@ function VideoPlayer({ url }) {
 
   // Native: try expo-video first (best MOV support)
   if (useVideoPlayer && ExpoVideo) {
-    return <NativeVideoPlayer url={url} />;
+    return <NativeVideoPlayer url={url} isActive={isActive} />;
   }
 
   // No expo-video module on this build — fall back to the native AVPlayer
   // view (iOS) via NativeVideoPlayer. No more per-video WebView (that was the
   // jank the video players were migrated off of).
-  return <NativeVideoPlayer url={url} />;
+  return <NativeVideoPlayer url={url} isActive={isActive} />;
 }
 
 // ============================================================
@@ -2045,7 +2053,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               const i = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
               if (i !== _currentIdx) _setCurrentIdx(i);
             }}
-            renderItem={({ item }) => {
+            renderItem={({ item, index }) => {
               const u = getFullUrl(item?.fileUrl);
               const e = getExt(item?.fileName);
               const isImg = item?.type === 'image' || IMAGE_EXTS.includes(e);
@@ -2054,7 +2062,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               return (
                 <View style={{ width: SCREEN_W, flex: 1 }}>
                   {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} onDismissMove={_onDismissMove} onDismissEnd={_onDismissEnd} /> :
-                   isVid ? <VideoPlayer url={u} /> :
+                   isVid ? <VideoPlayer url={u} isActive={index === _currentIdx} /> :
                    isPrv ? <PreviewViewer url={u} filename={item?.fileName} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} t={t} /> :
                    <GenericFileViewer url={u} filename={item?.fileName} fileSize={item?.fileSize} messageId={item?.messageId || item?.id || 0} t={t} />}
                 </View>
