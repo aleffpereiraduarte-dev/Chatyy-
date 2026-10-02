@@ -241,7 +241,11 @@ export default function KidsTVTab() {
             )}
             ListEmptyComponent={
               <View style={st.center}>
-                <Text style={{ fontSize: 40 }}>{'\uD83D\uDCFA'}</Text>
+                <Svg width={48} height={48} viewBox="0 0 24 24" fill="none" style={{ opacity: 0.35 }}>
+                  <Rect x={2.5} y={7} width={19} height={12} rx={2} stroke={subColor} strokeWidth={1.6} />
+                  <Path d="M8 3.5l4 3.5 4-3.5" stroke={subColor} strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
+                  <Polygon points="11,10.5 15,13 11,15.5" fill={subColor} />
+                </Svg>
                 <Text style={{ color: subColor, fontSize: 17, fontWeight: '600', marginTop: 8 }}>{t('kids.noVideos')}</Text>
               </View>
             }

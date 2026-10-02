@@ -18850,14 +18850,29 @@ function ChatConversationInner() {
           runStartIdx = i; runSender = m.sender_email; runLastD = cd; runBatch = mb;
           continue;
         }
-        // Grouping rule: same sender AND (same batch_id OR within 30s window).
-        // batch_id overrides the timestamp gate so slow mobile uploads still
-        // collapse into one album even if created_at spreads past 30s.
-        const sameBatch = runBatch && mb && runBatch === mb;
-        const within = runLastD && (cd - runLastD <= 30000);
-        if (m.sender_email === runSender && (sameBatch || within)) {
+        // Grouping rule (WhatsApp parity):
+        //   • A run anchored to a real batch_id is a CLOSED unit — only items
+        //     carrying that SAME batch_id join it. batch_id beats the clock, so
+        //     a slow multi-upload still collapses into one album even when its
+        //     created_at spreads past 30s; and, crucially, a photo/vídeo sent
+        //     SEPARATELY afterwards (different batch, or none — singles send
+        //     with batch_id=null) no longer gets swallowed into the album.
+        //     [2026-10-02] founder: "manda um álbum aí depois alguém manda algo
+        //     separado, junta" — the old `sameBatch || within` window merged it.
+        //   • A batch-less run (legacy clients that don't tag batches) still
+        //     groups consecutive media within a 30s window, but an incoming
+        //     *batched* item breaks out to start its own album.
+        const sameSender = m.sender_email === runSender;
+        let join = false;
+        if (sameSender) {
+          if (runBatch) {
+            join = !!mb && mb === runBatch;
+          } else {
+            join = !mb && !!runLastD && (cd - runLastD <= 30000);
+          }
+        }
+        if (join) {
           runLastD = cd;
-          if (!runBatch && mb) runBatch = mb;
         } else {
           flushRun(i - 1);
           runStartIdx = i; runSender = m.sender_email; runLastD = cd; runBatch = mb;

@@ -33,7 +33,9 @@ function IconCartLocal({ size = 24, color = "#666" }) {
   );
 }
 
-const ACCENT = '#25D366'; // WhatsApp green
+// [beauty 2026-10-02] Neutralized from WhatsApp green (#25D366) to the brand's
+// mono accent — business was the only live screen still looking old-brand-green.
+const ACCENT = '#111111';
 const ACCENT_DARK = '#111111';
 const VERIFIED_COLOR = '#1DA1F2';
 
@@ -300,7 +302,7 @@ function ProfileTab({ colors, isDark, user }) {
         <View style={styles.statsRow}>
           <StatCard label="Produtos" value={profile?.product_count ?? '—'} color="#111111" colors={colors} />
           <StatCard label="Pedidos" value={profile?.order_count ?? '—'} color={ACCENT} colors={colors} />
-          <StatCard label="Avaliação" value={profile?.rating ? `${profile.rating}★` : '—'} color="#f59e0b" colors={colors} />
+          <StatCard label="Avaliação" value={profile?.rating ? `${profile.rating}` : '—'} icon={profile?.rating ? <IconStar size={13} color={ACCENT} /> : null} color={ACCENT} colors={colors} />
         </View>
       </ScrollView>
 
@@ -1183,10 +1185,13 @@ function InfoRow({ icon, label, colors, accent }) {
   );
 }
 
-function StatCard({ label, value, color, colors }) {
+function StatCard({ label, value, color, colors, icon }) {
   return (
     <View style={[styles.statCard, { backgroundColor: colors.surface }]}>
-      <Text style={[styles.statValue, { color }]}>{value}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 3 }}>
+        <Text style={[styles.statValue, { color }]}>{value}</Text>
+        {icon || null}
+      </View>
       <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{label}</Text>
     </View>
   );

@@ -1103,8 +1103,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <Switch
                 value={!!settings.smart_pin_enabled}
                 onValueChange={(v) => saveSettings({ smart_pin_enabled: v })}
-                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(245,158,11,0.4)' }}
-                thumbColor={settings.smart_pin_enabled ? '#F59E0B' : isDark ? '#555' : '#ccc'}
+                trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17,17,17,0.45)' }}
+                thumbColor={settings.smart_pin_enabled ? '#111111' : isDark ? '#555' : '#ccc'}
               />
             </View>
 
@@ -1190,10 +1190,10 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               onPress={() => { try { router.push('/linked-devices'); } catch (e) { console.warn('[profile] nav:', e); } }}
               activeOpacity={0.7}
             >
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(59,130,246,0.1)' : '#F1F3F5' }]}>
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#F1F3F5' }]}>
                 {Platform.OS === 'web'
-                  ? <IconDeviceWeb size={16} color="#3B82F6" />
-                  : <IconDeviceMobile size={16} color="#3B82F6" />}
+                  ? <IconDeviceWeb size={16} color={colors.text} />
+                  : <IconDeviceMobile size={16} color={colors.text} />}
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.linkText, { color: colors.text, flex: undefined }]}>{t?.('devices.title') || 'Dispositivos conectados'}</Text>
@@ -1214,8 +1214,8 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               onPress={() => setSubScreen('callerid')}
               activeOpacity={0.7}
             >
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(0,122,255,0.1)' : '#F1F3F5' }]}>
-                <IconPhone size={16} color="#007AFF" />
+              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#F1F3F5' }]}>
+                <IconPhone size={16} color={colors.text} />
               </View>
               <Text style={[styles.linkText, { color: colors.text }]}>{t?.('callerId.title') || 'Verificar Caller ID'}</Text>
               <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
@@ -2899,7 +2899,12 @@ function SettingItem({ icon, iconBg, title, subtitle, colors, isDark, onPress, l
         activeOpacity={1}
       >
         <Animated.View style={[styles.settingItemModern, { transform: [{ scale: scaleAnim }] }]}>
-          <View style={[styles.iconCircle, { backgroundColor: iconBg || 'transparent' }]}>{icon}</View>
+          {/* [beauty 2026-10-02] Force every settings icon MONO in one place:
+              neutral chip (ignores the per-row rainbow iconBg) + icon recolored
+              to colors.text (fixes the dark-mode #111111-invisible bug too). */}
+          <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)' }]}>
+            {icon ? React.cloneElement(icon, { color: colors.text }) : null}
+          </View>
           <View style={styles.settingContent}>
             <Text style={[styles.settingTitleModern, { color: colors.text }]}>{title}</Text>
             {subtitle ? <Text style={[styles.settingSubtitleModern, { color: isDark ? '#6b7280' : '#9ca3af' }]} numberOfLines={1}>{subtitle}</Text> : null}
