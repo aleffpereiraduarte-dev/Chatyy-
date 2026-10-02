@@ -85,7 +85,7 @@ export default function CategoryTabs({ activeCategory = 'all', onCategoryChange,
                   },
             ]}
             onPress={() => onCategoryChange?.(cat.key)}
-            activeOpacity={0.75}
+            activeOpacity={0.6}
           >
             <Icon
               size={15}
@@ -141,7 +141,7 @@ const s = StyleSheet.create({
     }),
   },
   tabText: { fontSize: 13, fontWeight: '600', letterSpacing: -0.1 },
-  tabTextActive: { fontWeight: '800' },
+  tabTextActive: { fontWeight: '700' },
   badge: {
     minWidth: 20, height: 20, borderRadius: 10,
     justifyContent: 'center', alignItems: 'center',

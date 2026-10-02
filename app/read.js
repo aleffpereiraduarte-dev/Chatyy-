@@ -622,7 +622,7 @@ const s = StyleSheet.create({
     borderRadius: 12,
     ...(Platform.OS === 'web' ? { cursor: 'pointer', transition: 'background-color 160ms ease' } : {}),
   },
-  backText: { fontSize: FontSize.lg, fontWeight: '700', marginLeft: 4, letterSpacing: -0.3 },
+  backText: { fontSize: FontSize.base, fontWeight: '600', marginLeft: 4, letterSpacing: -0.2 },
   navArrows: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   navArrowBtn: {
     padding: 10, borderRadius: 10,

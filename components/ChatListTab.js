@@ -6657,7 +6657,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                 const { Skeleton } = require('../modules/expo-native-toolkit');
                 if (Skeleton) {
                   return [0, 1, 2, 3, 4, 5, 6].map(i => (
-                    <Skeleton key={i} variant="chatRow" style={{ height: 72, width: '100%' }} />
+                    <Skeleton key={i} variant="chatRow" style={{ height: 64, width: '100%' }} />
                   ));
                 }
               } catch {}
@@ -6671,7 +6671,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         <ListComponent
           data={visibleConversations}
           keyExtractor={keyExtractor}
-          estimatedItemSize={72}
+          estimatedItemSize={64}
           ListHeaderComponent={ListHeaderComponent}
           ListFooterComponent={ListFooterComponent}
           renderItem={renderItem}

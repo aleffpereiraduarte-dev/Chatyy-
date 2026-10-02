@@ -24917,7 +24917,7 @@ function ChatConversationInner() {
   if (chatLocked && !chatUnlocked) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background, justifyContent: 'center', alignItems: 'center' }]}>
-        <View style={[styles.header, { backgroundColor: isDark ? '#111b21' : '#ffffff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#1a2730' : '#eef0f1', paddingTop: insets.top, position: 'absolute', top: 0, left: 0, right: 0 }]}>
+        <View style={[styles.header, { backgroundColor: isDark ? '#111b21' : '#ffffff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? '#1a2730' : '#eef0f1', paddingTop: insets.top + 6, position: 'absolute', top: 0, left: 0, right: 0 }]}>
           <TouchableOpacity onPress={goBack} style={styles.headerBtn}>
             <IconArrowLeft size={22} color={colors.text} />
           </TouchableOpacity>
@@ -25016,7 +25016,7 @@ function ChatConversationInner() {
           backgroundColor: isDark ? '#111b21' : '#ffffff',
           borderBottomWidth: StyleSheet.hairlineWidth,
           borderBottomColor: isDark ? '#1a2730' : '#eef0f1',
-          paddingTop: insets.top,
+          paddingTop: insets.top + 6,
         }]}>
           <TouchableOpacity onPress={handleClearSelection} style={styles.headerBtn} accessibilityLabel={t('common.cancel') || 'Cancelar'} accessibilityRole="button">
             <IconX size={22} color={colors.text} />
@@ -25057,7 +25057,7 @@ function ChatConversationInner() {
         backgroundColor: isDark ? '#111b21' : '#ffffff',
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: isDark ? '#1a2730' : '#eef0f1',
-        paddingTop: insets.top,
+        paddingTop: insets.top + 6,
         ...(Platform.OS === 'web'
           ? {
               background: isDark ? '#111b21' : '#ffffff',
@@ -32096,7 +32096,7 @@ const styles = StyleSheet.create({
     }),
   },
   systemMsg: { alignItems: 'center', marginVertical: 8, paddingHorizontal: Spacing.lg },
-  systemText: { fontSize: 12, textAlign: 'center', fontStyle: 'italic', lineHeight: 18, letterSpacing: 0.1 },
+  systemText: { fontSize: 12, textAlign: 'center', fontWeight: '500', lineHeight: 18, letterSpacing: 0.1 },
   scrollDownFab: {
     position: 'absolute', right: 18, bottom: 90,
     width: 48, height: 48, borderRadius: 24,

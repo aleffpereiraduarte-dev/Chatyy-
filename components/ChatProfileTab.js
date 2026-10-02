@@ -2481,7 +2481,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
         </View>
 
         {/* ─── Instagram-style stats row + action buttons ─── */}
-        <View style={{ marginHorizontal: 12, marginTop: 10, padding: 16, borderRadius: 18, backgroundColor: surfaceBg, ...cardShadow(isDark) }}>
+        <View style={{ marginHorizontal: 16, marginTop: 10, padding: 16, borderRadius: 18, backgroundColor: surfaceBg, ...cardShadow(isDark) }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', paddingBottom: 14 }}>
             <View style={{ alignItems: 'center', flex: 1 }}>
               <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>{igStats.posts}</Text>
@@ -2579,7 +2579,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               activeOpacity={0.85}
               onPress={() => { if (!callerVerified) setShowVerifyCallerId(true); }}
               style={{
-                marginHorizontal: 12, marginTop: 10, padding: 16, borderRadius: 18,
+                marginHorizontal: 16, marginTop: 10, padding: 16, borderRadius: 18,
                 backgroundColor: callerVerified
                   ? (isDark ? 'rgba(17, 17, 17,0.08)' : '#ecfdf5')
                   : (isDark ? 'rgba(99,102,241,0.10)' : '#eef2ff'),

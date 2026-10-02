@@ -651,17 +651,17 @@ const s = StyleSheet.create({
     // [beauty 2026-10-01] Dropped the blue glow (off-palette rgba(37,99,235))
     // — the accent bar itself carries the unread cue, no glow needed.
   },
-  leftArea: { marginRight: 11 },
+  leftArea: { marginRight: Spacing.md + 2 },
   content: { flex: 1, minWidth: 0 },
-  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 },
+  topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 },
   senderRow: { flexDirection: 'row', alignItems: 'center', flex: 1, minWidth: 0, marginRight: Spacing.sm },
   dateRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
   from: { fontSize: 15, flexShrink: 1, letterSpacing: -0.15 },
-  date: { fontSize: 11.5, letterSpacing: 0.1, fontWeight: '500', opacity: 0.75 },
-  subjectLine: { marginTop: 2 },
-  subject: { fontSize: 13.5, lineHeight: 19, letterSpacing: -0.05 },
+  date: { fontSize: 11.5, letterSpacing: 0.1, fontWeight: '600' },
+  subjectLine: { marginTop: 1 },
+  subject: { fontSize: 14, lineHeight: 19, letterSpacing: -0.05 },
   unreadSubject: { fontWeight: '700' },
-  preview: { fontSize: 13.5, lineHeight: 19, letterSpacing: 0 },
+  preview: { fontSize: 13, lineHeight: 18, letterSpacing: 0 },
   unreadText: { fontWeight: '800', letterSpacing: -0.2 },
   starBtn: {
     padding: Spacing.xs, marginLeft: Spacing.sm,

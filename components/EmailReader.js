@@ -1663,7 +1663,7 @@ const s = StyleSheet.create({
   content: { padding: Spacing.xl + 2, paddingBottom: 40 },
   // Header — DENSIDADE 2026: assunto menor + menos respiro (leitura tipo Gmail).
   headerRow: { flexDirection: 'row', alignItems: 'flex-start', marginBottom: Spacing.lg },
-  subject: { flex: 1, fontSize: 22, fontWeight: '800', lineHeight: 28, letterSpacing: -0.6 },
+  subject: { flex: 1, fontSize: 22, fontWeight: '700', lineHeight: 29, letterSpacing: -0.3 },
   headerActions: { flexDirection: 'row', marginLeft: Spacing.sm, gap: 4 },
   headerBtn: {
     width: 38, height: 38, borderRadius: 19,
@@ -1681,13 +1681,8 @@ const s = StyleSheet.create({
   // soft halo shadow. Matches the sender-hero-pill spec.
   senderAvatarRing: {
     width: 46, height: 46, borderRadius: 23,
-    borderWidth: 2,
     alignItems: 'center', justifyContent: 'center',
     marginRight: Spacing.md + 2,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.18,
-    shadowRadius: 6,
-    elevation: 3,
   },
   senderInfo: { flex: 1 },
   senderNameRow: { flexDirection: 'row', alignItems: 'center' },
@@ -1728,7 +1723,7 @@ const s = StyleSheet.create({
   summaryClose: { fontSize: FontSize.sm, marginTop: Spacing.sm },
   // Body
   bodyContainer: { marginTop: Spacing.md, paddingTop: Spacing.lg, borderTopWidth: StyleSheet.hairlineWidth, minHeight: 200 },
-  bodyText: { fontSize: 15.5, lineHeight: 24, letterSpacing: -0.05 },
+  bodyText: { fontSize: 15.5, lineHeight: 26, letterSpacing: -0.05 },
   // Attachments
   attachments: { marginTop: Spacing.xxl, paddingTop: Spacing.lg, borderTopWidth: StyleSheet.hairlineWidth },
   attachTitleRow: { flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.md },
@@ -1765,12 +1760,17 @@ const s = StyleSheet.create({
   meetCardUrl: { fontSize: FontSize.xs, marginTop: 2 },
   // Actions
   actions: {
-    flexDirection: 'row', marginTop: Spacing.xxxl, paddingTop: Spacing.lg,
+    flexDirection: 'row', marginTop: Spacing.lg, paddingTop: Spacing.lg,
     borderTopWidth: StyleSheet.hairlineWidth, gap: Spacing.sm, flexWrap: 'wrap',
   },
+  // [2026-10-02 repaginação] Uniform 2-column grid instead of a ragged
+  // content-sized pill wrap. flexBasis 47% + flexGrow 1 → two equal tiles per
+  // row (a lone trailing item spans full width), centered content, calmer
+  // radius. Turns the cluttered button wall into a clean, scannable grid.
   actionBtn: {
-    flexDirection: 'row', alignItems: 'center',
-    borderRadius: 24, paddingVertical: 11, paddingHorizontal: Spacing.xl,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    flexBasis: '47%', flexGrow: 1, minWidth: 0,
+    borderRadius: 14, paddingVertical: 11, paddingHorizontal: Spacing.md,
     borderWidth: 1.5, borderColor: 'transparent',
     ...Platform.select({
       web: { transition: 'all 0.18s ease, transform 0.12s ease', cursor: 'pointer' },
@@ -1779,7 +1779,7 @@ const s = StyleSheet.create({
   },
   actionBtnPrimary: {
     ...Platform.select({
-      web: { boxShadow: '0 4px 14px rgba(37, 99, 235, 0.35)', background: 'linear-gradient(135deg, #2563eb 0%, #4f46e5 100%)' },
+      web: { boxShadow: '0 4px 14px rgba(17,17,17,0.22)' },
       default: {},
     }),
   },
@@ -1799,16 +1799,20 @@ const s = StyleSheet.create({
   secondaryActions: {
     flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.md, flexWrap: 'wrap',
   },
+  // [2026-10-02 repaginação] Same uniform 2-col grid as the primary actions so
+  // the secondary pile (Tarefas / Imprimir / Exportar / …) reads as one clean
+  // block instead of a ragged wrap of different-width pills.
   secBtn: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: Spacing.md, paddingVertical: 9,
-    borderRadius: 20,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    flexBasis: '47%', flexGrow: 1, minWidth: 0,
+    paddingHorizontal: Spacing.md, paddingVertical: 10,
+    borderRadius: 14,
     ...Platform.select({
       web: { transition: 'all 0.15s ease', cursor: 'pointer' },
       default: {},
     }),
   },
-  secBtnText: { fontSize: FontSize.sm, fontWeight: '600' },
+  secBtnText: { fontSize: FontSize.sm, fontWeight: '600', flexShrink: 1 },
   // Translation
   translationContainer: {
     marginTop: Spacing.lg, padding: Spacing.lg, borderRadius: BorderRadius.lg,
