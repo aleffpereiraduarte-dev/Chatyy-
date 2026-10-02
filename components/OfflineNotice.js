@@ -31,10 +31,12 @@ export default function OfflineNotice() {
     // keys off `isOffline` going false — still fires the moment we're back).
     const OFFLINE_SHOW_DELAY_MS = 4000;
     let offlineTimer = null;
+    let wsUnsub = null;
+    let wsPoll = null;
     const applyConnectivity = (online) => {
       if (online) {
         // Back online → hide immediately + cancel any pending show.
-        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
+        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } if (wsUnsub) { try { wsUnsub(); } catch {} wsUnsub = null; } if (wsPoll) { clearInterval(wsPoll); wsPoll = null; }
         setIsOffline(false);
       } else {
         // Went offline → arm the sustained-outage timer (don't stack timers
@@ -51,6 +53,28 @@ export default function OfflineNotice() {
       }
     };
 
+    // [2026-10-02] Continuous "live socket == real internet" override. The old
+    // code checked mailWs.authenticated only ONCE (when the 4s timer fired), so
+    // if the socket reconnected AFTER the bar was already shown, the bar stayed
+    // STUCK — NetInfo/NWPathMonitor never sends an "online" event on a false
+    // offline (blocked reachability probe / captive portal / VPN), so nothing
+    // hid it. Founder: "às vezes fica 'sem internet' na home mesmo com net."
+    // Now: the instant the WS authenticates we hide the bar, AND we poll the
+    // live socket every 1s so a healthy socket ALWAYS wins over a false offline.
+    try {
+      if (mailWs && typeof mailWs.on === 'function') {
+        wsUnsub = mailWs.on('connection', (e) => {
+          if (e && (e.status === 'authenticated'
+            || ((e.status === 'connected' || e.status === 'pong') && mailWs.authenticated))) {
+            applyConnectivity(true);
+          }
+        });
+      }
+    } catch {}
+    wsPoll = setInterval(() => {
+      try { if (mailWs && mailWs.authenticated) applyConnectivity(true); } catch {}
+    }, 1000);
+
     if (Platform.OS === 'web') {
       const handleOnline = () => applyConnectivity(true);
       const handleOffline = () => applyConnectivity(false);
@@ -58,7 +82,7 @@ export default function OfflineNotice() {
       window.addEventListener('offline', handleOffline);
       applyConnectivity(navigator.onLine);
       return () => {
-        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
+        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } if (wsUnsub) { try { wsUnsub(); } catch {} wsUnsub = null; } if (wsPoll) { clearInterval(wsPoll); wsPoll = null; }
         window.removeEventListener('online', handleOnline);
         window.removeEventListener('offline', handleOffline);
       };
@@ -78,7 +102,7 @@ export default function OfflineNotice() {
       try {
         NetInfo = require('@react-native-community/netinfo').default;
       } catch {
-        return () => { if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } };
+        return () => { if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } if (wsUnsub) { try { wsUnsub(); } catch {} wsUnsub = null; } if (wsPoll) { clearInterval(wsPoll); wsPoll = null; } };
       }
       const unsub = NetInfo.addEventListener(state => {
         // Use the native value when available — more accurate than NetInfo's
@@ -95,7 +119,7 @@ export default function OfflineNotice() {
         }
       });
       return () => {
-        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; }
+        if (offlineTimer) { clearTimeout(offlineTimer); offlineTimer = null; } if (wsUnsub) { try { wsUnsub(); } catch {} wsUnsub = null; } if (wsPoll) { clearInterval(wsPoll); wsPoll = null; }
         unsub();
       };
     }

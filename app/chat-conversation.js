@@ -27870,7 +27870,11 @@ function ChatConversationInner() {
       {/* GIF Picker Panel */}
       {showGifPicker && (
         <GifPickerPanel
-          onSelect={openGifCaption}
+          // [2026-10-02] Tap = envia direto (igual WhatsApp e igual os stickers
+          // aqui do lado). Antes abria uma 2ª tela de legenda/confirmar
+          // (openGifCaption) — founder: "ao enviar GIF aparecem 2 páginas que
+          // tem que confirmar". Agora é 1 toque: escolheu, enviou.
+          onSelect={(gif) => handleSendGif(gif)}
           onClose={() => setShowGifPicker(false)}
           colors={colors}
           t={t}
