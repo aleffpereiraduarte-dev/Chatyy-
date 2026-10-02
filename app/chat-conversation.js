@@ -28953,10 +28953,37 @@ function ChatConversationInner() {
               </TouchableOpacity>
             </View>
 
+            {/* Message preview — so you know WHICH message these receipts are for
+                (WhatsApp shows the bubble at the top of its Message Info sheet). */}
+            {messageInfoModal?.message && (() => {
+              const m = messageInfoModal.message;
+              const tp = m.type;
+              let label = null, body = null;
+              if (tp === 'image') label = t('chatConv.photo') || 'Foto';
+              else if (tp === 'video') label = t('chatConv.video') || 'Vídeo';
+              else if (tp === 'audio' || tp === 'voice') label = t('chatConv.voice') || 'Mensagem de voz';
+              else if (tp === 'document' || tp === 'file') label = t('chatConv.document') !== 'chatConv.document' ? t('chatConv.document') : 'Documento';
+              else if (tp === 'sticker') label = t('chatConv.sticker') || 'Figurinha';
+              else if (tp === 'location') label = t('chatConv.location') || 'Localização';
+              else if (tp === 'gif') label = 'GIF';
+              else body = String(m.content || m.text || '').trim();
+              if (!label && !body) return null;
+              return (
+                <View style={{ flexDirection: 'row', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,17,17,0.05)', borderRadius: 12, padding: 11, marginBottom: 14, gap: 9, alignItems: 'center' }}>
+                  <View style={{ width: 3, alignSelf: 'stretch', borderRadius: 2, backgroundColor: colors.text, opacity: 0.35 }} />
+                  <Text numberOfLines={2} style={{ flex: 1, fontSize: 13.5, lineHeight: 18, color: colors.textSecondary, fontStyle: body ? 'normal' : 'italic' }}>
+                    {label || body}
+                  </Text>
+                </View>
+              );
+            })()}
+
             {/* Sent time */}
             {messageInfoModal?.sent_at && (
               <View style={styles.messageInfoRow}>
-                <View style={[styles.messageInfoDot, { backgroundColor: '#8696A0' }]} />
+                <View style={{ width: 20, marginTop: 2, flexDirection: 'row' }}>
+                  <IconCheck size={15} color={colors.textSecondary} />
+                </View>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.sentAt')}</Text>
                   <Text style={[styles.messageInfoTime, { color: colors.text }]}>
@@ -29017,7 +29044,7 @@ function ChatConversationInner() {
                   );
                   return (
                     <>
-                      <Section titleKey="chatConv.readBy" fallback="Lido por" list={readList} tintColor="#111111" tsKey="read_at" />
+                      <Section titleKey="chatConv.readBy" fallback="Lido por" list={readList} tintColor={colors.text} tsKey="read_at" />
                       <Section titleKey="chatConv.deliveredTo" fallback="Entregue para" list={deliveredList} tintColor={colors.textSecondary} tsKey="delivered_at" />
                       {pendingList.length > 0 && (
                         <Section titleKey="chatConv.pendingTo" fallback="Pendente" list={pendingList} tintColor={null} tsKey={null} />
@@ -29032,42 +29059,59 @@ function ChatConversationInner() {
                 })()}
               </ScrollView>
             ) : (
-              // DIRECT chat: keep the per-recipient timestamp list (was the original design).
-              (messageInfoModal?.receipts || []).map((r, idx) => (
-                <View key={r.email || idx}>
-                  {/* Participant — WhatsApp-style avatar + name row */}
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                    <AvatarCircle email={r.email} name={r.name} size={32} />
-                    <Text style={[styles.messageInfoParticipant, { color: colors.text, marginBottom: 0 }]}>{r.name || r.email}</Text>
+              // DIRECT chat: WhatsApp-style status rows with ✓✓ double-check
+              // marks — grey ✓✓ for delivered, bold ✓✓ for read ("visto").
+              // Colors use colors.textSecondary/colors.text so the ticks stay
+              // visible in BOTH light and dark themes (was hard-coded #111111,
+              // which vanished on the dark sheet).
+              (messageInfoModal?.receipts || []).map((r, idx) => {
+                const receipts = messageInfoModal?.receipts || [];
+                const delivered = r.delivered_at || r.read_at;
+                const DoubleCheck = ({ color, active }) => (
+                  <View style={{ width: 20, marginTop: 2, flexDirection: 'row', opacity: active ? 1 : 0.5 }}>
+                    <IconCheck size={15} color={color} />
+                    <IconCheck size={15} color={color} style={{ marginLeft: -8 }} />
                   </View>
+                );
+                return (
+                  <View key={r.email || idx}>
+                    {/* Only show the avatar/name header when there's more than
+                        one recipient (true 1:1 doesn't need it). */}
+                    {receipts.length > 1 && (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12, marginBottom: 6 }}>
+                        <AvatarCircle email={r.email} name={r.name} size={32} />
+                        <Text style={[styles.messageInfoParticipant, { color: colors.text, marginTop: 0, marginBottom: 0 }]}>{r.name || r.email}</Text>
+                      </View>
+                    )}
 
-                  {/* Delivered */}
-                  <View style={styles.messageInfoRow}>
-                    <View style={[styles.messageInfoDot, { backgroundColor: r.delivered_at ? '#111111' : colors.textTertiary }]} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.deliveredAt')}</Text>
-                      <Text style={[styles.messageInfoTime, { color: colors.text }]}>
-                        {(r.delivered_at || r.read_at) ? _formatReceiptDate(r.delivered_at || r.read_at, t) : t('chatConv.notDelivered')}
-                      </Text>
+                    {/* Delivered */}
+                    <View style={styles.messageInfoRow}>
+                      <DoubleCheck color={colors.textSecondary} active={!!delivered} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.deliveredAt')}</Text>
+                        <Text style={[styles.messageInfoTime, { color: colors.text }]}>
+                          {delivered ? _formatReceiptDate(delivered, t) : t('chatConv.notDelivered')}
+                        </Text>
+                      </View>
                     </View>
-                  </View>
 
-                  {/* Read */}
-                  <View style={styles.messageInfoRow}>
-                    <View style={[styles.messageInfoDot, { backgroundColor: r.read_at ? '#111111' : colors.textTertiary }]} />
-                    <View style={{ flex: 1 }}>
-                      <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.readAt')}</Text>
-                      <Text style={[styles.messageInfoTime, { color: colors.text }]}>
-                        {r.read_at ? _formatReceiptDate(r.read_at, t) : t('chatConv.notRead')}
-                      </Text>
+                    {/* Read ("visto") */}
+                    <View style={styles.messageInfoRow}>
+                      <DoubleCheck color={colors.text} active={!!r.read_at} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.messageInfoLabel, { color: colors.textSecondary }]}>{t('chatConv.readAt')}</Text>
+                        <Text style={[styles.messageInfoTime, { color: colors.text }]}>
+                          {r.read_at ? _formatReceiptDate(r.read_at, t) : t('chatConv.notRead')}
+                        </Text>
+                      </View>
                     </View>
-                  </View>
 
-                  {idx < (messageInfoModal?.receipts || []).length - 1 && (
-                    <View style={[styles.messageInfoDivider, { backgroundColor: colors.border }]} />
-                  )}
-                </View>
-              ))
+                    {idx < receipts.length - 1 && (
+                      <View style={[styles.messageInfoDivider, { backgroundColor: colors.border }]} />
+                    )}
+                  </View>
+                );
+              })
             )}
 
             {!messageInfoModal?.loading && conversationType !== 'group' && (!messageInfoModal?.receipts || messageInfoModal.receipts.length === 0) && (
