@@ -56,11 +56,17 @@ export function setPhoenixHubEnabled(on) {
 // this lets the founder validate the REAL app (chat + a call) on his own account
 // with ZERO risk to other users before a global flip. Widen this list to ramp;
 // empty it (or set the names to nothing) to roll the cohort back instantly.
-export const PHOENIX_COHORT = [
-  'duarte@chatyy.com.br',
-  'suporte@boraum.com.br',
-  'mauricioribeiro@chatyy.com.br',
-];
+// [2026-10-02 ROLLBACK] Esvaziado. O cohort quebrou ligação cross-hub: um user
+// no Phoenix (cohort) ligando pra um user no Go NÃO tem o call_offer/answer/ICE
+// espelhado entre os hubs (só o chat.php espelha; a sinalização de chamada é
+// client→hub→client direto no WS, hub-local) → áudio em mão única / não conecta.
+// Além disso o user_socket.ex do Phoenix recusava o bearer CRU do app (ele só
+// sanitizava; o Go faz sha256(token) primeiro). Reabilitar o cohort SÓ depois
+// de: (1) Phoenix validar o token igual ao Go (sha256 primeiro) e (2) resolver
+// a sinalização de chamada cross-hub (rotear call SEMPRE pelo Go até o cutover
+// global, OU bridge de sinalização entre hubs). Chat-receive via Phoenix é
+// seguro (espelhado); CALL não é, enquanto existir população mista.
+export const PHOENIX_COHORT = [];
 
 /**
  * Whether Phoenix should be used for THIS account. True when the global flag is
