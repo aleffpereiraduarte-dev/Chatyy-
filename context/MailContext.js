@@ -1362,9 +1362,21 @@ export function MailProvider({ children }) {
         // real-time). When USE_PHOENIX_HUB is OFF (default / shipped), this is
         // a no-op and nothing about the legacy path changes.
         try {
-          const { isPhoenixHubEnabled } = require('../services/flags');
-          if (isPhoenixHubEnabled()) {
+          const flags = require('../services/flags');
+          // [2026-10-02 Stage 3 cohort] Resolve per-account: the global flag OR
+          // the staged test-cohort allowlist. For a cohort account we flip the
+          // runtime global ON here so EVERY other isPhoenixHubEnabled() read this
+          // session (outbound relay in websocket.js, conversation join in
+          // chat-conversation.js) is consistent; for a non-cohort account we flip
+          // it OFF so a previous cohort session can't leak into this one.
+          const usePhx = flags.isPhoenixForEmail(user.email);
+          flags.setPhoenixHubEnabled(usePhx);
+          if (usePhx) {
             require('../services/phoenixAdapter').startPhoenix(token, user.email);
+          } else {
+            // Switching INTO a non-cohort account: tear down any Phoenix socket
+            // a previous cohort account left running this session.
+            try { require('../services/phoenixAdapter').stopPhoenix(); } catch {}
           }
         } catch {}
       }

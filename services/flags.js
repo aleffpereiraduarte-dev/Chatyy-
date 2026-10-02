@@ -48,3 +48,31 @@ export function setPhoenixHubEnabled(on) {
   try { globalThis.__chatyy_use_phoenix = !!on; } catch {}
   USE_PHOENIX_HUB = !!on;
 }
+
+// [2026-10-02 Stage 3 cohort] Staged rollout allowlist. Phoenix is enabled ONLY
+// for these test accounts (chat receive runs in parallel with Go + dedup; call
+// signaling is load-bearing on Phoenix). Everyone else stays 100% on Go. The
+// server side is proven (socket+auth+join + real phoenixMirror→client delivery);
+// this lets the founder validate the REAL app (chat + a call) on his own account
+// with ZERO risk to other users before a global flip. Widen this list to ramp;
+// empty it (or set the names to nothing) to roll the cohort back instantly.
+export const PHOENIX_COHORT = [
+  'duarte@chatyy.com.br',
+  'suporte@boraum.com.br',
+  'mauricioribeiro@chatyy.com.br',
+];
+
+/**
+ * Whether Phoenix should be used for THIS account. True when the global flag is
+ * on (runtime override / future global default) OR the email is in the staged
+ * cohort. Call this once at auth with the active email; it flips the runtime
+ * global so every other isPhoenixHubEnabled() read stays consistent this session.
+ */
+export function isPhoenixForEmail(email) {
+  if (isPhoenixHubEnabled()) return true;
+  try {
+    const e = String(email || '').toLowerCase().trim();
+    return e !== '' && PHOENIX_COHORT.map((x) => x.toLowerCase()).includes(e);
+  } catch {}
+  return false;
+}
