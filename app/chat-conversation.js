@@ -4309,10 +4309,12 @@ function AttachmentMenuItem({ item, index, onPress, colors, sheetAnim }) {
       activeOpacity={0.8}
     >
       <Animated.View style={{ alignItems: 'center', transform: [{ scale: Animated.multiply(itemScale, scaleBtn) }], opacity: itemOpacity }}>
-        <View style={[attachStyles.iconCircle, { backgroundColor: item.color }]}>
-          <item.icon size={24} color="#fff" />
+        {/* [beauty 2026-10-02] Mono neutral chip instead of the per-item
+            rainbow filled circle — matches the rest of the app's palette. */}
+        <View style={[attachStyles.iconCircle, { backgroundColor: colors.surfaceVariant || '#F0F1F3' }]}>
+          <item.icon size={23} color={colors.text} />
         </View>
-        <Text style={[attachStyles.label, { color: colors.textSecondary }]}>{item.label}</Text>
+        <Text style={[attachStyles.label, { color: colors.text }]}>{item.label}</Text>
       </Animated.View>
     </TouchableOpacity>
   );
@@ -29392,9 +29394,9 @@ function ChatConversationInner() {
           {/* Header label — tiny uppercase title for visual context, like
               iOS share sheets. Subtle and small so it doesn't compete. */}
           <Text style={{
-            fontSize: 11, fontWeight: '600', letterSpacing: 0.8,
+            fontSize: 11, fontWeight: '700', letterSpacing: 0.6,
             color: colors.textSecondary, textTransform: 'uppercase',
-            paddingHorizontal: 16, paddingTop: 6, paddingBottom: 8,
+            paddingHorizontal: 14, paddingTop: 4, paddingBottom: 5,
           }}>
             {t('chatConv.moreOptions') || 'Mais opções'}
           </Text>
@@ -29632,30 +29634,31 @@ function ChatConversationInner() {
               sections.forEach((sec, sidx) => {
                 if (sec.divider && sidx > 0) {
                   out.push(
-                    <View key={`div-${sidx}`} style={{ height: 1, backgroundColor: dividerColor, marginVertical: 8, marginHorizontal: 8 }} />
+                    <View key={`div-${sidx}`} style={{ height: StyleSheet.hairlineWidth, backgroundColor: dividerColor, marginVertical: 5, marginHorizontal: 12 }} />
                   );
                 }
                 sec.items.forEach((item, iidx) => {
                   const Ico = item.Icon;
-                  // Highlighted item (AI summary): subtle outlined chip with
-                  // gradient-feel background to signal premium.
                   const isHighlighted = !!item.highlight;
-                  // Tint background: hex `'15'` suffix = ~8% opacity (subtle,
-                  // not the harsh `'20'` from before). Danger items get a red
-                  // wash so they read as destructive at a glance.
-                  const tintBase = item.danger ? '#FF3B30' : (item.tint || '#6B7280');
-                  const tintBg = tintBase + '15';
+                  // [beauty 2026-10-02] Compact + monochrome rows. The per-item
+                  // rainbow tints (amber/green/blue/cyan…) read busy/dated and
+                  // the tall rows made the menu huge. Icons are now neutral
+                  // (danger=red), rows are tighter, badge uses the accent. No
+                  // items removed — every function stays.
+                  const dangerC = colors.error || '#EF4444';
+                  const iconColor = item.danger ? dangerC : (isHighlighted ? colors.primary : colors.text);
+                  const chipBg = item.danger
+                    ? dangerC + '14'
+                    : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)');
                   out.push(
                     <TouchableOpacity
                       key={`s${sidx}-i${iidx}`}
                       style={{
-                        flexDirection: 'row', alignItems: 'center', gap: 14,
-                        paddingHorizontal: 16, paddingVertical: 14,
-                        borderRadius: 12,
+                        flexDirection: 'row', alignItems: 'center', gap: 12,
+                        paddingHorizontal: 14, paddingVertical: 9,
+                        borderRadius: 11,
                         ...(isHighlighted ? {
-                          backgroundColor: (item.tint || '#111111') + '0D',
-                          borderWidth: 1,
-                          borderColor: (item.tint || '#111111') + '33',
+                          backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(17,17,17,0.04)',
                         } : null),
                       }}
                       onPress={() => {
@@ -29665,26 +29668,26 @@ function ChatConversationInner() {
                       activeOpacity={0.6}
                     >
                       <View style={{
-                        width: 36, height: 36, borderRadius: 10,
-                        backgroundColor: tintBg,
+                        width: 30, height: 30, borderRadius: 9,
+                        backgroundColor: chipBg,
                         alignItems: 'center', justifyContent: 'center',
                       }}>
-                        {Ico ? <Ico size={19} color={tintBase} /> : null}
+                        {Ico ? <Ico size={17} color={iconColor} /> : null}
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={{
-                          fontSize: 15, color: item.danger ? '#EF4444' : colors.text,
+                          fontSize: 14.5, color: item.danger ? dangerC : colors.text,
                           fontWeight: isHighlighted ? '600' : '500', letterSpacing: -0.1,
-                        }}>
+                        }} numberOfLines={1}>
                           {item.label}
                         </Text>
                         {item.subtitle ? (
-                          <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
+                          <Text style={{ fontSize: 11.5, color: colors.textSecondary, marginTop: 1 }} numberOfLines={1}>
                             {item.subtitle}
                           </Text>
                         ) : null}
                       </View>
-                      {item.badge && <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: '#10b981' }} />}
+                      {item.badge && <View style={{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: colors.primary }} />}
                     </TouchableOpacity>
                   );
                 });
