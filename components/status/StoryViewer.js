@@ -266,7 +266,7 @@ function SliderStickerView({ sticker, statusId, ownStatus, alreadyVoted, onVoted
         <View style={{
           position: 'absolute', left: 0, top: 0, bottom: 0,
           width: `${value}%`,
-          borderRadius: 4, backgroundColor: '#F59E0B',
+          borderRadius: 4, backgroundColor: '#111111',
         }} />
         <View
           {...pan.panHandlers}
@@ -512,7 +512,7 @@ const StoryMedia = React.memo(function StoryMedia({
         ? (gradient.colors.length > 1 ? gradient.colors : [gradient.colors[0], gradient.colors[0]])
         : null;
       return (
-        <View style={{ flex: 1, backgroundColor: gradient ? '#000' : (_bg || '#25D366'), alignItems: 'center', justifyContent: 'center', padding: 30 }}>
+        <View style={{ flex: 1, backgroundColor: gradient ? '#000' : (_bg || '#111111'), alignItems: 'center', justifyContent: 'center', padding: 30 }}>
           {gradient ? (
             <Svg
               pointerEvents="none"

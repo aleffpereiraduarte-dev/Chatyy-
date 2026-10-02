@@ -142,7 +142,7 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
     const d = new Date(`${base}T${tt}:00`);
     return isNaN(d.getTime()) ? new Date() : d;
   };
-  const [selectedColor, setSelectedColor] = useState('#4285F4');
+  const [selectedColor, setSelectedColor] = useState('#111111');
   const [recurrence, setRecurrence] = useState('');
   const [attendeesText, setAttendeesText] = useState('');
   const [reminder, setReminder] = useState('none');
@@ -210,7 +210,7 @@ function EditEventView({ event, onSave, onCancel, colors, t }) {
       setDescription(event.description || '');
       setLocation(event.location || '');
       setAllDay(!!event.all_day);
-      setSelectedColor(event.color || event.calendar_color || '#4285F4');
+      setSelectedColor(event.color || event.calendar_color || '#111111');
       setRecurrence(event.recurrence_rule || '');
       setReminder(event.reminder || 'none');
       if (event.start_at) {

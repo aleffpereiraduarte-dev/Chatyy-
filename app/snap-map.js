@@ -148,8 +148,8 @@ function buildMapHtml({ center, zoom, isDark, initialPins, initialMe }) {
   .pin.stale .ago{background:rgba(239,68,68,0.92);color:#fff}
   /* MapLibre centers this marker (anchor:'center'); no absolute transform. */
   .me{pointer-events:none}
-  .me .me-av{width:42px;height:42px;border-radius:50%;object-fit:cover;display:block;border:3px solid #3B82F6;box-shadow:0 2px 10px rgba(0,0,0,0.45),0 0 0 2px #fff;background:#111111}
-  .me .dot{width:18px;height:18px;border-radius:50%;background:#3B82F6;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);position:relative}
+  .me .me-av{width:42px;height:42px;border-radius:50%;object-fit:cover;display:block;border:3px solid #111111;box-shadow:0 2px 10px rgba(0,0,0,0.45),0 0 0 2px #fff;background:#111111}
+  .me .dot{width:18px;height:18px;border-radius:50%;background:#111111;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);position:relative}
   /* WhatsApp/Google-style breathing pulse around the blue dot. The outer
      ring expands+fades to telegraph "you are here, GPS live". */
   .me .dot::before{content:'';position:absolute;left:50%;top:50%;width:18px;height:18px;border-radius:50%;background:rgba(59,130,246,0.35);transform:translate(-50%,-50%);animation:mePulse 2s ease-out infinite;z-index:-1}
@@ -1271,7 +1271,7 @@ export default function SnapMapScreen() {
           <Text style={{ fontSize: 18, fontWeight: '700', color: colors.text }}>
             {t?.('snapmap.title') || 'Amigos no Mapa'}
           </Text>
-          <Text style={{ fontSize: 12, color: ghostMode ? '#f59e0b' : colors.textSecondary, marginTop: 2 }}>
+          <Text style={{ fontSize: 12, color: ghostMode ? colors.text : colors.textSecondary, marginTop: 2 }}>
             {ghostMode
               ? (t?.('snapmap.ghostStatus') || 'Modo invisível — ninguém te vê')
               : `${shares.length} ${shares.length === 1 ? (t?.('snapmap.sharingNowOne') || 'compartilhando agora') : (t?.('snapmap.sharingNow') || 'compartilhando agora')}`}
@@ -1282,12 +1282,12 @@ export default function SnapMapScreen() {
           style={{
             padding: 8,
             borderRadius: 14,
-            backgroundColor: ghostMode ? 'rgba(245,158,11,0.18)' : 'transparent',
+            backgroundColor: ghostMode ? (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)') : 'transparent',
             marginRight: 4,
           }}
           accessibilityLabel={ghostMode ? (t?.('snapmap.ghostOff') || 'Sair do modo invisível') : (t?.('snapmap.ghostOn') || 'Modo invisível')}
         >
-          <IconEyeOff size={20} color={ghostMode ? '#f59e0b' : colors.text} />
+          <IconEyeOff size={20} color={colors.text} />
         </TouchableOpacity>
         <TouchableOpacity onPress={openGrants} style={{ padding: 8 }} accessibilityLabel="Privacidade">
           <IconUser size={22} color={colors.text} />

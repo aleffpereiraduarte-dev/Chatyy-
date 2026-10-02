@@ -725,10 +725,10 @@ function DevicesScreen({ colors, t, onClose, onLogout }) {
       return { Icon: IconSmartphone, tint: '#111111', bg: '#11111118' };
     }
     if (label.includes('android')) {
-      return { Icon: IconSmartphone, tint: '#10b981', bg: '#10b98118' };
+      return { Icon: IconSmartphone, tint: '#111111', bg: '#11111118' };
     }
     if (label.includes('mac') || label.includes('windows') || label.includes('linux') || label.includes('chrome') || label.includes('firefox') || label.includes('safari') || label.includes('edge')) {
-      return { Icon: IconMonitor, tint: '#0ea5e9', bg: '#0ea5e918' };
+      return { Icon: IconMonitor, tint: '#111111', bg: '#11111118' };
     }
     return { Icon: IconShield, tint: '#94a3b8', bg: '#94a3b818' };
   };

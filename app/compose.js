@@ -70,7 +70,7 @@ import {
   IconX, IconSparkles, IconSend, IconCheckCircle,
   IconClock, IconFileText, IconPaperclip, IconFilm,
   IconChevronDown, IconChevronUp, IconArrowLeft, IconArchive,
-  IconLock, IconAlertTriangle, IconCheck,
+  IconLock, IconAlertTriangle, IconCheck, IconLink,
 } from '../components/Icons';
 
 const DRAFT_SAVE_INTERVAL = 5000;
@@ -1888,8 +1888,9 @@ export default function ComposeScreen() {
             accessibilityLabel={t('compose.insertUrlPreview') || 'Inserir preview'}
             accessibilityRole="button"
           >
+            {!urlPreviewLoading && <IconLink size={13} color={colors.primary} />}
             <Text style={[s.toolBtnText, { color: colors.primary }]}>
-              {urlPreviewLoading ? (t('compose.urlPreviewLoading') || 'Carregando preview...') : '🔗 ' + (t('compose.insertUrlPreview') || 'Inserir preview')}
+              {urlPreviewLoading ? (t('compose.urlPreviewLoading') || 'Carregando preview...') : (t('compose.insertUrlPreview') || 'Inserir preview')}
             </Text>
           </TouchableOpacity>
         )}

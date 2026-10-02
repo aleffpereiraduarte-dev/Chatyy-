@@ -1435,7 +1435,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
     if (clean.length > 10) clean = clean.slice(0, 10);
     setter(clean);
   };
-  const [selectedColor, setSelectedColor] = useState('#4285F4');
+  const [selectedColor, setSelectedColor] = useState('#111111');
   const [calendarId, setCalendarId] = useState(0);
   const [attendeesText, setAttendeesText] = useState('');
   const [saving, setSaving] = useState(false);
@@ -1473,7 +1473,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
       setAllDay(false);
       setStartTime(`${startH}:${startM}`);
       setEndTime(`${endH}:${startM}`);
-      setSelectedColor('#4285F4');
+      setSelectedColor('#111111');
       setCalendarId(calendars?.[0]?.id || 0);
       setAttendeesText('');
       setSaving(false);
@@ -2806,7 +2806,7 @@ function CalendarScreenInner() {
           ? {
               background: isDark
                 ? 'linear-gradient(140deg, #161618 0%, #161618 55%, #161618 100%)'
-                : 'linear-gradient(135deg, #111111 0%, #111111 55%, #DB2777 100%)',
+                : 'linear-gradient(135deg, #111111 0%, #111111 55%, #111111 100%)',
             }
           : { backgroundColor: isDark ? '#161618' : '#111111' },
       ]}>

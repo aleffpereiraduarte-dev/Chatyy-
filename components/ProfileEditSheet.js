@@ -133,7 +133,7 @@ function Row({
       </View>
       {showVerMais ? (
         <TouchableOpacity onPress={() => setExpanded(true)} style={{ marginTop: 4 }} accessibilityRole="button">
-          <Text style={{ fontSize: 13, color: '#111111', fontWeight: '600' }}>Ver mais</Text>
+          <Text style={{ fontSize: 13, color: colors?.text || '#111111', fontWeight: '600' }}>Ver mais</Text>
         </TouchableOpacity>
       ) : null}
       {showCounter && multiline && maxLength ? (
@@ -173,7 +173,7 @@ function UsernameIndicator({ status, colors }) {
     return (
       <Animated.View style={{
         width: 18, height: 18, borderRadius: 9,
-        backgroundColor: '#f59e0b',
+        backgroundColor: colors?.textSecondary || '#6b7280',
         opacity: pulse,
       }} />
     );
@@ -695,7 +695,7 @@ export default function ProfileEditSheet({
                   style={{ marginTop: 14, paddingVertical: 4, paddingHorizontal: 8 }}
                   activeOpacity={0.6}
                 >
-                  <Text style={{ fontSize: 15, color: '#111111', fontWeight: '600' }}>
+                  <Text style={{ fontSize: 15, color: colors?.text || '#111111', fontWeight: '600' }}>
                     {t?.('profile.changePhoto') || 'Trocar foto'}
                   </Text>
                 </TouchableOpacity>
@@ -865,8 +865,8 @@ export default function ProfileEditSheet({
                   }}
                   accessibilityRole="button"
                 >
-                  <IconPlus size={16} color="#111111" />
-                  <Text style={{ fontSize: 14, color: '#111111', fontWeight: '600' }}>
+                  <IconPlus size={16} color={colors?.text || '#111111'} />
+                  <Text style={{ fontSize: 14, color: colors?.text || '#111111', fontWeight: '600' }}>
                     {t?.('profile.addLink') || 'Adicionar link'}
                   </Text>
                 </TouchableOpacity>
@@ -894,7 +894,7 @@ export default function ProfileEditSheet({
                   hint: t?.('profile.accountTypeBusinessHint') || 'Categoria + contato + métricas comerciais.' },
               ].map((opt) => {
                 const selected = accountType === opt.key;
-                const accent = opt.key === 'creator' ? '#111111' : opt.key === 'business' ? '#2563EB' : '#111111';
+                const accent = '#111111';
                 return (
                   <TouchableOpacity
                     key={opt.key}

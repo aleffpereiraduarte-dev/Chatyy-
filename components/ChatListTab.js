@@ -5500,7 +5500,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           active
             ? [s.chipActive, isDark && { backgroundColor: '#e9edef', borderColor: '#e9edef' }]
             : {
-                backgroundColor: isDark ? '#1c2a35' : '#f0f2f5',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)',
                 borderColor: 'transparent',
               },
           isWeb && { transition: 'all 0.18s cubic-bezier(0.4,0,0.2,1)', cursor: 'pointer' },

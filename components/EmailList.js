@@ -269,22 +269,22 @@ export default function EmailList({
           {currentFolder === 'Trash' && emails.length > 0 && onEmptyTrash && (
             <TouchableOpacity
               onPress={onEmptyTrash}
-              style={[s.folderActionBtn, { borderColor: '#dc2626' }]}
+              style={[s.folderActionBtn, { borderColor: colors.error }]}
               activeOpacity={0.7}
             >
-              <IconTrash size={13} color="#dc2626" />
-              <Text style={{ color: '#dc2626', fontSize: 12, fontWeight: '600' }}>{t('sidebar.emptyTrash')}</Text>
+              <IconTrash size={13} color={colors.error} />
+              <Text style={{ color: colors.error, fontSize: 12, fontWeight: '600' }}>{t('sidebar.emptyTrash')}</Text>
             </TouchableOpacity>
           )}
           {/* Clear Spam button */}
           {(currentFolder === 'Junk' || currentFolder === 'Spam') && emails.length > 0 && onClearSpam && (
             <TouchableOpacity
               onPress={onClearSpam}
-              style={[s.folderActionBtn, { borderColor: '#f59e0b' }]}
+              style={[s.folderActionBtn, { borderColor: colors.warning }]}
               activeOpacity={0.7}
             >
-              <IconTrash size={13} color="#f59e0b" />
-              <Text style={{ color: '#f59e0b', fontSize: 12, fontWeight: '600' }}>{t('inbox.clearSpam')}</Text>
+              <IconTrash size={13} color={colors.warning} />
+              <Text style={{ color: colors.warning, fontSize: 12, fontWeight: '600' }}>{t('inbox.clearSpam')}</Text>
             </TouchableOpacity>
           )}
           <TouchableOpacity onPress={onRefresh} style={s.refreshBtn}>

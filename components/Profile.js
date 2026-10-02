@@ -1722,7 +1722,7 @@ export default function Profile({
                           : <Image source={{ uri: thumbUrl }} style={{ width: '100%', height: '100%', borderRadius: 30 }} resizeMode="cover" />)
                   ) : (
                     <View style={{
-                      flex: 1, borderRadius: 30, backgroundColor: s.bg_color || '#25D366',
+                      flex: 1, borderRadius: 30, backgroundColor: s.bg_color || colors?.primary || '#111111',
                       alignItems: 'center', justifyContent: 'center', padding: 4,
                     }}>
                       <Text style={{ color: '#fff', fontSize: 10, fontWeight: '700', textAlign: 'center' }} numberOfLines={3}>
@@ -3525,7 +3525,7 @@ export default function Profile({
                 value={hideStatusFromContact}
                 onValueChange={handleToggleHideStatus}
                 disabled={hideStatusSaving}
-                trackColor={{ false: '#767577', true: colors?.primary || '#25D366' }}
+                trackColor={{ false: '#767577', true: colors?.primary || '#111111' }}
                 thumbColor={Platform.OS === 'android' ? (hideStatusFromContact ? '#fff' : '#f4f3f4') : undefined}
               />
             </TouchableOpacity>

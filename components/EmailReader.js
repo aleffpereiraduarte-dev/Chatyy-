@@ -819,7 +819,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           sending → done states. */}
       {unsubscribeInfo && (
         <View style={{ marginHorizontal: 16, marginTop: 12, flexDirection: 'row', alignItems: 'center', gap: 10,
-                       backgroundColor: '#f3e8ff', borderLeftWidth: 4, borderLeftColor: '#111111',
+                       backgroundColor: '#f3f4f6', borderLeftWidth: 4, borderLeftColor: '#111111',
                        padding: 12, borderRadius: 8 }}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontWeight: '700', color: '#111111', fontSize: 13 }}>
@@ -1392,13 +1392,13 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           <Text style={[s.actionText, { color: colors.text }]}>{t('reader.forward')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.actionBtn, { backgroundColor: '#f59e0b12', borderColor: '#f59e0b25' }]}
+          style={[s.actionBtn, { backgroundColor: colors.warning + '12', borderColor: colors.warning + '25' }]}
           onPress={() => onReportSpam?.(email)}
           accessibilityLabel={t('reader.spam')}
           accessibilityRole="button"
         >
-          <IconAlertTriangle size={16} color="#f59e0b" style={{ marginRight: 8 }} />
-          <Text style={[s.actionText, { color: '#f59e0b' }]}>{t('reader.spam')}</Text>
+          <IconAlertTriangle size={16} color={colors.warning} style={{ marginRight: 8 }} />
+          <Text style={[s.actionText, { color: colors.warning }]}>{t('reader.spam')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[s.actionBtn, { backgroundColor: showTranslation ? colors.primary + '18' : colors.primary + '12', borderColor: showTranslation ? colors.primary + '30' : 'transparent' }]}
@@ -1442,7 +1442,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
         {/* AI: Action items button (only for long emails) */}
         {(email.body_text || '').length > 300 && (
           <TouchableOpacity
-            style={[s.secBtn, { backgroundColor: '#11111122', borderWidth: 1, borderColor: '#111111' }]}
+            style={[s.secBtn, { backgroundColor: colors.primary + '12', borderWidth: 1, borderColor: colors.border }]}
             onPress={async () => {
               setActionItemsLoading(true);
               try {
@@ -1453,11 +1453,11 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
             }}
           >
             {actionItemsLoading ? (
-              <Text style={{ color: '#111111', fontWeight: '600', fontSize: 12 }}>...</Text>
+              <Text style={{ color: colors.text, fontWeight: '600', fontSize: 12 }}>...</Text>
             ) : (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                <IconSparkles size={12} color="#111111" />
-                <Text style={{ color: '#111111', fontWeight: '600', fontSize: 12 }}>Tarefas</Text>
+                <IconSparkles size={12} color={colors.text} />
+                <Text style={{ color: colors.text, fontWeight: '600', fontSize: 12 }}>Tarefas</Text>
               </View>
             )}
           </TouchableOpacity>

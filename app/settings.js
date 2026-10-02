@@ -2416,12 +2416,12 @@ function SettingsScreenInner() {
           {/* Swatch grid with labeled colors. Six brand-aligned options. */}
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14, justifyContent: 'flex-start' }}>
             {[
-              { c: '#111111', label: t('settings.led.c1') || 'Roxo' },
+              { c: '#8B5CF6', label: t('settings.led.c1') || 'Roxo' },
               { c: '#3B82F6', label: t('settings.led.c2') || 'Azul' },
               { c: '#10B981', label: t('settings.led.c3') || 'Verde' },
               { c: '#EF4444', label: t('settings.led.c4') || 'Vermelho' },
               { c: '#F59E0B', label: t('settings.led.c5') || 'Âmbar' },
-              { c: '#111111', label: t('settings.led.c6') || 'Rosa' },
+              { c: '#EC4899', label: t('settings.led.c6') || 'Rosa' },
               { c: '#06B6D4', label: t('settings.led.c7') || 'Ciano' },
               { c: '#FFFFFF', label: t('settings.led.c8') || 'Branco' },
             ].map(({ c, label }) => {

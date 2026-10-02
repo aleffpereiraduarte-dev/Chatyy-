@@ -2272,7 +2272,7 @@ export default function ChatNewScreen() {
                       onPress={() => handleInviteShare({})}
                       activeOpacity={0.7}
                     >
-                      <View style={[sty.quickActionIcon, { backgroundColor: '#6366f1' }]}>
+                      <View style={[sty.quickActionIcon, { backgroundColor: '#111111' }]}>
                         <IconUserPlus size={18} color="#fff" />
                       </View>
                       <View style={{ flex: 1 }}>
@@ -2284,7 +2284,7 @@ export default function ChatNewScreen() {
 
                   {/* Invite count for non-Chatyy contacts */}
                   {otherContacts.length > 0 && (
-                    <View style={[sty.inviteCountBanner, { backgroundColor: isDark ? '#1a2e1a' : '#f0faf3' }]}>
+                    <View style={[sty.inviteCountBanner, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,17,17,0.04)' }]}>
                       <Text style={{ color: colors.textSecondary, fontSize: 13 }}>
                         {t('chat.contactsNotOnChatyy', { count: otherContacts.length })}
                       </Text>
@@ -2412,7 +2412,7 @@ export default function ChatNewScreen() {
                     <Text style={{ color: '#fff', fontWeight: '600', fontSize: 14 }}>{t('chat.qrScan')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[sty.qrActionBtn, { backgroundColor: '#6366f1' }]}
+                    style={[sty.qrActionBtn, { backgroundColor: '#111111' }]}
                     onPress={handleShareQrImage}
                   >
                     <IconMail size={18} color="#fff" />

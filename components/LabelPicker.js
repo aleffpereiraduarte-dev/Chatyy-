@@ -105,7 +105,7 @@ export default function LabelPicker({ visible, onClose, currentLabels = [], onTo
     const parent = parentDraft.trim().toLowerCase();
     try {
       if (parent) {
-        await api.labelCreateNested?.(name, '#1a73e8', parent);
+        await api.labelCreateNested?.(name, '#111111', parent);
       } else {
         await api.createLabel(name);
       }

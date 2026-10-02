@@ -39,9 +39,9 @@ const isWeb = Platform.OS === 'web';
 const FILE_TYPE_COLORS = {
   image:        { accent: '#f59e0b', bg: '#fffbeb', bgDark: '#451a03', icon: '#d97706' },
   video:        { accent: '#111111', bg: '#F1F3F5', bgDark: '#161618', icon: '#111111' },
-  audio:        { accent: '#111111', bg: '#eef2ff', bgDark: '#1e1b4b', icon: '#4f46e5' },
+  audio:        { accent: '#111111', bg: '#F1F3F5', bgDark: '#161618', icon: '#111111' },
   pdf:          { accent: '#dc2626', bg: '#fef2f2', bgDark: '#450a0a', icon: '#dc2626' },
-  document:     { accent: '#111111', bg: '#F1F3F5', bgDark: '#172554', icon: '#111111' },
+  document:     { accent: '#111111', bg: '#F1F3F5', bgDark: '#161618', icon: '#111111' },
   spreadsheet:  { accent: '#16a34a', bg: '#f0fdf4', bgDark: '#052e16', icon: '#16a34a' },
   presentation: { accent: '#d97706', bg: '#fffbeb', bgDark: '#451a03', icon: '#d97706' },
   archive:      { accent: '#64748b', bg: '#f8fafc', bgDark: '#1e293b', icon: '#64748b' },

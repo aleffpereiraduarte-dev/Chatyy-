@@ -535,7 +535,7 @@ function DraggableSticker({ sticker, onMove, onRemove }) {
               position: 'absolute', left: 0, top: 0, bottom: 0,
               width: `${pct}%`,
               borderRadius: 4,
-              backgroundColor: '#F59E0B',
+              backgroundColor: '#111111',
             }} />
             <Text style={{
               position: 'absolute', top: -14,
@@ -3262,7 +3262,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   // visible so the action is always one tap away. Uses
                   // archiveMyStatus which hides the latest item immediately
                   // and TODOs the backend wire-up.
-                  style={[styles.actionCircle, { backgroundColor: isDark ? '#1a2330' : '#e3f2fd', marginRight: 10 }]}
+                  style={[styles.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)', marginRight: 10 }]}
                   onPress={() => {
                     const last = myStatuses[myStatuses.length - 1];
                     if (!last) return;
@@ -3282,7 +3282,7 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   }}
                   accessibilityLabel={t?.('status.archive') || 'Arquivar status'}
                 >
-                  <IconArchive size={18} color="#3b82f6" />
+                  <IconArchive size={18} color={isDark ? '#fff' : '#111111'} />
                 </TouchableOpacity>
               )}
               {/* "Ver arquivo" — opens the archive sheet so users can browse
@@ -3290,11 +3290,11 @@ export default function ChatStatusTab({ colors, isDark, t, user, router, autoNew
                   24h story. Lives next to the archive trash so the two
                   archive actions are co-located. */}
               <TouchableOpacity
-                style={[styles.actionCircle, { backgroundColor: isDark ? '#1e2a3a' : '#e8f0fe', marginRight: 10 }]}
+                style={[styles.actionCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)', marginRight: 10 }]}
                 onPress={openArchiveSheet}
                 accessibilityLabel={t?.('status.openArchive') || 'Abrir arquivo'}
               >
-                <IconBookmark size={18} color="#3b82f6" />
+                <IconBookmark size={18} color={isDark ? '#fff' : '#111111'} />
               </TouchableOpacity>
               {hasMyStatus && (
                 <TouchableOpacity

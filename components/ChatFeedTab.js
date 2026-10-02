@@ -19,7 +19,7 @@ import LiveIndicator from './LiveIndicator';
 import ReelsViewer from './ReelsViewer';
 import UnifiedComposeFab from './UnifiedComposeFab';
 import Profile from './Profile';
-import { IconPlus, IconVideo, IconSearch, IconX, IconBell } from './Icons';
+import { IconPlus, IconVideo, IconSearch, IconX, IconBell, IconChevronUp } from './Icons';
 import Svg, { Circle, Rect, Path, Line, Polyline } from 'react-native-svg';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
@@ -1620,7 +1620,7 @@ export default function ChatFeedTab({ colors, isDark, t, user, router, initialFe
           accessibilityLabel={t('feed.scrollTop') || 'Voltar ao topo'}
           accessibilityRole="button"
         >
-          <Text style={{ fontSize: 20, color: isDark ? '#fff' : '#111', lineHeight: 20 }}>↑</Text>
+          <IconChevronUp size={22} color={isDark ? '#fff' : '#111'} />
         </TouchableOpacity>
       )}
 

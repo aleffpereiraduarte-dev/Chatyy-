@@ -2070,7 +2070,7 @@ const s = StyleSheet.create({
   saveBtn: {
     borderRadius: 24, paddingVertical: 14, alignItems: 'center', marginTop: Spacing.md,
     ...Platform.select({
-      web: { background: 'linear-gradient(135deg, #111111 0%, #111111 100%)', boxShadow: '0 4px 14px rgba(37,99,235,0.3)', cursor: 'pointer' },
+      web: { background: 'linear-gradient(135deg, #111111 0%, #111111 100%)', boxShadow: '0 4px 14px rgba(17,17,17,0.25)', cursor: 'pointer' },
       default: {},
     }),
   },

@@ -7,6 +7,7 @@ import {
   IconSend, IconArchive, IconTrash, IconStar, IconStarFilled,
   IconMarkRead, IconMarkUnread, IconClock, IconAlertTriangle,
   IconFolder, IconX, IconVolume2,
+  IconReply, IconReplyAll, IconForward,
 } from './Icons';
 
 const SEPARATOR = { _separator: true };
@@ -37,9 +38,9 @@ export default function ContextMenu({ visible, position, email, onClose, actions
   const isMuted = mutedUids?.has?.(String(email.uid));
 
   const items = [
-    { key: 'reply', label: t('contextMenu.reply'), icon: IconSend, action: () => actions.onReply?.(email) },
-    { key: 'replyAll', label: t('contextMenu.replyAll'), icon: IconSend, action: () => actions.onReplyAll?.(email) },
-    { key: 'forward', label: t('contextMenu.forward'), icon: IconSend, action: () => actions.onForward?.(email) },
+    { key: 'reply', label: t('contextMenu.reply'), icon: IconReply, action: () => actions.onReply?.(email) },
+    { key: 'replyAll', label: t('contextMenu.replyAll'), icon: IconReplyAll, action: () => actions.onReplyAll?.(email) },
+    { key: 'forward', label: t('contextMenu.forward'), icon: IconForward, action: () => actions.onForward?.(email) },
     SEPARATOR,
     { key: 'archive', label: t('contextMenu.archive'), icon: IconArchive, action: () => actions.onArchive?.(email) },
     { key: 'delete', label: t('contextMenu.delete'), icon: IconTrash, color: colors.error, action: () => actions.onDelete?.(email) },

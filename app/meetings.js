@@ -31,7 +31,6 @@ const MEET_BASE = 'https://chatyy.com.br/meet/';
 // so dark mode resolves correctly — see the theme map in BRIEFING.md.
 const ACCENT = '#111111';
 const ACCENT_DARK = '#111111';
-const AMBER = '#F59E0B';
 const LIVE_RED = '#EF4444';
 
 const safeAlert = (title, message, buttons) => {
