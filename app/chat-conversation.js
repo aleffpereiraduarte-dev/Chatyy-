@@ -529,12 +529,14 @@ function compressImageWeb(blob, maxDimension = 2048, quality = 0.8) {
 // the animation runs on the UI thread (not JS) — zero jank even when list
 // is scrolling or React is re-rendering.
 function MessageSendAnim({ children, animate, fromOther }) {
-  const translateY = useRef(new Animated.Value(animate ? 12 : (fromOther ? 8 : 0))).current;
-  const translateX = useRef(new Animated.Value(fromOther ? -16 : (animate ? 8 : 0))).current;
-  const opacity = useRef(new Animated.Value((animate || fromOther) ? 0 : 1)).current;
-  // Peer bubble starts smaller (0.7) so the spring "pop" is visible —
-  // 0.85 was too subtle to read as a real iMessage entrance.
-  const scale = useRef(new Animated.Value(animate ? 0.88 : (fromOther ? 0.7 : 1))).current;
+  const translateY = useRef(new Animated.Value(animate ? 12 : (fromOther ? 5 : 0))).current;
+  const translateX = useRef(new Animated.Value(fromOther ? -9 : (animate ? 8 : 0))).current;
+  // [2026-10-02] Peer bubble entra MAIS VISÍVEL (opacity 0.35, não 0) pra não
+  // "demorar a aparecer" (founder). Antes começava invisível + encolhida (0.7)
+  // e o spring levava ~300-400ms → parecia atrasada. Agora já nasce quase
+  // opaca e quase no tamanho, o spring só dá o "assentar" — leitura instantânea.
+  const opacity = useRef(new Animated.Value(animate ? 0 : (fromOther ? 0.35 : 1))).current;
+  const scale = useRef(new Animated.Value(animate ? 0.88 : (fromOther ? 0.9 : 1))).current;
   useEffect(() => {
     if (animate) {
       // Own-send entrance: subtle settle (no heavy overshoot). Initial scale
@@ -547,14 +549,15 @@ function MessageSendAnim({ children, animate, fromOther }) {
         Animated.timing(opacity, { toValue: 1, duration: 110, useNativeDriver: true }),
       ]).start();
     } else if (fromOther) {
-      // iMessage-grade peer entrance: snappier spring with visible bounce,
-      // slide from the left edge, fade in fast. Was friction:10 (too damped)
-      // — bump to 7 so user reads it as "ploop!" not just a fade.
+      // [2026-10-02] Peer entrance SNAPPY (founder: "demora a aparecer"). Spring
+      // mais rígido (tension 240, friction 9 = sem bounce longo) + fade em 80ms
+      // partindo de 0.35 → a bolha "assenta" em ~150ms em vez de ~350ms. Leitura
+      // = instantânea, mantendo um micro-settle elegante (não é fade seco).
       Animated.parallel([
-        Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 180, friction: 8 }),
-        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 180, friction: 8 }),
-        Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 180, friction: 7 }),
-        Animated.timing(opacity, { toValue: 1, duration: 140, useNativeDriver: true }),
+        Animated.spring(translateY, { toValue: 0, useNativeDriver: true, tension: 240, friction: 9 }),
+        Animated.spring(translateX, { toValue: 0, useNativeDriver: true, tension: 240, friction: 9 }),
+        Animated.spring(scale, { toValue: 1, useNativeDriver: true, tension: 240, friction: 9 }),
+        Animated.timing(opacity, { toValue: 1, duration: 80, useNativeDriver: true }),
       ]).start();
     }
   }, []);
@@ -32228,7 +32231,16 @@ const styles = StyleSheet.create({
   // largura do texto, então a bolha saía estreita demais e a última letra de
   // mensagens curtas era cortada (foto do founder: "TA BOM" sem o M). Zero =
   // largura medida == renderizada, texto nunca estoura a bolha.
-  msgText: { fontSize: 15.5, lineHeight: 21, letterSpacing: 0 },
+  // [2026-10-02] paddingRight 3: mesmo com letterSpacing 0 o iOS AINDA submede a
+  // largura intrínseca de bolhas curtas por causa do "right side bearing" do
+  // último glifo (ex. "Que top" perdia o 'p', foto do founder) — o frame do
+  // <Text> sai ~1-2px menor que o glifo. Padding NA BOLHA não resolve (o corte é
+  // DENTRO do frame do texto, antes do padding da bolha). 3px de folga no PRÓPRIO
+  // texto entra na medição intrínseca → o frame cresce, o glifo final nunca
+  // encosta na borda, a bolha dimensiona com a folga. Simétrico o bastante (o
+  // paddingHorizontal:14 da bolha domina o visual). Cobre todos os caminhos de
+  // render que reusam msgText (texto puro + FormattedText segmentado).
+  msgText: { fontSize: 15.5, lineHeight: 21, letterSpacing: 0, paddingRight: 3 },
   // Time + tick row. Always one line inside the bubble. Minimum width is
   // enforced by bubble.minWidth so the row never wraps and the V never
   // "falls behind" the bubble when the bubble is narrow.
