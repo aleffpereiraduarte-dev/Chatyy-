@@ -201,14 +201,17 @@ function AccentColorRow({ colors, t }) {
 //  • Logout/Delete pushed to bottom with strong 6px divider on top
 //
 // Section colour palette (kept inline so tweaks live next to the rows):
+// [beauty 2026-10-02] Settings icons are MONO now — the per-row rainbow
+// (amber/blue/teal/green) read busy/dated. All neutral #111111 like the rows
+// that already shipped mono (PURPLE/PINK); only danger stays red.
 const ICON_PURPLE = '#111111';
 const ICON_RED    = '#ef4444';
-const ICON_AMBER  = '#f59e0b';
-const ICON_BLUE   = '#3b82f6';
-const ICON_TEAL   = '#0ea5e9';
+const ICON_AMBER  = '#111111';
+const ICON_BLUE   = '#111111';
+const ICON_TEAL   = '#111111';
 const ICON_GRAY   = '#64748b';
 const ICON_PINK   = '#111111';
-const ICON_GREEN  = '#10b981';
+const ICON_GREEN  = '#111111';
 
 // ─── Hero card (avatar + name + email) ───────────────────────────────
 function HeroCard({ colors, userEmail, onPress, t }) {
