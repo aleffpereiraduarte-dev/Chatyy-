@@ -269,10 +269,12 @@ const StoriesStrip = React.memo(function StoriesStrip({ user, colors, isDark, t,
   const others = (groups || []).filter(g => String(g.email || '').toLowerCase() !== String(user?.email || '').toLowerCase());
   const myDisplay = user?.name || user?.email?.split('@')[0] || '';
 
-  // Hide entirely when there's literally nothing to surface — no own status
-  // and zero others. A lone "Seu status" with no rings reads as an empty
-  // glitch on a fresh account, and the FAB already covers post creation.
-  if (!myEntry && others.length === 0) return null;
+  // [fix 2026-10-02] ALWAYS render the strip so the "Seu status +" tile (the
+  // Instagram/WhatsApp "post a story" entry) is always visible. Previously the
+  // whole strip was hidden when you had no status AND no friends had one — so on
+  // a fresh/quiet account there was NO way to post a story (founder: "a opção de
+  // postar story não aparece"). The own tile with the + badge is the canonical
+  // create affordance and must never disappear.
 
   // Own tile: view your active story if you have one, else jump straight into
   // the composer. Guards the calls so an older shell that didn't wire these
