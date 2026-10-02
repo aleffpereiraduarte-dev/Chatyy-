@@ -32220,7 +32220,11 @@ const styles = StyleSheet.create({
   bubbleDeleted: { opacity: 0.55, paddingHorizontal: 11, paddingVertical: 6 },
   // [beauty 2026-05-31] lineHeight 20.5→21 — a hair more leading so multi-line
   // message bodies breathe and don't pack tight against the meta row below.
-  msgText: { fontSize: 15.5, lineHeight: 21, letterSpacing: -0.08 },
+  // letterSpacing 0 (era -0.08): o espaçamento negativo fazia o RN SUBMEDIR a
+  // largura do texto, então a bolha saía estreita demais e a última letra de
+  // mensagens curtas era cortada (foto do founder: "TA BOM" sem o M). Zero =
+  // largura medida == renderizada, texto nunca estoura a bolha.
+  msgText: { fontSize: 15.5, lineHeight: 21, letterSpacing: 0 },
   // Time + tick row. Always one line inside the bubble. Minimum width is
   // enforced by bubble.minWidth so the row never wraps and the V never
   // "falls behind" the bubble when the bubble is narrow.

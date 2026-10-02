@@ -481,7 +481,7 @@ export const ChatBubble = {
   tailRadius: 14,    // era 16 — tail-less (sem canto pontudo)
   gap: 2,            // between consecutive messages from same sender
   gapGroup: 5,       // era 6 — between speaker changes
-  paddingX: 10,      // era 11
+  paddingX: 12,      // 11→10 cortava a última letra de bolhas curtas (ex "TA BOM" perdia o M); 12 dá folga pro texto nunca encostar na borda
   paddingY: 6,       // era 7
   maxWidth: '83%',   // era 82% — compensa o padding menor
 };
