@@ -26205,7 +26205,7 @@ function ChatConversationInner() {
           viewabilityConfig={viewabilityConfig}
           onViewableItemsChanged={onViewableItemsChanged}
           onScrollToIndexFailed={handleScrollToIndexFailed}
-          initialNumToRender={Platform.OS === 'android' ? 12 : 15}
+          initialNumToRender={10}
           maxToRenderPerBatch={Platform.OS === 'android' ? 6 : 10}
           // windowSize: 7 (vs default 21) on Android means FlatList only keeps
           // ~7 viewport-heights of rows mounted around the visible area.

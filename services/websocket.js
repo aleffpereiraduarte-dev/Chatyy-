@@ -522,6 +522,21 @@ class MailWebSocket {
         if (this.connected && this.authenticated && !this.pingTimer) this._startPing();
         return;
       }
+      // [2026-10-02 churn fix] Burst coalesce. Multiple reconnect triggers
+      // (AppState 'active' + NetInfo 'online' + resurrect + scheduleReconnect +
+      // MailContext effect) fire within the same ~second, and because each one
+      // _cleanup()s the previous socket (nulling this.ws) BEFORE this guard can
+      // see it, the readyState check above misses them — so every trigger
+      // opened a FRESH socket. Prod WS log: the same device opened 4 sockets in
+      // one second and 44% of ALL sockets died in <15s (open → immediately
+      // superseded/closed). If a connect for this SAME token was initiated
+      // <1.2s ago, coalesce this redundant call. onclose/onerror reset
+      // _lastConnectAt=0, so a REAL failure still reconnects immediately (no
+      // stall), and a token change (account switch / slide) skips the coalesce.
+      if (this._lastConnectAt && this.token === liveToken &&
+          (Date.now() - this._lastConnectAt) < 1200) {
+        return;
+      }
     } catch {}
 
     this.token = liveToken;
@@ -546,6 +561,11 @@ class MailWebSocket {
       // Falls back transparently because the server's onMessage handler
       // accepts JSON TEXT frames forever (no deprecation deadline).
       this.cwpNegotiated = false;
+      // [2026-10-02 churn fix] Stamp the moment we open a socket so the burst-
+      // coalesce guard above can absorb the other reconnect triggers that fire
+      // in the same ~second. Reset to 0 in onclose/onerror so a genuine failure
+      // reconnects immediately.
+      this._lastConnectAt = Date.now();
       if (_cwpEnabled()) {
         // RN's WebSocket constructor accepts protocols as second arg
         // (string or string[]).
@@ -661,6 +681,11 @@ class MailWebSocket {
       this.connected = false;
       this.authenticated = false;
       this._stopPing();
+      // [2026-10-02 churn fix] The LIVE socket closed (orphaned burst sockets
+      // have their handlers detached in _cleanup, so this only fires for the
+      // real one). Clear the coalesce stamp so the scheduled reconnect is NOT
+      // suppressed — a genuine drop must reconnect immediately.
+      this._lastConnectAt = 0;
 
       // Diagnostic beacon so we can figure out WHY the socket keeps dropping
       // (iOS backgrounding, carrier flap, server-initiated close, etc.) without
