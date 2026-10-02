@@ -1738,6 +1738,14 @@ export function AuthProvider({ children }) {
             loadAccounts();
             prefetchAvatar(check.data.email);
             prefetchProfile(check.data.email);
+            // [2026-10-02] Register the device push token under the switched-to
+            // account. Every other auth path (login/loginWithToken/challenge)
+            // does this; switchAccount didn't, so after an in-app A→B switch the
+            // token was never POSTed under B and B stayed push-deaf (the
+            // AppState→active re-register never fires because the app is already
+            // active during a switch). The token-send guards are now keyed by
+            // {token, account} so this isn't swallowed by A's recent send.
+            try { registerPushAfterAuth(); } catch {}
             return { success: true, data: check.data };
           }
         } catch {
@@ -1754,7 +1762,7 @@ export function AuthProvider({ children }) {
     } finally {
       setSwitching(false);
     }
-  }, [loadAccounts, user, prefetchAvatar, prefetchProfile]);
+  }, [loadAccounts, user, prefetchAvatar, prefetchProfile, registerPushAfterAuth]);
 
   // Remove a stored account
   const removeAccount = useCallback(async (email) => {

@@ -1290,7 +1290,14 @@ function AppInit({ onNotification, setOtaToast }) {
       try {
         const { AppState } = require('react-native');
         const sub = AppState.addEventListener('change', (s) => {
-          if (s === 'active') maybeRunSync(false).catch(() => {});
+          if (s === 'active') {
+            maybeRunSync(false).catch(() => {});
+            // [2026-10-02] Reconcile the app-icon badge on warm foreground.
+            // Pushes that landed while backgrounded leave the OS badge stuck
+            // until the user happens to open a chat; refreshBadgeCount recomputes
+            // it from server-side unread (chat + email).
+            try { require('../services/pushNotifications').refreshBadgeCount?.().catch(() => {}); } catch {}
+          }
         });
         // Stash on the ref so cleanup below can remove it.
         cleanupRef.current = (() => {

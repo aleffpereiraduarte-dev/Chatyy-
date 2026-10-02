@@ -1011,8 +1011,17 @@ let _lastRotationHandledAt = 0;
 // fired it hundreds of times per second. One attempt at a time, and the same
 // token is not re-POSTed more than once per 30s (success or fail — the
 // pending queue covers retries on real failures).
-let _sendTokenInFlight = false;
+// [2026-10-02] Keyed by token+account (was a global bool + token-only map).
+// The device push token is CONSTANT across accounts, so keying the guards by
+// token alone swallowed the (re)registration of the same token under a
+// DIFFERENT account on a fast account switch — leaving the switched-to account
+// push-deaf for 30s. A Set of in-flight keys also lets two accounts register
+// the same device concurrently.
+const _sendTokenInFlightKeys = new Set();
 const _lastTokenSendAt = Object.create(null);
+// Cold-start notification-tap replay guards (see setupNotificationListeners).
+let _coldStartTapHandled = false;
+let _lastHandledResponseId = null;
 function _markFlushed(key) {
   if (!key) return;
   if (_flushedTokensInSession.has(key)) return;
@@ -1093,14 +1102,20 @@ export async function sendTokenToBackend(pushToken) {
   if (!pushToken) return;
   // [2026-06-12 STORM FIX] hard re-entry + frequency guard.
   const _nowSend = Date.now();
-  if (_sendTokenInFlight) return;
-  if (_lastTokenSendAt[pushToken] && _nowSend - _lastTokenSendAt[pushToken] < 30 * 1000) return;
-  _sendTokenInFlight = true;
-  _lastTokenSendAt[pushToken] = _nowSend;
+  // Resolve the active account up-front so the re-entry + 30s frequency guards
+  // are scoped to {token, account} — a different account must never be blocked
+  // by a recent send of the same device token under the previous account.
+  let _acctEmail = '';
+  try { _acctEmail = (await _getActiveEmailSafe()) || ''; } catch {}
+  const _key = pushToken + '|' + _acctEmail;
+  if (_sendTokenInFlightKeys.has(_key)) return;
+  if (_lastTokenSendAt[_key] && _nowSend - _lastTokenSendAt[_key] < 30 * 1000) return;
+  _sendTokenInFlightKeys.add(_key);
+  _lastTokenSendAt[_key] = _nowSend;
   try {
     return await _sendTokenToBackendInner(pushToken);
   } finally {
-    _sendTokenInFlight = false;
+    _sendTokenInFlightKeys.delete(_key);
   }
 }
 
@@ -1455,7 +1470,16 @@ export async function setupNotificationListeners() {
     }
   });
 
-  const responseSub = Notifications.addNotificationResponseReceivedListener((response) => {
+  const _dispatchNotificationResponse = (response) => {
+    if (!response) return;
+    // Dedup by notification id so the cold-start replay below can't re-handle a
+    // tap the live listener already processed (and a stale launch response
+    // can't fire twice across setup re-runs).
+    const _rid = response?.notification?.request?.identifier;
+    if (_rid) {
+      if (_rid === _lastHandledResponseId) return;
+      _lastHandledResponseId = _rid;
+    }
     const data = response.notification.request.content.data;
     const actionId = response.actionIdentifier;
 
@@ -1638,7 +1662,25 @@ export async function setupNotificationListeners() {
     }
 
     handleNotificationNavigation(data);
-  });
+  };
+  const responseSub = Notifications.addNotificationResponseReceivedListener(_dispatchNotificationResponse);
+
+  // [2026-10-02] Cold-start tap deep-link. When the app is launched from a
+  // KILLED state by tapping a push, expo-notifications emits the response
+  // BEFORE this (late, async) listener registers, so the tap was dropped and
+  // the app opened on its default route instead of the chat/call/email target.
+  // Replay the launch response ONCE per process; the id-dedup in the dispatcher
+  // prevents a double-handle if the live listener did catch it, and a short
+  // delay lets the root navigator mount before we route.
+  try {
+    if (!_coldStartTapHandled) {
+      _coldStartTapHandled = true;
+      const _launch = await Notifications.getLastNotificationResponseAsync();
+      if (_launch) {
+        setTimeout(() => { try { _dispatchNotificationResponse(_launch); } catch {} }, 700);
+      }
+    }
+  } catch {}
 
   // ─── Offline retry wiring for pending_token_sends ────────────────────
   // 1. Drain on every foreground transition (matches the existing 6h
@@ -1682,8 +1724,10 @@ export async function setupNotificationListeners() {
 function handleNotificationNavigation(data) {
   if (!data) return;
   try {
-    if (data.type === 'new_email' && data.uid) {
-      // Navigate to the specific email
+    if ((data.type === 'new_email' || data.type === 'email') && data.uid) {
+      // Navigate to the specific email. Accept both 'new_email' and 'email'
+      // type strings — the backend uses either, and 'email' used to fall
+      // through to the generic Inbox route, losing the specific message.
       const folder = data.folder || 'INBOX';
       router.push(`/read?uid=${data.uid}&folder=${encodeURIComponent(folder)}`);
       return;
@@ -1699,7 +1743,10 @@ function handleNotificationNavigation(data) {
       const senderName = data.sender_name || data.title || '';
       const nameParam = senderName ? `&name=${encodeURIComponent(senderName)}` : '';
       const emailParam = data.sender_email ? `&email=${encodeURIComponent(data.sender_email)}` : '';
-      router.push(`/chat-conversation?id=${data.conversation_id}${nameParam}${emailParam}&type=direct`);
+      // Derive conv type from is_group so a group push doesn't open in direct
+      // mode (wrong header/membership affordances on first paint).
+      const convType = (data.is_group === true || data.is_group === 'true' || data.is_group === 1 || data.is_group === '1') ? 'group' : 'direct';
+      router.push(`/chat-conversation?id=${data.conversation_id}${nameParam}${emailParam}&type=${convType}`);
       return;
     }
     // Voicemail deep-link — tapping a "X left you a voicemail" push lands on
