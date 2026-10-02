@@ -342,8 +342,11 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
 
   // ───────────── SENDER BRANCH ─────────────
   if (isOwn) {
-    const accent = 'rgba(255,255,255,0.92)';
-    const subtle = 'rgba(255,255,255,0.65)';
+    // [fix 2026-10-01] Was hardcoded WHITE text (assumed a dark bubble), but the
+    // own bubble is LIGHT (#F1F3F5) in light mode → white-on-light = "muito
+    // apagada". Use theme text colors so it contrasts on both own-bubble tones.
+    const accent = safeColors.text || '#111111';
+    const subtle = safeColors.textSecondary || 'rgba(0,0,0,0.5)';
     const sub = vbHasAny
       ? (t?.('chatConv.viewOnceOpened') || 'Visualizada')
       : (t?.('chatConv.viewOnceSent') || 'Visualização única');
@@ -354,7 +357,7 @@ export default function ViewOnceMessage({ msg, colors = {}, isOwn, onView, t, cu
         : (t?.('chatConv.viewOncePhoto') || 'Foto única');
     return (
       <View style={s.expiredRow}>
-        <View style={[s.expiredIconCircle, { backgroundColor: 'rgba(255,255,255,0.15)' }]}>
+        <View style={[s.expiredIconCircle, { backgroundColor: (safeColors.text || '#111111') + '1f' }]}>
           {isAudio
             ? <IconMic size={16} color={accent} />
             : isVideo

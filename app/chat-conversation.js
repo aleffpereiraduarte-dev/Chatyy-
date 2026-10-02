@@ -21765,27 +21765,27 @@ function ChatConversationInner() {
               {/* Map preview — Google Static Maps PNG via the server proxy.
                   Plain <Image> source (no iframe / WebView), taps fall
                   through naturally to the outer TouchableOpacity. */}
-              {mapStaticUrl ? (
+              {hasCoords ? (
                 <View style={{ position: 'relative', width: '100%', height: MAP_H, backgroundColor: isDark ? '#0B141A' : '#E5E7EB' }}>
-                  <Image
-                    source={{ uri: mapStaticUrl }}
-                    style={{ width: '100%', height: '100%' }}
-                    resizeMode="cover"
+                  {/* [fix 2026-10-01] BoraUm STATIC-map endpoint died (404) → the
+                      thumbnail was gray. Render the still-healthy interactive
+                      MapLibre VECTOR map as a non-interactive WebView instead
+                      (react-native-webview already bundled; location bubbles are
+                      rare so no list-jank concern). It draws its own red marker. */}
+                  <WebView
+                    source={{ html: boraMapHtml({ lat, lng, zoom: 15, interactive: false, markerColor: '#EF4444' }) }}
+                    style={{ width: '100%', height: '100%', backgroundColor: isDark ? '#0B141A' : '#E5E7EB' }}
+                    originWhitelist={['*']}
+                    scrollEnabled={false}
+                    pointerEvents="none"
+                    androidLayerType="hardware"
+                    javaScriptEnabled
+                    domStorageEnabled
                   />
                   {/* LIVE pulsing dot at center of map */}
                   {isLiveActive && (
                     <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
                       <LiveLocationPulse size={16} color="#22c55e" />
-                    </View>
-                  )}
-                  {/* Static-location: little white pin badge in center as fallback decoration */}
-                  {!isLiveLocation && (
-                    <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
-                      <View style={{ alignItems: 'center', justifyContent: 'center', transform: [{ translateY: -8 }] }}>
-                        <View style={{ width: 30, height: 30, borderRadius: 15, backgroundColor: '#EF4444', alignItems: 'center', justifyContent: 'center', borderWidth: 2.5, borderColor: '#fff', ...Platform.select({ ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 3 }, android: { elevation: 4 } }) }}>
-                          <IconMapPin size={16} color="#fff" />
-                        </View>
-                      </View>
                     </View>
                   )}
                   {/* AO VIVO badge top-left */}
