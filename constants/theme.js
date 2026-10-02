@@ -481,7 +481,7 @@ export const ChatBubble = {
   tailRadius: 14,    // era 16 — tail-less (sem canto pontudo)
   gap: 2,            // between consecutive messages from same sender
   gapGroup: 5,       // era 6 — between speaker changes
-  paddingX: 12,      // 11→10 cortava a última letra de bolhas curtas (ex "TA BOM" perdia o M); 12 dá folga pro texto nunca encostar na borda
+  paddingX: 14,      // 11→10 cortava a última letra de bolhas curtas (ex "TA BOM"/"Que top" perdia a última letra — sem overflow:hidden o glifo transborda pro cinza). 14 dá folga total p/ a medição levemente estreita do iOS nunca encostar na borda
   paddingY: 6,       // era 7
   maxWidth: '83%',   // era 82% — compensa o padding menor
 };
