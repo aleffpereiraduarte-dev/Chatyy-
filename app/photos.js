@@ -2114,7 +2114,16 @@ function PhotosScreenInner() {
         if (Platform.OS === 'web') return;
         await Share.share({ url: photo.uri, message: photo.name });
       } else {
-        const url = api.fileDownloadUrl(photo.id);
+        // SECURITY: share the PUBLIC cdn url — NEVER the token download URL (it
+        // carries the perpetual bearer and would leak in the shared link). A
+        // backed-up photo carries cdn_url/thumbnail_url (media.chatyy.com.br).
+        // Fall back to a short-lived `dl` grant (no bearer) only if neither.
+        let url = photo.cdn_url;
+        if (!url && photo.thumbnail_url) {
+          url = photo.thumbnail_url.startsWith('http') ? photo.thumbnail_url : (api.BASE_URL + photo.thumbnail_url);
+        }
+        if (!url) url = await api.fileDownloadUrlGranted(photo.id, { allowBearerFallback: false });
+        if (!url) return;
         if (Platform.OS === 'web') {
           if (navigator.share) {
             await navigator.share({ title: photo.name, url });
@@ -2134,14 +2143,17 @@ function PhotosScreenInner() {
     if (!photo) return;
     try {
       if (Platform.OS === 'web') {
-        const url = api.fileDownloadUrl(photo.id);
-        Linking.openURL(url);
+        // SECURITY: prefer public cdn_url; else mint a short-lived `dl` grant so
+        // the bearer never lands in the browser address bar / history.
+        const url = photo.cdn_url || (await api.fileDownloadUrlGranted(photo.id));
+        if (url) Linking.openURL(url);
       } else {
         if (photo.isDevice) return; // Already on device
         const ML = require('expo-media-library');
         const { status } = await ML.requestPermissionsAsync();
         if (status !== 'granted') return;
-        const url = api.fileDownloadUrl(photo.id);
+        const url = photo.cdn_url || (await api.fileDownloadUrlGranted(photo.id));
+        if (!url) return;
         let FileSystem; try { FileSystem = require('expo-file-system/legacy'); } catch { FileSystem = require('expo-file-system'); }
         const download = await FileSystem.downloadAsync(url, FileSystem.cacheDirectory + photo.name);
         if (download.uri) {

@@ -72,6 +72,15 @@ export function parseServerDate(value) {
   if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) {
     s = s.replace(' ', 'T');
   }
+  // [2026-10-03] TZ fix: the backend serializes UTC timestamps with NO timezone
+  // designator (`Y-m-d H:i:s` / `...THH:MM:SS`). The ES spec parses that bare
+  // date-time form as LOCAL time, so BR (UTC-3) rendered every meeting/event +3h
+  // late. When the string is a bare date-time carrying NO `Z` and NO numeric
+  // offset, append `Z` so it's read as UTC. Strings that ALREADY end in `Z` or a
+  // `±HH:MM`/`±HHMM`/`±HH` offset are left untouched (no double designator).
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?(\.\d+)?$/.test(s)) {
+    s += 'Z';
+  }
   return new Date(s);
 }
 export let BASE_URL = 'https://chatyy.com.br';
@@ -7089,13 +7098,35 @@ export async function fileUpload(file, folderId = null) {
 // `attachment_token` (see getAttachmentUrl + mintAttachmentDownloadToken on the
 // backend), but that token is bound to (uid, folder, part) for IMAP
 // attachments and does NOT cover drive file ids — there is no
-// drive-download-token mint endpoint yet. Until the backend exposes a
-// `drive_dl_token` (short-lived, bound to the drive file id) we keep the bearer
-// here so downloads don't break. When that endpoint lands, mirror the
-// getAttachmentUrl pattern: serve a cached `dt`, prefetch in the background,
-// and fall back to the bearer only if the mint isn't deployed.
+// drive-download-token mint endpoint yet. The backend now exposes
+// `drive_dl_token` (short-lived, bound to the drive file id) — prefer the async
+// `fileDownloadUrlGranted()` below, which mints a `dl` grant and NEVER embeds
+// the perpetual bearer in a URL. This sync form is kept ONLY for in-app <Image>
+// thumbnail renders that can't await; those requests are authenticated by the
+// app and are never shared/copied. NEVER hand the output of this function to a
+// Share sheet, clipboard, or any user-visible/shareable link.
 export function fileDownloadUrl(fileId) {
   return `${API_URL}?action=drive_download&id=${fileId}&token=${encodeURIComponent(authToken || '')}`;
+}
+
+// [2026-10-03] SECURITY: short-lived, file-scoped download grant. Mints a `dl`
+// token via `drive_dl_token {file_id}` → `{ok, token, expires}` (envelope may be
+// `{success, data:{token}}` per jsonResponse) and builds `drive_download?id=&dl=`
+// so the perpetual bearer never leaks into a shared/copied/logged URL. Use this
+// for Share and Save-to-device. For a backed-up photo prefer the PUBLIC
+// `cdn_url` directly. With allowBearerFallback=false (share paths) returns null
+// instead of ever falling back to the bearer URL.
+export async function fileDownloadUrlGranted(fileId, opts = {}) {
+  const allowBearerFallback = opts.allowBearerFallback !== false;
+  try {
+    const r = await apiCall('drive_dl_token', { file_id: fileId }, 'POST');
+    const dl = r?.data?.token || r?.token || r?.data?.dl || r?.dl;
+    const ok = (r?.success ?? r?.ok ?? false) || !!dl;
+    if (ok && dl) {
+      return `${API_URL}?action=drive_download&id=${fileId}&dl=${encodeURIComponent(dl)}`;
+    }
+  } catch {}
+  return allowBearerFallback ? fileDownloadUrl(fileId) : null;
 }
 
 export async function fileDelete(fileId) {
@@ -7664,22 +7695,51 @@ export async function fileUnshare(fileId, email) {
 }
 
 // ─── PUBLIC LINK SHARE (Dropbox / Drive style) ───
-// /d/{token} resolves to /api/email.php?action=file_resolve_link on the public SPA.
-// Backend: handlePublicFileLink + file_create_link/file_list_links/file_revoke_link in files.php.
+// [2026-10-03] Repointed off the DEAD files.php endpoints (file_create_link /
+// file_list_links / file_revoke_link — that backend is gone, drive ids never
+// resolved there) onto the live drive.php share model: drive_share (public) /
+// drive_shared_by_me / drive_unshare. The drive model is ONE public link per
+// file, so password / expiry / maxDownloads aren't honored by the backend — the
+// options are accepted but ignored. Responses are normalized here to the shape
+// the files.js UI already expects ({data.url}, {data.links:[{token,url,...}]}),
+// where `token` carries the drive share_id used to revoke.
 export async function fileCreateLink(fileId, opts = {}) {
-  const payload = { file_id: fileId };
-  if (opts.password) payload.password = opts.password;
-  if (opts.expiresInDays) payload.expires_in_days = opts.expiresInDays;
-  if (opts.maxDownloads) payload.max_downloads = opts.maxDownloads;
-  return apiCall('file_create_link', payload, 'POST');
+  // drive_share is idempotent: returns the existing public link if one exists.
+  const r = await apiCall('drive_share', { id: fileId, type: 'public' }, 'POST');
+  if (r?.success) {
+    return {
+      success: true,
+      data: {
+        url: r.data?.share_url || '',
+        token: r.data?.share_id ?? r.data?.share_token ?? null,
+      },
+    };
+  }
+  return r;
 }
 
 export async function fileListLinks(fileId) {
-  return apiCall('file_list_links', { file_id: fileId });
+  // No per-file list endpoint on the drive side; derive from drive_shared_by_me.
+  const r = await apiCall('drive_shared_by_me');
+  if (r?.success) {
+    const links = (r.data?.files || [])
+      .filter(f => String(f.id) === String(fileId) && f.shared_with === 'public' && f.share_token)
+      .map(f => ({
+        token: f.share_id,
+        url: `${BASE_URL}/api/drive.php?action=drive_get_shared&token=${f.share_token}`,
+        has_password: false,
+        expires_at: null,
+        max_downloads: null,
+        downloads: 0,
+      }));
+    return { success: true, data: { links } };
+  }
+  return r;
 }
 
 export async function fileRevokeLink(token) {
-  return apiCall('file_revoke_link', { token }, 'POST');
+  // `token` here is the drive share_id surfaced by fileListLinks above.
+  return apiCall('drive_unshare', { share_id: token }, 'POST');
 }
 
 export async function filePhotos(type = 'all', page = 1, limit = 50) {

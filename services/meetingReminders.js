@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { meetList } from './api';
+import { meetList, parseServerDate } from './api';
 
 const REMINDER_PREFIX = 'meet-reminder-';
 let scheduledMeetings = new Set();
@@ -79,7 +79,7 @@ export async function syncMeetingReminders() {
     // Schedule reminders for upcoming meetings
     for (const meeting of meetings) {
       if (!meeting.scheduled_at) continue;
-      const scheduledAt = new Date(meeting.scheduled_at);
+      const scheduledAt = parseServerDate(meeting.scheduled_at);
       if (scheduledAt > now) {
         await scheduleReminder(meeting);
       }

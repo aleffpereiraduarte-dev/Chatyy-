@@ -3108,7 +3108,7 @@ function FilesScreenInner() {
                   const fname = actionMenu.item.original_name || actionMenu.item.name;
                   setActionMenu(null);
                   try {
-                    const r = await api.apiCall('file_versions_list', { file_id: fid }, 'GET');
+                    const r = await api.apiCall('drive_file_versions', { file_id: fid }, 'GET');
                     const versions = (r?.success && Array.isArray(r.data?.versions)) ? r.data.versions : [];
                     setVersionsModal({ file_id: fid, name: fname, versions });
                   } catch {
@@ -3303,7 +3303,7 @@ function FilesScreenInner() {
                         style={{ paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14, backgroundColor: colors.primary }}
                         onPress={async () => {
                           try {
-                            const r = await api.apiCall('file_version_restore', { file_id: versionsModal.file_id, version_id: v.id }, 'POST');
+                            const r = await api.apiCall('drive_restore_version', { file_id: versionsModal.file_id, version_id: v.id }, 'POST');
                             if (r?.success) {
                               setVersionsModal(null);
                               showToast?.(t?.('files.versionRestored') || 'Versão restaurada');

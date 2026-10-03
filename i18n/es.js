@@ -1844,6 +1844,7 @@ export default {
   'chat.searchPlaceholder': 'Buscar conversaciones...',
   'chat.tabCalls': 'Llamadas',
   'chat.tabChats': 'Chats',
+  'chat.tabEmail': 'Email',
   'chat.tabReels': 'Reels',
   'chat.tabStatus': 'Estados',
   'chat.tabConfig': 'Ajustes',

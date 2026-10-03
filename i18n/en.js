@@ -1843,6 +1843,7 @@ export default {
   'chat.searchPlaceholder': 'Search conversations...',
   'chat.tabCalls': 'Calls',
   'chat.tabChats': 'Chats',
+  'chat.tabEmail': 'Email',
   'chat.tabReels': 'Reels',
   'chat.tabStatus': 'Status',
   'chat.tabConfig': 'Settings',
