@@ -18653,8 +18653,16 @@ function ChatConversationInner() {
       // the rich screen renders. NativeCallRoom keeps the LK Room alive;
       // /call.js adopts it via adoptNativeRoom on mount. Android keeps
       // native CallActivity for now.
+      // [2026-10-02 founder: "no iOS a ligação abre 2 telas empilhadas"] FIX:
+      // no iOS de SAÍDA o nativo JÁ apresenta a CallViewController
+      // (presentOutgoingCallVC) — empurrar a /call.js por cima dava DUAS telas
+      // empilhadas. Igual já é no ATENDER (native-only), a saída agora também é
+      // só nativa: NÃO fazemos _jsRoute no iOS. (Web continua via onWebFallback;
+      // Android segue na CallActivity nativa.) O fix "correto" de suprimir a VC
+      // nativa (suppressVCPresent) é build nativo — essa é a mitigação por OTA
+      // que o founder escolheu (manter a nativa).
       if (native && Platform.OS === 'ios' && outCallId) {
-        _jsRoute(outCallId);
+        // intencionalmente sem _jsRoute — a CallViewController nativa é a UI.
       }
       // native=false is expected when foreground mobile takes the JS path
       // OR on web. Only surface an error when native genuinely failed
