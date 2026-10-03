@@ -171,7 +171,12 @@ const DESKTOP_BREAKPOINT = 900;
 // Email moved into the Apps drawer (still a top-level entry there) because
 // 5 tabs felt cluttered and competed with chats/calls for the user's eye.
 // Desktop already omits email since the sidebar exposes it.
-const TAB_KEYS_FULL = ['reels', 'chats', 'calls', 'apps'];
+// [2026-10-03 founder] Barra de baixo: Email no lugar do Reels. Chatyy é
+// chat+email (OneMundo Mail) → Email é utilidade diária + diferencial, merece a
+// barra; Reels (engajamento/Instagram) migra pro drawer de Apps (segue acessível
+// pelo botão Apps → Feed). Ordem: Chats (primário/default) · Email (diferencial)
+// · Ligações · Apps (hub/overflow na ponta).
+const TAB_KEYS_FULL = ['chats', 'email', 'calls', 'apps'];
 // Desktop keeps the classic email-hub layout — user asked for it to stay as-is.
 // Profile is no longer a chat tab — tap the avatar in the header to reach
 // /u/{email}. Keeps a single profile surface across the whole app.
@@ -301,6 +306,8 @@ function ChatHub() {
   // items[].viewed_by_me is false; feed unread comes off the latest cursor
   // we've seen versus what api.feedList() returns.
   const [chatsBadge, setChatsBadge] = useState(0);
+  // [2026-10-03] Badge de email não-lido na barra de baixo (aba Email).
+  const [emailBadge, setEmailBadge] = useState(0);
   const [statusBadge, setStatusBadge] = useState(0);
   const [feedBadge, setFeedBadge] = useState(0);
 
@@ -508,6 +515,25 @@ function ChatHub() {
     })();
     return () => { cancelled = true; };
   }, [showAppsDrawer]);
+
+  // [2026-10-03] Badge de email não-lido na barra de baixo — busca leve (só a
+  // CONTAGEM) no mount e a cada 60s. Silencioso; nunca derruba a UI.
+  useEffect(() => {
+    let cancelled = false; let timer = null;
+    const fetchEmailUnread = async () => {
+      try {
+        const api = require('../services/api');
+        if (!api.inboxUnreadCount) return;
+        const r = await api.inboxUnreadCount().catch(() => null);
+        if (cancelled) return;
+        const n = Number(r?.data?.unread || r?.data?.count || 0);
+        setEmailBadge(Number.isFinite(n) && n > 0 ? n : 0);
+      } catch {}
+    };
+    fetchEmailUnread();
+    timer = setInterval(fetchEmailUnread, 60000);
+    return () => { cancelled = true; if (timer) clearInterval(timer); };
+  }, []);
 
   const handleTabPress = useCallback((tab) => {
     // "Apps" is a drawer overlay — it doesn't switch tabs, so we keep the
@@ -1184,20 +1210,22 @@ function ChatHub() {
         ) : (
           <>
             <TabBarItem
-              icon={(active) => <IconVideo size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} />}
-              label={t('chat.tabReels') || 'Reels'}
-              active={false}
-              onPress={() => handleTabPress('reels')}
-              isDark={isDark}
-              badge={feedBadge}
-            />
-            <TabBarItem
               icon={(active) => <IconChatsTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
               label={t('chat.tabChats') || 'Chats'}
               active={activeTab === 'chats'}
               onPress={() => handleTabPress('chats')}
               isDark={isDark}
               badge={chatsBadge}
+            />
+            {/* [2026-10-03] Email no lugar do Reels — diferencial do super-app
+                + utilidade diária. Abre o inbox (/inbox) via handleTabPress('email'). */}
+            <TabBarItem
+              icon={(active) => <IconMail size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} />}
+              label={t('chat.tabEmail') || 'Email'}
+              active={false}
+              onPress={() => handleTabPress('email')}
+              isDark={isDark}
+              badge={emailBadge}
             />
             <TabBarItem
               icon={(active) => <IconCallsTab size={22} color={active ? ACCENT : (isDark ? '#5a6270' : '#a0a8b4')} active={active} />}
