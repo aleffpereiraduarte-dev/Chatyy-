@@ -1898,12 +1898,12 @@ const s = StyleSheet.create({
 
   // Favorites section
   favoritesSection: {
-    paddingHorizontal: Spacing.md, paddingTop: Spacing.md + 2, paddingBottom: Spacing.sm + 2,
+    paddingHorizontal: Spacing.lg, paddingTop: Spacing.md + 2, paddingBottom: Spacing.sm + 2,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },
   favoritesSectionTitle: {
     fontSize: 10, fontWeight: '800', marginBottom: Spacing.sm,
-    textTransform: 'uppercase', letterSpacing: 1.2,
+    textTransform: 'uppercase', letterSpacing: 0.8,
   },
   favoritesScroll: {
     gap: Spacing.lg, paddingBottom: Spacing.xs,
@@ -1921,10 +1921,10 @@ const s = StyleSheet.create({
   // below it. Letter-spacing nudged up (1→1.4) so the all-caps reads as a
   // section label and not a typo.
   sectionHeader: {
-    paddingHorizontal: Spacing.md, paddingVertical: 8, paddingTop: 12,
+    paddingHorizontal: Spacing.lg, paddingVertical: 8, paddingTop: 12,
   },
   sectionHeaderText: {
-    fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1.4,
+    fontSize: 11, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.8,
   },
 
   // Empty
@@ -1969,7 +1969,7 @@ const s = StyleSheet.create({
   // Contact row
   contactRow: {
     flexDirection: 'row', alignItems: 'center',
-    paddingVertical: Spacing.md + 2, paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.md + 2, paddingHorizontal: Spacing.lg,
     borderBottomWidth: StyleSheet.hairlineWidth,
     ...Platform.select({
       web: { transition: 'background-color 0.15s ease', cursor: 'pointer' },
@@ -1996,7 +1996,7 @@ const s = StyleSheet.create({
   groupChip: { alignSelf: 'flex-start', borderRadius: 4, paddingHorizontal: 6, paddingVertical: 1, marginTop: 3 },
   groupChipText: { fontSize: 10, fontWeight: '600' },
   groupTabs: { borderBottomWidth: 1, maxHeight: 52 },
-  groupTabsContent: { paddingHorizontal: Spacing.md, gap: 8, alignItems: 'center', paddingVertical: 10 },
+  groupTabsContent: { paddingHorizontal: Spacing.lg, gap: 8, alignItems: 'center', paddingVertical: 10 },
   groupTab: {
     paddingHorizontal: Spacing.md + 2, paddingVertical: 7, borderRadius: 20,
     ...Platform.select({ web: { transition: 'all 0.15s ease', cursor: 'pointer' }, default: {} }),

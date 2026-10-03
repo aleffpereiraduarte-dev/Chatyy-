@@ -1319,7 +1319,7 @@ function SettingsScreenInner() {
           flexDirection: 'row', alignItems: 'center',
           backgroundColor: colors.surface,
           borderColor: colors.borderLight, borderWidth: 1,
-          borderRadius: 14, paddingHorizontal: 12, paddingVertical: 4,
+          borderRadius: BorderRadius.xl, paddingHorizontal: 12, paddingVertical: 4,
           marginBottom: Spacing.lg,
         }}>
           <TextInput
@@ -1406,7 +1406,7 @@ function SettingsScreenInner() {
                     backgroundColor: colors.surface,
                     borderColor: colors.borderLight,
                     borderWidth: 1,
-                    borderRadius: 12,
+                    borderRadius: BorderRadius.xl,
                     paddingVertical: 10,
                     paddingHorizontal: 12,
                     marginBottom: 7,
@@ -5426,7 +5426,7 @@ const s = StyleSheet.create({
   // separating (shadow dropped to none), calmer radius, tighter inner
   // padding + smaller inter-card gap for an iOS-Settings density.
   section: {
-    borderRadius: BorderRadius.lg, paddingHorizontal: Spacing.lg + 1, paddingVertical: Spacing.sm,
+    borderRadius: BorderRadius.xl, paddingHorizontal: Spacing.lg + 1, paddingVertical: Spacing.sm,
     marginBottom: Spacing.sm,
     ...Platform.select({
       web: { boxShadow: 'none' },
@@ -5435,11 +5435,11 @@ const s = StyleSheet.create({
     }),
   },
   profileSection: {
-    alignItems: 'center', paddingVertical: Spacing.lg,
+    alignItems: 'center', paddingVertical: Spacing.xl,
   },
   profileEmail: {
-    fontSize: FontSize.lg, marginTop: Spacing.sm + 2, marginBottom: Spacing.sm + 1,
-    fontWeight: '600', letterSpacing: -0.3,
+    fontSize: FontSize.xl, marginTop: Spacing.sm + 2, marginBottom: Spacing.sm + 1,
+    fontWeight: '700', letterSpacing: -0.3,
   },
   // [beauty2 2026-05-31] pill button gets a hairline border + brand-tinted
   // feel so it reads as a calm secondary action under the avatar.
@@ -5471,7 +5471,7 @@ const s = StyleSheet.create({
   // -0.5) so it doesn't look squashed at this size.
   // [beauty2 2026-05-31] dialed the card heading down to 18px/700 — closer to
   // iOS Settings group-header weight; calmer, less shouty than 20/800.
-  sectionTitle: { fontSize: FontSize.lg, fontWeight: '700', marginBottom: Spacing.xs, letterSpacing: LetterSpacing.tight },
+  sectionTitle: { fontSize: FontSize.xl, fontWeight: '700', marginBottom: Spacing.sm, letterSpacing: LetterSpacing.tighter },
   // Eyebrow label — small uppercase brand-color tag rendered above a section
   // title for screens that want extra navigability (iOS Settings pattern).
   // Currently only used internally; rows opt in via <Text style={[s.sectionEyebrow, { color: colors.primary }]}/>.
@@ -5499,7 +5499,7 @@ const s = StyleSheet.create({
   },
   settingInfo: { flex: 1, minWidth: 0 },
   settingLabel: { fontSize: FontSize.lg, fontWeight: '600', letterSpacing: LetterSpacing.tight },
-  settingDesc: { fontSize: FontSize.sm, marginTop: 2, opacity: 0.72, lineHeight: 17, letterSpacing: LetterSpacing.normal },
+  settingDesc: { fontSize: FontSize.sm, marginTop: 2, opacity: 0.72, lineHeight: 18, letterSpacing: LetterSpacing.normal },
   // Per page
   // [beauty2 2026-05-31] segmented-pill selectors — slightly rounder + tighter
   // gap so the row of options reads as one cohesive iOS segmented control.

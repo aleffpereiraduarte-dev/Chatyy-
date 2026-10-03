@@ -2565,7 +2565,7 @@ const sty = StyleSheet.create({
     borderBottomWidth: 0,
   },
   headerBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
-  headerTitle: { fontSize: 20, fontWeight: '600', letterSpacing: 0, flex: 1, textAlign: 'center' },
+  headerTitle: { fontSize: 20, fontWeight: '700', letterSpacing: -0.3, flex: 1, textAlign: 'center' },
   toggleRow: {
     flexDirection: 'row', marginHorizontal: Spacing.md, marginTop: 12,
     borderRadius: 14, padding: 4, gap: 4,
@@ -2576,14 +2576,14 @@ const sty = StyleSheet.create({
   },
   toggleBtnActive: {
     ...Platform.select({
-      web: { boxShadow: '0 2px 8px rgba(17, 17, 17,0.25)' },
+      web: { boxShadow: '0 2px 6px rgba(0,0,0,0.12)' },
       default: {},
     }),
-    elevation: 3,
+    elevation: 2,
     shadowColor: '#111111',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
   },
   toggleText: { fontSize: 13, fontWeight: '600' },
   groupNameWrap: {
@@ -2708,7 +2708,7 @@ const sty = StyleSheet.create({
     // Subtle brand ring around 40px avatar — signals "Chatyy user" without
     // pill noise. 2px purple ring with 4px halo for crispness.
     padding: 2, borderRadius: 24,
-    borderWidth: 1.5, borderColor: 'rgba(17, 17, 17,0.22)',
+    borderWidth: 1, borderColor: 'rgba(17, 17, 17,0.10)',
     position: 'relative',
   },
   contactInfo: { flex: 1 },
@@ -2743,14 +2743,14 @@ const sty = StyleSheet.create({
     borderRadius: 14,
     backgroundColor: '#111111',
     ...Platform.select({
-      web: { boxShadow: '0 1px 3px rgba(17, 17, 17,0.3)' },
+      web: { boxShadow: '0 1px 4px rgba(0,0,0,0.14)' },
       default: {},
     }),
     elevation: 2,
     shadowColor: '#111111',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.3,
-    shadowRadius: 3,
+    shadowOpacity: 0.14,
+    shadowRadius: 4,
   },
   inviteBtnText: { color: '#fff', fontSize: 12, fontWeight: '700', letterSpacing: 0.2 },
   inviteBtnWithIcon: {
@@ -2815,13 +2815,13 @@ const sty = StyleSheet.create({
     gap: 10, height: 50, borderRadius: 25,
     backgroundColor: '#111111',
     ...Platform.select({
-      web: { boxShadow: '0 3px 12px rgba(17, 17, 17,0.3)' },
+      web: { boxShadow: '0 2px 10px rgba(0,0,0,0.16)' },
       default: {},
     }),
-    elevation: 4,
+    elevation: 3,
     shadowColor: '#111111',
     shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.18,
     shadowRadius: 8,
   },
   createBtnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },

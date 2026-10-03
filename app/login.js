@@ -2200,7 +2200,7 @@ export default function LoginScreen() {
                                   <Animated.View
                                     key={i}
                                     style={{
-                                      width: 42, height: 50, borderRadius: 10,
+                                      width: 42, height: 52, borderRadius: 12,
                                       borderWidth: _focused ? 2 : 1.5,
                                       borderColor: _otpBorder,
                                       backgroundColor: _otpBg,
@@ -2382,7 +2382,7 @@ export default function LoginScreen() {
                           <View style={{
                             width: 24, height: 24, borderRadius: 12, marginTop: 1,
                             alignItems: 'center', justifyContent: 'center',
-                            backgroundColor: isDark ? 'rgba(17, 17, 17,0.20)' : 'rgba(17, 17, 17,0.10)',
+                            backgroundColor: colors.primary + (isDark ? '2E' : '1A'),
                           }}>
                             <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary }}>{n}</Text>
                           </View>
@@ -2407,8 +2407,8 @@ export default function LoginScreen() {
                       {qrStatus === 'confirmed' && (
                         <View style={{
                           width: frameSize, height: frameSize, borderRadius: 20,
-                          borderWidth: 1, borderColor: isDark ? 'rgba(17, 17, 17,0.30)' : 'rgba(17, 17, 17,0.18)',
-                          backgroundColor: isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.05)',
+                          borderWidth: 1, borderColor: colors.primary + (isDark ? '40' : '30'),
+                          backgroundColor: colors.primary + (isDark ? '14' : '0D'),
                           alignItems: 'center', justifyContent: 'center', marginBottom: 22, padding: 24,
                         }}>
                           <Text style={[s.qrConnectedText, { color: colors.primary, textAlign: 'center' }]}>
@@ -2518,7 +2518,7 @@ export default function LoginScreen() {
                         {Platform.OS !== 'web' && (
                           <Animated.View pointerEvents="none" style={{
                             position: 'absolute', top: -4, left: -4, right: -4, bottom: -4,
-                            borderRadius: 14, backgroundColor: 'rgba(17, 17, 17,0.18)',
+                            borderRadius: 16, backgroundColor: colors.primary + '22',
                             opacity: emailRingAnim, zIndex: -1,
                           }} />
                         )}
@@ -2526,11 +2526,11 @@ export default function LoginScreen() {
                           style={[s.igInput, {
                             backgroundColor: colors.surfaceVariant,
                             borderColor: focused === 'email'
-                              ? (colors.textTertiary)
+                              ? colors.primary
                               : (colors.authInputBorder),
                             color: colors.text,
                             ...(Platform.OS === 'web' && focused === 'email'
-                              ? { boxShadow: '0 0 0 4px rgba(17, 17, 17,0.18)' }
+                              ? { boxShadow: `0 0 0 4px ${colors.primary}26` }
                               : {}),
                           }]}
                           value={email}
@@ -2712,7 +2712,7 @@ export default function LoginScreen() {
                         {Platform.OS !== 'web' && (
                           <Animated.View pointerEvents="none" style={{
                             position: 'absolute', top: -4, left: -4, right: -4, bottom: -4,
-                            borderRadius: 14, backgroundColor: 'rgba(17, 17, 17,0.18)',
+                            borderRadius: 16, backgroundColor: colors.primary + '22',
                             opacity: passRingAnim, zIndex: -1,
                           }} />
                         )}
@@ -2721,12 +2721,12 @@ export default function LoginScreen() {
                           style={[s.igInput, {
                             backgroundColor: colors.surfaceVariant,
                             borderColor: focused === 'pass'
-                              ? (colors.textTertiary)
+                              ? colors.primary
                               : (colors.authInputBorder),
                             color: colors.text,
                             paddingRight: 44,
                             ...(Platform.OS === 'web' && focused === 'pass'
-                              ? { boxShadow: '0 0 0 4px rgba(17, 17, 17,0.18)' }
+                              ? { boxShadow: `0 0 0 4px ${colors.primary}26` }
                               : {}),
                           }]}
                           value={password}
@@ -3274,11 +3274,13 @@ const s = StyleSheet.create({
 
   /* Typography — clean, Google-like */
   title: {
-    fontSize: 24, fontWeight: '400', textAlign: 'center', marginBottom: 4,
+    fontSize: 24, fontWeight: '400', textAlign: 'center', marginBottom: 6,
+    letterSpacing: -0.4,
     ...Platform.select({ web: { fontFamily: "'Google Sans', 'Segoe UI', Roboto, Arial, sans-serif" }, default: {} }),
   },
   subtitle: {
     fontSize: 16, textAlign: 'center', marginBottom: 28, lineHeight: 24,
+    letterSpacing: 0.1,
   },
 
   /* Error */
@@ -3359,7 +3361,7 @@ const s = StyleSheet.create({
      IG signature: NO shadow, flat. The previous violet box-shadow was
      fighting for attention on a quiet card. */
   primaryBtn: {
-    borderRadius: 10, paddingVertical: 13, paddingHorizontal: 28,
+    borderRadius: 12, paddingVertical: 14, paddingHorizontal: 28,
     alignItems: 'center', justifyContent: 'center', minWidth: 110,
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
@@ -3372,9 +3374,9 @@ const s = StyleSheet.create({
      toggles via state (RN can't smoothly animate border color natively, so
      simple swap is the canonical choice). */
   igInput: {
-    height: 52, borderRadius: 10, borderWidth: 1, paddingHorizontal: 14,
-    fontSize: 14, fontWeight: '400',
-    ...Platform.select({ web: { outlineStyle: 'none', transition: 'box-shadow 140ms ease' }, default: {} }),
+    height: 54, borderRadius: 12, borderWidth: 1, paddingHorizontal: 16,
+    fontSize: 15, fontWeight: '400',
+    ...Platform.select({ web: { outlineStyle: 'none', transition: 'box-shadow 140ms ease, border-color 140ms ease' }, default: {} }),
   },
   igEyeBtn: {
     position: 'absolute', right: 6, top: 0, bottom: 0,
@@ -3385,9 +3387,9 @@ const s = StyleSheet.create({
   /* IG-style primary CTA — full width, 46pt, 10pt radius, branded purple
      shadow for premium presence. semibold 14pt label. */
   igPrimaryBtn: {
-    width: '100%', height: 46, borderRadius: 10,
+    width: '100%', height: 50, borderRadius: 12,
     alignItems: 'center', justifyContent: 'center',
-    marginTop: 8,
+    marginTop: 10,
     ...Platform.select({
       web: {
         cursor: 'pointer',
@@ -3398,7 +3400,7 @@ const s = StyleSheet.create({
       android: { elevation: 6 },
     }),
   },
-  igPrimaryBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  igPrimaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '600', letterSpacing: 0.2 },
   /* Ghost text-link below the primary CTA. */
   igGhostBtn: {
     width: '100%', alignItems: 'center', justifyContent: 'center',

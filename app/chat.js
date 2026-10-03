@@ -941,9 +941,9 @@ function ChatHub() {
                 <TouchableOpacity
                   onPress={() => setShowGlobalSearch(true)}
                   activeOpacity={0.6}
-                  style={{ paddingHorizontal: 8, paddingVertical: 4, marginRight: 4, borderRadius: 12, backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)' }}
+                  style={{ paddingHorizontal: 9, paddingVertical: 4, marginRight: 4, borderRadius: 12, backgroundColor: isDark ? 'rgba(233,237,239,0.14)' : 'rgba(17,17,17,0.07)' }}
                 >
-                  <Text style={{ fontSize: 11, fontWeight: '700', color: '#111111' }}>{t('common.searchAll') || 'Tudo'}</Text>
+                  <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.2, color: isDark ? '#e9edef' : '#111111' }}>{t('common.searchAll') || 'Tudo'}</Text>
                 </TouchableOpacity>
                 <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6} style={styles.searchCloseBtn}>
                   <IconClose size={16} color={isDark ? '#6b7280' : '#9ca3af'} />
@@ -1566,7 +1566,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
           </View>
           {/* Header */}
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, paddingHorizontal: 4 }}>
-            <Text style={{ fontSize: 20, fontWeight: '800', color: colors.text }}>
+            <Text style={{ fontSize: 20, fontWeight: '800', letterSpacing: -0.3, color: colors.text }}>
               {t('chat.apps') || 'Apps'}
             </Text>
             <TouchableOpacity onPress={onClose} hitSlop={10}>
@@ -1652,8 +1652,8 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                 <Text style={{
                   fontSize: 11,
                   fontWeight: '700',
-                  color: isDark ? '#e9edef' : '#111111',
-                  letterSpacing: 0.5,
+                  color: isDark ? '#9ca3af' : '#6b7280',
+                  letterSpacing: 0.6,
                   textTransform: 'uppercase',
                   marginBottom: 12,
                   paddingHorizontal: 6,
@@ -1690,7 +1690,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
                   fontSize: 11,
                   fontWeight: '700',
                   color: isDark ? '#9ca3af' : '#6b7280',
-                  letterSpacing: 0.5,
+                  letterSpacing: 0.6,
                   textTransform: 'uppercase',
                   marginBottom: 12,
                   paddingHorizontal: 6,
@@ -1887,23 +1887,24 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   brandTitle: {
-    fontSize: 25,
+    fontSize: 24,
     fontWeight: '800',
-    letterSpacing: -0.8,
+    letterSpacing: -0.5,
   },
   title: {
-    fontSize: 21,
+    fontSize: 20,
     fontWeight: '700',
-    letterSpacing: -0.4,
+    letterSpacing: -0.3,
   },
   headerActions: {
     flexDirection: 'row',
-    gap: 7,
+    alignItems: 'center',
+    gap: 2,
   },
   headerIconBtn: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
     ...(Platform.OS === 'web' ? { transition: 'background-color 0.2s ease, transform 0.15s cubic-bezier(0.34,1.56,0.64,1)', cursor: 'pointer' } : {}),
@@ -1923,8 +1924,8 @@ const styles = StyleSheet.create({
   searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 40,
-    borderRadius: 20,
+    height: 42,
+    borderRadius: 21,
     paddingHorizontal: 14,
     gap: 10,
   },
@@ -1932,6 +1933,7 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     fontWeight: '400',
+    letterSpacing: -0.1,
     paddingVertical: 0,
     ...(Platform.OS === 'web' ? { outlineStyle: 'none' } : {}),
   },
@@ -1973,9 +1975,9 @@ const styles = StyleSheet.create({
   },
   tabLabel: {
     fontSize: 10,
-    marginTop: 2,
+    marginTop: 3,
     fontWeight: '500',
-    letterSpacing: 0.1,
+    letterSpacing: 0.2,
   },
   tabActiveDot: {
     width: 5,

@@ -523,8 +523,16 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   cta: {
-    height: 52, borderRadius: 10,
+    height: 52, borderRadius: 12,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    ...Platform.select({
+      web: {
+        boxShadow: '0 10px 26px rgba(17, 17, 17,0.35), 0 2px 6px rgba(17, 17, 17,0.20)',
+        transition: 'transform 140ms ease, box-shadow 140ms ease',
+      },
+      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 8 }, shadowOpacity: 0.35, shadowRadius: 14 },
+      android: { elevation: 6 },
+    }),
   },
-  ctaText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  ctaText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
 });

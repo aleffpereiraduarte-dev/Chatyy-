@@ -738,9 +738,9 @@ export default function SignupPhone() {
           segments (phone, otp, name, handle), 3pt tall, 2pt gap. */}
       {step !== 'welcome' && step !== 'done' && (
         <View style={{
-          height: 3,
+          height: 4,
           flexDirection: 'row',
-          gap: 2,
+          gap: 3,
           marginHorizontal: 24,
           marginTop: Math.max(_insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : 44) + 4,
           marginBottom: 4,
@@ -753,8 +753,8 @@ export default function SignupPhone() {
                 key={s}
                 style={{
                   flex: 1,
-                  height: 3,
-                  borderRadius: 2,
+                  height: 4,
+                  borderRadius: 999,
                   backgroundColor: idx <= cur ? colors.primary : (colors.border),
                 }}
               />
@@ -937,11 +937,11 @@ export default function SignupPhone() {
                         activeOpacity={0.6}
                         style={{
                           flexDirection: 'row', alignItems: 'center',
-                          paddingVertical: 12, paddingHorizontal: 14,
+                          paddingVertical: 13, paddingHorizontal: 14,
                           borderRadius: 12,
-                          backgroundColor: 'rgba(17, 17, 17,0.08)',
+                          backgroundColor: colors.surfaceVariant,
                           borderWidth: 1,
-                          borderColor: 'rgba(17, 17, 17,0.22)',
+                          borderColor: colors.border,
                           marginBottom: 4,
                         }}
                       >
@@ -1049,7 +1049,7 @@ export default function SignupPhone() {
                         <Animated.View
                           key={i}
                           style={{
-                            width: 42, height: 50, borderRadius: 10,
+                            width: 42, height: 52, borderRadius: 12,
                             borderWidth: _focused ? 2 : 1.5,
                             borderColor: _otpBorder,
                             backgroundColor: _otpBg,
