@@ -113,6 +113,15 @@ function buildMapHtml({ center, zoom, isDark, initialPins, initialMe }) {
   const styleUrl = isDark
     ? 'https://boraum.com.br/maptiles/styles/world-cinza/style.json'
     : boraStyleUrl(center.lng, center.lat);
+  // [premium 2026-10-03] theme tokens for the in-map glass chrome (search bar,
+  // FABs, compass, cluster bubbles). Injected straight into the CSS below so
+  // the WebView UI tracks the app's dark/light state — same isDark switch the
+  // basemap already uses. Nothing here is a native dep; it's all CSS/DOM.
+  const glassBg = isDark ? 'rgba(20,21,26,0.72)' : 'rgba(255,255,255,0.80)';
+  const glassBorder = isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.08)';
+  const glassText = isDark ? '#f1f5f9' : '#15171c';
+  const glassSub = isDark ? 'rgba(241,245,249,0.6)' : 'rgba(21,23,28,0.55)';
+  const resultsBg = isDark ? 'rgba(20,21,26,0.96)' : 'rgba(255,255,255,0.98)';
   return `<!DOCTYPE html><html><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
@@ -120,50 +129,112 @@ function buildMapHtml({ center, zoom, isDark, initialPins, initialMe }) {
 <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
 <style>
   html,body,#map{margin:0;padding:0;width:100%;height:100%;background:${isDark ? '#0d0d0d' : '#e5e7eb'};font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+  *{-webkit-tap-highlight-color:transparent}
   /* MapLibre positions the marker element via its anchor; the pin itself just
      lays out its inner avatar + labels in a column (no absolute transform). */
-  .pin{display:flex;flex-direction:column;align-items:center;cursor:pointer;pointer-events:auto;user-select:none}
-  /* Gradient ring around the avatar — same look as Snapchat / Find-My.
-     Live (fresh) = green gradient, unlimited = purple gradient, stale =
-     desaturated gray. We use a two-layer box-shadow trick so the ring has
-     both an outer halo + a hairline white separator inside, matching the
-     iOS Find-My pin design. */
-  .pin .ring{width:52px;height:52px;border-radius:26px;background:linear-gradient(135deg,#22c55e,#16a34a);padding:3px;box-sizing:border-box;box-shadow:0 4px 14px rgba(0,0,0,0.45),0 0 0 2px rgba(255,255,255,0.95) inset;position:relative}
-  .pin.unlimited .ring{background:linear-gradient(135deg,#111111,#111111)}
-  .pin.stale .ring{background:linear-gradient(135deg,#9ca3af,#6b7280);opacity:0.85}
+  .pin{display:flex;flex-direction:column;align-items:center;cursor:pointer;pointer-events:auto;user-select:none;transition:transform .18s ease;position:relative}
+  .pin:active{transform:scale(.94)}
+  /* [premium] Heading cone — a soft directional beam behind the avatar that
+     points where the friend is moving (Snapchat-style). data-h holds the GPS
+     heading in degrees; applyHeadings() rotates it relative to map bearing so
+     it stays geographically correct even when the user rotates the map. Only
+     injected when the pin carries a finite heading, so it degrades silently. */
+  .pin .cone,.me .cone{position:absolute;width:64px;height:64px;transform-origin:50% 50%;pointer-events:none;background:conic-gradient(from -22deg at 50% 50%,rgba(34,197,94,0.55),rgba(34,197,94,0) 44deg);border-radius:50%;z-index:-1}
+  /* Pin is a column with the 56px ring at the top → center the cone on it. */
+  .pin .cone{left:50%;top:28px;margin:-32px 0 0 -32px}
+  /* "You" marker is centered on its coordinate → cone centers on the element. */
+  .me .cone{left:50%;top:50%;margin:-32px 0 0 -32px;background:conic-gradient(from -22deg at 50% 50%,rgba(59,130,246,0.55),rgba(59,130,246,0) 44deg)}
+  /* Premium avatar ring — bigger, softer shadow + glow. Live (fresh) = green
+     gradient, unlimited = ink gradient, stale = desaturated gray. Two-layer
+     box-shadow gives an outer halo + a hairline inner separator (Find-My). */
+  .pin .ring{width:56px;height:56px;border-radius:28px;background:linear-gradient(135deg,#34d399,#16a34a);padding:3px;box-sizing:border-box;box-shadow:0 6px 18px rgba(0,0,0,0.42),0 0 0 2px rgba(255,255,255,0.95) inset,0 0 14px rgba(34,197,94,0.55);position:relative}
+  .pin.unlimited .ring{background:linear-gradient(135deg,#1f2937,#111111);box-shadow:0 6px 18px rgba(0,0,0,0.45),0 0 0 2px rgba(255,255,255,0.95) inset}
+  .pin.stale .ring{background:linear-gradient(135deg,#9ca3af,#6b7280);opacity:0.85;box-shadow:0 4px 12px rgba(0,0,0,0.4),0 0 0 2px rgba(255,255,255,0.9) inset}
   .pin .ring img{width:100%;height:100%;border-radius:50%;display:block;object-fit:cover;background:#111111}
-  .pin .ring .ini{width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px;background:#111111}
-  /* Live breathing pulse — only shown for fresh (non-stale) sharers. The
-     ring radiates a soft green glow that fades, signaling "this person is
-     ACTIVE right now". Stale pins skip the animation so the eye is drawn
-     to the live ones. */
-  .pin:not(.stale) .ring::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid rgba(34,197,94,0.55);animation:pinPulse 2.4s ease-out infinite;pointer-events:none}
-  .pin.unlimited:not(.stale) .ring::after{border-color:rgba(17, 17, 17,0.6)}
-  @keyframes pinPulse{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.45);opacity:0}}
-  .pin .label{margin-top:5px;background:rgba(0,0,0,0.82);color:#fff;font-size:10px;font-weight:700;padding:3px 9px;border-radius:11px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;backdrop-filter:blur(8px)}
-  /* "há Xmin" badge stacked under the name label so users can eyeball at a
-     glance whether a friend just updated or has been stale for a while.
-     Rendered ONLY when ago_label is set so old/missing rows degrade. */
-  .pin .ago{margin-top:2px;background:rgba(255,255,255,0.92);color:#111;font-size:9px;font-weight:600;padding:1px 7px;border-radius:9px;max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .pin .ring .ini{width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:19px;background:#111111}
+  /* Live breathing pulse — the GREEN "online right now" ring. Only on fresh
+     (non-stale) sharers so the eye is drawn to live friends. */
+  .pin.online .ring::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid rgba(34,197,94,0.6);animation:pinPulse 2.4s ease-out infinite;pointer-events:none}
+  .pin.unlimited.online .ring::after{border-color:rgba(148,163,184,0.6)}
+  /* A quick one-shot "just moved" bump when a live WS tick repositions a pin. */
+  .pin.justmoved .ring{animation:pinBump .6s ease-out}
+  @keyframes pinPulse{0%{transform:scale(1);opacity:.7}100%{transform:scale(1.55);opacity:0}}
+  @keyframes pinBump{0%{transform:scale(1)}35%{transform:scale(1.18)}100%{transform:scale(1)}}
+  .pin .label{margin-top:6px;background:rgba(0,0,0,0.82);color:#fff;font-size:10px;font-weight:700;padding:3px 9px;border-radius:11px;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  /* "há Xmin · 1.2km" badge. Rendered ONLY when it has content so old/missing
+     rows degrade. Shows distance-from-you when available (Find-My style). */
+  .pin .ago{margin-top:2px;background:rgba(255,255,255,0.92);color:#111;font-size:9px;font-weight:600;padding:1px 7px;border-radius:9px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pin.stale .ago{background:rgba(239,68,68,0.92);color:#fff}
   /* MapLibre centers this marker (anchor:'center'); no absolute transform. */
-  .me{pointer-events:none}
-  .me .me-av{width:42px;height:42px;border-radius:50%;object-fit:cover;display:block;border:3px solid #111111;box-shadow:0 2px 10px rgba(0,0,0,0.45),0 0 0 2px #fff;background:#111111}
-  .me .dot{width:18px;height:18px;border-radius:50%;background:#111111;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,0.4);position:relative}
-  /* WhatsApp/Google-style breathing pulse around the blue dot. The outer
-     ring expands+fades to telegraph "you are here, GPS live". */
+  .me{pointer-events:none;position:relative;display:flex;align-items:center;justify-content:center}
+  .me .me-av{width:46px;height:46px;border-radius:50%;object-fit:cover;display:block;border:3px solid #2563eb;box-shadow:0 4px 14px rgba(0,0,0,0.45),0 0 0 2px #fff,0 0 16px rgba(37,99,235,0.6);background:#111111}
+  .me .dot{width:18px;height:18px;border-radius:50%;background:#2563eb;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.45),0 0 12px rgba(37,99,235,0.6);position:relative}
+  /* WhatsApp/Google-style breathing pulse around the you-are-here dot. */
   .me .dot::before{content:'';position:absolute;left:50%;top:50%;width:18px;height:18px;border-radius:50%;background:rgba(59,130,246,0.35);transform:translate(-50%,-50%);animation:mePulse 2s ease-out infinite;z-index:-1}
   .me .dot::after{content:'';position:absolute;left:50%;top:50%;width:18px;height:18px;border-radius:50%;background:rgba(59,130,246,0.25);transform:translate(-50%,-50%);animation:mePulse 2s ease-out infinite 1s;z-index:-1}
   @keyframes mePulse{0%{transform:translate(-50%,-50%) scale(1);opacity:.7}100%{transform:translate(-50%,-50%) scale(4);opacity:0}}
+  /* [premium] Distance-overlap CLUSTER bubble — stacked avatars + count. */
+  .cluster{display:flex;flex-direction:column;align-items:center;cursor:pointer;user-select:none;transition:transform .18s ease}
+  .cluster:active{transform:scale(.94)}
+  .cluster .cstack{position:relative;height:46px}
+  .cluster .cav{position:absolute;top:0;width:40px;height:40px;border-radius:50%;overflow:hidden;border:2px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.4);background:#111}
+  .cluster .cav img{width:100%;height:100%;object-fit:cover;display:block}
+  .cluster .cav .cini{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:15px;background:#334155}
+  .cluster .ccount{margin-top:5px;background:#111111;color:#fff;font-size:11px;font-weight:800;padding:2px 10px;border-radius:12px;box-shadow:0 3px 10px rgba(0,0,0,0.45)}
+  /* [premium] Search result temp marker. */
+  .searchpin{display:flex;flex-direction:column;align-items:center;pointer-events:none}
+  .searchpin .sp-dot{width:16px;height:16px;border-radius:50%;background:#f43f5e;border:3px solid #fff;box-shadow:0 3px 10px rgba(0,0,0,0.5)}
+  .searchpin .sp-label{margin-top:5px;background:rgba(0,0,0,0.82);color:#fff;font-size:10px;font-weight:700;padding:3px 9px;border-radius:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* [premium] Subtle map vignette + top accent sheen — pure decoration. */
+  #vignette{position:absolute;inset:0;pointer-events:none;z-index:1;box-shadow:inset 0 0 120px 20px ${isDark ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0.14)'};background:linear-gradient(180deg,${isDark ? 'rgba(0,0,0,0.28)' : 'rgba(255,255,255,0.0)'} 0%,rgba(0,0,0,0) 22%)}
+  /* [premium] Glass control chrome — search bar, FAB stack, compass. */
+  #searchWrap{position:absolute;top:12px;left:12px;right:64px;z-index:5}
+  #searchBar{display:flex;align-items:center;gap:8px;padding:9px 12px;border-radius:16px;background:${glassBg};border:1px solid ${glassBorder};backdrop-filter:blur(16px) saturate(150%);-webkit-backdrop-filter:blur(16px) saturate(150%);box-shadow:0 8px 24px rgba(0,0,0,0.22)}
+  #searchBar svg{flex:0 0 auto;opacity:.7}
+  #searchInput{flex:1;border:0;outline:0;background:transparent;color:${glassText};font-size:14px;font-weight:600;min-width:0}
+  #searchInput::placeholder{color:${glassSub}}
+  #searchClear{flex:0 0 auto;display:none;cursor:pointer;opacity:.6;padding:2px}
+  #searchResults{display:none;margin-top:8px;border-radius:14px;overflow:hidden;background:${resultsBg};border:1px solid ${glassBorder};box-shadow:0 12px 30px rgba(0,0,0,0.28);max-height:260px;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  #searchResults .sr-row{padding:11px 14px;font-size:13px;color:${glassText};border-bottom:1px solid ${glassBorder};cursor:pointer;line-height:1.3}
+  #searchResults .sr-row:last-child{border-bottom:0}
+  #searchResults .sr-row:active{background:${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}}
+  #searchResults .sr-empty,#searchResults .sr-loading{padding:12px 14px;font-size:12px;color:${glassSub}}
+  #ctrlStack{position:absolute;right:12px;top:68px;z-index:5;display:flex;flex-direction:column;gap:8px}
+  .glassbtn{width:44px;height:44px;border-radius:14px;background:${glassBg};border:1px solid ${glassBorder};backdrop-filter:blur(16px) saturate(150%);-webkit-backdrop-filter:blur(16px) saturate(150%);box-shadow:0 6px 18px rgba(0,0,0,0.22);display:flex;align-items:center;justify-content:center;color:${glassText};cursor:pointer;font-size:22px;font-weight:600;user-select:none}
+  .glassbtn:active{transform:scale(.92)}
+  .glassbtn.sm{font-size:20px}
+  #btn3d{font-size:13px;font-weight:800;letter-spacing:.3px}
+  #btn3d.on{background:#111111;color:#fff;border-color:#111111}
+  #compass{position:absolute;right:12px;top:12px;z-index:5;width:44px;height:44px;border-radius:50%;background:${glassBg};border:1px solid ${glassBorder};backdrop-filter:blur(16px) saturate(150%);-webkit-backdrop-filter:blur(16px) saturate(150%);box-shadow:0 6px 18px rgba(0,0,0,0.22);display:flex;align-items:center;justify-content:center;cursor:pointer}
+  #compass .needle{width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:15px solid #ef4444;position:relative;transition:transform .12s linear}
+  #compass .needle::after{content:'';position:absolute;left:-6px;top:15px;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-top:15px solid ${isDark ? '#64748b' : '#94a3b8'}}
 </style>
 </head><body>
 <div id="map"></div>
+<div id="vignette"></div>
+<div id="searchWrap">
+  <div id="searchBar">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${glassText}" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    <input id="searchInput" type="text" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Buscar lugar ou endereço"/>
+    <div id="searchClear"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${glassText}" stroke-width="2.4" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+  </div>
+  <div id="searchResults"></div>
+</div>
+<div id="compass" title="Norte"><div class="needle"></div></div>
+<div id="ctrlStack">
+  <div class="glassbtn" id="btnFit" title="Ver todos"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${glassText}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/></svg></div>
+  <div class="glassbtn sm" id="btnZoomIn" title="Aproximar">+</div>
+  <div class="glassbtn sm" id="btnZoomOut" title="Afastar">&#8722;</div>
+  <div class="glassbtn" id="btn3d" title="Visão 3D">3D</div>
+</div>
 <script>
 var INITIAL_CENTER = ${JSON.stringify(center)};
 var INITIAL_ZOOM = ${zoom};
 var INITIAL_PINS = ${pinsJson};
 var INITIAL_ME = ${meJson};
 var STYLE_URL = ${JSON.stringify(styleUrl)};
+// Theme-aware 3D building extrusion color (dark = slate ink, light = pale gray).
+var B3D_COLOR = ${JSON.stringify(isDark ? '#2b303c' : '#dfe3ea')};
 
 var __map = null;
 var __overlays = {};       // email → maplibregl.Marker (avatar pin)
@@ -214,10 +285,19 @@ function pinHtml(pin) {
   // so users see at a glance how fresh the position is — the dominant
   // user feedback ("ta desconectando") was actually peers seeing stale pins
   // and assuming the share died, when it's still live just heartbeat-quiet.
-  var agoHtml = pin.ago_label
-    ? '<div class="ago">' + escapeHtml(pin.ago_label) + '</div>'
+  // [premium] Merge "visto há X" + "1.2km de você" into one subtle badge.
+  var agoBits = [];
+  if (pin.ago_label) agoBits.push(escapeHtml(pin.ago_label));
+  if (pin.dist_label) agoBits.push(escapeHtml(pin.dist_label));
+  var agoHtml = agoBits.length
+    ? '<div class="ago">' + agoBits.join(' · ') + '</div>'
     : '';
-  return '<div class="ring">' + img + '</div><div class="label">' + escapeHtml(nameShort) + '</div>' + agoHtml;
+  // [premium] Directional cone when the backend sent a GPS heading. Rendered
+  // behind the ring; applyHeadings() keeps it correct under map rotation.
+  var coneHtml = (pin.heading != null && isFinite(pin.heading))
+    ? '<div class="cone" data-h="' + Number(pin.heading) + '"></div>'
+    : '';
+  return coneHtml + '<div class="ring">' + img + '</div><div class="label">' + escapeHtml(nameShort) + '</div>' + agoHtml;
 }
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
@@ -235,9 +315,15 @@ function escapeHtml(s) {
 // inner markup the old renderers used, so the stale ring + ago badge stay
 // consistent. Anchor is the bottom-center of the bubble (the avatar "drops"
 // onto the coordinate, Find-My style).
+function pinClass(pin) {
+  // online = fresh (non-stale) sharer → drives the pulsing GREEN ring.
+  return 'pin'
+    + (pin.is_unlimited ? ' unlimited' : '')
+    + (pin.is_stale ? ' stale' : ' online');
+}
 function makePinEl(pin) {
   var el = document.createElement('div');
-  el.className = 'pin' + (pin.is_unlimited ? ' unlimited' : '') + (pin.is_stale ? ' stale' : '');
+  el.className = pinClass(pin);
   el.innerHTML = pinHtml(pin);
   return el;
 }
@@ -248,6 +334,18 @@ function makePinEl(pin) {
 // animation frame; if a newer update arrives mid-glide we cancel and re-aim
 // from the live position. easeInOutQuad for a natural settle — same curve the
 // old gmaps/leaflet renderers used.
+function bumpMarker(marker) {
+  // [premium] A quick scale pulse on the ring telegraphs a live WS tick.
+  try {
+    var el = marker.getElement();
+    if (!el) return;
+    el.classList.remove('justmoved');
+    // reflow so the animation restarts even on rapid consecutive ticks
+    void el.offsetWidth;
+    el.classList.add('justmoved');
+    setTimeout(function(){ try { el.classList.remove('justmoved'); } catch(_){} }, 650);
+  } catch (_) {}
+}
 function glideMarker(marker, toLng, toLat) {
   try {
     if (marker.__glideRAF) { cancelAnimationFrame(marker.__glideRAF); marker.__glideRAF = null; }
@@ -257,18 +355,282 @@ function glideMarker(marker, toLng, toLat) {
     // First placement or a long jump (>~2km) → snap, don't animate.
     if (!isFinite(fLat) || !isFinite(fLng) || Math.abs(dLat) > 0.02 || Math.abs(dLng) > 0.02 || (dLat === 0 && dLng === 0)) {
       marker.setLngLat([toLng, toLat]);
+      try { scheduleClusters(); } catch (_) {}
       return;
     }
-    var dur = 700, start = (window.performance && performance.now) ? performance.now() : Date.now();
+    bumpMarker(marker);
+    var dur = 800, start = (window.performance && performance.now) ? performance.now() : Date.now();
     function step(now) {
       var t = Math.min(1, ((now || Date.now()) - start) / dur);
       var e = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; // easeInOutQuad
       marker.setLngLat([fLng + dLng * e, fLat + dLat * e]);
       if (t < 1) { marker.__glideRAF = requestAnimationFrame(step); }
-      else { marker.setLngLat([toLng, toLat]); marker.__glideRAF = null; }
+      else { marker.setLngLat([toLng, toLat]); marker.__glideRAF = null; try { scheduleClusters(); } catch (_) {} }
     }
     marker.__glideRAF = requestAnimationFrame(step);
   } catch (e) { try { marker.setLngLat([toLng, toLat]); } catch (e2) {} }
+}
+
+// ──────────────────────────── Premium map helpers ─────────────────────────
+// All self-contained in the WebView (no RN glue, no native deps). Clustering
+// is a lightweight DOM overlap-collapse over the EXISTING avatar markers — we
+// never convert pins to a GeoJSON source, so the __renderPins/pin_tap protocol
+// is untouched. We only toggle element visibility + add/remove cluster bubbles.
+var __clusterMarkers = [];
+var __clusterRAF = null;
+var CLUSTER_MAX_ZOOM = 15.5; // above this, show every friend individually
+var CLUSTER_RADIUS = 48;     // px — markers closer than this collapse
+
+function clearClusterMarkers() {
+  __clusterMarkers.forEach(function(m){ try { m.remove(); } catch(_){} });
+  __clusterMarkers = [];
+}
+function makeClusterEl(group) {
+  var el = document.createElement('div');
+  el.className = 'cluster';
+  var stack = '';
+  group.slice(0, 3).forEach(function(g, i){
+    var p = g.m.__pin || {};
+    var inner = p.avatar_url
+      ? '<img src="' + p.avatar_url + '" onerror="this.style.display=\\'none\\'"/>'
+      : '<div class="cini">' + (String(p.name || p.email || '?').trim().charAt(0).toUpperCase()) + '</div>';
+    stack += '<div class="cav" style="left:' + (i * 18) + 'px;z-index:' + (9 - i) + '">' + inner + '</div>';
+  });
+  // width of the stack so the bubble centers nicely
+  var w = 40 + Math.min(2, group.length - 1) * 18;
+  el.innerHTML = '<div class="cstack" style="width:' + w + 'px">' + stack + '</div><div class="ccount">' + group.length + '</div>';
+  return el;
+}
+function updateClusters() {
+  if (!__map) return;
+  try {
+    var zoom = __map.getZoom();
+    var items = [];
+    Object.keys(__overlays).forEach(function(em){
+      var m = __overlays[em];
+      var elp = m.getElement();
+      if (!elp) return;
+      var ll = m.getLngLat();
+      if (!ll) return;
+      var pt = __map.project(ll);
+      items.push({ em: em, m: m, x: pt.x, y: pt.y, ll: ll, el: elp });
+    });
+    // reset visibility + clear old cluster bubbles
+    items.forEach(function(it){ it.el.style.display = ''; });
+    clearClusterMarkers();
+    if (zoom >= CLUSTER_MAX_ZOOM || items.length < 2) return;
+    var used = {};
+    var R2 = CLUSTER_RADIUS * CLUSTER_RADIUS;
+    items.forEach(function(it){
+      if (used[it.em]) return;
+      var group = [it];
+      used[it.em] = true;
+      items.forEach(function(jt){
+        if (used[jt.em]) return;
+        var dx = it.x - jt.x, dy = it.y - jt.y;
+        if (dx * dx + dy * dy <= R2) { group.push(jt); used[jt.em] = true; }
+      });
+      if (group.length > 1) {
+        group.forEach(function(g){ g.el.style.display = 'none'; });
+        var cx = 0, cy = 0;
+        group.forEach(function(g){ cx += g.ll.lng; cy += g.ll.lat; });
+        var center = [cx / group.length, cy / group.length];
+        var cel = makeClusterEl(group);
+        (function(grp){
+          cel.addEventListener('click', function(){
+            try {
+              if (grp.length === 1) { __map.flyTo({ center: grp[0].ll, zoom: 17, essential: true }); return; }
+              var b = new maplibregl.LngLatBounds(grp[0].ll, grp[0].ll);
+              grp.forEach(function(g){ b.extend(g.ll); });
+              __map.fitBounds(b, { padding: 90, maxZoom: 17, duration: 650 });
+            } catch (_) {}
+          });
+        })(group);
+        var cm = new maplibregl.Marker({ element: cel, anchor: 'bottom' }).setLngLat(center).addTo(__map);
+        __clusterMarkers.push(cm);
+      }
+    });
+  } catch (_) {}
+}
+function scheduleClusters() {
+  if (__clusterRAF) return;
+  __clusterRAF = requestAnimationFrame(function(){
+    __clusterRAF = null;
+    updateClusters();
+  });
+}
+
+// Rotate every heading cone so it points the true GPS bearing regardless of
+// how the user has rotated the map. Called on render + on map 'rotate'.
+function applyHeadings() {
+  try {
+    var b = __map ? __map.getBearing() : 0;
+    var cones = document.querySelectorAll('.pin .cone, .me .cone');
+    for (var i = 0; i < cones.length; i++) {
+      var h = parseFloat(cones[i].getAttribute('data-h'));
+      if (!isFinite(h)) continue;
+      cones[i].style.transform = 'rotate(' + (h - b) + 'deg)';
+    }
+  } catch (_) {}
+}
+
+// Reflect map bearing on the compass needle.
+function applyCompass() {
+  try {
+    var n = document.querySelector('#compass .needle');
+    if (n && __map) n.style.transform = 'rotate(' + (-__map.getBearing()) + 'deg)';
+  } catch (_) {}
+}
+
+// [premium] 3D buildings. We inspect the live style for a building layer so it
+// works across the BoraUm styles (world-cinza = Protomaps 'world' source;
+// per-country = OpenMapTiles 'openmaptiles' source — the BR style even ships a
+// 'building-3d' fill-extrusion already). If the vector tiles expose no building
+// layer we skip gracefully and report via map_caps (host ignores unknown types).
+function add3DBuildings() {
+  try {
+    if (!__map || __map.__b3d) return;
+    var style = __map.getStyle();
+    if (!style || !style.layers) return;
+    var src = null, srcLayer = null, existing = null, beforeId = null;
+    style.layers.forEach(function(l){
+      var sl = l['source-layer'] || '';
+      var isB = /building/i.test(l.id) || /building/i.test(sl);
+      if (isB) {
+        if (l.type === 'fill-extrusion') existing = l.id;
+        else if (l.type === 'fill' && !src) { src = l.source; srcLayer = sl; }
+      }
+      if (!beforeId && l.type === 'symbol') beforeId = l.id;
+    });
+    if (existing) {
+      // Style already ships 3D buildings (BR 'building-3d') — just theme it.
+      try { __map.setPaintProperty(existing, 'fill-extrusion-color', B3D_COLOR); } catch(_){}
+      try { __map.setPaintProperty(existing, 'fill-extrusion-opacity', 0.82); } catch(_){}
+      try { __map.setLayoutProperty(existing, 'visibility', 'visible'); } catch(_){}
+      __map.__b3d = true;
+      try { rnPost({ type: 'map_caps', buildings3d: true, mode: 'existing' }); } catch(_){}
+      return;
+    }
+    if (!src || !srcLayer) { try { rnPost({ type: 'map_caps', buildings3d: false, reason: 'no_building_layer' }); } catch(_){} return; }
+    // Height: prefer real attributes; fall back to a flat 6m so height-less
+    // Protomaps footprints still read as subtle 3D instead of nothing.
+    var heightExpr = ['interpolate', ['linear'], ['zoom'],
+      14, 0,
+      15.5, ['coalesce', ['get', 'render_height'], ['get', 'height'], 6]];
+    var baseExpr = ['coalesce', ['get', 'render_min_height'], ['get', 'min_height'], 0];
+    __map.addLayer({
+      id: 'chatyy-3d-buildings',
+      type: 'fill-extrusion',
+      source: src,
+      'source-layer': srcLayer,
+      minzoom: 14,
+      paint: {
+        'fill-extrusion-color': B3D_COLOR,
+        'fill-extrusion-height': heightExpr,
+        'fill-extrusion-base': baseExpr,
+        'fill-extrusion-opacity': 0.72,
+      },
+    }, beforeId || undefined);
+    __map.__b3d = true;
+    try { rnPost({ type: 'map_caps', buildings3d: true, mode: 'added' }); } catch(_){}
+  } catch (e) {
+    try { rnPost({ type: 'map_caps', buildings3d: false, reason: String((e && e.message) || e) }); } catch(_){}
+  }
+}
+
+// [premium] Place search via OSM Nominatim — the SAME endpoint the chat live-
+// location picker already uses (chat-conversation.js). Nominatim sends CORS
+// headers so the in-WebView fetch works; BoraUm has no geocoder of its own
+// (its /nominatim path serves the SPA shell, not an API). flyTo + temp marker.
+var __searchMarker = null, __searchTimer = null, __searchSeq = 0;
+function doGeocode(q) {
+  var box = document.getElementById('searchResults');
+  if (!box) return;
+  if (!q || q.trim().length < 3) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  var seq = ++__searchSeq;
+  box.innerHTML = '<div class="sr-loading">Buscando…</div>';
+  box.style.display = 'block';
+  fetch('https://nominatim.openstreetmap.org/search?format=json&limit=6&addressdetails=1&accept-language=pt-BR&q=' + encodeURIComponent(q), { headers: { 'Accept': 'application/json' } })
+    .then(function(r){ return r.json(); })
+    .then(function(list){
+      if (seq !== __searchSeq) return; // a newer keystroke superseded this
+      if (!Array.isArray(list) || !list.length) { box.innerHTML = '<div class="sr-empty">Nenhum resultado</div>'; box.style.display = 'block'; return; }
+      box.innerHTML = '';
+      list.forEach(function(it){
+        var row = document.createElement('div');
+        row.className = 'sr-row';
+        row.textContent = it.display_name || '';
+        row.addEventListener('click', function(){ selectPlace(it); });
+        box.appendChild(row);
+      });
+      box.style.display = 'block';
+    })
+    .catch(function(){ if (seq === __searchSeq) { box.style.display = 'none'; } });
+}
+function selectPlace(it) {
+  var lat = parseFloat(it.lat), lon = parseFloat(it.lon);
+  if (!isFinite(lat) || !isFinite(lon)) return;
+  var box = document.getElementById('searchResults');
+  var inp = document.getElementById('searchInput');
+  if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+  if (inp) inp.value = (it.display_name || '').split(',')[0];
+  if (__searchMarker) { try { __searchMarker.remove(); } catch(_){} __searchMarker = null; }
+  var el = document.createElement('div');
+  el.className = 'searchpin';
+  el.innerHTML = '<div class="sp-label">' + escapeHtml((it.display_name || '').split(',').slice(0, 2).join(',').trim()) + '</div><div class="sp-dot"></div>';
+  __searchMarker = new maplibregl.Marker({ element: el, anchor: 'bottom' }).setLngLat([lon, lat]).addTo(__map);
+  try { __map.flyTo({ center: [lon, lat], zoom: 16, pitch: 55, speed: 1.1, curve: 1.42, essential: true }); } catch(_){}
+  try { document.activeElement && document.activeElement.blur && document.activeElement.blur(); } catch(_){}
+}
+function clearSearch() {
+  var inp = document.getElementById('searchInput');
+  var box = document.getElementById('searchResults');
+  var clr = document.getElementById('searchClear');
+  if (inp) inp.value = '';
+  if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+  if (clr) clr.style.display = 'none';
+  if (__searchMarker) { try { __searchMarker.remove(); } catch(_){} __searchMarker = null; }
+}
+
+// Wire the glass controls (search, FABs, compass). DOM is already in <body>
+// because this inline script runs after it. All handlers are no-ops if the map
+// isn't ready yet. Idempotent-guarded so a re-call can't double-bind.
+function setupControls() {
+  if (window.__ctrlsReady) return; window.__ctrlsReady = true;
+  try {
+    var inp = document.getElementById('searchInput');
+    var clr = document.getElementById('searchClear');
+    if (inp) {
+      inp.addEventListener('input', function(){
+        if (clr) clr.style.display = inp.value ? 'block' : 'none';
+        if (__searchTimer) clearTimeout(__searchTimer);
+        var v = inp.value;
+        __searchTimer = setTimeout(function(){ doGeocode(v); }, 420);
+      });
+      inp.addEventListener('keydown', function(e){
+        if (e.key === 'Enter' || e.keyCode === 13) {
+          if (__searchTimer) clearTimeout(__searchTimer);
+          doGeocode(inp.value);
+        }
+      });
+    }
+    if (clr) clr.addEventListener('click', clearSearch);
+    var bind = function(id, fn){ var b = document.getElementById(id); if (b) b.addEventListener('click', fn); };
+    bind('btnFit', function(){ try { window.__fitAll(true); } catch(_){} });
+    bind('btnZoomIn', function(){ try { __map.zoomIn({ duration: 300 }); } catch(_){} });
+    bind('btnZoomOut', function(){ try { __map.zoomOut({ duration: 300 }); } catch(_){} });
+    bind('compass', function(){ try { __map.easeTo({ bearing: 0, pitch: 45, duration: 500 }); } catch(_){} });
+    bind('btn3d', function(){
+      try {
+        var btn = document.getElementById('btn3d');
+        var on = __map.getPitch() > 10;
+        __map.easeTo({ pitch: on ? 0 : 55, duration: 500 });
+        if (btn) btn.classList.toggle('on', !on);
+      } catch(_){}
+    });
+    var btn3d0 = document.getElementById('btn3d');
+    if (btn3d0) btn3d0.classList.add('on'); // default pitch is 45° → 3D on
+  } catch (_) {}
 }
 
 function bootMap() {
@@ -277,11 +639,31 @@ function bootMap() {
     style: STYLE_URL,
     center: [INITIAL_CENTER.lng, INITIAL_CENTER.lat],
     zoom: INITIAL_ZOOM,
+    // [premium 2026-10-03] Tilt in by default for 3D depth, and let the user
+    // rotate/pitch with gestures (two-finger). The custom glass compass resets
+    // north; the plain NavigationControl is replaced by our own FAB stack.
+    pitch: 45,
+    bearing: 0,
     attributionControl: false,
+    maxPitch: 70,
   });
-  // Zoom buttons (top-left, like the old zoomControl:true). No compass —
-  // snap-map never rotates.
-  try { __map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-left'); } catch (e) {}
+  try { __map.dragRotate.enable(); } catch (e) {}
+  try { __map.touchZoomRotate.enableRotation(); } catch (e) {}
+  // Wire the glass controls (search / FABs / compass) as soon as the DOM +
+  // map instance exist — handlers no-op safely until the map is ready.
+  try { setupControls(); } catch (e) {}
+  // Keep heading cones + compass needle correct as the user rotates, and
+  // re-run the DOM cluster collapse as the camera moves.
+  try {
+    __map.on('rotate', function(){ applyHeadings(); applyCompass(); });
+    __map.on('pitch', function(){ applyCompass(); });
+    __map.on('move', scheduleClusters);
+    __map.on('zoom', scheduleClusters);
+    __map.on('moveend', scheduleClusters);
+    __map.on('zoomend', scheduleClusters);
+    // setStyle (watchdog/online retry) reloads the style → re-add 3D buildings.
+    __map.on('styledata', function(){ try { add3DBuildings(); } catch(_){} });
+  } catch (e) {}
 
   // ── Diagnostics: surface WHY the basemap goes gray. The engine can
   // construct (zoom buttons render) yet never paint tiles — WebGL context
@@ -314,6 +696,7 @@ function bootMap() {
     __mapTries++;
     if (__mapTries <= 3) {
       try { rnPost({ type: 'map_retry', attempt: __mapTries }); } catch(_){}
+      __map.__b3d = false; // style reload → let add3DBuildings run again
       try { __map.setStyle(STYLE_URL); } catch(_){}
       setTimeout(function(){ try { __map.resize(); } catch(_){} }, 300);
       setTimeout(__mapWatchdog, 6000);
@@ -327,6 +710,7 @@ function bootMap() {
   try {
     window.addEventListener('online', function(){
       if (__ready) return;
+      __map.__b3d = false; // style reload → let add3DBuildings run again
       try { __map.setStyle(STYLE_URL); } catch(_){}
       setTimeout(function(){ try { __map.resize(); } catch(_){} }, 300);
       setTimeout(__mapWatchdog, 5000);
@@ -342,10 +726,11 @@ function bootMap() {
       seen[p.email] = true;
       var existing = __overlays[p.email];
       if (existing) {
-        // Update visual chrome (ring/stale/badge + click handler) in place,
-        // then glide to the new coords so a live tick animates.
-        existing.getElement().className = 'pin' + (p.is_unlimited ? ' unlimited' : '') + (p.is_stale ? ' stale' : '');
+        // Update visual chrome (ring/stale/online/cone/badge + click handler)
+        // in place, then glide to the new coords so a live tick animates.
+        existing.getElement().className = pinClass(p);
         existing.getElement().innerHTML = pinHtml(p);
+        existing.__pin = p; // keep latest pin data for the cluster bubble
         glideMarker(existing, p.lng, p.lat);
       } else {
         var el = makePinEl(p);
@@ -355,12 +740,16 @@ function bootMap() {
         var m = new maplibregl.Marker({ element: el, anchor: 'bottom' })
           .setLngLat([p.lng, p.lat])
           .addTo(__map);
+        m.__pin = p;
         __overlays[p.email] = m;
       }
     });
     Object.keys(__overlays).forEach(function(em){
       if (!seen[em]) { try { __overlays[em].remove(); } catch(_){} delete __overlays[em]; }
     });
+    // Re-orient heading cones to the current bearing + recompute clustering.
+    try { applyHeadings(); } catch(_){}
+    try { scheduleClusters(); } catch(_){}
   };
 
   // "You are here" blue dot — a non-interactive centered marker so taps fall
@@ -370,8 +759,22 @@ function bootMap() {
       if (__meMarker) { try { __meMarker.remove(); } catch(_){} __meMarker = null; }
       return;
     }
+    // [premium] Direction cone for "you" when the GPS gave a heading.
+    var coneHtml = (me.heading != null && isFinite(me.heading))
+      ? '<div class="cone" data-h="' + Number(me.heading) + '"></div>'
+      : '';
     if (__meMarker) {
       __meMarker.setLngLat([me.lng, me.lat]);
+      // Keep the cone in sync as heading changes between fixes.
+      try {
+        var mel = __meMarker.getElement();
+        var existingCone = mel.querySelector('.cone');
+        if (coneHtml) {
+          if (existingCone) { existingCone.setAttribute('data-h', Number(me.heading)); }
+          else { mel.insertAdjacentHTML('afterbegin', coneHtml); }
+        } else if (existingCone) { existingCone.remove(); }
+        applyHeadings();
+      } catch(_){}
     } else {
       var el = document.createElement('div');
       el.className = 'me';
@@ -379,18 +782,30 @@ function bootMap() {
       // available (Snapchat-style), falling back to the classic blue dot.
       if (me.avatar_url) {
         el.className = 'me me-has-av';
-        el.innerHTML = '<img class="me-av" src="' + me.avatar_url + '" onerror="this.style.display=\\'none\\';this.nextElementSibling&&(this.nextElementSibling.style.display=\\'block\\')"/><div class="dot" style="display:none"></div>';
+        el.innerHTML = coneHtml + '<img class="me-av" src="' + me.avatar_url + '" onerror="this.style.display=\\'none\\';this.nextElementSibling&&(this.nextElementSibling.style.display=\\'block\\')"/><div class="dot" style="display:none"></div>';
       } else {
-        el.innerHTML = '<div class="dot"></div>';
+        el.innerHTML = coneHtml + '<div class="dot"></div>';
       }
       __meMarker = new maplibregl.Marker({ element: el, anchor: 'center' })
         .setLngLat([me.lng, me.lat])
         .addTo(__map);
+      try { applyHeadings(); } catch(_){}
     }
   };
 
+  // [premium] Smooth, eased focus instead of a linear pan. Zooms in a touch if
+  // we're currently far out so tapping a friend/recenter actually frames them.
   window.__panTo = function(lat, lng) {
-    try { __map.panTo([lng, lat]); } catch (e) {}
+    try {
+      var z = __map.getZoom();
+      __map.flyTo({
+        center: [lng, lat],
+        zoom: z < 14 ? 15.5 : z,
+        speed: 1.1,
+        curve: 1.42,
+        essential: true,
+      });
+    } catch (e) { try { __map.panTo([lng, lat]); } catch (e2) {} }
   };
 
   // [beauty 2026-10-01] Zoom to fit ALL friends (+ me) in view. Before, the map
@@ -406,7 +821,9 @@ function bootMap() {
       if (pts.length === 1) { __map.easeTo({ center: pts[0], zoom: 15, duration: animate ? 500 : 0 }); return; }
       var b = new maplibregl.LngLatBounds(pts[0], pts[0]);
       pts.forEach(function(p){ b.extend(p); });
-      __map.fitBounds(b, { padding: 70, maxZoom: 15, duration: animate ? 600 : 0 });
+      // Keep the current tilt/bearing so fitting all friends doesn't flatten
+      // the premium 3D view.
+      __map.fitBounds(b, { padding: 70, maxZoom: 15, duration: animate ? 600 : 0, pitch: __map.getPitch(), bearing: __map.getBearing() });
     } catch (e) {}
   };
 
@@ -416,10 +833,14 @@ function bootMap() {
   __map.on('load', function(){
     if (__ready) return;
     __ready = true;
+    // [premium] Add 3D building extrusion if the vector tiles expose a building
+    // layer (degrades gracefully otherwise; reports via map_caps).
+    try { add3DBuildings(); } catch(_){}
     window.__renderPins(INITIAL_PINS);
     if (INITIAL_ME) window.__renderMe(INITIAL_ME);
     // Fit all friends + me into view on open (no animation on first paint).
     try { window.__fitAll(false); } catch(_){}
+    try { applyCompass(); } catch(_){}
     rnPost({ type: 'map_ready' });
   });
 }
@@ -754,7 +1175,9 @@ export default function SnapMapScreen() {
                 10000,
               );
               if (alive && fresh?.coords) {
-                setMyLocation({ lat: fresh.coords.latitude, lng: fresh.coords.longitude });
+                // heading is -1/null when the device can't resolve it → keep undefined.
+                const hdg = Number(fresh.coords.heading);
+                setMyLocation({ lat: fresh.coords.latitude, lng: fresh.coords.longitude, heading: Number.isFinite(hdg) && hdg >= 0 ? hdg : undefined });
                 gotFreshGps = true;
               }
             } catch {}
@@ -1009,6 +1432,13 @@ export default function SnapMapScreen() {
           } catch {}
         }
         const isStale = ageMs !== null && ageMs > STALE_THRESHOLD_MS;
+        // [premium 2026-10-03] Distance-from-me label shown right on the pin
+        // (Find-My style). Only when I have my own GPS + the friend has coords.
+        let distLabel = '';
+        if (myLocation && Number.isFinite(myLocation.lat) && Number.isFinite(Number(s.latitude))) {
+          const dm = haversineMeters(myLocation.lat, myLocation.lng, Number(s.latitude), Number(s.longitude));
+          if (dm !== null) distLabel = formatDistance(dm);
+        }
         return {
           email: s.email,
           name: s.name || s.email?.split('@')[0] || '',
@@ -1017,6 +1447,7 @@ export default function SnapMapScreen() {
           is_unlimited: !!s.is_unlimited,
           is_stale: isStale,
           ago_label: ageMs !== null ? ago(s.updated_at) : '',
+          dist_label: distLabel,
           avatar_url: s.email ? getAvatarUrlForEmail(s.email) : null,
           // [beauty 2026-10-01] heading/speed/accuracy are already returned by
           // the backend (chat_friends_map_shares) but were being discarded here.
@@ -1027,7 +1458,7 @@ export default function SnapMapScreen() {
           accuracy: Number.isFinite(Number(s.accuracy)) ? Number(s.accuracy) : null,
         };
       })
-  ), [filteredShares, nowTick]);
+  ), [filteredShares, nowTick, myLocation]);
 
   // [7181 fix 2026-05-22] Wake stale sharers. When iOS sleeps a friend's
   // app or Android force-stops it, the location row sits frozen in PG and
@@ -1101,7 +1532,13 @@ export default function SnapMapScreen() {
   const mePayload = useMemo(() => (
     // [beauty 2026-10-01] Include my avatar so the "you are here" marker shows
     // my photo (Snapchat-style) instead of a bare blue dot.
-    myLocation ? { lat: myLocation.lat, lng: myLocation.lng, avatar_url: user?.email ? getAvatarUrlForEmail(user.email) : null } : null
+    // [premium 2026-10-03] Forward heading when GPS provided one → direction cone.
+    myLocation ? {
+      lat: myLocation.lat,
+      lng: myLocation.lng,
+      heading: Number.isFinite(Number(myLocation.heading)) ? Number(myLocation.heading) : null,
+      avatar_url: user?.email ? getAvatarUrlForEmail(user.email) : null,
+    } : null
   ), [myLocation, user?.email]);
 
   // HTML built once per mount. We avoid rebuilding on state change
@@ -1513,9 +1950,14 @@ export default function SnapMapScreen() {
           </View>
         )}
 
-        {/* "Centralize-me" FAB — WhatsApp/Maps-style. Pan/zooms the map to
-            the user's current GPS. Pulls a fresh fix on tap so even if the
-            initial reading was stale the user gets the latest location. */}
+        {/* "Centralize-me" FAB — WhatsApp/Maps-style. flyTo the user's current
+            GPS. Pulls a fresh fix on tap so even if the initial reading was
+            stale the user gets the latest location. The compass, fit-all, zoom
+            and 3D controls live inside the map (glass FAB stack) because they
+            act directly on the MapLibre camera; this one is RN because it needs
+            expo-location. Positioned above the bottom friends panel so it's
+            never hidden behind the sheet.
+            [premium 2026-10-03] Restyled to a glass-blur FAB, theme-aware. */}
         {myLocation && (
           <TouchableOpacity
             onPress={async () => {
@@ -1526,7 +1968,8 @@ export default function SnapMapScreen() {
                     const Location = require('expo-location');
                     const fresh = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
                     if (fresh?.coords) {
-                      target = { lat: fresh.coords.latitude, lng: fresh.coords.longitude };
+                      const hdg = Number(fresh.coords.heading);
+                      target = { lat: fresh.coords.latitude, lng: fresh.coords.longitude, heading: Number.isFinite(hdg) && hdg >= 0 ? hdg : undefined };
                       setMyLocation(target);
                     }
                   } catch {}
@@ -1535,18 +1978,19 @@ export default function SnapMapScreen() {
               } catch {}
             }}
             style={{
-              position: 'absolute', right: 16, bottom: 24,
-              width: 52, height: 52, borderRadius: 26,
-              backgroundColor: colors.surface,
+              position: 'absolute', right: 16,
+              bottom: shares.length > 0 ? 146 : 26,
+              width: 54, height: 54, borderRadius: 27,
+              backgroundColor: isDark ? 'rgba(20,21,26,0.86)' : 'rgba(255,255,255,0.92)',
               alignItems: 'center', justifyContent: 'center',
-              shadowColor: '#000', shadowOpacity: 0.25,
-              shadowRadius: 8, shadowOffset: { width: 0, height: 4 },
-              elevation: 6,
-              borderWidth: 1, borderColor: colors.border || 'rgba(0,0,0,0.08)',
+              shadowColor: '#000', shadowOpacity: 0.28,
+              shadowRadius: 10, shadowOffset: { width: 0, height: 5 },
+              elevation: 8,
+              borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.07)',
             }}
             accessibilityLabel={t?.('snapmap.centerOnMe') || 'Minha localização'}
           >
-            <IconNavigation size={22} color={colors.primary} />
+            <IconNavigation size={23} color={colors.primary} />
           </TouchableOpacity>
         )}
 
