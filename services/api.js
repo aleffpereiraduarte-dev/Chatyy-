@@ -9639,55 +9639,73 @@ export async function parentalUnlockHistory(childEmail) {
 }
 
 // ─── Family Sharing (Apple-style hub) ───
-// TODO: backend endpoints below are NOT yet implemented. Wrappers return
-// the apiCall promise so screens render gracefully (`success: false`)
-// until PHP handlers ship. Drop the TODO comments when each backend
-// lands.
+// Backed by the REAL `family_*` handlers in email.php. Shape (family_info):
+//   { success, data: {
+//       family:  { id, name, photo_url, owner_email, share_plan },
+//       members: [{ email, name, online, last_seen, presence }],  // SIBLING of family
+//       my_role, is_owner
+//   } }
+// The backend AUTO-CREATES a solo family on the first family_info call, so a
+// family ALWAYS exists (there is no "create" action and no empty state).
+// Members have NO avatar_url / is_me / role — the UI computes is_me from the
+// current user's email and renders avatars from the member email.
 
-// Returns family unit metadata: { id, name, avatar_url, members[] }.
-// Member shape: { email, name, role: 'parent'|'child'|'spouse', age?, avatar_url, online?, location? }
+// Returns the caller's family + its members (auto-creates a solo family).
 export async function familyInfo() {
-  // TODO: backend handler `family_info` pending.
   return apiCall('family_info');
 }
 
-// Invite a new member by email or phone with a role.
-// role: 'parent' | 'child' | 'spouse'
+// Accept an invite and join a family by its invite TOKEN (carried by the
+// chatyy://family/join/<token> deep-link).
+export async function familyJoin(token) {
+  return apiCall('family_join', { token }, 'POST');
+}
+
+// Invite a member by email/phone with a role. role: 'parent'|'spouse'|'child'.
+// Rate-limited (10 / 24h → may come back success:false with a pt-BR `message`
+// to surface). On success returns { data: { token, role, link } } where
+// `link` = chatyy://family/join/<token> — share it via the OS Share sheet.
 export async function familyInvite(target, role = 'child') {
-  // TODO: backend handler `family_invite` pending.
   return apiCall('family_invite', { target, role }, 'POST');
+}
+
+// Leave the family the caller belongs to (non-owners only).
+export async function familyLeave() {
+  return apiCall('family_leave', {}, 'POST');
 }
 
 // Link a spouse account (also a parent — full perms over children).
 export async function familyAddSpouse(spouseEmail) {
-  // TODO: backend handler `family_add_spouse` pending.
   return apiCall('family_add_spouse', { spouse_email: spouseEmail }, 'POST');
 }
 
-// Update family metadata (name, photo).
+// Update family metadata (name, photo_url). Owner only.
 export async function familyUpdate(data) {
-  // TODO: backend handler `family_update` pending.
   return apiCall('family_update', data || {}, 'POST');
 }
 
-// Remove a family member (only the family owner can do this).
+// Remove a family member (owner only).
 export async function familyRemoveMember(email) {
-  // TODO: backend handler `family_remove_member` pending.
   return apiCall('family_remove_member', { email }, 'POST');
 }
 
-// Shared photo album — list and append. Stored in R2 under
-// /family/<family_id>/album/* (same pattern as feed-files).
-export async function familySharedAlbum() {
-  // TODO: backend handler `family_shared_album` pending.
-  return apiCall('family_shared_album');
+// ── Shared photo album ──
+export async function familySharedAlbumList() {
+  return apiCall('family_shared_album_list');
 }
 
-export async function familySharedAlbumAdd(fileUri, caption = '') {
-  // TODO: backend handler `family_shared_album_add` pending.
+// Append to the shared album. Multipart upload of a local file + caption.
+// (The handler also accepts a pre-uploaded `url`; pass an object { url,
+// caption } to use that path instead of uploading a file.)
+export async function familySharedAlbumAdd(fileUriOrObj, caption = '') {
+  if (fileUriOrObj && typeof fileUriOrObj === 'object') {
+    return apiCall('family_shared_album_add', {
+      url: fileUriOrObj.url, caption: fileUriOrObj.caption || caption || '',
+    }, 'POST');
+  }
   const formData = new FormData();
   formData.append('caption', caption);
-  formData.append('file', { uri: fileUri, name: 'photo.jpg', type: 'image/jpeg' });
+  formData.append('file', { uri: fileUriOrObj, name: 'photo.jpg', type: 'image/jpeg' });
   const headers = getAuthHeaders();
   if (headers && headers['Content-Type']) delete headers['Content-Type']; // let runtime add boundary
   const res = await fetch(API_URL + '?action=family_shared_album_add', {
@@ -9696,38 +9714,33 @@ export async function familySharedAlbumAdd(fileUri, caption = '') {
   return res.json().catch(() => ({ success: false }));
 }
 
-// Shared family calendar — pulls events tagged with family_id.
-export async function familySharedCalendar() {
-  // TODO: backend handler `family_shared_calendar` pending.
-  return apiCall('family_shared_calendar');
+// ── Shared family calendar ──
+export async function familyCalendarList() {
+  return apiCall('family_calendar_list');
+}
+export async function familyCalendarAdd(event) {
+  return apiCall('family_calendar_add', event || {}, 'POST');
 }
 
-// Shared shopping list — list + add + check.
-export async function familyShoppingList() {
-  // TODO: backend handler `family_shopping_list` pending.
-  return apiCall('family_shopping_list');
+// ── Shared shopping list ── (real: get / add {text} / toggle {id})
+export async function familyShoppingListGet() {
+  return apiCall('family_shopping_list_get');
+}
+export async function familyShoppingListAdd(text) {
+  return apiCall('family_shopping_list_add', { text }, 'POST');
+}
+export async function familyShoppingListToggle(id) {
+  return apiCall('family_shopping_list_toggle', { id }, 'POST');
 }
 
-export async function familyShoppingListAdd(item) {
-  // TODO: backend handler `family_shopping_list_add` pending.
-  return apiCall('family_shopping_list_add', { item }, 'POST');
-}
-
-export async function familyShoppingListToggle(id, checked) {
-  // TODO: backend handler `family_shopping_list_toggle` pending.
-  return apiCall('family_shopping_list_toggle', { id, checked: checked ? 1 : 0 }, 'POST');
-}
-
-// Find My Family — returns last known location for every member. Should
-// reuse the parental_update_location / chat_user_locations storage.
+// Find My Family — last known location for every member (feeds /snap-map).
 export async function familyLocationAll() {
-  // TODO: backend handler `family_location_all` pending.
   return apiCall('family_location_all');
 }
 
-// Plan share — reads which plan is active and who else benefits.
+// Plan share — reads which plan is active and who else benefits (monetization
+// is paused; the UI only calls this when PLANS_ENABLED).
 export async function familyPlanShare() {
-  // TODO: backend handler `family_plan_share` pending.
   return apiCall('family_plan_share');
 }
 

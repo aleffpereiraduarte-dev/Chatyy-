@@ -1775,7 +1775,21 @@ class MailWebSocket {
         const chatMsg = msg.data || msg;
         const msgId = chatMsg?.message?.id || chatMsg?.id;
         if (msgId && !this._trackMsgId(msgId)) {
-          return; // Duplicate, skip
+          // [FIX media-enrichment re-broadcast 2026-10-02] The server
+          // re-broadcasts the SAME chat_message id a second time once it has
+          // generated the media thumbnail / dimensions (thumb_b64 /
+          // thumbnail_url / poster / width / height). Plain id-dedup dropped
+          // that second frame, so the recipient kept a blank photo / black
+          // video forever. Let a re-broadcast through ONLY when it carries one
+          // of those enrichment fields (true duplicates are still dropped).
+          const _enr = chatMsg?.message || chatMsg || {};
+          const _hasEnrichment =
+            _enr.thumb_b64 != null || _enr.thumbnail_url != null ||
+            _enr.poster != null || _enr.width != null || _enr.height != null;
+          if (!_hasEnrichment) {
+            return; // Duplicate, skip
+          }
+          // fall through — delivered to listeners as a merge-update
         }
         // Kick off a background download for image + audio attachments the
         // moment they arrive — by the time the user navigates into the conv

@@ -8266,6 +8266,7 @@ function ChatConversationInner() {
     return () => { cancelled = true; };
   }, [conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
   const searchSeqRef = useRef(0); // Sequence id for race-safe handleSearchMessages
+  const searchDebounceRef = useRef(null); // [2026-10-02] debounce p/ a busca por tecla (evita travar digitando)
   const rsvpInflightRef = useRef(new Set()); // Pending meetup RSVPs (de-dupes rapid taps)
   const inflightReactionMsgIdsRef = useRef(new Set()); // msgIds with an in-flight local reaction — WS broadcast must not clobber our optimistic state until own HTTP reconciles
   const pollVoteLocksRef = useRef(new Set()); // Per-poll-id mutex for vote requests
@@ -9701,6 +9702,13 @@ function ChatConversationInner() {
   };
 
   const currentEmail = user?.email || '';
+  // [FIX stale-currentEmail 2026-10-02] onViewableItemsChanged is created once
+  // via useRef().current, so it closes over currentEmail at FIRST render — when
+  // user?.email can still be '' — and would then read-ack our OWN messages
+  // (sender_email !== '' is always true). Keep a ref updated every render so the
+  // viewability filter always sees the live email.
+  const currentEmailRef = useRef(currentEmail);
+  currentEmailRef.current = currentEmail;
 
   // Rehydrate the live-location dup-session guard on mount / after messages
   // load. `liveLocActive` initializes to null and was NEVER restored, so after
@@ -11788,21 +11796,12 @@ function ChatConversationInner() {
         const raw = data?.message || data;
         if (!raw || !raw.id) return;
         if (String(raw.conversation_id ?? data?.conversation_id) !== String(conversationId)) return;
-        // Advance the pts watermark as soon as a new message arrives. Future
-        // chat_sync calls start from here, so we never re-fetch this row.
-        if (raw.conv_pts) {
-          // [2026-07-02] Advance only on a CONTIGUOUS pts. A non-contiguous jump
-          // means an earlier event (e.g. a reaction/read that broadcast to zero
-          // subscribers during a blip) was missed — advancing past it would skip
-          // it forever. Leaving the watermark low lets the next chat_sync backfill
-          // the gap; the message itself is already applied (dedup covers re-delivery).
-          try {
-            const _cs = require('../services/chatSync');
-            const _inc = Number(raw.conv_pts);
-            const _loc = _cs.getLastPts(conversationId) || 0;
-            if (_loc <= 0 || _inc <= _loc + 1) _cs.observePts(conversationId, _inc);
-          } catch {}
-        }
+        // [FIX pts-before-insert 2026-10-02] The pts watermark bump was MOVED
+        // down to AFTER processIncoming produces a valid msg (see below). It
+        // used to run here, at the top — but if processIncoming then failed and
+        // returned, the watermark had already advanced past a row that never
+        // rendered → silent permanent message loss. Advance only once we know
+        // the message will be applied.
         if (!_recvIdSet.current) _recvIdSet.current = new Set();
         // Dedup keys: both message id AND client_message_id (when present) —
         // WS + TCP dual-path can deliver the same message via different
@@ -11829,6 +11828,21 @@ function ChatConversationInner() {
           // marca depois que o processIncoming retornou um msg válido.
           let msg = processIncoming([raw])?.[0];
           if (!msg) return;
+          // Advance the pts watermark now that we have a valid, decrypted msg
+          // that WILL be inserted. Future chat_sync calls start from here so we
+          // never re-fetch this row. [2026-07-02] Advance only on a CONTIGUOUS
+          // pts — a non-contiguous jump means an earlier event (reaction/read
+          // broadcast to zero subscribers during a blip) was missed; advancing
+          // past it would skip it forever, so leave the watermark low and let
+          // the next chat_sync backfill the gap (dedup covers re-delivery).
+          if (raw.conv_pts) {
+            try {
+              const _cs = require('../services/chatSync');
+              const _inc = Number(raw.conv_pts);
+              const _loc = _cs.getLastPts(conversationId) || 0;
+              if (_loc <= 0 || _inc <= _loc + 1) _cs.observePts(conversationId, _inc);
+            } catch {}
+          }
           _addRecvId(idKey);
           // [FIX 2026-08-09 tick azul não aparece] Só o broadcast CANÔNICO (id
           // numérico) pode reivindicar o cidKey. Se o relay otimista (id 'tmp_')
@@ -12503,7 +12517,11 @@ function ChatConversationInner() {
         // this the bubble would flicker to "read" the moment we call the
         // backend even before the peer has actually seen it.
         if (data?._local) return;
-        if (String(data?.conversation_id) === String(conversationId) && data?.email !== currentEmail) {
+        // [FIX casing 2026-10-02] lowercase both sides — a server event echoing
+        // our own read with different email casing slipped past this guard and
+        // flipped our bubbles to false ✓✓-blue (the message_read path above was
+        // already hardened the same way).
+        if (String(data?.conversation_id) === String(conversationId) && (data?.email || '').toLowerCase() !== (currentEmail || '').toLowerCase()) {
           setReadReceipts(prev => {
             const newId = Number(data.last_read_id) || 0;
             const existing = prev.find(rr => rr.email === data.email);
@@ -12905,18 +12923,6 @@ function ChatConversationInner() {
         const _cidKey = _rawCid ? 'c:' + String(_rawCid) : null;
         if (_recvIdSet.current.has(_idKey)) return;
         if (_cidKey && _recvIdSet.current.has(_cidKey)) return;
-        // Advance pts watermark so chat_sync doesn't re-fetch this event
-        // (the WS handler above does this too; TCP was silently missing it).
-        if (msg.conv_pts) {
-          // [2026-07-02] Contiguous-only advance (see WS path above) — skip the
-          // watermark bump on a gap so the next chat_sync backfills missed events.
-          try {
-            const _cs = require('../services/chatSync');
-            const _inc = Number(msg.conv_pts);
-            const _loc = _cs.getLastPts(conversationId) || 0;
-            if (_loc <= 0 || _inc <= _loc + 1) _cs.observePts(conversationId, _inc);
-          } catch {}
-        }
         // ★ Decrypt + normalize for native view. Mirror the WS path: process
         // FIRST and only mark the id in the dedup set AFTER a valid msg comes
         // back. The old order added _idKey BEFORE processIncoming (and indexed
@@ -12926,8 +12932,25 @@ function ChatConversationInner() {
         const m2 = processIncoming([msg])?.[0];
         if (!m2) return;
         msg = m2;
+        // [FIX pts-before-insert 2026-10-02] Advance the pts watermark only now
+        // that we have a valid msg that WILL be inserted — bumping it at the top
+        // (before processIncoming, as it used to) advanced past rows that failed
+        // to decrypt and never rendered → silent permanent message loss.
+        // [2026-07-02] Contiguous-only advance (see WS path) — skip the bump on
+        // a gap so the next chat_sync backfills missed events.
+        if (msg.conv_pts) {
+          try {
+            const _cs = require('../services/chatSync');
+            const _inc = Number(msg.conv_pts);
+            const _loc = _cs.getLastPts(conversationId) || 0;
+            if (_loc <= 0 || _inc <= _loc + 1) _cs.observePts(conversationId, _inc);
+          } catch {}
+        }
         _addRecvId(_idKey);
-        if (_cidKey) _addRecvId(_cidKey);
+        // [FIX 2026-10-02] Mirror the WS guard: a tmp_ relay id must NOT claim
+        // the cid, or the canonical broadcast hits the _cidKey early-return
+        // before the tmp_→numeric upgrade — bubble stuck at tmp_, no receipt.
+        if (_cidKey && !_idKey.startsWith('tmp_')) _addRecvId(_cidKey);
         // Soft pop sound for incoming messages from OTHER users (not own echo)
         const isFromOther = msg.sender_email && msg.sender_email !== user?.email;
         const tcpClientMsgIdOuter = msg.client_message_id || msg._client_id || data?.client_message_id || data?._client_id;
@@ -13076,7 +13099,11 @@ function ChatConversationInner() {
       const onChatRead = (data) => {
         if (!mountedRef.current) return;
         if (String(data?.conversation_id) !== String(conversationId)) return;
-        if (data?.email !== currentEmail) {
+        // [FIX 2026-10-02] Mirror the WS chat_read path: ignore our own locally
+        // emitted read, and lowercase both sides so a casing mismatch on our own
+        // email doesn't flip our bubbles to false ✓✓-blue.
+        if (data?._local) return;
+        if ((data?.email || '').toLowerCase() !== (currentEmail || '').toLowerCase()) {
           setReadReceipts(prev => {
             const newId = Number(data.last_read_id) || 0;
             const existing = prev.find(rr => rr.email === data.email);
@@ -19738,7 +19765,7 @@ function ChatConversationInner() {
       let maxVisibleId = 0;
       for (const v of viewableItems) {
         const m = v?.item;
-        if (m && !m._type && typeof m.id === 'number' && m.sender_email !== currentEmail) {
+        if (m && !m._type && typeof m.id === 'number' && m.sender_email !== currentEmailRef.current) {
           if (m.id > maxVisibleId) maxVisibleId = m.id;
         }
       }
@@ -25408,7 +25435,15 @@ function ChatConversationInner() {
             <TextInput
               ref={searchInputRef}
               value={searchQuery}
-              onChangeText={(q) => handleSearchMessages(q, searchFilters)}
+              onChangeText={(q) => {
+                // [2026-10-02] texto atualiza na hora (responsivo); a busca
+                // pesada (filtro local + FTS SQLite + round-trip servidor)
+                // roda com debounce de 250ms pra não disparar a cada tecla.
+                setSearchQuery(q);
+                if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+                if (!q.trim()) { setSearchResults([]); setSearchIdx(0); return; }
+                searchDebounceRef.current = setTimeout(() => handleSearchMessages(q, searchFilters), 250);
+              }}
               placeholder={t('chatConv.searchPlaceholder') || t('chat.searchPlaceholder') || 'Search messages...'}
               placeholderTextColor={colors.textTertiary}
               style={{ flex: 1, fontSize: 14, color: colors.text, paddingVertical: 6, paddingHorizontal: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', borderRadius: 18 }}

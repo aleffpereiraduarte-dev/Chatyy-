@@ -488,9 +488,6 @@ const ConversationRow = React.memo(function ConversationRow({
         : `${typingNames.slice(0, 2).join(', ')} +${typingNames.length - 2}`)
     : null;
 
-  let preview = '';
-  let previewSender = null;
-  let statusType = null;
   // Scheduled-message indicator: surface a tiny clock prefix on the row when
   // there's a pending scheduled outgoing message. Backend may attach this on
   // the conversation row directly or on lastMsg under a few different keys —
@@ -501,9 +498,18 @@ const ConversationRow = React.memo(function ConversationRow({
     conversation.scheduled_message ||
     (lastMsg && (lastMsg.scheduled_at || lastMsg.is_scheduled))
   );
-  if (typingName) {
-    preview = '';
-  } else if (lastMsg) {
+  // [perf] Memoize the preview/caption derivation — unmemoized it ran
+  // JSON.parse (2-3×) + ~7 regex passes PER ROW on every list-wide re-render
+  // (presence tick, selection toggle, theme flip), dominating the JS profile
+  // on 200-row lists. typingName is deliberately NOT a dep: while a peer is
+  // typing the render shows the typing branch and never reads preview/
+  // previewSender/statusType (the receipt icon only renders in the non-typing
+  // branch), so deriving purely from lastMsg yields byte-identical output.
+  const { preview, previewSender, statusType } = useMemo(() => {
+    let preview = '';
+    let previewSender = null;
+    let statusType = null;
+    if (lastMsg) {
     if ((lastMsg.sender_email || '').toLowerCase() === _me) {
       // Defense-in-depth for group read receipts: only paint the blue
       // double-check ('read') in a group when the backend confirms EVERY
@@ -652,7 +658,9 @@ const ConversationRow = React.memo(function ConversationRow({
     } else {
       preview = content;
     }
-  }
+    }
+    return { preview, previewSender, statusType };
+  }, [lastMsg, isGroup, isChannel, _me, t]);
 
   // ── Swipe with refs for fresh props ──
   const translateX = useRef(new Animated.Value(0)).current;
@@ -2928,9 +2936,13 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const [selectionMode, setSelectionMode] = useState(false);
   // Memoize FlatList extraData so it doesn't get a fresh object every render.
   // Was a perf gap — every keystroke / presence event re-invalidated row diffs.
+  // presenceVersion is intentionally NOT in extraData: it bumps every ~45s on
+  // the presence poll and, when carried here, forced a full FlashList re-render
+  // list-wide every cycle (visible flicker + wasted work). Rows already read
+  // live presence through presencesRef, so dropping it costs no correctness.
   const extraDataMemo = React.useMemo(
-    () => ({ typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, presenceVersion, socketUp }),
-    [typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, presenceVersion, socketUp]
+    () => ({ typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, socketUp }),
+    [typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, socketUp]
   );
   const [selectedIds, setSelectedIds] = useState(new Set());
   // Contact-discovery banner (WhatsApp pattern: surface "X amigos no Chatyy"
@@ -3151,7 +3163,37 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         // archived) — O(n) doubled per refresh. Now single O(n) loop.
         const _active = []; const _arch = [];
         for (const c of convs) (c.archived ? _arch : _active).push(c);
-        setConversations(_active);
+        // [fix P2] Merge instead of blind-replace. An optimistic message the
+        // user JUST sent can already sit in local list state with a
+        // last_message newer than this background snapshot (which raced the
+        // send). `setConversations(_active)` raw clobbered it → the row flashed
+        // back to the previous message. Keep whichever row carries the newer
+        // last message per id, and Math.max the unread so a concurrent bump
+        // isn't lost either.
+        setConversations(prev => {
+          if (!Array.isArray(prev) || prev.length === 0) return _active;
+          const prevById = new Map(prev.map(p => [p.id, p]));
+          return _active.map(c => {
+            const old = prevById.get(c.id);
+            if (!old) return c;
+            const oldLm = old.last_message || {};
+            const newLm = c.last_message || {};
+            // Prefer the newer last message: compare by message id when both
+            // are numeric (monotonic), else fall back to last_message_at
+            // (TEXT — lexical compare, per the created_at TEXT gotcha).
+            let keepOld;
+            if (typeof oldLm.id === 'number' && typeof newLm.id === 'number') {
+              keepOld = oldLm.id > newLm.id;
+            } else {
+              keepOld = String(old.last_message_at || '') > String(c.last_message_at || '');
+            }
+            const base = keepOld
+              ? { ...c, last_message: old.last_message, last_message_at: old.last_message_at }
+              : { ...c };
+            base.unread_count = Math.max(c.unread_count || 0, old.unread_count || 0);
+            return base;
+          });
+        });
         setArchivedConversations(_arch);
         cacheConversations(convs).catch(() => {});
         _saveNativeConversations(convs);
@@ -3227,6 +3269,16 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       if (isFresh()) { setLoading(false); setRefreshing(false); }
     }
   }, [searchText]);
+
+  // [fix P1] Hold the latest loadConversations in a ref so the WS-wiring effect
+  // can invoke it WITHOUT listing it as a dependency. loadConversations changes
+  // identity on every `searchText` keystroke (it closes over searchText); if
+  // the WS effect depended on it, each keystroke would tear down + rebuild all
+  // socket listeners (incl. the personal chat_user_{email} channel), dropping
+  // live messages and double-counting unread. Refresh the ref every render so
+  // callers still run the current logic while the effect mounts once/account.
+  const loadConvRef = useRef(null);
+  loadConvRef.current = loadConversations;
 
   useEffect(() => {
     // If we already painted from MMKV/native cache, do a silent sync
@@ -3318,6 +3370,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   // Throttled to once per 800ms to avoid double-fires from React Navigation transitions.
   const lastFocusRefreshRef = useRef(0);
   const lastConvsRef = useRef(null);
+  // [fix P2] Focus sync keeps its OWN fingerprint ref. It used to share
+  // lastConvsRef with the background fast-path sync, so after one path wrote a
+  // fingerprint the other would early-return on an IDENTICAL snapshot and skip
+  // its setState — e.g. the focus refresh silently no-op'd right after a
+  // background sync, leaving the Archived bucket stale on back-out.
+  const focusConvsRef = useRef(null);
   const loadConvSeqRef = useRef(0);
   useFocusEffect(
     useCallback(() => {
@@ -3332,9 +3390,14 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           // so we re-render when a new message arrives or unread count changes,
           // but skip the setState (and flicker) when nothing actually changed.
           const newFingerprint = convs.map(c => `${c.id}:${c.unread_count ?? 0}:${c.updated_at || c.last_message_at || ''}:${c.last_message?.id||''}:${c.last_message?.read_at?1:0}:${c.last_message?.delivered_at?1:0}`).join('|');
-          if (convs.length > 0 && newFingerprint !== lastConvsRef.current) {
-            lastConvsRef.current = newFingerprint;
-            setConversations(convs.filter(c => !c.archived));
+          if (convs.length > 0 && newFingerprint !== focusConvsRef.current) {
+            focusConvsRef.current = newFingerprint;
+            // Refresh BOTH buckets — back-out from an archived chat must repaint
+            // the Archived list too (was only ever updating the active list).
+            const _active = []; const _arch = [];
+            for (const c of convs) (c.archived ? _arch : _active).push(c);
+            setConversations(_active);
+            setArchivedConversations(_arch);
             cacheConversations(convs).catch(() => {});
           }
         }
@@ -3495,8 +3558,8 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // Dedup: the SAME inbound message arrives as BOTH `chat_message` (Go
       // relay) AND `chat_summary` (PHP fan-out), both wired to this handler.
       // Without id-dedup the unread badge bumped +2 per received message.
-      // Keyed on message id; evicted wholesale when it grows past ~1000 so it
-      // never leaks unbounded for the subscription's lifetime.
+      // Keyed on message id; bounded with FIFO eviction (oldest id dropped)
+      // past ~1000 so it never leaks unbounded for the subscription's lifetime.
       const _listRecvIds = new Set();
       // Handler shared between `chat_message` (self or sender's other-device
       // broadcast) and `chat_summary` (per-user fan-out from the new
@@ -3511,7 +3574,17 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         if (_recvId != null) {
           const _rk = String(_recvId);
           if (_listRecvIds.has(_rk)) return;
-          if (_listRecvIds.size > 1000) _listRecvIds.clear();
+          // [fix P3] FIFO eviction, not a wholesale .clear(). Clearing the
+          // whole set at the 1000 boundary dropped EVERY remembered id, so a
+          // chat_message/chat_summary pair for the same message straddling the
+          // boundary (first seen just before the flush, second just after)
+          // slipped the dedup and double-counted the unread. Dropping only the
+          // oldest id keeps the recent window intact. Set preserves insertion
+          // order, so the first key is the oldest.
+          if (_listRecvIds.size >= 1000) {
+            const _oldest = _listRecvIds.values().next().value;
+            if (_oldest !== undefined) _listRecvIds.delete(_oldest);
+          }
           _listRecvIds.add(_rk);
         }
         // Task #886 — auto-download voice notes the instant the WS event lands,
@@ -3687,7 +3760,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
               // just added to a group OR the cache is stale. Insert an
               // optimistic placeholder at the top so the bubble appears
               // immediately, then refetch to fill in members/avatar/etc.
-              loadConversations(false);
+              loadConvRef.current?.(false);
               const senderLc = String(data.sender_email || data.sender || '').toLowerCase();
               const meLc = String(user?.email || '').toLowerCase();
               const placeholder = {
@@ -4007,7 +4080,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           setSocketUp(true);
           hasAuthedThisSession = true;
           if (!wasConnected) {
-            try { loadConversations(false); } catch {}
+            try { loadConvRef.current?.(false); } catch {}
             // [#1211 2026-05-19] PHONE-FIRST CATCH-UP: pull every event missed
             // for known convs since their last-seen pts and let chatSync
             // mirror the new_message hydrated rows into SQLite (the applyEvents
@@ -4144,14 +4217,14 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // arrived while WS was dead. Without this the list shows stale bubbles
       // until the user manually pulls to refresh.
       unsubs.push(mailWs.on('foreground', () => {
-        try { loadConversations(false); } catch {}
+        try { loadConvRef.current?.(false); } catch {}
       }));
       // silent_sync (background FCM hint) → refresh the list so a message
       // that landed while the app was suspended shows up the moment the
       // user opens the chat tab. Telegram does the same on background fetch.
       unsubs.push(mailWs.on('silent_sync', (data) => {
         if (data?.type && data.type !== 'chat') return;
-        try { loadConversations(false); } catch {}
+        try { loadConvRef.current?.(false); } catch {}
       }));
       // status_new — backend broadcasts this when ANY contact (or your own
       // other device) publishes a status. Triggers a load() so the new
@@ -4177,7 +4250,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         const now = Date.now();
         if (now - lastAppStateRefresh < 2000) return;
         lastAppStateRefresh = now;
-        try { loadConversations(false); } catch {}
+        try { loadConvRef.current?.(false); } catch {}
       };
       const appStateSub = AppState.addEventListener('change', _onAppStateChange);
       unsubs.push(() => { try { appStateSub?.remove?.(); } catch {} });
@@ -4192,7 +4265,11 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
         if (user?.email) mailWs.unsubscribe(`chat_user_${user.email}`);
       } catch {}
     };
-  }, [user?.email, loadConversations]);
+    // [fix P1] Depend ONLY on user?.email so this effect mounts once per
+    // account. loadConversations is reached through loadConvRef.current inside
+    // (it churns identity on every search keystroke); keeping it out of the
+    // deps stops the per-keystroke teardown/rebuild of all WS listeners.
+  }, [user?.email]);
 
   // WebSocket-based presence (single source of truth)
   useEffect(() => {
@@ -4324,6 +4401,14 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
     const last = _navLockRef.current;
     if (last && last.id === conv.id && (now - last.at) < 800) return;
     _navLockRef.current = { id: conv.id, at: now };
+    // [fix P2] Optimistically clear this conversation's unread badge the
+    // instant the user taps in — WhatsApp parity, no wait for the read-ack
+    // round-trip or the next list sync. The server read-ack + next delta sync
+    // reconcile the real count; if this was a locked-chat auth that gets
+    // cancelled the next focus sync restores the badge.
+    if ((conv.unread_count || 0) > 0) {
+      setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, unread_count: 0 } : c));
+    }
     // Haptic click on row-open — WhatsApp pattern, confirms the tap took.
     haptic.select();
 
