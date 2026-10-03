@@ -1906,7 +1906,11 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
                 const handle = p.v.replace(/^@/, '').trim();
                 if (!handle) return;
                 if (handle.includes('@')) {
-                  routerProp?.push({ pathname: '/chat-conversation', params: { email: handle, type: 'direct' } });
+                  // [2026-10-02] replace (não push): abrir outro chat de DENTRO
+                  // do chat empilhava telas /chat-conversation → ao arrastar de
+                  // volta apareciam "várias janelas de chat". replace mantém só
+                  // 1 chat na pilha (back vai direto pra lista, igual WhatsApp).
+                  routerProp?.replace({ pathname: '/chat-conversation', params: { email: handle, type: 'direct' } });
                 } else {
                   routerProp?.push({ pathname: '/profile', params: { handle } });
                 }
@@ -28336,7 +28340,9 @@ function ChatConversationInner() {
                         safeAlert(t('common.error') || 'Erro', t('chatConv.replyPrivatelyFailed') || 'Não foi possível abrir a conversa.');
                         return;
                       }
-                      router.push({
+                      // [2026-10-02] replace (não push) — ver nota do @mention:
+                      // evita empilhar telas de chat ao trocar de conversa.
+                      router.replace({
                         pathname: '/chat-conversation',
                         params: {
                           id: newId,
