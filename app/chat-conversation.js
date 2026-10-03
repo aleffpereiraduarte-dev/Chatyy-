@@ -12902,6 +12902,30 @@ function ChatConversationInner() {
       // Set initial connection state - keep true to avoid showing banner on mount
       // Banner will only show after a real disconnect event
       if (mailWs.isConnected) setWsConnected(true);
+
+      // [2026-10-03] WATCHDOG anti-"Conectando preso". O wsConnected só volta a
+      // TRUE quando chega um evento 'authenticated' NOVO. Se o socket JÁ estava
+      // autenticado (navegou pro chat com o socket up) e um 'disconnected'
+      // espúrio (flap de rede, foreground, troca de tela) deixou wsConnected=false,
+      // nenhum 'authenticated' novo é emitido → o banner "Conectando" ficava preso
+      // pra sempre mesmo com o socket 100% saudável (provado: servidor autentica
+      // em ~167ms). A cada 2.5s reconcilia com o estado REAL do socket:
+      //   • autenticado de verdade → destrava o banner na hora;
+      //   • morto/sem auth → resurrect() (idempotente) força reconectar.
+      const _wsWatchdog = setInterval(() => {
+        if (!mountedRef.current) return;
+        try {
+          if (mailWs.authenticated && mailWs.isConnected) {
+            if (!wsConnectedRef.current) {
+              if (wsDisconnectTimerRef.current) { clearTimeout(wsDisconnectTimerRef.current); wsDisconnectTimerRef.current = null; }
+              setWsConnected(true); wsConnectedRef.current = true; hasEverConnectedRef.current = true;
+            }
+          } else {
+            try { mailWs.resurrect && mailWs.resurrect('chat-conectando-watchdog'); } catch {}
+          }
+        } catch {}
+      }, 2500);
+      wsUnsubs.push(() => clearInterval(_wsWatchdog));
     } catch {}
 
     // TCP listeners — guaranteed delivery via Signal Server (binary protocol)
