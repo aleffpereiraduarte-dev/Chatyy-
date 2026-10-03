@@ -3097,7 +3097,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // [2026-06-04] usava api.chatPin(id) — esse action fixa MENSAGEM (exige
       // message_id) → 400 silencioso e o bulk-pin nunca fixava nada (caçada
       // R2). Fixar CONVERSA é chat_pin_conversation (igual handlePinConversation).
-      try { await api.apiCall('chat_pin_conversation', { conversation_id: id }, 'POST'); } catch {}
+      try { await api.apiCall('chat_pin_conversation', { conversation_id: id, pinned: true }, 'POST'); } catch {}
     }
     loadConversations(false);
     exitSelectionMode();
@@ -4597,11 +4597,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       // conversation to top of the list we need chat_pin_conversation which
       // in email.php maps to the chat_favorite/chat_pin_conversation case.
       if (displaceId) {
-        // Server-side toggle for the displaced row first, so when the
-        // refetch lands below it reflects the new ordering.
-        try { await api.apiCall('chat_pin_conversation', { conversation_id: displaceId }, 'POST'); } catch {}
+        // Displaced row is always being UNpinned → explicit pinned:false
+        // (set, não toggle — ver backend 2026-10-03; toggle cego perdia o pin).
+        try { await api.apiCall('chat_pin_conversation', { conversation_id: displaceId, pinned: false }, 'POST'); } catch {}
       }
-      await api.apiCall('chat_pin_conversation', { conversation_id: conv.id }, 'POST');
+      // Explicit intent (willPin) — idempotente, não vira fixa→desfixa num re-disparo.
+      await api.apiCall('chat_pin_conversation', { conversation_id: conv.id, pinned: willPin }, 'POST');
       loadConversations(false);
     } catch {
       // Revert optimistic toggles on error.
