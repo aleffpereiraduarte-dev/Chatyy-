@@ -18653,16 +18653,17 @@ function ChatConversationInner() {
       // the rich screen renders. NativeCallRoom keeps the LK Room alive;
       // /call.js adopts it via adoptNativeRoom on mount. Android keeps
       // native CallActivity for now.
-      // [2026-10-02 founder: "no iOS a ligação abre 2 telas empilhadas"] FIX:
-      // no iOS de SAÍDA o nativo JÁ apresenta a CallViewController
-      // (presentOutgoingCallVC) — empurrar a /call.js por cima dava DUAS telas
-      // empilhadas. Igual já é no ATENDER (native-only), a saída agora também é
-      // só nativa: NÃO fazemos _jsRoute no iOS. (Web continua via onWebFallback;
-      // Android segue na CallActivity nativa.) O fix "correto" de suprimir a VC
-      // nativa (suppressVCPresent) é build nativo — essa é a mitigação por OTA
-      // que o founder escolheu (manter a nativa).
+      // [2026-10-02 REVERT] Tentei tirar a /call.js do iOS de SAÍDA pra matar a
+      // tela dupla — MAS o áudio de QUEM LIGA depende da /call.js: ela é que
+      // configura a LiveKit AudioSession no iOS pro caller (call.js ~1445:
+      // skipLKAudioSession só é true pra !isCaller). Sem a /call.js o caller
+      // conectava SEM ÁUDIO ("não dá pra escutar nada quando conecta"). Então a
+      // /call.js VOLTA no iOS de saída (áudio > tela limpa). A tela dupla é
+      // cosmética; o fix correto (1 tela + áudio) = BUILD NATIVO: ou o nativo
+      // configura a AudioSession no outgoing (igual faz no answer), ou
+      // suppressVCPresent=true mantendo a /call.js como UI.
       if (native && Platform.OS === 'ios' && outCallId) {
-        // intencionalmente sem _jsRoute — a CallViewController nativa é a UI.
+        _jsRoute(outCallId);
       }
       // native=false is expected when foreground mobile takes the JS path
       // OR on web. Only surface an error when native genuinely failed
