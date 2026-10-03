@@ -1746,7 +1746,18 @@ function handleNotificationNavigation(data) {
       // Derive conv type from is_group so a group push doesn't open in direct
       // mode (wrong header/membership affordances on first paint).
       const convType = (data.is_group === true || data.is_group === 'true' || data.is_group === 1 || data.is_group === '1') ? 'group' : 'direct';
-      router.push(`/chat-conversation?id=${data.conversation_id}${nameParam}${emailParam}&type=${convType}`);
+      const _convTarget = `/chat-conversation?id=${data.conversation_id}${nameParam}${emailParam}&type=${convType}`;
+      // [2026-10-02] Tocar na notificação com um chat JÁ aberto empurrava uma
+      // 2ª tela /chat-conversation por cima → ao voltar precisava voltar 2×
+      // (founder). Se já há um chat aberto, REPLACE (troca a tela, back vai
+      // direto pra lista); se já é o MESMO chat, não faz nada; só faz push
+      // quando não há chat aberto (lista/outra tela → back volta pra origem).
+      if (_activeConversationId != null) {
+        if (String(_activeConversationId) === String(data.conversation_id)) return;
+        router.replace(_convTarget);
+      } else {
+        router.push(_convTarget);
+      }
       return;
     }
     // Voicemail deep-link — tapping a "X left you a voicemail" push lands on
