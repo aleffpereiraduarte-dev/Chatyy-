@@ -590,7 +590,17 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
             if (!kid || kid > mid) continue;
             if (String(next[k]?.sender_email || '').toLowerCase() === actor) continue;
             if (next[k].read_at) continue;
-            next[k] = { ...next[k], read_at: ev.created_at, _readStatus: 2 };
+            // [2026-10-04] Lido implica ENTREGUE — marca _delivered/delivered_at
+            // junto do read. O renderer agora exige entrega p/ pintar azul (mata
+            // azul falso em msg não-entregue), então leitura REAL do peer precisa
+            // carregar a entrega também, senão ficaria cinza.
+            next[k] = {
+              ...next[k],
+              read_at: ev.created_at,
+              _delivered: true,
+              delivered_at: next[k].delivered_at || ev.created_at,
+              _readStatus: 2,
+            };
           }
           break;
         }

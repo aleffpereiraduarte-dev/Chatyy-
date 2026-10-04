@@ -18,17 +18,21 @@
 //   - "Storage upgrade" upsell tiles
 //   - Diamond balance chips in headers
 // Flip to `true` (and republish OTA) to bring all of it back instantly.
-export const MONETIZATION_ENABLED = false;
+// [2026-10-04 monetização LIGADA — storage pago via Stripe/cartão] Split
+// granular: storage plans + Stripe/cartão ON; IAP OFF (produtos ASC/Play ainda
+// nos preços antigos → cobraria errado; liga quando o founder atualizar a loja);
+// diamonds/wallet OFF até polir.
+export const MONETIZATION_ENABLED = true;
 
-// Convenience aliases that read better at call sites. All resolve to the
-// same flag today but exist so future granular splits (e.g. enable Plans
-// but not Diamonds) are a one-line change here, not 30 grep-and-replace.
-export const WALLET_ENABLED       = MONETIZATION_ENABLED;
-export const DIAMONDS_ENABLED     = MONETIZATION_ENABLED;
-export const PLANS_ENABLED        = MONETIZATION_ENABLED;
-export const IAP_ENABLED          = MONETIZATION_ENABLED;
-export const STRIPE_ENABLED       = MONETIZATION_ENABLED;
-export const PREMIUM_BADGES_VISIBLE = MONETIZATION_ENABLED;
+export const WALLET_ENABLED       = false;
+export const DIAMONDS_ENABLED     = false;
+export const PLANS_ENABLED        = true;
+export const IAP_ENABLED          = false;
+export const STRIPE_ENABLED       = true;
+// Checkout Stripe de ARMAZENAMENTO: so ligar apos o backend stripe_checkout
+// aceitar kind:'storage' + tier/period e o webhook chamar setStorageTier().
+export const STRIPE_STORAGE_CHECKOUT = false;
+export const PREMIUM_BADGES_VISIBLE = true;
 
 // Helper: lets components default to "free" semantics when a feature is
 // gated off. `requireMonetization` returns true when paid features should

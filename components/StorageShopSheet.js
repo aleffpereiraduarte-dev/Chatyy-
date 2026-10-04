@@ -15,6 +15,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { STORAGE_TIERS, purchaseStorage, getStorageLocalizedPrice } from '../services/iap';
 import { getBaseUrl } from '../services/api';
+import { startStripeCheckout, openStripePortal, isStripeCardAvailable, isStripeStorageCheckoutAvailable } from '../services/stripeCheckout';
 import { IconX, IconCloud } from './Icons';
 
 function formatBrl(v) {
@@ -84,6 +85,30 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
       setPendingTier(null);
     }
   }, [pendingTier, cycle, t, onClose]);
+
+  // Cartao via Stripe hospedado: SO Android/web (iOS = IAP, regra da Apple).
+  const onPayCard = useCallback(async (tier) => {
+    if (pendingTier) return;
+    setPendingTier(tier.id);
+    try {
+      const r = await startStripeCheckout(tier.id, cycle);
+      if (!r?.success) {
+        Alert.alert(t('common.error') || 'Erro', t('storage.cardFailed') || 'Não foi possível abrir o pagamento com cartão. Tente novamente em instantes.');
+      }
+    } finally {
+      setPendingTier(null);
+    }
+  }, [pendingTier, cycle, t]);
+
+  const onManageCard = useCallback(async () => {
+    const r = await openStripePortal();
+    if (!r?.success) {
+      Alert.alert(t('common.error') || 'Erro', t('storage.portalFailed') || 'Nenhuma assinatura com cartão encontrada.');
+    }
+  }, [t]);
+
+  const showCard = isStripeStorageCheckoutAvailable();
+  const showPortal = isStripeCardAvailable();
 
   const tiers = useMemo(() => STORAGE_TIERS, []);
 
@@ -185,10 +210,29 @@ export default function StorageShopSheet({ visible, onClose, currentTier = 'free
                       <Text style={styles.buyBtnText}>{t('storage.choose') || 'Escolher'}</Text>
                     </View>
                   ) : null}
+                  {showCard && !pending && !isCurrent && (
+                    <TouchableOpacity
+                      onPress={() => onPayCard(tier)}
+                      style={[styles.cardBtn, { borderColor: colors.tint || '#0a84ff' }]}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={[styles.cardBtnText, { color: colors.tint || '#0a84ff' }]}>
+                        {t('storage.payCard') || 'Pagar com cartão'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </TouchableOpacity>
               );
             })}
           </ScrollView>
+
+          {showPortal && (
+            <TouchableOpacity onPress={onManageCard} style={{ alignSelf: 'center', paddingVertical: 8 }}>
+              <Text style={{ color: colors.tint || '#0a84ff', fontSize: 14, fontWeight: '600' }}>
+                {t('storage.manageCard') || 'Gerenciar cartão / assinatura'}
+              </Text>
+            </TouchableOpacity>
+          )}
 
           <Text style={[styles.foot, { color: colors.muted }]}>
             {t('storage.cancelAnytime') || 'Cancele quando quiser. Assinatura renova automaticamente.'}
@@ -228,5 +272,7 @@ const styles = StyleSheet.create({
   badgeText: { color: '#fff', fontSize: 11, fontWeight: '700' },
   buyBtn: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10 },
   buyBtnText: { color: '#fff', fontSize: 14, fontWeight: '700' },
+  cardBtn: { marginLeft: 8, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 10, borderWidth: 1.5 },
+  cardBtnText: { fontSize: 12, fontWeight: '700' },
   foot: { fontSize: 12, textAlign: 'center', marginTop: 8 },
 });

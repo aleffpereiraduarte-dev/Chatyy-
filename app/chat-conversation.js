@@ -758,9 +758,15 @@ function computeTickState(msg, opts = {}) {
   } else {
     // DIRECT: confia APENAS no peer. read_at/read_by são carimbo do servidor;
     // o watermark já exclui o próprio e-mail (ver _enrichedMessagesBase).
-    // Sinal FORTE por-mensagem (read_at/read_by do peer) → azul direto.
-    if (peerReadAt) return 2;
+    // [AZUL FALSO à prova de bala v2 2026-10-04] LIDO EXIGE ENTREGUE em TODOS os
+    // caminhos — inclusive o peerReadAt (read_at/read_by). Uma msg que o peer
+    // NEM RECEBEU (delivered_at/delivered_to NULL) não pode estar lida, por mais
+    // que um read_at bogus tenha sido carimbado (ex: eco do delta-sync no
+    // open/close). Leitura REAL sempre vem com entrega (o servidor e o sync
+    // marcam _delivered junto do read), então isto não deixa leitura legítima
+    // em cinza — só mata o azul em msg não-entregue.
     const idN = Number(msg.id);
+    if (peerReadAt && peerDelivered) return 2;
     // [AZUL FALSO à prova de bala 2026-10-04] O watermark é um AGREGADO que um
     // evento bogus pode inflar (provado: banco diz higorlima leu só até 11638 e
     // minhas msgs 11644+ têm delivered_at/read_at NULL, mas o balão ficava azul).

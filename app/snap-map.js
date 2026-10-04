@@ -1999,40 +1999,10 @@ export default function SnapMapScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Empty state */}
-        {!loading && shares.length === 0 && (
-          <View pointerEvents="box-none" style={{ position: 'absolute', top: 60, left: 0, right: 0, alignItems: 'center' }}>
-            <View style={{ backgroundColor: 'rgba(0,0,0,0.78)', padding: 22, borderRadius: 18, maxWidth: 320, marginHorizontal: 16 }}>
-              <IconMapPin size={36} color="#fff" style={{ alignSelf: 'center' }} />
-              <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', textAlign: 'center', marginTop: 12 }}>
-                {t?.('snapmap.empty') || 'Nenhum amigo dividindo localização'}
-              </Text>
-              <Text style={{ color: 'rgba(255,255,255,0.82)', fontSize: 13, textAlign: 'center', marginTop: 6, lineHeight: 18 }}>
-                {t?.('snapmap.emptyHint') || 'Peça pra um amigo no chat compartilhar a localização ao vivo, ou ative o seu para eles te verem aqui.'}
-              </Text>
-              <View style={{ flexDirection: 'row', gap: 8, marginTop: 14, alignSelf: 'center' }}>
-                <TouchableOpacity
-                  onPress={refreshShares}
-                  style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.16)' }}
-                  accessibilityLabel={t?.('common.refresh') || 'Atualizar'}
-                >
-                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
-                    {refreshing ? '…' : (t?.('common.refresh') || 'Atualizar')}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  onPress={() => router.push('/chat-new')}
-                  style={{ paddingHorizontal: 14, paddingVertical: 8, borderRadius: 16, backgroundColor: '#111111' }}
-                  accessibilityLabel={t?.('snapmap.inviteFriend') || 'Convidar amigo'}
-                >
-                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>
-                    {t?.('snapmap.inviteFriend') || 'Convidar amigo'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        )}
+        {/* [2026-10-04 founder] Card de "Nenhum amigo dividindo localização"
+            REMOVIDO — ficava flutuando feio sobre o mapa. Mapa limpo quando
+            ninguém está compartilhando; o banner "Compartilhando com…" e os
+            controles já dão o contexto. */}
 
         {/* Apple Find-My-style friends list panel —
             Bottom-pinned sheet that lists every friend currently sharing
