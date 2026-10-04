@@ -542,8 +542,13 @@ const ConversationRow = React.memo(function ConversationRow({
       // authoritative, so DMs keep the existing behavior. If all_read isn't
       // present yet (older backend), a group caps at 'delivered' instead of
       // wrongly showing blue — never regresses DM.
-      if (lastMsg.read_at && (!isGroup || lastMsg.all_read)) statusType = 'read';
-      else if (lastMsg.delivered_at || lastMsg.read_at) statusType = 'delivered';
+      // [2026-10-04] CONSISTENTE COM O CHAT (computeTickState): LIDO EXIGE
+      // ENTREGUE. Azul só quando read_at E delivered_at (uma msg não entregue
+      // não pode estar lida — matava o azul falso no chat, agora igual na lista).
+      // Leitura real sempre vem com entrega (servidor + WS marcam junto).
+      const _deliv = !!lastMsg.delivered_at;
+      if (lastMsg.read_at && _deliv && (!isGroup || lastMsg.all_read)) statusType = 'read';
+      else if (_deliv) statusType = 'delivered';
       else statusType = 'sent';
     }
 
