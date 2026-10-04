@@ -215,6 +215,9 @@ export default function ProfileEditSheet({
   const [bio, setBio] = useState('');
   const [website, setWebsite] = useState('');
   const [pronouns, setPronouns] = useState('');
+  // Recado (WhatsApp "about") — short status line. Persisted via the same
+  // update_profile action as the rest (backend whitelist includes `about`).
+  const [about, setAbout] = useState('');
   // Legacy professional info — proCategory/proContact still exist on
   // data.json, now gated by accountType (radio) instead of a switch.
   const [proCategory, setProCategory] = useState('');
@@ -252,6 +255,7 @@ export default function ProfileEditSheet({
     setBio(initial?.bio || '');
     setWebsite(initial?.website || '');
     setPronouns(initial?.pronouns || '');
+    setAbout(initial?.about || initial?.recado || '');
     setProCategory(initial?.proCategory || '');
     setProContact(initial?.proContact || '');
     // Profile-upgrade combo hydrate
@@ -432,6 +436,7 @@ export default function ProfileEditSheet({
     (bio || '') !== (initial?.bio || '') ||
     (website || '') !== (initial?.website || '') ||
     (pronouns || '') !== (initial?.pronouns || '') ||
+    (about || '') !== (initial?.about || initial?.recado || '') ||
     (proCategory || '') !== (initial?.proCategory || '') ||
     (proContact || '') !== (initial?.proContact || '') ||
     // Profile-upgrade combo dirty checks
@@ -481,6 +486,7 @@ export default function ProfileEditSheet({
         bio: bio.trim(),
         website: website.trim(),
         pronouns: pronouns.trim(),
+        about: about.trim(),
         proCategory: showPro ? proCategory.trim() : '',
         proContact: showPro ? proContact.trim() : '',
         // Profile-upgrade combo
@@ -491,7 +497,7 @@ export default function ProfileEditSheet({
       if (r?.success) {
         onSaved?.({
           name, username: cleanedUsername, bio, website,
-          pronouns,
+          pronouns, about: about.trim(),
           proCategory: showPro ? proCategory : '',
           proContact: showPro ? proContact : '',
           cover_url: coverUrl,
@@ -799,6 +805,54 @@ export default function ProfileEditSheet({
                 maxLength={120}
                 colors={colors}
               />
+
+              {/* Recado (WhatsApp "about") — quick presets + free text. Saved
+                  via the same update_profile action (field `about`). */}
+              <Row
+                label={t?.('profile.about') || 'Recado'}
+                value={about}
+                onChangeText={setAbout}
+                placeholder={t?.('profile.aboutPh') || 'Disponível'}
+                maxLength={139}
+                colors={colors}
+              />
+              <View style={{
+                flexDirection: 'row', flexWrap: 'wrap', gap: 8,
+                paddingHorizontal: 16, paddingTop: 10, paddingBottom: 4,
+              }}>
+                {[
+                  t?.('profile.aboutPresetAvailable') || 'Disponível',
+                  t?.('profile.aboutPresetBusy') || 'Ocupado',
+                  t?.('profile.aboutPresetUrgent') || 'Só urgências',
+                  t?.('profile.aboutPresetRush') || 'Na correria',
+                ].map((preset) => {
+                  const selected = (about || '').trim() === preset;
+                  return (
+                    <TouchableOpacity
+                      key={preset}
+                      onPress={() => setAbout(preset)}
+                      activeOpacity={0.75}
+                      style={{
+                        paddingHorizontal: 12, paddingVertical: 7, borderRadius: 16,
+                        borderWidth: 1,
+                        borderColor: selected ? '#111111' : (colors?.border || 'rgba(0,0,0,0.12)'),
+                        backgroundColor: selected
+                          ? (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.06)')
+                          : 'transparent',
+                      }}
+                      accessibilityRole="button"
+                    >
+                      <Text style={{
+                        fontSize: 13,
+                        fontWeight: selected ? '700' : '500',
+                        color: selected ? (colors?.text || '#111111') : (colors?.textSecondary || '#6b7280'),
+                      }}>
+                        {preset}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
 
               {/* Multi-link section — up to 5 link-in-bio chips that render
                   below the bio on the public profile. Each row: label (left,

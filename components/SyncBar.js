@@ -115,8 +115,8 @@ export default function SyncBar() {
     // socket had any chance to connect silently).
     const scheduleConnecting = () => {
       clearTimeout(graceTimer.current);
-      // Already authed? nothing to announce.
-      if (mailWs?.authenticated) return;
+      // Already authed? nothing to announce — and clear any stale offline bar.
+      if (mailWs?.authenticated) { if (statusRef.current === 'offline') hide(); return; }
       const grace = hasConnectedOnceRef.current ? (Platform.OS === 'web' ? 5000 : 3000) : 12000;
       graceTimer.current = setTimeout(() => {
         if (!mountedRef.current || mailWs?.authenticated) return;
@@ -227,6 +227,7 @@ export default function SyncBar() {
     //   device → online  : if WS already authed, hide; else "Conectando…"
     //                       (server now reachable — we're retrying the WS).
     let netUnsub;
+    let offlineDebounce;
     if (Platform.OS === 'web') {
       const onOff = () => { clearTimeout(graceTimer.current); deviceOnlineRef.current = false; show('offline'); };
       const onOn = () => {
@@ -256,22 +257,53 @@ export default function SyncBar() {
           // but a hard false (connected to wifi w/ no internet) IS offline.
           const online = !!st.isConnected && st.isInternetReachable !== false;
           deviceOnlineRef.current = online;
-          if (!online) { clearTimeout(graceTimer.current); show('offline'); }
-          else if (mailWs?.authenticated) hide();
-          // [2026-10-01] WAS `show('connecting')` — NetInfo fires this listener
-          // immediately on subscribe (cold-start mount) with online=true and
-          // WS not yet authed, which painted "Conectando" instantly every open.
-          // Funnel through the grace timer instead so the cold-start handshake
-          // (1-5s) stays silent and only a genuinely stuck connect surfaces.
-          else scheduleConnecting();
+          if (!online) {
+            // [false-offline fix 2026-10-03] NetInfo's reachability probe
+            // (Google generate_204) false-negatives on good wifi: isInternet-
+            // Reachable comes back `false` while the socket is perfectly
+            // healthy, and the RED "Sem internet" then STUCK because no further
+            // NetInfo event arrived and nothing re-checked. Debounce the banner
+            // ~4s and, at fire time, suppress it when the WS is actually
+            // authenticated. Mirrors the OfflineNotice.js fix.
+            clearTimeout(graceTimer.current);
+            clearTimeout(offlineDebounce);
+            offlineDebounce = setTimeout(() => {
+              if (!mountedRef.current) return;
+              if (mailWs?.authenticated) { if (statusRef.current === 'offline') hide(); return; }
+              if (!deviceOnlineRef.current) show('offline');
+            }, 4000);
+          } else {
+            clearTimeout(offlineDebounce);
+            if (mailWs?.authenticated) hide();
+            // [2026-10-01] WAS `show('connecting')` — NetInfo fires this listener
+            // immediately on subscribe (cold-start mount) with online=true and
+            // WS not yet authed, which painted "Conectando" instantly every open.
+            // Funnel through the grace timer instead so the cold-start handshake
+            // (1-5s) stays silent and only a genuinely stuck connect surfaces.
+            else scheduleConnecting();
+          }
         });
       } catch {}
     }
+
+    // [false-offline fix 2026-10-03] "Live socket wins" safety poll: if the WS
+    // is authenticated but a stale 'offline' banner is still up (NetInfo never
+    // sent a recovery event — the classic stuck-banner case), clear it. Same
+    // 1s pattern OfflineNotice.js uses.
+    const socketPoll = setInterval(() => {
+      if (!mountedRef.current) return;
+      if (mailWs?.authenticated && statusRef.current === 'offline') {
+        deviceOnlineRef.current = true;
+        hide();
+      }
+    }, 1000);
 
     return () => {
       clearTimeout(graceTimer.current);
       clearTimeout(connectingTimeout.current);
       clearTimeout(syncStallTimer.current);
+      clearTimeout(offlineDebounce);
+      clearInterval(socketPoll);
       mailWs?.off?.('connection', handleConnection);
       mailWs?.off?.('sync_progress', handleSync);
       mailWs?.off?.('chat_bootstrap_progress', handleBootstrap);

@@ -2,6 +2,7 @@ package expo.modules.callkit
 
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
 import io.livekit.android.LiveKit
 import io.livekit.android.RoomOptions
@@ -64,6 +65,11 @@ object NativeCallRoom {
     @Volatile private var preconnectingCallId: String? = null
     @Volatile private var preconnectJob: Job? = null
 
+    // [P0 audio-drop fix 2026-10-04] Guards against starting the in-call
+    // foreground service more than once for the same accepted call (a repeated
+    // adoptForCall). Reset in clear(). See ensureForegroundServiceForWarmCall.
+    @Volatile private var fgsStartedForCallId: String? = null
+
     // SupervisorJob so a single event handler crash doesn't kill the whole
     // listener scope. Main dispatcher so emit* calls (which post to React
     // Native bridge) happen on the JS main thread.
@@ -84,6 +90,19 @@ object NativeCallRoom {
      *  AudioRecord actually exists. */
     private fun installHwAudioEffects(ctx: Context) {
         if (hwAudioEffects.isNotEmpty()) return // idempotent — already attached
+        // [double-AEC fix 2026-10-04] WhatsApp strategy — trust the HARDWARE AEC
+        // owned by LiveKit's JavaAudioDeviceModule (it enables the platform
+        // AEC/NS by default whenever the device supports them). Creating a SECOND
+        // platform AcousticEchoCanceler/NoiseSuppressor on the SAME WebRTC
+        // AudioRecord session put two cancellers in series → robotic/pumping
+        // voice on speakerphone. So when the platform HW AEC is available (the
+        // device module already engaged it) we DO NOT attach a manual canceller.
+        // The manual attach stays only as a FALLBACK for devices with no platform
+        // AEC (there the device module falls back to WebRTC's software AEC).
+        if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
+            Log.d(TAG, "installHwAudioEffects: platform HW AEC owned by device module — skipping manual attach (no double-AEC)")
+            return
+        }
         try {
             var sid = 0
             try {
@@ -141,6 +160,58 @@ object NativeCallRoom {
     private fun releaseHwAudioEffects() {
         for (fx in hwAudioEffects) { try { fx.release() } catch (_: Throwable) {} }
         hwAudioEffects.clear()
+    }
+
+    /**
+     * [P0 audio-drop fix 2026-10-04] The WARM accept path (preconnect →
+     * adoptForCall) returns WITHOUT launching CallActivity, so the in-call
+     * foreground service (CallOngoingService, FOREGROUND_SERVICE_TYPE_PHONE_CALL)
+     * and the AudioRouter were never set up — only the COLD path
+     * (CallActivity.onCreate) did it. Because preconnect almost always lands the
+     * Room before the Accept tap, the common case ran with NO foreground
+     * service → Android 14+ revokes the mic ~5s after the app goes to the
+     * background ("áudio cai ao minimizar"). This mirrors the cold-path setup
+     * on the warm branch: configure audio routing + start the phoneCall FGS.
+     *
+     * Idempotent — starts CallOngoingService at most once per [callId]. The
+     * cold path never runs after the warm branch's early return, so the FGS
+     * can't be started twice for one call. The service is torn down by the
+     * existing end-call cleanup (ExpoCallKitModule endCall / CallActionReceiver),
+     * which already stop CallOngoingService, so no new teardown is needed here.
+     */
+    private fun ensureForegroundServiceForWarmCall(
+        ctx: Context,
+        callId: String,
+        callerName: String,
+        hasVideo: Boolean,
+    ) {
+        val app = ctx.applicationContext
+        // Audio routing (earpiece for audio / speaker for video, BT hot-plug) —
+        // mirror CallActivity.onCreate's AudioRouter.configureForCall(hasVideo).
+        try {
+            expo.modules.callkit.audio.AudioRouter.get(app).configureForCall(hasVideo)
+        } catch (t: Throwable) {
+            Log.w(TAG, "warm FGS: AudioRouter.configureForCall failed: ${t.message}")
+        }
+        if (fgsStartedForCallId == callId) {
+            Log.d(TAG, "warm FGS: CallOngoingService already started for callId=$callId — skip")
+            return
+        }
+        try {
+            val svcIntent = Intent(app, CallOngoingService::class.java).apply {
+                putExtra(CallOngoingService.EXTRA_CALL_ID, callId)
+                putExtra(CallOngoingService.EXTRA_CALLER_NAME, callerName)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                app.startForegroundService(svcIntent)
+            } else {
+                app.startService(svcIntent)
+            }
+            fgsStartedForCallId = callId
+            Log.i(TAG, "warm FGS: CallOngoingService started (phoneCall) for callId=$callId")
+        } catch (t: Throwable) {
+            Log.w(TAG, "warm FGS: startForegroundService(CallOngoingService) failed: ${t.message}")
+        }
     }
 
     // ────────────── [CALL_E2EE, flag-gated, default OFF] ──────────────
@@ -368,6 +439,9 @@ object NativeCallRoom {
         preconnectJob?.cancel()
         preconnectJob = null
         preconnectingCallId = null
+        // [P0 audio-drop fix 2026-10-04] Allow the warm-path FGS to start again
+        // for the next call. The FGS itself is stopped by the end-call cleanup.
+        fgsStartedForCallId = null
         // [CALL_E2EE] Drop the staged shared key so it can't leak into a later
         // call that happens to reuse the same callId string. No-op when unset.
         try { ExpoCallKitModule.clearPendingE2EEKey(callId) } catch (_: Throwable) {}
@@ -761,6 +835,11 @@ object NativeCallRoom {
             // absent, matching legacy behavior.
             val prefs = ctx.getSharedPreferences("expo_callkit_prefs", Context.MODE_PRIVATE)
             val startMuted = prefs.getBoolean("pending_call_mic_muted", false)
+            // [P0 audio-drop fix 2026-10-04] Start the in-call foreground service
+            // + configure audio routing BEFORE publishing the mic. The warm path
+            // never reaches CallActivity (which owned this on the cold path), so
+            // without it Android 14+ kills the mic ~5s after backgrounding.
+            try { ensureForegroundServiceForWarmCall(ctx, callId, callerName, hasVideo) } catch (_: Throwable) {}
             try {
                 setMicEnabled(!startMuted)
                 if (hasVideo) setCameraEnabled(true)

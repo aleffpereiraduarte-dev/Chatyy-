@@ -1134,8 +1134,8 @@ export default function SignupPhone() {
                 {/* Confirmação: avisa por qual canal o código saiu (SMS ou ligação). */}
                 <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', marginTop: 10, lineHeight: 18 }}>
                   {sentVia === 'voice'
-                    ? (t('signupPhone.sentVoice') || 'Vamos te ligar e ler o código 📞')
-                    : (t('signupPhone.sentSms') || 'Enviamos um código por SMS 📱')}
+                    ? (t('signupPhone.sentVoice') || 'Vamos te ligar e ler o código')
+                    : (t('signupPhone.sentSms') || 'Enviamos um código por SMS')}
                 </Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
                   <Text style={{ fontSize: 12, color: colors.textTertiary }}>

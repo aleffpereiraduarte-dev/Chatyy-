@@ -279,15 +279,15 @@ export default function ComposeModal({ params, onClose }) {
   }, []);
 
   const handleClose = () => {
+    // Gmail parity: closing a compose silently saves a draft and closes — NO
+    // blocking window.confirm. The old confirm froze the single-threaded web
+    // renderer (~20s until dismissed/reload) and, when the window was
+    // minimized, made the X appear to do nothing. The draft save is
+    // fire-and-forget so a slow/hanging network request can't block the close
+    // either — no data is lost (content is persisted as a draft).
     const hasContent = to.length > 0 || subject.trim() || body.trim() || attachments.length > 0;
-    if (hasContent) {
-      if (Platform.OS === 'web') {
-        if (!window.confirm(t('compose.discardDraftConfirm'))) return;
-      }
-    }
-    // Save draft on close if has content
     if (hasContent && contentChangedRef.current) {
-      saveDraftRef.current();
+      try { saveDraftRef.current?.(); } catch {}
     }
     onClose();
   };

@@ -105,7 +105,7 @@ export default function LocationMessage({ content, isOwn, colors = {}, onOpenMap
     const lat = location.latitude;
     const lng = location.longitude;
     if (lat == null || lng == null) return;
-    const text = `📍 ${location.address || 'Location'}\nhttps://maps.google.com/?q=${lat},${lng}`;
+    const text = `${location.address || 'Location'}\nhttps://maps.google.com/?q=${lat},${lng}`;
     try {
       if (Platform.OS !== 'web') {
         await Share.share({ message: text, title: 'Localização' });

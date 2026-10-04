@@ -577,7 +577,21 @@ class ExpoChatCacheModule : Module() {
 
 // ── SQLite schema ────────────────────────────────────────────────
 
-private class ChatDbHelper(ctx: Context) : SQLiteOpenHelper(ctx, "chatyy_chat_cache.sqlite", null, 1) {
+private class ChatDbHelper(ctx: Context) : SQLiteOpenHelper(ctx, "chatyy_chat_cache.sqlite", null, 2) {
+  // Parity with iOS: WAL journaling for concurrent readers during writes,
+  // synchronous=NORMAL (safe + fast under WAL), and a busy_timeout so a brief
+  // writer lock retries instead of throwing SQLiteDatabaseLockedException.
+  override fun onConfigure(db: SQLiteDatabase) {
+    super.onConfigure(db)
+    try { db.enableWriteAheadLogging() } catch (_: Exception) {}
+    try { db.execSQL("PRAGMA busy_timeout=5000") } catch (_: Exception) {}
+  }
+
+  override fun onOpen(db: SQLiteDatabase) {
+    super.onOpen(db)
+    try { db.execSQL("PRAGMA synchronous=NORMAL") } catch (_: Exception) {}
+  }
+
   override fun onCreate(db: SQLiteDatabase) {
     db.execSQL("""
       CREATE TABLE IF NOT EXISTS messages (
@@ -592,7 +606,8 @@ private class ChatDbHelper(ctx: Context) : SQLiteOpenHelper(ctx, "chatyy_chat_ca
         payload TEXT NOT NULL
       )
     """)
-    db.execSQL("CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id)")
+    // id DESC matches the "ORDER BY id DESC" read path (parity with iOS).
+    db.execSQL("CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id DESC)")
     db.execSQL("""
       CREATE TABLE IF NOT EXISTS conversations (
         id INTEGER PRIMARY KEY,
@@ -618,5 +633,13 @@ private class ChatDbHelper(ctx: Context) : SQLiteOpenHelper(ctx, "chatyy_chat_ca
     """)
     db.execSQL("CREATE INDEX IF NOT EXISTS idx_emails_folder ON emails(folder, uid)")
   }
-  override fun onUpgrade(db: SQLiteDatabase, oldV: Int, newV: Int) { /* no-op v1 */ }
+  override fun onUpgrade(db: SQLiteDatabase, oldV: Int, newV: Int) {
+    // v1 -> v2: rebuild idx_messages_conv as (conversation_id, id DESC).
+    if (oldV < 2) {
+      try {
+        db.execSQL("DROP INDEX IF EXISTS idx_messages_conv")
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id, id DESC)")
+      } catch (_: Exception) {}
+    }
+  }
 }

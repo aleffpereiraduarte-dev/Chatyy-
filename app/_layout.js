@@ -427,7 +427,9 @@ function useDeepLinking() {
       // /chat/:id → open chat conversation
       const chatMatch = pathname.match(/^\/chat\/(\d+)/);
       if (chatMatch) {
-        router.push('/chat-conversation?id=' + chatMatch[1]);
+        // Shared helper: replace (not stack) when a chat is already open.
+        try { require('../services/pushNotifications').openConversation('/chat-conversation?id=' + chatMatch[1], chatMatch[1]); }
+        catch { router.push('/chat-conversation?id=' + chatMatch[1]); }
         return;
       }
 
@@ -475,22 +477,10 @@ function useDeepLinking() {
       // /j/:token → join group via invite link
       const joinMatch = pathname.match(/^\/j\/([a-f0-9]{32})$/);
       if (joinMatch) {
-        (async () => {
-          try {
-            const api = await import('../services/api');
-            const r = await api.chatGroupJoinViaLink(joinMatch[1]);
-            // Groups with "aprovar novos membros" answer success:true with a
-            // conversation_id but leave the user merely queued
-            // (pending_approval) — routing there opens a conversation they
-            // cannot read or post to. Send them to /j/<token>, which renders
-            // the pending state.
-            if (r?.success && r.data?.pending_approval) {
-              router.push('/j/' + joinMatch[1]);
-            } else if (r?.success && r.data?.conversation_id) {
-              router.push('/chat-conversation?id=' + r.data.conversation_id + (r.data.name ? '&name=' + encodeURIComponent(r.data.name) : ''));
-            }
-          } catch {}
-        })();
+        // Never auto-join from a link: open the preview screen, whose Join
+        // button is the only thing that joins (logged-out users are bounced
+        // to /login?next=/j/<token> by the auth gate, preserving the link).
+        router.push('/j/' + joinMatch[1]);
         return;
       }
 
@@ -528,7 +518,7 @@ function useDeepLinking() {
           const path = hash.substring(1); // remove #
           const chatMatch = path.match(/^\/chat\/(\d+)/);
           if (chatMatch) {
-            setTimeout(() => router.push('/chat-conversation?id=' + chatMatch[1]), 500);
+            setTimeout(() => { try { require('../services/pushNotifications').openConversation('/chat-conversation?id=' + chatMatch[1], chatMatch[1]); } catch { router.push('/chat-conversation?id=' + chatMatch[1]); } }, 500);
           }
           const emailMatch = path.match(/^\/email\/(\d+)/);
           if (emailMatch) {
@@ -567,6 +557,13 @@ function AppInit({ onNotification, setOtaToast }) {
   const authUser = auth?.user;
   const authLoading = auth?.loading;
   const router = useRouter();
+  // Let the push-tap handler switch to the account a push was addressed to.
+  const _switchAcct = auth?.switchAccount;
+  useEffect(() => {
+    try {
+      require('../services/pushNotifications').setSwitchAccountHandler(_switchAcct ? (e) => _switchAcct(e) : null);
+    } catch {}
+  }, [_switchAcct]);
   useEffect(() => {
     const PUBLIC_ROUTES = ['/login', '/signup', '/signup-phone', '/signup-username', '/forgot', '/verify-phone-required', '/onboarding', '/privacy', '/feed'];
     if (authLoading) return;
@@ -1600,12 +1597,12 @@ export default function RootLayout() {
                   <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false, freezeOnBlur: false }} />
                   <Stack.Screen name="call/[id]" options={{ headerShown: false, presentation: 'card', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="voicemail-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false }} />
-                  <Stack.Screen name="meetings" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="meetings" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="meeting-create" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 150 }} />
                   <Stack.Screen name="meeting-detail" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="meeting-recap" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="call-recap" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="files" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="files" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="calendar" options={{ presentation: 'card', animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="event-detail" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="chat" options={{ presentation: 'card', animation: 'fade', animationDuration: 120 }} />
@@ -1641,26 +1638,26 @@ export default function RootLayout() {
                   <Stack.Screen name="notification-preferences" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
                   <Stack.Screen name="spotlight" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 180 }} />
                   <Stack.Screen name="bots" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="documentos" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
-                  <Stack.Screen name="one" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
-                  <Stack.Screen name="drive" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
-                  <Stack.Screen name="photos" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="documentos" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="one" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="drive" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="photos" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="photo-new" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 200 }} />
                   <Stack.Screen name="live-broadcast" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="live-viewer" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="lives-saved" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="live-replay" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="live-discover" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="notes" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="notes" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150, gestureEnabled: false }} />
-                  <Stack.Screen name="plans" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="plans" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="wallet" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="diamond-shop" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="storage" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="wallet-cashout" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="creator-earnings" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
-                  <Stack.Screen name="chat-backup" options={{ presentation: 'card', animation: 'fade', animationDuration: 150 }} />
+                  <Stack.Screen name="backup" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="chat-backup" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="u/[username]" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="contacts" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="notifications" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />

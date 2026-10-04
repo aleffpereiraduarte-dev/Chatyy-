@@ -2236,14 +2236,21 @@ class MailWebSocket {
   // `message_read` broadcasts back on `chat_{convId}` channel so the peer's
   // open thread + other listeners flip in real-time. HTTP chatRead still
   // fires for persistence — this is the in-band signaling fast-path.
-  sendMessageRead(conversationId, lastReadId) {
+  sendMessageRead(conversationId, lastReadId, senderEmail) {
     if (!this.isConnected || !conversationId) return;
-    this._send({
+    const frame = {
       type: 'message_read',
       conversation_id: conversationId,
       message_ids: lastReadId ? [lastReadId] : [],
       last_read_id: lastReadId || 0,
-    });
+    };
+    // [2026-10-03] For 1:1 direct chats, name the message sender so the hub
+    // can push the read receipt straight to the sender's per-user channel —
+    // flips their ✓✓ blue instantly even when they're on the chat LIST (not
+    // inside the thread). Omitted for groups (thread-channel fan-out covers
+    // open viewers; PHP chat_read still fans to each member's user channel).
+    if (senderEmail) frame.sender_email = senderEmail;
+    this._send(frame);
   }
 
   // Subscribe to presence changes for specific emails

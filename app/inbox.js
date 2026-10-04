@@ -14,6 +14,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { Shadow, BorderRadius, FontSize, Spacing, LetterSpacing, AnimTiming } from '../constants/theme';
 import EmailReader from '../components/EmailReader';
 import Sidebar from '../components/Sidebar';
+import * as Haptics from 'expo-haptics';
 // Cold-start: these overlays (search, notifications hub, shortcut refs,
 // snooze/context/quick-settings panels) are never visible on the first paint
 // of /inbox — they all start closed (`visible={false}`) and only render UI
@@ -49,7 +50,6 @@ const ComposeModal = lazy(() => import('../components/ComposeModal'));
 // Side panel modules render via iframe (same origin = shared session)
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as api from '../services/api';
-import Onboarding, { ONBOARDING_KEY } from '../components/Onboarding';
 import CompleteProfileModal, { isProfileComplete, COMPLETE_PROFILE_SKIP_KEY } from '../components/CompleteProfileModal';
 import { canNavigateNow } from '../services/navGuard';
 
@@ -618,23 +618,12 @@ function InboxScreenInner() {
     }
   }, [authLoading, user]);
 
-  // Onboarding check — show tutorial on first login (skip if pre-login onboarding was completed)
-  useEffect(() => {
-    if (!user) return;
-    let alive = true;
-    Promise.all([
-      AsyncStorage.getItem(ONBOARDING_KEY),
-      AsyncStorage.getItem('onboarding_complete'),
-    ]).then(([val, preLoginVal]) => {
-      if (!alive) return;
-      if (!val && !preLoginVal) setShowOnboarding(true);
-      else if (!val && preLoginVal) {
-        // Pre-login onboarding was done, mark inbox one as done too
-        AsyncStorage.setItem(ONBOARDING_KEY, 'true').catch(() => {});
-      }
-    }).catch(() => {});
-    return () => { alive = false; };
-  }, [user]);
+  // Onboarding — the post-login inbox tutorial (Onboarding.js, 4 slides) was
+  // removed from the flow (2026-10-03): it duplicated the pre-login intro
+  // carousel (SignupIntro, 5 slides on /login), stacking up to 9 intro screens
+  // before the user reached the app. SignupIntro is kept as the single intro.
+  // `showOnboarding` stays false so the inbox renders directly; the
+  // complete-profile check below (gated on !showOnboarding) runs as normal.
 
   // Complete profile check — show after onboarding is done
   useEffect(() => {
@@ -690,7 +679,6 @@ function InboxScreenInner() {
   const headerAnim = useRef(new Animated.Value(0)).current;
   const sidebarAnim = useRef(new Animated.Value(0)).current;
   const listAnim = useRef(new Animated.Value(0)).current;
-  const fabAnim = useRef(new Animated.Value(0)).current;
 
   // Sidebar slide animation for mobile overlay
   const sidebarSlideAnim = useRef(new Animated.Value(-310)).current;
@@ -699,38 +687,19 @@ function InboxScreenInner() {
   // FAB press scale animation
   const fabScaleAnim = useRef(new Animated.Value(1)).current;
 
-  // Folder transition animation
-  const folderTransitionAnim = useRef(new Animated.Value(1)).current;
-  const prevFolder = useRef(currentFolder);
-
-  // Animate folder transition when switching folders
-  useEffect(() => {
-    if (prevFolder.current !== currentFolder) {
-      prevFolder.current = currentFolder;
-      const nd = Platform.OS !== 'web';
-      folderTransitionAnim.setValue(0);
-      Animated.timing(folderTransitionAnim, {
-        toValue: 1,
-        duration: AnimTiming.slow,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: false,
-      }).start();
-    }
-  }, [currentFolder]);
-
   // Animate sidebar slide on mobile
   useEffect(() => {
     if (!isDesktop) {
       const nd = Platform.OS !== 'web';
       if (showSidebar) {
         Animated.parallel([
-          Animated.spring(sidebarSlideAnim, { toValue: 0, tension: 80, friction: 14, useNativeDriver: false }),
-          Animated.timing(sidebarOverlayOpacity, { toValue: 1, duration: 250, easing: Easing.out(Easing.cubic), useNativeDriver: false }),
+          Animated.spring(sidebarSlideAnim, { toValue: 0, tension: 80, friction: 14, useNativeDriver: nd }),
+          Animated.timing(sidebarOverlayOpacity, { toValue: 1, duration: 250, easing: Easing.out(Easing.cubic), useNativeDriver: nd }),
         ]).start();
       } else {
         Animated.parallel([
-          Animated.timing(sidebarSlideAnim, { toValue: -310, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: false }),
-          Animated.timing(sidebarOverlayOpacity, { toValue: 0, duration: 180, easing: Easing.in(Easing.cubic), useNativeDriver: false }),
+          Animated.timing(sidebarSlideAnim, { toValue: -310, duration: 220, easing: Easing.in(Easing.cubic), useNativeDriver: nd }),
+          Animated.timing(sidebarOverlayOpacity, { toValue: 0, duration: 180, easing: Easing.in(Easing.cubic), useNativeDriver: nd }),
         ]).start();
       }
     }
@@ -754,10 +723,9 @@ function InboxScreenInner() {
     // Smooth staggered entry animation
     const nd = Platform.OS !== 'web';
     Animated.stagger(50, [
-      Animated.timing(headerAnim, { toValue: 1, duration: 350, easing: Easing.out(Easing.exp), useNativeDriver: false }),
-      Animated.timing(sidebarAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: false }),
-      Animated.timing(listAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: false }),
-      Animated.spring(fabAnim, { toValue: 1, tension: 100, friction: 10, useNativeDriver: false }),
+      Animated.timing(headerAnim, { toValue: 1, duration: 350, easing: Easing.out(Easing.exp), useNativeDriver: nd }),
+      Animated.timing(sidebarAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: nd }),
+      Animated.timing(listAnim, { toValue: 1, duration: 400, easing: Easing.out(Easing.exp), useNativeDriver: nd }),
     ]).start();
   }, [recentlyReadLoaded]);
 
@@ -919,7 +887,12 @@ function InboxScreenInner() {
     };
 
     window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
+    return () => {
+      window.removeEventListener('keydown', handleKey);
+      // leak: a pending "g" two-key prefix left a 1.5s timer dangling if the
+      // screen unmounted mid-chord. Clear it on teardown.
+      if (gPrefixTimer) clearTimeout(gPrefixTimer);
+    };
   }, []);
 
   const handleSearch = useCallback(() => {
@@ -990,6 +963,7 @@ function InboxScreenInner() {
   }, [ctxStarEmail]);
 
   const handleCompose = useCallback(() => {
+    try { Haptics.selectionAsync(); } catch {}
     if (isDesktop && Platform.OS === 'web') {
       setComposeModal({});
     } else {
@@ -1055,6 +1029,7 @@ function InboxScreenInner() {
   const [loadingMore, setLoadingMore] = useState(false);
   const handleManualRefresh = useCallback(async () => {
     if (refreshingNow) return;
+    try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
     setRefreshingNow(true);
     try { await refresh(); } catch {}
     setTimeout(() => setRefreshingNow(false), 350);
@@ -1085,6 +1060,8 @@ function InboxScreenInner() {
     setShowSidebar(false);
     if (route === '__search__') { setShowGlobalSearch(true); return; }
     if (route === '__notifications__') { setShowNotifHub(true); return; }
+    // /chat <-> /inbox are sibling roots: replace so they don't stack.
+    if (typeof route === 'string' && /^\/(chat|inbox)(\?|$)/.test(route)) { router.replace(route); return; }
     router.push(route);
   }, [router]);
 
@@ -1110,6 +1087,8 @@ function InboxScreenInner() {
       });
       return;
     }
+    // /chat <-> /inbox are sibling roots: replace so they don't stack.
+    if (typeof route === 'string' && /^\/(chat|inbox)(\?|$)/.test(route)) { router.replace(route); return; }
     router.push(route);
   }, [router]);
 
@@ -1378,13 +1357,18 @@ function InboxScreenInner() {
     return [...top, ...rest];
   }, [emails, activeCategory, aiCategories, inboxLayout, isImportant]);
 
+  // Stable select-all handler (was an inline closure recreated every render).
+  // Scoped to the rendered (filtered) list — see onSelectAll usage below.
+  const handleSelectAll = useCallback(() => selectAll(filteredEmails), [selectAll, filteredEmails]);
+
+  // Enter multi-select: one selection haptic the first time (not on every toggle).
+  const handleToggleSelect = useCallback((uid) => {
+    if (!selectMode) { try { Haptics.selectionAsync(); } catch {} }
+    toggleSelect(uid);
+  }, [selectMode, toggleSelect]);
+
   // Don't render anything while redirecting to login
   if (!user) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
-
-  // Onboarding tutorial
-  if (showOnboarding) {
-    return <Onboarding onDone={() => setShowOnboarding(false)} />;
-  }
 
   return (
     <>
@@ -1893,11 +1877,11 @@ function InboxScreenInner() {
           // Selection
           selectMode={selectMode}
           selectedUids={selectedUids}
-          onToggleSelect={toggleSelect}
+          onToggleSelect={handleToggleSelect}
           // Scope select-all to the rendered (filtered) list — the bare
           // context fn selected the whole folder, so a filtered tab (e.g.
           // "Não lidas") bulk-deleted invisible emails. [deep-20260805]
-          onSelectAll={() => selectAll(filteredEmails)}
+          onSelectAll={handleSelectAll}
           onClearSelection={clearSelection}
           // Bulk
           onBulkDelete={bulkDelete}

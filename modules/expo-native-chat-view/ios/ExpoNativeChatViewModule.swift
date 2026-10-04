@@ -1684,6 +1684,49 @@ enum GroupPosition {
     case last        // last message, has tail
 }
 
+// MARK: - Memory-safe image decoding (downsampling)
+//
+// A full-resolution camera photo decoded with `UIImage(data:)` /
+// `UIImage(contentsOfFile:)` lands in memory FULLY expanded — a 12 MP photo is
+// ~48 MB of RGBA regardless of the JPEG size — even though a chat bubble only
+// needs a few hundred points. ImageIO's thumbnail path decodes straight to the
+// target size, so peak memory stays bounded to roughly maxPixelSize² × 4 bytes
+// (≈4 MB at 1024). We cache the THUMBNAIL (not the full-res image) in NSCache;
+// the original bytes stay on disk so a full-screen viewer can re-read them.
+//
+// `maxPixelSize` caps the LONGEST side in pixels. Orientation is baked in via
+// kCGImageSourceCreateThumbnailWithTransform. Returns nil when the data/file is
+// not a decodable still image, so callers can fall back (e.g. the animated-GIF
+// path, which must NOT be downsampled — it needs every frame).
+
+fileprivate func downsampleBubbleImage(source: CGImageSource, maxPixelSize: CGFloat) -> UIImage? {
+    let opts: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceShouldCacheImmediately: true,
+        kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+    ]
+    guard let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, opts as CFDictionary) else {
+        return nil
+    }
+    return UIImage(cgImage: cg)
+}
+
+fileprivate func downsampleBubbleImage(data: Data, maxPixelSize: CGFloat = 1024) -> UIImage? {
+    guard let src = CGImageSourceCreateWithData(
+        data as CFData, [kCGImageSourceShouldCache: false] as CFDictionary
+    ) else { return nil }
+    return downsampleBubbleImage(source: src, maxPixelSize: maxPixelSize)
+}
+
+fileprivate func downsampleBubbleImage(contentsOfFile path: String, maxPixelSize: CGFloat = 1024) -> UIImage? {
+    let url = URL(fileURLWithPath: path)
+    guard let src = CGImageSourceCreateWithURL(
+        url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary
+    ) else { return nil }
+    return downsampleBubbleImage(source: src, maxPixelSize: maxPixelSize)
+}
+
 final class BubbleCell: UICollectionViewCell {
 
     private let bubble = UIView()
@@ -3186,7 +3229,7 @@ final class BubbleCell: UICollectionViewCell {
         if imageCache.object(forKey: remoteUrl as NSString) != nil { return }
         let disk = diskPath(for: remoteUrl)
         if FileManager.default.fileExists(atPath: disk.path) {
-            if let img = UIImage(contentsOfFile: disk.path) {
+            if let img = downsampleBubbleImage(contentsOfFile: disk.path) {
                 imageCache.setObject(img, forKey: remoteUrl as NSString)
             }
             return
@@ -3195,7 +3238,7 @@ final class BubbleCell: UICollectionViewCell {
         if !tryStartDownload(remoteUrl) { return }
         URLSession.shared.dataTask(with: url) { data, _, _ in
             defer { finishDownload(remoteUrl) }
-            guard let data = data, let img = UIImage(data: data) else { return }
+            guard let data = data, let img = downsampleBubbleImage(data: data) else { return }
             atomicWrite(data, to: disk)
             imageCache.setObject(img, forKey: remoteUrl as NSString)
         }.resume()
@@ -3241,7 +3284,7 @@ final class BubbleCell: UICollectionViewCell {
                 }
             } catch {
                 // Fallback: try to load as regular image (sometimes a poster URL)
-                if let data = try? Data(contentsOf: url), let img = UIImage(data: data) {
+                if let data = try? Data(contentsOf: url), let img = downsampleBubbleImage(data: data) {
                     imageCache.setObject(img, forKey: cacheKey as NSString)
                     DispatchQueue.main.async {
                         if view.window != nil { view.image = img }
@@ -3268,7 +3311,7 @@ final class BubbleCell: UICollectionViewCell {
         let disk = diskPath(for: remoteUrl)
         if FileManager.default.fileExists(atPath: disk.path) {
             DispatchQueue.global(qos: .userInitiated).async { [weak view] in
-                guard let img = UIImage(contentsOfFile: disk.path) else { return }
+                guard let img = downsampleBubbleImage(contentsOfFile: disk.path) else { return }
                 imageCache.setObject(img, forKey: remoteUrl as NSString)
                 DispatchQueue.main.async {
                     guard let view = view else { return }
@@ -3288,7 +3331,7 @@ final class BubbleCell: UICollectionViewCell {
             // cache after the in-flight download finishes.
             DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.4) { [weak view] in
                 if FileManager.default.fileExists(atPath: disk.path),
-                   let img = UIImage(contentsOfFile: disk.path) {
+                   let img = downsampleBubbleImage(contentsOfFile: disk.path) {
                     imageCache.setObject(img, forKey: remoteUrl as NSString)
                     DispatchQueue.main.async {
                         guard let view = view else { return }
@@ -3302,7 +3345,7 @@ final class BubbleCell: UICollectionViewCell {
         }
         URLSession.shared.dataTask(with: url) { [weak view] data, _, _ in
             defer { finishDownload(remoteUrl) }
-            guard let data = data, let img = UIImage(data: data) else { return }
+            guard let data = data, let img = downsampleBubbleImage(data: data) else { return }
             atomicWrite(data, to: disk)
             imageCache.setObject(img, forKey: remoteUrl as NSString)
             DispatchQueue.main.async {
@@ -5028,7 +5071,7 @@ final class PlaylistCell: UICollectionViewCell {
                 coverIcon.isHidden = true
             } else {
                 URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-                    guard let data = data, let img = UIImage(data: data) else { return }
+                    guard let data = data, let img = downsampleBubbleImage(data: data, maxPixelSize: 512) else { return }
                     Self.coverCache.setObject(img, forKey: firstCover as NSString)
                     DispatchQueue.main.async {
                         guard self?.currentCoverUrl == firstCover else { return }
@@ -5502,7 +5545,9 @@ final class GifStickerCell: UICollectionViewCell {
         if FileManager.default.fileExists(atPath: diskPath.path) {
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let data = try? Data(contentsOf: diskPath) else { return }
-                let image = Self.animatedImage(from: data) ?? UIImage(data: data)
+                // Animated GIFs keep every frame (animatedImage); a non-animated
+                // still (sticker/static image) falls back to a downsampled decode.
+                let image = Self.animatedImage(from: data) ?? downsampleBubbleImage(data: data)
                 guard let image = image else { return }
                 Self.imageCache.setObject(image, forKey: urlString as NSString)
                 if image.size.height > 0 {
@@ -5524,7 +5569,9 @@ final class GifStickerCell: UICollectionViewCell {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let data = try? Data(contentsOf: url) else { return }
             try? data.write(to: diskPath)
-            let image = Self.animatedImage(from: data) ?? UIImage(data: data)
+            // Animated GIFs keep every frame (animatedImage); a non-animated
+            // still (sticker/static image) falls back to a downsampled decode.
+            let image = Self.animatedImage(from: data) ?? downsampleBubbleImage(data: data)
             guard let image = image else { return }
             Self.imageCache.setObject(image, forKey: urlString as NSString)
             if image.size.height > 0 {

@@ -228,16 +228,24 @@ export default function NotificationToast({ notification, onDismiss }) {
     // Progress bar countdown — useNativeDriver:false because the driven value
     // feeds a `width` style, which is a layout prop (native driver supports
     // only transform/opacity).
-    Animated.timing(progressAnim, {
+    const progress = Animated.timing(progressAnim, {
       toValue: 0,
       duration: TOAST_DURATION,
       useNativeDriver: false,
-    }).start();
+    });
+    progress.start();
 
     timerRef.current = setTimeout(() => dismiss(), TOAST_DURATION);
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
+      // PERF/leak: progressAnim runs useNativeDriver:false (JS rAF loop). The
+      // push toast mounts/unmounts often; without stopping it the 4s timing
+      // kept ticking against an unmounted component on every notification swap.
+      progress.stop();
+      slideAnim.stopAnimation();
+      opacityAnim.stopAnimation();
+      scaleAnim.stopAnimation();
     };
   }, [notification]);
 
@@ -300,10 +308,27 @@ export default function NotificationToast({ notification, onDismiss }) {
     const data = notification?.data;
     dismiss();
 
-    // Navigate based on notification type
-    if (data?.type === 'chat_message' && data?.conversation_id) {
-      router.push(`/chat-conversation?id=${data.conversation_id}`);
-    } else if (data?.type === 'meeting_reminder' && data?.room_id) {
+    // Navigate based on notification type. Account check first (token is
+    // shared across accounts) and chat-like types go through the shared
+    // push handler (switch-account + replace-not-stack).
+    if (data && data.conversation_id && /^(chat_message|chat_mention|chat_keyword|voicemail|group|group_message)$/.test(String(data.type || ''))) {
+      try { require('../services/pushNotifications').handleNotificationNavigation(data); } catch {
+        router.push(`/chat-conversation?id=${data.conversation_id}`);
+      }
+      return;
+    }
+    if (data?.recipient_email) {
+      try {
+        const pn = require('../services/pushNotifications');
+        pn.ensureNotificationAccount(data).then((ok) => { if (ok) _toastNavigate(data); });
+        return;
+      } catch {}
+    }
+    _toastNavigate(data);
+  }, [notification, dismiss]);
+
+  const _toastNavigate = (data) => {
+    if (data?.type === 'meeting_reminder' && data?.room_id) {
       router.push(`/meeting-detail?room_id=${data.room_id}`);
     } else if ((data?.type === 'live' || data?.type === 'live_start') && data?.session_id) {
       // Live broadcast started by a friend — jump straight into the viewer.
@@ -322,7 +347,7 @@ export default function NotificationToast({ notification, onDismiss }) {
     } else {
       router.push('/inbox');
     }
-  }, [notification, dismiss]);
+  };
 
   if (!isVisible || !notification) return null;
 

@@ -59,7 +59,7 @@ const ACCENT_HEX_SET = new Set(ACCENT_PRESETS.map(p => p.hex));
 const THEME_MODES = new Set(['light', 'dark', 'system']);
 
 export function ThemeProvider({ children }) {
-  const [isDark, setIsDark] = useState(false);
+  const [systemIsDark, setSystemIsDark] = useState(false);
   // 3-state source of truth. Defaults to 'system' so a fresh install follows
   // the OS until the user explicitly forces light/dark. Backward compat: the
   // hydrate effect below maps a legacy `theme_dark` value into a mode when no
@@ -77,24 +77,23 @@ export function ThemeProvider({ children }) {
         if (typeof localStorage !== 'undefined') {
           const savedMode = localStorage.getItem('theme_mode');
           const saved = localStorage.getItem('theme_dark');
+          // Seed systemIsDark from the OS so 'system' mode is correct on first
+          // paint. isDark itself is DERIVED from themeMode + systemIsDark (see
+          // below) — we never set it directly here, which is what used to race
+          // with the systemScheme watcher and leave forced-dark rendering light.
+          try {
+            const mq = window.matchMedia('(prefers-color-scheme: dark)');
+            setSystemIsDark(mq.matches);
+          } catch {}
           if (savedMode && THEME_MODES.has(savedMode)) {
             // Explicit 3-state mode wins.
             setThemeModeState(savedMode);
-            if (savedMode === 'system') {
-              const mq = window.matchMedia('(prefers-color-scheme: dark)');
-              setIsDark(mq.matches);
-            } else {
-              setIsDark(savedMode === 'dark');
-            }
           } else if (saved !== null) {
             // Legacy install: only theme_dark exists → map it to a forced mode.
             setThemeModeState(saved === 'true' ? 'dark' : 'light');
-            setIsDark(saved === 'true');
           } else {
             // No preference at all → follow system.
             setThemeModeState('system');
-            const mq = window.matchMedia('(prefers-color-scheme: dark)');
-            setIsDark(mq.matches);
           }
           const savedDensity = localStorage.getItem('density');
           if (savedDensity && DENSITY_CONFIG[savedDensity]) setDensityState(savedDensity);
@@ -122,17 +121,14 @@ export function ThemeProvider({ children }) {
           AsyncStorage.getItem('inbox_type'),
           AsyncStorage.getItem('theme_accent'),
         ]).then(([savedMode, saved, savedDensity, savedInbox, savedAccent]) => {
+          setSystemIsDark(systemScheme === 'dark');
           if (savedMode && THEME_MODES.has(savedMode)) {
             setThemeModeState(savedMode);
-            if (savedMode === 'system') setIsDark(systemScheme === 'dark');
-            else setIsDark(savedMode === 'dark');
           } else if (saved !== null) {
             // Legacy install: map the old boolean override to a forced mode.
             setThemeModeState(saved === 'true' ? 'dark' : 'light');
-            setIsDark(saved === 'true');
           } else {
             setThemeModeState('system');
-            setIsDark(systemScheme === 'dark');
           }
           if (savedDensity && DENSITY_CONFIG[savedDensity]) setDensityState(savedDensity);
           if (savedInbox) setInboxTypeState(savedInbox);
@@ -150,15 +146,17 @@ export function ThemeProvider({ children }) {
 
   // Watch system color scheme changes. Only drives isDark when the active mode
   // is 'system' (or, for legacy web installs, when no explicit pref is saved).
+  // Track the OS color scheme into `systemIsDark`. isDark is DERIVED from
+  // themeMode + systemIsDark, so this only changes rendering when the active
+  // mode is 'system'. Tracking it unconditionally (instead of gating on
+  // themeMode and calling setIsDark) removes the first-mount race where this
+  // watcher clobbered a freshly-hydrated forced-dark value back to light.
   useEffect(() => {
-    if (themeMode !== 'system') return;
     if (Platform.OS === 'web') {
       try {
         const mq = window.matchMedia('(prefers-color-scheme: dark)');
-        // Apply current value immediately so a mode switch to 'system' picks
-        // up the OS scheme without waiting for the next change event.
-        setIsDark(mq.matches);
-        const handler = (e) => setIsDark(e.matches);
+        setSystemIsDark(mq.matches);
+        const handler = (e) => setSystemIsDark(e.matches);
         // Safari <14 só tem addListener/removeListener — usar fallback
         // pra evitar TypeError no boot do app em iOS antigo.
         if (mq.addEventListener) mq.addEventListener('change', handler);
@@ -170,9 +168,9 @@ export function ThemeProvider({ children }) {
       } catch {}
     } else {
       // Native: useColorScheme() re-runs this effect on every OS scheme flip.
-      if (systemScheme) setIsDark(systemScheme === 'dark');
+      if (systemScheme) setSystemIsDark(systemScheme === 'dark');
     }
-  }, [systemScheme, themeMode]);
+  }, [systemScheme]);
 
   // Inject Inter font + anti-aliasing for web
   useEffect(() => {
@@ -228,29 +226,27 @@ export function ThemeProvider({ children }) {
       } else {
         AsyncStorage.removeItem('theme_dark').catch(() => {});
       }
-      setIsDark(systemScheme === 'dark');
     } else {
-      const next = mode === 'dark';
-      setIsDark(next);
-      _persistDark(next);
+      // isDark is derived from themeMode; only the legacy mirror needs writing.
+      _persistDark(mode === 'dark');
     }
     if (!_suppressBroadcast.current) _broadcastSetting('theme', mode === 'system' ? 'system' : (mode === 'dark' ? 'dark' : 'light'));
-  }, [_persistMode, _persistDark, systemScheme]);
+  }, [_persistMode, _persistDark]);
 
   // Legacy boolean toggle — now expressed in terms of the 3-state mode so the
   // two never drift. Toggling always lands on a FORCED light/dark (never
   // 'system'), matching the prior behavior where toggle pinned theme_dark.
   const toggle = useCallback(() => {
-    setIsDark(prev => {
-      const next = !prev;
+    setThemeModeState(prevMode => {
+      const prevDark = prevMode === 'system' ? systemIsDark : prevMode === 'dark';
+      const next = !prevDark;
       const mode = next ? 'dark' : 'light';
-      setThemeModeState(mode);
       _persistMode(mode);
       _persistDark(next);
       if (!_suppressBroadcast.current) _broadcastSetting('theme', mode);
-      return next;
+      return mode;
     });
-  }, [_persistDark, _persistMode]);
+  }, [_persistDark, _persistMode, systemIsDark]);
 
   const setDensity = useCallback((d) => {
     if (!DENSITY_CONFIG[d]) return;
@@ -316,12 +312,10 @@ export function ThemeProvider({ children }) {
                 } else {
                   AsyncStorage.removeItem('theme_dark').catch(() => {});
                 }
-                setIsDark(systemScheme === 'dark');
               } else {
                 const next = value === 'dark' || value === true || value === 'true';
                 setThemeModeState(next ? 'dark' : 'light');
                 _persistMode(next ? 'dark' : 'light');
-                setIsDark(next);
                 _persistDark(next);
               }
             } else if (key === 'density' && DENSITY_CONFIG[value]) {
@@ -361,6 +355,10 @@ export function ThemeProvider({ children }) {
 
   // Override primary-related keys with the user-picked accent so all surfaces
   // (FABs, links, badges) re-tint live without touching every consumer.
+  // isDark is DERIVED — single source of truth is themeMode (+ systemIsDark for
+  // 'system'). This eliminates the setIsDark races between the hydrate effect
+  // and the OS-scheme watcher that left web rendering light under forced dark.
+  const isDark = themeMode === 'system' ? systemIsDark : themeMode === 'dark';
   const baseColors = isDark ? DarkColors : Colors;
   const colors = useMemo(() => ({
     ...baseColors,

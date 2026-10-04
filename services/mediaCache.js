@@ -1252,6 +1252,8 @@ function _shouldAutoDownload(url) {
 // background prefetch path leaves opts.force unset so cellular saves data.
 export async function cacheMedia(url, opts = {}) {
   if (!url || Platform.OS === 'web') return url;
+  // view-once media must never be written to the disk cache.
+  if (opts.viewOnce) return url;
   // [2026-05-26] Already-local URIs (file://, content://, ph://, etc.) are not
   // remote assets to download — the bytes are already on the device. Callers
   // can reach here when a chat image bubble's pre-resolved `file://` path is

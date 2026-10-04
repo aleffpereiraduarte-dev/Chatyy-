@@ -343,7 +343,7 @@ const StoriesStrip = React.memo(function StoriesStrip({ user, colors, isDark, t,
   );
 });
 
-export default function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedModeConsumed, tabActive, requestOpenStatus, requestNewStatus }) {
+function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedModeConsumed, tabActive, requestOpenStatus, requestNewStatus }) {
   // [#1247 2026-05-20] parentActive prop chega pro ReelsViewer. ChatFeedTab
   // fica mounted (display:none) quando user troca pra aba Chats — sem isso
   // o ShortsPlayer continuava tocando áudio em background. tabActive vem
@@ -2093,3 +2093,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+
+// PERF: Feed stays mounted (hidden) once visited and holds image/video rows.
+// Memo skips re-running its render on unrelated chat.js parent churn now that
+// tabProps is a stable reference.
+export default React.memo(ChatFeedTab);

@@ -954,7 +954,7 @@ const StoryScroller = React.memo(function StoryScroller({ statuses, myStatuses, 
 // migrated into hooks/useStatuses.js. The local mine/others state below
 // gets seeded by the hook's mirror useEffect.)
 
-export default function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openStatusEmail, onOpenStatusConsumed }) {
+function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openStatusEmail, onOpenStatusConsumed }) {
   // Real safe-area insets — `StatusBar.currentHeight` (the const fallback used
   // before) returned 0 on a few Pixel/Galaxy devices when the composer Modal
   // mounted before the system bar measurement settled, leaving the back/Save/
@@ -6733,3 +6733,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+
+// PERF: Status stays mounted (hidden) once visited so its StoryViewer modal can
+// float over other tabs; it holds story thumbnails + video. Memo skips re-render
+// on unrelated chat.js parent churn now that tabProps is a stable reference.
+export default React.memo(ChatStatusTab);

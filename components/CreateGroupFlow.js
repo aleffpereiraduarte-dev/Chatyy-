@@ -11,6 +11,7 @@ import * as api from '../services/api';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { IconArrowLeft, IconSearch, IconX, IconUsers, IconCheck, IconPlus } from './Icons';
 import AvatarCircle from './AvatarCircle';
+import { Image as ExpoImage } from 'expo-image';
 import Svg, { Path, Circle as SvgCircle } from 'react-native-svg';
 
 const ACCENT = '#111111';
@@ -55,6 +56,12 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
   const [groupName, setGroupName] = useState('');
   const [groupDescription, setGroupDescription] = useState('');
   const [isPublic, setIsPublic] = useState(true);
+  // Group photo — picked file ({ uri, name, type }) + local preview URI.
+  // The group doesn't exist yet at pick time, so we stage the file here and
+  // upload it right AFTER chat_create returns the conversation id (same
+  // chat_upload → chat_update avatar_url pipeline the group-info screen uses).
+  const [groupPhoto, setGroupPhoto] = useState(null);
+  const [groupPhotoPreview, setGroupPhotoPreview] = useState(null);
 
   const searchTimer = useRef(null);
   const isChannel = mode === 'channel';
@@ -67,6 +74,8 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
       setGroupName('');
       setGroupDescription('');
       setIsPublic(true);
+      setGroupPhoto(null);
+      setGroupPhotoPreview(null);
       setSearchResults([]);
       return;
     }
@@ -109,6 +118,51 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
     return selectedMembers.some(m => m.email === email);
   }, [selectedMembers]);
 
+  // Pick (and 1:1-crop) the group photo. Mirrors the profile-avatar picker:
+  // native uses expo-image-picker with allowsEditing+aspect[1,1]; web uses a
+  // hidden <input type=file>. We only stage the file + a local preview here —
+  // the actual upload happens in handleCreate once we have a conversation id.
+  const handlePickGroupPhoto = async () => {
+    try {
+      let file = null;
+      let previewUri = null;
+      if (Platform.OS === 'web') {
+        await new Promise((resolve) => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/*';
+          input.onchange = (e) => { const f = e.target.files?.[0]; if (f) file = f; resolve(); };
+          input.click();
+        });
+        if (!file) return;
+        previewUri = (typeof URL !== 'undefined' && URL.createObjectURL) ? URL.createObjectURL(file) : null;
+      } else {
+        const ImagePicker = require('expo-image-picker');
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          safeAlert(t('chatConv.permission') || 'Permissão', t('chatConv.galleryPermission') || t('channel.mediaPermission') || 'Permita o acesso à galeria nas configurações.');
+          return;
+        }
+        const result = await ImagePicker.launchImageLibraryAsync({
+          mediaTypes: ['images'],
+          allowsEditing: true,
+          aspect: [1, 1],
+          quality: 0.85,
+        });
+        if (result.canceled || !result.assets?.[0]) return;
+        const a = result.assets[0];
+        // Force JPEG — same HEIC-mislabel guard the profile avatar uses.
+        file = { uri: a.uri, name: a.fileName || 'group.jpg', type: 'image/jpeg' };
+        previewUri = a.uri;
+      }
+      if (!file) return;
+      setGroupPhoto(file);
+      setGroupPhotoPreview(previewUri);
+    } catch {
+      safeAlert(t('common.error') || 'Erro', t('common.networkError') || 'Erro de rede');
+    }
+  };
+
   const handleNext = () => {
     if (step === 1) {
       if (selectedMembers.length === 0) {
@@ -147,10 +201,26 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
       if (result.success) {
         const convId = result.data?.conversation_id || result.data?.id;
         const convName = result.data?.name || name;
+        // If a photo was picked, upload it now that we have a conversation id.
+        // Reuses the proven chat_upload → chat_update avatar_url pipeline (same
+        // one the group-info "change photo" flow uses). Best-effort: a failed
+        // upload never blocks group creation — the group is created regardless.
+        let avatarUrl = null;
+        if (convId && groupPhoto) {
+          try {
+            const up = await api.chatUploadFile(convId, groupPhoto, '', false, null, 'image', null, true);
+            const fileUrl = up?.data?.file_url || up?.data?.url || up?.data?.message?.file_url;
+            if (fileUrl) {
+              const ur = await api.chatUpdate(convId, { avatar_url: fileUrl });
+              if (ur?.success) avatarUrl = fileUrl;
+            }
+          } catch {}
+        }
         onCreated?.({
           id: convId,
           name: convName,
           type: isChannel ? 'channel' : 'group',
+          ...(avatarUrl ? { avatar_url: avatarUrl } : {}),
         });
       } else {
         safeAlert(t('common.error'), result?.message || 'Error');
@@ -320,12 +390,34 @@ export default function CreateGroupFlow({ visible, onClose, onCreated, mode = 'g
         {/* STEP 2: Group/Channel details */}
         {step === 2 && (
           <ScrollView style={{ flex: 1 }} contentContainerStyle={sty.step2Content}>
-            {/* Photo circle placeholder */}
-            <TouchableOpacity style={[sty.photoCircle, { backgroundColor: isDark ? '#222' : '#e8e8e8' }]}>
-              <IconCamera size={32} color={isDark ? '#888' : '#999'} />
-              <Text style={[sty.photoLabel, { color: isDark ? '#888' : '#999' }]}>
-                {isChannel ? t('channel.name') : t('group.photo')}
-              </Text>
+            {/* Photo circle — tap to pick + crop a 1:1 image. Shows a preview
+                once picked; a small camera badge keeps the "edit" affordance. */}
+            <TouchableOpacity
+              style={[sty.photoCircle, { backgroundColor: isDark ? '#222' : '#e8e8e8' }]}
+              onPress={handlePickGroupPhoto}
+              activeOpacity={0.8}
+              accessibilityRole="button"
+              accessibilityLabel={t('group.photo') || 'Foto do grupo'}
+            >
+              {groupPhotoPreview ? (
+                <>
+                  <ExpoImage
+                    source={{ uri: groupPhotoPreview }}
+                    style={{ width: 100, height: 100, borderRadius: 50 }}
+                    contentFit="cover"
+                  />
+                  <View style={sty.photoBadge}>
+                    <IconCamera size={15} color="#fff" />
+                  </View>
+                </>
+              ) : (
+                <>
+                  <IconCamera size={32} color={isDark ? '#888' : '#999'} />
+                  <Text style={[sty.photoLabel, { color: isDark ? '#888' : '#999' }]}>
+                    {t('group.photo') || 'Foto'}
+                  </Text>
+                </>
+              )}
             </TouchableOpacity>
 
             {/* Name input */}
@@ -559,6 +651,13 @@ const sty = StyleSheet.create({
     marginBottom: 24,
   },
   photoLabel: { fontSize: 11, marginTop: 4, fontWeight: '600' },
+  photoBadge: {
+    position: 'absolute', right: 2, bottom: 2,
+    width: 30, height: 30, borderRadius: 15,
+    backgroundColor: ACCENT,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: '#fff',
+  },
   inputGroup: { marginBottom: 20 },
   inputLabel: { fontSize: 13, fontWeight: '600', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
   textInput: {

@@ -1447,8 +1447,16 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
   const [monthlyDay, setMonthlyDay] = useState(null);
   const [reminder, setReminder] = useState('none');
 
+  // Only (re)seed the form on the RISING edge of `visible`. Previously this
+  // effect also listed `calendars` as a dep, so when loadCalendars() resolved
+  // while the user was mid-edit it re-ran and wiped every field (title → ''),
+  // which then failed the title validation on save → cal_create never fired
+  // and (on web) a blocking window.alert froze the renderer. Rising-edge
+  // gating keeps the user's input intact.
+  const wasVisibleRef = useRef(false);
   useEffect(() => {
-    if (visible) {
+    if (visible && !wasVisibleRef.current) {
+      wasVisibleRef.current = true;
       const dateObj = selectedDate || new Date();
       const y = dateObj.getFullYear();
       const m = String(dateObj.getMonth() + 1).padStart(2, '0');
@@ -1456,8 +1464,7 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
       const ds = `${y}-${m}-${d}`;
       setStartDate(ds);
       setEndDate(ds);
-    }
-    if (visible) {
+
       // Pre-fill with current time rounded to next 30min
       const now = new Date();
       const mins = now.getMinutes();
@@ -1484,8 +1491,16 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
       setWeeklyDays([wdMap[seed.getDay()]]);
       setMonthlyDay(seed.getDate());
       setReminder('none');
+    } else if (!visible) {
+      wasVisibleRef.current = false;
     }
   }, [visible, selectedDate, calendars]);
+
+  // Seed the default calendar once calendars load, WITHOUT disturbing the rest
+  // of the form — so a late loadCalendars() resolution can't wipe user input.
+  useEffect(() => {
+    if (visible && calendars?.length && !calendarId) setCalendarId(calendars[0].id);
+  }, [visible, calendars]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Conflict detection — warns (non-blocking) if the proposed window overlaps
   // an existing event on the same day. Skip when allDay (would always clash).
@@ -1541,11 +1556,17 @@ function AddEventModal({ visible, onClose, onSave, colors, calendars, selectedDa
       return;
     }
 
-    // Validate date is not in the past
+    // Validate date is not in the past. Allow a grace window so an event
+    // prefilled at ~now (the picker seeds the next :00/:30, often only ~1min
+    // ahead) still saves even if the user spent a moment filling the form —
+    // otherwise `now` creeps past the prefilled start and the save is silently
+    // rejected (on web a blocking window.alert froze the renderer and
+    // cal_create never fired).
     const startAt = allDay ? `${startDate}T00:00:00` : `${startDate}T${startTime}:00`;
     const startDateObj = new Date(startAt);
     const now = new Date();
-    if (!allDay && startDateObj < now) {
+    const PAST_GRACE_MS = 5 * 60 * 1000;
+    if (!allDay && Number.isFinite(startDateObj.getTime()) && (startDateObj.getTime() + PAST_GRACE_MS) < now.getTime()) {
       safeAlert(t('common.error'), t('calendar.errorPastDate'));
       return;
     }

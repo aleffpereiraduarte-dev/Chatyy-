@@ -6340,7 +6340,11 @@ export async function chatUploadFile(conversationId, file, content = '', viewOnc
       xhr.open('POST', `${API_URL}?action=chat_upload`);
       Object.entries(headers).forEach(([k, v]) => xhr.setRequestHeader(k, v));
       if (Platform.OS === 'web') xhr.withCredentials = true;
-      xhr.timeout = 300000;
+      // Scale with file size (same formula as chat-conversation UPLOAD_TIMEOUT_MS:
+      // 180s + 4s/MB, capped 10min). A fixed 300s aborted every big video on
+      // slow cellular even while bytes were still flowing.
+      { const _szMb = Math.ceil(((file && (file.size || file.blob?.size)) || 0) / (1024 * 1024));
+        xhr.timeout = Math.min(10 * 60 * 1000, Math.max(300000, 180000 + _szMb * 4000)); }
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable && onProgress) {
           onProgress(e.loaded / e.total);

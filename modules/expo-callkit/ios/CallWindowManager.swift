@@ -69,6 +69,21 @@ public final class CallWindowManager: NSObject {
         return
       }
 
+      // [P2 teardown 2026-10-04] Um callId DIFERENTE chegou enquanto a window
+      // da call anterior ainda está ativa (ex.: ligações em sequência rápida,
+      // ou uma call antiga que nunca recebeu hideCallUI). Sem isso, a atribuição
+      // `self.callWindow = window` lá embaixo ÓRFÃ a UIWindow + CallViewController
+      // + Room antigos — o Room órfão continua dono da AVAudioSession, então a
+      // nova call fica com mic/alto-falante mudos ("áudio preso"). Faz o teardown
+      // da anterior ANTES de construir a nova: hideCallUI nula o rootVC antigo →
+      // CallViewController.deinit faz room.disconnect(). hideCallUI roda síncrono
+      // aqui (já estamos na main thread) e restaura a keyWindow do RN, que o
+      // bloco abaixo recaptura em previousKeyWindow.
+      if self.callWindow != nil, let old = self.currentCallId, old != callId {
+        NSLog("[CallWindowManager] showCallUI — callId mudou (\(old) → \(callId)); teardown da window antiga antes de criar a nova")
+        self.hideCallUI(callId: old)
+      }
+
       // Achar uma scene foreground pra criar a window. Em testes em iPad
       // multi-scene pode haver 2+; pegamos a mais provável (active ou
       // foregroundInactive).

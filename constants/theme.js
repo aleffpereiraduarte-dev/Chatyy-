@@ -102,12 +102,16 @@ export const Colors = {
   avatarBg: '#8A9099',
   avatarColors: ['#8A9099', '#7C8B9A', '#9AA0A6', '#A0968C'],
 
-  // Chat — NEUTRAL bubbles: mine = light gray, other = white. Zero color.
+  // Chat — NEUTRAL bubbles (2026-10-03): ENVIADO e RECEBIDO agora têm tons
+  // claramente distintos (antes own #E7E9EC ~ other #FFFFFF ~ fundo #f0f2f5 =
+  // tudo "flat"). RECEBIDO = branco puro; ENVIADO = cinza-neutro nitidamente
+  // mais escuro, que descola tanto do branco quanto do fundo. Zero cor.
   chatPrimary: '#111111',
-  chatBubbleOwn: '#E7E9EC',
-  chatBubbleOwnBorder: 'rgba(0,0,0,0.05)',
+  chatBubbleOwn: '#D7DCE1',
+  chatBubbleOwnBorder: 'rgba(0,0,0,0.06)',
   chatBubbleOther: '#FFFFFF',
-  chatBubbleOtherBorder: 'rgba(0,0,0,0.06)',
+  chatBubbleOtherBorder: 'rgba(0,0,0,0.08)',
+  chatBubbleOwnText: '#111B21',
   chatBackground: '#F5F6F8',
   chatInputBg: '#FFFFFF',
   chatInputBorder: 'rgba(0,0,0,0.08)',
@@ -291,12 +295,16 @@ export const DarkColors = {
   avatarBg: '#7C828A',
   avatarColors: ['#7C828A', '#8B95A3', '#9AA0A6', '#A09488'],
 
-  // Chat — NEUTRAL bubbles: mine = neutral gray, other = dark surface. Zero color.
+  // Chat — NEUTRAL bubbles (2026-10-03): paleta WhatsApp-dark blue-charcoal
+  // (harmoniza com bg #0b141a). ENVIADO = tom elevado/mais claro (#2A3942),
+  // RECEBIDO = tom mais escuro (#1F2C33) → distinção clara à primeira vista,
+  // mantendo neutro. Texto claro (#E9EDEF) legível nos dois.
   chatPrimary: '#111111',
-  chatBubbleOwn: '#26282C',
-  chatBubbleOwnBorder: 'rgba(255,255,255,0.06)',
-  chatBubbleOther: '#161618',
-  chatBubbleOtherBorder: 'rgba(255,255,255,0.08)',
+  chatBubbleOwn: '#2A3942',
+  chatBubbleOwnBorder: 'rgba(255,255,255,0.05)',
+  chatBubbleOther: '#1F2C33',
+  chatBubbleOtherBorder: 'rgba(255,255,255,0.06)',
+  chatBubbleOwnText: '#E9EDEF',
   chatBackground: '#0B0B0D',
   chatInputBg: '#161618',
   chatInputBorder: 'rgba(255,255,255,0.08)',

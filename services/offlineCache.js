@@ -492,7 +492,7 @@ export async function replayOfflineQueue(api) {
   // message sends now and overtakes the earlier one the recipient never got.
   // Seed the block set from notDue message-producing actions before the loop.
   for (const a of notDue) {
-    if ((a.type === 'chat_send' || a.type === 'chat_file_upload' || a.type === 'chat_voice_upload') && a.conversation_id) {
+    if ((a.type === 'chat_send' || a.type === 'chat_file_upload' || a.type === 'chat_voice_upload' || a.type === 'chat_audio_upload') && a.conversation_id) {
       blockedConvIds.add(a.conversation_id);
     }
   }
@@ -502,7 +502,7 @@ export async function replayOfflineQueue(api) {
     // for a conversation once an earlier one failed this pass — keeps photo+text
     // in the order the user sent them (a fast text must not overtake a pending
     // photo/voice upload). Was chat_send-only, so media could land out of order.
-    if ((action.type === 'chat_send' || action.type === 'chat_file_upload' || action.type === 'chat_voice_upload') && blockedConvIds.has(action.conversation_id)) {
+    if ((action.type === 'chat_send' || action.type === 'chat_file_upload' || action.type === 'chat_voice_upload' || action.type === 'chat_audio_upload') && blockedConvIds.has(action.conversation_id)) {
       failedActions.push(action);
       continue;
     }
@@ -1298,7 +1298,7 @@ export async function replayOfflineQueue(api) {
       // dropa da fila silenciosamente em vez de bater no servidor pra
       // sempre. Ainda chama emitSendFail pro balão refletir o estado.
       if (err && err.isHardError) {
-        if ((action.type === 'chat_file_upload' || action.type === 'chat_send' || action.type === 'chat_voice_upload') && action.temp_id) {
+        if ((action.type === 'chat_file_upload' || action.type === 'chat_send' || action.type === 'chat_voice_upload' || action.type === 'chat_audio_upload') && action.temp_id) {
           try {
             const evt = require('./sendFailEvents');
             evt.emitSendFail?.(action.conversation_id, action.temp_id, action.client_message_id);
@@ -1344,7 +1344,7 @@ export async function replayOfflineQueue(api) {
       // (timeout/5xx/rejeição não-classificada) re-enfileirava pra sempre E
       // adicionava o conversation_id em blockedConvIds abaixo, travando TODA a
       // conversa (head-of-line). Mesma classe do fantasma de 2026-07-06.
-      if ((action.type === 'chat_send' || action.type === 'chat_file_upload' || action.type === 'chat_voice_upload') && attempts >= MAX_SEND_ATTEMPTS) {
+      if ((action.type === 'chat_send' || action.type === 'chat_file_upload' || action.type === 'chat_voice_upload' || action.type === 'chat_audio_upload') && attempts >= MAX_SEND_ATTEMPTS) {
         if (action.temp_id) {
           try {
             const evt = require('./sendFailEvents');
@@ -1368,7 +1368,7 @@ export async function replayOfflineQueue(api) {
           evt.emitSendFail?.(action.conversation_id, action.temp_id, action.client_message_id);
         } catch {}
       }
-      if ((action.type === 'chat_send' || action.type === 'chat_file_upload' || action.type === 'chat_voice_upload') && action.conversation_id) {
+      if ((action.type === 'chat_send' || action.type === 'chat_file_upload' || action.type === 'chat_voice_upload' || action.type === 'chat_audio_upload') && action.conversation_id) {
         blockedConvIds.add(action.conversation_id);
       }
     }

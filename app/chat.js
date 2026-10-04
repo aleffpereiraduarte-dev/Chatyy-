@@ -137,17 +137,23 @@ function IconClose({ size = 20, color = '#666' }) {
   );
 }
 
+function ChatErrorFallback({ error }) {
+  const { colors } = useTheme();
+  const { t } = useLanguage();
+  return (
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20, backgroundColor: colors.background }}>
+      <Text style={{ fontSize: 18, fontWeight: '700', color: colors.error, marginBottom: 12 }}>{t('common.error') || 'Erro'}</Text>
+      <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center' }}>{String(error)}</Text>
+    </View>
+  );
+}
+
 class ChatErrorBoundary extends React.Component {
   state = { error: null };
   static getDerivedStateFromError(error) { return { error }; }
   render() {
     if (this.state.error) {
-      return (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 }}>Erro</Text>
-          <Text style={{ fontSize: 13, color: '#666', textAlign: 'center' }}>{String(this.state.error)}</Text>
-        </View>
-      );
+      return <ChatErrorFallback error={this.state.error} />;
     }
     return this.props.children;
   }
@@ -287,6 +293,9 @@ function ChatHub() {
 
   // Content fade animation
   const contentOpacity = useRef(new Animated.Value(1)).current;
+  // [beauty 2026-10-03] Subtle directional slide paired with the content fade
+  // so switching tabs eases in from the swipe direction (Instagram-style).
+  const contentTranslateX = useRef(new Animated.Value(0)).current;
 
   const [showAppsDrawer, setShowAppsDrawer] = useState(false);
   // Per-app badge counts surfaced on the apps drawer tiles. Refreshed
@@ -542,7 +551,7 @@ function ChatHub() {
     // "One" is the AI assistant screen — full navigation, not an inline tab.
     if (tab === 'one') { try { router.push('/one'); } catch (e) { console.warn("[chat] router.push failed:", e); } return; }
     // "Email" jumps to the inbox screen (same pattern as One).
-    if (tab === 'email') { try { router.push('/inbox'); } catch (e) { console.warn("[chat] router.push failed:", e); } return; }
+    if (tab === 'email') { try { router.replace('/inbox'); } catch (e) { console.warn("[chat] router.replace failed:", e); } return; }
     // "Reels" bottom-nav button opens the feed screen on the Posts tab by
     // default (Reels is the second sub-tab inside the feed). Reverts #896
     // which forced reels mode — user feedback 2026-05-21: clicking Reels
@@ -559,7 +568,7 @@ function ChatHub() {
     if (idx >= 0) {
       Animated.spring(indicatorAnim, {
         toValue: idx,
-        useNativeDriver: false,
+        useNativeDriver: true,
         tension: 120,
         friction: 16,
         overshootClamping: false,
@@ -571,12 +580,21 @@ function ChatHub() {
     // whole content area for a frame (read as a flicker, not a crossfade, since
     // tabs swap via display:none with no simultaneous out/in). Now it starts at
     // 0.6 and springs to 1 — a quick settle-in with no blank frame.
+    // [beauty 2026-10-03] Direction of the subtle content slide: compare the
+    // incoming tab index against the outgoing one (fall back to a forward
+    // nudge for off-bar tabs like Feed/Status that aren't in TAB_KEYS).
+    const prevIdx = TAB_KEYS.indexOf(activeTab);
+    const dir = (idx >= 0 && prevIdx >= 0 && idx !== prevIdx) ? (idx > prevIdx ? 1 : -1) : 1;
     contentOpacity.setValue(0.6);
-    Animated.spring(contentOpacity, { toValue: 1, useNativeDriver: true, tension: 100, friction: 18 }).start();
+    contentTranslateX.setValue(dir * 16);
+    Animated.parallel([
+      Animated.spring(contentOpacity, { toValue: 1, useNativeDriver: true, tension: 100, friction: 18 }),
+      Animated.spring(contentTranslateX, { toValue: 0, useNativeDriver: true, tension: 100, friction: 18 }),
+    ]).start();
 
     setActiveTab(tab);
     setMountedTabs(prev => { const next = new Set(prev); next.add(tab); return next; });
-  }, [indicatorAnim, contentOpacity, activeTab, TAB_KEYS]);
+  }, [indicatorAnim, contentOpacity, contentTranslateX, activeTab, TAB_KEYS]);
 
   // Trigger initial sync ONCE per account (not per app-version-bump).
   // Old gate was a global `sync_version` bump that re-ran the 8-phase
@@ -768,7 +786,16 @@ function ChatHub() {
     setMountedTabs(prev => prev.has('status') ? prev : new Set(prev).add('status'));
     setAutoNewStatus(true);
   }, []);
-  const tabProps = { colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, openStatusEmail, onOpenStatusConsumed: () => setOpenStatusEmail(null), requestOpenStatus, requestNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed: () => setPendingReels(false), tabActive: activeTab };
+  // PERF: these two were inline arrows inside the tabProps literal, so every
+  // chat.js render minted fresh function identities → tabProps changed → every
+  // mounted tab (ChatListTab, Feed, Status, …) re-rendered even on unrelated
+  // state churn (SyncBar ticks, badge updates). useCallback pins them.
+  const onOpenStatusConsumed = useCallback(() => setOpenStatusEmail(null), []);
+  const onFeedModeConsumed = useCallback(() => setPendingReels(false), []);
+  // PERF: tabProps was a fresh object every render and is spread into ALL
+  // mounted tabs. Memoizing it means a tab only re-renders when a value it
+  // actually consumes changes, not on every parent re-render.
+  const tabProps = useMemo(() => ({ colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, initialFeedMode: pendingReels ? 'reels' : undefined, onFeedModeConsumed, tabActive: activeTab }), [colors, isDark, t, user, router, searchQuery, setActiveTab, autoNewStatus, openStatusEmail, onOpenStatusConsumed, requestOpenStatus, requestNewStatus, pendingReels, onFeedModeConsumed, activeTab]);
 
   const titles = {
     feed: t('feed.title') || 'Feed',
@@ -982,7 +1009,7 @@ function ChatHub() {
           <SyncBar />
 
           {/* Content - lazy mount: only mount tab once visited, then keep mounted hidden */}
-          <Animated.View style={{ flex: 1, opacity: contentOpacity }}>
+          <Animated.View style={{ flex: 1, opacity: contentOpacity, transform: [{ translateX: contentTranslateX }] }}>
             <View style={{ display: activeTab === 'chats' ? 'flex' : 'none', flex: activeTab === 'chats' ? 1 : undefined }}>
               <ChatErrorBoundary><ChatListTab key={'cl_' + (user?.email || 'anon')} {...tabProps} /></ChatErrorBoundary>
             </View>
@@ -1088,7 +1115,7 @@ function ChatHub() {
       <SyncBar />
 
       {/* Tab content with fade - lazy mount: only mount tab once visited */}
-      <Animated.View style={{ flex: 1, opacity: contentOpacity }}>
+      <Animated.View style={{ flex: 1, opacity: contentOpacity, transform: [{ translateX: contentTranslateX }] }}>
         <View style={{ display: activeTab === 'chats' ? 'flex' : 'none', flex: activeTab === 'chats' ? 1 : undefined }}>
           <ChatErrorBoundary><ChatListTab key={'cl_' + (user?.email || 'anon')} {...tabProps} /></ChatErrorBoundary>
         </View>
@@ -1412,7 +1439,7 @@ function AppTile({ item, badge, onPress, colors, isDark }) {
           <Animated.View style={{
             position: 'absolute', top: -4, right: -4,
             minWidth: 18, height: 18, paddingHorizontal: 5,
-            borderRadius: 9, backgroundColor: '#ef4444',
+            borderRadius: 9, backgroundColor: colors.badge,
             alignItems: 'center', justifyContent: 'center',
             borderWidth: 2, borderColor: isDark ? '#0f0f14' : '#fff',
             transform: [{ scale: badgePulse }],
@@ -1749,6 +1776,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
 
 // ── Desktop sidebar tab item with hover ──
 function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark, badge, dot }) {
+  const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
   const color = active ? '#111111' : 'rgba(255,255,255,0.6)';
   const isWeb = Platform.OS === 'web';
@@ -1777,7 +1805,7 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
           <View style={{
             position: 'absolute', top: -2, right: -2,
             width: 8, height: 8, borderRadius: 4,
-            backgroundColor: '#ef4444',
+            backgroundColor: colors.badge,
             borderWidth: 1.5, borderColor: '#0f1115',
           }} />
         )}
@@ -1825,6 +1853,7 @@ function PulseBadge({ badge, isDark }) {
 
 // ── Mobile tab bar item with dot indicator ──
 function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
+  const { colors } = useTheme();
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const bounceAnim = useRef(new Animated.Value(0)).current;
   // [beauty 2026-10-01] Removed the dead `glowAnim` — it ran a 220ms JS-thread
@@ -1860,7 +1889,7 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
           <View style={{
             position: 'absolute', top: 2, right: 2,
             width: 8, height: 8, borderRadius: 4,
-            backgroundColor: '#ef4444',
+            backgroundColor: colors.badge,
             borderWidth: 1.5, borderColor: isDark ? '#0f1115' : '#ffffff',
           }} />
         )}

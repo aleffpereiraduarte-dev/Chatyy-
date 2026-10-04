@@ -734,6 +734,46 @@ export default function ComposeScreen() {
             setQuotedHeader(fwdHeader);
             setQuotedHtml(sanitizeQuotedHtml(fwdBody));
             setBody('');
+
+            // [FORWARD KEEPS ATTACHMENTS] A normal forward must carry the
+            // original's files, not just the quoted body (Gmail parity).
+            // Download each non-inline attachment from the original message and
+            // add it to the compose attachments list so sendEmail re-uploads
+            // it. Fire-and-forget so it never blocks the compose from opening.
+            // (Inline images referenced by cid: live in the quoted body and are
+            // intentionally skipped here to avoid duplicate file attachments.)
+            const fwdAtts = Array.isArray(orig.attachments) ? orig.attachments.filter(a => a && !a.inline && (a.filename || a.name)) : [];
+            if (fwdAtts.length > 0) {
+              (async () => {
+                try {
+                  const fwFolder = params.folder || 'INBOX';
+                  for (const a of fwdAtts) {
+                    if (!alive) return;
+                    const name = a.filename || a.name || `attachment_${a.part_id || ''}`;
+                    const type = a.mime || a.type || 'application/octet-stream';
+                    try {
+                      const url = api.getAttachmentUrl(uid, fwFolder, a.part_id);
+                      if (Platform.OS === 'web') {
+                        const resp = await fetch(url, { credentials: 'include' });
+                        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+                        const blob = await resp.blob();
+                        const file = new File([blob], name, { type });
+                        if (!alive) return;
+                        setAttachments(prev => [...prev, { name, size: blob.size, type, _raw: file, uri: '' }]);
+                      } else {
+                        let FS; try { FS = await import('expo-file-system/legacy'); } catch { FS = await import('expo-file-system'); }
+                        const safeName = String(name).replace(/[^\w.\-]+/g, '_');
+                        const dest = (FS.cacheDirectory || FS.documentDirectory || '') + 'fwd_' + Date.now() + '_' + safeName;
+                        const dl = await FS.downloadAsync(url, dest);
+                        const info = await FS.getInfoAsync(dl.uri);
+                        if (!alive) return;
+                        setAttachments(prev => [...prev, { name, size: info.size || a.size || 0, type, uri: dl.uri }]);
+                      }
+                    } catch (e) { console.warn('forward attachment fetch failed', name, e); }
+                  }
+                } catch (e) { console.warn('forward attachments', e); }
+              })();
+            }
           }
         }
       }).catch(() => {}).finally(() => { if (alive) setLoading(false); });

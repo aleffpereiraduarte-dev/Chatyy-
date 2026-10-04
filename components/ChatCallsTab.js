@@ -736,8 +736,13 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
   const hasSavedName = !!(item.contactName || item.contact_name) && !/^\+?\d[\d\s\-()]{3,}$/.test(String(rawName).trim());
   const phoneForLookup = item.to_number || (typeof rawName === 'string' && /^\+?\d/.test(rawName) ? rawName : '');
   const lookedUp = !hasSavedName && phoneForLookup ? lookupDeviceContactName(phoneForLookup) : null;
+  // [FIX 2026-10-03] A "saved name" that is actually a raw email handle
+  // (lowercase, dot/underscore separated, e.g. "sara.costa") was shown as-is
+  // because hasSavedName was true — but it should read "Sara Costa". Prettify
+  // those too; real names (with spaces or mixed case) are left untouched.
+  const _isRawHandle = (n) => typeof n === 'string' && /^[a-z0-9]+([._-][a-z0-9]+)+$/.test(String(n).trim());
   const displayName = lookedUp
-    || (hasSavedName ? rawName : prettifyHandle(rawName));
+    || ((hasSavedName && !_isRawHandle(rawName)) ? rawName : prettifyHandle(rawName));
 
   return (
     <TouchableOpacity

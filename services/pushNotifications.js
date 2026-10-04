@@ -17,6 +17,47 @@ export function setForegroundNotificationHandler(handler) {
 let _activeConversationId = null;
 export function setActiveConversation(conversationId) {
   _activeConversationId = conversationId;
+  // [2026-10-04] WhatsApp parity: opening a conversation = reading it, so clear
+  // that chat's ALREADY-DELIVERED push notifications from the tray. The
+  // _activeConversationId check below only suppresses NEW pushes while you're in
+  // the chat; it never removed the ones that arrived before you opened it (the
+  // founder's report: "o push devia sumir ao ler, igual WhatsApp").
+  if (conversationId != null && Platform.OS !== 'web') {
+    dismissConversationNotifications(conversationId).catch(() => {});
+  }
+}
+
+// Remove every delivered chat notification that belongs to `conversationId`
+// from the notification tray (and trim the app badge by how many we cleared).
+// Fire-and-forget; all failures are non-fatal.
+export async function dismissConversationNotifications(conversationId) {
+  try {
+    if (Platform.OS === 'web' || conversationId == null) return;
+    if (!Notifications) {
+      try { Notifications = await import('expo-notifications'); } catch { return; }
+    }
+    if (!Notifications?.getPresentedNotificationsAsync) return;
+    const presented = await Notifications.getPresentedNotificationsAsync();
+    const target = String(conversationId);
+    let cleared = 0;
+    for (const n of presented || []) {
+      const data = n?.request?.content?.data || {};
+      if (String(data.conversation_id ?? '') === target) {
+        const id = n?.request?.identifier;
+        if (id) {
+          try { await Notifications.dismissNotificationAsync(id); cleared++; } catch {}
+        }
+      }
+    }
+    // Keep the app-icon badge honest (don't leave a count for notifications the
+    // user already read). Never go below 0.
+    if (cleared > 0 && Notifications.getBadgeCountAsync && Notifications.setBadgeCountAsync) {
+      try {
+        const cur = await Notifications.getBadgeCountAsync();
+        await Notifications.setBadgeCountAsync(Math.max(0, (cur || 0) - cleared));
+      } catch {}
+    }
+  } catch {}
 }
 export function clearActiveConversation() {
   _activeConversationId = null;
@@ -1721,7 +1762,48 @@ export async function setupNotificationListeners() {
   };
 }
 
-function handleNotificationNavigation(data) {
+// [2026-10-03] Push tokens are shared across the accounts on a device, so a
+// tap can arrive for an account that is NOT the active one. _layout registers
+// AuthContext.switchAccount here; handleNotificationNavigation switches first
+// (or drops the tap when the target account isn't signed in on this device)
+// instead of opening account B's conversation id under account A's session.
+let _switchAccountHandler = null;
+export function setSwitchAccountHandler(fn) { _switchAccountHandler = fn; }
+function _normAcctEmail(e) {
+  return String(e || '').toLowerCase().replace('@onemundo.com.br', '@chatyy.com.br');
+}
+export async function ensureNotificationAccount(data) {
+  try {
+    const rcpt = _normAcctEmail(data?.recipient_email);
+    if (!rcpt) return true;
+    const active = _normAcctEmail(await _getActiveEmailSafe());
+    if (!active || active === rcpt) return true;
+    const stored = require('./api').getStoredAccounts?.() || [];
+    const acc = stored.find((a) => _normAcctEmail(a.email) === rcpt);
+    if (!acc || !_switchAccountHandler) return false;
+    const r = await _switchAccountHandler(acc.email);
+    return !!r?.success;
+  } catch { return true; }
+}
+
+// Shared "open this conversation" navigation. With a chat already open, a
+// push stacked a 2nd /chat-conversation (back needed 2x): REPLACE instead,
+// no-op when it is the same chat, push only from list/other screens.
+export function openConversation(target, convId) {
+  if (_activeConversationId != null) {
+    if (convId != null && String(_activeConversationId) === String(convId)) return;
+    router.replace(target);
+  } else {
+    router.push(target);
+  }
+}
+
+export function handleNotificationNavigation(data) {
+  if (!data) return;
+  ensureNotificationAccount(data).then((ok) => { if (ok) _navigateForNotification(data); }).catch(() => {});
+}
+
+function _navigateForNotification(data) {
   if (!data) return;
   try {
     if ((data.type === 'new_email' || data.type === 'email') && data.uid) {
@@ -1736,7 +1818,7 @@ function handleNotificationNavigation(data) {
       router.push(`/meeting-detail?room_id=${data.room_id}`);
       return;
     }
-    if ((data.type === 'chat_message' || data.type === 'chat_mention' || data.type === 'chat_keyword') && data.conversation_id) {
+    if ((data.type === 'chat_message' || data.type === 'chat_mention' || data.type === 'chat_keyword' || data.type === 'group' || data.type === 'group_message') && data.conversation_id) {
       // [2026-07-03] chat_mention / chat_keyword pushes carry conversation_id
       // just like chat_message; tapping them used to fall through to the email
       // Inbox route below. Route them to the conversation too.
@@ -1752,12 +1834,7 @@ function handleNotificationNavigation(data) {
       // (founder). Se já há um chat aberto, REPLACE (troca a tela, back vai
       // direto pra lista); se já é o MESMO chat, não faz nada; só faz push
       // quando não há chat aberto (lista/outra tela → back volta pra origem).
-      if (_activeConversationId != null) {
-        if (String(_activeConversationId) === String(data.conversation_id)) return;
-        router.replace(_convTarget);
-      } else {
-        router.push(_convTarget);
-      }
+      openConversation(_convTarget, data.conversation_id);
       return;
     }
     // Voicemail deep-link — tapping a "X left you a voicemail" push lands on
@@ -1773,7 +1850,7 @@ function handleNotificationNavigation(data) {
     if (data.type === 'voicemail' && data.conversation_id) {
       const vmId = data.voicemail_id || data.vm_id || '';
       const vmParam = vmId ? `&voicemail_id=${encodeURIComponent(vmId)}` : '';
-      router.push(`/chat-conversation?id=${data.conversation_id}${vmParam}&autoplay=1&type=direct`);
+      openConversation(`/chat-conversation?id=${data.conversation_id}${vmParam}&autoplay=1&type=direct`, data.conversation_id);
       return;
     }
     if (data.type === 'login_challenge' && data.challenge_id) {

@@ -67,6 +67,22 @@ final class CallSignalWs: NSObject {
     private var authTimeoutWorkItem: DispatchWorkItem?
     private var pingTimer: DispatchSourceTimer?
 
+    // [P2 pong watchdog 2026-10-04] Timestamp of the last pong the server ACKed
+    // (sendPing's completion fires with err==nil on pong). A half-open socket
+    // (TCP alive to the OS but the peer gone) otherwise only surfaces on the
+    // NEXT ping attempt ~25s later — too slow when a call_invite/call_end must
+    // go out NOW. If >2 ping intervals pass with no pong we force a
+    // disconnect+reconnect. nil = no healthy pong seen yet (set on ping start).
+    private var lastPongAt: Date?
+
+    // [P2 active-call keepAlive 2026-10-04] callIds with an in-flight signaling
+    // exchange (invite/answer fired, not yet ended). While non-empty the WS is
+    // treated as keep-alive: it keeps retrying reconnect regardless of an empty
+    // outbox, so the caller's call_invite/call_end always has a live socket
+    // (previously a non-keepAlive caller gave up after maxReconnect ≈ 7s).
+    // Cleared on outbound call_end and inbound call_end/call_cancel.
+    private var activeCallIds: Set<String> = []
+
     // [P0 2026-05-18 #1132] Track inbound call_invite IDs we've already
     // surfaced to CallKit so a re-deliver (server retry, multi-device fan-out)
     // doesn't ring twice. Bounded — 32 entries, FIFO eviction.
@@ -173,6 +189,11 @@ final class CallSignalWs: NSObject {
         // [CALL-TRACE 2026-05-20 WAVE42] Step 4/12 — caller pushes call_invite
         // into the iOS native WS outbox.
         NSLog("[CallTrace][4/12] WS send call_invite callId=\(callId) callee=\(calleeEmail) video=\(hasVideo) ts=\(Int(Date().timeIntervalSince1970 * 1000))")
+        // [P2 active-call keepAlive 2026-10-04] Mark this call active so the WS
+        // keeps reconnecting until the call ends (scheduleReconnectLocked honors
+        // activeCallIds) — don't let a non-keepAlive caller give up after
+        // maxReconnect while its call_invite/call_end is still pending.
+        queue.async { [weak self] in self?.activeCallIds.insert(callId) }
         enqueue(dict)
     }
 
@@ -203,6 +224,9 @@ final class CallSignalWs: NSObject {
             while self.selfAnsweredCallIds.count > self.kSelfAnsweredMax {
                 self.selfAnsweredCallIds.removeFirst()
             }
+            // [P2 active-call keepAlive 2026-10-04] Answering also makes the
+            // call active — keep the socket alive for the resulting signaling.
+            self.activeCallIds.insert(callId)
         }
         enqueue(dict)
     }
@@ -226,6 +250,11 @@ final class CallSignalWs: NSObject {
             // when target_email is missing).
             dict["caller_email"] = targetEmail.lowercased()
         }
+        // [P2 active-call keepAlive 2026-10-04] This call is ending — drop it
+        // from the active set AFTER the call_end is enqueued (enqueue itself
+        // keeps the socket alive long enough to flush the frame; the active-set
+        // removal only affects whether we keep retrying reconnects afterward).
+        queue.async { [weak self] in self?.activeCallIds.remove(callId) }
         enqueue(dict)
     }
 
@@ -595,6 +624,11 @@ final class CallSignalWs: NSObject {
         // stale/duplicate frame is what fired the close.
         nativeCallDiag("ws_call_end_recv", callId, "reason=\(reason)")
 
+        // [P2 active-call keepAlive 2026-10-04] Call is over — drop it from the
+        // active set so reconnect retries wind down (covers inbound call_cancel
+        // too, which routes through this handler). Runs on `queue`.
+        activeCallIds.remove(callId)
+
         // Drop the dedup entry so a follow-up invite with the same id (rare,
         // but possible across server reconnects) is not silently filtered.
         if let idx = seenIncomingInvites.firstIndex(of: callId) {
@@ -793,8 +827,33 @@ final class CallSignalWs: NSObject {
             return
         }
 
+        // [cross-path dedup 2026-10-04 P1.2] Before minting a NEW UUID + calling
+        // reportNewIncomingCall, consult the module's shared callId→UUID store.
+        // The VoIP push path fires earliest and registers its CallKit UUID there
+        // (VoipPushAppDelegateSubscriber.registerIncomingCallKitUUIDIfAbsent). If
+        // the push already reported THIS callId, reporting again here would mint
+        // a 2nd UUID → double ring / 2 CallKit entries when the app is alive in
+        // background. Reuse the existing UUID for our call_end bookkeeping and
+        // SKIP the duplicate report. The push path already posted
+        // ExpoCallKitPendingVoipCall, so the module still gets onIncomingCall.
+        if let existing = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId) {
+            NSLog("[CallSignalWs] call_invite \(callId): VoIP push already reported as \(existing.uuidString) — reusing UUID, skipping duplicate CallKit report")
+            inviteUUIDsByCallId.append((callId: callId, uuid: existing))
+            while inviteUUIDsByCallId.count > kInviteUUIDMax {
+                inviteUUIDsByCallId.removeFirst()
+            }
+            return
+        }
+
         NSLog("[CallSignalWs] call_invite \(callId) from \(callerEmail) — reporting to CallKit")
         let uuid = UUID()
+        // [cross-path dedup 2026-10-04 P1.2] Eagerly mirror our minted UUID into
+        // the shared store now (adoptPendingCall also does this, but async via
+        // the ExpoCallKitPendingVoipCall post below). This keeps the shared
+        // callId→UUID map populated synchronously so the inbound call_end
+        // shared-map fallback (handleIncomingCallEndLocked) resolves even before
+        // the module has processed the notification.
+        ExpoCallKitModule.registerIncomingCallKitUUIDIfAbsent(uuid, forCallId: callId)
         // [#1179 cleanup, 2026-05-19] Remember the UUID so a later inbound
         // call_end frame can dismiss the matching CallKit entry. FIFO trim.
         inviteUUIDsByCallId.append((callId: callId, uuid: uuid))
@@ -891,18 +950,24 @@ final class CallSignalWs: NSObject {
     private func scheduleReconnectLocked() {
         // Idle: stop reconnecting unless we're in keep-alive mode (callee
         // path — needs to receive inbound call_invite frames even with an
-        // empty outgoing queue).
-        guard !pendingMessages.isEmpty || keepAlive else { return }
+        // empty outgoing queue) OR there's an active call in flight ([P2
+        // 2026-10-04] a non-keepAlive CALLER must not give up while its
+        // call_invite/call_end still needs to go out).
+        let callActive = !activeCallIds.isEmpty
+        guard !pendingMessages.isEmpty || keepAlive || callActive else { return }
         let attempt = reconnectAttempts
         reconnectAttempts += 1
         if attempt >= maxReconnect {
-            // In keep-alive mode we don't give up forever — try again every
-            // 30s. The JS WS is still the primary path; this is the native
-            // ring fallback for inbound call_invite.
-            if keepAlive {
-                NSLog("[CallSignalWs] keep-alive: \(maxReconnect) attempts spent — slow retry in 30s")
+            // In keep-alive mode OR with an active call we don't give up
+            // forever — try again every ~30s (+jitter). The JS WS is still the
+            // primary path; this is the native ring/signaling fallback.
+            if keepAlive || callActive {
+                // [P2 jitter 2026-10-04] Spread retries so N devices reconnecting
+                // after a shared outage don't stampede the hub.
+                let slow = 30.0 + Double.random(in: 0...5)
+                NSLog("[CallSignalWs] keep-alive/active-call: \(maxReconnect) attempts spent — slow retry in \(String(format: "%.1f", slow))s")
                 reconnectAttempts = 0
-                queue.asyncAfter(deadline: .now() + 30) { [weak self] in
+                queue.asyncAfter(deadline: .now() + slow) { [weak self] in
                     self?.connectLocked()
                 }
                 return
@@ -910,8 +975,11 @@ final class CallSignalWs: NSObject {
             NSLog("[CallSignalWs] reconnect: gave up after \(maxReconnect) attempts — JS WS is the fallback")
             return
         }
-        let backoff = backoffSec[min(attempt, backoffSec.count - 1)]
-        NSLog("[CallSignalWs] reconnect: attempt \(attempt + 1)/\(maxReconnect) in \(backoff)s")
+        // [P2 jitter 2026-10-04] Add up to +30% jitter to the fixed backoff so
+        // simultaneous reconnects (e.g. after a server blip) don't thunder.
+        let base = backoffSec[min(attempt, backoffSec.count - 1)]
+        let backoff = base + Double.random(in: 0...(base * 0.3))
+        NSLog("[CallSignalWs] reconnect: attempt \(attempt + 1)/\(maxReconnect) in \(String(format: "%.2f", backoff))s")
         queue.asyncAfter(deadline: .now() + backoff) { [weak self] in
             self?.connectLocked()
         }
@@ -920,14 +988,29 @@ final class CallSignalWs: NSObject {
     /// Called on `queue`.
     private func startPingTimerLocked() {
         pingTimer?.cancel()
+        // Seed so the watchdog doesn't trip before the first pong round-trip.
+        lastPongAt = Date()
         let t = DispatchSource.makeTimerSource(queue: queue)
         t.schedule(deadline: .now() + pingInterval, repeating: pingInterval)
         t.setEventHandler { [weak self] in
             guard let self = self, let task = self.task, self.authed else { return }
-            task.sendPing { err in
+            // [P2 pong watchdog 2026-10-04] Half-open detection: if we haven't
+            // seen a pong in >2 ping intervals the socket is dead to the peer
+            // even though sendPing's own error may not have fired yet. Force a
+            // reconnect so an active call's signaling isn't stranded.
+            if let last = self.lastPongAt, Date().timeIntervalSince(last) > self.pingInterval * 2 {
+                NSLog("[CallSignalWs] pong watchdog: no pong in \(Int(Date().timeIntervalSince(last)))s (>2×\(Int(self.pingInterval))s) — forcing reconnect")
+                self.onDisconnectLocked()
+                return
+            }
+            task.sendPing { [weak self] err in
+                guard let self = self else { return }
                 if let err = err {
                     NSLog("[CallSignalWs] ping failed: \(err.localizedDescription)")
                     self.queue.async { self.onDisconnectLocked() }
+                } else {
+                    // Pong received — socket is healthy.
+                    self.queue.async { self.lastPongAt = Date() }
                 }
             }
         }

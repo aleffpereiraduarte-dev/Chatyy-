@@ -101,6 +101,34 @@ export class TCPClient extends EventEmitter {
    * Connect to Signal Server
    */
   async connect(email, token) {
+    // ───────────────────────────────────────────────────────────────────
+    // [2026-10-03 tempo-real web] WEB GUARD — never open a :5222 socket here.
+    //
+    // The Signal Server on :5222 (processo chatyy-signal) is a RAW TCP server
+    // speaking the custom binary frame protocol (main.go → net.Listen("tcp") +
+    // HandleConnection on a plain net.Conn — NO TLS, NO HTTP/WebSocket upgrade).
+    // A browser `new WebSocket('wss://host:5222')` can never complete a handshake
+    // against it, and on the web the app is served from chatyy.com.br which is
+    // Cloudflare-proxied — CF does not proxy port 5222 at all (curl → 000).
+    //
+    // In practice this transport is INERT everywhere: nothing in the app ever
+    // calls tcpClient.connect() (verified 2026-10-03). The real-time chat
+    // transport is mailWs (services/websocket.js → Go hub :8084, exposed on the
+    // web via nginx `/ws` → wss://ws.chatyy.com.br, which bypasses Cloudflare).
+    // mailWs carries chat_message/read/react/edit/delete both per-thread
+    // (chat-conversation.js) and globally (chatPersistence.js), and PHP
+    // chat_send fans out to the Go hub via POST 127.0.0.1:8084/broadcast.
+    // Live web delivery was proven end-to-end (message landed with the HTTP
+    // chat_sync poll disabled → genuinely pushed over the WS).
+    //
+    // So on web we hard short-circuit: building `wss://host:5222` could only
+    // produce a doomed socket + exponential reconnect storm if some future
+    // caller ever wired connect() in. Native path is left byte-identical.
+    if (Platform.OS === 'web') {
+      log('[tcp] connect() skipped on web — :5222 is raw-TCP/unreachable; chat realtime runs over mailWs (:8084 /ws)');
+      return Promise.resolve();
+    }
+
     // Fechar ws anterior sem disparar reconexão
     if (this.ws) {
       this.ws.onclose = null;

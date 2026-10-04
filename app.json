@@ -19,7 +19,7 @@
     "runtimeVersion": "2.5.0",
     "updates": {
       "enabled": true,
-      "fallbackToCacheTimeout": 5000,
+      "fallbackToCacheTimeout": 0,
       "checkAutomatically": "ON_LOAD",
       "url": "https://u.expo.dev/c95f3d04-7288-4f3d-8da3-42a128986467",
       "requestHeaders": {
@@ -108,7 +108,10 @@
         ],
         "NSSpeechRecognitionUsageDescription": "Allow $(PRODUCT_NAME) to use speech recognition."
       },
-      "buildNumber": "625"
+      "buildNumber": "626",
+      "associatedDomains": [
+        "applinks:chatyy.com.br"
+      ]
     },
     "android": {
       "package": "com.onemundo.mail",
@@ -156,6 +159,21 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "category": [
+            "DEFAULT",
+            "BROWSABLE"
+          ],
+          "data": [
+            {
+              "scheme": "https",
+              "host": "chatyy.com.br",
+              "pathPrefix": "/call"
+            }
+          ]
+        },
         {
           "action": "SEND",
           "category": [
@@ -328,7 +346,9 @@
             "deploymentTarget": "16.0"
           },
           "android": {
-            "minSdkVersion": 26
+            "minSdkVersion": 26,
+            "enableProguardInReleaseBuilds": true,
+            "enableShrinkResources": true
           }
         }
       ]

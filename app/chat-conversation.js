@@ -248,14 +248,14 @@ function renderMarkdownLite(text, baseStyle) {
 // ============================================================
 function AnimatedPressable({ children, onPress, onLongPress, delayLongPress, style, activeOpacity = 0.9, ...props }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
-  // Why: 0.97 was barely perceptible; 0.95 makes every tap on every row read
-  // as "I felt it" without visibly distorting the layout. Faster snap-down
-  // (tension 460), softer settle (tension 200, friction 9) — iMessage feel.
+  // CLEAN 2026: match the canonical components/PressableScale feel used
+  // everywhere else — softer snap-down (tension 340, scale 0.97) that reads
+  // responsive but light instead of the harder "tapa" of the old 460/0.95.
   const handlePressIn = () => {
-    Animated.spring(scaleAnim, { toValue: 0.95, useNativeDriver: true, tension: 460, friction: 11 }).start();
+    Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true, tension: 340, friction: 12 }).start();
   };
   const handlePressOut = () => {
-    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 200, friction: 9 }).start();
+    Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 220, friction: 13 }).start();
   };
   return (
     <TouchableOpacity onPress={onPress} onLongPress={onLongPress} delayLongPress={delayLongPress} onPressIn={handlePressIn} onPressOut={handlePressOut} activeOpacity={activeOpacity} {...props}>
@@ -282,6 +282,13 @@ function AnimatedPressable({ children, onPress, onLongPress, delayLongPress, sty
 // message — iOS treated shape #3 as local, Chrome treated it as UTC after
 // the `+ 'Z'` concat but Safari NaN'd. We force T separator + Z suffix so
 // `new Date(...)` is unambiguous everywhere.
+// view-once messages must never join an album or the swipe-able media list —
+// the viewer would show/cache them without consuming the view.
+function _isViewOnceMsg(m) {
+  const v = m && (m.is_view_once ?? m.isViewOnce ?? m.view_once);
+  return v === true || v === 1 || v === '1' || v === 't' || v === 'true';
+}
+
 function _normalizeIso(dateStr) {
   if (!dateStr) return '';
   let s = String(dateStr).trim();
@@ -7561,13 +7568,20 @@ function ChatConversationInner() {
     return () => { try { sub.remove?.(); } catch {} };
   }, [goBack]);
 
-  // Suppress push notifications for this conversation while it's open
+  // Suppress push notifications for this conversation while it's open, AND
+  // clear its already-delivered pushes from the tray when it opens (WhatsApp
+  // parity: reading the message removes the notification). [2026-10-04]
   useEffect(() => {
     if (!conversationId) return;
     try {
-      const { setActiveConversation, clearActiveConversation } = require('../services/pushNotifications');
-      setActiveConversation(conversationId);
-      return () => clearActiveConversation();
+      const { setActiveConversation, clearActiveConversation, dismissConversationNotifications } = require('../services/pushNotifications');
+      setActiveConversation(conversationId); // also dismisses this chat's tray notifications
+      // Re-dismiss when the app returns to foreground while THIS chat stays
+      // open — a push that landed while backgrounded in the same conversation.
+      const sub = AppState.addEventListener('change', (s) => {
+        if (s === 'active') { try { dismissConversationNotifications(conversationId); } catch {} }
+      });
+      return () => { clearActiveConversation(); try { sub?.remove?.(); } catch {} };
     } catch {}
   }, [conversationId]);
 
@@ -8878,7 +8892,7 @@ function ChatConversationInner() {
       // flips to ✓✓ blue in <50ms (vs ~300ms HTTP round-trip). chat.php
       // still broadcasts the canonical chat_read after persistence — this
       // is the fast path, the HTTP write above is the source of truth.
-      mailWs.sendMessageRead?.(conversationId, msgId);
+      mailWs.sendMessageRead?.(conversationId, msgId, conversationType === 'direct' ? (params.email || '') : '');
       mailWs._emit?.('chat_read', {
         conversation_id: conversationId,
         reader_email: emailInline,
@@ -9701,7 +9715,14 @@ function ChatConversationInner() {
     }
   };
 
-  const currentEmail = user?.email || '';
+  // [FIX own-messages-on-wrong-side 2026-10-03] On a COLD / deep-link load
+  // (e.g. tapping a push notification, or opening a conversation URL directly),
+  // AuthContext's `user` hasn't hydrated yet, so `user?.email` is '' on the
+  // first renders. Every bubble's `isOwn = sender_email === currentEmail` then
+  // evaluated false, so OUR OWN messages rendered as INCOMING (left-aligned, no
+  // ticks) until re-render. Fall back to the synchronously-available stored
+  // active account (localStorage/MMKV cache) so the side is correct immediately.
+  const currentEmail = user?.email || (api.getActiveAccountEmail?.() || '');
   // [FIX stale-currentEmail 2026-10-02] onViewableItemsChanged is created once
   // via useRef().current, so it closes over currentEmail at FIRST render — when
   // user?.email can still be '' — and would then read-ack our OWN messages
@@ -9709,6 +9730,15 @@ function ChatConversationInner() {
   // viewability filter always sees the live email.
   const currentEmailRef = useRef(currentEmail);
   currentEmailRef.current = currentEmail;
+
+  // PERF: whether the composer must be replaced by the "only admins" banner.
+  // This boolean was recomputed INLINE up to 4 times per render (= per
+  // keystroke) via members.find/.some scans down in the JSX — cost scaled with
+  // group/channel size. Memoize it once; it only depends on membership + mode.
+  const composerBlocked = useMemo(() => (
+    (conversationType === 'channel' && !members.find(m => m.email === currentEmail && m.role === 'admin')) ||
+    (conversationType === 'group' && adminOnlyMessages && members.some(m => m.email === currentEmail && m.role !== 'admin'))
+  ), [conversationType, members, currentEmail, adminOnlyMessages]);
 
   // Rehydrate the live-location dup-session guard on mount / after messages
   // load. `liveLocActive` initializes to null and was NEVER restored, so after
@@ -10527,9 +10557,16 @@ function ChatConversationInner() {
                 if (!m || typeof m.id !== 'number') continue;
                 // Own-message receipt state only — incoming rows never show ticks.
                 if (m.sender_email !== currentEmail) continue;
+                // Fold server-authoritative read_by/delivered_to presence into
+                // the signature too — otherwise a reload that newly carries
+                // read_by:[peer] (but no scalar read_at/_read) has an identical
+                // fingerprint to the stale cached snapshot and the ✓✓-blue
+                // upgrade is thrown away (the reopen sub-report bug).
+                const _rb = Array.isArray(m.read_by) ? m.read_by.length : (m.read_by ? 1 : 0);
+                const _dt = Array.isArray(m.delivered_to) ? m.delivered_to.length : 0;
                 s += m.id
-                  + ':' + (m._read ? 'r' : (m.read_at ? 'r' : ''))
-                  + (m._delivered ? 'd' : (m.delivered_at ? 'd' : '')) + ',';
+                  + ':' + (m._read ? 'r' : (m.read_at ? 'r' : (_rb > 0 ? 'r' : '')))
+                  + (m._delivered ? 'd' : (m.delivered_at ? 'd' : (_dt > 0 ? 'd' : ''))) + ',';
               }
               return s;
             };
@@ -12055,6 +12092,27 @@ function ChatConversationInner() {
             }
             if (_ackId != null) {
               api.chatDeliveryAckBatched?.(conversationId, [_ackId]);
+              // [instant gray ✓✓ 2026-10-03] The HTTP ack above stays the
+              // source of truth, but it costs a full round-trip, so the
+              // sender's gray ✓✓ ("Entregue") lagged visibly behind the
+              // WS-instant blue read tick. ALSO fire an in-band
+              // `message_delivered` WS frame the instant the message lands:
+              // the Go hub relays it straight to the sender's email channel
+              // (handleMessageDelivered → broadcastToEmail), so their gray
+              // ✓✓ flips in <50ms. Frame field names match the hub handler
+              // exactly (message_id / conversation_id / sender_email — all
+              // required there); the sender thread already listens for
+              // `message_delivered`.
+              if (msg.sender_email) {
+                try {
+                  mailWs.send?.({
+                    type: 'message_delivered',
+                    message_id: _ackId,
+                    conversation_id: conversationId,
+                    sender_email: msg.sender_email,
+                  });
+                } catch {}
+              }
             }
           }
 
@@ -13718,7 +13776,9 @@ function ChatConversationInner() {
     // Light haptic the instant the send button registers — tactile feedback
     // that the message is on its way (before the bubble even appears).
     // Matches iMessage's subtle send tick.
-    try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+    // [2026-10-04] Rich WhatsApp-style send haptic (thud+tick on iOS, tap
+    // fallback on Android) instead of a bare light impact. See services/haptics.
+    try { if (Platform.OS !== 'web') require('../services/haptics').haptics.send(); } catch {}
 
     // Defer sound + AI guards to next tick so the optimistic bubble
     // renders BEFORE any other work (WhatsApp/Telegram-style snap).
@@ -14549,8 +14609,12 @@ function ChatConversationInner() {
     // file_url and falls back to content, so no-caption GIFs (content=url)
     // stay byte-for-byte backward compatible.
     const _cap = (caption && String(caption).trim()) ? String(caption).trim() : '';
-    const bodyContent = _cap || sendUrl;
-    const fileUrlArg = _cap ? sendUrl : null;
+    // [2026-10-03] chat_send rejects a giphy/tenor URL in file_url (400), so a
+    // captioned GIF never sent and sat queued on a clock forever. The URL now
+    // ALWAYS rides in `content` (file_url dropped for gif); a caption goes out
+    // as a separate text message right after the GIF.
+    const bodyContent = sendUrl;
+    const fileUrlArg = null;
     try {
       const declared = Number(gif?.size || gif?.bytes || 0);
       let bytes = declared;
@@ -14607,6 +14671,19 @@ function ChatConversationInner() {
         setMessages(prev => prev.map(m => m.id === tempId ? { ...r.data, _pending: false, sender_email: r.data.sender_email || m.sender_email || currentEmail } : m));
         removePendingMessage(conversationId, tempId).catch(() => {});
         try { const mailWs = require('../services/websocket').default; mailWs.relayChatMessage(conversationId, r.data, tempId, getMemberEmails()); } catch {}
+        if (_cap) {
+          try {
+            const rc = await enqueueChatSend(() => api.chatSend(conversationId, _cap, 'text'));
+            if (rc?.success && rc.data?.id) {
+              setMessages(prev => prev.some(m => m.id === rc.data.id) ? prev : [...prev, { ...rc.data, _pending: false, sender_email: rc.data.sender_email || currentEmail }]);
+            }
+          } catch {}
+        }
+      } else if (/\b(400|403|413|415|422|429)\b|too large|rejected|blocked|forbidden|unsupported|invalid/i.test(`${r?.status || ''} ${r?.error || ''} ${r?.message || ''}`)) {
+        // Hard server reject — retrying can never succeed, so show the failed
+        // bubble instead of queueing it forever.
+        removePendingMessage(conversationId, tempId).catch(() => {});
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
       } else {
         // Mirror text-send fallback: queue for retry instead of dropping.
         try {
@@ -14617,7 +14694,12 @@ function ChatConversationInner() {
           setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
         }
       }
-    } catch {
+    } catch (_gifErr) {
+      if (/\b(400|403|413|415|422|429)\b|too large|rejected|blocked|forbidden|unsupported|invalid/i.test(String(_gifErr?.message || ''))) {
+        removePendingMessage(conversationId, tempId).catch(() => {});
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false } : m));
+        return;
+      }
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
         await queueOfflineAction({ type: 'chat_send', conversation_id: conversationId, content: bodyContent, file_url: fileUrlArg, msgType: 'gif', reply_to_id: null, mentions: null, temp_id: tempId, client_message_id: msgId });
@@ -15969,6 +16051,12 @@ function ChatConversationInner() {
             adoptLocalFileAsCache(remote, audioData.uri).catch(() => {});
           } catch {}
         }
+      } else if (/\b41[35]\b|\b403\b|\b429\b|\b507\b|too large|size|mime|rejected|blocked|forbidden|unsupported|quota|storage/i.test(String(`${r?.status || ''} ${r?.error || ''} ${r?.message || ''}`))) {
+        // Hard server reject (403/413/415/429/507): retrying forever on a clock
+        // can never succeed → failed bubble, don't queue (same regex as the
+        // photo/video path's _isHard).
+        removePendingMessage(conversationId, tempId).catch(() => {});
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
       } else {
         // Falhou no server (5xx, timeout, etc) → queue pra retry automático
         // quando a rede voltar. Antes ficava como _failed e só re-enviava
@@ -15994,9 +16082,16 @@ function ChatConversationInner() {
         }
       }
       setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
-    } catch {
+    } catch (_audErr) {
       // Net caiu durante o upload → mesma lógica: queue pra retry.
       // Sem isso, user gravava áudio com net ruim, fechava app, perdia.
+      // Hard rejects (403/413/429/507) are permanent → failed bubble, no queue.
+      if (/\b41[35]\b|\b403\b|\b429\b|\b507\b|too large|size|mime|rejected|blocked|forbidden|unsupported|quota|storage/i.test(String(_audErr?.message || ''))) {
+        removePendingMessage(conversationId, tempId).catch(() => {});
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+        setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
+        return;
+      }
       try {
         const { queueOfflineAction } = require('../services/offlineCache');
         await queueOfflineAction({
@@ -18909,7 +19004,7 @@ function ChatConversationInner() {
       };
       for (let i = 0; i < messages.length; i++) {
         const m = messages[i];
-        const isMedia = m.type === 'image' || m.type === 'video';
+        const isMedia = (m.type === 'image' || m.type === 'video') && !_isViewOnceMsg(m);
         if (!isMedia) { flushRun(i - 1); continue; }
         const cd = new Date(_normalizeIso(m.created_at));
         const mb = m._batch_id || null;
@@ -19025,6 +19120,11 @@ function ChatConversationInner() {
           _failed: items.some(it => it && it._failed),
           _read: last._read,
           _delivered: last._delivered,
+          // Roll up the SERVER-authoritative receipt arrays so a reopened album
+          // honors read_by/delivered_to from the payload (see read-receipt
+          // hydration in _enrichedMessagesBase), not just the scalar read_at.
+          read_by: last.read_by,
+          delivered_to: last.delivered_to,
         };
         result.push(albumMsg);
         continue;
@@ -19126,13 +19226,59 @@ function ChatConversationInner() {
     // with maxReadId, and treat ANY of my messages with id <= that watermark
     // as read below. Direct chats only (single peer = unambiguous); groups
     // keep their per-member _read semantics untouched.
+    // [REOPEN SUB-REPORT fix 2026-10-03] On reopen, chat_messages returns the
+    // SERVER-authoritative receipt evidence (read_by:[peer]) on own rows, but
+    // the thread only trusted the scalar read_at — which the payload may omit —
+    // so a bubble the LIST already shows as ✓✓-blue dropped back to gray in the
+    // open thread until a live WS event arrived. read_by is populated ONLY by
+    // the server (the WS/TCP fast-paths stamp _read/read_at, never read_by), so
+    // honoring it here restores the blue on load WITHOUT reintroducing the
+    // optimistic-_read false-blue this file fixed earlier. Direct chats only
+    // (single peer ⇒ any reader other than me is the peer).
+    const _peerReadOnLoad = (m) => {
+      const rb = m && m.read_by;
+      if (Array.isArray(rb)) {
+        if (rb.length === 0) return false;
+        return rb.some(x => {
+          const e = (typeof x === 'string' ? x : (x && (x.email || x.user_email || x.user))) || '';
+          return !e || e.toLowerCase() !== (currentEmail || '').toLowerCase();
+        });
+      }
+      if (typeof rb === 'string' && rb.trim()) {
+        return rb.trim().toLowerCase() !== (currentEmail || '').toLowerCase();
+      }
+      return false;
+    };
+    // Same idea for the delivered (double-gray) state: delivered_to is a
+    // server-computed array, so a reopened thread can show ✓✓ even when the
+    // scalar _delivered/delivered_at didn't survive the reload.
+    const _peerDeliveredOnLoad = (m) => {
+      const dt = m && m.delivered_to;
+      if (Array.isArray(dt)) {
+        if (dt.length === 0) return false;
+        return dt.some(x => {
+          const e = (typeof x === 'string' ? x : (x && (x.email || x.user_email || x.user))) || '';
+          return !e || e.toLowerCase() !== (currentEmail || '').toLowerCase();
+        });
+      }
+      return false;
+    };
     let ownReadWatermark = -1;
     if (conversationType !== 'group') {
       for (let i = 0; i < reversedMessages.length; i++) {
         const m = reversedMessages[i];
         if (!m || m._type === 'separator') continue;
         if (m.sender_email !== currentEmail) continue;
-        if (m._read === true || m.read_at) {
+        // [FALSE-BLUE fix 2026-10-03] Only the SERVER-stamped read_at is
+        // peer-authoritative here. The client `_read` flag is set optimistically
+        // by the WS/TCP fast-paths (which ALSO update readReceipts → maxReadId),
+        // and it can go STALE — a lingering _read=true on one own message would
+        // monotonically promote EVERY earlier own bubble to false blue even when
+        // the peer never read (proven: peer last_read_message_id=0, read_at=NULL,
+        // yet the bubbles rendered ✓✓ blue). Genuine peer reads are still covered
+        // by maxReadId (readReceipts, peer-sourced) folded into readWatermark
+        // below, so dropping the bare-_read source here loses nothing real.
+        if (m.read_at || _peerReadOnLoad(m)) {
           const idN = Number(m.id);
           if (Number.isFinite(idN) && idN > ownReadWatermark) ownReadWatermark = idN;
         }
@@ -19155,11 +19301,14 @@ function ChatConversationInner() {
         if (item._pending) albumStatus = 0;
         else if (item._failed) albumStatus = -1;
         else if (isOwnA) {
-          if (item._read === true) albumStatus = 2;
+          // [FALSE-BLUE fix 2026-10-03] bare _read trusted only in groups (see base path)
+          if (conversationType === 'group' && item._read === true) albumStatus = 2;
           else if (conversationType !== 'group' && item.read_at) albumStatus = 2;
           else if (conversationType !== 'group' && readWatermark >= 0 && Number(item.id) > 0 && Number(item.id) <= readWatermark) albumStatus = 2;
+          else if (conversationType !== 'group' && _peerReadOnLoad(item)) albumStatus = 2;
           else if (item._delivered) albumStatus = 1.5;
           else if (conversationType !== 'group' && item.delivered_at) albumStatus = 1.5;
+          else if (conversationType !== 'group' && _peerDeliveredOnLoad(item)) albumStatus = 1.5;
         }
         const prev = cache.get(item._key);
         if (prev && prev.source === item && prev.enriched._readStatus === albumStatus) {
@@ -19188,9 +19337,13 @@ function ChatConversationInner() {
       // maxReadId fallback was the old global readReceipts-based check,
       // which wrongly turned group ticks purple as soon as the first
       // member opened the thread.
-      else if (isOwn && item._read === true) readStatus = 2;
+      // [FALSE-BLUE fix 2026-10-03] Trust the bare client `_read` flag only in
+      // GROUPS (there the backend flips it only when ALL members read — it's
+      // the authoritative all-read signal). In DIRECT chats `_read` can linger
+      // stale and paint false blue, so direct relies solely on peer-authoritative
+      // read_at / readWatermark below.
+      else if (isOwn && conversationType === 'group' && item._read === true) readStatus = 2;
       // Direct-chat cold-load fallback: server-returned read_at is authoritative.
-      // Groups still require _read (all-members-read semantics).
       else if (isOwn && conversationType !== 'group' && item.read_at) readStatus = 2;
       // Direct-chat readReceipts fallback: chat list shows ✓✓ in the preview
       // because chat_read WS events bump last_message.read_at on the row,
@@ -19202,8 +19355,14 @@ function ChatConversationInner() {
       // version of this check turned ticks purple after the first member
       // read, violating WhatsApp's "all members" semantics.
       else if (isOwn && conversationType !== 'group' && readWatermark >= 0 && Number(item.id) > 0 && Number(item.id) <= readWatermark) readStatus = 2;
+      // [REOPEN SUB-REPORT fix 2026-10-03] Direct-chat: server-authoritative
+      // read_by:[peer] from the reload payload = read (blue), even if read_at /
+      // readWatermark are absent on this hop. read_by is never set optimistically.
+      else if (isOwn && conversationType !== 'group' && _peerReadOnLoad(item)) readStatus = 2;
       else if (isOwn && item._delivered) readStatus = 1.5;
       else if (isOwn && conversationType !== 'group' && item.delivered_at) readStatus = 1.5;
+      // Direct-chat: server-authoritative delivered_to:[peer] = delivered (✓✓ gray).
+      else if (isOwn && conversationType !== 'group' && _peerDeliveredOnLoad(item)) readStatus = 1.5;
       const isHighlighted = item.id === highlightedMsgId;
       const isHeartPop = item.id === heartPopMsg;
       // NOTE: live upload byte-progress is intentionally NOT folded in here
@@ -19730,6 +19889,22 @@ function ChatConversationInner() {
   const [floatingDate, setFloatingDate] = useState('');
   const floatingDateOpacity = useRef(new Animated.Value(0)).current;
   const floatingHideTimer = useRef(null);
+  // [dup "Hoje" fix 2026-10-03] When every loaded message falls on the SAME
+  // calendar day the thread already renders ONE inline date separator
+  // ("Hoje"/"Ontem"/date) above the messages, so the floating pill would just
+  // duplicate it — the founder's print showed two "Hoje" at once. Track
+  // whether there's a single date-group (exactly one `separator` row in
+  // messagesWithSeparators) and, if so, keep the floating pill hidden. The
+  // onViewableItemsChanged handler below is a stable useRef callback, so we
+  // read the live value through a ref kept in sync by the effect.
+  const singleDateGroupRef = useRef(false);
+  useEffect(() => {
+    let sep = 0;
+    for (const r of messagesWithSeparators) {
+      if (r && r._type === 'separator') { sep++; if (sep > 1) break; }
+    }
+    singleDateGroupRef.current = sep <= 1;
+  }, [messagesWithSeparators]);
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 30, minimumViewTime: 50 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }) => {
     if (!viewableItems || viewableItems.length === 0) return;
@@ -19771,13 +19946,22 @@ function ChatConversationInner() {
     }
     if (!ca) return;
     try {
-      const label = formatDateSeparator(ca, t);
-      setFloatingDate(label);
-      Animated.timing(floatingDateOpacity, { toValue: 1, duration: 180, useNativeDriver: true }).start();
-      if (floatingHideTimer.current) clearTimeout(floatingHideTimer.current);
-      floatingHideTimer.current = setTimeout(() => {
-        Animated.timing(floatingDateOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
-      }, 1500);
+      if (singleDateGroupRef.current) {
+        // Single date-group loaded ⇒ the inline separator above the messages
+        // already labels the day. Keep the floating pill fully hidden so the
+        // user never sees "Hoje" twice. Multi-day threads fall through and
+        // keep the pill, where it's genuinely useful while scrolling.
+        if (floatingHideTimer.current) { clearTimeout(floatingHideTimer.current); floatingHideTimer.current = null; }
+        floatingDateOpacity.setValue(0);
+      } else {
+        const label = formatDateSeparator(ca, t);
+        setFloatingDate(label);
+        Animated.timing(floatingDateOpacity, { toValue: 1, duration: 180, useNativeDriver: true }).start();
+        if (floatingHideTimer.current) clearTimeout(floatingHideTimer.current);
+        floatingHideTimer.current = setTimeout(() => {
+          Animated.timing(floatingDateOpacity, { toValue: 0, duration: 400, useNativeDriver: true }).start();
+        }, 1500);
+      }
     } catch {}
 
     // ★ FIX #1: Send read receipts for visible messages.
@@ -24075,21 +24259,26 @@ function ChatConversationInner() {
             styles.bubble,
             !!msg.reply_to && !isDeleted && styles.bubbleWithReply,
             isOwn
-              // Richer, more saturated bubble colors — old palette read as
-              // washed out on both themes. Own bubbles get a luminous
-              // lavender (light) / brighter purple (dark); received bubbles
-              // pick up a slightly warmer white / darker navy-tinted purple
-              // so the contrast against the background is stronger.
-              ? [styles.bubbleOwn, { backgroundColor: isDark ? '#111111' : '#F1F3F5' }]
-              // [bubble-redesign 2026-05-30] Received bubble: cleaner neutral
-              // surface — light stays crisp white with a hairline; dark moves
-              // to a slightly lighter slate-purple (#262135) so body text and
-              // the meta row keep strong contrast against the wallpaper.
-              // [contrast 2026-06-23] Light received bubble barely separated
-              // from the wallpaper — bump the hairline border opacity
-              // 0.05→0.08 (paired with the shadow bump in styles.bubbleOther)
-              // so it reads as a distinct surface. Dark unchanged.
-              : [styles.bubbleOther, { backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#26282C' : '#FFFFFF'), ...(isDark ? {} : { borderWidth: 0.5, borderColor: 'rgba(0,0,0,0.08)', ...(Platform.OS === 'ios' ? { shadowOpacity: 0.08, shadowRadius: 5 } : {}) }) }],
+              // [bubble-distinction 2026-10-03] ENVIADO e RECEBIDO agora têm
+              // tons claramente distintos (tokens colors.chatBubbleOwn/Other —
+              // ver theme.js). ENVIADO = cinza-neutro mais escuro (light) /
+              // tom elevado blue-charcoal (dark). Hairline + sombra base (muito
+              // sutil) pra descolar do fundo sem glow. Zero cor.
+              ? [styles.bubbleOwn, {
+                  backgroundColor: colors.chatBubbleOwn,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: colors.chatBubbleOwnBorder,
+                  ...(Platform.OS === 'ios' ? { shadowOpacity: isDark ? 0.18 : 0.07, shadowRadius: 5 } : {}),
+                }]
+              // RECEBIDO = branco puro (light) / blue-charcoal escuro (dark),
+              // sempre via token. Hairline nos dois temas + sombra leve no iOS
+              // light pra separar do wallpaper. Mention mantém o tint verde.
+              : [styles.bubbleOther, {
+                  backgroundColor: isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : colors.chatBubbleOther,
+                  borderWidth: StyleSheet.hairlineWidth,
+                  borderColor: colors.chatBubbleOtherBorder,
+                  ...(Platform.OS === 'ios' && !isDark ? { shadowOpacity: 0.08, shadowRadius: 5 } : {}),
+                }],
             // Bubble shape (settings.js `bubble_shape`). Layered AFTER the
             // default bubbleOwn/bubbleOther corner radii so it overrides them,
             // but BEFORE the isFirstInGroup tail override below so the tail
@@ -24127,8 +24316,8 @@ function ChatConversationInner() {
                   ? 'M0,0 L8,0 C8,0 8,3 7,5.5 C5,9.5 0,13 0,13 Z'
                   : 'M8,0 L0,0 C0,0 0,3 1,5.5 C3,9.5 8,13 8,13 Z'}
                 fill={isOwn
-                  ? (isDark ? '#111111' : '#F1F3F5')
-                  : (isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : (isDark ? '#26282C' : '#FFFFFF'))}
+                  ? colors.chatBubbleOwn
+                  : (isUserMentioned(msg, currentEmail) ? (isDark ? '#1a3a2a' : '#d4f0e0') : colors.chatBubbleOther)}
               />
             </Svg>
           )}
@@ -24447,7 +24636,7 @@ function ChatConversationInner() {
                 if (!Number.isFinite(s)) return null;
                 const t = Date.parse(msg.created_at);
                 const willVanish = !Number.isFinite(t) || t >= s;
-                return willVanish ? <IconClock size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} style={{ marginRight: 2 }} /> : null;
+                return willVanish ? <IconClock size={10} color={isOwn ? ownMetaColor : colors.textTertiary} style={{ marginRight: 2 }} /> : null;
               })()}
               {/* WAVE 46 (2026-05-21) removed the inline star to keep the bubble
                   clean — but QA 2026-05-29 showed users had no in-bubble signal
@@ -24456,10 +24645,10 @@ function ChatConversationInner() {
                   starred (msg.starred now arrives from chat_messages — Fix B).
                   Tiny (10px) + same meta color = clean look, real feedback. */}
               {!!msg.starred && (
-                <IconStarFilled size={10} color={isOwn ? 'rgba(255,255,255,0.7)' : colors.textTertiary} style={{ marginRight: 2 }} />
+                <IconStarFilled size={10} color={isOwn ? ownMetaColor : colors.textTertiary} style={{ marginRight: 2 }} />
               )}
               {!!msg._e2e && (
-                <IconLock size={10} color={isOwn ? 'rgba(255,255,255,0.5)' : colors.textTertiary} style={{ marginRight: 2 }} />
+                <IconLock size={10} color={isOwn ? ownMetaColor : colors.textTertiary} style={{ marginRight: 2 }} />
               )}
               {msg.edited_at && !isDeleted && (() => {
                 // Show "(editada Nx)" when the server reports more than one
@@ -25817,8 +26006,8 @@ function ChatConversationInner() {
             }
             return `${messages.length}_${messages[messages.length - 1]?.id || 0}_${voteSum}_${txCount}_${reactSum}_${editSum}`;
           })()}
-          ownBubbleColor={isDark ? '#111111' : '#F1F3F5'}
-          otherBubbleColor={isDark ? '#26282C' : '#ffffff'}
+          ownBubbleColor={colors.chatBubbleOwn}
+          otherBubbleColor={colors.chatBubbleOther}
           listBackgroundColor={isDark ? '#0b141a' : '#f0f2f5'}
           textColor={isDark ? '#f0f2f5' : '#111b21'}
           metaColor={isDark ? 'rgba(240,242,245,0.55)' : 'rgba(17, 17, 17,0.55)'}
@@ -26835,8 +27024,7 @@ function ChatConversationInner() {
           and every send died on the backend 403 (admin_only) with no feedback.
           Group check requires the member row to be loaded (fail-open while
           members === []), so the composer never hides during initial load. */}
-      {(conversationType === 'channel' && !members.find(m => m.email === currentEmail && m.role === 'admin')) ||
-       (conversationType === 'group' && adminOnlyMessages && members.some(m => m.email === currentEmail && m.role !== 'admin')) ? (
+      {composerBlocked ? (
         <View style={{ paddingVertical: 14, paddingHorizontal: 20, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border, alignItems: 'center' }}>
           <Text style={{ color: colors.textTertiary, fontSize: 14 }}>{t('chat.onlyAdmins')}</Text>
         </View>
@@ -26848,8 +27036,7 @@ function ChatConversationInner() {
           native module crash, undefined URI) crashed the whole chat-conversation
           tree. ErrorBoundary catches the render error and shows a friendly fallback
           with a "Cancelar" button so the user can recover without restarting the app. */}
-      {(conversationType !== 'channel' || members.find(m => m.email === currentEmail && m.role === 'admin')) &&
-       !(conversationType === 'group' && adminOnlyMessages && members.some(m => m.email === currentEmail && m.role !== 'admin')) && (isRecording ? (
+      {!composerBlocked && (isRecording ? (
         <View style={{ paddingBottom: keyboardHeight > 0 ? 0 : Math.max(insets.bottom, Spacing.sm) }}>
           <ErrorBoundary onReset={() => setIsRecording(false)}>
             <AudioRecorder
@@ -27098,20 +27285,18 @@ function ChatConversationInner() {
         <View pointerEvents={(blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 'none' : 'auto'} style={[styles.inputBar, {
           backgroundColor: isDark ? '#111b21' : '#f0f2f5',
           opacity: (blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 0.4 : 1,
-          // Android edge-to-edge w/ transparent navigationBar: insets.bottom
-          // ≈ 48px for gesture indicator. When keyboard opens, OS draws
-          // keyboard ON TOP of that area (gesture bar disappears), but the
-          // safe-area inset does NOT update — leaving phantom padding that
-          // shows as a white strip / cuts the composer. With 0 here the
-          // composer sits flush on top of the keyboard, no flash gap.
-          // 2026-05-12: cap Android padding at 16px max to eliminate the
-          // visible "gab" (gap) below composer when keyboard dismisses but
-          // gesture bar inset stays inflated.
+          // Bottom safe-area so the composer clears the system bar on BOTH
+          // platforms: Android nav/gesture bar (insets.bottom ≈ 48px) and iOS
+          // home indicator (≈ 34px). When the keyboard is OPEN the OS draws it
+          // over that area, so padding = 0 (composer sits flush on the keyboard,
+          // no gap). When CLOSED we MUST use the full inset — the old cap at
+          // 16px (2026-05) left the Android nav bar overlapping the bottom of
+          // the composer (reported: "embaixo no Android tá cortando"). The
+          // keyboardHeight==0 branch already handles the dismiss gap, so the
+          // cap was unnecessary and caused the overlap.
           paddingBottom: keyboardHeight > 0
             ? 0
-            : (Platform.OS === 'android'
-                ? Math.min(Math.max(insets.bottom, Spacing.sm), 16)
-                : Math.max(insets.bottom, Spacing.sm)),
+            : Math.max(insets.bottom, Spacing.sm),
         }]}>
           {/* WhatsApp pill container — 2026 refined.
               Telegram-style horizontal swipe: a short flick LEFT on the
@@ -27232,11 +27417,19 @@ function ChatConversationInner() {
                 // conversation has at least one bot member. Hide as soon as a
                 // space follows the command or the slash is removed.
                 try {
+                  // PERF: only scan the member list when the text actually
+                  // starts with `/`. Before, this .some() ran on EVERY keystroke
+                  // in EVERY conversation (even 1:1s with no bots) just to decide
+                  // a popup that 99% of keystrokes never show. The slash regex is
+                  // a cheap bail-out that skips the scan for normal typing.
                   const slashMatch = /^\/(\w*)$/.exec(text);
-                  const hasBots = (membersRef.current || []).some(m =>
-                    typeof m?.email === 'string' && m.email.toLowerCase().endsWith('@bots.chatyy')
-                  );
-                  const shouldShow = !!(slashMatch && hasBots);
+                  let shouldShow = false;
+                  if (slashMatch) {
+                    const hasBots = (membersRef.current || []).some(m =>
+                      typeof m?.email === 'string' && m.email.toLowerCase().endsWith('@bots.chatyy')
+                    );
+                    shouldShow = hasBots;
+                  }
                   setShowBotPopup(prev => prev === shouldShow ? prev : shouldShow);
                   if (shouldShow) setBotCommandFilter((slashMatch[1] || '').toLowerCase());
                 } catch {}
@@ -29219,7 +29412,7 @@ function ChatConversationInner() {
         if (mv.visible && !mv.viewOnce) {
           try {
             const all = (messagesRef.current || messages || [])
-              .filter(m => !m._pending && (m.type === 'image' || m.type === 'video') && m.file_url)
+              .filter(m => !m._pending && (m.type === 'image' || m.type === 'video') && m.file_url && !_isViewOnceMsg(m))
               .map(m => {
                 // Compute thumbUri (server-side small variant) from image_variants
                 // JSON the same way the bubble does so the viewer's neighbor

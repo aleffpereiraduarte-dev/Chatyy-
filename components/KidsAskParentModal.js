@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 import * as api from '../services/api';
+import { IconUsers, IconSmartphone, IconMessageCircle, IconAlertTriangle, IconCheckCircle, IconClock as IconClockSvg } from './Icons';
 
 function IconX({ size = 22, color = '#fff' }) {
   return (
@@ -47,11 +48,11 @@ function IconBack({ size = 18, color = '#111111' }) {
 }
 
 const REQUEST_TYPES = [
-  { key: 'extra_time',  emoji: '⏰', color: '#f97316', name: 'Mais tempo no app',       desc: 'Peça mais minutos pro seu pai ou mãe' },
-  { key: 'new_contact', emoji: '👥', color: '#10b981', name: 'Aprovar novo contato',    desc: 'Adicionar um amigo novo' },
-  { key: 'new_app',     emoji: '📱', color: '#111111', name: 'Liberar novo app',        desc: 'Usar um app que está bloqueado' },
-  { key: 'help',        emoji: '🆘', color: '#ef4444', name: 'Preciso de ajuda',        desc: 'Mandar alerta importante' },
-  { key: 'other',       emoji: '💬', color: '#111111', name: 'Outro pedido',            desc: 'Escrever do seu jeito' },
+  { key: 'extra_time',  Icon: IconClockSvg, color: '#f97316', name: 'Mais tempo no app',       desc: 'Peça mais minutos pro seu pai ou mãe' },
+  { key: 'new_contact', Icon: IconUsers, color: '#10b981', name: 'Aprovar novo contato',    desc: 'Adicionar um amigo novo' },
+  { key: 'new_app',     Icon: IconSmartphone, color: '#111111', name: 'Liberar novo app',        desc: 'Usar um app que está bloqueado' },
+  { key: 'help',        Icon: IconAlertTriangle, color: '#ef4444', name: 'Preciso de ajuda',        desc: 'Mandar alerta importante' },
+  { key: 'other',       Icon: IconMessageCircle, color: '#111111', name: 'Outro pedido',            desc: 'Escrever do seu jeito' },
 ];
 
 export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
@@ -142,7 +143,7 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
 
           {sent ? (
             <View style={{ padding: 36, alignItems: 'center' }}>
-              <Text style={{ fontSize: 60, marginBottom: 10 }}>✅</Text>
+              <View style={{ marginBottom: 10 }}><IconCheckCircle size={60} color="#10b981" /></View>
               <Text style={{ fontSize: 20, fontWeight: '800', color: isDark ? '#a7f3d0' : '#065f46', textAlign: 'center' }}>
                 {t?.('kids.askParent.sent') || 'Pedido enviado!'}
               </Text>
@@ -233,11 +234,11 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                         backgroundColor: (matchType?.color || '#111111') + '25',
                         alignItems: 'center', justifyContent: 'center',
                       }}>
-                        <Text style={{ fontSize: 20 }}>{matchType?.emoji || '💬'}</Text>
+                        {React.createElement(matchType?.Icon || IconMessageCircle, { size: 20, color: matchType?.color || '#111111' })}
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: 14, fontWeight: '800', color: isDark ? '#F1F3F5' : '#111' }}>
-                          {matchType?.name || item.reason || item.type || '—'}
+                          {(matchType ? (t?.('kids.askParent.type.'+matchType.key) || matchType.name) : null) || item.reason || item.type || '—'}
                         </Text>
                         {!!item.note && (
                           <Text style={{ fontSize: 13, color: isDark ? '#F1F3F5' : '#475569', marginTop: 4 }} numberOfLines={2}>
@@ -295,14 +296,14 @@ export default function KidsAskParentModal({ visible, onClose, isDark, t }) {
                         backgroundColor: rt.color + '25',
                         alignItems: 'center', justifyContent: 'center',
                       }}>
-                        <Text style={{ fontSize: 26 }}>{rt.emoji}</Text>
+                        <rt.Icon size={26} color={rt.color} />
                       </View>
                       <View style={{ flex: 1 }}>
                         <Text style={{ fontSize: 15, fontWeight: '800', color: selected ? rt.color : (isDark ? '#F1F3F5' : '#111') }}>
-                          {rt.name}
+                          {t?.('kids.askParent.type.'+rt.key) || rt.name}
                         </Text>
                         <Text style={{ fontSize: 12, color: isDark ? '#9ca3af' : '#6b7280', marginTop: 2 }}>
-                          {rt.desc}
+                          {t?.('kids.askParent.typeDesc.'+rt.key) || rt.desc}
                         </Text>
                       </View>
                     </TouchableOpacity>

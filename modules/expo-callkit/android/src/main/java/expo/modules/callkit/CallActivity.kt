@@ -413,19 +413,10 @@ class CallActivity : ComponentActivity() {
     // phone to ear during a voice call, the screen turns off so cheek-presses
     // don't toggle UI controls and battery is preserved. Video calls skip
     // this so the screen stays on for preview.
-    val isVideoCall = hasVideo
-    if (!isVideoCall) {
-      try {
-        val pm = getSystemService(POWER_SERVICE) as PowerManager
-        proximityWakeLock = pm.newWakeLock(
-          PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
-          "chatyy:call:proximity"
-        )
-        proximityWakeLock?.acquire(60 * 60 * 1000L) // 1h cap
-        Log.d(TAG, "proximityWakeLock acquired (audio call)")
-      } catch (t: Throwable) {
-        Log.w(TAG, "proximityWakeLock acquire failed: ${t.message}")
-      }
+    // Acquire only for an audio-only start. An audio→video upgrade releases it
+    // (enterVideoModeAndPublish) and a later downgrade re-acquires it.
+    if (!hasVideo) {
+      acquireProximityWakeLock()
     }
     lkUrl = extras.getString(EXTRA_LK_URL)
     lkToken = extras.getString(EXTRA_LK_TOKEN)
@@ -924,12 +915,55 @@ class CallActivity : ComponentActivity() {
     }
   }
 
+  // [proximity 2026-10-04] Proximity wake-lock lifecycle extracted into helpers
+  // so an audio→video upgrade can RELEASE it (the screen must stay on for
+  // video) and a video→audio downgrade can RE-ACQUIRE it. Both are idempotent.
+  private fun acquireProximityWakeLock() {
+    try {
+      if (proximityWakeLock == null) {
+        val pm = getSystemService(POWER_SERVICE) as PowerManager
+        proximityWakeLock = pm.newWakeLock(
+          PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+          "chatyy:call:proximity"
+        )
+      }
+      if (proximityWakeLock?.isHeld != true) {
+        proximityWakeLock?.acquire(60 * 60 * 1000L) // 1h cap
+        Log.d(TAG, "proximityWakeLock acquired")
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "proximityWakeLock acquire failed: ${t.message}")
+    }
+  }
+
+  private fun releaseProximityWakeLock() {
+    try {
+      if (proximityWakeLock?.isHeld == true) {
+        proximityWakeLock?.release()
+        Log.d(TAG, "proximityWakeLock released")
+      }
+    } catch (_: Throwable) {}
+  }
+
   // [Wave 15 gap B2, 2026-05-20] Hardware audio effects (AEC/NS/AGC) attached
   // post-LK audio track publish. AudioRecord audioSessionId é descoberto via
   // reflection — LK Android não expõe diretamente, mas o módulo nativo WebRTC
   // reusa o globalSessionId. Fallback gracioso: se sessionId não resolve, no-op.
   private val hwAudioEffects = mutableListOf<android.media.audiofx.AudioEffect>()
   private fun installHwAudioEffects() {
+    // [double-AEC fix 2026-10-04] WhatsApp strategy — trust the HARDWARE AEC
+    // owned by LiveKit's JavaAudioDeviceModule (it enables the platform AEC/NS
+    // by default whenever the device supports them). Creating a SECOND platform
+    // AcousticEchoCanceler/NoiseSuppressor on the SAME WebRTC AudioRecord
+    // session put two cancellers in series → robotic/pumping voice on
+    // speakerphone. So when the platform HW AEC is available (the device module
+    // already engaged it) we DO NOT attach a manual canceller. The manual
+    // attach stays only as a FALLBACK for devices with no platform AEC (there
+    // the device module falls back to WebRTC's software AEC).
+    if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
+      Log.d(TAG, "installHwAudioEffects: platform HW AEC owned by device module — skipping manual attach (no double-AEC)")
+      return
+    }
     try {
       // [WAVE 44B, 2026-05-21 gap A5] Resolve the real WebRTC AudioRecord
       // session id. Many OEMs (Samsung Exynos, Xiaomi MIUI < 13) silently
@@ -1001,11 +1035,7 @@ class CallActivity : ComponentActivity() {
     try { unregisterReceiver(dtmfReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(callAnsweredReceiver) } catch (_: Exception) {}
     // [2026-05-21] Release proximity wake-lock if held.
-    try {
-      if (proximityWakeLock?.isHeld == true) {
-        proximityWakeLock?.release()
-      }
-    } catch (_: Throwable) {}
+    releaseProximityWakeLock()
     proximityWakeLock = null
     stopRingback()
     // [Wave 15 gap B2] Release HW audio effects antes do AudioRouter teardown.
@@ -2471,6 +2501,14 @@ class CallActivity : ComponentActivity() {
 
   private fun enterVideoModeAndPublish() {
     val r = room ?: return
+    // [proximity fix 2026-10-04] Audio→video upgrade: the proximity wake-lock
+    // acquired for the audio call blanks the screen when the phone nears the
+    // face — wrong for video, where the user is looking at the screen. Release
+    // it here, the single upgrade entry point (both the callee-accept and the
+    // requester-accepted routes funnel through enterVideoModeAndPublish). Done
+    // before the CAMERA-grant early-return so it applies on every upgrade path.
+    // A later video→audio downgrade should call acquireProximityWakeLock().
+    releaseProximityWakeLock()
     // [video-upgrade 2026-05-25] Ensure CAMERA runtime grant before publish.
     // Manifest declares it but Android 6+ silently publishes nothing without
     // the grant (mirrors the RECORD_AUDIO gate). On first audio→video upgrade

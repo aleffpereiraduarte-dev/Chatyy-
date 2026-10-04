@@ -21,7 +21,8 @@
 //
 //   - The style is chosen per the map center by coverageStyleFor(lng, lat) in
 //     components/BoraMap.js: inside BR/US/PH/PT/CO → the country style; else
-//     the neutral global 'world-cinza' style. Dark mode forces 'world-cinza'.
+//     the neutral global 'world-cinza' style. Dark mode uses the dedicated
+//     'boraum-mapa-escuro' dark basemap (BR street detail + dark world base).
 //   - Each friend pin is a DOM avatar (new maplibregl.Marker({element})); the
 //     "you are here" blue dot is a second, non-interactive marker.
 //   - The postMessage protocol (RN ⇄ WebView) is UNCHANGED from the old
@@ -101,17 +102,20 @@ const DEFAULT_ZOOM = 14;
 // .postMessage` (web). The protocol is byte-identical to the old gmaps/leaflet
 // renderers — only the tile/map engine changed.
 //
-// Dark mode: there are no per-country dark styles on the BoraUm tileserver, so
-// dark mode just uses the global 'world-cinza' style (clean gray base) — the
-// avatar rings + pulses carry the visual language regardless of basemap.
+// Dark mode: the BoraUm tileserver now ships a purpose-built dark style
+// 'boraum-mapa-escuro' (2026-10 — BR to street level zoom 16 + a dark world
+// base elsewhere). We use it instead of the old 'world-cinza' fallback, which
+// is a LIGHT gray base and read washed-out in dark mode. Light mode keeps the
+// per-country coverage styles (they also feed the static balloon maps).
 function buildMapHtml({ center, zoom, isDark, initialPins, initialMe }) {
   const pinsJson = JSON.stringify(initialPins || []);
   const meJson = JSON.stringify(initialMe || null);
   // Style is picked by the BoraUm coverage helper. coverageStyleFor() takes
-  // (lon, lat) — longitude first. In dark mode we force 'world-cinza' (the
-  // neutral gray global style) so the basemap reads as "dark-ish" everywhere.
+  // (lon, lat) — longitude first. In dark mode we use the real dark basemap
+  // ('boraum-mapa-escuro' — it already carries its own BR-street + world-base
+  // coverage, so no per-country juggling needed on the dark side).
   const styleUrl = isDark
-    ? 'https://boraum.com.br/maptiles/styles/world-cinza/style.json'
+    ? 'https://boraum.com.br/maptiles/styles/boraum-mapa-escuro/style.json'
     : boraStyleUrl(center.lng, center.lat);
   // [premium 2026-10-03] theme tokens for the in-map glass chrome (search bar,
   // FABs, compass, cluster bubbles). Injected straight into the CSS below so
@@ -139,7 +143,7 @@ function buildMapHtml({ center, zoom, isDark, initialPins, initialMe }) {
      heading in degrees; applyHeadings() rotates it relative to map bearing so
      it stays geographically correct even when the user rotates the map. Only
      injected when the pin carries a finite heading, so it degrades silently. */
-  .pin .cone,.me .cone{position:absolute;width:64px;height:64px;transform-origin:50% 50%;pointer-events:none;background:conic-gradient(from -22deg at 50% 50%,rgba(34,197,94,0.55),rgba(34,197,94,0) 44deg);border-radius:50%;z-index:-1}
+  .pin .cone,.me .cone{position:absolute;width:64px;height:64px;transform-origin:50% 50%;pointer-events:none;background:conic-gradient(from -22deg at 50% 50%,rgba(255,255,255,0.32),rgba(255,255,255,0) 44deg);border-radius:50%;z-index:-1}
   /* Pin is a column with the 56px ring at the top → center the cone on it. */
   .pin .cone{left:50%;top:28px;margin:-32px 0 0 -32px}
   /* "You" marker is centered on its coordinate → cone centers on the element. */
@@ -147,14 +151,14 @@ function buildMapHtml({ center, zoom, isDark, initialPins, initialMe }) {
   /* Premium avatar ring — bigger, softer shadow + glow. Live (fresh) = green
      gradient, unlimited = ink gradient, stale = desaturated gray. Two-layer
      box-shadow gives an outer halo + a hairline inner separator (Find-My). */
-  .pin .ring{width:56px;height:56px;border-radius:28px;background:linear-gradient(135deg,#34d399,#16a34a);padding:3px;box-sizing:border-box;box-shadow:0 6px 18px rgba(0,0,0,0.42),0 0 0 2px rgba(255,255,255,0.95) inset,0 0 14px rgba(34,197,94,0.55);position:relative}
+  .pin .ring{width:56px;height:56px;border-radius:28px;background:#111111;padding:3px;box-sizing:border-box;box-shadow:0 6px 18px rgba(0,0,0,0.42),0 0 0 2px rgba(255,255,255,0.95) inset;position:relative}
   .pin.unlimited .ring{background:linear-gradient(135deg,#1f2937,#111111);box-shadow:0 6px 18px rgba(0,0,0,0.45),0 0 0 2px rgba(255,255,255,0.95) inset}
   .pin.stale .ring{background:linear-gradient(135deg,#9ca3af,#6b7280);opacity:0.85;box-shadow:0 4px 12px rgba(0,0,0,0.4),0 0 0 2px rgba(255,255,255,0.9) inset}
   .pin .ring img{width:100%;height:100%;border-radius:50%;display:block;object-fit:cover;background:#111111}
   .pin .ring .ini{width:100%;height:100%;border-radius:50%;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:19px;background:#111111}
   /* Live breathing pulse — the GREEN "online right now" ring. Only on fresh
      (non-stale) sharers so the eye is drawn to live friends. */
-  .pin.online .ring::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid rgba(34,197,94,0.6);animation:pinPulse 2.4s ease-out infinite;pointer-events:none}
+  .pin.online .ring::after{content:'';position:absolute;inset:-4px;border-radius:50%;border:2px solid rgba(255,255,255,0.65);animation:pinPulse 2.4s ease-out infinite;pointer-events:none}
   .pin.unlimited.online .ring::after{border-color:rgba(148,163,184,0.6)}
   /* A quick one-shot "just moved" bump when a live WS tick repositions a pin. */
   .pin.justmoved .ring{animation:pinBump .6s ease-out}
@@ -1693,15 +1697,15 @@ export default function SnapMapScreen() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: isDark ? '#0d0d0d' : '#fff' }}>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
       {/* Header — title + ghost-mode toggle + privacy shortcut.
           [WAVE 49 2026-05-21] The subtitle now surfaces TWO pieces of state:
           (1) the count of friends currently visible to me, and (2) my own
           ghost-mode status. Users had no way to tell at a glance whether
           they were broadcasting, which directly fed the "ta desconectando"
           confusion (you can't tell if YOU stopped showing up to them). */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: topInset + 8, paddingBottom: 14, backgroundColor: isDark ? '#0d0d0d' : '#fff', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', zIndex: 10 }}>
-        <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }} accessibilityLabel="Voltar">
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingTop: topInset + 8, paddingBottom: 14, backgroundColor: colors.background, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)', zIndex: 10 }}>
+        <TouchableOpacity onPress={() => router.back()} style={{ padding: 8 }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel={t?.('common.back') || 'Voltar'}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <View style={{ flex: 1, marginLeft: 8 }}>
@@ -1722,11 +1726,12 @@ export default function SnapMapScreen() {
             backgroundColor: ghostMode ? (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)') : 'transparent',
             marginRight: 4,
           }}
+          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
           accessibilityLabel={ghostMode ? (t?.('snapmap.ghostOff') || 'Sair do modo invisível') : (t?.('snapmap.ghostOn') || 'Modo invisível')}
         >
           <IconEyeOff size={20} color={colors.text} />
         </TouchableOpacity>
-        <TouchableOpacity onPress={openGrants} style={{ padding: 8 }} accessibilityLabel="Privacidade">
+        <TouchableOpacity onPress={openGrants} style={{ padding: 8 }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} accessibilityLabel="Privacidade">
           <IconUser size={22} color={colors.text} />
         </TouchableOpacity>
       </View>
@@ -1736,7 +1741,7 @@ export default function SnapMapScreen() {
           We only render this when there are >=2 shares so single-friend or
           empty screens stay clean. */}
       {shares.length >= 2 && (
-        <View style={{ backgroundColor: isDark ? '#0d0d0d' : '#fff', paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
+        <View style={{ backgroundColor: colors.background, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingHorizontal: 4 }}>
             {[
               { id: 'all', label: t?.('snapmap.filterAll') || 'Todos', icon: null },
@@ -1758,7 +1763,7 @@ export default function SnapMapScreen() {
                   accessibilityState={{ selected: active }}
                 >
                   {p.icon === 'live' && (
-                    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: active ? '#fff' : '#22c55e' }} />
+                    <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: active ? '#fff' : colors.primary }} />
                   )}
                   <Text style={{ color: active ? '#fff' : colors.text, fontSize: 12, fontWeight: '700' }}>
                     {p.label}
@@ -1862,7 +1867,7 @@ export default function SnapMapScreen() {
         {mapErr && (
           <View pointerEvents="box-none" style={{ position: 'absolute', bottom: 90, left: 16, right: 16, alignItems: 'center' }}>
             <View style={{ backgroundColor: 'rgba(28,28,33,0.95)', borderRadius: 14, paddingHorizontal: 14, paddingVertical: 10, maxWidth: 340, borderWidth: 1, borderColor: 'rgba(255,255,255,0.18)' }}>
-              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Sem conexão com o mapa</Text>
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{t?.('snapmap.mapOffline') || 'Sem conexão com o mapa'}</Text>
               <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 10, marginTop: 2 }} numberOfLines={2}>
                 Verifique sua internet — o mapa recarrega sozinho quando você voltar online.
               </Text>
@@ -1870,7 +1875,7 @@ export default function SnapMapScreen() {
                 onPress={() => { setMapErr(null); mapReadyRef.current = false; try { webRef.current?.reload?.(); } catch(_){} }}
                 style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: '#111111', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 12 }}
               >
-                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>Tentar de novo</Text>
+                <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{t?.('snapmap.retry') || 'Tentar de novo'}</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1938,7 +1943,7 @@ export default function SnapMapScreen() {
                 style={{
                   paddingHorizontal: 12, paddingVertical: 7,
                   borderRadius: 14,
-                  backgroundColor: '#22c55e',
+                  backgroundColor: colors.primary,
                 }}
                 accessibilityLabel={t?.('snapmap.enableLocation') || 'Ativar localização'}
               >
@@ -2101,7 +2106,7 @@ export default function SnapMapScreen() {
                       style={{ alignItems: 'center', width: 72 }}
                       accessibilityLabel={`${s.name || s.email}, ${ago(s.updated_at)}`}
                     >
-                      <View style={{ borderWidth: 2, borderColor: s.is_unlimited ? '#111111' : '#22c55e', borderRadius: 30, padding: 2 }}>
+                      <View style={{ borderWidth: 2, borderColor: s.is_unlimited ? '#111111' : colors.primary, borderRadius: 30, padding: 2 }}>
                         <AvatarCircle name={s.name || s.email} email={s.email} size={50} />
                       </View>
                       <Text numberOfLines={1} style={{ color: colors.text, fontSize: 11, fontWeight: '600', marginTop: 4, maxWidth: 70, textAlign: 'center' }}>
@@ -2155,7 +2160,7 @@ export default function SnapMapScreen() {
                       style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, gap: 12 }}
                       accessibilityRole="button"
                     >
-                      <View style={{ borderWidth: 2, borderColor: s.is_unlimited ? '#111111' : '#22c55e', borderRadius: 28, padding: 2 }}>
+                      <View style={{ borderWidth: 2, borderColor: s.is_unlimited ? '#111111' : colors.primary, borderRadius: 28, padding: 2 }}>
                         <AvatarCircle name={s.name || s.email} email={s.email} size={46} />
                       </View>
                       <View style={{ flex: 1 }}>
@@ -2222,7 +2227,7 @@ export default function SnapMapScreen() {
               return (
               <>
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-                  <View style={{ borderWidth: 3, borderColor: isStale ? '#9ca3af' : (selected.is_unlimited ? '#111111' : '#22c55e'), borderRadius: 36, padding: 2 }}>
+                  <View style={{ borderWidth: 3, borderColor: isStale ? '#9ca3af' : (selected.is_unlimited ? '#111111' : colors.primary), borderRadius: 36, padding: 2 }}>
                     <AvatarCircle name={selected.name || selected.email} email={selected.email} size={60} />
                   </View>
                   <View style={{ flex: 1 }}>
@@ -2257,7 +2262,7 @@ export default function SnapMapScreen() {
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={() => { setSelected(null); router.push(`/chat-conversation?email=${encodeURIComponent(selected.email)}&autoCall=1`); }}
-                    style={{ paddingVertical: 14, paddingHorizontal: 18, borderRadius: 22, backgroundColor: '#22c55e', alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
+                    style={{ paddingVertical: 14, paddingHorizontal: 18, borderRadius: 22, backgroundColor: colors.primary, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 }}
                     accessibilityLabel={t?.('snapmap.call') || 'Ligar'}
                   >
                     <IconPhone size={18} color="#fff" />

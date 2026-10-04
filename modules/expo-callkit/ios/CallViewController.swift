@@ -277,6 +277,56 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // re-creates the AVAudioSession-bound RTC sender).
     private var localAudioTrackRef: LocalAudioTrack?
 
+    // [2026-10-03 PRIVACY ring-leak fix] OUTGOING calls must NOT publish the
+    // mic into the SFU until the callee has genuinely answered. The callee's
+    // VoIP-push preconnectRoom joins the room subscribe-only DURING the ring,
+    // so a caller mic published at connect time was audible to the callee
+    // before Accept. The gate opens on the first real post-answer signal:
+    // WS call_accepted (CallKitCallAnsweredRemote) OR the first remote track
+    // we subscribe (the callee publishes nothing until it answers). Incoming
+    // VCs are unaffected (isOutgoing == false => never gated).
+    private var outgoingMicGateOpen: Bool = false
+
+    private func openOutgoingMicGate(reason: String) {
+        guard isOutgoing, !outgoingMicGateOpen else { return }
+        outgoingMicGateOpen = true
+        nativeCallDiag("outgoing_mic_gate_open", callId, reason)
+        guard let r = self.room else { return }
+        // [2026-10-04 ring-leak, VIDEO] Publish the caller's camera on answer
+        // too, gated the same as the mic. Done BEFORE the mic-enabled guard so a
+        // muted-mic video call still shows the caller's camera after Accept.
+        if self.hasVideo {
+            Task { [weak self] in
+                guard let self = self, let r2 = self.room else { return }
+                let captureOpts = Self.defaultCameraCaptureOptions(position: self.currentCameraPosition)
+                let publishOpts = Self.defaultVideoPublishOptions()
+                if let pub = try? await r2.localParticipant.setCamera(enabled: true, captureOptions: captureOpts, publishOptions: publishOpts),
+                   let track = pub.track as? LocalVideoTrack {
+                    await MainActor.run { self.session.localVideoTrack = track }
+                    print("[CallVC] outgoing camera published on answer (\(reason)) callId=\(self.callId)")
+                }
+            }
+        }
+        let desired = self.session.micEnabled
+        guard desired else { return }
+        Task { [weak self] in
+            guard let self = self else { return }
+            do {
+                let micPub = try await r.localParticipant.setMicrophone(
+                    enabled: true,
+                    captureOptions: Self.defaultAudioCaptureOptions()
+                )
+                if let track = micPub?.track as? LocalAudioTrack {
+                    await MainActor.run { self.localAudioTrackRef = track }
+                }
+                print("[CallVC] outgoing mic published on answer (\(reason)) callId=\(self.callId)")
+            } catch {
+                // Pre-connect: the post-connect publish reads the open gate.
+                print("[CallVC] outgoing mic publish-on-answer failed (benign if pre-connect): \(error)")
+            }
+        }
+    }
+
     init(callId: String,
          callerName: String,
          callerEmail: String,
@@ -353,14 +403,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // ringback engine the moment the callee's WS accept frame lands.
         installRemoteAnsweredObserver()
 
-        // [button-removal 2026-05-26] Noise suppression is now ALWAYS ON — the
-        // user-facing toggle was removed from the More sheet per founder. Force
-        // it enabled regardless of any stale App Group `rnnoise_enabled=false`
-        // a user persisted before the toggle disappeared (else they'd be stuck
-        // off with no way to re-enable). The RNNoise frame processing itself is
-        // untouched. applyNoiseSuppression persists the flag + flips the
-        // processor singleton.
-        applyNoiseSuppression(true)
+        // [2026-10-04 RNNoise facade removal] We no longer force a bogus
+        // "RNNoise ON" here. RNNoise was never actually linked (see
+        // RNNoiseAudioProcessor.swift) — it was a no-op that only pretended to
+        // suppress noise. The REAL suppression is WebRTC's built-in NS + Apple
+        // VPIO/HW-AEC, enabled unconditionally via defaultAudioCaptureOptions()
+        // on the LiveKit RoomOptions, and is untouched. Nothing to force here.
 
         // [WAVE 154 2026-05-22] NUCLEAR — SwiftUI CallView removed entirely.
         //
@@ -1004,14 +1052,11 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // suspend chain survives even if the VC is dismissed mid-handshake.
         if let url = lkUrl, let token = lkToken, !url.isEmpty, !token.isEmpty {
             print("[CallVC] Starting LiveKit connect — callId=\(callId)")
-            // [2026-05-17 RNNoise + MediaPipe] Touch the processor singletons
-            // so they're allocated before Room.connect — that way the very
-            // first published audio + video frames already see the toggle
-            // state from App Group UserDefaults. The actual delegate wiring
-            // (Room.audioCustomProcessingDelegate / videoCustomProcessingDelegate)
-            // happens in LiveKit Swift 2.1+; on earlier revs the singleton
-            // just stays idle and toggles still update UI state.
-            _ = RNNoiseAudioProcessor.shared
+            // [2026-05-17 MediaPipe] Touch the BackgroundProcessor singleton so
+            // it's allocated before Room.connect — the first published video
+            // frames already see the blur/wallpaper toggle state from App Group
+            // UserDefaults. (RNNoise removed 2026-10-04 — it was a never-linked
+            // no-op facade; real audio NS = WebRTC + VPIO via capture options.)
             _ = BackgroundProcessor.shared
             // [Wave C, 2026-05-18] Build a Room with adaptive-stream enabled +
             // RoomOptions wired so initial publish carries simulcast layers
@@ -1023,9 +1068,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // capture options carry WebRTC's native AEC + AGC + noise
             // suppression toggles. LiveKit forwards these to the underlying
             // RTCAudioTrack constraints, so the published mic track applies
-            // them on every Room.connect. RNNoise (above) layers on top via
-            // the customAudioProcessing delegate when the SPM module is
-            // present. RoomOptions init signature (LK Swift 2.5+ verified):
+            // them on every Room.connect. This (+ Apple VPIO/HW-AEC) is the
+            // ONLY noise suppression in effect — there is no RNNoise layer
+            // (removed 2026-10-04). RoomOptions init signature (LK Swift 2.5+ verified):
             //   init(defaultCameraCaptureOptions:, defaultScreenShareCaptureOptions:,
             //        defaultAudioCaptureOptions:, defaultVideoPublishOptions:,
             //        defaultAudioPublishOptions:, defaultDataPublishOptions:,
@@ -1076,10 +1121,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // background effects). Must bind BEFORE setCamera() below so the
             // very first published frame already carries the processor.
             BackgroundProcessorLKAdapter.shared.bind(to: r)
-            // [Wave WhatsApp parity, 2026-05-20 gap B1] Mirror for the audio
-            // path — RNNoise ML noise suppression. Skips silently when the
-            // SPM module isn't linked (dlsym fallback returned unavailable).
-            RNNoiseLKAdapter.shared.bind(to: r)
+            // [2026-10-04] RNNoiseLKAdapter.bind removed from the path — it was
+            // a no-op (RNNoise never linked). Audio noise suppression is handled
+            // entirely by WebRTC's NS + Apple VPIO via defaultAudioCaptureOptions.
             Task { [weak self] in
                 guard let self = self else { return }
                 do {
@@ -1097,6 +1141,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                     //                 AudioCaptureOptions? = nil,
                     //                 publishOptions: AudioPublishOptions? = nil)
                     //   async throws -> LocalTrackPublication?
+                    if self.isOutgoing && !self.outgoingMicGateOpen {
+                        // [2026-10-03 ring-leak] Caller: hold the mic until answered.
+                        print("[CallVC] outgoing mic publish DEFERRED until answer — callId=\(self.callId)")
+                    } else {
                     let micPub = try await r.localParticipant.setMicrophone(
                         enabled: true,
                         captureOptions: Self.defaultAudioCaptureOptions()
@@ -1109,7 +1157,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         await MainActor.run { self.localAudioTrackRef = track }
                     }
                     print("[CallVC] Mic published (aec+agc+ns) — callId=\(self.callId)")
-                    if self.hasVideo {
+                    }
+                    if self.hasVideo && self.isOutgoing && !self.outgoingMicGateOpen {
+                        // [2026-10-04 ring-leak, VIDEO] Caller: hold the CAMERA
+                        // until answered — same gate the mic already uses above.
+                        // Without this, the callee's subscribe-only preconnect
+                        // received the caller's live camera stream BEFORE tapping
+                        // Accept. Published in openOutgoingMicGate() on answer.
+                        print("[CallVC] outgoing camera publish DEFERRED until answer — callId=\(self.callId)")
+                    } else if self.hasVideo {
                         // [Wave C, 2026-05-18] Pass explicit captureOptions +
                         // publishOptions so the *first* publish carries our
                         // simulcast tiers. Room-level defaults set above already
@@ -1447,6 +1503,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
     private func applyMicEnabled(_ enabled: Bool) {
         guard let r = self.room else { return }
+        // [2026-10-03 ring-leak] Un-muting during the ring must not publish.
+        // The desired state is kept in session.micEnabled (set by the caller of
+        // this fn / UI); openOutgoingMicGate honours it on answer.
+        if isOutgoing && !outgoingMicGateOpen && enabled { return }
         // [2026-05-26 mute→unmute P0 fix] Route BOTH mute and unmute through
         // LocalParticipant.setMicrophone(enabled:) — the exact path the WORKING
         // GroupCallViewController.applyMicEnabled uses.
@@ -1858,19 +1918,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
-    /// [RNNoise, 2026-05-17] Per-user noise-suppression toggle. The actual
-    /// frame processing happens in RNNoiseAudioProcessor.shared (registered
-    /// once at module setup via LiveKit's audio custom-processing delegate).
-    /// This method just flips the bool + persists.
+    /// [2026-10-04] Noise-suppression UI toggle. NOTE: this only reflects the
+    /// UI bool + persists the pref — it does NOT toggle real suppression.
+    /// RNNoise was never linked (removed as a facade); WebRTC's built-in NS +
+    /// Apple VPIO/HW-AEC are always on via defaultAudioCaptureOptions and are
+    /// not user-toggleable here. Kept so any surviving toggle closure compiles.
     private func applyNoiseSuppression(_ enabled: Bool) {
-        RNNoiseAudioProcessor.shared.enabled = enabled
         session.noiseSuppression = enabled
-        // [button-removal 2026-05-26] Persist so the App Group seed (which the
-        // CallSessionState init reads) is self-healing — a user who had
-        // `rnnoise_enabled=false` before the toggle was removed gets overwritten
-        // to true on the next call start and never lands in a stuck-off state.
         UserDefaults(suiteName: "group.com.onemundo.mail")?.set(enabled, forKey: "rnnoise_enabled")
-        print("[CallVC] noiseSuppression → \(enabled) (available=\(RNNoiseAudioProcessor.shared.available))")
+        print("[CallVC] noiseSuppression UI flag → \(enabled) (real NS = WebRTC/VPIO, always on)")
     }
 
     /// [MediaPipe, 2026-05-17] Cycle through background modes: off → blur_medium
@@ -2244,6 +2300,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             Task { [weak self] in
                 guard let self = self else { return }
                 do {
+                    if self.outgoingMicGateOpen {
                     let micPub = try await r.localParticipant.setMicrophone(
                         enabled: desired,
                         captureOptions: Self.defaultAudioCaptureOptions()
@@ -2252,6 +2309,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         await MainActor.run { self.localAudioTrackRef = track }
                     }
                     print("[CallVC] didActivate mic republish(\(desired)) ok — callId=\(self.callId)")
+                    } else {
+                        print("[CallVC] didActivate mic republish skipped (ring, not answered) — callId=\(self.callId)")
+                    }
                 } catch {
                     // Pre-connect activation lands here (room not connected
                     // yet) — benign, the post-connect publish takes over.
@@ -2319,6 +2379,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 return
             }
             print("[CallVC] remote-answered \(self.callId) — stopping ringback + flipping status")
+            self.openOutgoingMicGate(reason: "ws_call_accepted")
             self.stopRingbackTone(reason: "remote_answered")
             self.session.status = "Conectado"
 
@@ -2782,9 +2843,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             print("[CallVC] preconnectRoom: already pre-connected for \(callId) — skip")
             return
         }
-        // Touch processor singletons so the first published audio frame sees
-        // the user's RNNoise / background-blur toggle state.
-        _ = RNNoiseAudioProcessor.shared
+        // Touch the BackgroundProcessor singleton so the first published video
+        // frame sees the user's background-blur toggle state. (RNNoise removed
+        // 2026-10-04 — never-linked no-op; audio NS = WebRTC + VPIO.)
         _ = BackgroundProcessor.shared
         // [WAVE 115, 2026-05-21] Relay-first ICE — same policy as viewDidLoad path.
         let roomOptions = RoomOptions(
@@ -3063,13 +3124,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         sheet.addAction(UIAlertAction(title: screenSharing ? "Parar compartilhamento" : "Compartilhar tela", style: .default) { [weak self] _ in
             self?.toggleScreenShare()
         })
-        // [button-removal 2026-05-26] "Redução de ruído" toggle + the hand-raise
-        // control REMOVED per founder. Noise suppression stays ALWAYS ON
-        // internally — applyNoiseSuppression(true) is forced in viewDidLoad /
-        // session seeding (see below), and RNNoiseAudioProcessor.shared keeps
-        // processing every frame; only the user-facing toggle is gone. (iOS had
-        // no hand-raise action in this sheet — it lived only in the dead SwiftUI
-        // CallView — so there is nothing to remove for that one here.)
+        // [button-removal 2026-05-26 / 2026-10-04] "Redução de ruído" toggle +
+        // hand-raise control REMOVED per founder. Noise suppression is handled
+        // by WebRTC's built-in NS + Apple VPIO/HW-AEC (always on via
+        // defaultAudioCaptureOptions) — there is NO RNNoise processing (that was
+        // a never-linked facade, removed 2026-10-04). (iOS had no hand-raise
+        // action in this sheet — it lived only in the dead SwiftUI CallView.)
         // Background effect cycle (cycleBackground exists; MediaPipe blur).
         sheet.addAction(UIAlertAction(title: "Efeito de fundo", style: .default) { [weak self] _ in
             self?.cycleBackground()
@@ -3903,6 +3963,7 @@ extension CallViewController: RoomDelegate {
         // and stopRingbackTone is guarded by ringbackActive.
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+            self.openOutgoingMicGate(reason: "remote_track_subscribed")
             self.stopRingbackTone(reason: "didSubscribeTrack_mediaTruth")
             if self.session.status != "Conectado" {
                 self.session.status = "Conectado"

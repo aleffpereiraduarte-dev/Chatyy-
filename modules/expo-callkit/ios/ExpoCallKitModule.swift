@@ -164,6 +164,22 @@ public class ExpoCallKitModule: Module {
     }
   }
 
+  /// [cross-path dedup 2026-10-04 P1.2] Eagerly record the CallKit UUID a VoIP
+  /// push just reported for `callId` into the shared callId→UUID store —
+  /// synchronously, instead of only via the async `ExpoCallKitPendingVoipCall`
+  /// → `adoptPendingCall` hop. This lets the native WS `call_invite` path
+  /// (CallSignalWs) detect the call was already surfaced and REUSE this UUID
+  /// instead of minting a second one, which would ring CallKit twice / show 2
+  /// entries when the app is alive in background. First writer wins — never
+  /// overwrites an existing entry.
+  static func registerIncomingCallKitUUIDIfAbsent(_ uuid: UUID, forCallId callId: String) {
+    sharedUUIDLock.lock()
+    defer { sharedUUIDLock.unlock() }
+    if sharedUUIDByCallId[callId] == nil {
+      sharedUUIDByCallId[callId] = uuid
+    }
+  }
+
   /// [#1171 redux dismiss, 2026-05-19] Public bridge so CallViewController can
   /// invoke ProviderDelegate.dismissActiveCallSurfaces as a last-resort
   /// fallback when its own `self.dismiss(animated:)` is swallowed (no
@@ -453,12 +469,11 @@ public class ExpoCallKitModule: Module {
           }
         }
       }
-      // [2026-05-17] Touch the processor singletons so they're allocated
-      // (and their dlsym / pod-load probe runs) ahead of the first Room.
-      // The wiring into LiveKit's audio/video custom-processing pipeline is
-      // done on the Room itself in CallViewController.bringUpRoom — these
-      // singletons just need to exist before that fires.
-      _ = RNNoiseAudioProcessor.shared
+      // [2026-05-17 / 2026-10-04] Touch the BackgroundProcessor singleton so
+      // it's allocated ahead of the first Room. The MediaPipe blur wiring is
+      // done on the Room itself in CallViewController. (RNNoise singleton touch
+      // removed — RNNoise was a never-linked no-op facade; real audio NS =
+      // WebRTC + Apple VPIO via the LiveKit audio capture options.)
       _ = BackgroundProcessor.shared
     }
 
@@ -662,24 +677,29 @@ public class ExpoCallKitModule: Module {
       return true
     }
 
-    // ─── RNNoise (2026-05-17) ────────────────────────────────────────────
+    // ─── RNNoise (2026-05-17 / removed as facade 2026-10-04) ─────────────
     //
-    // Per-user ML noise suppression toggle. Default ON. The actual frame
-    // processing happens inside RNNoiseAudioProcessor (loaded via dlsym so
-    // the app links even when the Swift Package isn't added yet — see the
-    // MANUAL STEPS at the bottom of RNNoiseAudioProcessor.swift).
+    // RNNoise ML noise suppression was NEVER actually linked (the Swift
+    // Package was never added, so the dlsym lookups always failed and every
+    // frame passed through untouched). These JS-facing functions are kept so
+    // existing JS callers don't break, but they are now honest no-ops:
+    // `isNoiseSuppressionAvailable` returns false and the toggle does nothing.
+    // Real noise suppression = WebRTC's built-in NS + Apple VPIO/HW-AEC, which
+    // are always on via the LiveKit audio capture options and NOT toggleable.
     Function("setNoiseSuppression") { (enabled: Bool) -> Bool in
-      RNNoiseAudioProcessor.shared.enabled = enabled
-      NSLog("[ExpoCallKit] setNoiseSuppression: \(enabled) (available=\(RNNoiseAudioProcessor.shared.available))")
+      // Accepted (returns true) to avoid breaking JS callers, but it's a no-op:
+      // there is no RNNoise layer to toggle. WebRTC NS stays on regardless.
+      NSLog("[ExpoCallKit] setNoiseSuppression(\(enabled)) — no-op (RNNoise not integrated; real NS = WebRTC/VPIO, always on)")
       return true
     }
 
     Function("getNoiseSuppression") { () -> Bool in
-      return RNNoiseAudioProcessor.shared.enabled
+      // RNNoise is not running. (WebRTC NS, which IS running, is not exposed here.)
+      return false
     }
 
     Function("isNoiseSuppressionAvailable") { () -> Bool in
-      return RNNoiseAudioProcessor.shared.available
+      return false
     }
 
     // ─── MediaPipe Background blur / virtual background (2026-05-17) ────

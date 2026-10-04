@@ -386,6 +386,13 @@ function CallScreenInner() {
   const [callDuration, setCallDuration] = useState(0);
   const callDurationRef = useRef(0);
   const [peerConnected, setPeerConnected] = useState(false);
+  // Ref mirror of peerConnected for event handlers captured in long-lived
+  // closures (e.g. RoomEvent.Disconnected inside connectToRoom's useCallback,
+  // whose deps intentionally omit peerConnected). Reading the state var there
+  // captured a stale `false`, so a terminal Disconnected AFTER the peer joined
+  // fell into the setup-phase error branch and the setReconnecting branch was
+  // dead code. Pattern mirrors handleEndCallRef. [2026-10-03]
+  const peerConnectedRef = useRef(false);
   const [peerRinging, setPeerRinging] = useState(false);
   const [ended, setEnded] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
@@ -610,6 +617,51 @@ function CallScreenInner() {
   // physical presence of a remote participant for 12s is a strong-enough
   // signal that they're really in the call.
   const callAcceptedRef = useRef(false);
+  // [2026-10-03 PRIVACY ring-leak fix] The 1:1 CALLER pre-connects to the SFU
+  // during the ring, but must NOT publish its mic until the callee has really
+  // answered — the callee's preconnect joins subscribe-only during the ring
+  // and would otherwise hear the caller before tapping Accept. Gate opens on
+  // (a) WS call_accepted (callAcceptedRef) or (b) first remote AUDIO track
+  // subscribed (the callee publishes nothing until it answers; this covers a
+  // dropped WS frame). NEVER opened on bare ParticipantConnected (that is
+  // the leak). Callee and group calls are unaffected.
+  const remoteAudioSeenRef = useRef(false);
+  const _micGateOpen = () => !isCaller || isGroupCall || callAcceptedRef.current || remoteAudioSeenRef.current;
+  const _openCallerMic = () => {
+    if (!isCaller || isGroupCall) return;
+    const r = roomRef.current;
+    if (!r || audioMutedRef.current) return;
+    r.localParticipant.setMicrophoneEnabled(true).catch((e) => {
+      try { _callDiagAppend('warn', 'caller mic publish-on-answer failed', { call_id: callId, msg: String(e?.message || e).slice(0, 200) }); } catch {}
+    });
+  };
+  // [2026-10-03 PRIVACY ring-leak fix — video] Camera analogue of _openCallerMic.
+  // The 1:1 CALLER pre-connects to the SFU during the ring but must NOT publish
+  // its camera until the callee really answers — otherwise the callee's
+  // subscribe-only preconnect receives the caller's video before tapping Accept
+  // (same leak class the mic gate closed for audio). connectToRoom skips the
+  // camera publish while _micGateOpen() is false and stashes the computed
+  // publish opts here; this fires on the same answered triggers as the mic
+  // (WS call_accepted, first remote audio track, 12s fallback). Self-view is
+  // unaffected on the callee/group paths (gate is open immediately there).
+  const _pendingCamPubOptsRef = useRef(undefined);
+  const _openCallerCam = () => {
+    if (!isCaller || isGroupCall || !isVideoCall) return;
+    if (!videoEnabledRef.current) return;
+    const r = roomRef.current;
+    if (!r) return;
+    (async () => {
+      try {
+        const opts = _pendingCamPubOptsRef.current;
+        if (opts) await r.localParticipant.setCameraEnabled(true, undefined, opts);
+        else await r.localParticipant.setCameraEnabled(true);
+        const camPub = r.localParticipant.getTrackPublication(Track.Source.Camera);
+        if (camPub?.videoTrack) setLocalVideoTrack(camPub.videoTrack);
+      } catch (e) {
+        try { _callDiagAppend('warn', 'caller cam publish-on-answer failed', { call_id: callId, msg: String(e?.message || e).slice(0, 200) }); } catch {}
+      }
+    })();
+  };
   const peerParticipantConnectedAtRef = useRef(0);
   const pendingPeerConnectedFallbackRef = useRef(null);
 
@@ -1100,7 +1152,7 @@ function CallScreenInner() {
         // came back silently mute. Re-assert to the user's mute choice.
         (async () => {
           try {
-            await r.localParticipant.setMicrophoneEnabled(!audioMutedRef.current);
+            await r.localParticipant.setMicrophoneEnabled(!audioMutedRef.current && _micGateOpen());
           } catch (e) {
             try { _callDiagAppend('warn', 'mic re-assert failed on foreground resume', { call_id: callId, msg: String(e?.message || e).slice(0, 200) }); } catch {}
           }
@@ -1328,7 +1380,7 @@ function CallScreenInner() {
     const r = roomRef.current;
     if (!r) return false;
     try {
-      await r.localParticipant.setMicrophoneEnabled(!audioMutedRef.current);
+      await r.localParticipant.setMicrophoneEnabled(!audioMutedRef.current && _micGateOpen());
       return true;
     } catch (e) {
       console.warn('[Call] _retryMicPublish err:', e?.message);
@@ -2139,7 +2191,7 @@ function CallScreenInner() {
       // current mute choice; setMicrophoneEnabled is idempotent when healthy.
       (async () => {
         try {
-          await r.localParticipant.setMicrophoneEnabled(!audioMutedRef.current);
+          await r.localParticipant.setMicrophoneEnabled(!audioMutedRef.current && _micGateOpen());
         } catch (e) {
           try { _callDiagAppend('warn', 'post-reconnect mic republish failed', { call_id: callId, msg: String(e?.message || e).slice(0, 200) }); } catch {}
         }
@@ -2147,7 +2199,7 @@ function CallScreenInner() {
     });
 
     r.on(RoomEvent.Disconnected, (reason) => {
-      try { _callDiagAppend('warn', 'LK Room disconnected', { call_id: callId, reason: String(reason), peer_was_connected: peerConnected }); } catch {}
+      try { _callDiagAppend('warn', 'LK Room disconnected', { call_id: callId, reason: String(reason), peer_was_connected: peerConnectedRef.current }); } catch {}
       console.log('[Call] LiveKit Disconnected reason=', reason);
       // [CALL-TRACE 2026-05-20 WAVE42] Step 12b/12 — JS Room dropped. If
       // reason=ClientInitiated it's our own hangup. Anything else combined
@@ -2156,7 +2208,7 @@ function CallScreenInner() {
         console.log('[CALL-TRACE][12b/12] JS Room.Disconnected', {
           callId,
           reason: String(reason),
-          peerConnected,
+          peerConnected: peerConnectedRef.current,
           ts: Date.now(),
         });
       } catch {}
@@ -2171,7 +2223,7 @@ function CallScreenInner() {
       // the callee finished joining the room → user reports "atendi e
       // encerrou na hora". Surface the error to the UI instead and stay
       // silent on WS so the callee can still join via LiveKit's own retry.
-      if (!peerConnected) {
+      if (!peerConnectedRef.current) {
         console.warn('[Call] LiveKit Disconnected BEFORE peer joined — NOT firing handleEndCall (setup-phase)');
         try { setErrorMsg(t('call.connectionFailed') || 'Não foi possível conectar.'); } catch {}
         try { setConnectionFailed(true); } catch {}
@@ -2233,6 +2285,13 @@ function CallScreenInner() {
             if (callerTimeoutRef.current) { clearTimeout(callerTimeoutRef.current); callerTimeoutRef.current = null; }
             peerJoinedAtRef.current = Date.now();
             try { callKeep.reportConnected(callId); } catch {}
+            // The WS call_accepted was dropped, so the normal answered-side mic
+            // open (via call_accepted / TrackSubscribed) never fired. Declaring
+            // connected here without opening the caller mic left the mic gate
+            // shut → callee heard silence and handleToggleMute showed a lying
+            // unmuted icon. Open mic (and camera on video) now. [2026-10-03]
+            _openCallerMic();
+            _openCallerCam();
             try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
           }, 12000);
         }
@@ -2273,6 +2332,13 @@ function CallScreenInner() {
 
     r.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
       console.log('[Call] TrackSubscribed', track.kind, 'from', participant.identity, 'source=', publication.source);
+      try {
+        if (participant !== r.localParticipant && (track?.kind === 'audio' || publication?.kind === 'audio') && !remoteAudioSeenRef.current) {
+          remoteAudioSeenRef.current = true;
+          _openCallerMic();
+          _openCallerCam();
+        }
+      } catch {}
       _refreshRemoteTracks(participant);
       _updateGroupPeer(participant.identity, {
         participant,
@@ -2564,7 +2630,7 @@ function CallScreenInner() {
       }
     }
     try {
-      await r.localParticipant.setMicrophoneEnabled(wantMicOn);
+      await r.localParticipant.setMicrophoneEnabled(wantMicOn && _micGateOpen());
     } catch (e) {
       console.warn('[Call] setMicrophoneEnabled err:', e?.message);
       // LK threw despite our pre-flight — classify the error name and
@@ -2630,25 +2696,36 @@ function CallScreenInner() {
               videoEncoding: { maxBitrate: 200000, maxFramerate: 15 },
             }
           : undefined;
-        try {
-          // LK's setCameraEnabled accepts publish opts as 3rd arg (cap opts)
-          // on livekit-client 2.x. On older versions the arg is ignored — the
-          // adaptive loop above will still pull the bitrate down to the
-          // matching bucket on the first poll.
-          if (camPubOpts) {
-            try { _diag('low_data_mode_on', { auto: !userToggleOn }); } catch {}
-            await r.localParticipant.setCameraEnabled(true, undefined, camPubOpts);
-          } else {
-            await r.localParticipant.setCameraEnabled(true);
+        // [2026-10-03 PRIVACY ring-leak fix — video] Stash the computed publish
+        // opts so _openCallerCam() can reuse them when it fires on answer.
+        _pendingCamPubOptsRef.current = camPubOpts;
+        // Mirror the mic gate: the 1:1 CALLER pre-connects during the ring but
+        // must NOT publish its camera to the SFU until the callee answers —
+        // _micGateOpen() is false for the caller until call_accepted / first
+        // remote audio / the 12s fallback, at which point _openCallerCam()
+        // publishes. Callee + group calls open the gate immediately so this is
+        // a no-op detour for them.
+        if (_micGateOpen()) {
+          try {
+            // LK's setCameraEnabled accepts publish opts as 3rd arg (cap opts)
+            // on livekit-client 2.x. On older versions the arg is ignored — the
+            // adaptive loop above will still pull the bitrate down to the
+            // matching bucket on the first poll.
+            if (camPubOpts) {
+              try { _diag('low_data_mode_on', { auto: !userToggleOn }); } catch {}
+              await r.localParticipant.setCameraEnabled(true, undefined, camPubOpts);
+            } else {
+              await r.localParticipant.setCameraEnabled(true);
+            }
+            const camPub = r.localParticipant.getTrackPublication(Track.Source.Camera);
+            if (camPub?.videoTrack) setLocalVideoTrack(camPub.videoTrack);
+          } catch (e) {
+            console.warn('[Call] setCameraEnabled err:', e?.message);
+            // Fallback: audio-only if camera failed.
+            setVideoEnabled(false);
+            videoEnabledRef.current = false;
+            try { setErrorMsg(t('call.videoUnavailable') || 'Câmera indisponível — usando só áudio'); } catch {}
           }
-          const camPub = r.localParticipant.getTrackPublication(Track.Source.Camera);
-          if (camPub?.videoTrack) setLocalVideoTrack(camPub.videoTrack);
-        } catch (e) {
-          console.warn('[Call] setCameraEnabled err:', e?.message);
-          // Fallback: audio-only if camera failed.
-          setVideoEnabled(false);
-          videoEnabledRef.current = false;
-          try { setErrorMsg(t('call.videoUnavailable') || 'Câmera indisponível — usando só áudio'); } catch {}
         }
       }
     }
@@ -3001,6 +3078,7 @@ function CallScreenInner() {
 
   // Sync the ref so the global teardown hook always sees the latest.
   useEffect(() => { handleEndCallRef.current = handleEndCall; }, [handleEndCall]);
+  useEffect(() => { peerConnectedRef.current = peerConnected; }, [peerConnected]);
 
   // ───── Post-call rating handlers ─────
   // Both paths cancel the auto-nav timers and ship the rating (if any)
@@ -3199,6 +3277,8 @@ function CallScreenInner() {
       unsubAccepted = mailWs.on('call_accepted', (data) => {
         if (data?.call_id === callId && mounted) {
           callAcceptedRef.current = true;
+          _openCallerMic();
+          _openCallerCam();
           if (callerTimeoutRef.current) clearTimeout(callerTimeoutRef.current);
           try { const { stopRingtone } = require('../services/ringtone'); stopRingtone(); } catch {}
           setPeerRinging(true);
@@ -3625,7 +3705,7 @@ function CallScreenInner() {
     setAudioMuted(newMuted);
     audioMutedRef.current = newMuted;
     try {
-      await r.localParticipant.setMicrophoneEnabled(!newMuted);
+      await r.localParticipant.setMicrophoneEnabled(!newMuted && _micGateOpen());
     } catch (e) {
       console.warn('[Call] setMicrophoneEnabled err:', e?.message);
       if (Platform.OS === 'web' && !newMuted) {

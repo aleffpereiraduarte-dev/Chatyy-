@@ -417,6 +417,13 @@ async function clearMmkvIfAccountChanged(email) {
     const prev = String(getString('omc_cache_owner') || '').trim().toLowerCase();
     if (prev && prev !== cur) {
       await clearAccountScopedMmkv();
+      // [2026-10-04] Also wipe the native expo-chat-cache SQLite (emails/drive/
+      // avatars — not account-namespaced) so a cold start as a DIFFERENT account
+      // (clean logout never ran) doesn't paint the previous user's data.
+      try {
+        const NativeChatCache = require('../modules/expo-chat-cache').default;
+        if (NativeChatCache?.clearAll) await NativeChatCache.clearAll();
+      } catch {}
     }
     if (prev !== cur) { try { setString('omc_cache_owner', cur); } catch {} }
   } catch {}
@@ -451,6 +458,18 @@ async function clearAllPerAccountCaches() {
   // dbClearAll()" comment) — without this explicit wipe, a logout left the
   // messages/conversations tables on disk for the next account to read.
   try { await clearLocalChatStore(); } catch {}
+
+  // 1a-native. P0 PRIVACY [2026-10-04]: the expo-chat-cache NATIVE SQLite store
+  // (tables emails / drive_files / avatars / media_uris / messages /
+  // conversations) is keyed only by folder/parentId/email — NOT namespaced by
+  // account — and NONE of the wipes above reach it (clearChatCache/dbClearAll
+  // touch the JS expo-sqlite store, not this native module). So after logout,
+  // account A's inbox rows, Drive files and avatars painted under account B and
+  // FTS search returned A's mail. The module exposes clearAll(); call it here.
+  try {
+    const NativeChatCache = require('../modules/expo-chat-cache').default;
+    if (NativeChatCache?.clearAll) await NativeChatCache.clearAll();
+  } catch {}
 
   // 1b. Avatar disk cache (documentDirectory/avatar-saved). Avatars are
   // user-visible identifiers — leaving them on disk after logout lets

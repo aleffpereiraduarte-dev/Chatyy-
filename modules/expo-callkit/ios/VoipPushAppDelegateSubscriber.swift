@@ -318,6 +318,15 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         kCallIdToUUID[callId] = uuid
         kCallIdToUUIDLock.unlock()
 
+        // [cross-path dedup 2026-10-04 P1.2] Mirror this UUID into the module's
+        // shared callId→UUID store IMMEDIATELY (not only via the async
+        // ExpoCallKitPendingVoipCall → adoptPendingCall hop below). The VoIP
+        // push fires earliest; if a native WS `call_invite` for the SAME callId
+        // races in before adoptPendingCall runs, CallSignalWs now sees this UUID
+        // and skips its own duplicate reportNewIncomingCall (no double ring / 2
+        // CallKit entries when the app is alive in background).
+        ExpoCallKitModule.registerIncomingCallKitUUIDIfAbsent(uuid, forCallId: callId)
+
         // reportNewIncomingCall FIRST — before any bookkeeping. Apple's
         // run-loop deadline is enforced: any work between the push receipt
         // and the report call eats budget and any blocking sync can push us

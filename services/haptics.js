@@ -81,8 +81,12 @@ export function error() {
  */
 export async function pattern(events) {
   if (_native?.hapticPattern) {
-    try { await _native.hapticPattern(events); } catch {}
+    try { await _native.hapticPattern(events); return; } catch {}
   }
+  // [2026-10-04] Fallback where Core Haptics patterns aren't available (Android,
+  // or the native toolkit isn't loaded): approximate with a single impact so the
+  // moment (e.g. "send") still gives tactile feedback instead of being MUTE.
+  try { tap('medium'); } catch {}
 }
 
 // Convenience wrapper for the most common app moments

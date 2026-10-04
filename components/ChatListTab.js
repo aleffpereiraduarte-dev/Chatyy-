@@ -23,7 +23,7 @@ import { userScopedKey } from '../services/cache';
 import { RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
 import { getCachedMessagesSync } from '../services/smartChatCache';
 import CachedImage from './CachedImage';
-import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera } from './Icons';
+import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera, IconPhone, IconVideo, IconPaperclip, IconMapPin, IconFilm, IconMic, IconUser, IconBarChart, IconCalendar } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import HomeHubCard from './HomeHubCard';
 import AvatarLightbox from './AvatarLightbox';
@@ -50,6 +50,7 @@ import ScreenEmptyState from './ScreenEmptyState';
 import { ChatListSkeleton } from './SkeletonLoader';
 import { SkeletonRow as SkeletonRowPrimitive } from './Skeleton';
 import PressableScale from './PressableScale';
+import FadeSlideIn from './FadeSlideIn';
 import { haptic } from '../constants/theme';
 
 let NativeSwipeable = null;
@@ -152,6 +153,29 @@ function IconBellOff({ size = 24, color = '#666' }) {
       <Path d="M18 8a6 6 0 0 0-9.33-5" />
       <Path d="m1 1 22 22" />
     </Svg>
+  );
+}
+
+// Preview rows build strings with a leading emoji (📎 📞 📹 …). House rule: no
+// emoji in UI — swap the leading glyph for an SVG at RENDER time (the string
+// itself stays untouched so startsWith() checks elsewhere keep working).
+const PREVIEW_EMOJI_ICONS = {
+  '\uD83D\uDCCE': IconPaperclip, '\uD83D\uDCDE': IconPhone, '\uD83D\uDCF9': IconVideo,
+  '\uD83D\uDCF7': IconCamera, '\uD83C\uDFAC': IconFilm, '\uD83C\uDFA5': IconVideo,
+  '\uD83C\uDFB5': IconMusic, '\uD83C\uDF99': IconMic, '\uD83D\uDCCD': IconMapPin,
+  '\uD83D\uDC64': IconUser, '\uD83D\uDCCA': IconBarChart, '\uD83D\uDCC5': IconCalendar,
+  '\uD83D\uDCAB': IconSparkles,
+};
+function withPreviewIcon(str, color) {
+  if (typeof str !== 'string' || str.length < 2) return str;
+  const Ic = PREVIEW_EMOJI_ICONS[str.slice(0, 2)];
+  if (!Ic) return str;
+  const rest = str.slice(2).replace(/^[\uFE0F\s]+/, '');
+  return (
+    <>
+      <View style={{ marginRight: 4, justifyContent: 'center' }}><Ic size={13} color={color} /></View>
+      {rest}
+    </>
   );
 }
 
@@ -811,10 +835,10 @@ const ConversationRow = React.memo(function ConversationRow({
     const scale = dragX.interpolate({ inputRange: [-80, 0], outputRange: [1, 0.5], extrapolate: 'clamp' });
     return (
       <View style={{ flexDirection: 'row' }}>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#4B5563' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onArchive?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#4B5563' }]} onPress={() => { try { haptic.success(); } catch {} swipeRef.current?.close(); propsRef.current.onArchive?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconArchive size={20} color="#fff" /></Animated.View>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#EF4444' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onDelete?.(conversation); }}>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#EF4444' }]} onPress={() => { try { haptic.medium(); } catch {} swipeRef.current?.close(); propsRef.current.onDelete?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconTrash size={20} color="#fff" /></Animated.View>
         </TouchableOpacity>
       </View>
@@ -862,8 +886,15 @@ const ConversationRow = React.memo(function ConversationRow({
       : colors.background;
 
   // Native swipe row content
+  // [polish 2026-10-03] Row tap target uses PressableScale (the canonical
+  // premium scale-on-press primitive) for a consistent spring feel on open.
+  // haptic={false}: the open already fires haptic.select() in
+  // handleConversationPress, so the primitive's default press-in tick would
+  // double it. All other props (onPress/onPressIn/onLongPress/web mouse +
+  // context handlers/delays/activeOpacity) pass straight through unchanged.
   const rowContent = (
-        <TouchableOpacity
+        <PressableScale
+          haptic={false}
           style={[
             s.row,
             {
@@ -1088,9 +1119,9 @@ const ConversationRow = React.memo(function ConversationRow({
                     {previewSender ? (
                       <>
                         <Text style={{ fontWeight: '600', color: colors.textSecondary }}>{previewSender}: </Text>
-                        {preview}
+                        {withPreviewIcon(preview, unread ? (isDark ? '#e8e8ea' : '#262626') : (isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)'))}
                       </>
-                    ) : (preview || t('chat.noMessages'))}
+                    ) : (withPreviewIcon(preview, unread ? (isDark ? '#e8e8ea' : '#262626') : (isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)')) || t('chat.noMessages'))}
                   </Text>
                 </View>
               )}
@@ -1142,7 +1173,7 @@ const ConversationRow = React.memo(function ConversationRow({
               </View>
             </View>
           </View>
-        </TouchableOpacity>
+        </PressableScale>
   );
 
   // Use native Swipeable on iOS/Android, PanResponder on web. Hooks declared above —
@@ -1151,6 +1182,11 @@ const ConversationRow = React.memo(function ConversationRow({
     return (
       <NativeSwipeable ref={swipeRef} friction={1.5} leftThreshold={50} rightThreshold={50} overshootLeft={false} overshootRight={false}
         renderLeftActions={renderLeftActions} renderRightActions={renderRightActions}
+        // [polish 2026-10-03] Subtle selection tick when the row swipes open —
+        // WhatsApp parity. One haptic per swipe-reveal (discrete action); the
+        // action buttons add their own on tap. Unknown prop is a no-op if the
+        // installed gesture-handler ever drops it, so this stays defensive.
+        onSwipeableWillOpen={() => { try { haptic.select(); } catch {} }}
 >
         {rowContent}
       </NativeSwipeable>
@@ -1180,11 +1216,11 @@ const ConversationRow = React.memo(function ConversationRow({
         </TouchableOpacity>
       </Animated.View>
       <Animated.View style={[s.swipeActionsRight, { opacity: rightOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#4B5563' }]} onPress={() => { resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#4B5563' }]} onPress={() => { try { haptic.success(); } catch {} resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
           <IconArchive size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isArchived ? (t('chat.unarchive') || 'Unarchive') : (t('chat.archive') || 'Archive')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#EF4444' }]} onPress={() => { resetSwipe(); propsRef.current.onDelete?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#EF4444' }]} onPress={() => { try { haptic.medium(); } catch {} resetSwipe(); propsRef.current.onDelete?.(conversation); }}>
           <IconTrash size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{t('chat.delete') || 'Excluir'}</Text>
         </TouchableOpacity>
@@ -2666,7 +2702,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   );
 }
 
-export default function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setActiveTab, requestOpenStatus, requestNewStatus }) {
+function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setActiveTab, requestOpenStatus, requestNewStatus }) {
   const confirm = useConfirm();
   const { language } = useLanguage();
   // Try MMKV preload first; fall back to the native SQLite cache (iOS).
@@ -3028,6 +3064,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   }, []);
 
   const enterSelectionMode = useCallback((id) => {
+    // [polish 2026-10-03] Selection tick on multi-select START. This is the
+    // real discrete "enter multi-select" action (reached from the long-press
+    // menu's "Selecionar" and from web right-click) — firing here instead of
+    // on the row long-press itself avoids double-firing with the long-press
+    // menu's own Medium impact (showLongPressMenu).
+    try { haptic.select(); } catch {}
     setSelectionMode(true);
     setSelectedIds(new Set([id]));
   }, []);
@@ -3280,6 +3322,115 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
   const loadConvRef = useRef(null);
   loadConvRef.current = loadConversations;
 
+  // ─── Steady-state read-receipt reconcile ──────────────────────────────────
+  // [2026-10-03] A dropped WS receipt broadcast (chat_read / message_read /
+  // chat_delivered / message_delivered) used to leave a row's tick (✓ / ✓✓
+  // gray / ✓✓ blue) stale "forever": the OPEN conversation self-heals via its
+  // own chat_sync, but the list never did. On reconnect the list already
+  // pulled syncConversations() purely to mirror new_message rows into SQLite
+  // and threw the per-conv `events` away with a no-op setMessages. Here we
+  // WALK those same events and patch last_message.{delivered_at, read_at} for
+  // any read/delivered whose COVERED message id ≥ the row's last_message.id
+  // (receipts are monotonic). Runs on reconnect (reusing the already-fetched
+  // payload — no extra request), on focus, and on a light interval while
+  // mounted, so a missed broadcast can't diverge list↔thread for more than one
+  // tick. Fully defensive: tolerates any event-shape drift, never throws.
+  const conversationsRef = useRef(conversations);
+  conversationsRef.current = conversations;
+  const applyReceiptMarks = useCallback((perConv) => {
+    try {
+      if (!Array.isArray(perConv) || perConv.length === 0) return;
+      const meLower = (user?.email || '').toLowerCase();
+      if (!meLower) return;
+      // Collapse each conv's events into a single {deliveredUpTo, readUpTo}
+      // high-watermark. `read` carries payload.message_id (the last-read id);
+      // `delivered` coalesces a burst into payload.message_ids[].
+      const marks = new Map();
+      for (const c of perConv) {
+        const cid = c?.id;
+        if (cid == null || !Array.isArray(c?.events)) continue;
+        let deliveredUpTo = 0, readUpTo = 0;
+        for (const ev of c.events) {
+          try {
+            if (ev?.type === 'read') {
+              const mid = Number(ev?.payload?.message_id) || 0;
+              if (mid > readUpTo) readUpTo = mid;
+            } else if (ev?.type === 'delivered') {
+              const dids = Array.isArray(ev?.payload?.message_ids) ? ev.payload.message_ids : [];
+              for (const d of dids) { const n = Number(d) || 0; if (n > deliveredUpTo) deliveredUpTo = n; }
+            }
+          } catch {}
+        }
+        if (deliveredUpTo > 0 || readUpTo > 0) marks.set(String(cid), { deliveredUpTo, readUpTo });
+      }
+      if (marks.size === 0) return;
+      const nowIso = new Date().toISOString();
+      setConversations(prev => {
+        let changed = false;
+        const next = prev.map(c => {
+          const m = marks.get(String(c?.id)) || marks.get(String(c?.conversation_id));
+          const lm = c?.last_message;
+          if (!m || !lm) return c;
+          // Only MY outbound preview drives the row ticks — a receipt on the
+          // peer's own message never flips my ✓/✓✓.
+          if (!lm.sender_email || lm.sender_email.toLowerCase() !== meLower) return c;
+          const lmId = Number(lm.id) || 0;
+          const coveredRead = m.readUpTo > 0 && (!lmId || m.readUpTo >= lmId);
+          const coveredDelivered = m.deliveredUpTo > 0 && (!lmId || m.deliveredUpTo >= lmId);
+          const wantRead = coveredRead && !lm.read_at;
+          const wantDelivered = (coveredRead || coveredDelivered) && !lm.delivered_at;
+          if (!wantRead && !wantDelivered) return c;
+          changed = true;
+          return {
+            ...c,
+            last_message: {
+              ...lm,
+              ...((wantDelivered || wantRead) ? { delivered_at: lm.delivered_at || nowIso } : {}),
+              ...(wantRead ? { read_at: lm.read_at || nowIso } : {}),
+            },
+          };
+        });
+        return changed ? next : prev;
+      });
+    } catch {}
+  }, [user?.email]);
+  // Mirror the fetched payload into SQLite (new_message rows) AND reconcile the
+  // list ticks — one place so the reconnect path and the interval/focus path
+  // behave identically and never drop message persistence.
+  const applyEventsAndReceipts = useCallback((perConv) => {
+    if (!Array.isArray(perConv)) return;
+    try {
+      const { applyEvents: _applyEv } = require('../services/chatSync');
+      for (const c of perConv) {
+        try { _applyEv?.(c?.events || [], null, () => {}, c?.messages || []); } catch {}
+      }
+    } catch {}
+    applyReceiptMarks(perConv);
+  }, [applyReceiptMarks]);
+  const reconcileReceipts = useCallback(async () => {
+    try {
+      const live = Array.isArray(conversationsRef.current) ? conversationsRef.current : [];
+      const ids = live
+        .map(c => Number(c?.id))
+        .filter(n => Number.isFinite(n) && n > 0)
+        .slice(0, 200);
+      if (ids.length === 0) return;
+      const { syncConversations: _syncConvs } = require('../services/chatSync');
+      if (typeof _syncConvs !== 'function') return;
+      const perConv = await _syncConvs(ids);
+      applyEventsAndReceipts(perConv);
+    } catch {}
+  }, [applyEventsAndReceipts]);
+
+  // Light steady-state reconcile: every 25s while mounted, catch a receipt
+  // broadcast that never landed on the list. Cheap — chatSync single-flights +
+  // debounces concurrent callers into one coalesced chat_sync delta, and we
+  // only setState for rows whose covered id actually advanced.
+  useEffect(() => {
+    const id = setInterval(() => { reconcileReceipts(); }, 25000);
+    return () => clearInterval(id);
+  }, [reconcileReceipts]);
+
   useEffect(() => {
     // If we already painted from MMKV/native cache, do a silent sync
     // (no spinner ever flashes). Only show the loader on a truly cold start.
@@ -3382,6 +3533,9 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
       const now = Date.now();
       if (now - lastFocusRefreshRef.current < 800) return;
       lastFocusRefreshRef.current = now;
+      // Reconcile ticks on focus too (back-out from a chat where a receipt
+      // broadcast was dropped). Fire-and-forget alongside the full refresh.
+      try { reconcileReceipts(); } catch {}
       // Silent delta sync (no loading indicator — instant, no flicker if unchanged)
       api.chatConversations(searchText || '', false).then(r => {
         if (r?.success) {
@@ -3402,7 +3556,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           }
         }
       }).catch(() => {});
-    }, [searchText])
+    }, [searchText, reconcileReceipts])
   );
 
   useEffect(() => {
@@ -4102,17 +4256,15 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
                   .filter(n => Number.isFinite(n) && n > 0)
                   .slice(0, 200);
                 if (ids.length === 0) return;
-                const { syncConversations: _syncConvs, applyEvents: _applyEv } = require('../services/chatSync');
+                const { syncConversations: _syncConvs } = require('../services/chatSync');
                 if (typeof _syncConvs !== 'function') return;
                 const perConv = await _syncConvs(ids);
                 if (!Array.isArray(perConv)) return;
-                for (const c of perConv) {
-                  try {
-                    // No-op setMessages — applyEvents will mirror to SQLite
-                    // via the chatCache hook inside chatSync.applyEvents.
-                    _applyEv?.(c.events || [], null, () => {}, c.messages || []);
-                  } catch {}
-                }
+                // Mirror new_message rows to SQLite (as before) AND reconcile
+                // the list ticks from the SAME payload — a dropped receipt
+                // broadcast that stranded a row's ✓/✓✓ heals on reconnect
+                // instead of the events being discarded with a no-op setState.
+                applyEventsAndReceipts(perConv);
               } catch {}
             })();
           }
@@ -6754,6 +6906,12 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           })()}
         </View>
       ) : (
+        // [polish 2026-10-03] Fade the real list in on first paint instead of
+        // hard-cutting from the skeleton. distance={0} = pure opacity crossfade
+        // (cheap, no layout shift on a full list); runs once when this branch
+        // mounts (skeleton→content), not on pull-to-refresh (the list stays
+        // mounted then, so no replay).
+        <FadeSlideIn distance={0} duration={260}>
         <ListComponent
           data={visibleConversations}
           keyExtractor={keyExtractor}
@@ -6782,6 +6940,7 @@ export default function ChatListTab({ colors, isDark, t, user, router, searchQue
           onScroll={onListScroll}
           scrollEventThrottle={16}
         />
+        </FadeSlideIn>
       )}
 
       {/* FAB Menu Overlay */}
@@ -7811,7 +7970,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
                       backgroundColor: isDark ? 'rgba(0,0,0,0.25)' : 'rgba(0,0,0,0.08)',
                       marginBottom: 3,
                     }}>
-                      <CachedImage source={{ uri: thumbUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
+                      <CachedImage source={{ uri: thumbUri }} style={{ width: '100%', height: '100%' }} resizeMode="cover" recyclingKey={thumbUri} />
                       {(m.type === 'video') && (
                         <View style={{
                           position: 'absolute', left: 0, right: 0, top: 0, bottom: 0,
@@ -7851,7 +8010,7 @@ function ConversationPeekCard({ conv, previewMsgs, currentUserEmail, colors, isD
                       let more rows fit vertically; the full text stays
                       one tap away inside the conversation. */}
                   <Text style={{ fontSize: 14, color: txtCol, lineHeight: 19 }} numberOfLines={2}>
-                    {body || '—'}
+                    {withPreviewIcon(body, txtCol) || '—'}
                   </Text>
                   {(time || isOwn) ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-end', gap: 4, marginTop: 1 }}>
@@ -8347,3 +8506,10 @@ const s = StyleSheet.create({
     letterSpacing: 0.1,
   },
 });
+
+// PERF: the chats tab is ALWAYS mounted inside chat.js, which hosts a SyncBar
+// that ticks on an interval plus badge/search-animation state. Without memo,
+// every one of those parent re-renders re-ran ChatListTab's whole render.
+// chat.js now passes a memoized tabProps, so a shallow prop compare skips the
+// re-render unless something the list actually consumes changed.
+export default React.memo(ChatListTab);

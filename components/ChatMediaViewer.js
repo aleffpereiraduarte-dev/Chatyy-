@@ -1607,8 +1607,12 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
   // cached, future opens read from disk and survive network drops.
   useEffect(() => {
     if (!visible || Platform.OS === 'web') return;
+    // view-once must never be persisted to the disk cache (it would survive
+    // the one-time view and be re-openable from the cache).
+    if (viewOnce) return;
     const it = _list[_currentIdx];
     if (!it?.fileUrl) return;
+    if (it.viewOnce || it.isViewOnce || it.is_view_once) return;
     // Skip if already a local URI (outbox / just-saved).
     if (it.fileUrl.startsWith('file://') || it.fileUrl.startsWith('content://')) return;
     // CRITICAL (2026-05-19 #2): use api.getMediaUrl so the cache-write key
@@ -1633,10 +1637,11 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
       if (getLocalUriIfCached(absolute)) return; // already cached
       cacheMedia(absolute, {
         force: true,
+        viewOnce: false,
         conversationId: conversationId != null ? conversationId : undefined,
       }).catch(() => {});
     } catch {}
-  }, [visible, _currentIdx, _list, conversationId]);
+  }, [visible, _currentIdx, _list, conversationId, viewOnce]);
 
   if (!visible) return null;
 

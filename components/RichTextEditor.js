@@ -312,6 +312,32 @@ function WebEditor({ value, onChange, placeholder, minHeight, colors, isDark, ca
     setActiveCommands(active);
   }, []);
 
+  // [STRIKE-ON-LOAD FIX] On some Chromium builds a fresh/empty contentEditable
+  // reports `strikeThrough` as ACTIVE (queryCommandState === true) as the
+  // pending typing style, so the first characters the user types come out
+  // wrapped in <strike> and the "S" toolbar button looks pre-selected. Clear
+  // that stray pending style once, when the empty editor is first focused with
+  // a collapsed caret: toggle the command back off so typing starts as normal
+  // text. Guarded by a ref so it runs at most once and never fights a
+  // deliberate user toggle.
+  const strikeNormalizedRef = useRef(false);
+  const normalizeEmptyFormatting = useCallback(() => {
+    if (strikeNormalizedRef.current) return;
+    try {
+      const el = editorRef.current;
+      if (!el) return;
+      const html = el.innerHTML;
+      const empty = !html || html === '<br>' || html.replace(/<br\s*\/?>/g, '').trim() === '';
+      if (!empty) return;
+      const sel = window.getSelection ? window.getSelection() : null;
+      if (sel && !sel.isCollapsed) return;
+      strikeNormalizedRef.current = true;
+      if (document.queryCommandState('strikeThrough')) {
+        document.execCommand('strikeThrough', false, null);
+      }
+    } catch {}
+  }, []);
+
   const handleInput = useCallback(() => {
     if (editorRef.current) {
       const html = editorRef.current.innerHTML;
@@ -490,7 +516,7 @@ function WebEditor({ value, onChange, placeholder, minHeight, colors, isDark, ca
           onKeyUp={handleKeyUp}
           onKeyDown={handleKeyDown}
           onMouseUp={handleMouseUp}
-          onFocus={() => checkActiveFormats()}
+          onFocus={() => { normalizeEmptyFormatting(); checkActiveFormats(); }}
           onPaste={handlePaste}
           style={editorStyle}
           data-testid="rich-text-editor"

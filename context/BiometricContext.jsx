@@ -99,6 +99,23 @@ async function setStoredPref(key, value) {
   } catch {}
 }
 
+// [2026-10-03] COLD-START LOCK. The pref hydration below is async + deferred,
+// so the app used to open fully UNLOCKED on every cold launch (kill + reopen
+// bypassed the biometric lock). Read the pref + session marker SYNCHRONOUSLY
+// (SecureStore.getItem) so the first render already shows the lock overlay.
+// Requires BOTH the pref and a stored session token, so logged-out users and
+// auth screens never get trapped behind a lock.
+function _coldStartShouldLock() {
+  if (Platform.OS === 'web') return false;
+  try {
+    const SecureStore = require('expo-secure-store');
+    if (typeof SecureStore.getItem !== 'function') return false;
+    if (SecureStore.getItem(BIOMETRIC_PREF_KEY) !== 'true') return false;
+    const tok = SecureStore.getItem('mail_token');
+    return !!(tok && String(tok).trim());
+  } catch { return false; }
+}
+
 export function BiometricProvider({ children }) {
   const { t } = useLanguage();
   const pathname = usePathname();
@@ -112,8 +129,9 @@ export function BiometricProvider({ children }) {
     isAuthRouteRef.current = AUTH_ROUTES.some(r => path === r || path.startsWith(r + '/') || path.startsWith(r + '?'));
   }, [pathname]);
   const [biometricAvailable, setBiometricAvailable] = useState(false);
-  const [biometricEnabled, setBiometricEnabled] = useState(false);
-  const [isLocked, setIsLocked] = useState(false);
+  const [_coldLock] = useState(_coldStartShouldLock);
+  const [biometricEnabled, setBiometricEnabled] = useState(_coldLock);
+  const [isLocked, setIsLocked] = useState(_coldLock);
   const [authenticating, setAuthenticating] = useState(false);
   // Interval expressed in seconds OR the string 'never'. Default kept in
   // a ref so the AppState handler picks up changes without re-subscribing.
@@ -153,6 +171,12 @@ export function BiometricProvider({ children }) {
           const stored = await getStoredPref(BIOMETRIC_PREF_KEY);
           if (stored === 'true' && hasHw && isEnrolled) {
             setBiometricEnabled(true);
+          } else if (_coldLock) {
+            // Cold-start lock was armed from the sync pref read, but biometrics
+            // are no longer usable (unenrolled / hardware gone) or the pref was
+            // cleared — release it so the user is never trapped.
+            setBiometricEnabled(false);
+            setIsLocked(false);
           }
           // Load saved auto-lock interval pref. Accept both numeric strings
           // and the literal 'never'.

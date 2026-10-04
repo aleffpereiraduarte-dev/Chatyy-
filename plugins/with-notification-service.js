@@ -90,20 +90,118 @@ const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 `;
 
 // Read the canonical Swift file from disk so we don't have to maintain a
-// massive embedded template string. If the canonical copy disappears (e.g.
-// repo was pruned), the plugin falls back to a no-op stub that just
-// returns the request unchanged — better than failing the build.
+// massive embedded template string. On EAS CLOUD builds the `ios/` dir is
+// gitignored and regenerated, so the on-disk canonical copy is ABSENT there —
+// the embedded fallback below is what actually ships. It therefore must carry
+// the REAL rich-push implementation (download image -> UNNotificationAttachment,
+// WhatsApp-style), NOT a no-op. [2026-10-04] Keep this in sync with
+// ios/ChatyyNotificationService/NotificationService.swift.
 function readCanonicalSwift(projectRoot) {
   try {
     const p = path.join(projectRoot, 'ios', EXT_NAME, 'NotificationService.swift');
     if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8');
   } catch {}
-  // Stub fallback — keeps build green even if canonical copy was deleted.
+  // Embedded canonical (used on cloud builds where ios/ is regenerated).
   return `import UserNotifications
+
+/// Notification Service Extension — rich push (image attachment), WhatsApp-style.
+/// Backend (firebase_push.php) sends aps.mutable-content=1 + the image URL in
+/// media_url / fcm_options.image. We download it to a temp file and attach it.
+/// Memory-safe: we stream to disk and attach the FILE, never decode into UIImage.
 class NotificationService: UNNotificationServiceExtension {
+
+    private var contentHandler: ((UNNotificationContent) -> Void)?
+    private var bestAttemptContent: UNMutableNotificationContent?
+    private var downloadTask: URLSessionTask?
+
     override func didReceive(_ request: UNNotificationRequest,
                              withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void) {
-        contentHandler(request.content)
+        self.contentHandler = contentHandler
+        self.bestAttemptContent = request.content.mutableCopy() as? UNMutableNotificationContent
+
+        guard let bestAttemptContent = self.bestAttemptContent else {
+            contentHandler(request.content)
+            return
+        }
+
+        guard let imageURL = Self.extractImageURL(from: request.content.userInfo) else {
+            contentHandler(bestAttemptContent)
+            return
+        }
+
+        let req = URLRequest(url: imageURL,
+                             cachePolicy: .reloadIgnoringLocalCacheData,
+                             timeoutInterval: 10)
+        let task = URLSession.shared.downloadTask(with: req) { [weak self] location, response, _ in
+            defer {
+                if let self = self, let handler = self.contentHandler {
+                    handler(bestAttemptContent)
+                }
+            }
+            guard let location = location,
+                  let attachment = Self.makeAttachment(from: location, response: response, url: imageURL)
+            else { return }
+            bestAttemptContent.attachments = [attachment]
+        }
+        self.downloadTask = task
+        task.resume()
+    }
+
+    override func serviceExtensionTimeWillExpire() {
+        downloadTask?.cancel()
+        if let contentHandler = contentHandler, let bestAttemptContent = bestAttemptContent {
+            contentHandler(bestAttemptContent)
+        }
+    }
+
+    private static func extractImageURL(from userInfo: [AnyHashable: Any]) -> URL? {
+        var candidates: [String] = []
+        if let s = userInfo["media_url"] as? String { candidates.append(s) }
+        if let fcm = userInfo["fcm_options"] as? [String: Any],
+           let s = fcm["image"] as? String { candidates.append(s) }
+        if let s = userInfo["image"] as? String { candidates.append(s) }
+
+        for raw in candidates {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { continue }
+            if let url = URL(string: trimmed),
+               let scheme = url.scheme?.lowercased(),
+               scheme == "https" || scheme == "http" {
+                return url
+            }
+        }
+        return nil
+    }
+
+    private static func makeAttachment(from location: URL,
+                                       response: URLResponse?,
+                                       url: URL) -> UNNotificationAttachment? {
+        let ext = fileExtension(url: url, response: response)
+        let fileName = UUID().uuidString + (ext.isEmpty ? "" : "." + ext)
+        let dest = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(fileName)
+        do {
+            if FileManager.default.fileExists(atPath: dest.path) {
+                try FileManager.default.removeItem(at: dest)
+            }
+            try FileManager.default.moveItem(at: location, to: dest)
+            return try UNNotificationAttachment(identifier: fileName, url: dest, options: nil)
+        } catch {
+            try? FileManager.default.removeItem(at: dest)
+            return nil
+        }
+    }
+
+    private static func fileExtension(url: URL, response: URLResponse?) -> String {
+        let pathExt = url.pathExtension
+        if !pathExt.isEmpty, pathExt.count <= 5 { return pathExt }
+        switch response?.mimeType?.lowercased() {
+        case "image/jpeg": return "jpg"
+        case "image/png":  return "png"
+        case "image/gif":  return "gif"
+        case "image/webp": return "webp"
+        case "image/heic": return "heic"
+        default:           return "jpg"
+        }
     }
 }
 `;

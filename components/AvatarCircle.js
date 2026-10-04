@@ -217,22 +217,23 @@ function hashColor(name) {
 // white initials. Brand-leaning (more violets/blues/teals) so a wall of
 // initials reads as ONE Chatyy identity instead of random hues. Replaces
 // the flat `hashColor()` fill that made avatars look generic/repeated.
-// Uber black&white (founder 2026-09-29): monochrome grayscale pairs only —
-// white initials on dark gray→black. Varying shades keep contacts visually
-// distinct without any color. Zero violet/blue/teal/pink.
+// Neutral 2026 sober set (founder 2026-10-03): refina o "black&white" de
+// 2026-09-29 — as 12 duplas eram quase-pretas (pesadas) e difíceis de
+// distinguir entre si. Agora 8 tons NEUTROS/dessaturados (grafite, cinza-
+// azulado/slate, taupe, stone), MID-dark em vez de near-black, com variação
+// de matiz-sussurro + lightness pra cada contato ficar distinto e elegante —
+// sóbrio, nada de arco-íris. Saturação baixíssima (<~15%); iniciais brancas
+// WCAG-safe em todas. Gradiente mono-tom muito sutil (c1 claro → c2 escuro).
+// Reversível: trocar este array de volta restaura o grayscale puro.
 const AVATAR_GRADIENTS = [
-  ['#374151', '#111827'], // slate
-  ['#4B5563', '#1F2937'], // gray
-  ['#1F2937', '#0B0F14'], // near-black
-  ['#52525B', '#27272A'], // zinc
-  ['#3F3F46', '#18181B'], // zinc dark
-  ['#404040', '#171717'], // neutral
-  ['#525252', '#262626'], // neutral light
-  ['#2D2D2D', '#111111'], // charcoal
-  ['#434343', '#1A1A1A'], // graphite
-  ['#333333', '#0D0D0D'], // ink
-  ['#4A4A4A', '#222222'], // stone
-  ['#2A2A2A', '#000000'], // black
+  ['#525E6B', '#2C353F'], // slate (cinza-azulado)
+  ['#5B5F66', '#2F343A'], // grafite
+  ['#5E5750', '#332E29'], // taupe (neutro quente, bem dessaturado)
+  ['#4F5A66', '#28313B'], // steel
+  ['#5A5A5A', '#303030'], // cinza neutro
+  ['#565E62', '#2D3337'], // cool stone
+  ['#605852', '#352F2A'], // warm stone
+  ['#4B5560', '#262E37'], // deep slate
 ];
 function hashInt(s) {
   let h = 0;
@@ -344,7 +345,12 @@ function _CollageTile({ member, size, width, height }) {
           source={{ uri }}
           style={{ width: w, height: h, position: 'absolute' }}
           onError={() => setTileErr(true)}
-          {...(ExpoImage ? { cachePolicy: 'memory-disk', contentFit: 'cover' } : (Platform.OS === 'web' ? { loading: 'lazy' } : {}))}
+          // PERF/polish: in the recycled conversation FlashList a group row can
+          // flash the PREVIOUS group's member photo until the new one decodes.
+          // recyclingKey tells expo-image to blank the view on recycle so the
+          // stale image never shows. (Single-avatar + ChatMedia paths already
+          // set this; the collage tile was the one that didn't.)
+          {...(ExpoImage ? { cachePolicy: 'memory-disk', contentFit: 'cover', recyclingKey: memberEmail || uri } : (Platform.OS === 'web' ? { loading: 'lazy' } : {}))}
         />
       ) : null}
     </View>
@@ -481,7 +487,14 @@ function AvatarCircle({ name, email, uri, size = 48, style, online = false, ring
   // "@itsneres" or plain names sometimes leak through from feed posts and
   // would otherwise trigger a 400 loop against /get_avatar.
   const looksLikeEmail = typeof email === 'string' && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
-  const baseAvatarUrl = looksLikeEmail ? getAvatarUrlForEmail(email) : null;
+  let baseAvatarUrl = looksLikeEmail ? getAvatarUrlForEmail(email) : null;
+  // [2026-10-03] Pass the display name so the server's generated initials
+  // fallback uses it (sender "Google" → "GO") instead of the email local-part
+  // ("no-reply" → "NO"). Ignored server-side when a real profile avatar exists.
+  // Only when `name` is a real human name, not itself an email.
+  if (baseAvatarUrl && typeof name === 'string' && name.trim() && !/@/.test(name)) {
+    baseAvatarUrl += (baseAvatarUrl.includes('?') ? '&' : '?') + 'name=' + encodeURIComponent(name.trim().slice(0, 40));
+  }
   // Stable cache key — only busts when `bumpAvatarCache(email)` is called
   // (happens on explicit avatar upload OR WS avatar_updated event). When
   // it does bust, expo-image's disk cache is also cleared globally so
