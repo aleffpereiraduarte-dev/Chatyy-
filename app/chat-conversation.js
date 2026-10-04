@@ -10865,10 +10865,14 @@ function ChatConversationInner() {
             const map = new Map((prev || []).map(x => [x.email, x.last_read_id || 0]));
             for (const rr of r.data.read_receipts) {
               if ((rr?.email || '').toLowerCase() === _meLc) continue;
-              const cur = map.get(rr.email) || 0;
-              const next = rr.last_read_id || 0;
-              if (next > cur) map.set(rr.email, next);
-              else if (!map.has(rr.email)) map.set(rr.email, next);
+              // [AZUL FALSO causa-raiz 2026-10-04] O last_read_message_id do
+              // servidor é AUTORITATIVO — SOBRESCREVE, nunca faz max-merge.
+              // O merge monotônico antigo (só subia) fazia um watermark de peer
+              // inflado por um evento vivo GRUDAR pra sempre: o servidor reenviava
+              // o valor correto (menor) a cada load, mas o cliente mantinha o
+              // antigo → balões meus ficavam ✓✓ azul mesmo o peer não tendo lido,
+              // e reabrir o app NÃO corrigia. Confiar no snapshot do servidor.
+              map.set(rr.email, rr.last_read_id || 0);
             }
             return Array.from(map, ([email, last_read_id]) => ({ email, last_read_id }));
           });
