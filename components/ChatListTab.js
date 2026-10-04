@@ -953,7 +953,7 @@ const ConversationRow = React.memo(function ConversationRow({
           <View style={s.avatarWrap}>
             {isChannel ? (
               <View style={{
-                width: 46, height: 46, borderRadius: 23,
+                width: 52, height: 52, borderRadius: 26,
                 backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)',
                 alignItems: 'center', justifyContent: 'center',
               }}>
@@ -963,7 +963,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 </Svg>
               </View>
             ) : isGroup ? (
-              <GroupAvatarStack conversation={conversation} size={46} isDark={isDark} />
+              <GroupAvatarStack conversation={conversation} size={52} isDark={isDark} />
             ) : (
               <View>
                 {/* [beauty 2026-10-01] Removed the unread "halo" ring and the
@@ -973,7 +973,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 <AvatarCircle
                   name={displayName}
                   email={otherEmail}
-                  size={46}
+                  size={52}
                   // WAVE 95: tap-avatar → fullscreen lightbox (only for direct
                   // chats; group/channel avatars don't have a single photo to
                   // enlarge — the row tap still opens the conversation).
@@ -1112,7 +1112,7 @@ const ConversationRow = React.memo(function ConversationRow({
                         color: unread
                           ? (isDark ? '#e8e8ea' : '#262626')
                           : (isDark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.45)'),
-                        fontWeight: unread ? '600' : '400',
+                        fontWeight: unread ? '500' : '400',
                       },
                     ]}
                     numberOfLines={1}
@@ -6755,7 +6755,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
   ), [loading, t, router]);
 
   const ItemSeparatorComponent = useCallback(() => (
-    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', marginLeft: 74, marginRight: 16 }]} />
+    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', marginLeft: 80, marginRight: 0 }]} />
   ), [isDark]);
 
   return (
@@ -8214,8 +8214,8 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    minHeight: 64,
+    paddingVertical: 11,
+    minHeight: 76,
     ...(Platform.OS === 'web' ? {
       transition: 'background-color 0.18s ease, box-shadow 0.18s ease',
       cursor: 'pointer',
@@ -8268,14 +8268,14 @@ const s = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 3,
+    marginBottom: 4,
   },
   // [beauty 2026-05-31] Name reads crisper at 16 with a slightly tighter
   // tracking; read rows sit at semibold so the unread→bold step is a real,
   // legible contrast jump (iMessage-style) rather than a subtle weight nudge.
   rowName: {
-    fontSize: 15,
-    fontWeight: '500',
+    fontSize: 16.5,
+    fontWeight: '600',
     flex: 1,
     letterSpacing: -0.25,
   },
@@ -8287,7 +8287,7 @@ const s = StyleSheet.create({
   // across rows regardless of "agora" vs "14:32" vs "Ontem".
   // [beauty 2026-05-31] Timestamp flush-right, tabular so the right column stays
   // pixel-aligned across "agora" / "14:32" / "Ontem".
-  rowTime: { fontSize: 12.5, letterSpacing: -0.1, fontWeight: '500', fontVariant: ['tabular-nums'] },
+  rowTime: { fontSize: 12, letterSpacing: -0.1, fontWeight: '400', fontVariant: ['tabular-nums'] },
   rowBottom: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -8298,10 +8298,10 @@ const s = StyleSheet.create({
   // so it reads as the quiet secondary line under the name — never competing
   // with it for weight.
   rowPreview: {
-    fontSize: 13.5,
+    fontSize: 14.5,
     flex: 1,
     marginRight: 10,
-    lineHeight: 18,
+    lineHeight: 19,
     letterSpacing: -0.1,
   },
   // Unread badge — brand-purple pill (was WhatsApp green). Crisp squircle pill

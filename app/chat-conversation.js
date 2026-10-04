@@ -20521,7 +20521,7 @@ function ChatConversationInner() {
         const text = t('chat.disappearingChanged').replace('{name}', senderName).replace('{timer}', timerLabel);
         return (
           <View style={styles.systemMsg}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={[styles.systemPill, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
               <IconClock size={14} color={colors.textTertiary} />
               <Text style={[styles.systemText, { color: colors.textTertiary }]}>{text}</Text>
             </View>
@@ -20536,7 +20536,7 @@ function ChatConversationInner() {
         const text = (t('chatConv.systemScreenshot') || '{name} took a screenshot').replace('{name}', senderName);
         return (
           <View style={styles.systemMsg}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={[styles.systemPill, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
               <IconEye size={14} color={colors.textTertiary} />
               <Text style={[styles.systemText, { color: colors.textTertiary }]}>{text}</Text>
             </View>
@@ -20552,7 +20552,7 @@ function ChatConversationInner() {
           : (t('chat.vanishModeChangedOff') || '{name} turned off vanish mode').replace('{name}', senderName);
         return (
           <View style={styles.systemMsg}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={[styles.systemPill, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
               <IconEye size={14} color="#111111" />
               <Text style={[styles.systemText, { color: '#111111' }]}>{text}</Text>
             </View>
@@ -20569,7 +20569,7 @@ function ChatConversationInner() {
         const text = (t('chatConv.userLeft') || '{name} saiu do grupo').replace('{name}', name);
         return (
           <View style={styles.systemMsg}>
-            <Text style={[styles.systemText, { color: colors.textTertiary }]}>{text}</Text>
+            <Text style={[styles.systemText, styles.systemPill, { color: colors.textTertiary }]}>{text}</Text>
           </View>
         );
       }
@@ -20581,7 +20581,7 @@ function ChatConversationInner() {
       if (!displayText) return null;
       return (
         <View style={styles.systemMsg}>
-          <Text style={[styles.systemText, { color: colors.textTertiary }]}>{displayText}</Text>
+          <Text style={[styles.systemText, styles.systemPill, { color: colors.textTertiary }]}>{displayText}</Text>
         </View>
       );
     }
@@ -32426,8 +32426,8 @@ const styles = StyleSheet.create({
   headerInfo: { flex: 1, marginHorizontal: 8 },
   // [beauty 2026-05-31] Tighter tracking (-0.3→-0.35) at 800 weight reads as a
   // confident, condensed name (matches iMessage/WhatsApp header typography).
-  headerTitle: { fontSize: 16.5, fontWeight: '800', letterSpacing: LetterSpacing.tighter },
-  headerSubtitle: { fontSize: 12, marginTop: 2, opacity: 0.9, fontWeight: '500', letterSpacing: 0.1 },
+  headerTitle: { fontSize: 17, fontWeight: '700', letterSpacing: LetterSpacing.tighter },
+  headerSubtitle: { fontSize: 12.5, marginTop: 1, opacity: 0.85, fontWeight: '500', letterSpacing: 0.1 },
   disappearingBanner: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     paddingVertical: 8, paddingHorizontal: 14, gap: 6,
@@ -32460,8 +32460,8 @@ const styles = StyleSheet.create({
     // and read as an intentional pill, not a tight tag.
     // Clean, flat day-divider pill — the subtle gray wash carries it; no drop
     // shadow (2026: dividers read as quiet structure, not floating chips).
-    fontSize: 11.5, fontWeight: '700', letterSpacing: 0.4,
-    paddingHorizontal: 12, paddingVertical: 5,
+    fontSize: 11.5, fontWeight: '600', letterSpacing: 0.2,
+    paddingHorizontal: 12, paddingVertical: 4,
     borderRadius: 999, overflow: 'hidden',
     ...Platform.select({
       web: {
@@ -32471,17 +32471,19 @@ const styles = StyleSheet.create({
     }),
   },
   systemMsg: { alignItems: 'center', marginVertical: 8, paddingHorizontal: Spacing.lg },
-  systemText: { fontSize: 12, textAlign: 'center', fontWeight: '500', lineHeight: 18, letterSpacing: 0.1 },
+  systemText: { fontSize: 12, textAlign: 'center', fontWeight: '500', lineHeight: 17, letterSpacing: 0.1 },
+  // [polish] System pill: subtle centered chip (WhatsApp 'X joined'). Neutral wash reads in light + dark.
+  systemPill: { alignSelf: 'center', paddingHorizontal: 12, paddingVertical: 5, borderRadius: 12, overflow: 'hidden', backgroundColor: 'rgba(128,128,128,0.16)', maxWidth: '88%' },
   scrollDownFab: {
-    position: 'absolute', right: 18, bottom: 90,
-    width: 48, height: 48, borderRadius: 24,
+    position: 'absolute', right: 14, bottom: 90,
+    width: 42, height: 42, borderRadius: 21,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 0,
     // Brand-tinted lift: a faint violet halo (was pure black) so the FAB
     // reads as part of the purple system instead of a generic grey button.
     ...Platform.select({
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.16, shadowRadius: 12 },
-      android: { elevation: 6 },
+      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.14, shadowRadius: 6 },
+      android: { elevation: 3 },
       web: { boxShadow: '0 4px 16px rgba(17,17,17,0.14), 0 1px 4px rgba(0,0,0,0.06)', backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)', transition: 'transform 0.2s ease, box-shadow 0.2s ease' },
     }),
     zIndex: 10,
@@ -32520,10 +32522,11 @@ const styles = StyleSheet.create({
     // as a single mashed block. marginTop:2 separates from the bubble's
     // top edge so the quote isn't kissing the bubble corner. borderRadius
     // bumped 4→6 to match the WhatsApp quote pill.
-    borderLeftWidth: 3, borderRadius: 6,
-    paddingHorizontal: 10, paddingVertical: 8,
+    borderLeftWidth: 4, borderRadius: 8,
+    paddingHorizontal: 10, paddingVertical: 6,
     marginTop: 2,
-    marginBottom: 8,
+    marginBottom: 6,
+    overflow: 'hidden',
     // Natural width — lets the reply preview push the bubble out to
     // accommodate the quoted text + sender name. `alignSelf: 'stretch'`
     // (previous iteration) made it conform to the bubble, which in turn
@@ -32533,12 +32536,12 @@ const styles = StyleSheet.create({
   },
   // WAVE 70: author label gets a 700 weight + 3px gap to the quote body
   // (matches WhatsApp typography hierarchy — bold author, muted quote).
-  replyName: { fontSize: 13, fontWeight: '700', letterSpacing: -0.1, marginBottom: 3 },
+  replyName: { fontSize: 12.5, fontWeight: '700', letterSpacing: -0.1, marginBottom: 2 },
   // WAVE 70: quote text bumped 12→13 with 17px lineHeight so multi-line
   // quotes breathe instead of stacking flat. opacity 0.78→0.82 nudges it
   // just a hair more readable while still subordinate to the reply text
   // beneath.
-  replyText: { fontSize: 13, lineHeight: 17, opacity: 0.82 },
+  replyText: { fontSize: 13, lineHeight: 17, opacity: 0.78 },
   bubble: {
     // [bubble-redesign 2026-05-30] Tighter, consistent padding + slightly
     // rounder corners for a WhatsApp/Telegram-grade feel. Vertical padding
@@ -32617,19 +32620,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-end',
     flexWrap: 'nowrap',
-    gap: 4,
-    marginTop: 5,
+    gap: 3,
+    marginTop: 3,
     minHeight: 14,
   },
   editedLabel: { fontSize: 10, fontStyle: 'italic', opacity: 0.55 },
-  msgTime: { fontSize: 11, fontWeight: '500', letterSpacing: 0.2, opacity: 0.9, flexShrink: 0 },
+  msgTime: { fontSize: 11, fontWeight: '400', letterSpacing: 0.1, opacity: 0.78, flexShrink: 0 },
   videoOverlayAbsolute: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
   },
   // [beauty 2026-05-31] marginTop 5→6 so the reaction shelf sits clearly below
   // the bubble's bottom edge instead of kissing it.
-  reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 5, marginTop: 6 },
+  reactionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 5 },
   reactionsRowOwn: { justifyContent: 'flex-end' },
   // Why (vidiante): chips bumped 16→17 radius + tighter chunkier padding so
   // they read as proper sticker-pills, not text labels. Added cursor +
@@ -32637,16 +32640,16 @@ const styles = StyleSheet.create({
   // is exactly the dopamine moment.
   reactionChip: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    paddingHorizontal: 9, paddingVertical: 4,
-    borderRadius: 17, borderWidth: 1,
+    paddingHorizontal: 7, paddingVertical: 2,
+    borderRadius: 13, borderWidth: 1,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.12, shadowRadius: 7 },
-      android: { elevation: 3 },
-      web: { boxShadow: '0 2px 10px rgba(0,0,0,0.10)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', transition: 'transform 0.18s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.18s ease', cursor: 'pointer' },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.10, shadowRadius: 3 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 1px 3px rgba(0,0,0,0.12)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', transition: 'transform 0.18s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.18s ease', cursor: 'pointer' },
     }),
   },
-  reactionEmoji: { fontSize: 16 },
-  reactionCount: { fontSize: 11.5, fontWeight: '700', letterSpacing: 0.1 },
+  reactionEmoji: { fontSize: 14 },
+  reactionCount: { fontSize: 11, fontWeight: '700', letterSpacing: 0.1 },
   loadMoreBtn: {
     alignSelf: 'center', paddingVertical: Spacing.sm, paddingHorizontal: Spacing.lg,
     borderRadius: 20, borderWidth: 1, marginBottom: Spacing.sm,
@@ -32694,8 +32697,8 @@ const styles = StyleSheet.create({
     gap: 6,
     borderTopWidth: 0,
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: -3 }, shadowOpacity: 0.06, shadowRadius: 10 },
-      android: { elevation: 6 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: -1 }, shadowOpacity: 0.04, shadowRadius: 4 },
+      android: { elevation: 3 },
       web: {
         maxWidth: 960, alignSelf: 'center', width: '100%',
         backdropFilter: 'blur(20px) saturate(180%)',
