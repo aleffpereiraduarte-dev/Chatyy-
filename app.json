@@ -108,14 +108,11 @@
         ],
         "NSSpeechRecognitionUsageDescription": "Allow $(PRODUCT_NAME) to use speech recognition."
       },
-      "buildNumber": "626",
-      "associatedDomains": [
-        "applinks:chatyy.com.br"
-      ]
+      "buildNumber": "627"
     },
     "android": {
       "package": "com.onemundo.mail",
-      "versionCode": 576,
+      "versionCode": 577,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.VIBRATE",

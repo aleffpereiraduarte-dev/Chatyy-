@@ -7538,24 +7538,38 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
               }
               const Ico = it.icon;
               const isLast = i === items.length - 1;
+              // [2026-10-04] Premium refresh: icon in a soft circular chip on the
+              // LEFT (neutral, red-tinted for destructive) + lighter label +
+              // tighter rows — WhatsApp/iOS-settings feel instead of chunky
+              // right-icon rows.
+              const isDanger = it.color === danger;
+              const chipBg = isDanger
+                ? (isDark ? 'rgba(239,68,68,0.16)' : '#fee2e2')
+                : (isDark ? 'rgba(255,255,255,0.08)' : '#f3f4f6');
               return (
                 <TouchableOpacity
                   key={i}
                   onPress={() => handleTap(it.onPress)}
-                  activeOpacity={0.7}
+                  activeOpacity={0.6}
                   style={{
-                    flexDirection: 'row', alignItems: 'center',
-                    paddingHorizontal: 18, paddingVertical: 14,
+                    flexDirection: 'row', alignItems: 'center', gap: 14,
+                    paddingHorizontal: 14, paddingVertical: 10,
                     borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth,
                     borderBottomColor: divider,
                   }}
                   accessibilityRole="button"
                   accessibilityLabel={it.label}
                 >
-                  <Text style={{ flex: 1, fontSize: 16, color: it.color, fontWeight: '600', letterSpacing: -0.1 }}>
+                  <View style={{
+                    width: 34, height: 34, borderRadius: 17,
+                    alignItems: 'center', justifyContent: 'center',
+                    backgroundColor: chipBg,
+                  }}>
+                    {Ico ? <Ico color={it.color} size={19} /> : null}
+                  </View>
+                  <Text style={{ flex: 1, fontSize: 16, color: it.color, fontWeight: '500', letterSpacing: -0.2 }}>
                     {it.label}
                   </Text>
-                  {Ico ? <Ico color={it.color} size={22} /> : null}
                 </TouchableOpacity>
               );
             })}

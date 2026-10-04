@@ -706,6 +706,67 @@ function senderColorFromEmail(email) {
 }
 
 // ============================================================
+// TICK STATE — FONTE ÚNICA DE VERDADE (enviado / entregue / lido)
+// ============================================================
+// Retorna o enum _readStatus consumido em TODO lugar que desenha o tick de
+// uma mensagem própria (balão de texto, rodapé de mídia, e — indiretamente,
+// via os MESMOS sinais peer-autoritativos — a prévia da lista e a tela
+// "Informações da mensagem"):
+//   0   pendente  (relógio)        — ainda sem ACK do servidor
+//  -1   falhou    (! vermelho)
+//   1   enviado   (✓ único)        — servidor tem a msg; peer ainda não recebeu
+//   1.5 entregue  (✓✓ cinza)       — device do peer recebeu
+//   2   lido      (✓✓ azul)        — o peer REALMENTE abriu/leu
+//
+// REGRAS DURAS (nunca regredir — ver incidentes "azul falso" na MEMORY):
+//   • Derivar SOMENTE de sinais do PEER. Em DIRECT, o estado de leitura do
+//     PRÓPRIO usuário NUNCA pode promover os balões dele: abrir a conversa
+//     avança MEU watermark de leitura até o id mais novo — isso não é o peer
+//     lendo nada. (Causa raiz do azul falso: maxReadId incluía meu e-mail.)
+//   • GRUPO: "lido" só quando o backend marcou _read=true (= TODOS os outros
+//     membros leram). Um único membro lendo ainda é apenas "entregue".
+//   • Na dúvida, REBAIXAR. Melhor ✓ cinza do que ✓✓ azul falso.
+//
+// Entradas (todas opcionais menos msg):
+//   isOwn             — é minha mensagem (só minhas msgs mostram tick)
+//   isGroup           — semântica de grupo vs direct
+//   peerReadWatermark — maior id de msg que o PEER já leu (DIRECT; exclui meu
+//                       e-mail). -1 = desconhecido.
+//   peerReadAt        — true se ESTA msg carrega read_at/read_by do peer
+//   peerDelivered     — true se ESTA msg foi entregue ao peer
+//                       (_delivered / delivered_at / delivered_to[peer];
+//                        em grupo = apenas _delivered)
+function computeTickState(msg, opts = {}) {
+  if (!msg) return 1;
+  if (msg._pending) return 0;
+  if (msg._failed) return -1;
+  const {
+    isOwn = false,
+    isGroup = false,
+    peerReadWatermark = -1,
+    peerReadAt = false,
+    peerDelivered = false,
+  } = opts;
+  // Só mensagens próprias mostram recibo. Incoming nunca entra aqui como tick.
+  if (!isOwn) return 1;
+  // ---- LIDO (✓✓ azul) ----
+  if (isGroup) {
+    // Backend só marca _read=true quando TODOS os outros membros leram.
+    if (msg._read === true) return 2;
+  } else {
+    // DIRECT: confia APENAS no peer. read_at/read_by são carimbo do servidor;
+    // o watermark já exclui o próprio e-mail (ver _enrichedMessagesBase).
+    if (peerReadAt) return 2;
+    const idN = Number(msg.id);
+    if (peerReadWatermark >= 0 && idN > 0 && idN <= peerReadWatermark) return 2;
+  }
+  // ---- ENTREGUE (✓✓ cinza) ----
+  if (peerDelivered) return 1.5;
+  // ---- ENVIADO (✓ único) ----
+  return 1;
+}
+
+// ============================================================
 // ANIMATED CHECK STATUS (sent → delivered → read)
 // ============================================================
 // Fades a fresh copy of the checks in whenever _readStatus changes so the
@@ -19195,19 +19256,33 @@ function ChatConversationInner() {
   const searchHighlightId = searchResults.length > 0 && searchResults[searchIdx] ? searchResults[searchIdx].id : null;
   const highlightedMsgId = replyJumpHighlightId != null ? replyJumpHighlightId : searchHighlightId;
   const _enrichCacheRef = useRef(new Map()); // id → { enriched, source }
-  // Precompute the highest `last_read_id` across all read receipts once — O(r)
+  // Precompute the highest `last_read_id` across read receipts — O(r).
+  // [AZUL FALSO causa-raiz 2026-10-04] Este watermark DEVE ser só do PEER.
+  // Ao abrir a conversa chamamos api.chatRead(conv, 0) = "marca tudo como lido
+  // PRA MIM", o que avança o MEU last_read_message_id até o id mais novo. O
+  // servidor ecoa isso em read_receipts (que inclui o próprio usuário) e o
+  // merge em loadMessages (sem filtro de e-mail) guardava essa entrada. Como
+  // maxReadId pegava o max de TODAS as entradas (inclusive a minha), todo
+  // balão próprio com id <= meu-watermark virava ✓✓ AZUL mesmo com o peer
+  // sem ter recebido/lido (peer "visto ontem"). Excluir meu e-mail aqui
+  // corrige: em DIRECT sobra exatamente o peer; em grupo o maxReadId nem é
+  // consumido (ver _enrichedMessagesBase, só usado quando type !== 'group').
   const maxReadId = useMemo(() => {
     if (!readReceipts || readReceipts.length === 0) return -1;
+    const meLc = (currentEmail || '').toLowerCase();
     let max = -1;
     for (let i = 0; i < readReceipts.length; i++) {
+      const rr = readReceipts[i];
+      // NUNCA considerar o próprio recibo de leitura — não é sinal do peer.
+      if ((rr?.email || '').toLowerCase() === meLc) continue;
       // [receipt-sync media 2026-06-04] Number() coercion — a string
       // last_read_id (relay/cache hop) used to kill this fallback entirely,
       // which is what kept fresh media bubbles stuck at ✓ until reload.
-      const v = Number(readReceipts[i]?.last_read_id);
+      const v = Number(rr?.last_read_id);
       if (Number.isFinite(v) && v > max) max = v;
     }
     return max;
-  }, [readReceipts]);
+  }, [readReceipts, currentEmail]);
   const _enrichedMessagesBase = useMemo(() => {
     const cache = _enrichCacheRef.current;
     const out = new Array(reversedMessages.length);

@@ -31,6 +31,7 @@ import {
   IconEyeOff, IconArchive,
 } from './Icons';
 import * as api from '../services/api';
+import AvatarCircle from './AvatarCircle';
 import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
 import { useBiometric } from '../context/BiometricContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -49,7 +50,23 @@ const ACCENT = '#111111';
 // for switches/value labels. `noChevron` hides it when there's no
 // navigation (terminal info rows).
 function Row({ icon: Icon, label, value, onPress, colors, destructive, right, iconTint, noChevron }) {
-  const tint = destructive ? '#ef4444' : iconTint;
+  // Monochrome, theme-aware icon treatment. The settings palette is unified
+  // on a single neutral tint ('#111111') so every section icon reads as one
+  // family (Instagram-level consistency) — but a hardcoded near-black glyph is
+  // invisible in dark mode, so we resolve the glyph + chip from theme tokens:
+  //   • mono/neutral  → colors.text glyph on a soft surfaceVariant chip
+  //   • gray helper    → colors.textSecondary glyph
+  //   • destructive    → red glyph on a red-tinted chip
+  //   • explicit color → keep the brand color + 12% tinted chip
+  const isMono = iconTint === '#111111';
+  const isGray = iconTint === '#64748b';
+  const glyph = destructive ? '#ef4444'
+    : isMono ? (colors?.text || '#111')
+    : isGray ? (colors?.textSecondary || '#64748b')
+    : (iconTint || (colors?.textSecondary || '#64748b'));
+  const chipBg = destructive ? 'rgba(239,68,68,0.12)'
+    : (isMono || isGray || !iconTint) ? (colors?.surfaceVariant || '#f1f5f9')
+    : iconTint + '1F';  // 1F = ~12% alpha — Instagram-style colored chip
   return (
     <Pressable
       onPress={onPress}
@@ -57,28 +74,24 @@ function Row({ icon: Icon, label, value, onPress, colors, destructive, right, ic
         flexDirection: 'row',
         alignItems: 'center',
         paddingHorizontal: 16,
-        paddingVertical: 13,
+        paddingVertical: 14,
         gap: 14,
-        backgroundColor: pressed ? 'rgba(17, 17, 17,0.06)' : 'transparent',
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: (colors?.borderLight || '#f1f5f9') + '60',
+        backgroundColor: pressed ? (colors?.surfaceVariant || 'rgba(0,0,0,0.04)') : 'transparent',
       })}
     >
       <View style={{
         width: 34, height: 34, borderRadius: 9,
-        backgroundColor: tint
-          ? tint + '1F'  // 1F = ~12% alpha — Instagram-style colored chip
-          : (colors?.surface || '#f3f4f6'),
+        backgroundColor: Icon ? chipBg : 'transparent',
         alignItems: 'center', justifyContent: 'center',
       }}>
-        {Icon && <Icon size={18} color={tint || (colors?.textSecondary || '#64748b')} />}
+        {Icon && <Icon size={18} color={glyph} />}
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 15, fontWeight: '500', color: destructive ? '#ef4444' : (colors?.text || '#111') }}>
+        <Text style={{ fontSize: 15.5, fontWeight: '500', letterSpacing: -0.1, color: destructive ? '#ef4444' : (colors?.text || '#111') }}>
           {label}
         </Text>
         {!!value && (
-          <Text style={{ fontSize: 12, color: colors?.textSecondary, marginTop: 2 }} numberOfLines={1}>
+          <Text style={{ fontSize: 12.5, color: colors?.textSecondary, marginTop: 2 }} numberOfLines={1}>
             {value}
           </Text>
         )}
@@ -92,26 +105,43 @@ function Row({ icon: Icon, label, value, onPress, colors, destructive, right, ic
   );
 }
 
+// Grouped card (iOS/Instagram-level). Section title is a discreet uppercase
+// caption; the rows sit inside a single rounded, hairline-bordered surface
+// card with inset hairline separators between them (aligned to where the row
+// label begins, ~64px, so the icon column reads as a clean gutter). Dividers
+// are injected here instead of per-row so every screen that renders rows in a
+// Section gets consistent separators with zero double-lines.
 function Section({ title, children, colors }) {
+  const kids = React.Children.toArray(children).filter(Boolean);
+  const dividerColor = colors?.borderLight || 'rgba(0,0,0,0.06)';
   return (
-    <View style={{
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: colors?.border || 'rgba(0,0,0,0.08)',
-      marginTop: 24, marginBottom: 8, position: 'relative',
-    }}>
-      {title && (
+    <View style={{ marginTop: 22 }}>
+      {title ? (
         <Text style={{
-          fontSize: 11.5, fontWeight: '700', textTransform: 'uppercase',
-          color: colors?.textTertiary, paddingHorizontal: 20,
-          marginTop: 4, marginBottom: 12,
-          letterSpacing: 0.5,
-          position: 'relative',
+          fontSize: 12, fontWeight: '700', textTransform: 'uppercase',
+          color: colors?.textTertiary,
+          marginLeft: 20, marginRight: 20, marginBottom: 9,
+          letterSpacing: 0.7,
         }}>
           {title}
         </Text>
-      )}
-      <View style={{ backgroundColor: colors?.surface || '#fff' }}>
-        {children}
+      ) : null}
+      <View style={{
+        marginHorizontal: 16,
+        borderRadius: 16,
+        overflow: 'hidden',
+        backgroundColor: colors?.surface || '#fff',
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: colors?.border || 'rgba(0,0,0,0.08)',
+      }}>
+        {kids.map((child, i) => (
+          <React.Fragment key={i}>
+            {i > 0 ? (
+              <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: dividerColor, marginLeft: 64 }} />
+            ) : null}
+            {child}
+          </React.Fragment>
+        ))}
       </View>
     </View>
   );
@@ -122,20 +152,18 @@ function ToggleRow({ icon: Icon, label, value, onChange, colors, description }) 
     <View style={{
       flexDirection: 'row', alignItems: 'center',
       paddingHorizontal: 16, paddingVertical: 13, gap: 14,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: (colors?.borderLight || '#f1f5f9') + '60',
     }}>
       <View style={{
         width: 34, height: 34, borderRadius: 9,
-        backgroundColor: colors?.surface || '#f3f4f6',
+        backgroundColor: colors?.surfaceVariant || '#f3f4f6',
         alignItems: 'center', justifyContent: 'center',
       }}>
-        {Icon && <Icon size={18} color={colors?.textSecondary || '#64748b'} />}
+        {Icon && <Icon size={18} color={colors?.text || '#64748b'} />}
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={{ fontSize: 15, fontWeight: '500', color: colors?.text }}>{label}</Text>
+        <Text style={{ fontSize: 15.5, fontWeight: '500', letterSpacing: -0.1, color: colors?.text }}>{label}</Text>
         {!!description && (
-          <Text style={{ fontSize: 12, color: colors?.textSecondary, marginTop: 2 }}>{description}</Text>
+          <Text style={{ fontSize: 12.5, color: colors?.textSecondary, marginTop: 2, lineHeight: 17 }}>{description}</Text>
         )}
       </View>
       <Switch
@@ -156,12 +184,12 @@ function AccentColorRow({ colors, t }) {
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
         <View style={{
           width: 34, height: 34, borderRadius: 9,
-          backgroundColor: colors?.surface || '#f3f4f6',
+          backgroundColor: colors?.surfaceVariant || '#f3f4f6',
           alignItems: 'center', justifyContent: 'center',
         }}>
           <View style={{ width: 16, height: 16, borderRadius: 8, backgroundColor: accentColor }} />
         </View>
-        <Text style={{ fontSize: 15, fontWeight: '500', color: colors?.text || '#111', flex: 1 }}>
+        <Text style={{ fontSize: 15.5, fontWeight: '500', letterSpacing: -0.1, color: colors?.text || '#111', flex: 1 }}>
           {t?.('settings.accentColor') || 'Cor do destaque'}
         </Text>
       </View>
@@ -214,47 +242,59 @@ const ICON_PINK   = '#111111';
 const ICON_GREEN  = '#111111';
 
 // ─── Hero card (avatar + name + email) ───────────────────────────────
-function HeroCard({ colors, userEmail, onPress, t }) {
-  // We avoid pulling AvatarCircle (which has its own caching pipeline)
-  // here to keep the sheet light — a simple letter avatar in a
-  // gradient-ish purple chip mirrors Instagram's settings hero, and the
-  // proper avatar is one tap away in the edit-profile screen.
-  const initial = (userEmail || '?').trim().charAt(0).toUpperCase() || '?';
-  const handle = userEmail ? userEmail.split('@')[0] : '';
+function HeroCard({ colors, userEmail, userName, username, avatarUrl, onPress, t }) {
+  // [2026-10-04] Show the REAL profile — same display name, @handle and photo as
+  // the /u/[username] profile screen — not the email local-part. Before, name
+  // and @ were both derived from userEmail.split('@')[0], so a user whose email
+  // was duarte@ but whose username is @aleffduarte saw a mismatched "@duarte".
+  const handle = (username && String(username).trim())
+    || (userEmail ? userEmail.split('@')[0] : '');
+  const displayName = (userName && String(userName).trim())
+    || handle
+    || (t?.('settings.yourProfile') || 'Seu perfil');
   return (
     <Pressable
       onPress={onPress}
       style={({ pressed }) => ({
         marginHorizontal: 16,
-        marginTop: 12,
-        padding: 14,
+        marginTop: 14,
+        padding: 16,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 14,
-        borderRadius: 14,
+        gap: 15,
+        borderRadius: 18,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: colors?.border || '#e5e7eb',
         backgroundColor: pressed
           ? (colors?.surfaceVariant || colors?.surface || '#f3f4f6')
           : (colors?.surface || '#fff'),
+        // Soft lift so the identity card reads as the premium focal point at
+        // the top of the sheet (kept subtle; theme-aware).
+        ...(Platform.OS === 'web'
+          ? { boxShadow: isDarkColors(colors) ? '0 2px 10px rgba(0,0,0,0.35)' : '0 2px 10px rgba(15,23,42,0.06)' }
+          : {
+              shadowColor: '#000',
+              shadowOpacity: isDarkColors(colors) ? 0.28 : 0.06,
+              shadowRadius: 10,
+              shadowOffset: { width: 0, height: 3 },
+              elevation: 2,
+            }),
       })}
       accessibilityRole="button"
       accessibilityLabel={t?.('settings.editProfile') || 'Editar perfil'}
     >
-      <View style={{
-        width: 64, height: 64, borderRadius: 32,
-        backgroundColor: ICON_PURPLE + '22',
-        alignItems: 'center', justifyContent: 'center',
-        borderWidth: 2, borderColor: ICON_PURPLE + '55',
-      }}>
-        <Text style={{ fontSize: 26, fontWeight: '700', color: ICON_PURPLE }}>{initial}</Text>
-      </View>
+      <AvatarCircle
+        uri={avatarUrl || null}
+        email={userEmail}
+        name={displayName}
+        size={62}
+      />
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text style={{ fontSize: 17, fontWeight: '700', color: colors?.text || '#111' }} numberOfLines={1}>
-          {handle || (t?.('settings.yourProfile') || 'Seu perfil')}
+        <Text style={{ fontSize: 18, fontWeight: '800', letterSpacing: -0.3, color: colors?.text || '#111' }} numberOfLines={1}>
+          {displayName}
         </Text>
         {!!handle && (
-          <Text style={{ fontSize: 13, color: colors?.textSecondary, marginTop: 1 }} numberOfLines={1}>
+          <Text style={{ fontSize: 13.5, color: colors?.textSecondary, marginTop: 2 }} numberOfLines={1}>
             @{handle}
           </Text>
         )}
@@ -314,10 +354,12 @@ function PlusUpsellCard({ colors, onPress, t }) {
 function SettingsSearchBar({ value, onChangeText, colors, t }) {
   return (
     <View style={{
-      marginHorizontal: 16, marginTop: 12, marginBottom: 4,
+      marginHorizontal: 16, marginTop: 14, marginBottom: 2,
       flexDirection: 'row', alignItems: 'center', gap: 8,
-      paddingHorizontal: 12, height: 38, borderRadius: 10,
-      backgroundColor: colors?.surfaceVariant || colors?.surface || '#f1f5f9',
+      paddingHorizontal: 13, height: 40, borderRadius: 12,
+      backgroundColor: colors?.surface || '#fff',
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors?.border || 'rgba(0,0,0,0.08)',
     }}>
       <IconSearch size={16} color={colors?.textSecondary || '#64748b'} />
       <TextInput
@@ -347,7 +389,7 @@ function matches(label, q) {
   return (label || '').toLowerCase().includes(q.toLowerCase());
 }
 
-function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, onClose, closeAndRun, userEmail }) {
+function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, onClose, closeAndRun, userEmail, userName, username, avatarUrl }) {
   const [query, setQuery] = useState('');
 
   // Linked alt phones count — surfaced as a small badge on the "Outros
@@ -381,7 +423,7 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
       rows: [
         { icon: IconUser, label: t?.('settings.editProfile') || 'Editar perfil', tint: ICON_PURPLE, onPress: onEditProfile },
         { icon: IconLock, label: t?.('settings.security') || 'Segurança e senha', tint: ICON_PURPLE, onPress: () => push('security') },
-        { icon: IconEye,  label: t?.('settings.privacy') || 'Privacidade',         tint: ICON_RED,    onPress: () => push('privacy') },
+        { icon: IconEye,  label: t?.('settings.privacy') || 'Privacidade',         tint: ICON_PURPLE, onPress: () => push('privacy') },
         {
           icon: IconPhone,
           label: t?.('linkedPhones.title') || 'Outros números',
@@ -490,12 +532,12 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
       stickyHeaderIndices={query ? [0] : [0, 1]}
     >
       {/* Hero + plus card hide while searching to keep results focused. */}
-      {!query && <HeroCard colors={colors} userEmail={userEmail} onPress={onEditProfile} t={t} />}
+      {!query && <HeroCard colors={colors} userEmail={userEmail} userName={userName} username={username} avatarUrl={avatarUrl} onPress={onEditProfile} t={t} />}
       {/* Plus upsell removed from Configurações (2026-05-08): user prefers a
           cleaner sheet. Upsell still surfaces contextually via UpsellHelper at
           gated features (e.g., backup, custom themes, status views). */}
 
-      <View style={{ backgroundColor: colors?.background || '#fff' }}>
+      <View style={{ backgroundColor: isDark ? (colors?.background || '#000') : (colors?.surfaceVariant || '#f3f4f6') }}>
         <SettingsSearchBar value={query} onChangeText={setQuery} colors={colors} t={t} />
       </View>
 
@@ -515,10 +557,10 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
                 }}>
                   <View style={{
                     minWidth: 22, paddingHorizontal: 6, height: 20,
-                    borderRadius: 10, backgroundColor: '#111111',
+                    borderRadius: 10, backgroundColor: colors?.primary || colors?.text || '#111111',
                     alignItems: 'center', justifyContent: 'center',
                   }}>
-                    <Text style={{ color: '#fff', fontSize: 11, fontWeight: '700' }}>{r.badge}</Text>
+                    <Text style={{ color: colors?.background || '#fff', fontSize: 11, fontWeight: '700' }}>{r.badge}</Text>
                   </View>
                   <IconChevronRight size={18} color={colors?.textTertiary || '#bbb'} />
                 </View>
@@ -530,17 +572,7 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
       ))}
 
       {visibleDanger.length > 0 && (
-        <View style={{
-          marginTop: 32,
-          marginHorizontal: 16,
-          borderTopWidth: 6,
-          borderTopColor: colors?.surfaceVariant || colors?.borderLight || '#f1f5f9',
-          backgroundColor: 'rgba(239,68,68,0.08)',
-          borderColor: 'rgba(239,68,68,0.3)',
-          borderWidth: 1,
-          borderRadius: 12,
-          overflow: 'hidden',
-        }}>
+        <View style={{ marginTop: 14 }}>
           <Section title={t?.('settings.dangerZone') || 'Zona de perigo'} colors={colors}>
             {visibleDanger.map(r => (
               <Row
@@ -2448,6 +2480,7 @@ const SCREEN_TITLE_FALLBACK = {
 
 export default function ProfileSettingsSheet({
   visible, onClose, colors, isDark, t, router, onLogout, onEditProfile, userEmail,
+  userName, username, avatarUrl,
 }) {
   const [stack, setStack] = useState(['main']);
   const currentScreen = stack[stack.length - 1];
@@ -2539,6 +2572,9 @@ export default function ProfileSettingsSheet({
             onClose={onClose}
             closeAndRun={closeAndRun}
             userEmail={userEmail}
+            userName={userName}
+            username={username}
+            avatarUrl={avatarUrl}
           />
         );
     }
@@ -2550,7 +2586,13 @@ export default function ProfileSettingsSheet({
         <Pressable
           style={{
             position: 'absolute', left: 0, right: 0, bottom: 0,
-            backgroundColor: colors?.background || '#fff',
+            // Grouped background (iOS/Instagram-style): a soft grey canvas in
+            // light mode so the white surface cards read as discrete, elevated
+            // groups; in dark mode the darkest background already lets the
+            // (lighter) surface cards pop, so we keep it.
+            backgroundColor: isDark
+              ? (colors?.background || '#000')
+              : (colors?.surfaceVariant || colors?.background || '#f3f4f6'),
             borderTopLeftRadius: 18, borderTopRightRadius: 18,
             maxHeight: '92%', minHeight: '70%',
           }}

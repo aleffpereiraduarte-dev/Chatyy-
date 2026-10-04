@@ -233,9 +233,10 @@ const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors,
         accessibilityRole="button"
         accessibilityLabel={label}
         style={{
-          paddingVertical: 12,
+          paddingVertical: 9,
           paddingHorizontal: 14,
-          borderRadius: 12, // modern rounded-rect (segmented control feel)
+          borderRadius: 10, // modern rounded-rect (segmented control feel)
+          minHeight: 34,
           alignItems: 'center',
           justifyContent: 'center',
           backgroundColor: isPrimary ? '#111111' : secondaryFill,
@@ -244,8 +245,8 @@ const FlatButton = memo(function FlatButton({ label, onPress, isPrimary, colors,
       >
         <Text style={{
           fontSize: 14,
-          fontWeight: '700',
-          letterSpacing: 0.1,
+          fontWeight: '600',
+          letterSpacing: 0.2,
           color: isPrimary ? '#fff' : (colors?.text || (isDark ? '#fff' : '#111')),
         }} numberOfLines={1}>
           {label}
@@ -3909,6 +3910,9 @@ export default function Profile({
       t={t}
       router={router}
       userEmail={identity?.email}
+      userName={identity?.name}
+      username={identity?.username}
+      avatarUrl={identity?.avatar_url}
       onEditProfile={() => setEditOpen(true)}
       onLogout={async () => {
         try {

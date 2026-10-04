@@ -622,6 +622,30 @@ export function AuthProvider({ children }) {
               loadAccounts();
               _syncShareExtAuth(userData.email);
               setLoading(false);
+              // [2026-10-04 cache-first boot] Wire the happy-path essentials
+              // that an eager cache-first return would otherwise skip, so the
+              // instant-paint path is functionally equivalent to a fresh
+              // checkAuth success (chat sync engines, avatar/profile prefetch,
+              // native-call token, child status). All idempotent + best-effort
+              // so none of them can ever stall or crash boot.
+              try { _bootSyncEngines(); } catch {}
+              try { prefetchAvatar(userData.email); prefetchProfile(userData.email); } catch {}
+              try { _childRestrictions = userData.is_child ? (userData.child_restrictions || {}) : null; } catch {}
+              if (Platform.OS !== 'web') {
+                try {
+                  const tok = (userData?.token || api.getAuthToken?.() || '').toString();
+                  const baseUrl = (api.getBaseUrl?.() || 'https://chatyy.com.br').toString();
+                  if (tok) {
+                    const mod = require('../modules/expo-callkit');
+                    if (typeof mod?.persistAuthForNativeCall === 'function') {
+                      Promise.race([
+                        Promise.resolve(mod.persistAuthForNativeCall(tok, baseUrl)).catch(() => {}),
+                        new Promise((res) => setTimeout(res, 600)),
+                      ]).catch(() => {});
+                    }
+                  }
+                } catch {}
+              }
               // [WAVE 66] Background revalidation. Bounded 8s timeout so a
               // genuinely offline launch never blocks. Only acts on an
               // *explicit* server rejection (not a network error).
@@ -645,6 +669,16 @@ export function AuthProvider({ children }) {
                     // [WAVE 66] Token still valid — refresh cache + revive WS
                     // so it doesn't sit dead after a cold-start hydrate.
                     if (r.data) AsyncStorage.setItem('chatyy_offline_user', JSON.stringify(r.data)).catch(() => {});
+                    // [2026-10-04 cache-first boot] Reconcile the instantly-
+                    // painted cached user with authoritative server data so
+                    // fields that gate routing (needs_phone_verification,
+                    // is_child) self-correct a moment after the cache paint.
+                    try {
+                      if (r.data?.email) {
+                        setUser(r.data);
+                        _childRestrictions = r.data.is_child ? (r.data.child_restrictions || {}) : null;
+                      }
+                    } catch {}
                     try {
                       const ws = require('../services/websocket').default;
                       if (ws?.resurrect) ws.resurrect('hydrate_guard_revalidated');
@@ -697,6 +731,21 @@ export function AuthProvider({ children }) {
             if (await hydrateOffline()) return;
           }
         } catch {}
+
+        // [2026-10-04 cache-first cold start] Native: if a previously-validated
+        // user is cached, PAINT IT IMMEDIATELY and revalidate in the background.
+        // Before this, every ONLINE cold start blocked first paint on the
+        // checkAuth round-trip (BR↔NY RTT + server time), so after the branded
+        // splash faded the user stared at a blank white screen for ~1-2s until
+        // the fetch resolved. hydrateOffline sets user + loading=false fast from
+        // AsyncStorage, then kicks a bounded background checkAuth guard that
+        // logs out ONLY on an *explicit* server rejection — ghost-session
+        // protection is unchanged. Returns false when there's no cached user
+        // (fresh install / after logout) → we fall through to the normal
+        // blocking checkAuth below, which routes to /login as before.
+        if (Platform.OS !== 'web') {
+          if (await hydrateOffline()) return;
+        }
 
         // First try: check if server session is still alive
         const r = await api.checkAuth();
