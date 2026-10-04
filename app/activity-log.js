@@ -427,7 +427,7 @@ export default function ActivityLogScreen() {
         <FadeSlideIn>
         <FlatList
           data={listData}
-          keyExtractor={i => i.key || String(i.id || Math.random())}
+          keyExtractor={(i, idx) => i.key || String(i.id ?? `al-${idx}`)}
           renderItem={renderListItem}
           ListHeaderComponent={ListHeader}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />}

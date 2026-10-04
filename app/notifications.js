@@ -688,7 +688,7 @@ function NotificationsScreenInner() {
     );
   }, [colors, isDark, handleTap, handleAction, t]);
 
-  const keyExtractor = useCallback((item) => String(item.id || item.latest_at || Math.random()), []);
+  const keyExtractor = useCallback((item, idx) => String(item.id || item.latest_at || `n-${idx}`), []);
 
   return (
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>

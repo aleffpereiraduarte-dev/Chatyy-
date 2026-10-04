@@ -5822,7 +5822,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
             </Text>
             <FlatList
               data={contactStatuses || []}
-              keyExtractor={(g) => String(g.ownerEmail || g.email || Math.random())}
+              keyExtractor={(g, idx) => String(g.ownerEmail || g.email || `st-${idx}`)}
               renderItem={({ item }) => {
                 const em = String(item.ownerEmail || item.email || '').toLowerCase();
                 const nm = item.ownerName || item.name || em.split('@')[0] || em;
