@@ -7665,6 +7665,7 @@ export default {
   'chatConv.markAsRead': 'Marcar como lido',
   'chatConv.smartReplies': 'Sugestões',
   'chatConv.sendFailed': 'Falha ao enviar',
+  'chatConv.tapToResend': 'Toque para reenviar',
   // Auto-added missing keys — 2026-05-17 i18n cleanup wave
   'a11y.addStar': 'Adicionar estrela',
   'a11y.deselect': 'Desmarcar',

@@ -7572,6 +7572,7 @@ export default {
   'chatConv.markAsRead': 'Mark as read',
   'chatConv.smartReplies': 'Suggestions',
   'chatConv.sendFailed': 'Failed to send',
+  'chatConv.tapToResend': 'Tap to resend',
   // Auto-added missing keys — 2026-05-17 i18n cleanup wave
   'a11y.addStar': 'Add star',
   'a11y.deselect': 'Deselect',

@@ -1,71 +1,93 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, Animated, StyleSheet, Platform, Easing } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { AnimTiming } from '../constants/theme';
 
+// ── Shared shimmer clock ──
+// One native-driven value drives EVERY Shimmer on screen, so the highlight
+// sweeps across the whole list in sync (WhatsApp/Telegram look) instead of
+// each bar pulsing on its own. Ref-counted: the loop only runs while at
+// least one skeleton is mounted.
+let _shClock = null;
+let _shLoop = null;
+let _shUsers = 0;
+function acquireShimmerClock() {
+  if (!_shClock) _shClock = new Animated.Value(0);
+  if (_shUsers++ === 0) {
+    _shClock.setValue(0);
+    _shLoop = Animated.loop(
+      Animated.timing(_shClock, { toValue: 1, duration: 1300, easing: Easing.inOut(Easing.quad), useNativeDriver: true })
+    );
+    _shLoop.start();
+  }
+  return _shClock;
+}
+function releaseShimmerClock() {
+  if (--_shUsers <= 0) {
+    _shUsers = 0;
+    try { _shLoop && _shLoop.stop(); } catch {}
+    _shLoop = null;
+  }
+}
+
+// Soft bell of slices that fakes a gradient highlight (no linear-gradient dep,
+// so this stays OTA-safe). Opacities are multiplied by the highlight color.
+const SHIMMER_BELL = [0.1, 0.35, 0.7, 1, 0.7, 0.35, 0.1];
+
 function Shimmer({ style, delay = 0 }) {
-  const { colors } = useTheme();
-  const anim = useRef(new Animated.Value(0)).current;
+  const { colors, isDark } = useTheme();
+  const clock = useRef(null);
+  if (!clock.current) clock.current = acquireShimmerClock();
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [w, setW] = useState(0);
 
   useEffect(() => {
     // Staggered entrance fade
-    Animated.timing(fadeAnim, {
+    const fade = Animated.timing(fadeAnim, {
       toValue: 1,
       duration: AnimTiming.normal,
       delay,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
-    }).start();
-
-    // Smooth shimmer pulse.
-    // Why: 900ms each way (1.8s cycle) felt sluggish — bumped to 700ms each
-    // way (1.4s cycle) to read as "loading, fast" instead of "stuck". Sine
-    // easing replaces ease-in-out so the transition through the lighter peak
-    // feels like a wave rather than a step.
-    Animated.loop(
-      Animated.sequence([
-        Animated.timing(anim, {
-          toValue: 1,
-          duration: 700,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-        Animated.timing(anim, {
-          toValue: 0,
-          duration: 700,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-      ])
-    ).start();
+    });
+    fade.start();
+    return () => { fade.stop(); releaseShimmerClock(); };
   }, []);
 
-  const bg = anim.interpolate({
-    inputRange: [0, 0.5, 1],
-    outputRange: [
-      colors.borderLight || '#e5e7eb',
-      colors.surfaceVariant || '#f3f4f6',
-      colors.borderLight || '#e5e7eb',
-    ],
-  });
+  const base = colors.borderLight || (isDark ? '#26272b' : '#e5e7eb');
+  const hi = isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.75)';
+  const band = Math.max(60, w * 0.7);
+  const translateX = clock.current.interpolate({ inputRange: [0, 1], outputRange: [-band, w] });
 
   return (
     <Animated.View
+      onLayout={(e) => { const nw = Math.round(e.nativeEvent.layout.width); if (nw && nw !== w) setW(nw); }}
       style={[
         style,
         {
-          backgroundColor: bg,
+          backgroundColor: base,
           borderRadius: 8,
+          overflow: 'hidden',
           opacity: fadeAnim,
           ...(Platform.OS === 'web' ? {
-            background: `linear-gradient(90deg, ${colors.borderLight || '#e5e7eb'} 25%, ${colors.surfaceVariant || '#f3f4f6'} 50%, ${colors.borderLight || '#e5e7eb'} 75%)`,
+            background: `linear-gradient(90deg, ${base} 25%, ${isDark ? 'rgba(255,255,255,0.09)' : (colors.surfaceVariant || '#f3f4f6')} 50%, ${base} 75%)`,
             backgroundSize: '200% 100%',
             animation: 'shimmerSlide 1.4s infinite ease-in-out',
           } : {}),
         },
       ]}
-    />
+    >
+      {w > 0 && Platform.OS !== 'web' ? (
+        <Animated.View
+          pointerEvents="none"
+          style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: band, flexDirection: 'row', transform: [{ translateX }] }}
+        >
+          {SHIMMER_BELL.map((o, i) => (
+            <View key={i} style={{ flex: 1, backgroundColor: hi, opacity: o }} />
+          ))}
+        </Animated.View>
+      ) : null}
+    </Animated.View>
   );
 }
 

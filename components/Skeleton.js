@@ -130,4 +130,18 @@ const styles = StyleSheet.create({
   bubble: { borderRadius: 16, padding: 12, borderWidth: 1, overflow: 'hidden' },
 });
 
+// Crossfade helper: wrap the REAL content that replaces a skeleton so it
+// fades/rises in softly instead of popping (WhatsApp/Telegram feel).
+//   <SkeletonFadeIn>{rows}</SkeletonFadeIn>
+export function SkeletonFadeIn({ children, duration = 240, style }) {
+  const o = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const a = Animated.timing(o, { toValue: 1, duration, useNativeDriver: true });
+    a.start();
+    return () => a.stop();
+  }, [o, duration]);
+  const ty = o.interpolate({ inputRange: [0, 1], outputRange: [6, 0] });
+  return <Animated.View style={[{ flex: 1, opacity: o, transform: [{ translateY: ty }] }, style]}>{children}</Animated.View>;
+}
+
 export default Skeleton;

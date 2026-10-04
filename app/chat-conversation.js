@@ -31,6 +31,7 @@ const { FlashList: _MsgFlashList } = require('@shopify/flash-list');
 const _NativeChatView = null;
 import Svg, { Path } from 'react-native-svg';
 import CircularProgressArc from '../components/CircularProgressArc';
+import MediaSendOverlay, { MediaPopIn } from '../components/MediaSendOverlay'; // [2026-10-04] WhatsApp-level send motion
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ReactionBurst from '../components/ReactionBurst';
@@ -5960,6 +5961,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   // is tap-to-record/hands-free, so a "lock" affordance is meaningless. Cancel
   // is always available via the explicit X button.)
   const slideX = useRef(new Animated.Value(0)).current;
+  const slideHapticRef = useRef(false);
   const cancelledRef = useRef(false);
   const intervalRef = useRef(null);
   const startTimeRef = useRef(0);
@@ -6794,9 +6796,17 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   const slideCancelPan = PanResponder.create({
     onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 10,
+    onPanResponderGrant: () => { slideHapticRef.current = false; },
     onPanResponderMove: (_, g) => {
       if (g.dx < 0) {
         slideX.setValue(Math.max(g.dx, -140));
+      }
+      // Haptic tick when crossing the cancel threshold (and again when
+      // coming back) so the user feels the "point of no return".
+      const past = g.dx < -80;
+      if (past !== slideHapticRef.current) {
+        slideHapticRef.current = past;
+        try { if (Platform.OS !== 'web') require('../services/haptics').tap(past ? 'medium' : 'light'); } catch {}
       }
     },
     onPanResponderRelease: (_, g) => {
@@ -8991,6 +9001,34 @@ function ChatConversationInner() {
     }));
     setUploadProgress(prev => { const n = { ...prev }; delete n[tempId]; return n; });
   }, []);
+
+  // [2026-10-04] Tap-to-resend from the failed-media overlay (MediaSendOverlay).
+  // Same local-media path as the failed-bubble "Tentar" action: re-enqueue the
+  // upload in offlineCache and replay now. Remote-URL media falls back to the
+  // existing footer alert flow (this is a no-op there).
+  const retryFailedMediaSend = useCallback(async (msg) => {
+    try {
+      const raw = msg?._localUri || msg?.file_url || '';
+      if (!raw || /^https?:/i.test(raw)) return;
+      setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, _failed: false, _pending: true, _uploading: true, _uploadPct: 0 } : m));
+      const { queueOfflineAction, replayOfflineQueue } = require('../services/offlineCache');
+      await queueOfflineAction({
+        type: 'chat_file_upload',
+        conversation_id: conversationId,
+        uri: raw,
+        name: msg.file_name || '',
+        file_type: '',
+        msg_type: msg.type,
+        client_message_id: msg._client_id || msg.client_message_id || ('msg_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)),
+        temp_id: (typeof msg.id === 'string' && msg.id.startsWith('tmp_')) ? msg.id : `tmp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        caption: msg.content || '',
+        view_once: msg.is_view_once ? 1 : 0,
+      });
+      replayOfflineQueue(api).catch(() => {});
+    } catch {
+      setMessages(prev => prev.map(m => m.id === msg?.id ? { ...m, _failed: true, _pending: false, _uploading: false } : m));
+    }
+  }, [conversationId]);
   const [wsConnected, setWsConnected] = useState(true);
   // Network reachability — separate from WS state so the banner can
   // distinguish "no network at all" (gray + cellular off) from "network
@@ -20856,7 +20894,7 @@ function ChatConversationInner() {
               delayLongPress={350}
               activeOpacity={0.9}
               style={{ marginHorizontal: -13, marginTop: -8, marginBottom: hasCaption ? 0 : -8 }}>
-              <View style={{ overflow: 'hidden', width: imgBoxW, height: imgBoxH, maxHeight: 320, maxWidth: 300, backgroundColor: (() => {
+              <MediaPopIn enabled={!!msg._uploading && typeof msg.id === 'string' && msg.id.startsWith('tmp_')} style={{ overflow: 'hidden', width: imgBoxW, height: imgBoxH, maxHeight: 320, maxWidth: 300, backgroundColor: (() => {
                 // [WAVE 77 2026-05-21] HSL base painted on the WRAPPER itself so
                 // that even when every internal layer is transparent (e.g. during
                 // ExpoImage's cross-dissolve transition on Android where the
@@ -21246,30 +21284,18 @@ function ChatConversationInner() {
                     <Text style={{ color: '#fff', fontSize: 11, marginTop: 4 }}>Protegido</Text>
                   </View>
                 )}
-                {imgUploading && (
-                  <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' }}>
-                    {/* WhatsApp-style progress ring with % in the middle */}
-                    <View style={{ width: 68, height: 68, borderRadius: 34, borderWidth: 3, borderColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' }}>
-                      <CircularProgressArc pct={imgProgress} size={68} strokeWidth={3.5} style={{ position: 'absolute' }} />
-                      <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>{Math.round(imgProgress)}%</Text>
-                    </View>
-                    {/* Size indicator below */}
-                    {msg.file_size > 0 && (
-                      <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 8, fontWeight: '500' }}>
-                        {((msg.file_size * imgProgress / 100) / 1048576).toFixed(1)} / {(msg.file_size / 1048576).toFixed(1)} MB
-                      </Text>
-                    )}
-                    {/* Cancel button in top-right corner */}
-                    <TouchableOpacity
-                      activeOpacity={0.7}
-                      onPress={(e) => { e.stopPropagation?.(); cancelUpload(msg.id); }}
-                      style={{ position: 'absolute', top: 8, right: 8, width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}
-                      accessibilityLabel={t('common.cancel') || 'Cancelar'}
-                    >
-                      <IconX size={14} color="#fff" />
-                    </TouchableOpacity>
-                  </View>
-                )}
+                <MediaSendOverlay
+                  active={imgUploading}
+                  progress={imgIndeterminate ? undefined : imgProgress}
+                  compressing={false}
+                  sizeBytes={msg.file_size || 0}
+                  failed={!!msg._failed && !imgUploading}
+                  onCancel={() => cancelUpload(msg.id)}
+                  onRetry={() => retryFailedMediaSend(msg)}
+                  cancelLabel={t('common.cancel') || 'Cancelar'}
+                  retryLabel={t('chatConv.tapToResend') || 'Toque para reenviar'}
+                  failedLabel={t('chatConv.sendFailed') || 'Falha no envio'}
+                />
                 {/* Download progress ring — shown when receiving an image from
                     the server and the full-resolution is still fetching.
                     [WAVE 36 2026-05-20] Switched to purple Chatyy ring (#111111)
@@ -21309,7 +21335,7 @@ function ChatConversationInner() {
                 {!hasCaption && !imgUploading && (!isAlbumMember || isAlbumLast) && (
                   <MediaStatusFooter msg={msg} isOwn={isOwn} />
                 )}
-              </View>
+              </MediaPopIn>
               {hasCaption && (
                 <View>
                   <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight, marginTop: 6, paddingHorizontal: 13 }]}>{msg.content}</Text>
@@ -21466,7 +21492,7 @@ function ChatConversationInner() {
               activeOpacity={0.9}
               style={{ marginHorizontal: -13, marginTop: -8, marginBottom: -8 }}
             >
-              <View style={{ overflow: 'hidden' }}>
+              <MediaPopIn enabled={!!msg._uploading && typeof msg.id === 'string' && msg.id.startsWith('tmp_')} style={{ overflow: 'hidden' }}>
               {Platform.OS === 'web' ? (
                 <View style={{ position: 'relative', width: (_vbW && !isNaN(_vbW)) ? _vbW : 280, height: (_vbH && !isNaN(_vbH)) ? _vbH : 200, backgroundColor: '#000' }}>
                   <video
@@ -21619,31 +21645,19 @@ function ChatConversationInner() {
                       transition={{ duration: 180, effect: 'cross-dissolve' }}
                     />
                   ) : null}
-                  {vidUploading ? (
-                    <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' }}>
-                      <View style={{ width: 68, height: 68, borderRadius: 34, borderWidth: 3, borderColor: 'rgba(255,255,255,0.25)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.25)' }}>
-                        <CircularProgressArc pct={vidProgress} size={68} strokeWidth={3.5} style={{ position: 'absolute' }} />
-                        <Text style={{ color: '#fff', fontSize: 15, fontWeight: '700' }}>{Math.round(vidProgress)}%</Text>
-                      </View>
-                      {vidCompressing ? (
-                        <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 8, fontWeight: '500' }}>
-                          {(t('chatConv.compressingVideo') || 'Comprimindo…')}
-                        </Text>
-                      ) : (msg.file_size > 0 && (
-                        <Text style={{ color: 'rgba(255,255,255,0.85)', fontSize: 11, marginTop: 8, fontWeight: '500' }}>
-                          {((msg.file_size * vidProgress / 100) / 1048576).toFixed(1)} / {(msg.file_size / 1048576).toFixed(1)} MB
-                        </Text>
-                      ))}
-                      <TouchableOpacity
-                        activeOpacity={0.7}
-                        onPress={(e) => { e.stopPropagation?.(); cancelUpload(msg.id); }}
-                        style={{ position: 'absolute', top: 8, right: 8, width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' }}
-                        accessibilityLabel={t('common.cancel') || 'Cancelar'}
-                      >
-                        <IconX size={14} color="#fff" />
-                      </TouchableOpacity>
-                    </View>
-                  ) : vidIsDownloading ? (
+                  <MediaSendOverlay
+                    active={vidUploading}
+                    progress={vidIndeterminate ? undefined : vidProgress}
+                    compressing={vidCompressing}
+                    sizeBytes={msg.file_size || 0}
+                    failed={!!msg._failed && !vidUploading}
+                    onCancel={() => cancelUpload(msg.id)}
+                    onRetry={() => retryFailedMediaSend(msg)}
+                    cancelLabel={t('common.cancel') || 'Cancelar'}
+                    retryLabel={t('chatConv.tapToResend') || 'Toque para reenviar'}
+                    failedLabel={t('chatConv.sendFailed') || 'Falha no envio'}
+                  />
+                  {vidUploading ? null : vidIsDownloading ? (
                     // [WAVE 34 2026-05-20] Downloading state CENTERED via
                     // absolute fill (was inline so it pushed off the visual
                     // center). Same purple-tinted glow as the play btn so
@@ -21782,7 +21796,7 @@ function ChatConversationInner() {
               {!vidUploading && (!isAlbumMember || isAlbumLast) && (
                 <MediaStatusFooter msg={msg} isOwn={isOwn} />
               )}
-              </View>
+              </MediaPopIn>
             </TouchableOpacity>
           );
         }
