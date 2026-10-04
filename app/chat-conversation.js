@@ -757,9 +757,18 @@ function computeTickState(msg, opts = {}) {
   } else {
     // DIRECT: confia APENAS no peer. read_at/read_by são carimbo do servidor;
     // o watermark já exclui o próprio e-mail (ver _enrichedMessagesBase).
+    // Sinal FORTE por-mensagem (read_at/read_by do peer) → azul direto.
     if (peerReadAt) return 2;
     const idN = Number(msg.id);
-    if (peerReadWatermark >= 0 && idN > 0 && idN <= peerReadWatermark) return 2;
+    // [AZUL FALSO à prova de bala 2026-10-04] O watermark é um AGREGADO que um
+    // evento bogus pode inflar (provado: banco diz higorlima leu só até 11638 e
+    // minhas msgs 11644+ têm delivered_at/read_at NULL, mas o balão ficava azul).
+    // LIDO EXIGE ENTREGUE: uma msg não entregue NÃO pode estar lida. Então só
+    // confiar no watermark quando a msg também está entregue (peerDelivered,
+    // que vem correto do servidor = NULL p/ não entregue). Mata o azul falso na
+    // fonte, independente de onde o watermark inflou; leituras reais passam pelo
+    // peerReadAt acima e não são afetadas.
+    if (peerReadWatermark >= 0 && idN > 0 && idN <= peerReadWatermark && peerDelivered) return 2;
   }
   // ---- ENTREGUE (✓✓ cinza) ----
   if (peerDelivered) return 1.5;
