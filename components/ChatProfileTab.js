@@ -12,6 +12,7 @@ try { autoBackupMod = require('../services/autoBackup'); } catch {}
 import { clearAudioCache, getAudioCacheSize, getAudioCacheCount } from '../services/audioCache';
 import Svg, { Path, Circle as SvgCircle, Rect, Line, Polygon } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
+import SettingsSegmented from './SettingsSegmented';
 import {
   IconUser, IconEdit, IconCamera, IconChevronRight, IconLock, IconArrowLeft,
   IconPhone, IconMail, IconImage, IconX, IconCheck, IconBell, IconSparkles,
@@ -1751,49 +1752,34 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
             <Text style={{ fontSize: 12, color: isDark ? '#6b7280' : '#9ca3af', marginBottom: 12, paddingHorizontal: 4 }}>
               {t?.('settings.autoDownload.subtitle') || t?.('config.autoDownloadDesc') || 'Escolha quando o app baixa mídias automaticamente'}
             </Text>
-            {/* Column header row */}
-            <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)' }}>
-              <View style={{ width: 20, marginRight: 12 }} />
-              <Text style={{ flex: 1, fontSize: 12, fontWeight: '600', color: isDark ? '#9ca3af' : '#6b7280' }}>
-                {t?.('settings.autoDownload.colMedia') || 'Mídia'}
-              </Text>
-              {autoDownloadCols.map(col => (
-                <Text key={col.key} style={{ width: 64, textAlign: 'center', fontSize: 12, fontWeight: '600', color: isDark ? '#9ca3af' : '#6b7280' }}>
-                  {col.label}
-                </Text>
-              ))}
-            </View>
-            {autoDownloadItems.map(item => {
+            {autoDownloadItems.map((item, idx) => {
               const row = autoDlPolicy[item.key] || { mobile: 0, wifi: 0, roaming: 0 };
+              const mode = row.mobile ? 'always' : (row.wifi ? 'wifi' : 'never');
               return (
-                <View key={item.key} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 10 }}>
-                  <View style={{ width: 20, marginRight: 12, alignItems: 'center' }}>
-                    <item.Icon size={20} color={isDark ? '#9ca3af' : '#6b7280'} />
+                <View key={item.key} style={{ paddingVertical: 12, paddingHorizontal: 4, borderTopWidth: idx ? StyleSheet.hairlineWidth : 0, borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 12 }}>
+                    <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)' }]}>
+                      <item.Icon size={18} color={colors.text} />
+                    </View>
+                    <Text style={[styles.switchLabel, { color: colors.text, flex: 1 }]}>{item.label}</Text>
                   </View>
-                  <Text style={[styles.switchLabel, { color: colors.text, flex: 1 }]}>{item.label}</Text>
-                  {autoDownloadCols.map(col => {
-                    const on = !!row[col.key];
-                    return (
-                      <TouchableOpacity
-                        key={col.key}
-                        accessibilityRole="switch"
-                        accessibilityState={{ checked: on }}
-                        accessibilityLabel={`${item.label} ${col.label}`}
-                        onPress={() => togglePolicyCell(item.key, col.key)}
-                        activeOpacity={0.7}
-                        style={{ width: 64, alignItems: 'center', justifyContent: 'center', paddingVertical: 4 }}>
-                        <View style={{
-                          width: 22, height: 22, borderRadius: 6,
-                          borderWidth: 2,
-                          borderColor: on ? ACCENT : (isDark ? '#4b5563' : '#d1d5db'),
-                          backgroundColor: on ? ACCENT : 'transparent',
-                          alignItems: 'center', justifyContent: 'center',
-                        }}>
-                          {on ? <IconCheck size={14} color="#fff" /> : null}
-                        </View>
-                      </TouchableOpacity>
-                    );
-                  })}
+                  <SettingsSegmented
+                    colors={colors}
+                    isDark={isDark}
+                    compact
+                    value={mode}
+                    onChange={(m) => {
+                      const wantMobile = m === 'always' ? 1 : 0;
+                      const wantWifi = m === 'never' ? 0 : 1;
+                      if (!!row.mobile !== !!wantMobile) togglePolicyCell(item.key, 'mobile');
+                      if (!!row.wifi !== !!wantWifi) togglePolicyCell(item.key, 'wifi');
+                    }}
+                    options={[
+                      { value: 'never',  label: t?.('settings.autoDownload.never') || 'Nunca' },
+                      { value: 'wifi',   label: t?.('settings.autoDownload.wifiOnly') || 'Wi-Fi' },
+                      { value: 'always', label: t?.('settings.autoDownload.always') || 'Sempre' },
+                    ]}
+                  />
                 </View>
               );
             })}

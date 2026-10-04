@@ -1870,6 +1870,16 @@ export default function OneScreen() {
   const [voiceTranscript, setVoiceTranscript] = useState('');
   const [inputFocused, setInputFocused] = useState(false);
   const flatListRef = useRef(null);
+  // [2026-10-04] 1º scroll ao abrir a Bia = INSTANTÂNEO (ancora a última msg no
+  // rodapé); mudanças seguintes animam. Sem isto o scrollToEnd animado só em
+  // onContentSizeChange não ancorava no open (founder: "última msg tem que
+  // ficar embaixo").
+  const didFirstScrollRef = useRef(false);
+  const scrollBiaToEnd = (force = false) => {
+    const animated = didFirstScrollRef.current && !force;
+    try { flatListRef.current?.scrollToEnd({ animated }); } catch {}
+    didFirstScrollRef.current = true;
+  };
   const recognitionRef = useRef(null);
   const audioRecordingRef = useRef(null); // expo-audio recorder for Whisper auto-detect path
   const vadTimerRef = useRef(null); // polling interval for voice activity detection
@@ -3584,7 +3594,8 @@ export default function OneScreen() {
             data={messages}
             keyExtractor={item => String(item.id)}
             renderItem={renderMessage}
-            onContentSizeChange={() => flatListRef.current?.scrollToEnd({ animated: true })}
+            onContentSizeChange={() => scrollBiaToEnd()}
+            onLayout={() => { if (!didFirstScrollRef.current) scrollBiaToEnd(true); }}
             showsVerticalScrollIndicator={false}
             style={{ flex: 1 }}
             contentContainerStyle={{

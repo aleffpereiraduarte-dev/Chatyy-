@@ -28,12 +28,16 @@ import {
   IconForward, IconFileText, IconUsers,
   IconClock, IconImage, IconStar, IconMapPin, IconSearch,
   IconSmartphone, IconMonitor, IconShield, IconBarChart, IconGiftBox,
-  IconEyeOff, IconArchive,
+  IconEyeOff, IconArchive, IconCloud, IconCheck, IconBrush, IconZap, IconMusic, IconFilm,
 } from './Icons';
 import * as api from '../services/api';
 import AvatarCircle from './AvatarCircle';
 import { useTheme, ACCENT_PRESETS } from '../context/ThemeContext';
 import { useBiometric } from '../context/BiometricContext';
+import { useCurrency } from '../context/CurrencyContext';
+import SettingsSegmented from './SettingsSegmented';
+import StorageShopSheet from './StorageShopSheet';
+import { openStripePortal, isStripeCardAvailable } from '../services/stripeCheckout';
 import { useLanguage } from '../context/LanguageContext';
 import Svg, { Rect as SvgRect, Circle as SvgCircle, Polygon as SvgPolygon, G as SvgG, Defs as SvgDefs, ClipPath as SvgClipPath } from 'react-native-svg';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
@@ -174,6 +178,18 @@ function ToggleRow({ icon: Icon, label, value, onChange, colors, description }) 
         ios_backgroundColor={isDarkColors(colors) ? '#3a3a3a' : '#ddd'}
       />
     </View>
+  );
+}
+
+// Footnote — grey explanatory caption BELOW a card (iOS grouped-table footer).
+function Footnote({ children, colors }) {
+  return (
+    <Text style={{
+      fontSize: 12.5, lineHeight: 17, color: colors?.textTertiary,
+      marginHorizontal: 20, marginTop: 10,
+    }}>
+      {children}
+    </Text>
   );
 }
 
@@ -422,6 +438,7 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
       title: t?.('settings.account') || 'Conta',
       rows: [
         { icon: IconUser, label: t?.('settings.editProfile') || 'Editar perfil', tint: ICON_PURPLE, onPress: onEditProfile },
+        { icon: IconCloud, label: 'Chatyy One', tint: ICON_PURPLE, onPress: () => push('one') },
         { icon: IconLock, label: t?.('settings.security') || 'Segurança e senha', tint: ICON_PURPLE, onPress: () => push('security') },
         { icon: IconEye,  label: t?.('settings.privacy') || 'Privacidade',         tint: ICON_PURPLE, onPress: () => push('privacy') },
         {
@@ -468,7 +485,9 @@ function MainScreen({ push, onEditProfile, onLogout, colors, isDark, t, router, 
       title: t?.('settings.preferences') || 'Preferências',
       rows: [
         { icon: IconBell,  label: t?.('settings.notifications') || 'Notificações', tint: ICON_AMBER, onPress: () => push('notifications') },
+        { icon: IconBrush, label: t?.('settings.appearance') || 'Aparência',        tint: ICON_BLUE,  onPress: () => push('appearance') },
         { icon: IconGlobe, label: t?.('settings.language') || 'Idioma',            tint: ICON_BLUE,  onPress: () => push('language') },
+        { icon: IconDatabase, label: t?.('config.storage') || 'Armazenamento e dados', tint: ICON_BLUE, onPress: () => push('storage') },
         { icon: IconEye,   label: t?.('settings.reading') || 'Leitura',            tint: ICON_BLUE,  onPress: () => push('reading') },
       ],
       // The accent picker is a custom inline row, kept always visible
@@ -652,11 +671,9 @@ function SecurityScreen({ colors, t, router, onClose }) {
         <Row icon={IconLock} label={t?.('settings.changePassword') || 'Alterar senha'} onPress={() => goDetailedSettings('security')} colors={colors} />
         <Row icon={IconPhone} label={t?.('settings.twoFactor') || 'Verificação em duas etapas'} onPress={() => goDetailedSettings('security')} colors={colors} />
       </Section>
-      <Section colors={colors}>
-        <Text style={{ fontSize: 12, color: colors?.textTertiary, paddingHorizontal: 20, paddingVertical: 12, lineHeight: 17 }}>
-          {t?.('settings.securityNote') || 'Suas conversas e emails são protegidos por criptografia em trânsito. Habilite o bloqueio biométrico para uma camada extra de segurança quando alguém pegar seu celular.'}
-        </Text>
-      </Section>
+      <Footnote colors={colors}>
+        {t?.('settings.securityNote') || 'Suas conversas e emails são protegidos por criptografia em trânsito. Habilite o bloqueio biométrico para uma camada extra de segurança quando alguém pegar seu celular.'}
+      </Footnote>
     </ScrollView>
   );
 }
@@ -1051,23 +1068,13 @@ function PrivacyScreen({ colors, t }) {
     };
     const cur = settings[field] || OPTS[0];
     return (
-      <TouchableOpacity
+      <Row
+        icon={Icon}
+        label={label}
+        value={(field === 'online' && cur === 'nobody') ? labels.invisible : (labels[cur] || cur)}
         onPress={() => update({ [field]: OPTS[(OPTS.indexOf(cur) + 1) % OPTS.length] })}
-        activeOpacity={0.65}
-        style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}
-      >
-        <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors?.surface, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-          <Icon size={18} color={colors?.text} />
-        </View>
-        <View style={{ flex: 1 }}>
-          <Text style={{ color: colors?.text, fontSize: 15, fontWeight: '500' }}>{label}</Text>
-          <Text style={{ color: colors?.textTertiary, fontSize: 12, marginTop: 2 }}>
-            {/* online + nobody reads as "invisible" so the subtitle is clear. */}
-            {(field === 'online' && cur === 'nobody') ? labels.invisible : (labels[cur] || cur)}
-          </Text>
-        </View>
-        <IconChevronRight size={18} color={colors?.textTertiary} />
-      </TouchableOpacity>
+        colors={colors}
+      />
     );
   };
 
@@ -1176,24 +1183,13 @@ function PrivacyScreen({ colors, t }) {
             mirrors the PrivacyRow shape so the visual stays consistent
             with the rest of the list. Backend stores in chat_user_defaults
             and applies it to every chat_create going forward. */}
-        <TouchableOpacity
+        <Row
+          icon={IconClock}
+          label={t?.('privacy.disappearingTitle') || 'Apagar mensagens automaticamente'}
+          value={labelDisappearing(defaultDisappearing)}
           onPress={cycleDefaultDisappearing}
-          activeOpacity={0.65}
-          style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14 }}
-        >
-          <View style={{ width: 36, height: 36, borderRadius: 18, backgroundColor: colors?.surface, alignItems: 'center', justifyContent: 'center', marginRight: 12 }}>
-            <IconClock size={18} color={colors?.text} />
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={{ color: colors?.text, fontSize: 15, fontWeight: '500' }}>
-              Apagar mensagens automaticamente
-            </Text>
-            <Text style={{ color: colors?.textTertiary, fontSize: 12, marginTop: 2 }}>
-              {labelDisappearing(defaultDisappearing)}
-            </Text>
-          </View>
-          <IconChevronRight size={18} color={colors?.textTertiary} />
-        </TouchableOpacity>
+          colors={colors}
+        />
       </Section>
       <Section title={t?.('privacy.groupsSection') || 'Grupos'} colors={colors}>
         <PrivacyRow
@@ -1202,11 +1198,9 @@ function PrivacyScreen({ colors, t }) {
           field="group_add"
         />
       </Section>
-      <Section colors={colors}>
-        <Text style={{ fontSize: 12, color: colors?.textTertiary, paddingHorizontal: 20, paddingVertical: 12, lineHeight: 17 }}>
-          {t?.('privacy.note') || 'Pra bloquear um usuário específico, abra o perfil dele e toque nos três pontos.'}
-        </Text>
-      </Section>
+      <Footnote colors={colors}>
+        {t?.('privacy.note') || 'Pra bloquear um usuário específico, abra o perfil dele e toque nos três pontos.'}
+      </Footnote>
     </ScrollView>
   );
 }
@@ -2441,6 +2435,425 @@ function ExportDataScreen({ colors, t }) {
   );
 }
 
+// ─── Screen: Aparência (tema / cor / idioma / moeda) ─────────────────
+function AppearanceScreen({ colors, isDark, t, push }) {
+  const { themeMode, setThemeMode } = useTheme();
+  const { language } = useLanguage();
+  const { currency, setCurrency, resetCurrency, autoDetected, supported, symbols } = useCurrency();
+  const langLabel = { 'pt-BR': 'Português (Brasil)', en: 'English', es: 'Español' }[language] || language || 'Português (Brasil)';
+  const mode = themeMode || 'system';
+  const glyph = (sym) => ({ color }) => (
+    <Text style={{ fontSize: 13, fontWeight: '700', color }}>{sym}</Text>
+  );
+  const check = <IconCheck size={18} color={colors?.text || '#111'} />;
+  return (
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+      <Section title={t?.('settings.theme.label') || 'Tema'} colors={colors}>
+        <View style={{ padding: 16 }}>
+          <SettingsSegmented
+            colors={colors}
+            isDark={isDark}
+            value={mode}
+            onChange={(v) => { try { setThemeMode?.(v); } catch {} }}
+            options={[
+              { value: 'light', label: t?.('settings.theme.light') || 'Claro' },
+              { value: 'dark', label: t?.('settings.theme.dark') || 'Escuro' },
+              { value: 'system', label: t?.('settings.theme.system') || 'Sistema' },
+            ]}
+          />
+        </View>
+      </Section>
+      <Section title={t?.('settings.accentColor') || 'Cor do destaque'} colors={colors}>
+        <AccentColorRow colors={colors} t={t} />
+      </Section>
+      <Section title={t?.('settings.language') || 'Idioma'} colors={colors}>
+        <Row icon={IconGlobe} label={t?.('settings.language') || 'Idioma'} value={langLabel} onPress={() => push('language')} colors={colors} />
+      </Section>
+      <Section title={t?.('settings.currencyLabel') || 'Moeda'} colors={colors}>
+        <Row
+          icon={IconStar}
+          label={t?.('settings.currencyAuto') || 'Auto'}
+          value={t?.('settings.currencyAutoDesc') || 'Segue a região do aparelho'}
+          onPress={() => { try { resetCurrency?.(); } catch {} }}
+          right={autoDetected ? check : null}
+          colors={colors}
+        />
+        {(supported || []).map((c) => (
+          <Row
+            key={c}
+            icon={glyph(symbols?.[c] || c)}
+            label={t?.('settings.currency.' + c) || c}
+            value={c}
+            onPress={() => { try { setCurrency?.(c); } catch {} }}
+            right={(!autoDetected && currency === c) ? check : null}
+            colors={colors}
+          />
+        ))}
+      </Section>
+      <Footnote colors={colors}>
+        {t?.('settings.currencyDesc') || 'Usada para exibir valores no app.'}
+      </Footnote>
+    </ScrollView>
+  );
+}
+
+// ─── Screen: Armazenamento e dados ───────────────────────────────────
+// Download automático = segmented Nunca / Wi-Fi / Sempre por tipo de mídia.
+// Mapeia pra matriz do servidor (chat_set_auto_download_policy, célula a célula):
+//   Nunca  = mobile 0 + wifi 0 · Wi-Fi = mobile 0 + wifi 1 · Sempre = mobile 1 + wifi 1
+// (roaming nunca é tocado — segue o valor salvo).
+const AUTO_DL_DEFAULT = {
+  photos:    { mobile: 1, wifi: 1, roaming: 0 },
+  audio:     { mobile: 1, wifi: 1, roaming: 0 },
+  videos:    { mobile: 0, wifi: 1, roaming: 0 },
+  documents: { mobile: 0, wifi: 1, roaming: 0 },
+};
+function autoDlMode(row) {
+  if (row?.mobile) return 'always';
+  if (row?.wifi) return 'wifi';
+  return 'never';
+}
+function fmtBytesSheet(b) {
+  const v = Number(b) || 0;
+  if (v >= 1024 ** 4) return (v / 1024 ** 4).toFixed(2).replace('.', ',') + ' TB';
+  if (v >= 1024 ** 3) return (v / 1024 ** 3).toFixed(1).replace('.', ',') + ' GB';
+  if (v >= 1024 ** 2) return Math.round(v / 1024 ** 2) + ' MB';
+  return Math.round(v / 1024) + ' KB';
+}
+
+function StorageDataScreen({ colors, isDark, t, push }) {
+  const [policy, setPolicy] = useState(AUTO_DL_DEFAULT);
+  const [usage, setUsage] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await api.chatGetUserDefaults();
+        const p = r?.data?.auto_download_policy;
+        if (alive && r?.success && p && typeof p === 'object') setPolicy(prev => ({ ...prev, ...p }));
+      } catch {}
+      try {
+        const r = await api.storageUsage();
+        if (alive && r?.success && r.data) setUsage(r.data);
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const setMode = (bucket, mode) => {
+    const mobile = mode === 'always' ? 1 : 0;
+    const wifi = mode === 'never' ? 0 : 1;
+    setPolicy(prev => {
+      const cur = prev[bucket] || { mobile: 0, wifi: 0, roaming: 0 };
+      const next = { ...prev, [bucket]: { ...cur, mobile, wifi } };
+      try {
+        const mc = require('../services/mediaCache');
+        if (mc && typeof mc.setAutoDownloadPolicy === 'function') mc.setAutoDownloadPolicy(next);
+      } catch {}
+      return next;
+    });
+    // Fire-and-forget, célula a célula (API existente).
+    api.chatSetAutoDownloadPolicy({ bucket, column: 'mobile', value: mobile }).catch(() => {});
+    api.chatSetAutoDownloadPolicy({ bucket, column: 'wifi', value: wifi }).catch(() => {});
+  };
+
+  const buckets = [
+    { key: 'photos',    label: t?.('settings.autoDownload.photos') || 'Fotos',          Icon: IconImage },
+    { key: 'audio',     label: t?.('settings.autoDownload.audio') || 'Áudios',          Icon: IconMusic },
+    { key: 'videos',    label: t?.('settings.autoDownload.videos') || 'Vídeos',         Icon: IconFilm },
+    { key: 'documents', label: t?.('settings.autoDownload.documents') || 'Documentos', Icon: IconFileText },
+  ];
+  const modeOptions = [
+    { value: 'never',  label: t?.('settings.autoDownload.never') || 'Nunca' },
+    { value: 'wifi',   label: t?.('settings.autoDownload.wifiOnly') || 'Wi-Fi' },
+    { value: 'always', label: t?.('settings.autoDownload.always') || 'Sempre' },
+  ];
+
+  const used = Number(usage?.used_bytes);
+  const limit = Number(usage?.limit_bytes) || 0;
+  const hasUsage = Number.isFinite(used) && limit > 0;
+  const pct = hasUsage ? Math.min(100, Math.max(0, (used / limit) * 100)) : 0;
+
+  const clearCache = () => {
+    const doIt = async () => {
+      try {
+        const keys = ['chatyy_notif_prefs', 'chatyy_sticker_recents', 'chat_draft_', 'link_preview_'];
+        if (Platform.OS === 'web') {
+          const rm = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const k = localStorage.key(i);
+            if (keys.some(p => k?.startsWith(p))) rm.push(k);
+          }
+          rm.forEach(k => localStorage.removeItem(k));
+        } else {
+          const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+          const all = await AsyncStorage.getAllKeys();
+          const rm = all.filter(k => keys.some(p => k.startsWith(p)));
+          if (rm.length) await AsyncStorage.multiRemove(rm);
+        }
+        try { const ac = require('../services/audioCache'); await ac.clearAudioCache?.(); } catch {}
+        Alert.alert('Chatyy', t?.('config.cacheCleared') || 'Cache limpo!');
+      } catch {}
+    };
+    if (Platform.OS === 'web') { doIt(); return; }
+    Alert.alert(
+      t?.('config.clearCache') || 'Limpar cache',
+      t?.('storageData.clearCacheConfirm') || 'Remove arquivos temporários deste aparelho. Suas conversas não são apagadas.',
+      [
+        { text: t?.('common.cancel') || 'Cancelar', style: 'cancel' },
+        { text: t?.('common.clear') || 'Limpar', style: 'destructive', onPress: doIt },
+      ],
+    );
+  };
+
+  return (
+    <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+      <Section title={t?.('settings.autoDownload.title') || 'Download automático'} colors={colors}>
+        {buckets.map(b => (
+          <View key={b.key} style={{ paddingHorizontal: 16, paddingVertical: 13, gap: 12 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+              <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: colors?.surfaceVariant || '#f1f5f9', alignItems: 'center', justifyContent: 'center' }}>
+                <b.Icon size={18} color={colors?.text || '#111'} />
+              </View>
+              <Text style={{ flex: 1, fontSize: 15.5, fontWeight: '500', letterSpacing: -0.1, color: colors?.text }}>{b.label}</Text>
+            </View>
+            <SettingsSegmented
+              colors={colors}
+              isDark={isDark}
+              compact
+              value={autoDlMode(policy[b.key])}
+              onChange={(m) => setMode(b.key, m)}
+              options={modeOptions}
+            />
+          </View>
+        ))}
+      </Section>
+      <Footnote colors={colors}>
+        {t?.('settings.autoDownload.subtitle') || 'Escolha quando o app baixa mídias automaticamente'}
+      </Footnote>
+
+      <Section title={t?.('storageData.cloud') || 'Nuvem'} colors={colors}>
+        <View style={{ paddingHorizontal: 16, paddingVertical: 14, gap: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between' }}>
+            <Text style={{ fontSize: 15.5, fontWeight: '600', color: colors?.text }}>
+              {hasUsage ? fmtBytesSheet(used) : '—'}
+              <Text style={{ fontWeight: '400', color: colors?.textSecondary }}>
+                {hasUsage ? ` ${t?.('chatyyOne.of') || 'de'} ${fmtBytesSheet(limit)}` : ''}
+              </Text>
+            </Text>
+            {hasUsage ? <Text style={{ fontSize: 12.5, color: colors?.textSecondary }}>{Math.round(pct)}%</Text> : null}
+          </View>
+          <View style={{ height: 8, borderRadius: 4, backgroundColor: colors?.surfaceVariant || '#eee', overflow: 'hidden' }}>
+            <View style={{ width: pct + '%', height: '100%', borderRadius: 4, backgroundColor: pct >= 95 ? '#ef4444' : pct >= 80 ? '#f59e0b' : (colors?.tint || '#0a84ff') }} />
+          </View>
+        </View>
+        <Row icon={IconCloud} label="Chatyy One" value={t?.('chatyyOne.rowDesc') || 'Plano, pagamento e upgrade'} onPress={() => push('one')} colors={colors} />
+      </Section>
+
+      <Section title={t?.('storageData.device') || 'Neste aparelho'} colors={colors}>
+        <Row icon={IconArchive} label={t?.('config.clearCache') || 'Limpar cache'} onPress={clearCache} colors={colors} />
+      </Section>
+    </ScrollView>
+  );
+}
+
+// ─── Screen: Chatyy One (plano + pagamento + upgrade) ────────────────
+// Dados: api.planInfo() (plan_info) + api.storageUsage() (chat_storage_usage).
+// Pagamento: openStripePortal() (stripe_portal → WebBrowser) — SÓ fora do iOS
+// (isStripeCardAvailable). No iOS: "Gerencie pelo site chatyy.com.br".
+// Upgrade: StorageShopSheet existente (nada de pagamento reimplementado aqui).
+function ChatyyOneScreen({ colors, isDark, t }) {
+  const [plan, setPlan] = useState(null);
+  const [usage, setUsage] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [shop, setShop] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const { language } = useLanguage();
+
+  const load = useCallback(async () => {
+    try {
+      const [p, u] = await Promise.all([
+        api.planInfo().catch(() => null),
+        api.storageUsage().catch(() => null),
+      ]);
+      if (p?.success && p.data) setPlan(p.data);
+      if (u?.success && u.data) setUsage(u.data);
+    } catch {}
+    setLoading(false);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+
+  const tier = String(usage?.tier || 'free');
+  const planKey = String(plan?.plan || 'free');
+  const isPaid = tier !== 'free' || planKey !== 'free';
+  const used = Number(usage?.used_bytes ?? plan?.storage_used);
+  const limit = Number(usage?.limit_bytes ?? plan?.storage_limit) || 20 * 1024 ** 3;
+  const hasUsage = Number.isFinite(used);
+  const pct = hasUsage ? Math.min(100, Math.max(0, (used / limit) * 100)) : 0;
+  const barColor = pct >= 95 ? '#ef4444' : pct >= 80 ? '#f59e0b' : (colors?.tint || '#0a84ff');
+  const isIOS = Platform.OS === 'ios';
+  const stripeOk = isStripeCardAvailable();
+
+  const fmtDate = (iso) => {
+    if (!iso) return null;
+    const d = new Date(String(iso).replace(' ', 'T'));
+    if (isNaN(d.getTime())) return null;
+    try { return d.toLocaleDateString(language === 'pt-BR' ? 'pt-BR' : language, { day: '2-digit', month: 'long', year: 'numeric' }); } catch { return d.toISOString().slice(0, 10); }
+  };
+  const renews = fmtDate(plan?.expires_at);
+  const period = plan?.billing_period === 'annual' || plan?.billing_period === 'yearly'
+    ? (t?.('chatyyOne.annual') || 'Anual') : (t?.('chatyyOne.monthly') || 'Mensal');
+
+  const manage = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const r = await openStripePortal();
+      if (!r?.success) {
+        Alert.alert(t?.('common.error') || 'Erro', t?.('storage.portalFailed') || 'Nenhuma assinatura com cartão encontrada.');
+      } else {
+        load();
+      }
+    } finally { setBusy(false); }
+  };
+
+  const openSite = () => { Linking.openURL('https://chatyy.com.br').catch(() => {}); };
+
+  if (loading) {
+    return <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={colors?.text} /></View>;
+  }
+
+  const gbTxt = fmtBytesSheet(limit);
+  return (
+    <>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
+        {/* Cartão do plano atual */}
+        <View style={{
+          marginHorizontal: 16, marginTop: 18, borderRadius: 20, padding: 20,
+          backgroundColor: colors?.surface || '#fff',
+          borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border || 'rgba(0,0,0,0.08)',
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
+            <View style={{ width: 48, height: 48, borderRadius: 14, backgroundColor: colors?.text || '#111', alignItems: 'center', justifyContent: 'center' }}>
+              <IconCloud size={24} color={colors?.background || '#fff'} />
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={{ fontSize: 20, fontWeight: '800', letterSpacing: -0.4, color: colors?.text }}>
+                {isPaid ? `Chatyy One ${gbTxt}` : (t?.('chatyyOne.freeTitle') || 'Chatyy One Grátis')}
+              </Text>
+              <Text style={{ fontSize: 13, color: colors?.textSecondary, marginTop: 2 }}>
+                {isPaid ? (t?.('chatyyOne.activePlan') || 'Plano ativo') : `${gbTxt} ${t?.('chatyyOne.included') || 'incluídos'}`}
+              </Text>
+            </View>
+            <View style={{
+              paddingHorizontal: 10, height: 24, borderRadius: 12, justifyContent: 'center',
+              backgroundColor: isPaid ? 'rgba(22,163,74,0.14)' : (colors?.surfaceVariant || '#eee'),
+            }}>
+              <Text style={{ fontSize: 11.5, fontWeight: '700', color: isPaid ? '#16a34a' : colors?.textSecondary }}>
+                {isPaid ? (t?.('chatyyOne.statusActive') || 'Ativo') : (t?.('chatyyOne.statusFree') || 'Grátis')}
+              </Text>
+            </View>
+          </View>
+
+          <View style={{ marginTop: 20 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: colors?.text }}>
+                {hasUsage ? fmtBytesSheet(used) : '—'}
+                <Text style={{ fontWeight: '400', color: colors?.textSecondary }}> {t?.('chatyyOne.of') || 'de'} {gbTxt}</Text>
+              </Text>
+              {hasUsage ? <Text style={{ fontSize: 12.5, color: colors?.textSecondary }}>{Math.round(pct)}%</Text> : null}
+            </View>
+            <View style={{ height: 10, borderRadius: 5, backgroundColor: colors?.surfaceVariant || '#eee', overflow: 'hidden' }}>
+              <View style={{ width: pct + '%', height: '100%', borderRadius: 5, backgroundColor: barColor }} />
+            </View>
+            {pct >= 80 ? (
+              <Text style={{ fontSize: 12.5, color: pct >= 95 ? '#ef4444' : '#b45309', marginTop: 8 }}>
+                {t?.('chatyyOne.nearFull') || 'Seu armazenamento está quase cheio.'}
+              </Text>
+            ) : null}
+          </View>
+
+          {MONETIZATION_ENABLED ? (
+            <Pressable
+              onPress={() => setShop(true)}
+              accessibilityRole="button"
+              style={({ pressed }) => ({
+                marginTop: 20, height: 48, borderRadius: 14, flexDirection: 'row', gap: 8,
+                alignItems: 'center', justifyContent: 'center',
+                backgroundColor: colors?.text || '#111', opacity: pressed ? 0.85 : 1,
+              })}
+            >
+              <IconZap size={18} color={colors?.background || '#fff'} />
+              <Text style={{ fontSize: 15.5, fontWeight: '700', color: colors?.background || '#fff' }}>
+                {isPaid ? (t?.('chatyyOne.changePlan') || 'Mudar de plano') : (t?.('chatyyOne.upgrade') || 'Fazer upgrade')}
+              </Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {/* Assinatura */}
+        {isPaid ? (
+          <Section title={t?.('chatyyOne.subscription') || 'Assinatura'} colors={colors}>
+            <Row icon={IconCheckCircle} label={t?.('chatyyOne.status') || 'Status'} value={t?.('chatyyOne.statusActive') || 'Ativo'} noChevron colors={colors} />
+            <Row icon={IconClock} label={t?.('chatyyOne.billing') || 'Cobrança'} value={period} noChevron colors={colors} />
+            {renews ? (
+              <Row icon={IconClock} label={t?.('chatyyOne.renewal') || 'Renovação / vigência até'} value={renews} noChevron colors={colors} />
+            ) : null}
+          </Section>
+        ) : null}
+
+        {/* Pagamento */}
+        <Section title={t?.('chatyyOne.payment') || 'Pagamento'} colors={colors}>
+          {isIOS ? (
+            <Row
+              icon={IconCreditCard}
+              label={t?.('chatyyOne.manageOnWeb') || 'Gerencie pelo site chatyy.com.br'}
+              value={t?.('chatyyOne.iosNote') || 'Assinaturas feitas no iPhone ficam na sua conta Apple.'}
+              onPress={openSite}
+              colors={colors}
+            />
+          ) : (
+            <>
+              <Row
+                icon={IconCreditCard}
+                label={t?.('chatyyOne.method') || 'Método de pagamento'}
+                value={isPaid ? (t?.('chatyyOne.methodCard') || 'Cartão (processado pelo Stripe)') : (t?.('chatyyOne.methodNone') || 'Nenhum — plano gratuito')}
+                noChevron
+                colors={colors}
+              />
+              {stripeOk ? (
+                <Row
+                  icon={IconBrush}
+                  label={isPaid ? (t?.('chatyyOne.managePayment') || 'Gerenciar pagamento e assinatura') : (t?.('chatyyOne.managePaymentFree') || 'Gerenciar pagamento')}
+                  onPress={manage}
+                  right={busy ? <ActivityIndicator size="small" color={colors?.textSecondary} /> : undefined}
+                  colors={colors}
+                />
+              ) : null}
+            </>
+          )}
+        </Section>
+        <Footnote colors={colors}>
+          {isIOS
+            ? (t?.('chatyyOne.iosFootnote') || 'Por regras da Apple, cartão e portal de assinatura ficam no site. Acesse chatyy.com.br para gerenciar.')
+            : (t?.('chatyyOne.footnote') || 'Trocar ou remover cartão e cancelar a assinatura abre o portal seguro do Stripe. O Chatyy nunca vê o número do seu cartão.')}
+        </Footnote>
+      </ScrollView>
+
+      {MONETIZATION_ENABLED ? (
+        <StorageShopSheet
+          visible={shop}
+          onClose={() => { setShop(false); load(); }}
+          currentTier={tier}
+          usedBytes={hasUsage ? used : undefined}
+          limitBytes={limit}
+        />
+      ) : null}
+    </>
+  );
+}
+
 // ─── Main component ──────────────────────────────────────────────────
 const SCREEN_TITLES = {
   main: 'settings.title',
@@ -2458,6 +2871,9 @@ const SCREEN_TITLES = {
   delete: 'settings.deleteAccount',
   export: 'settings.exportData',
   vacation: 'settings.vacation',
+  appearance: 'settings.appearance',
+  storage: 'config.storage',
+  one: 'chatyyOne.title',
 };
 const SCREEN_TITLE_FALLBACK = {
   main: 'Configurações',
@@ -2476,6 +2892,9 @@ const SCREEN_TITLE_FALLBACK = {
   export: 'Baixar meus dados',
   vacation: 'Resposta automática',
   filters: 'Filtros de email',
+  appearance: 'Aparência',
+  storage: 'Armazenamento e dados',
+  one: 'Chatyy One',
 };
 
 export default function ProfileSettingsSheet({
@@ -2559,6 +2978,9 @@ export default function ProfileSettingsSheet({
       case 'delete':        return <DeleteAccountScreen colors={colors} t={t} onClose={onClose} onLogout={handleLogout} />;
       case 'export':        return <ExportDataScreen colors={colors} t={t} />;
       case 'vacation':      return <VacationScreen colors={colors} t={t} />;
+      case 'appearance':    return <AppearanceScreen colors={colors} isDark={isDark} t={t} push={push} />;
+      case 'storage':       return <StorageDataScreen colors={colors} isDark={isDark} t={t} push={push} />;
+      case 'one':           return <ChatyyOneScreen colors={colors} isDark={isDark} t={t} />;
       default:
         return (
           <MainScreen
