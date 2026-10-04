@@ -48,7 +48,7 @@ async function mintEphemeralToken() {
   }
   return {
     token: res.data.client_secret,
-    model: res.data.model || 'gpt-4o-realtime-preview',
+    model: res.data.model || 'gpt-realtime',
   };
 }
 
@@ -164,7 +164,11 @@ export class OneRealtimeSession {
     const offer = await this.pc.createOffer();
     await this.pc.setLocalDescription(offer);
 
-    const sdpRes = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent(model)}`, {
+    // [2026-10-04] GA endpoint. A Beta (/v1/realtime) foi DESLIGADA pelo OpenAI
+    // ("The Realtime Beta API is no longer supported. Please use
+    // /v1/realtime/calls for the GA API.") → o SDP exchange falhava e a chamada
+    // de voz da Bia nunca conectava. O token efêmero já é mintado no endpoint GA.
+    const sdpRes = await fetch(`https://api.openai.com/v1/realtime/calls?model=${encodeURIComponent(model)}`, {
       method: 'POST',
       body: offer.sdp,
       headers: {
