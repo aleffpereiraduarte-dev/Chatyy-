@@ -134,6 +134,14 @@ export const STORAGE_TIERS = [
     skuAnnualApple:   'com.onemundo.mail.storage_1000_annual',
     skuMonthlyGoogle: 'chatyy_storage_1tb',  basePlanMonthlyGoogle: 'monthly',
     skuAnnualGoogle:  'chatyy_storage_1tb',  basePlanAnnualGoogle:  'annual' },
+  // [2026-10-04] 2TB — vendido via Stripe/cartão (backend STORAGE_TIERS_WAVE75).
+  // SKUs de IAP ainda não criados na loja (IAP off); o checkout por cartão usa
+  // o tier id, então funciona no Android/web independente dos SKUs.
+  { id: '2tb',   gb: 2048, priceMonthly: 49.99, priceAnnual: 499.90,
+    skuMonthlyApple:  'com.onemundo.mail.storage_2000',
+    skuAnnualApple:   'com.onemundo.mail.storage_2000_annual',
+    skuMonthlyGoogle: 'chatyy_storage_2tb',  basePlanMonthlyGoogle: 'monthly',
+    skuAnnualGoogle:  'chatyy_storage_2tb',  basePlanAnnualGoogle:  'annual' },
   { id: '5tb',   gb: 5120, priceMonthly: 129.99, priceAnnual: 1299.90,
     skuMonthlyApple:  'com.onemundo.mail.storage_5000',
     skuAnnualApple:   'com.onemundo.mail.storage_5000_annual',

@@ -29,8 +29,8 @@ import * as api from '../services/api';
 import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../services/firebasePhone';
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
 import useIsMounted from '../hooks/useIsMounted';
-import { COUNTRIES, formatPhone } from '../constants/countries';
-import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, IconAtSign, IconAlertTriangle, IconPhone, IconShield, IconSparkles, IconZap, IconCamera, IconChevronRight, IconLock, IconEye, IconEyeOff, IconX } from '../components/Icons';
+import { COUNTRIES, formatPhone, toE164, E164_RE } from '../constants/countries';
+import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, IconAtSign, IconAlertTriangle, IconPhone, IconShield, IconSparkles, IconZap, IconCamera, IconChevronRight, IconLock, IconEye, IconEyeOff, IconX, IconMessageCircle, IconSmartphone, IconUsers } from '../components/Icons';
 import SignupIntro from '../components/SignupIntro';
 import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
 
@@ -91,12 +91,8 @@ export default function SignupPhone() {
     if (!raw) return '';
     // Map common DDI prefixes for the countries we support and strip if
     // the phone starts with that DDI. Falls back to raw digits otherwise.
-    const dialMap = {
-      BR: '55', US: '1', CA: '1', PT: '351', ES: '34', AR: '54', MX: '52',
-      CL: '56', CO: '57', UY: '598', PY: '595', FR: '33', GB: '44', DE: '49', IT: '39',
-    };
     const iso = String(params?.country || '').toUpperCase();
-    const dial = dialMap[iso];
+    const dial = (COUNTRIES.find(c => c.code === iso)?.dial || '').replace('+', '');
     if (dial && raw.startsWith(dial)) return raw.slice(dial.length);
     return raw;
   });           // digits only (sem DDI)
@@ -278,7 +274,7 @@ export default function SignupPhone() {
   // Build E.164 from country dial + digits (PhoneInput holds digits only).
   const fullPhone = useMemo(() => {
     const c = COUNTRIES.find(x => x.code === countryCode) || COUNTRIES[0];
-    return `${c.dial}${phone.replace(/\D/g, '')}`;
+    return toE164(c.dial, phone);
   }, [countryCode, phone]);
 
   // Auto-suggest handle from name when entering the handle step. Runs on
@@ -380,7 +376,7 @@ export default function SignupPhone() {
   const [accountExists, setAccountExists] = useState(null); // null | true | false
   const sendOtp = async (channel = 'sms') => {
     const digits = phone.replace(/\D/g, '');
-    if (digits.length < 8) { setError(t('login.phoneInvalid') || 'Número inválido'); return; }
+    if (digits.length < 8 || !E164_RE.test(fullPhone)) { setError(t('login.phoneInvalid') || 'Número inválido'); return; }
     setError(''); setBusy(true);
     try {
       // 1. Check if account exists (no SMS sent — cheap PG/Maildir lookup).
@@ -736,32 +732,35 @@ export default function SignupPhone() {
           User-eye landing zone: the very top of the screen tells them "you
           are at step 2 of 4" before they even read the brand or hero. 4
           segments (phone, otp, name, handle), 3pt tall, 2pt gap. */}
-      {step !== 'welcome' && step !== 'done' && (
-        <View style={{
-          height: 4,
-          flexDirection: 'row',
-          gap: 3,
-          marginHorizontal: 24,
-          marginTop: Math.max(_insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : 44) + 4,
-          marginBottom: 4,
-        }}>
-          {(() => {
-            const order = ['phone', 'otp', 'name', 'handle'];
-            const cur = order.indexOf(step);
-            return order.map((s, idx) => (
-              <View
-                key={s}
-                style={{
-                  flex: 1,
-                  height: 4,
-                  borderRadius: 999,
-                  backgroundColor: idx <= cur ? colors.primary : (colors.border),
-                }}
-              />
-            ));
-          })()}
-        </View>
-      )}
+      {step !== 'welcome' && step !== 'done' && (() => {
+        const order = ['phone', 'otp', 'name', 'handle'];
+        const cur = order.indexOf(step);
+        const names = [t('onb.step.phone'), t('onb.step.otp'), t('onb.step.name'), t('onb.step.handle')];
+        return (
+          <View style={{
+            marginHorizontal: 24,
+            marginTop: Math.max(_insets.top, Platform.OS === 'android' ? (require('react-native').StatusBar.currentHeight || 24) : 44) + 4,
+            marginBottom: 4,
+          }}>
+            <View style={{ height: 5, flexDirection: 'row', gap: 4 }} accessibilityRole="progressbar" accessibilityLabel={t('onb.stepLabel', { n: cur + 1, total: order.length })}>
+              {order.map((s2, idx) => (
+                <View
+                  key={s2}
+                  style={{ flex: 1, height: 5, borderRadius: 999, backgroundColor: idx <= cur ? colors.primary : colors.border }}
+                />
+              ))}
+            </View>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 8 }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: colors.primary, letterSpacing: 0.2 }}>
+                {t('onb.stepLabel', { n: cur + 1, total: order.length })}
+              </Text>
+              <Text style={{ fontSize: 12, fontWeight: '500', color: colors.textTertiary }}>
+                {names[cur]}
+              </Text>
+            </View>
+          </View>
+        );
+      })()}
 
       {/* Header — back button + brand. paddingTop is reduced now that the
           progress bar above already pushes us off the status bar / notch /
@@ -996,9 +995,16 @@ export default function SignupPhone() {
                     </View>
                   );
                 })()}
-                <Text style={[styles.hint, { color: colors.textTertiary }]}>
-                  {t('signupPhone.hintPhone') || 'Vamos enviar um código por SMS'}
-                </Text>
+                <View style={{
+                  flexDirection: 'row', alignItems: 'center', gap: 10,
+                  padding: 12, borderRadius: 12, marginTop: 4,
+                  backgroundColor: isDark ? `${colors.primary}1f` : `${colors.primary}0f`,
+                }}>
+                  <IconMessageCircle size={18} color={colors.primary} />
+                  <Text style={{ flex: 1, fontSize: 13, lineHeight: 18, color: colors.textSecondary }}>
+                    {t('onb.phoneHint')}
+                  </Text>
+                </View>
                 {/* "Entrar com email" escape hatch — for legacy / pre-2026
                     accounts that signed up before phone-first, the user can
                     bounce to the email tab on /login. WhatsApp/Telegram do
@@ -1131,27 +1137,54 @@ export default function SignupPhone() {
                     importantForAutofill="yes"
                   />
                 </Pressable>
-                {/* Confirmação: avisa por qual canal o código saiu (SMS ou ligação). */}
-                <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', marginTop: 10, lineHeight: 18 }}>
-                  {sentVia === 'voice'
-                    ? (t('signupPhone.sentVoice') || 'Vamos te ligar e ler o código')
-                    : (t('signupPhone.sentSms') || 'Enviamos um código por SMS')}
-                </Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
-                  <Text style={{ fontSize: 12, color: colors.textTertiary }}>
-                    {resendCountdown > 0
-                      ? `${t('signupPhone.resendIn') || 'Reenviar em'} ${resendCountdown}s`
-                      : ''}
+                {/* Canais de envio: o código chega por WhatsApp e SMS (o que vier primeiro). */}
+                {sentVia === 'voice' ? (
+                  <Text style={{ fontSize: 13, color: colors.textSecondary, textAlign: 'center', marginTop: 4, lineHeight: 18 }}>
+                    {t('signupPhone.sentVoice')}
                   </Text>
-                  <TouchableOpacity disabled={resendCountdown > 0 || busy} onPress={() => sendOtp('sms')}>
-                    <Text style={{
-                      fontSize: 13, fontWeight: '600',
-                      color: resendCountdown > 0 ? colors.textTertiary : colors.primary,
-                    }}>
-                      {t('signupPhone.resend') || 'Reenviar código'}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
+                ) : (
+                  <View style={{
+                    flexDirection: 'row', alignItems: 'center', gap: 12,
+                    padding: 12, borderRadius: 14, marginTop: 4,
+                    backgroundColor: colors.surfaceVariant,
+                    borderWidth: 1, borderColor: colors.border,
+                  }}>
+                    <View style={{ flexDirection: 'row', gap: 6 }}>
+                      <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: `${colors.primary}1f`, alignItems: 'center', justifyContent: 'center' }}>
+                        <IconMessageCircle size={17} color={colors.primary} />
+                      </View>
+                      <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: `${colors.primary}1f`, alignItems: 'center', justifyContent: 'center' }}>
+                        <IconSmartphone size={17} color={colors.primary} />
+                      </View>
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>{t('onb.codeChannels')}</Text>
+                      <Text style={{ fontSize: 12, lineHeight: 17, color: colors.textSecondary, marginTop: 2 }}>{t('onb.codeChannelsSub')}</Text>
+                    </View>
+                  </View>
+                )}
+                <TouchableOpacity onPress={goBack} activeOpacity={0.6} style={{ alignSelf: 'center', paddingVertical: 10, marginTop: 6 }}>
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: colors.primary }}>{t('onb.changeNumber')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  disabled={resendCountdown > 0 || busy}
+                  onPress={() => sendOtp('sms')}
+                  activeOpacity={0.7}
+                  style={{
+                    alignSelf: 'center', marginTop: 4,
+                    paddingVertical: 10, paddingHorizontal: 18, borderRadius: 999,
+                    backgroundColor: resendCountdown > 0 ? 'transparent' : `${colors.primary}14`,
+                  }}
+                >
+                  <Text style={{
+                    fontSize: 14, fontWeight: '600',
+                    color: resendCountdown > 0 ? colors.textTertiary : colors.primary,
+                  }}>
+                    {resendCountdown > 0
+                      ? t('onb.resendIn', { s: resendCountdown })
+                      : t('signupPhone.resend')}
+                  </Text>
+                </TouchableOpacity>
                 {/* Registration-lock PIN gate (anti-SIM-swap). Surfaces only
                     when the account has a 4-6 digit PIN configured and the
                     OTP succeeded — the user must enter the PIN before a
@@ -1304,6 +1337,7 @@ export default function SignupPhone() {
                         <IconCamera size={15} color="#fff" />
                       </View>
                     </TouchableOpacity>
+                    <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 10 }}>{t('onb.photoHint')}</Text>
                   </View>
                   {/* First name */}
                   <View style={{
@@ -1482,6 +1516,24 @@ export default function SignupPhone() {
                       ))}
                     </View>
                   )}
+                  {!!username && (
+                    <View style={{
+                      marginTop: 14, padding: 12, borderRadius: 12,
+                      backgroundColor: usernameAvailable === false ? `${colors.error}14` : (isDark ? `${colors.primary}1f` : `${colors.primary}0f`),
+                    }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', color: colors.textTertiary }}>
+                        {t('onb.handlePreview')}
+                      </Text>
+                      <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginTop: 3 }} numberOfLines={1}>
+                        {username}@chatyy.com.br
+                      </Text>
+                      {usernameAvailable !== null && !usernameChecking && (
+                        <Text style={{ fontSize: 12, fontWeight: '600', marginTop: 3, color: usernameAvailable ? colors.success : colors.error }}>
+                          {usernameAvailable ? t('onb.available') : t('onb.taken')}
+                        </Text>
+                      )}
+                    </View>
+                  )}
                   <Text style={[styles.hint, { color: colors.textTertiary }]}>
                     {t('signupPhone.hintHandle') || 'Esse vai ser seu email no Chatyy também — pra receber e mandar mensagem.'}
                   </Text>
@@ -1550,6 +1602,30 @@ export default function SignupPhone() {
                       {t('signupPhone.redirecting') || 'Abrindo seu Chatyy…'}
                     </Text>
                   </View>
+                  <View style={{ alignSelf: 'stretch', marginTop: 28, gap: 10 }}>
+                    {[
+                      [IconMessageCircle, t('onb.doneTip1')],
+                      [IconPhone, t('onb.doneTip2')],
+                      [IconUsers, t('onb.doneTip3')],
+                    ].map(([TipIcon, label], i) => (
+                      <View key={i} style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 12, borderRadius: 12, backgroundColor: colors.surfaceVariant }}>
+                        <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: `${colors.primary}1f`, alignItems: 'center', justifyContent: 'center' }}>
+                          <TipIcon size={17} color={colors.primary} />
+                        </View>
+                        <Text style={{ flex: 1, fontSize: 14, fontWeight: '500', color: colors.text }}>{label}</Text>
+                      </View>
+                    ))}
+                  </View>
+                  {!showRestorePrompt && (
+                    <TouchableOpacity
+                      onPress={() => { try { router.replace('/chat'); } catch {} }}
+                      activeOpacity={0.85}
+                      style={[styles.cta, { alignSelf: 'stretch', marginTop: 24, backgroundColor: colors.primary }]}
+                    >
+                      <Text style={styles.ctaText}>{t('onb.doneStart')}</Text>
+                      <IconArrowRight size={18} color="#fff" style={{ marginLeft: 8 }} />
+                    </TouchableOpacity>
+                  )}
                 </View>
               );
             })()}
@@ -1644,7 +1720,7 @@ export default function SignupPhone() {
               <>
                 <Text style={styles.ctaText}>
                   {step === 'handle' ? (t('signupPhone.finish') || 'Criar conta')
-                  : (t('common.next') || 'Próximo')}
+                  : (t('onb.continue') || 'Continuar')}
                 </Text>
                 {step !== 'handle' && <IconArrowRight size={18} color="#fff" style={{ marginLeft: 8 }} />}
               </>

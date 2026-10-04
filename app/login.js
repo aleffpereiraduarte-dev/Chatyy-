@@ -14,7 +14,7 @@ import {
   IconSun, IconMoon, IconAlertTriangle,
   IconEye, IconEyeOff,
   IconMailLogo, IconShield, IconGlobe,
-  IconMail, IconMessageSquare, IconCloud,
+  IconMail, IconMessageCircle, IconMessageSquare, IconCloud,
   IconUsers, IconCheck, IconX, IconPhone, IconLock,
   IconChevronRight, IconChevronDown, IconRefresh,
 } from '../components/Icons';
@@ -1209,6 +1209,16 @@ export default function LoginScreen() {
     { code: '+593', flag: '\uD83C\uDDEA\uD83C\uDDE8', name: 'Equador', label: 'EC +593' },
     { code: '+58', flag: '\uD83C\uDDFB\uD83C\uDDEA', name: 'Venezuela', label: 'VE +58' },
   ];
+  // Amplia o seletor com todos os países de constants/countries.js (DDIs únicos,
+  // pois este seletor é chaveado por DDI).
+  {
+    const _have = new Set(COUNTRY_CODES.map(c => c.code));
+    for (const c of COUNTRIES_FULL) {
+      if (_have.has(c.dial)) continue;
+      _have.add(c.dial);
+      COUNTRY_CODES.push({ code: c.dial, flag: c.flag, name: c.name, label: `${c.code} ${c.dial}` });
+    }
+  }
   const [showCountryPicker, setShowCountryPicker] = useState(false);
   const [countrySearch, setCountrySearch] = useState('');
   const filteredCountries = useMemo(() => {
@@ -1219,8 +1229,8 @@ export default function LoginScreen() {
 
   const handlePhoneSendOtp = async (channel = 'sms') => {
     safeHaptic(() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light));
-    const cleaned = phoneNumber.replace(/[^0-9]/g, '');
-    if (cleaned.length < 8) { setError(t('login.phoneInvalid')); shake(); return; }
+    const cleaned = phoneNumber.replace(/[^0-9]/g, '').replace(/^0+/, '');
+    if (cleaned.length < 8 || !/^\+[1-9]\d{7,14}$/.test(phoneCountryCode + cleaned)) { setError(t('login.phoneInvalid')); shake(); return; }
     setError('');
     setPhoneSending(true);
     try {
@@ -1302,7 +1312,7 @@ export default function LoginScreen() {
     setError('');
     setPhoneVerifying(true);
     try {
-      const fullPhone = phoneCountryCode + phoneNumber.replace(/[^0-9]/g, '');
+      const fullPhone = phoneCountryCode + phoneNumber.replace(/[^0-9]/g, '').replace(/^0+/, '');
       // Unified verify (user feedback 2026-05-07): same OTP code resolves
       // both branches in one call. Server returns either a bearer token
       // (existing account → log in) or a verify_token (new account → go
@@ -1446,7 +1456,7 @@ export default function LoginScreen() {
   }, 700);
 
   useEffect(() => {
-    const cleaned = phoneNumber.replace(/\D/g, '');
+    const cleaned = phoneNumber.replace(/\D/g, '').replace(/^0+/, '');
     if (phoneStep !== 'input' || cleaned.length < 8) {
       setPhoneAccountState({ status: 'idle', phone: '' });
       return;
@@ -1871,6 +1881,13 @@ export default function LoginScreen() {
                     </Animated.View>}
                   </View>
 
+                  {!isDesktop && (
+                    <View style={{ alignItems: 'center', marginTop: -8, marginBottom: 4 }}>
+                      <Text style={{ fontSize: 30, fontWeight: '900', letterSpacing: -0.8, color: colors.primary }}>Chatyy</Text>
+                      <Text style={{ fontSize: 14, color: colors.textSecondary, marginTop: 2 }}>{t('login.tagline')}</Text>
+                    </View>
+                  )}
+
                   {/* Tab bar — pill segmented control (iOS style). Hidden on
                       mobile to match the unified Telegram-style flow: just one
                       phone entry, backend decides login vs signup. Desktop
@@ -1987,11 +2004,14 @@ export default function LoginScreen() {
                                 <TouchableOpacity
                                   onPress={() => { setCountrySearch(''); setShowCountryPicker(true); }}
                                   activeOpacity={0.6}
+                                  accessibilityRole="button"
+                                  accessibilityLabel={t('onb.countryLabel')}
                                   style={{
                                     flexDirection: 'row', alignItems: 'center',
-                                    paddingVertical: 14,
-                                    borderBottomWidth: StyleSheet.hairlineWidth,
-                                    borderBottomColor: _hairline,
+                                    paddingVertical: 13, paddingHorizontal: 14,
+                                    borderRadius: 14, borderWidth: 1,
+                                    borderColor: _hairline,
+                                    backgroundColor: colors.surfaceVariant,
                                   }}
                                 >
                                   {/* Country flag emoji — WhatsApp/Telegram pattern.
@@ -2004,23 +2024,29 @@ export default function LoginScreen() {
                                       {_country.flag}
                                     </Text>
                                   ) : null}
-                                  <Text style={{ flex: 1, fontSize: 16, fontWeight: '500', color: colors.text }}>
+                                  <Text style={{ flex: 1, fontSize: 16, fontWeight: '600', color: colors.text }} numberOfLines={1}>
                                     {_countryName}
                                   </Text>
+                                  <View style={{ paddingHorizontal: 9, paddingVertical: 3, borderRadius: 999, backgroundColor: `${colors.primary}1a`, marginRight: 8 }}>
+                                    <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primary }}>{phoneCountryCode}</Text>
+                                  </View>
                                   <IconChevronRight size={16} color={colors.textTertiary} />
                                 </TouchableOpacity>
                                 <View style={{
                                   flexDirection: 'row', alignItems: 'center',
-                                  borderBottomWidth: _isFocused ? 2 : StyleSheet.hairlineWidth,
-                                  borderBottomColor: _isFocused ? _hairlineActive : _hairline,
-                                  marginTop: -StyleSheet.hairlineWidth,
+                                  paddingHorizontal: 14, marginTop: 10,
+                                  borderRadius: 14,
+                                  borderWidth: _isFocused ? 2 : 1,
+                                  borderColor: _isFocused ? _hairlineActive : _hairline,
+                                  backgroundColor: colors.surfaceVariant,
+                                  ...(Platform.OS === 'web' && _isFocused ? { boxShadow: `0 0 0 4px ${colors.primary}22` } : {}),
                                 }}>
-                                  <View style={{ width: 64, paddingVertical: 14, paddingRight: 8 }}>
+                                  <View style={{ paddingVertical: 14, paddingRight: 8 }}>
                                     <Text style={{ fontSize: 16, color: colors.text, fontWeight: '500' }}>
                                       {phoneCountryCode}
                                     </Text>
                                   </View>
-                                  <View style={{ width: StyleSheet.hairlineWidth, height: 22, backgroundColor: _hairline, marginRight: 8 }} />
+                                  <View style={{ width: StyleSheet.hairlineWidth, height: 22, backgroundColor: _hairline, marginRight: 10 }} />
                                   {(() => {
                                     // Look up the mask from the canonical COUNTRIES list
                                     // (constants/countries.js) by matching dial. Falls back
@@ -2032,7 +2058,7 @@ export default function LoginScreen() {
                                     return (
                                       <TextInput
                                         style={[{
-                                          flex: 1, fontSize: 16, paddingVertical: 14,
+                                          flex: 1, fontSize: 18, fontWeight: '600', letterSpacing: 0.3, paddingVertical: 14,
                                           color: colors.text,
                                         }, Platform.OS === 'web' && { outlineStyle: 'none' }]}
                                         value={formatPhone(phoneNumber, _mask)}
@@ -2093,6 +2119,11 @@ export default function LoginScreen() {
                             </View>
                           )}
 
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'center', marginTop: 4, marginBottom: 6 }}>
+                            <IconMessageCircle size={15} color={colors.textSecondary} />
+                            <Text style={{ fontSize: 13, color: colors.textSecondary }}>{t('onb.phoneHint')}</Text>
+                          </View>
+
                           {(() => {
                             // Match login-unified.html: disabled state uses
                             // solid gray (#e5e7eb) with muted text — NOT a
@@ -2147,6 +2178,19 @@ export default function LoginScreen() {
                               cases automatically. Only on mobile (desktop
                               has the QR/Email tabs to clarify the choice). */}
                           {!isDesktop && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 18 }}>
+                              <Text style={{ fontSize: 14, color: colors.textSecondary }}>{t('onb.noAccount')}</Text>
+                              <TouchableOpacity
+                                onPress={() => { safeHaptic(() => Haptics.selectionAsync()); router.push('/signup-phone'); }}
+                                activeOpacity={0.6}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                accessibilityRole="button"
+                              >
+                                <Text style={{ fontSize: 14, fontWeight: '700', color: colors.primary }}>{t('login.createAccount')}</Text>
+                              </TouchableOpacity>
+                            </View>
+                          )}
+                          {!isDesktop && (
                             <Text style={{ fontSize: 13, color: colors.textTertiary, textAlign: 'center', lineHeight: 19, marginTop: 16 }}>
                               <Text style={{ fontWeight: '600', color: colors.textSecondary }}>{t('login.helperHasAccount') || 'Já tem Chatyy?'}</Text>{' '}{t('login.helperHasAccountSub') || 'Você entra direto.'}
                               {'\n'}
@@ -2165,9 +2209,15 @@ export default function LoginScreen() {
                             <TouchableOpacity
                               onPress={() => { safeHaptic(() => Haptics.selectionAsync()); setLoginMode('email'); setError(''); setStep(1); }}
                               activeOpacity={0.6}
-                              style={{ alignSelf: 'center', paddingVertical: 14, marginTop: 4 }}
+                              style={{
+                                alignSelf: 'stretch', marginTop: 12, paddingVertical: 14,
+                                flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+                                borderRadius: 14, borderWidth: 1, borderColor: colors.border,
+                              }}
+                              accessibilityRole="button"
                             >
-                              <Text style={{ fontSize: 13, color: colors.textSecondary, fontWeight: '500' }}>
+                              <IconMail size={17} color={colors.textSecondary} />
+                              <Text style={{ fontSize: 14, color: colors.text, fontWeight: '600' }}>
                                 {t('login.useEmailInstead') || 'Entrar com email'}
                               </Text>
                             </TouchableOpacity>
@@ -2321,6 +2371,10 @@ export default function LoginScreen() {
                             )}
                           </TouchableOpacity>
 
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'center', marginBottom: 4 }}>
+                            <IconMessageCircle size={15} color={colors.textSecondary} />
+                            <Text style={{ fontSize: 13, color: colors.textSecondary }}>{t('onb.codeChannels')}</Text>
+                          </View>
                           <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 16 }}>
                             <TouchableOpacity
                               onPress={() => { setPhoneStep('input'); setPhoneOtp(['', '', '', '', '', '']); setPhoneRequiresLock(false); setPhoneLockPin(''); setError(''); }}

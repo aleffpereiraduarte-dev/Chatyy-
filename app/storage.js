@@ -37,7 +37,7 @@ function formatBytes(b) {
 
 function tierLabel(t, fallback = '50GB Grátis') {
   const map = {
-    free: '50GB',
+    free: '20GB',
     '100gb': '100GB',
     '500gb': '500GB',
     '1tb': '1TB',
@@ -89,7 +89,7 @@ export default function StorageScreen() {
 
   const isPaid = usage?.tier && usage.tier !== 'free';
   const usedLabel = formatBytes(usage?.used_bytes || 0);
-  const limitLabel = formatBytes(usage?.limit_bytes || (50 * 1024 ** 3));
+  const limitLabel = formatBytes(usage?.limit_bytes || (20 * 1024 ** 3));
 
   const renewsLabel = useMemo(() => {
     if (!usage?.active_until) return null;
@@ -211,6 +211,19 @@ export default function StorageScreen() {
               </View>
             )}
 
+            {MONETIZATION_ENABLED && !isPaid && (
+              <View style={[styles.promo, { backgroundColor: pct >= 80 ? (pct >= 95 ? '#fee2e2' : '#fef3c7') : (isDark ? '#0b2540' : '#f0f7ff') }]}>
+                <Text style={[styles.promoTitle, { color: pct >= 80 ? (pct >= 95 ? '#991b1b' : '#92400e') : colors.text }]}>
+                  {pct >= 80
+                    ? (t('storage.promo.lowTitle') || 'Seu espaço está acabando')
+                    : (t('storage.promo.title') || 'Mais espaço, mais tranquilidade')}
+                </Text>
+                <Text style={[styles.promoBody, { color: pct >= 80 ? (pct >= 95 ? '#991b1b' : '#92400e') : colors.muted }]}>
+                  {t('storage.promo.body') || 'Backup automático, fotos e vídeos em qualidade original e espaço para compartilhar com a família. A partir de R$ 5,99/mês.'}
+                </Text>
+              </View>
+            )}
+
             {MONETIZATION_ENABLED && (
               <PressableScale
                 onPress={onShopOpen}
@@ -251,6 +264,8 @@ export default function StorageScreen() {
           visible={showShop}
           onClose={onShopClose}
           currentTier={usage?.tier || 'free'}
+          usedBytes={usage?.used_bytes}
+          limitBytes={usage?.limit_bytes}
         />
       )}
     </View>
@@ -294,6 +309,9 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderRadius: 10, alignSelf: 'flex-start',
   },
   manageBtnText: { fontSize: 14, fontWeight: '600' },
+  promo: { marginHorizontal: 14, marginTop: 12, padding: 14, borderRadius: 14 },
+  promoTitle: { fontSize: 15, fontWeight: '800' },
+  promoBody: { fontSize: 13, lineHeight: 19, marginTop: 4 },
   upgradeBtn: {
     marginHorizontal: 14, marginTop: 14, paddingVertical: 14,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',

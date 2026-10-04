@@ -31,7 +31,7 @@ export const IAP_ENABLED          = false;
 export const STRIPE_ENABLED       = true;
 // Checkout Stripe de ARMAZENAMENTO: so ligar apos o backend stripe_checkout
 // aceitar kind:'storage' + tier/period e o webhook chamar setStorageTier().
-export const STRIPE_STORAGE_CHECKOUT = false;
+export const STRIPE_STORAGE_CHECKOUT = true;  // [2026-10-04] backend storage checkout wired + testado (cs_live OK)
 export const PREMIUM_BADGES_VISIBLE = true;
 
 // Helper: lets components default to "free" semantics when a feature is
