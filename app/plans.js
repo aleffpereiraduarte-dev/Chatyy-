@@ -444,7 +444,7 @@ function formatBRL(centavos) {
 // were rebranded to feel modern; pricing stays exactly what the
 // store already accepted.
 const PLANS = {
-  free:   { price: 0,     storage: 100,  maxFile: 2, mediaRetention: null, label: 'Chatyy Free' },
+  free:   { price: 0,     storage: 20,  maxFile: 2, mediaRetention: null, label: 'Chatyy Free' },
   plus:   { price: 14.99, storage: 200,  maxFile: 2, mediaRetention: null, label: 'Chatyy Plus' },
   pro:    { price: 29.99, storage: 500,  maxFile: 2, mediaRetention: null, label: 'Chatyy Pro', maxMembers: 6 },
   // Legacy aliases — same entitlement, old name routes here.
