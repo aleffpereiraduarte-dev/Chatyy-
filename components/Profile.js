@@ -27,6 +27,7 @@ import {
 } from 'react-native';
 import * as api from '../services/api';
 import { BASE_URL } from '../services/api';
+import { computeContentMaxWidth } from '../utils/responsive';
 import { useAuth } from '../context/AuthContext';
 import AvatarCircle from './AvatarCircle';
 import AvatarLightbox from './AvatarLightbox';
@@ -3944,7 +3945,7 @@ export default function Profile({
     return (
       <>
         <ScrollView style={{ flex: 1, backgroundColor: colors?.background }}
-          contentContainerStyle={{ paddingBottom: 60 }}
+          contentContainerStyle={{ paddingBottom: 60, maxWidth: computeContentMaxWidth(SCREEN_W), width: '100%', alignSelf: 'center' }}
           onScrollBeginDrag={gridRenderLimit === Infinity ? undefined : expandGridRenderLimit}
         >
           {body}

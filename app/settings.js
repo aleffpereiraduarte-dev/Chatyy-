@@ -13,6 +13,7 @@ import FadeSlideIn from '../components/FadeSlideIn';
 import PressableScale from '../components/PressableScale';
 import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useResponsive } from '../utils/responsive';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useCurrency } from '../context/CurrencyContext';
@@ -329,6 +330,9 @@ function SettingsScreenInner() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
+  // Responsividade: em tablet/desktop/web centraliza a coluna de settings numa
+  // largura confortável (contentMaxWidth) em vez de esticar de ponta a ponta.
+  const { contentMaxWidth } = useResponsive();
 
   // Scroll-to-section when opened from ProfileSettingsSheet with ?section=X.
   // onLayout y-coords are relative to the PARENT view, which doesn't work
@@ -1311,7 +1315,7 @@ function SettingsScreenInner() {
         <SettingsSkeleton sections={4} rows={3} />
       ) : (
       <FadeSlideIn>
-      <ScrollView ref={scrollRef} contentContainerStyle={[s.scroll, { paddingBottom: 80 + insets.bottom }]}>
+      <ScrollView ref={scrollRef} contentContainerStyle={[s.scroll, { paddingBottom: 80 + insets.bottom, maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }]}>
         {/* Search bar — filtra sections em tempo real por título/label.
             Empty query mostra tudo; clear (✕) reseta. Sticky-ish topo da
             scroll, não é absolute pra não brigar com keyboard. */}

@@ -39,6 +39,7 @@ import { useConfirm } from '../components/ConfirmModal';
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow, ChatBubble, LetterSpacing, RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
+import { isTablet as RESP_IS_TABLET } from '../utils/responsive';
 import { SCAN_DOCUMENT_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
 import { emailToDisplayName } from '../services/api';
@@ -32404,7 +32405,10 @@ const styles = StyleSheet.create({
   disappearingBannerAction: { fontSize: 12, fontWeight: '700' },
   messageList: {
     paddingHorizontal: 6, paddingTop: 4, flexGrow: 1,
-    ...(Platform.OS === 'web' ? { maxWidth: 960, alignSelf: 'center', width: '100%' } : {}),
+    // Centraliza a coluna de mensagens em telas grandes em vez de esticar de
+    // ponta a ponta (balões usam maxWidth em %, que fica gigante num iPad/web).
+    // Web já tinha o teto; agora tablet nativo (iPad) também ganha a coluna.
+    ...((Platform.OS === 'web' || RESP_IS_TABLET) ? { maxWidth: 960, alignSelf: 'center', width: '100%' } : {}),
   },
   dateSeparator: {
     alignItems: 'center',

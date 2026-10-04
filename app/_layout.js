@@ -603,8 +603,14 @@ function AppInit({ onNotification, setOtaToast }) {
         if (!update.isAvailable) return;
         setOtaToast({ text: 'Baixando atualização…', kind: 'info' });
         await Updates.fetchUpdateAsync();
-        setOtaToast({ text: 'Atualização pronta! Recarregando…', kind: 'success' });
-        setTimeout(() => { try { Updates.reloadAsync(); } catch {} }, 1100);
+        // [2026-10-04] Em vez de recarregar sozinho (invasivo + histórico de
+        // "updates empilhados"), mostra um banner PERSISTENTE e TOCÁVEL: o
+        // usuário VÊ que a nova versão chegou e aplica quando quiser.
+        setOtaToast({
+          text: 'Nova versão disponível',
+          kind: 'update',
+          onPress: () => { try { Updates.reloadAsync(); } catch {} },
+        });
       } catch (e) {}
     })();
     return () => { if (otaToastTimer.current) clearTimeout(otaToastTimer.current); };
@@ -1536,25 +1542,40 @@ export default function RootLayout() {
                 <AppInit onNotification={handleNotification} setOtaToast={setOtaToast} />
                 <ShareIntentWatcher />
                 <OfflineNotice />
-                {otaToast ? (
-                  <RNView style={{
+                {otaToast ? (() => {
+                  const _Pressable = require('react-native').Pressable;
+                  const _tappable = typeof otaToast.onPress === 'function';
+                  const _bg = otaToast.kind === 'success' ? '#16a34a'
+                            : otaToast.kind === 'update' ? '#111111'
+                            : otaToast.kind === 'info' ? '#111111'
+                            : 'rgba(30,30,30,0.95)';
+                  const _wrap = {
                     position: 'absolute',
                     top: Platform.OS === 'ios' ? 54 : 24,
                     left: 16, right: 16,
-                    backgroundColor: otaToast.kind === 'success' ? '#16a34a'
-                                   : otaToast.kind === 'info' ? '#111111'
-                                   : 'rgba(30,30,30,0.95)',
-                    borderRadius: 12, paddingVertical: 10, paddingHorizontal: 16,
+                    backgroundColor: _bg,
+                    borderRadius: 12, paddingVertical: 11, paddingHorizontal: 16,
                     flexDirection: 'row', alignItems: 'center', gap: 10,
                     zIndex: 9999,
                     shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
                     shadowOpacity: 0.28, shadowRadius: 16, elevation: 12,
-                  }}>
-                    <RNText style={{ color: '#fff', fontSize: 14, fontWeight: '600', flex: 1, textAlign: 'center' }}>
-                      {otaToast.text}
-                    </RNText>
-                  </RNView>
-                ) : null}
+                  };
+                  const _inner = (
+                    <>
+                      <RNText style={{ color: '#fff', fontSize: 14, fontWeight: '600', flex: 1, textAlign: _tappable ? 'left' : 'center' }}>
+                        {otaToast.text}
+                      </RNText>
+                      {_tappable ? (
+                        <RNView style={{ backgroundColor: 'rgba(255,255,255,0.20)', borderRadius: 8, paddingVertical: 6, paddingHorizontal: 13 }}>
+                          <RNText style={{ color: '#fff', fontSize: 13, fontWeight: '700' }}>Atualizar</RNText>
+                        </RNView>
+                      ) : null}
+                    </>
+                  );
+                  return _tappable
+                    ? <_Pressable onPress={otaToast.onPress} style={({ pressed }) => [_wrap, pressed && { opacity: 0.85 }]} accessibilityRole="button" accessibilityLabel="Atualizar para a nova versão">{_inner}</_Pressable>
+                    : <RNView style={_wrap}>{_inner}</RNView>;
+                })() : null}
                 <ThemedStatusBar />
                 {/* Stage 6 — yellow "phone offline" banner shows when WS relay
                     couldn't reach the phone and we served cached data from

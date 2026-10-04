@@ -37,6 +37,23 @@ export const SCREEN_HEIGHT = _win.height;
 // Breakpoints (snapshot). Pra valores reativos use useResponsive().
 export const isSmallDevice = !IS_WEB && Math.min(_win.width, _win.height) < 360;
 export const isTablet = Math.min(_win.width, _win.height) >= 768;
+// Desktop = janela larga (web desktop ou iPad landscape). Baseado na LARGURA
+// atual (não na menor dimensão), porque "esticar feio" é problema horizontal.
+export const isDesktop = _win.width >= 1024;
+
+// contentMaxWidth: largura máxima confortável pra CENTRALIZAR superfícies
+// roláveis (lista, conversa, inbox, perfil, settings) em telas grandes, em vez
+// de esticar de ponta a ponta. Em telefone retorna a própria largura (= sem
+// restrição efetiva), então o componente pode sempre aplicar:
+//   { maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }
+// sem ramificar. Faixa 760–900px (zona de leitura confortável tipo WhatsApp/Gmail web).
+export function computeContentMaxWidth(width) {
+  const w = width || BASE_WIDTH;
+  if (w >= 1200) return 900;
+  if (w >= 768) return 760;
+  return w; // telefone: sem corte
+}
+export const CONTENT_MAX_WIDTH = computeContentMaxWidth(_win.width);
 
 // scaleSize: escala um tamanho fixo (fonte, padding, ícone) pro tamanho da tela.
 // Arredonda pro pixel físico mais próximo pra evitar texto borrado.
@@ -66,7 +83,13 @@ export function useResponsive() {
     isMedium: shortest >= 360 && shortest < 414,
     isLarge: shortest >= 414 && shortest < 768,
     isTablet: shortest >= 768,
+    // Desktop/janela larga: web desktop ou tablet em paisagem. Baseado na
+    // LARGURA atual (reativo a rotação / split-view / resize).
+    isDesktop: width >= 1024,
     isLandscape: width > height,
+    // Largura-alvo pra centralizar conteúdo em telas grandes (vide
+    // computeContentMaxWidth). Em telefone = width (sem corte).
+    contentMaxWidth: computeContentMaxWidth(width),
     // helper pra escalar dentro do componente (reativo)
     s: (n) => (typeof n === 'number' ? PixelRatio.roundToNearestPixel(n * scale) : n),
   };

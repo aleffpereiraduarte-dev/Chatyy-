@@ -17,6 +17,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow, haptic } from '../constants/theme';
+import { computeContentMaxWidth } from '../utils/responsive';
 import { Colors } from '../constants/theme';
 import SmartReplyChips from './SmartReplyChips';
 import LabelPicker, { LabelChip } from './LabelPicker';
@@ -801,7 +802,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
   return (
     <ScrollView
       style={s.container}
-      contentContainerStyle={[s.content, Platform.OS !== 'web' && { paddingBottom: 80 + insets.bottom }]}
+      contentContainerStyle={[s.content, { maxWidth: computeContentMaxWidth(win.width), width: '100%', alignSelf: 'center' }, Platform.OS !== 'web' && { paddingBottom: 80 + insets.bottom }]}
       scrollEventThrottle={16}
       onScroll={onScrollProgress ? (e) => {
         const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;

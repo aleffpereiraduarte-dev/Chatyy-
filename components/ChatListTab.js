@@ -21,6 +21,7 @@ import { cacheConversations, getCachedConversations, prewarmConversationsCache, 
 import { prefetchAvatarsForList } from '../services/avatarCache';
 import { userScopedKey } from '../services/cache';
 import { RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
+import { isTablet as RESP_IS_TABLET, CONTENT_MAX_WIDTH } from '../utils/responsive';
 import { getCachedMessagesSync } from '../services/smartChatCache';
 import CachedImage from './CachedImage';
 import { IconMessageSquare, IconSearch, IconX, IconTrash, IconArchive, IconVolume2, IconCheck, IconMail, IconEye, IconMusic, IconUserPlus, IconSparkles, IconHeart, IconUsers, IconBell, IconType, IconCamera, IconPhone, IconVideo, IconPaperclip, IconMapPin, IconFilm, IconMic, IconUser, IconBarChart, IconCalendar } from './Icons';
@@ -6920,7 +6921,12 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
           ListFooterComponent={ListFooterComponent}
           renderItem={renderItem}
           ListEmptyComponent={ListEmptyComponent}
-          contentContainerStyle={[visibleConversations.length === 0 && s.listEmpty]}
+          contentContainerStyle={[
+            visibleConversations.length === 0 && s.listEmpty,
+            // Tablet/desktop/web: centraliza a coluna de conversas numa largura
+            // confortável em vez de esticar (lista de telefone esticada = feia no iPad).
+            (Platform.OS === 'web' || RESP_IS_TABLET) && { maxWidth: CONTENT_MAX_WIDTH, width: '100%', alignSelf: 'center' },
+          ]}
           ItemSeparatorComponent={ItemSeparatorComponent}
           removeClippedSubviews={Platform.OS !== 'web'}
           initialNumToRender={15}
