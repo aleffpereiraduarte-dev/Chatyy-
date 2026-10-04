@@ -10856,9 +10856,15 @@ function ChatConversationInner() {
           // reconnect-triggered loadMessages() wipes read ticks that only
           // came in via WS chat_read events, and the purple double check
           // briefly vanishes until the next WS push.
+          // [AZUL FALSO 2026-10-04] O servidor inclui o PRÓPRIO usuário em
+          // read_receipts (meu last_read avança ao abrir a conversa). Nunca
+          // guardar meu recibo — readReceipts é só do(s) peer(s), senão o
+          // watermark de leitura promove meus balões a azul falso.
+          const _meLc = (currentEmailRef.current || user?.email || '').toLowerCase();
           setReadReceipts(prev => {
             const map = new Map((prev || []).map(x => [x.email, x.last_read_id || 0]));
             for (const rr of r.data.read_receipts) {
+              if ((rr?.email || '').toLowerCase() === _meLc) continue;
               const cur = map.get(rr.email) || 0;
               const next = rr.last_read_id || 0;
               if (next > cur) map.set(rr.email, next);
@@ -19361,7 +19367,10 @@ function ChatConversationInner() {
     }
     // Effective watermark = the higher of the readReceipts last_read_id and
     // the per-message own-read max. >= 0 only when at least one source is live.
+    // Ambos são PEER-autoritativos: maxReadId agora exclui meu e-mail e
+    // ownReadWatermark vem só de read_at/read_by do peer.
     const readWatermark = Math.max(maxReadId, ownReadWatermark);
+    const isGroupConv = conversationType === 'group';
     for (let i = 0; i < reversedMessages.length; i++) {
       const item = reversedMessages[i];
       if (item._type === 'separator') { out[i] = item; continue; }
@@ -19372,19 +19381,18 @@ function ChatConversationInner() {
       // "mandei uma foto no albun n aparece recibo").
       if (item._type === 'album') {
         const isOwnA = item.sender_email === currentEmail;
-        let albumStatus = 1;
-        if (item._pending) albumStatus = 0;
-        else if (item._failed) albumStatus = -1;
-        else if (isOwnA) {
-          // [FALSE-BLUE fix 2026-10-03] bare _read trusted only in groups (see base path)
-          if (conversationType === 'group' && item._read === true) albumStatus = 2;
-          else if (conversationType !== 'group' && item.read_at) albumStatus = 2;
-          else if (conversationType !== 'group' && readWatermark >= 0 && Number(item.id) > 0 && Number(item.id) <= readWatermark) albumStatus = 2;
-          else if (conversationType !== 'group' && _peerReadOnLoad(item)) albumStatus = 2;
-          else if (item._delivered) albumStatus = 1.5;
-          else if (conversationType !== 'group' && item.delivered_at) albumStatus = 1.5;
-          else if (conversationType !== 'group' && _peerDeliveredOnLoad(item)) albumStatus = 1.5;
-        }
+        // FONTE ÚNICA: mesmo computeTickState do balão de texto. Entregue em
+        // grupo = só _delivered; em direct = _delivered/delivered_at/peer.
+        const albumPeerDelivered = isGroupConv
+          ? !!item._delivered
+          : !!(item._delivered || item.delivered_at || _peerDeliveredOnLoad(item));
+        const albumStatus = computeTickState(item, {
+          isOwn: isOwnA,
+          isGroup: isGroupConv,
+          peerReadWatermark: readWatermark,
+          peerReadAt: !isGroupConv && (item.read_at || _peerReadOnLoad(item)),
+          peerDelivered: albumPeerDelivered,
+        });
         const prev = cache.get(item._key);
         if (prev && prev.source === item && prev.enriched._readStatus === albumStatus) {
           out[i] = prev.enriched;
@@ -19397,47 +19405,25 @@ function ChatConversationInner() {
         continue;
       }
       const isOwn = item.sender_email === currentEmail;
-      // WhatsApp tick semantics:
-      //   0  pending  (clock)
-      //  -1  failed   (red !)
-      //   1  sent     (single check)
-      //   1.5 delivered (double gray check) — server-confirmed reached device
-      //   2  read     (double purple check) — recipient opened the thread
-      let readStatus = 1;
-      if (item._pending) readStatus = 0;
-      else if (item._failed) readStatus = -1;
-      // Per-message _read flag is the single source of truth (WhatsApp parity:
-      // in groups, backend only flips this to true when ALL non-sender
-      // members have read; in direct chats, one reader = done). The
-      // maxReadId fallback was the old global readReceipts-based check,
-      // which wrongly turned group ticks purple as soon as the first
-      // member opened the thread.
-      // [FALSE-BLUE fix 2026-10-03] Trust the bare client `_read` flag only in
-      // GROUPS (there the backend flips it only when ALL members read — it's
-      // the authoritative all-read signal). In DIRECT chats `_read` can linger
-      // stale and paint false blue, so direct relies solely on peer-authoritative
-      // read_at / readWatermark below.
-      else if (isOwn && conversationType === 'group' && item._read === true) readStatus = 2;
-      // Direct-chat cold-load fallback: server-returned read_at is authoritative.
-      else if (isOwn && conversationType !== 'group' && item.read_at) readStatus = 2;
-      // Direct-chat readReceipts fallback: chat list shows ✓✓ in the preview
-      // because chat_read WS events bump last_message.read_at on the row,
-      // but the per-message read_at field doesn't propagate to messages
-      // already in memory. Use readReceipts.last_read_id (also updated by
-      // the same WS event) as the source of truth — if the peer has read
-      // up to msg N, every own message ≤ N is read. SAFE for direct chats
-      // (single peer = unambiguous). NOT applied to groups because the old
-      // version of this check turned ticks purple after the first member
-      // read, violating WhatsApp's "all members" semantics.
-      else if (isOwn && conversationType !== 'group' && readWatermark >= 0 && Number(item.id) > 0 && Number(item.id) <= readWatermark) readStatus = 2;
-      // [REOPEN SUB-REPORT fix 2026-10-03] Direct-chat: server-authoritative
-      // read_by:[peer] from the reload payload = read (blue), even if read_at /
-      // readWatermark are absent on this hop. read_by is never set optimistically.
-      else if (isOwn && conversationType !== 'group' && _peerReadOnLoad(item)) readStatus = 2;
-      else if (isOwn && item._delivered) readStatus = 1.5;
-      else if (isOwn && conversationType !== 'group' && item.delivered_at) readStatus = 1.5;
-      // Direct-chat: server-authoritative delivered_to:[peer] = delivered (✓✓ gray).
-      else if (isOwn && conversationType !== 'group' && _peerDeliveredOnLoad(item)) readStatus = 1.5;
+      // FONTE ÚNICA DE VERDADE: computeTickState (ver topo do arquivo).
+      // Semântica WhatsApp: 0 pendente / -1 falhou / 1 enviado /
+      // 1.5 entregue / 2 lido.
+      //   • GRUPO: lido só com _read=true (backend = TODOS os membros leram);
+      //     entregue com _delivered.
+      //   • DIRECT: lido só por sinal do PEER (read_at/read_by do peer, ou
+      //     watermark peer-only readWatermark >= id); entregue por
+      //     _delivered/delivered_at/delivered_to[peer]. NUNCA azul por flag
+      //     stale nem pelo próprio last_read (maxReadId já exclui meu e-mail).
+      const peerDelivered = isGroupConv
+        ? !!item._delivered
+        : !!(item._delivered || item.delivered_at || _peerDeliveredOnLoad(item));
+      const readStatus = computeTickState(item, {
+        isOwn,
+        isGroup: isGroupConv,
+        peerReadWatermark: readWatermark,
+        peerReadAt: !isGroupConv && (item.read_at || _peerReadOnLoad(item)),
+        peerDelivered,
+      });
       const isHighlighted = item.id === highlightedMsgId;
       const isHeartPop = item.id === heartPopMsg;
       // NOTE: live upload byte-progress is intentionally NOT folded in here

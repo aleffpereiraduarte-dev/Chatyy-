@@ -10,7 +10,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { Shadow, Spacing, FontSize, BorderRadius, AnimTiming } from '../constants/theme';
 import EmailReader from '../components/EmailReader';
 import ThreadView from '../components/ThreadView';
-import { IconChevronLeft, IconChevronRight, IconReply, IconReplyAll, IconArchive, IconTrash, IconForward, IconClock } from '../components/Icons';
+import { IconChevronLeft, IconChevronRight, IconReply, IconReplyAll, IconArchive, IconTrash, IconForward, IconClock, IconWifiOff, IconRefresh } from '../components/Icons';
 import SnoozePickerModal from '../components/SnoozePickerModal';
 import { MessageSkeleton } from '../components/SkeletonLoader';
 
@@ -19,6 +19,10 @@ export default function ReadScreen() {
   const [email, setEmail] = useState(null);
   const [thread, setThread] = useState(null);
   const [loading, setLoading] = useState(true);
+  // [offline] Bumped by the "Tentar novamente" button on the offline/failed
+  // state so the load effect (deps include retryEpoch) re-runs the fetch
+  // without a full screen remount.
+  const [retryEpoch, setRetryEpoch] = useState(0);
   // ── AI follow-up reminder ──
   // For sent emails older than 2 days with no reply, surface a yellow chip
   // suggesting a follow-up. Calls aiFollowupReminder with a single-item
@@ -193,7 +197,7 @@ export default function ReadScreen() {
     });
 
     return () => { cancelled = true; };
-  }, [uid, folder]);
+  }, [uid, folder, retryEpoch]);
 
   // Surface AI follow-up reminder chip for sent items aged >= 2 days where
   // no reply has been received. The reminder endpoint scores urgency and
@@ -358,6 +362,46 @@ export default function ReadScreen() {
           </View>
         )}
         <MessageSkeleton />
+      </View>
+    );
+  }
+
+  // [offline] Fetch finished but we have no email AND nothing was cached:
+  // the network failed and this email was never opened online, so its body
+  // isn't on the device. Instead of a blank reader (the old behavior), show a
+  // clear state — offline vs generic failure — with a retry. Non-destructive:
+  // nothing is written to cache, and reopening online fetches the real body.
+  if (!email) {
+    let _online = true;
+    try { _online = require('../services/networkInfo').isConnected(); } catch {}
+    return (
+      <View style={[s.container, { paddingTop: insets.top, backgroundColor: colors.surface }]}>
+        {Platform.OS !== 'web' && (
+          <View style={[s.navBar, { backgroundColor: colors.headerBgSolid, borderBottomColor: colors.border }]}>
+            <TouchableOpacity onPress={() => router.back()} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 16, right: 12 }} accessibilityLabel={t('reader.back')} accessibilityRole="button">
+              <IconChevronLeft size={22} color={colors.text} />
+              <Text style={[s.backText, { color: colors.text }]}>{t('reader.back')}</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 }}>
+          <IconWifiOff size={44} color={colors.textSecondary} />
+          <Text style={{ marginTop: 16, fontSize: 16, fontWeight: '600', color: colors.text, textAlign: 'center' }}>
+            {_online ? t('reader.openFailedTitle') : t('reader.offlineTitle')}
+          </Text>
+          <Text style={{ marginTop: 8, fontSize: 14, color: colors.textSecondary, textAlign: 'center', lineHeight: 20 }}>
+            {_online ? t('reader.openFailedBody') : t('reader.offlineBody')}
+          </Text>
+          <TouchableOpacity
+            onPress={() => { setLoading(true); setRetryEpoch(e => e + 1); }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 24, paddingVertical: 10, paddingHorizontal: 20, borderRadius: 24, backgroundColor: colors.primary }}
+            accessibilityLabel={t('offline.retry')}
+            accessibilityRole="button"
+          >
+            <IconRefresh size={16} color={colors.onPrimary || '#fff'} />
+            <Text style={{ fontSize: 14, fontWeight: '600', color: colors.onPrimary || '#fff' }}>{t('offline.retry')}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }

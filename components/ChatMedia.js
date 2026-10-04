@@ -211,6 +211,14 @@ export default function ChatMedia({
   if (failed || redownloadDeleted) {
     const sizeLabel = (typeof fileSize === 'number' && fileSize > 0) ? formatBytesShort(fileSize) : '';
     const isDeleted = redownloadDeleted;
+    // [offline 2026-10-04] When the load failed because the device is offline
+    // (not because the media is gone), say so plainly instead of the generic
+    // "Falha ao carregar" — the media just hasn't been downloaded yet and will
+    // appear once the user is back online. Tapping still retries.
+    let _offline = false;
+    if (!isDeleted && Platform.OS !== 'web') {
+      try { _offline = require('../services/networkInfo').isConnected() === false; } catch {}
+    }
     return (
       <TouchableOpacity
         onPress={isDeleted ? undefined : handleRetry}
@@ -229,9 +237,11 @@ export default function ChatMedia({
           <Text style={{ fontSize: 12, lineHeight: 17, color: 'rgba(0,0,0,0.55)', fontWeight: '600', textAlign: 'center', letterSpacing: 0.1 }}>
             {isDeleted
               ? 'Mensagem apagada'
-              : (messageId
-                  ? `Baixar de novo${sizeLabel ? ` (${sizeLabel})` : ''}`
-                  : 'Falha ao carregar\nToque pra tentar')}
+              : (_offline
+                  ? 'Mídia não disponível offline'
+                  : (messageId
+                      ? `Baixar de novo${sizeLabel ? ` (${sizeLabel})` : ''}`
+                      : 'Falha ao carregar\nToque pra tentar'))}
           </Text>
         )}
       </TouchableOpacity>

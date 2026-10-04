@@ -1633,15 +1633,34 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
       absolute = it.fileUrl.startsWith('http') ? it.fileUrl : `https://chatyy.com.br${it.fileUrl}`;
     }
     try {
-      const { getLocalUriIfCached, cacheMedia } = require('../services/mediaCache');
+      const mediaCache = require('../services/mediaCache');
+      const { getLocalUriIfCached } = mediaCache;
       if (getLocalUriIfCached(absolute)) return; // already cached
-      cacheMedia(absolute, {
-        force: true,
-        viewOnce: false,
+      // [offline persist 2026-10-04] Media the user actually OPENS is media
+      // they care about — persist it to the PERMANENT dir (documentDirectory)
+      // via saveMediaPermanent instead of the OS-purgeable cacheDirectory that
+      // plain cacheMedia uses for non-Keep-Always conversations. This is the
+      // WhatsApp guarantee: a photo/video you viewed survives iOS cache purges
+      // and the LRU sweep, so it's always there offline. Bounded by what the
+      // user opens (not the full history). view-once is already excluded above.
+      const _mid = (it && (it.messageId ?? it.message_id)) ?? messageId ?? null;
+      mediaCache.saveMediaPermanent(absolute, {
         conversationId: conversationId != null ? conversationId : undefined,
+      }).then((local) => {
+        // Best-effort: write the local file path back into SQLite so a cold
+        // open resolves from disk without waiting on the in-memory syncIndex.
+        try {
+          const localFileUri = (typeof local === 'string' && local)
+            ? (local.startsWith('file://') ? local : (local.startsWith('/') ? `file://${local}` : null))
+            : null;
+          if (localFileUri && _mid != null && conversationId != null) {
+            const nativeDb = require('../services/db');
+            nativeDb.dbUpdateMessageFields?.(conversationId, _mid, { local_path: localFileUri });
+          }
+        } catch {}
       }).catch(() => {});
     } catch {}
-  }, [visible, _currentIdx, _list, conversationId, viewOnce]);
+  }, [visible, _currentIdx, _list, conversationId, viewOnce, messageId]);
 
   if (!visible) return null;
 

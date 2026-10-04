@@ -50,14 +50,48 @@ if (Platform.OS !== 'web') {
           const q = await offlineCache.getOfflineQueue();
           size = Array.isArray(q) ? q.length : 0;
         }
-        if (!size || size === 0) {
+
+        // [2026-10-04] Também drena o OUTBOX V2 (SQLite messageOutbox). No
+        // nativo os envios de texto do chat passam pelo messageOutbox/sendWorker
+        // (não pela fila legacy do offlineCache), então sem isto uma mensagem
+        // digitada offline com o app fechado NUNCA saía em background — só
+        // quando o app voltava ao foreground. Conta as linhas pendentes do V2
+        // pra decidir NoData vs NewData e pra não queimar budget à toa.
+        let v2Pending = 0;
+        let outbox = null;
+        let sendWorker = null;
+        try { outbox = require('./messageOutbox'); } catch {}
+        try { sendWorker = require('./sendWorker').default || require('./sendWorker'); } catch {}
+        try {
+          if (outbox) {
+            // Reabilita linhas presas em 'sending' de uma execução anterior
+            // interrompida (o processo background pode ter sido morto no meio).
+            await outbox.recoverStuck?.();
+            const pending = await (outbox.getAllPending?.() || outbox.getPending?.(null));
+            v2Pending = Array.isArray(pending) ? pending.length : 0;
+          }
+        } catch {}
+
+        if ((!size || size === 0) && v2Pending === 0) {
           return BackgroundFetch.BackgroundFetchResult.NoData;
         }
 
-        const result = await offlineCache.replayOfflineQueue(api);
-        // replayOfflineQueue retorna { replayed, failed } — aceita
-        // também `completed` (alias defensivo) caso a API evolua.
-        const ok = (result?.replayed || result?.completed || 0) > 0;
+        let legacyReplayed = 0;
+        if (size > 0) {
+          const result = await offlineCache.replayOfflineQueue(api);
+          // replayOfflineQueue retorna { replayed, failed } — aceita
+          // também `completed` (alias defensivo) caso a API evolua.
+          legacyReplayed = (result?.replayed || result?.completed || 0);
+        }
+
+        // Drena o V2 e espera a passada completar (poke() retorna a Promise do
+        // drain). Fire-and-forget seria inútil num executor headless que encerra
+        // logo após o return.
+        if (v2Pending > 0 && sendWorker?.poke) {
+          try { await sendWorker.poke(); } catch {}
+        }
+
+        const ok = legacyReplayed > 0 || v2Pending > 0;
         return ok
           ? BackgroundFetch.BackgroundFetchResult.NewData
           : BackgroundFetch.BackgroundFetchResult.NoData;
