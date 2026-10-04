@@ -32375,6 +32375,15 @@ function ChatConversationInner() {
 // STYLES
 // ============================================================
 
+// [CORTE DE TEXTO fix 2026-10-04] Largura máxima do balão em PIXELS ESTÁVEIS.
+// Antes `msgRow.maxWidth` usava ChatBubble.maxWidth = '83%' (percentual do PAI).
+// No 1º render/insert do FlatList a largura do pai vem stale/0 → 83% de uma
+// largura errada → balão estreito demais → o texto recebido era CORTADO no meio
+// da palavra (foto do founder: "coca ca", "valac"). Um valor em px derivado da
+// TELA é estável desde o primeiro frame. Capado em 620 pra não ficar gigante em
+// iPad/web (lá a coluna já é centralizada).
+const BUBBLE_MAX_W = Math.round(Math.min(Dimensions.get('window').width, 620) * 0.84);
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   header: {
@@ -32482,7 +32491,7 @@ const styles = StyleSheet.create({
   // WhatsApp ~2-3dp mid-group). `msgRowGroupEnd` bumps this up for the
   // last msg in the group so the next speaker's bubble has clear visual
   // separation (~8dp, WhatsApp standard).
-  msgRow: { maxWidth: ChatBubble.maxWidth, marginBottom: ChatBubble.gap },
+  msgRow: { maxWidth: BUBBLE_MAX_W, marginBottom: ChatBubble.gap },
   msgRowGroupEnd: { marginBottom: ChatBubble.gapGroup + 2 },
   msgRowOwn: { alignSelf: 'flex-end', marginRight: 10 },
   msgRowOther: { alignSelf: 'flex-start', marginLeft: 10 },
