@@ -98,6 +98,12 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             try {
                 applicationContext.stopService(Intent(applicationContext, CallRingingService::class.java))
             } catch (_: Throwable) {}
+            // [2026-10-06 android-incoming] Telecom teardown + dedupe reset so
+            // the Connection doesn't stay RINGING after the caller gave up.
+            try {
+                IncomingCallRegistry.endTelecom(cancelId, android.telecom.DisconnectCause.REMOTE, "fcm_$type:$reason")
+                IncomingCallRegistry.forget(cancelId)
+            } catch (_: Throwable) {}
             // Also finish IncomingCallActivity if it's already on screen.
             try {
                 val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").apply {
@@ -181,6 +187,23 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
 
             Log.d(TAG, "Incoming call from $callerName ($callerEmail) callId=$callId video=$hasVideo isGroup=$isGroup avatar=${callerAvatar.isNotEmpty()} autoAccept=$autoAccept")
 
+            // [2026-10-06 android-incoming] Dedupe by call_id. Forensics
+            // (duarte iOS → suporte Android): 2 identical FCM pushes 230ms
+            // apart → 2× CallRingingService.onStartCommand (two 45s timers,
+            // vibrator restart) + 2× addNewIncomingCall (two RINGING
+            // ChatyyConnection). A second FCM for the same call is dropped
+            // here. A call first surfaced by the WS path is NOT dropped (FCM
+            // carries lk creds + avatar the WS frame lacks) — the ring
+            // service is idempotent per call_id and Telecom is deduped inside
+            // startTelecomIncomingCall.
+            // NOTE: read isRinging BEFORE markInviteSeen (which itself marks
+            // the call as seen → isRinging would always be true afterwards).
+            val alreadyRinging = IncomingCallRegistry.isRinging(callId)
+            if (!IncomingCallRegistry.markInviteSeen(callId, "fcm")) {
+                Log.i(TAG, "incoming_call callId=$callId: duplicate FCM — skipping")
+                return
+            }
+
             // [2026-05-21 FIX foreground-no-ring] Previously: skipped native
             // ringing if app was foreground, deferring to "JS Modal
             // (IncomingCallListener) handles the call UI". BUT
@@ -237,6 +260,14 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                     putExtra("group_name", groupName)
                 }
 
+                // [2026-10-06 android-incoming] If the WS path already started
+                // the ring for this call_id we still (re)start the service ONCE
+                // so the richer FCM extras (avatar, mute flag, group) refresh
+                // the notification — CallRingingService.onStartCommand is now
+                // idempotent per call_id (no second timer / vibrator restart).
+                if (alreadyRinging) {
+                    Log.i(TAG, "incoming_call callId=$callId: already ringing (WS first) — refreshing with FCM extras, no timer reset")
+                }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     startForegroundService(serviceIntent)
                 } else {
@@ -244,6 +275,21 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                 }
 
                 Log.d(TAG, "Started CallRingingService for callId=$callId")
+
+                // [2026-10-06 android-incoming] FOREGROUND SURFACE. With the app
+                // in front (screen on, unlocked) the system shows the
+                // notification as a heads-up and does NOT launch the
+                // full-screen intent — nothing answerable appeared and the
+                // call was missed after 45s (the forensic case: the Android
+                // user had just made a call, app open). Launch
+                // IncomingCallActivity directly; starting an Activity from a
+                // service is allowed while the app has a visible window.
+                // No-op when backgrounded/locked (FSI path unchanged).
+                IncomingCallRegistry.launchRingingUiIfForeground(
+                    applicationContext, callId, callerName, callerEmail,
+                    conversationId, hasVideo, callerAvatar, isGroup, groupName,
+                    source = "fcm"
+                )
 
                 // [STAGE-B 2026-05-20] Pre-warm the LiveKit Room while the
                 // user is still looking at the ringing UI. By the time
@@ -320,6 +366,13 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                     conversationId,
                     callerAvatar,
                     muteRingtone
+                )
+                // [2026-10-06 android-incoming] Same foreground surface on the
+                // notification-only fallback (FGS start refused).
+                IncomingCallRegistry.launchRingingUiIfForeground(
+                    applicationContext, callId, callerName, callerEmail,
+                    conversationId, hasVideo, callerAvatar, isGroup, groupName,
+                    source = "fcm-fallback"
                 )
                 // [Goal 1 ring-fix 2026-05-25] CRITICAL: the FGS never started
                 // here (ForegroundServiceStartNotAllowedException / FGS-type

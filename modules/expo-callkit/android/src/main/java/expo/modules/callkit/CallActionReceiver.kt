@@ -143,6 +143,8 @@ class CallActionReceiver : BroadcastReceiver() {
         )
         ExpoCallKitModule.persistCallAccepting(context.applicationContext, callId)
         ExpoCallKitModule.emitCallAnswered(callId)
+        // [2026-10-06 android-incoming] Sync Telecom (RINGING → ACTIVE).
+        IncomingCallRegistry.answerTelecom(callId)
 
         // Tear down ring UI before launching CallActivity to avoid stacking.
         // [Goal 1 ring-fix 2026-05-25] Stop the authoritative ringtone
@@ -188,8 +190,11 @@ class CallActionReceiver : BroadcastReceiver() {
       }
       "expo.modules.callkit.PIP_END" -> {
         // PiP "Encerrar" — mesmo behavior do ACTION_HANGUP.
+        // [2026-10-06 android-incoming] Stamp call_id so CallActivity's
+        // closeReceiver (which now ignores UNTARGETED closes for <5s-old
+        // calls) always honours this explicit hangup.
         try {
-          context.sendBroadcast(Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY"))
+          context.sendBroadcast(Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").putExtra("call_id", callId))
         } catch (_: Exception) {}
         try { context.stopService(Intent(context, CallOngoingService::class.java)) } catch (_: Exception) {}
         ExpoCallKitModule.emitCallEnded(callId)
@@ -209,7 +214,8 @@ class CallActionReceiver : BroadcastReceiver() {
         // an ACTIVE call has already accepted the ring, so those are gone.
         Log.d(TAG, "ACTION_HANGUP callId=$callId — closing active call")
         try {
-          val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY")
+          // [2026-10-06 android-incoming] call_id stamped (see PIP_END).
+          val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").putExtra("call_id", callId)
           context.sendBroadcast(closeIntent)
         } catch (_: Exception) {}
         try {
@@ -250,6 +256,10 @@ class CallActionReceiver : BroadcastReceiver() {
         // Stop the ringing foreground service
         stopRingingService(context)
 
+        // [2026-10-06 android-incoming] Telecom: REJECTED + destroy.
+        IncomingCallRegistry.endTelecom(callId, android.telecom.DisconnectCause.REJECTED, "declined_notification")
+        IncomingCallRegistry.forget(callId)
+
         // Send event to JS
         ExpoCallKitModule.emitCallEnded(callId)
 
@@ -271,7 +281,11 @@ class CallActionReceiver : BroadcastReceiver() {
   }
 
   private fun closeIncomingCallActivity(context: Context) {
-    val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY")
+    // [2026-10-06 android-incoming] target=ringer: this close is aimed at
+    // IncomingCallActivity ONLY. CallActivity.closeReceiver ignores it, so an
+    // accept-from-notification can never tear down the CallActivity it is
+    // about to (or just did) launch.
+    val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").putExtra("target", "ringer")
     context.sendBroadcast(closeIntent)
   }
 
@@ -296,29 +310,27 @@ class CallActionReceiver : BroadcastReceiver() {
     val cached = LkTokenFetcher.getCached(context, callId)
     if (cached != null) {
       Log.d(TAG, "[stage4] cache hit — launching CallActivity sync")
+      Log.i("CallTrace", "[7c/12] CallActionReceiver accept: cached LK token → CallActivity sync callId=$callId")
       startCallActivityWith(context, callId, callerName, callerEmail, conversationId, hasVideo, cached.url, cached.token, callerAvatar)
       return
     }
 
-    // Cache miss — fetch async, then start.
-    val pending = goAsync()
-    CoroutineScope(Dispatchers.IO).launch {
-      try {
-        val identity = callerEmail.takeIf { it.isNotBlank() } ?: "android-$callId"
-        val tk = LkTokenFetcher.fetch(context, callId, identity)
-        if (tk == null) {
-          Log.w(TAG, "[stage4] token fetch failed — launching CallActivity w/o token")
-          startCallActivityWith(context, callId, callerName, callerEmail, conversationId, hasVideo, null, null, callerAvatar)
-        } else {
-          Log.d(TAG, "[stage4] token fetched — launching CallActivity")
-          startCallActivityWith(context, callId, callerName, callerEmail, conversationId, hasVideo, tk.url, tk.token, callerAvatar)
-        }
-      } catch (t: Throwable) {
-        Log.e(TAG, "launchCallActivity async failed: ${t.message}")
-      } finally {
-        try { pending.finish() } catch (_: Exception) {}
-      }
-    }
+    // [2026-10-06 android-incoming] Cache miss: launch CallActivity NOW
+    // without lk creds instead of fetching here. Two reasons:
+    //   1. Background Activity Launch: a BroadcastReceiver may start an
+    //      Activity only while onReceive runs. The old goAsync() + IO
+    //      coroutine + startActivity AFTER the HTTP round-trip was outside
+    //      that window on Android 12+ (and a "notification trampoline" on
+    //      14/15) → silently blocked → no call screen after "Atender".
+    //   2. CallActivity.onCreate already owns the LkTokenFetcher fallback
+    //      (2 attempts, auth carried in the Intent via enrichIntentWithAuth)
+    //      and shows "Conectando…" while it mints the token.
+    // NOTE: the live notification "Atender" button uses PendingIntent
+    // .getActivity → IncomingCallActivity(auto_accept) and never reaches this
+    // receiver; this path is the secondary ACTION_ACCEPT_CALL entry point.
+    Log.w(TAG, "[stage4] no cached LK token — launching CallActivity NOW (token fetched inside CallActivity)")
+    Log.i("CallTrace", "[7c/12] CallActionReceiver accept: NO cached token → CallActivity immediately callId=$callId")
+    startCallActivityWith(context, callId, callerName, callerEmail, conversationId, hasVideo, null, null, callerAvatar)
   }
 
   private fun startCallActivityWith(

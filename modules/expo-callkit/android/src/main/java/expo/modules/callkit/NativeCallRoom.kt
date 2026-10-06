@@ -477,6 +477,41 @@ object NativeCallRoom {
         }
     }
 
+    // [2026-10-06 android-incoming] Single source of truth for the Android
+    // video codec + simulcast pair (CallActivity.bringUpRoom and the warm
+    // setCameraEnabled path both read it). libwebrtc on Android has NO
+    // software H.264 encoder: pinning "h264" on a device whose MediaCodec
+    // list has no hardware AVC encoder makes the camera publish fail
+    // silently (iPhone keeps seeing the avatar). H.264 also cannot simulcast.
+    //   hardware AVC encoder present → "h264", simulcast=false
+    //   otherwise                    → "vp8",  simulcast=true  (SW encoder)
+    @Volatile private var cachedPreferredCodec: String? = null
+
+    fun preferredVideoCodec(): String {
+        cachedPreferredCodec?.let { return it }
+        val codec = try {
+            val list = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
+            val hasHwAvcEncoder = list.codecInfos.any { info ->
+                if (!info.isEncoder) return@any false
+                if (!info.supportedTypes.any { it.equals("video/avc", ignoreCase = true) }) return@any false
+                val name = info.name.lowercase()
+                val isSoftware = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    !info.isHardwareAccelerated
+                } else {
+                    name.startsWith("omx.google.") || name.startsWith("c2.android.")
+                }
+                !isSoftware
+            }
+            if (hasHwAvcEncoder) "h264" else "vp8"
+        } catch (t: Throwable) {
+            Log.w(TAG, "[camera] preferredVideoCodec probe failed (${t.message}) — defaulting to h264")
+            "h264"
+        }
+        Log.i(TAG, "[camera] preferredVideoCodec=$codec simulcast=${codec != "h264"} (device=${Build.MANUFACTURER} ${Build.MODEL} sdk=${Build.VERSION.SDK_INT})")
+        cachedPreferredCodec = codec
+        return codec
+    }
+
     fun setCameraEnabled(enabled: Boolean) {
         val r = room
         if (r == null) {
@@ -522,17 +557,24 @@ object NativeCallRoom {
                             } ?: captureCls.getDeclaredConstructor().newInstance()
                         } catch (_: Throwable) { null }
                         val publishOpts = publishDefaultsCls.getDeclaredConstructor().newInstance()
+                        // [2026-10-06 android-incoming] Same codec/simulcast
+                        // pair as CallActivity.bringUpRoom. This path used to
+                        // pin h264 AND simulcast=true — libwebrtc has no H.264
+                        // simulcast, so the publish offer was invalid and the
+                        // warm-path camera never reached the peer.
+                        val codec = preferredVideoCodec()
+                        val useSimulcast = codec != "h264"
                         // Pin codec/simulcast/degradation reflectively.
                         publishDefaultsCls.declaredFields.forEach { f ->
                             f.isAccessible = true
                             when {
-                                f.name.contains("simulcast", true) && f.type == Boolean::class.java -> f.set(publishOpts, true)
+                                f.name.contains("simulcast", true) && f.type == Boolean::class.java -> f.set(publishOpts, useSimulcast)
                                 // [remote-video render fix 2026-05-26] vp9 → h264.
                                 // Must match CallActivity.bringUpRoom + the iOS
                                 // publish sites — VP9 doesn't decode reliably
                                 // cross-platform on mobile (iOS subscriber saw
                                 // only the avatar). H.264 is HW-decoded everywhere.
-                                f.name.contains("codec", true) && f.type == String::class.java -> f.set(publishOpts, "h264")
+                                f.name.contains("codec", true) && f.type == String::class.java -> f.set(publishOpts, codec)
                                 f.name.contains("degradation", true) -> {
                                     val t = f.type
                                     val v: Any = if (t.isEnum) {
@@ -550,7 +592,7 @@ object NativeCallRoom {
                         if (method != null && captureOpts != null) {
                             method.invoke(r.localParticipant, true, captureOpts, publishOpts)
                             usedOpts = true
-                            Log.d(TAG, "setCameraEnabled(true) with H264+simulcast publish opts")
+                            Log.d(TAG, "setCameraEnabled(true) with codec=$codec simulcast=$useSimulcast publish opts")
                         }
                     } catch (t: Throwable) {
                         Log.w(TAG, "H264 publish opts reflective set failed (falling back): ${t.message}")
@@ -863,13 +905,58 @@ object NativeCallRoom {
             try {
                 CallSignalWs.fireCallAnswered(ctx.applicationContext, callId, conversationId, callerEmail)
             } catch (_: Throwable) {}
+            // [2026-10-06 android-incoming] The warm path published the mic
+            // and RETURNED — no in-call UI ever appeared when the answer came
+            // through Telecom (Bluetooth headset / Android Auto / Wear /
+            // system call UI): audio flowed, screen showed nothing ("o módulo
+            // de ligação não abre"). Launch CallActivity here too. It builds
+            // its own Room; NativeCallRoom.publish() disconnects this warm
+            // Room first (DUPLICATE_IDENTITY guard) so the hand-off is clean
+            // — same end state as the cold path below.
+            launchCallActivityFor(
+                ctx, callId, lkUrl, lkToken, callerName, callerEmail,
+                conversationId, hasVideo, callerAvatar, origin = "warm"
+            )
             return
         }
         // Cold path — no preconnect (or it failed). Hand off to CallActivity
         // exactly the way the legacy IncomingCallActivity did.
         Log.w(TAG, "adoptForCall: no preconnect — falling back to CallActivity cold-launch")
-        try {
-            val intent = Intent(ctx, CallActivity::class.java).apply {
+        if (launchCallActivityFor(
+                ctx, callId, lkUrl, lkToken, callerName, callerEmail,
+                conversationId, hasVideo, callerAvatar, origin = "cold"
+            )) {
+            // [WAVE 104C] Pass callerEmail so C++ WS relay routes the frame.
+            try {
+                CallSignalWs.fireCallAnswered(ctx.applicationContext, callId, conversationId, callerEmail)
+            } catch (_: Throwable) {}
+        }
+    }
+
+    /**
+     * [2026-10-06 android-incoming] Shared CallActivity launcher for the
+     * Telecom-driven answer (ChatyyConnection.onAnswer → adoptForCall), warm
+     * and cold. Flags mirror IncomingCallActivity.startCallActivityWith
+     * (NEW_TASK | SINGLE_TOP | REORDER_TO_FRONT | CLEAR_TOP) so a CallActivity
+     * that is already up for this call just gets onNewIntent. Returns true
+     * when startActivity did not throw.
+     */
+    private fun launchCallActivityFor(
+        ctx: Context,
+        callId: String,
+        lkUrl: String?,
+        lkToken: String?,
+        callerName: String,
+        callerEmail: String,
+        conversationId: String,
+        hasVideo: Boolean,
+        callerAvatar: String,
+        origin: String,
+    ): Boolean {
+        Log.i(TAG, "[launch-decision] adoptForCall($origin) → CallActivity callId=$callId hasCreds=${!lkUrl.isNullOrEmpty() && !lkToken.isNullOrEmpty()} appForeground=${ExpoCallKitModule.isAppForeground}")
+        Log.i("CallTrace", "[7c/12] Telecom answer ($origin) → CallActivity launch callId=$callId ts=${System.currentTimeMillis()}")
+        return try {
+            val intent = Intent(ctx.applicationContext, CallActivity::class.java).apply {
                 addFlags(
                     Intent.FLAG_ACTIVITY_NEW_TASK
                         or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -886,13 +973,15 @@ object NativeCallRoom {
                 if (callerAvatar.isNotEmpty()) putExtra(CallActivity.EXTRA_CALLER_AVATAR, callerAvatar)
                 ExpoCallKitModule.enrichIntentWithAuth(ctx.applicationContext, this)
             }
-            ctx.startActivity(intent)
-            // [WAVE 104C] Pass callerEmail so C++ WS relay routes the frame.
-            try {
-                CallSignalWs.fireCallAnswered(ctx.applicationContext, callId, conversationId, callerEmail)
-            } catch (_: Throwable) {}
+            ctx.applicationContext.startActivity(intent)
+            true
         } catch (t: Throwable) {
-            Log.e(TAG, "adoptForCall fallback launch failed: ${t.message}")
+            // Background-activity-launch denial lands here on some OEMs when
+            // the answer came from a headset with the screen off. The call is
+            // still live (mic published, CallOngoingService up) — the user can
+            // reopen the screen from the ongoing notification.
+            Log.e(TAG, "adoptForCall($origin) CallActivity launch failed: ${t.message}")
+            false
         }
     }
 }

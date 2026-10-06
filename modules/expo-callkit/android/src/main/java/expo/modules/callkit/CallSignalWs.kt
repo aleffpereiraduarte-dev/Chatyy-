@@ -88,10 +88,10 @@ object CallSignalWs {
 
     // [P0 2026-05-18 #1132] Track inbound call_invite IDs we've already
     // surfaced to the ringing service so a re-deliver (server retry, FCM ↔ WS
-    // race, multi-device fan-out) doesn't ring twice. Bounded — 32 entries.
-    private const val SEEN_INVITES_MAX = 32
-    private val seenIncomingInvites: MutableSet<String> =
-        java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
+    // race, multi-device fan-out) doesn't ring twice.
+    // [2026-10-06 android-incoming] The WS-private `seenIncomingInvites` set
+    // moved to IncomingCallRegistry (60s TTL) so the FCM path shares it —
+    // the FCM path had NO dedupe and double-rang on duplicate pushes.
 
     // [WAVE 161B 2026-05-24] Mirror of iOS CallSignalWs.swift selfAnsweredCallIds.
     // When this device answers a call via fireCallAnswered, the server fans out
@@ -574,9 +574,16 @@ object CallSignalWs {
             ctx.stopService(stopIntent)
         } catch (_: Throwable) {}
 
+        // [2026-10-06 android-incoming] 3b. Telecom teardown — the peer ended
+        //    or cancelled, so disconnect+destroy the self-managed Connection
+        //    (RINGING or ACTIVE) instead of leaving a zombie behind.
+        try {
+            IncomingCallRegistry.endTelecom(callId, android.telecom.DisconnectCause.REMOTE, "ws_call_end:$reason")
+        } catch (_: Throwable) {}
+
         // 4. Dedup table: forget this call so a stale retransmit of the
         //    invite (server retry, race) wouldn't be filtered out.
-        seenIncomingInvites.remove(callId)
+        IncomingCallRegistry.forget(callId)
     }
 
     private fun handleIncomingCallInvite(obj: JSONObject) {
@@ -592,20 +599,19 @@ object CallSignalWs {
         // Dedup vs server retries + FCM↔WS race + multi-device fan-out.
         // CallRingingService is also idempotent on call_id, but bailing here
         // avoids a redundant startForegroundService spin.
-        if (!seenIncomingInvites.add(callId)) {
-            Log.d(TAG, "call_invite $callId: already surfaced, skipping")
+        // [2026-10-06 android-incoming] Shared registry: a WS re-deliver is
+        // dropped; a call the FCM path ALREADY surfaced is dropped too (FCM
+        // is the richer source — lk creds + avatar — so nothing is lost).
+        // NOTE: read isRinging BEFORE markInviteSeen (which marks the call as
+        // seen → isRinging would always be true afterwards).
+        val alreadyRinging = IncomingCallRegistry.isRinging(callId)
+        if (!IncomingCallRegistry.markInviteSeen(callId, "ws")) {
+            Log.d(TAG, "call_invite $callId: already surfaced (ws dup), skipping")
             return
         }
-        // FIFO trim — ConcurrentHashMap.newKeySet doesn't preserve insertion
-        // order, so we cap via best-effort eviction. The Set's contains() is
-        // O(1) regardless, so size doesn't hurt lookup speed.
-        if (seenIncomingInvites.size > SEEN_INVITES_MAX) {
-            try {
-                val it = seenIncomingInvites.iterator()
-                while (seenIncomingInvites.size > SEEN_INVITES_MAX && it.hasNext()) {
-                    it.next(); it.remove()
-                }
-            } catch (_: Throwable) { /* best-effort */ }
+        if (alreadyRinging) {
+            Log.d(TAG, "call_invite $callId: already ringing via FCM — skipping WS ring")
+            return
         }
 
         val callerEmail = obj.optString("caller_email")
@@ -655,21 +661,24 @@ object CallSignalWs {
         //
         // BACKGROUND / KILLED app keeps the native ring path so the OS-level
         // lock-screen FSI can still ring even when JS is paused or unloaded.
-        val appForeground = try {
-            ExpoCallKitModule.isAppForeground || isProcessForeground(ctx)
-        } catch (_: Throwable) { false }
+        //
+        // [2026-10-06 android-incoming] The foreground `return` above is GONE.
+        // IncomingCallListener.js was retired on mobile (#1026) — the
+        // `onIncomingCall` event emitted below has NO JS listener, so with the
+        // app open this path rang nowhere (forensic case: callee had the app
+        // in front, 2 WS invites arrived, zero surface, missed after 45s).
+        // The FCM path dropped the same gate on 2026-05-21; this was the last
+        // branch still skipping. Now: native ring ALWAYS, plus a direct
+        // IncomingCallActivity launch when the app is in front (the OS won't
+        // fire the FSI in that state). The JS nudge is kept as best-effort.
+        val appForeground = try { IncomingCallRegistry.isAppForeground(ctx) } catch (_: Throwable) { false }
         if (appForeground) {
-            Log.d(TAG, "call_invite $callId: app foreground — JS WS handler owns the UI, skipping native ring")
-            // Best-effort: also nudge ExpoCallKitModule so any onIncomingCall
-            // listener wired through the module gets a copy (parity with the
-            // VoIP push path on iOS). JS-side primary surface remains the
-            // mailWs `call_invite` subscription.
+            Log.d(TAG, "call_invite $callId: app foreground — native ring still fires + direct IncomingCallActivity launch")
             try {
                 ExpoCallKitModule.emitIncomingCallForeground(
                     callId, callerName, callerEmail, conversationId, hasVideo
                 )
             } catch (_: Throwable) { /* best-effort */ }
-            return
         }
 
         Log.d(TAG, "call_invite $callId from $callerEmail — launching CallRingingService")
@@ -686,6 +695,11 @@ object CallSignalWs {
             } else {
                 ctx.startService(serviceIntent)
             }
+            // [2026-10-06 android-incoming] Foreground surface (see FCM path).
+            IncomingCallRegistry.launchRingingUiIfForeground(
+                ctx, callId, callerName, callerEmail, conversationId, hasVideo,
+                source = "ws"
+            )
         } catch (e: Throwable) {
             Log.e(TAG, "call_invite $callId: startForegroundService failed — falling back to notification", e)
             try {
@@ -697,40 +711,21 @@ object CallSignalWs {
                     callerEmail,
                     conversationId
                 )
+                // [2026-10-06 android-incoming] Foreground surface on fallback too.
+                IncomingCallRegistry.launchRingingUiIfForeground(
+                    ctx, callId, callerName, callerEmail, conversationId, hasVideo,
+                    source = "ws-fallback"
+                )
             } catch (e2: Throwable) {
                 Log.e(TAG, "call_invite $callId: notification fallback also failed", e2)
             }
         }
     }
 
-    /**
-     * [foreground gate, 2026-05-21] ActivityManager-based process foreground
-     * check mirroring CallFirebaseMessagingService.isProcessForeground. The
-     * `ExpoCallKitModule.isAppForeground` flag is set by Activity lifecycle
-     * hooks which can lag by 50-500ms on Android (AppState race on first
-     * resume from cold), so we use this complement to avoid a brief window
-     * where the flag is still false even though the user has the app open.
-     */
-    private fun isProcessForeground(ctx: Context): Boolean {
-        return try {
-            val am = ctx.applicationContext.getSystemService(Context.ACTIVITY_SERVICE)
-                as? android.app.ActivityManager ?: return false
-            val procs = am.runningAppProcesses ?: return false
-            val myPkg = ctx.applicationContext.packageName
-            for (p in procs) {
-                if (p.processName != myPkg) continue
-                // IMPORTANCE_VISIBLE accepted (matches FCM path) — covers
-                // app-behind-system-dialog / app-in-Recents.
-                if (p.importance <= android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE) {
-                    return true
-                }
-            }
-            false
-        } catch (e: Exception) {
-            Log.w(TAG, "isProcessForeground check failed: ${e.message}")
-            false
-        }
-    }
+    // [2026-10-06 android-incoming] The private isProcessForeground() copy that
+    // lived here (`<= IMPORTANCE_VISIBLE`, which is true as soon as our own FGS
+    // runs) was replaced by IncomingCallRegistry.isAppForeground (strict
+    // IMPORTANCE_FOREGROUND + Expo lifecycle flag).
 
     private fun drainQueue() {
         val ws = wsRef.get() ?: return

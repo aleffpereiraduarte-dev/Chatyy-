@@ -52,6 +52,16 @@ class IncomingCallActivity : AppCompatActivity() {
   private var avatarSizePx: Int = 0
   private val mainHandler = Handler(Looper.getMainLooper())
 
+  companion object {
+    // [2026-10-06 android-incoming] Process-wide handler for the post-fetch
+    // CallActivity launch. `mainHandler` is wiped in onDestroy
+    // (removeCallbacksAndMessages(null)), so when this ringer Activity died
+    // mid-fetch (closeReceiver, 15s self-destroy, OEM task kill) the user's
+    // Accept was silently dropped — CallActivity never launched. The launch
+    // must not depend on this Activity being alive.
+    private val launchHandler = Handler(Looper.getMainLooper())
+  }
+
   // Receiver to close this activity when call is handled from notification.
   // [WAVE 161B 2026-05-24] Guard on call_id: a close broadcast for a stale
   // call (e.g., previous call was cancelled while a new invite landed) used
@@ -468,6 +478,9 @@ class IncomingCallActivity : AppCompatActivity() {
     ExpoCallKitModule.emitCallEnded(callId ?: "")
     CallNotificationService.cancelNotification(this, callId ?: "")
     stopRingingService()
+    // [2026-10-06 android-incoming] Telecom: REJECTED + destroy (no zombie RINGING).
+    IncomingCallRegistry.endTelecom(callId ?: "", android.telecom.DisconnectCause.REJECTED, "declined_with_message")
+    IncomingCallRegistry.forget(callId ?: "")
 
     // Best-effort HTTP send. We don't have the auth token in this Activity
     // (it lives in SharedPreferences via persistAuthForNativeCall) — read
@@ -634,6 +647,13 @@ class IncomingCallActivity : AppCompatActivity() {
     // up the call via consumePendingCall when it eventually mounts).
     ExpoCallKitModule.emitCallAnswered(callId ?: "")
 
+    // [2026-10-06 android-incoming] Tell Telecom WE answered: the self-managed
+    // ChatyyConnection flips RINGING → ACTIVE (OS takes audio focus +
+    // MODE_IN_COMMUNICATION). Before this nothing ever drove the Connection
+    // from our own UI, so it stayed RINGING orphaned. Does NOT run
+    // Connection.onAnswer (would double-launch CallActivity).
+    IncomingCallRegistry.answerTelecom(callId ?: "")
+
     // Cancel the notification and stop the ringing foreground service. Do
     // this BEFORE launching CallActivity so the user doesn't see both UIs
     // briefly stacked during the transition.
@@ -691,6 +711,7 @@ class IncomingCallActivity : AppCompatActivity() {
     val cached = LkTokenFetcher.getCached(applicationContext, id)
     if (cached != null) {
       Log.d("IncomingCallActivity", "[stage4] cache hit — launching CallActivity sync")
+      Log.i("CallTrace", "[7c/12] IncomingCallActivity accept: cached LK token → ${if (isGroup) "GroupCallActivity" else "CallActivity"} sync callId=$id")
       startCallActivityWith(id, name, email, video, cached.url, cached.token)
       // [2026-05-16 Stage 2 native WS signaling] Fire call_answered from
       // native AFTER CallActivity is launched (cache-hit path). JS-side
@@ -703,15 +724,46 @@ class IncomingCallActivity : AppCompatActivity() {
       return
     }
 
-    // Cache miss → fetch on a background thread, then launch.
+    // [2026-10-06 android-incoming] Cache miss, 1:1 call: DO NOT block the
+    // accept on a token fetch inside this ringer Activity. The old flow
+    // (Thread → fetch → mainHandler.post → startCallActivityWith) depended on
+    // this Activity staying alive: closeReceiver (an untargeted
+    // CLOSE_CALL_ACTIVITY), the 15s finishAndRemoveTask or an OEM task kill
+    // ran onDestroy → removeCallbacksAndMessages(null) → the posted launch
+    // was silently dropped → the user tapped Atender, saw "Conectando…"
+    // vanish and NO call screen ("o módulo de ligação não abre").
+    // Now: launch CallActivity IMMEDIATELY without lk creds. CallActivity
+    // .onCreate already owns the LkTokenFetcher fallback (2 attempts, auth
+    // from the Intent extras we enrich below) and renders "Conectando…"
+    // while it mints the token — so the in-call screen is on screen within
+    // one frame of the tap, independent of this Activity's lifetime.
+    if (!isGroup) {
+      Log.w("IncomingCallActivity", "[stage4] no cached LK token — launching CallActivity NOW (token fetched inside CallActivity)")
+      Log.i("CallTrace", "[7c/12] IncomingCallActivity accept: NO cached token → CallActivity immediately, fetch inside CallActivity callId=$id")
+      startCallActivityWith(id, name, email, video, null, null)
+      CallSignalWs.fireCallAnswered(applicationContext, id, conversationId ?: "", email)
+      return
+    }
+
+    // Group call (cache miss) → GroupCallActivity needs the token up-front
+    // (it aborts with "Grupo não disponível" on an empty token), so keep the
+    // fetch — but detached from this Activity's lifetime.
     // [#1175 2026-05-18] Pass our own Intent extras so LkTokenFetcher can
     // resolve auth via fallback B (intent) if SharedPreferences (source A)
     // is empty.
     val ourExtras = intent?.extras
+    // [2026-10-06 android-incoming] Snapshot the Context + post on the
+    // process-wide launchHandler (NOT mainHandler, which onDestroy wipes) so
+    // the launch survives this Activity being finished mid-fetch.
+    val appCtx = applicationContext
+    Log.i("CallTrace", "[7c/12] IncomingCallActivity accept (group): fetching LK token off-main, launch detached from ringer lifetime callId=$id")
     Thread {
       val identity = email.takeIf { it.isNotBlank() } ?: "android-$id"
-      val tk = LkTokenFetcher.fetch(applicationContext, id, identity, ourExtras)
-      mainHandler.post {
+      val tk = LkTokenFetcher.fetch(appCtx, id, identity, ourExtras)
+      launchHandler.post {
+        if (isDestroyed || isFinishing) {
+          Log.w("IncomingCallActivity", "[stage4] ringer Activity already gone — launching CallActivity from app context anyway")
+        }
         if (tk == null) {
           Log.w("IncomingCallActivity", "[stage4] token fetch FAILED — launching CallActivity without token (user will see error)")
           startCallActivityWith(id, name, email, video, null, null)
@@ -758,7 +810,7 @@ class IncomingCallActivity : AppCompatActivity() {
       if (url.isNullOrEmpty() || token.isNullOrEmpty()) {
         Log.w("IncomingCallActivity", "[#1359] group token unavailable (disbanded/403/409 or fetch fail) room=$id — aborting accept")
         stopRinging()
-        CallNotificationService.cancelNotification(this, id)
+        CallNotificationService.cancelNotification(applicationContext, id)
         stopRingingService()
         try {
           android.widget.Toast.makeText(
@@ -771,7 +823,11 @@ class IncomingCallActivity : AppCompatActivity() {
         return
       }
       try {
-        val gIntent = Intent(this, GroupCallActivity::class.java).apply {
+        // [2026-10-06 android-incoming] applicationContext (not `this`): this
+        // Activity may already be destroyed when the async fetch posts back.
+        // FLAG_ACTIVITY_NEW_TASK is already set, as required for app-context
+        // starts.
+        val gIntent = Intent(applicationContext, GroupCallActivity::class.java).apply {
           addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK
               or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -788,7 +844,7 @@ class IncomingCallActivity : AppCompatActivity() {
           if (!token.isNullOrEmpty()) putExtra(GroupCallActivity.EXTRA_LK_TOKEN, token)
           ExpoCallKitModule.enrichIntentWithAuth(applicationContext, this)
         }
-        startActivity(gIntent)
+        applicationContext.startActivity(gIntent)
         Log.d("IncomingCallActivity", "[#1359] routed accept to GroupCallActivity room=$id")
         // [Goal 2 full-screen-accept fix 2026-05-25] Finish this lock-screen
         // ringing Activity now that the call screen is launched — see the 1:1
@@ -800,7 +856,9 @@ class IncomingCallActivity : AppCompatActivity() {
       return
     }
     try {
-      val intent = Intent(this, CallActivity::class.java).apply {
+      // [2026-10-06 android-incoming] applicationContext (not `this`) — see
+      // the group branch above; the launch must not need a live Activity.
+      val intent = Intent(applicationContext, CallActivity::class.java).apply {
         // [#1172 native-call-in-background fix, 2026-05-19] Same foreground-
         // forcing flag set as ExpoCallKitModule.openNativeCall. Without
         // REORDER_TO_FRONT the lockscreen ringing task / launcher task can
@@ -841,7 +899,8 @@ class IncomingCallActivity : AppCompatActivity() {
         // #1175 is targeting.
         ExpoCallKitModule.enrichIntentWithAuth(applicationContext, this)
       }
-      startActivity(intent)
+      applicationContext.startActivity(intent)
+      Log.i("CallTrace", "[8/12] CallActivity launched from IncomingCallActivity callId=$id hasToken=${!token.isNullOrEmpty()} ringerAlive=${!(isDestroyed || isFinishing)} ts=${System.currentTimeMillis()}")
       // [Goal 2 full-screen-accept fix 2026-05-25] ROOT CAUSE of "answering
       // from the full-screen native incoming screen sometimes does nothing".
       //
@@ -878,8 +937,11 @@ class IncomingCallActivity : AppCompatActivity() {
    * fails to surface — the closeReceiver / 15s timeout still cover that.
    */
   private fun finishAcceptedRinger() {
+    // [2026-10-06 android-incoming] No-op when already gone (the async
+    // accept path can now outlive this Activity).
+    if (isDestroyed || isFinishing) return
     mainHandler.post {
-      try { finish() } catch (_: Exception) {}
+      try { if (!isDestroyed && !isFinishing) finish() } catch (_: Exception) {}
     }
   }
 
@@ -988,6 +1050,11 @@ class IncomingCallActivity : AppCompatActivity() {
     // Cancel the notification and stop the ringing foreground service
     CallNotificationService.cancelNotification(this, callId ?: "")
     stopRingingService()
+
+    // [2026-10-06 android-incoming] Telecom: REJECTED + destroy so the
+    // self-managed Connection doesn't stay RINGING after the red button.
+    IncomingCallRegistry.endTelecom(callId ?: "", android.telecom.DisconnectCause.REJECTED, "declined")
+    IncomingCallRegistry.forget(callId ?: "")
 
     finish()
   }

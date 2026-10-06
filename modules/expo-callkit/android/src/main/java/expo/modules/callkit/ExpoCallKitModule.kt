@@ -395,6 +395,14 @@ class ExpoCallKitModule : Module() {
       callerPhoneE164: String? = null,
     ): Boolean {
       if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+      // [2026-10-06 android-incoming] One addNewIncomingCall per call_id.
+      // Forensics (duarte→suporte): 2 FCM pushes 230ms apart → 2 RINGING
+      // ChatyyConnection for the same call. Single choke point for the FCM
+      // path AND the JS displayIncomingCall path.
+      if (!IncomingCallRegistry.markTelecomRequested(callId)) {
+        Log.d(TAG, "startTelecomIncomingCall: callId=$callId already handed to Telecom — skipping duplicate")
+        return true
+      }
       return try {
         val tm = ctx.getSystemService(Context.TELECOM_SERVICE) as? android.telecom.TelecomManager
           ?: return false
@@ -672,7 +680,14 @@ class ExpoCallKitModule : Module() {
     // gestures until the 8s safety timeout fires.
     Function("notifyAppReady") {
       try {
-        val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY")
+        // [2026-10-06 android-incoming] target=ringer — this is meant for the
+        // IncomingCallActivity overlay ONLY. It carries no call_id, and
+        // CallActivity.closeReceiver used to treat an id-less broadcast as
+        // "close any": JS mounting /call right after a native accept fired
+        // this and KILLED the freshly launched native CallActivity. The
+        // receiver now ignores target=ringer (and any untargeted close while
+        // its call is <5s old).
+        val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").putExtra("target", "ringer")
         context.sendBroadcast(closeIntent)
       } catch (_: Exception) {}
     }
@@ -709,7 +724,11 @@ class ExpoCallKitModule : Module() {
       // 30s missed-call timeout. The activity already registers a receiver
       // for this exact action and finishes cleanly.
       try {
+        // [2026-10-06 android-incoming] Stamp call_id so only UIs bound to
+        // THIS call close (CallActivity ignores other ids, and ignores
+        // id-less closes for <5s-old calls).
         val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY")
+        if (callId.isNotEmpty()) closeIntent.putExtra("call_id", callId)
         context.sendBroadcast(closeIntent)
       } catch (_: Exception) {}
     }

@@ -312,6 +312,11 @@ class CallActivity : ComponentActivity() {
   @Volatile
   private var finishing: Boolean = false
 
+  /** [2026-10-06 android-incoming] Creation timestamp — closeReceiver uses it
+   *  to shield a freshly launched call screen from UNTARGETED (no call_id)
+   *  CLOSE_CALL_ACTIVITY broadcasts fired by legacy paths right after accept. */
+  private val createdAtMs: Long = System.currentTimeMillis()
+
   /** Mirrors iOS CallSessionState; the source of truth for the Compose
    *  tree. Public so future GroupCallActivity can share the holder. */
   private val state = CallSessionStateAndroid()
@@ -333,9 +338,30 @@ class CallActivity : ComponentActivity() {
       // "close any" (preserves the legacy notifyAppReady / endCall paths
       // that genuinely want to dismiss any visible call UI).
       val broadcastCallId = intent?.getStringExtra("call_id") ?: ""
+      // [2026-10-06 android-incoming] Closes aimed at the ringer overlay
+      // (notifyAppReady, CallActionReceiver.closeIncomingCallActivity) carry
+      // target=ringer — never our business.
+      val target = intent?.getStringExtra("target") ?: ""
+      if (target == "ringer") {
+        Log.d(TAG, "closeReceiver: ignoring CLOSE aimed at the ringer (target=ringer, our call=$callId)")
+        return
+      }
       if (broadcastCallId.isNotEmpty() && broadcastCallId != callId) {
         Log.d(TAG, "closeReceiver: ignoring CLOSE for $broadcastCallId (our call=$callId)")
         return
+      }
+      // [2026-10-06 android-incoming] An UNTARGETED close (no call_id) landing
+      // within 5s of our creation is almost always a legacy "dismiss the
+      // ringer" broadcast racing the accept hand-off (JS notifyAppReady /
+      // endCall-after-accept) — it used to kill the call screen the instant it
+      // appeared ("o módulo de ligação não abre"). Ignore it; explicit
+      // hangups all carry call_id now.
+      if (broadcastCallId.isEmpty()) {
+        val ageMs = System.currentTimeMillis() - createdAtMs
+        if (ageMs < 5_000L) {
+          Log.w(TAG, "closeReceiver: ignoring UNTARGETED close — our call is only ${ageMs}ms old (callId=$callId)")
+          return
+        }
       }
       Log.d(TAG, "closeReceiver: finishing activity (broadcast call_id=$broadcastCallId)")
       finishCall(reason = "close_broadcast")
@@ -428,6 +454,10 @@ class CallActivity : ComponentActivity() {
       "outgoing=$isOutgoing convId=$conversationId " +
       "hasUrl=${!lkUrl.isNullOrEmpty()} hasToken=${!lkToken.isNullOrEmpty()} " +
       "hasAvatar=${callerAvatarUrl.isNotEmpty()}")
+    // [2026-10-06 android-incoming] Launch-decision trace for `adb logcat -s CallTrace`.
+    Log.i("CallTrace", "[8a/12] CallActivity.onCreate callId=$callId outgoing=$isOutgoing video=$hasVideo " +
+      "hasLkCreds=${!lkUrl.isNullOrEmpty() && !lkToken.isNullOrEmpty()} preconnected=${NativeCallRoom.isPreconnected(callId)} " +
+      "appForeground=${ExpoCallKitModule.isAppForeground} ts=${System.currentTimeMillis()}")
 
     // Seed the session state from intent extras so the first frame draws
     // with the right name + status string.
@@ -618,8 +648,23 @@ class CallActivity : ComponentActivity() {
                   }
                   Log.d(TAG, "camera ${if (desired) "unmute" else "mute"} (no republish)")
                 } else if (desired) {
-                  // First-time enable — perform the full publish path with
-                  // simulcast. setCameraEnabled honors the room-level
+                  // [2026-10-06 android-incoming] CAMERA runtime grant FIRST.
+                  // setCameraEnabled(true) without the grant creates a capturer
+                  // that produces no frames — and a later grant only "unmutes"
+                  // that dead track, so nothing is ever published ("ligo a
+                  // câmera no Android e o iPhone nunca vê"). Request the perm
+                  // and let onRequestPermissionsResult run the publish.
+                  val camGranted = ContextCompat.checkSelfPermission(
+                    this@CallActivity, Manifest.permission.CAMERA
+                  ) == PackageManager.PERMISSION_GRANTED
+                  if (!camGranted) {
+                    Log.w(TAG, "[camera] toggle ON without CAMERA grant — requesting; publish resumes on grant")
+                    pendingVideoPublish = true
+                    ensureCameraPermission()
+                    return@launch
+                  }
+                  // First-time enable — perform the full publish path.
+                  // setCameraEnabled honors the room-level
                   // VideoTrackPublishDefaults configured at bringUpRoom.
                   r.localParticipant.setCameraEnabled(true)
                   Log.d(TAG, "camera first-publish via setCameraEnabled")
@@ -629,6 +674,7 @@ class CallActivity : ComponentActivity() {
                   // local tracks on every LK Android 2.x rev. Poll the
                   // publication directly so the renderer binds reliably.
                   bindLocalCameraIfReady(r)
+                  verifyCameraPublished(r, "toggle")
                 }
               } catch (t: Throwable) {
                 Log.w(TAG, "toggleCam (mute path) failed: ${t.message} — falling back")
@@ -1313,8 +1359,19 @@ class CallActivity : ComponentActivity() {
           state.isCameraOn = true
           lifecycleScope.launch {
             try {
+              // [2026-10-06 android-incoming] A camera track created BEFORE
+              // the grant (older builds published it in attemptConnect) has a
+              // dead capturer; setCameraEnabled(true) on it is a no-op
+              // "unmute". Unpublish it so a FRESH capturer + track is built.
+              val stale = r.localParticipant.getTrackPublication(Track.Source.CAMERA)?.track
+              if (stale != null) {
+                Log.w(TAG, "[camera] stale pre-grant camera publication found — unpublishing before re-publish")
+                try { r.localParticipant.setCameraEnabled(false) } catch (_: Throwable) {}
+                state.hasLocalVideo = false
+              }
               r.localParticipant.setCameraEnabled(true)
               bindLocalCameraIfReady(r)
+              verifyCameraPublished(r, "late-grant")
               Log.d(TAG, "camera published after late CAMERA grant (initial video)")
             } catch (t: Throwable) {
               Log.w(TAG, "late camera publish failed: ${t.message}")
@@ -1380,6 +1437,16 @@ class CallActivity : ComponentActivity() {
     // holding fps and shedding resolution first (FaceTime/WhatsApp-like) beats
     // the even resolution+fps drop of BALANCED; the simulcast ladder gives the
     // SFU lower-res tiers so it steps down instead of freezing.
+    // [2026-10-06 android-incoming] Codec/simulcast pair chosen ONCE in
+    // NativeCallRoom.preferredVideoCodec(): "h264" (no simulcast) when the
+    // device has a hardware AVC encoder — libwebrtc on Android ships NO
+    // software H.264 encoder, so pinning h264 on a device without one made
+    // the camera publish fail silently (iPhone never saw the video) —
+    // otherwise "vp8" WITH simulcast (always available in software). Both
+    // the preconnect Room (NativeCallRoom.setCameraEnabled) and this Room use
+    // the same pair so the two publish paths can't diverge again.
+    val preferredCodec = NativeCallRoom.preferredVideoCodec()
+    val useSimulcast = preferredCodec != "h264"
     val publishDefaults = try {
       VideoTrackPublishDefaults(
         // [VIDEO FIX 2026-05-26] simulcast=false to match the H.264 codec pin
@@ -1387,7 +1454,7 @@ class CallActivity : ComponentActivity() {
         // camera publish offer is invalid and the peer never gets frames
         // (remote shows avatar only). H.264 publishes a single encoding anyway.
         // Mirrors iOS CallViewController/NativeCallRoom (simulcast:false).
-        simulcast = false,
+        simulcast = useSimulcast,
         videoEncoding = VideoPreset169.H720.encoding
       )
     } catch (t: Throwable) {
@@ -1414,8 +1481,8 @@ class CallActivity : ComponentActivity() {
         for (f in codecFields) {
           try {
             f.isAccessible = true
-            f.set(publishDefaults, "h264")
-            Log.d(TAG, "VideoTrackPublishDefaults.${f.name} = h264")
+            f.set(publishDefaults, preferredCodec)
+            Log.d(TAG, "VideoTrackPublishDefaults.${f.name} = $preferredCodec (simulcast=$useSimulcast)")
           } catch (e: Throwable) { Log.w(TAG, "codec set ${f.name} failed: ${e.message}") }
         }
       } else {
@@ -1683,20 +1750,34 @@ class CallActivity : ComponentActivity() {
         Log.w(TAG, "LK connected but RECORD_AUDIO denied — mic NOT published")
       }
       if (hasVideo) {
-        r.localParticipant.setCameraEnabled(state.isCameraOn)
-        // [2026-05-19] Bug #989 fix: LK Android 2.x doesn't always emit
-        // RoomEvent.TrackPublished for the local participant — depending on
-        // the SDK rev, local publish surfaces as RoomEvent.LocalTrackPublished
-        // (a different event type) or only via the participant's track
-        // publication map. Without an explicit bind here, `localRenderer` stays
-        // unattached → state.hasLocalVideo never flips → LocalPreviewTile is
-        // gated out → user sees the peer's video but their own preview is
-        // blank. The peer still sees the local user (track publishes fine over
-        // the SFU) so the bug masquerades as a render-only issue.
-        // Mirrors the iOS pattern (CallViewController.swift line ~447 polls
-        // localParticipant after setCameraEnabled returns).
-        if (state.isCameraOn) {
-          bindLocalCameraIfReady(r)
+        // [2026-10-06 android-incoming] Publish the camera ONLY once CAMERA is
+        // granted. ensureCameraPermission() in onCreate is async; on a first
+        // video call the grant dialog is still up when we reach here, and
+        // setCameraEnabled(true) before the grant builds a dead capturer that
+        // a later grant can't revive (it only "unmutes"). The grant handler
+        // (onRequestPermissionsResult → REQ_CODE_CAMERA) publishes instead.
+        val camGranted = ContextCompat.checkSelfPermission(
+          this@CallActivity, Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!camGranted) {
+          Log.w(TAG, "[camera] LK connected but CAMERA not granted yet — publish deferred to onRequestPermissionsResult")
+        } else {
+          r.localParticipant.setCameraEnabled(state.isCameraOn)
+          // [2026-05-19] Bug #989 fix: LK Android 2.x doesn't always emit
+          // RoomEvent.TrackPublished for the local participant — depending on
+          // the SDK rev, local publish surfaces as RoomEvent.LocalTrackPublished
+          // (a different event type) or only via the participant's track
+          // publication map. Without an explicit bind here, `localRenderer` stays
+          // unattached → state.hasLocalVideo never flips → LocalPreviewTile is
+          // gated out → user sees the peer's video but their own preview is
+          // blank. The peer still sees the local user (track publishes fine over
+          // the SFU) so the bug masquerades as a render-only issue.
+          // Mirrors the iOS pattern (CallViewController.swift line ~447 polls
+          // localParticipant after setCameraEnabled returns).
+          if (state.isCameraOn) {
+            bindLocalCameraIfReady(r)
+            verifyCameraPublished(r, "connect")
+          }
         }
       }
       reconnectAttempts = 0
@@ -1875,6 +1956,10 @@ class CallActivity : ComponentActivity() {
         }
         if (track is VideoTrack) {
           Log.d(TAG, "TrackSubscribed (video) sid=${event.publication.sid}")
+          // [2026-10-06 android-incoming] Trace: remote camera arrived (peer
+          // turned video on). If this prints but the screen stays on the
+          // avatar, the renderer bind below is the suspect, not the network.
+          Log.i("CallTrace", "[11/12] remote video subscribed callId=$callId sid=${event.publication.sid} wasVideoCall=${state.isVideo} rendererReady=${remoteRenderer != null}")
           state.hasRemoteVideo = true
           // [video-upgrade 2026-05-25] CRITICAL: a remote VIDEO track means the
           // peer enabled their camera (initial video call OR a mid-call audio→
@@ -2205,6 +2290,18 @@ class CallActivity : ComponentActivity() {
       NativeCallRoom.disconnect()
     } catch (t: Throwable) {
       Log.w(TAG, "NativeCallRoom.disconnect() in finishCall failed: ${t.message}")
+    }
+    // [2026-10-06 android-incoming] Telecom: the self-managed ChatyyConnection
+    // (incoming or outgoing) was never disconnected on hangup from this
+    // screen → it stayed ACTIVE/RINGING in Telecom after the call ended.
+    // close_broadcast == peer/server-driven end; everything else is us.
+    try {
+      val cause = if (reason == "close_broadcast") android.telecom.DisconnectCause.REMOTE
+                  else android.telecom.DisconnectCause.LOCAL
+      IncomingCallRegistry.endTelecom(callId, cause, "call_activity:$reason")
+      IncomingCallRegistry.forget(callId)
+    } catch (t: Throwable) {
+      Log.w(TAG, "endTelecom in finishCall failed: ${t.message}")
     }
     ExpoCallKitModule.emitCallEnded(callId)
     finish()
@@ -2569,11 +2666,55 @@ class CallActivity : ComponentActivity() {
         r.localParticipant.setCameraEnabled(true)
         bindLocalCameraIfReady(r)
         Log.d(TAG, "enterVideoModeAndPublish: camera published")
+        // [2026-10-06 android-incoming] Confirm a CAMERA publication really
+        // exists; otherwise reset the button + surface "Câmera indisponível".
+        verifyCameraPublished(r, "upgrade")
       } catch (t: Throwable) {
         Log.w(TAG, "enterVideoModeAndPublish: setCameraEnabled failed: ${t.message}")
+        state.isCameraOn = false
+        state.status = "Câmera indisponível"
       }
     }
     try { ExpoCallKitModule.emitLkLocalVideoChanged(true) } catch (_: Throwable) {}
+  }
+
+  /**
+   * [2026-10-06 android-incoming] Make the "Vídeo" button reflect the REAL
+   * published state. After any setCameraEnabled(true) we poll the local
+   * CAMERA publication for ~1.5s. Found → bind the preview (idempotent) and
+   * log the codec actually negotiated. Not found (no HW encoder for the
+   * pinned codec, capturer failure, permission race) → flip isCameraOn back
+   * to false, tell JS, and show "Câmera indisponível" for 3s instead of a
+   * silently lying ON button while the iPhone sees nothing.
+   */
+  private fun verifyCameraPublished(r: Room, origin: String) {
+    lifecycleScope.launch {
+      var track: LocalVideoTrack? = null
+      for (i in 0 until 6) {
+        track = try {
+          r.localParticipant.getTrackPublication(Track.Source.CAMERA)?.track as? LocalVideoTrack
+        } catch (_: Throwable) { null }
+        if (track != null) break
+        delay(250)
+      }
+      if (track != null) {
+        val sid = try { r.localParticipant.getTrackPublication(Track.Source.CAMERA)?.sid } catch (_: Throwable) { null }
+        Log.i(TAG, "[camera] published OK origin=$origin sid=$sid codec=${NativeCallRoom.preferredVideoCodec()} muted=${!track.enabled}")
+        Log.i("CallTrace", "[10/12] local camera published origin=$origin callId=$callId sid=$sid")
+        if (!state.hasLocalVideo) bindLocalVideoTrack(track)
+        return@launch
+      }
+      if (!state.isCameraOn) return@launch
+      Log.e(TAG, "[camera] publish FAILED origin=$origin — no CAMERA publication after 1.5s (encoder/capturer/permission). Button reset to OFF")
+      Log.i("CallTrace", "[10/12] local camera publish FAILED origin=$origin callId=$callId")
+      state.isCameraOn = false
+      state.hasLocalVideo = false
+      try { ExpoCallKitModule.emitLkLocalVideoChanged(false) } catch (_: Throwable) {}
+      val prev = state.status
+      state.status = "Câmera indisponível"
+      delay(3_000)
+      if (state.status == "Câmera indisponível") state.status = prev
+    }
   }
 
   /**

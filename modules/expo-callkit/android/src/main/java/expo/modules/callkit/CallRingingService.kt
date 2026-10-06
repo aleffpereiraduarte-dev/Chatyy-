@@ -112,6 +112,18 @@ class CallRingingService : Service() {
             }
         }
 
+        // [2026-10-06 android-incoming] Telecom: the self-managed Connection
+        // for this call is still RINGING — nobody told Telecom the ring timed
+        // out, so it lingered as a zombie (hub-side "busy zumbi" mirror).
+        // Disconnect MISSED + destroy, and reset the dedupe so a later
+        // genuine re-invite is not filtered.
+        if (!cid.isNullOrEmpty()) {
+            try {
+                IncomingCallRegistry.endTelecom(cid, android.telecom.DisconnectCause.MISSED, "ring_timeout")
+                IncomingCallRegistry.forget(cid)
+            } catch (_: Throwable) {}
+        }
+
         // Notify the rest of the system that this call was missed. Without
         // this, the service used to silently stopSelf and the JS layer /
         // call history never recorded the missed call (caller still rings,
@@ -168,6 +180,14 @@ class CallRingingService : Service() {
         isGroup = intent.getBooleanExtra("is_group", false)
         groupName = intent.getStringExtra("group_name") ?: ""
 
+        // [2026-10-06 android-incoming] Idempotent per call_id. A second
+        // onStartCommand for the SAME call (duplicate FCM, or FCM landing
+        // after the WS path already started us) must NOT arm a second 45s
+        // timeout nor restart the vibrator waveform — forensics showed both.
+        // We still rebuild + re-post the FGS notification below so the richer
+        // extras (avatar / mute / group) from the later source are applied
+        // in place (same notification id → no flicker).
+        val alreadyRinging = ringingCallIds.contains(safeCallId)
         // [2026-05-15] Add to the Set FIRST (allows concurrent rings to be
         // reasoned about), then use compareAndSet on currentCallId so we
         // only stamp the "primary" reference if it was empty. If another
@@ -177,7 +197,7 @@ class CallRingingService : Service() {
         ringingCallIds.add(safeCallId)
         currentCallId.compareAndSet(null, safeCallId)
 
-        Log.d(TAG, "Starting ringing for callId=$safeCallId, caller=$callerName, ringing=${ringingCallIds.size}")
+        Log.d(TAG, "Starting ringing for callId=$safeCallId, caller=$callerName, ringing=${ringingCallIds.size} alreadyRinging=$alreadyRinging")
 
         // Create the notification channel (idempotent)
         CallNotificationService.createNotificationChannel(this)
@@ -258,6 +278,14 @@ class CallRingingService : Service() {
             )
             try { IncomingRinger.start(applicationContext, muteRingtone) } catch (_: Throwable) {}
             stopSelf()
+            return START_NOT_STICKY
+        }
+
+        // [2026-10-06 android-incoming] Duplicate start for a call we are
+        // already ringing: notification refreshed above, ringer / vibrator /
+        // 45s timeout left exactly as they are.
+        if (alreadyRinging) {
+            Log.i(TAG, "callId=$safeCallId already ringing — notification refreshed, timer/vibrator untouched")
             return START_NOT_STICKY
         }
 

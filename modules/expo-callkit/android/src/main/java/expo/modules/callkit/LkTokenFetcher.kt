@@ -40,9 +40,18 @@ object LkTokenFetcher {
     private const val TIMEOUT_CONNECT_MS = 5_000
     private const val TIMEOUT_READ_MS = 8_000
     // Cache TTL: a token is good for 6h on the backend side; we re-fetch
-    // whenever the cached entry is older than 30s to avoid stale-token races
-    // if the call was rescheduled / the user re-signed in.
-    private const val CACHE_TTL_MS = 30_000L
+    // whenever the cached entry is older than the TTL to avoid stale-token
+    // races if the call was rescheduled / the user re-signed in.
+    // [2026-10-06 android-incoming] Was 30_000 — SHORTER than the 45s ring
+    // (CallRingingService.RINGING_TIMEOUT_MS). An Accept after ~30s of
+    // ringing threw away the pre-minted FCM token and fell into a blocking
+    // bearer fetch (slow/401 on a stale bearer → "Conectando…" forever).
+    // Now 60s, and when the token is a parseable JWT its own `exp` is
+    // honoured (capped at CACHE_MAX_AGE_WITH_EXP_MS so a long-lived token
+    // still can't be served for a call that is hours old).
+    private const val CACHE_TTL_MS = 60_000L
+    private const val CACHE_MAX_AGE_WITH_EXP_MS = 5 * 60_000L
+    private const val EXP_SAFETY_MARGIN_MS = 5_000L
 
     data class Result(val token: String, val url: String)
 
@@ -167,13 +176,23 @@ object LkTokenFetcher {
             val obj = JSONObject(raw)
             val entry = obj.optJSONObject(roomName) ?: return null
             val at = entry.optLong("at", 0L)
-            if (System.currentTimeMillis() - at > CACHE_TTL_MS) {
-                Log.d(TAG, "getCached: stale entry for room=$roomName, ignoring")
-                return null
-            }
             val token = entry.optString("token", "")
             val url = entry.optString("url", "")
             if (token.isEmpty() || url.isEmpty()) return null
+            // [2026-10-06 android-incoming] Freshness: honour the JWT `exp`
+            // when present (minus a safety margin, capped), else the flat TTL.
+            val now = System.currentTimeMillis()
+            val ageMs = now - at
+            val expMs = jwtExpiryMs(token)
+            val fresh = if (expMs > 0L) {
+                now < expMs - EXP_SAFETY_MARGIN_MS && ageMs <= CACHE_MAX_AGE_WITH_EXP_MS
+            } else {
+                ageMs <= CACHE_TTL_MS
+            }
+            if (!fresh) {
+                Log.d(TAG, "getCached: stale entry for room=$roomName (age=${ageMs}ms exp=${if (expMs > 0L) "${expMs - now}ms" else "n/a"}), ignoring")
+                return null
+            }
             Result(token, url)
         } catch (t: Throwable) {
             Log.w(TAG, "getCached failed: ${t.message}")
@@ -195,6 +214,26 @@ object LkTokenFetcher {
     // ────────────────── internals ──────────────────
 
     private const val KEY_TOKEN_CACHE = "lk_token_cache"
+
+    /**
+     * [2026-10-06 android-incoming] Epoch-millis expiry of a JWT (`exp`
+     * claim, seconds), or 0 when the string is not a parseable JWT. LiveKit
+     * access tokens are standard HS256 JWTs. Never throws.
+     */
+    private fun jwtExpiryMs(token: String): Long {
+        return try {
+            val parts = token.split('.')
+            if (parts.size < 2) return 0L
+            val payload = android.util.Base64.decode(
+                parts[1],
+                android.util.Base64.URL_SAFE or android.util.Base64.NO_PADDING or android.util.Base64.NO_WRAP
+            )
+            val exp = JSONObject(String(payload, StandardCharsets.UTF_8)).optLong("exp", 0L)
+            if (exp > 0L) exp * 1000L else 0L
+        } catch (_: Throwable) {
+            0L
+        }
+    }
 
     private fun resolveIdentity(ctx: Context): String {
         // The backend overrides `sub` with $user['email'] from the bearer

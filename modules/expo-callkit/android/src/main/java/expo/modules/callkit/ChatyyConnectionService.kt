@@ -212,6 +212,14 @@ class ChatyyConnectionService : ConnectionService() {
       }
       c.setRinging()
     }
+    // [2026-10-06 android-incoming] Register so OUR UI (IncomingCallActivity
+    // accept/decline, notification actions, 45s timeout, WS/FCM cancel) can
+    // drive this Connection's lifecycle. Until now nothing outside Telecom
+    // ever called setActive()/setDisconnected() → a call answered on our own
+    // screen left a zombie RINGING Connection behind (client half of the
+    // hub's "busy zumbi"). A duplicate for the same call_id supersedes and
+    // destroys the previous one (see registry).
+    IncomingCallRegistry.registerConnection(callId, conn)
     return conn
   }
 
@@ -296,6 +304,9 @@ class ChatyyConnectionService : ConnectionService() {
       // bridge in a follow-up wave).
       c.setDialing()
     }
+    // [2026-10-06 android-incoming] Same registration for outgoing so
+    // CallActivity.finishCall can disconnect+destroy it on hangup.
+    IncomingCallRegistry.registerConnection(callId, conn)
     return conn
   }
 
@@ -393,9 +404,58 @@ class ChatyyConnection(
     rejectInternal("declined")
   }
 
+  // ─────────── [2026-10-06 android-incoming] UI-driven lifecycle ───────────
+  // Telecom only calls onAnswer/onReject/onDisconnect when the ANSWER came
+  // through Telecom itself (BT headset, Auto, Wear, system dialer). When the
+  // user taps OUR IncomingCallActivity / notification button, Telecom is never
+  // told — the Connection stays RINGING forever (or ACTIVE forever after a
+  // hangup from CallActivity). These two entry points let the UI sync Telecom
+  // state WITHOUT re-running the onAnswer side effects (adoptForCall would
+  // double-launch CallActivity and double-fire call_answered).
+
+  /** Our UI accepted the call: RINGING → ACTIVE. Idempotent. */
+  fun answerFromUi() {
+    try {
+      val st = state
+      if (st == Connection.STATE_ACTIVE || st == Connection.STATE_DISCONNECTED) {
+        Log.d(TAG, "answerFromUi: callId=$callId state=$st — no-op")
+        return
+      }
+      Log.i(TAG, "answerFromUi: callId=$callId state=$st → setActive()")
+      setActive()
+    } catch (t: Throwable) {
+      Log.w(TAG, "answerFromUi failed: ${t.message}")
+    }
+  }
+
+  /**
+   * Our UI / timers / remote cancel ended the call: disconnect with [cause]
+   * (a DisconnectCause constant: REJECTED on decline, MISSED on timeout,
+   * REMOTE on peer cancel/hangup, LOCAL on our hangup) and destroy. Safe to
+   * call on an already-disconnected Connection.
+   */
+  fun endFromUi(cause: Int, reason: String) {
+    try {
+      val st = state
+      Log.i(TAG, "endFromUi: callId=$callId cause=$cause reason=$reason state=$st")
+      if (st != Connection.STATE_DISCONNECTED) {
+        setDisconnected(DisconnectCause(cause, reason))
+      }
+    } catch (t: Throwable) {
+      Log.w(TAG, "endFromUi setDisconnected failed: ${t.message}")
+    }
+    IncomingCallRegistry.unregisterConnection(callId, this)
+    try { destroy() } catch (t: Throwable) {
+      Log.w(TAG, "endFromUi destroy failed: ${t.message}")
+    }
+  }
+
   override fun onDisconnect() {
     Log.i(TAG, "onDisconnect: callId=$callId")
     setDisconnected(DisconnectCause(DisconnectCause.LOCAL))
+    // [2026-10-06 android-incoming] Drop from the registry on every
+    // Telecom-driven teardown too (here, onAbort, rejectInternal).
+    IncomingCallRegistry.unregisterConnection(callId, this)
     ExpoCallKitModule.emitCallEnded(callId)
     // [WAVE 116 2026-05-21] Issue 4 — purge the cached LK token/url that
     // JS pre-stashed via persistPendingLkToken. Called after Telecom
@@ -424,6 +484,7 @@ class ChatyyConnection(
   override fun onAbort() {
     Log.i(TAG, "onAbort: callId=$callId")
     setDisconnected(DisconnectCause(DisconnectCause.OTHER))
+    IncomingCallRegistry.unregisterConnection(callId, this) // [2026-10-06 android-incoming]
     destroy()
   }
 
@@ -459,6 +520,7 @@ class ChatyyConnection(
 
   private fun rejectInternal(reason: String) {
     setDisconnected(DisconnectCause(DisconnectCause.REJECTED))
+    IncomingCallRegistry.unregisterConnection(callId, this) // [2026-10-06 android-incoming]
     ExpoCallKitModule.emitCallEnded(callId)
     // [WAVE 116 2026-05-21] Issue 4 — purge cached LK token on decline too.
     // Token was stashed ahead of answer; since the call is being rejected
