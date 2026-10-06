@@ -67,6 +67,15 @@ private let kRingTimeoutSeconds: Int = 45
 private var kCallIdToUUID: [String: UUID] = [:]
 private let kCallIdToUUIDLock = NSLock()
 
+// [2026-10-06 callkit-dedupe] callId → the UUID the user ACCEPTED (stub
+// CXAnswer). When two CallKit UUIDs were minted for the same callId (VoIP push
+// vs. native WS invite racing), iOS ends the loser right after the answer
+// (maximumCallGroups=1). Its CXEndCallAction must NOT be treated as a user
+// decline (no call_end "declined" to the caller, no NativeCallRoom teardown of
+// the call we just answered). Cleared when the accepted UUID itself ends.
+private var kAcceptedUUIDByCallId: [String: UUID] = [:]
+private let kAcceptedUUIDByCallIdLock = NSLock()
+
 // [WAVE 163 2026-05-23 GHOST FIX] Outgoing-side timers, parallel to kRingTimers.
 // Lives at FILE scope (NOT inside ExpoCallKitModule) so the DispatchSource
 // timer survives module/bridge teardown when user swipe-kills the app while
@@ -300,37 +309,10 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
             || ((dict["auto_accept"] as? Bool) == true)
             || ((dict["auto_accept"] as? NSNumber)?.boolValue == true)
 
-        // [phantom-ring cancel fix 2026-05-26 P0] Dedup duplicate VoIP
-        // deliveries of the SAME callId. APNs can deliver the same push twice
-        // (retries, multiple token registrations). If we already have a live
-        // UUID for this callId, the call is already ringing — no-op: just
-        // satisfy the PushKit contract via completion() and return. Otherwise
-        // mint a fresh UUID and register it so the matching cancel push can
-        // later find and end it.
-        kCallIdToUUIDLock.lock()
-        if let alive = kCallIdToUUID[callId] {
-            kCallIdToUUIDLock.unlock()
-            print("[VoipSubscriber] duplicate incoming push for \(callId) — already ringing as \(alive.uuidString); no-op")
-            completion()
-            return
-        }
-        let uuid = UUID()
-        kCallIdToUUID[callId] = uuid
-        kCallIdToUUIDLock.unlock()
-
-        // [cross-path dedup 2026-10-04 P1.2] Mirror this UUID into the module's
-        // shared callId→UUID store IMMEDIATELY (not only via the async
-        // ExpoCallKitPendingVoipCall → adoptPendingCall hop below). The VoIP
-        // push fires earliest; if a native WS `call_invite` for the SAME callId
-        // races in before adoptPendingCall runs, CallSignalWs now sees this UUID
-        // and skips its own duplicate reportNewIncomingCall (no double ring / 2
-        // CallKit entries when the app is alive in background).
-        ExpoCallKitModule.registerIncomingCallKitUUIDIfAbsent(uuid, forCallId: callId)
-
-        // reportNewIncomingCall FIRST — before any bookkeeping. Apple's
-        // run-loop deadline is enforced: any work between the push receipt
-        // and the report call eats budget and any blocking sync can push us
-        // over the deadline. iOS then kills the app and stops VoIP delivery.
+        // Build the CallKit display update + the stub answer payload BEFORE the
+        // dedupe decision below — both are needed whether we mint a fresh UUID
+        // or reuse one the native WS path already reported.
+        // [2026-10-06 callkit-dedupe] (moved up from below; content unchanged)
         let update = CXCallUpdate()
         // [Wave WhatsApp parity, 2026-05-20 gap A2+H5] Prefer .phoneNumber when
         // we have the caller's E.164 — iOS routes through the same handle
@@ -354,13 +336,51 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         // boots faster than the answer, ExpoCallKitModule will get the same
         // payload via the App Group queue + NotificationCenter event, so
         // there's no race.
-        kPendingAnswerPayloadsLock.lock()
         var sp: [String: Any] = ["callId": callId, "hasVideo": hasVideo, "callerName": callerName]
         for (k, v) in dict {
             guard let key = k as? String else { continue }
             if let s = v as? String { sp[key] = s }
             else if let n = v as? NSNumber { sp[key] = n }
         }
+
+        // [phantom-ring cancel fix 2026-05-26 P0] Dedup duplicate VoIP
+        // deliveries of the SAME callId. APNs can deliver the same push twice
+        // (retries, multiple token registrations). If we already have a live
+        // UUID for this callId, the call is already ringing — no-op: just
+        // satisfy the PushKit contract via completion() and return. Otherwise
+        // mint a fresh UUID and register it so the matching cancel push can
+        // later find and end it.
+        kCallIdToUUIDLock.lock()
+        if let alive = kCallIdToUUID[callId] {
+            kCallIdToUUIDLock.unlock()
+            print("[VoipSubscriber] duplicate incoming push for \(callId) — already ringing as \(alive.uuidString); no-op")
+            completion()
+            return
+        }
+        // [2026-10-06 callkit-dedupe] ROOT CAUSE of "atendo e não abre nada /
+        // caller vê recusada": the native WS `call_invite` (CallSignalWs) can
+        // land 0.3-1s BEFORE this VoIP push when the app is alive in
+        // background. It reported UUID-A on earlyProvider and registered it in
+        // ExpoCallKitModule's shared callId→UUID store — but this path only
+        // deduped against its OWN kCallIdToUUID, minted UUID-B, reported it
+        // again (2nd CallKit entry) and stashed the payload ONLY under UUID-B.
+        // The user answered UUID-A → stub CXAnswer found no payload → nothing
+        // presented, no call_answered. iOS then ended UUID-B (1 call group) →
+        // stub CXEnd found UUID-B's payload → fired call_end "declined".
+        //
+        // Fix: claim the callId ATOMICALLY in the ONE shared registry
+        // (ExpoCallKitModule.sharedUUIDByCallId — the source of truth for both
+        // paths). If another path already owns this callId we REUSE its UUID:
+        // stash the payload under it, persist, refresh CallKit's display with
+        // the richer push data, run the ring-window preconnect and call the
+        // PushKit completion — WITHOUT a second reportNewIncomingCall.
+        let minted = UUID()
+        let uuid = ExpoCallKitModule.registerIncomingCallKitUUIDIfAbsent(minted, forCallId: callId)
+        let reusedExistingUUID = (uuid != minted)
+        kCallIdToUUID[callId] = uuid
+        kCallIdToUUIDLock.unlock()
+
+        kPendingAnswerPayloadsLock.lock()
         kPendingAnswerPayloads[uuid] = sp
         kPendingAnswerPayloadsLock.unlock()
 
@@ -374,6 +394,29 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         if let avatarUrl = (dict["caller_avatar"] as? String), !avatarUrl.isEmpty,
            let ud = UserDefaults(suiteName: kAppGroupId) {
             ud.set(avatarUrl, forKey: "callAvatar:\(callId)")
+        }
+
+        if reusedExistingUUID {
+            print("[VoipSubscriber] call \(callId) already reported by another path as \(uuid.uuidString) — reusing UUID, skipping duplicate reportNewIncomingCall")
+            nativeCallDiag("voip_dedupe_reuse_uuid", callId,
+                           "uuid=\(uuid.uuidString) hasVideo=\(hasVideo) lkInline=\(!((dict["lk_token"] as? String) ?? "").isEmpty)")
+            persistPendingCall(
+                callId: callId,
+                uuid: uuid,
+                callerName: callerName,
+                hasVideo: hasVideo,
+                payload: dict
+            )
+            // Refresh CallKit's display with the richer push data (phone
+            // handle, video flag). Must target the SAME provider that did the
+            // original reportNewIncomingCall (CallSignalWs uses earlyProvider);
+            // reportCall(with:updated:) on an unknown UUID is a harmless no-op.
+            if let provider = VoipPushAppDelegateSubscriber.earlyProvider {
+                provider.reportCall(with: uuid, updated: update)
+            }
+            VoipPushAppDelegateSubscriber.kickRingWindowPreconnect(callId: callId, dict: dict)
+            completion()
+            return
         }
 
         let provider = VoipPushAppDelegateSubscriber.earlyProvider ?? makeEphemeralProvider()
@@ -399,62 +442,11 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
 
             // [STAGE-A 2026-05-20] GAP #2 — Kick Room.connect during the ring
             // window, BEFORE the user taps Accept. Audio is hot the instant
-            // they answer (WhatsApp parity). The push may carry an inline
-            // `lk_token`+`lk_url` (server-side fast-path) OR JS may have
-            // persisted them ahead of time via `persistPendingLkToken`. Try
-            // inline first, then App Group cache, then async token fetch.
-            let lkTokenInline = (dict["lk_token"] as? String) ?? ""
-            let lkUrlInline   = (dict["lk_url"]   as? String) ?? ""
-            if !lkTokenInline.isEmpty && !lkUrlInline.isEmpty {
-                // [WAVE 104D fix, 2026-05-21] Persist inline push token to App Group
-                // so the CXAnswer handler (ExpoCallKitModule.provider:perform:
-                // CXAnswerCallAction) finds it in cache and doesn't fire a second
-                // NativeCallTokenFetcher.fetchToken() round-trip. Before this fix:
-                //   1. Push arrives with lk_token (pre-minted by backend).
-                //   2. preconnectRoom fires — Room connects with token A (identity X).
-                //   3. User taps Accept — CXAnswer reads lk_token_<callId> from
-                //      App Group → missing → falls through to fetchToken() → mints
-                //      token B (identity Y, different device-hash window) → presents
-                //      CallViewController with token B → LK SFU sees two publishers
-                //      for the same user → evicts one → audio gone or stuck "Conectando".
-                // Post-fix: token A is in App Group at push-receive time, CXAnswer
-                // uses it directly, single Room identity, no SFU eviction.
-                if let ud = UserDefaults(suiteName: kAppGroupId) {
-                    ud.set(lkTokenInline, forKey: "lk_token_\(callId)")
-                    ud.set(lkUrlInline,   forKey: "lk_url_\(callId)")
-                    print("[VoipSubscriber] WAVE104D: persisted inline lk_token to App Group for \(callId)")
-                }
-                Task.detached(priority: .userInitiated) {
-                    CallViewController.preconnectRoom(url: lkUrlInline, token: lkTokenInline, callId: callId)
-                }
-            } else if let ud = UserDefaults(suiteName: kAppGroupId),
-                      let cachedTok = ud.string(forKey: "lk_token_\(callId)"), !cachedTok.isEmpty,
-                      let cachedUrl = ud.string(forKey: "lk_url_\(callId)"), !cachedUrl.isEmpty {
-                Task.detached(priority: .userInitiated) {
-                    CallViewController.preconnectRoom(url: cachedUrl, token: cachedTok, callId: callId)
-                }
-            } else {
-                // No inline / cached token — fetch then preconnect. This still
-                // races the ring timer but typically resolves in 300-600ms.
-                let identityForFetch: String = {
-                    if let s = dict["identity"] as? String, !s.isEmpty { return s }
-                    if let ud = UserDefaults(suiteName: kAppGroupId),
-                       let e = ud.string(forKey: "user_email"), !e.isEmpty { return e }
-                    return callId
-                }()
-                Task.detached(priority: .userInitiated) {
-                    do {
-                        let tok = try await NativeCallTokenFetcher.shared.fetchToken(
-                            roomName: callId,
-                            identity: identityForFetch,
-                            role: "publisher"
-                        )
-                        CallViewController.preconnectRoom(url: tok.url, token: tok.token, callId: callId)
-                    } catch {
-                        print("[VoipSubscriber] STAGE-A preconnect token fetch failed: \(error)")
-                    }
-                }
-            }
+            // they answer (WhatsApp parity).
+            // [2026-10-06 callkit-dedupe] Body extracted to
+            // kickRingWindowPreconnect so the UUID-reuse branch above can run
+            // the exact same preconnect without a 2nd reportNewIncomingCall.
+            VoipPushAppDelegateSubscriber.kickRingWindowPreconnect(callId: callId, dict: dict)
 
             NotificationCenter.default.post(
                 name: Notification.Name("ExpoCallKitPendingVoipCall"),
@@ -502,6 +494,72 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
                 )
             }
             completion()
+        }
+    }
+
+    /// [2026-10-06 callkit-dedupe] Ring-window LiveKit preconnect, extracted
+    /// verbatim from the reportNewIncomingCall completion so BOTH the
+    /// fresh-UUID path and the reuse-existing-UUID path (callId already
+    /// reported by the native WS invite) run the identical preconnect. See the
+    /// STAGE-A / WAVE 104D comments inside for the history.
+    fileprivate static func kickRingWindowPreconnect(callId: String, dict: [AnyHashable: Any]) {
+        // [STAGE-A 2026-05-20] GAP #2 — Kick Room.connect during the ring
+        // window, BEFORE the user taps Accept. Audio is hot the instant
+        // they answer (WhatsApp parity). The push may carry an inline
+        // `lk_token`+`lk_url` (server-side fast-path) OR JS may have
+        // persisted them ahead of time via `persistPendingLkToken`. Try
+        // inline first, then App Group cache, then async token fetch.
+        let lkTokenInline = (dict["lk_token"] as? String) ?? ""
+        let lkUrlInline   = (dict["lk_url"]   as? String) ?? ""
+        if !lkTokenInline.isEmpty && !lkUrlInline.isEmpty {
+            // [WAVE 104D fix, 2026-05-21] Persist inline push token to App Group
+            // so the CXAnswer handler (ExpoCallKitModule.provider:perform:
+            // CXAnswerCallAction) finds it in cache and doesn't fire a second
+            // NativeCallTokenFetcher.fetchToken() round-trip. Before this fix:
+            //   1. Push arrives with lk_token (pre-minted by backend).
+            //   2. preconnectRoom fires — Room connects with token A (identity X).
+            //   3. User taps Accept — CXAnswer reads lk_token_<callId> from
+            //      App Group → missing → falls through to fetchToken() → mints
+            //      token B (identity Y, different device-hash window) → presents
+            //      CallViewController with token B → LK SFU sees two publishers
+            //      for the same user → evicts one → audio gone or stuck "Conectando".
+            // Post-fix: token A is in App Group at push-receive time, CXAnswer
+            // uses it directly, single Room identity, no SFU eviction.
+            if let ud = UserDefaults(suiteName: kAppGroupId) {
+                ud.set(lkTokenInline, forKey: "lk_token_\(callId)")
+                ud.set(lkUrlInline,   forKey: "lk_url_\(callId)")
+                print("[VoipSubscriber] WAVE104D: persisted inline lk_token to App Group for \(callId)")
+            }
+            Task.detached(priority: .userInitiated) {
+                CallViewController.preconnectRoom(url: lkUrlInline, token: lkTokenInline, callId: callId)
+            }
+        } else if let ud = UserDefaults(suiteName: kAppGroupId),
+                  let cachedTok = ud.string(forKey: "lk_token_\(callId)"), !cachedTok.isEmpty,
+                  let cachedUrl = ud.string(forKey: "lk_url_\(callId)"), !cachedUrl.isEmpty {
+            Task.detached(priority: .userInitiated) {
+                CallViewController.preconnectRoom(url: cachedUrl, token: cachedTok, callId: callId)
+            }
+        } else {
+            // No inline / cached token — fetch then preconnect. This still
+            // races the ring timer but typically resolves in 300-600ms.
+            let identityForFetch: String = {
+                if let s = dict["identity"] as? String, !s.isEmpty { return s }
+                if let ud = UserDefaults(suiteName: kAppGroupId),
+                   let e = ud.string(forKey: "user_email"), !e.isEmpty { return e }
+                return callId
+            }()
+            Task.detached(priority: .userInitiated) {
+                do {
+                    let tok = try await NativeCallTokenFetcher.shared.fetchToken(
+                        roomName: callId,
+                        identity: identityForFetch,
+                        role: "publisher"
+                    )
+                    CallViewController.preconnectRoom(url: tok.url, token: tok.token, callId: callId)
+                } catch {
+                    print("[VoipSubscriber] STAGE-A preconnect token fetch failed: \(error)")
+                }
+            }
         }
     }
 
@@ -764,6 +822,105 @@ extension VoipPushAppDelegateSubscriber: PKPushRegistryDelegate {
         t?.cancel()
     }
 
+    // MARK: - [2026-10-06 callkit-dedupe] Cross-path registry bridge
+    //
+    // The native WS invite path (CallSignalWs.handleIncomingCallInviteLocked)
+    // reports on `earlyProvider` too, so its CXAnswer/CXEnd land in THIS stub
+    // delegate. Before this fix the WS path never stashed an answer payload
+    // here → CXAnswer found nil → "No payload found … skipping" → no VC, no
+    // preconnect, no call_answered. These helpers let the WS path register its
+    // call exactly like a VoIP push does (payload + callId→UUID + App Group
+    // persist) so the stub handlers behave identically for both origins.
+
+    /// Register a call reported by a NON-push path (native WS invite) so the
+    /// stub CXAnswer/CXEnd handlers find its payload. Idempotent: never
+    /// overwrites a payload already stashed for `uuid`, never re-maps a callId
+    /// that already points at a different live UUID.
+    static func stashAnswerPayload(uuid: UUID, callId: String, payload: [String: Any]) {
+        guard !callId.isEmpty else { return }
+        var sp = payload
+        if sp["callId"] == nil { sp["callId"] = callId }
+        if sp["call_id"] == nil { sp["call_id"] = callId }
+        kCallIdToUUIDLock.lock()
+        if kCallIdToUUID[callId] == nil {
+            kCallIdToUUID[callId] = uuid
+        }
+        kCallIdToUUIDLock.unlock()
+        kPendingAnswerPayloadsLock.lock()
+        if kPendingAnswerPayloads[uuid] == nil {
+            kPendingAnswerPayloads[uuid] = sp
+        }
+        kPendingAnswerPayloadsLock.unlock()
+        let callerName = (sp["callerName"] as? String) ?? (sp["caller_name"] as? String) ?? "Chatyy"
+        let hasVideo: Bool = {
+            if let b = sp["hasVideo"] as? Bool { return b }
+            if let b = sp["video"] as? Bool { return b }
+            if let v = sp["video"] as? String { return v == "1" || v == "true" }
+            return false
+        }()
+        shared.persistPendingCall(
+            callId: callId,
+            uuid: uuid,
+            callerName: callerName,
+            hasVideo: hasVideo,
+            payload: sp
+        )
+    }
+
+    /// Live CallKit UUID this stub knows for `callId` (push or WS origin).
+    static func stubUUID(forCallId callId: String) -> UUID? {
+        kCallIdToUUIDLock.lock()
+        defer { kCallIdToUUIDLock.unlock() }
+        return kCallIdToUUID[callId]
+    }
+
+    /// Reverse lookup: callId for a UUID this stub knows about (map first, then
+    /// the stashed payload's own call_id).
+    static func stubCallId(forUUID uuid: UUID) -> String? {
+        kCallIdToUUIDLock.lock()
+        let mapped = kCallIdToUUID.first(where: { $0.value == uuid })?.key
+        kCallIdToUUIDLock.unlock()
+        if let m = mapped { return m }
+        kPendingAnswerPayloadsLock.lock()
+        defer { kPendingAnswerPayloadsLock.unlock() }
+        guard let p = kPendingAnswerPayloads[uuid] else { return nil }
+        return (p["callId"] as? String) ?? (p["call_id"] as? String)
+    }
+
+    /// Payload stashed under ANY UUID whose callId matches — used by CXAnswer
+    /// when the answered UUID has no payload of its own (sibling UUID did).
+    fileprivate static func siblingPayload(forCallId callId: String, excluding uuid: UUID) -> (UUID, [String: Any])? {
+        guard !callId.isEmpty else { return nil }
+        kPendingAnswerPayloadsLock.lock()
+        defer { kPendingAnswerPayloadsLock.unlock() }
+        for (u, p) in kPendingAnswerPayloads where u != uuid {
+            let pid = (p["callId"] as? String) ?? (p["call_id"] as? String) ?? ""
+            if pid == callId { return (u, p) }
+        }
+        return nil
+    }
+
+    fileprivate static func rememberAccepted(uuid: UUID, callId: String) {
+        guard !callId.isEmpty else { return }
+        kAcceptedUUIDByCallIdLock.lock()
+        kAcceptedUUIDByCallId[callId] = uuid
+        kAcceptedUUIDByCallIdLock.unlock()
+    }
+
+    fileprivate static func acceptedUUID(forCallId callId: String) -> UUID? {
+        guard !callId.isEmpty else { return nil }
+        kAcceptedUUIDByCallIdLock.lock()
+        defer { kAcceptedUUIDByCallIdLock.unlock() }
+        return kAcceptedUUIDByCallId[callId]
+    }
+
+    fileprivate static func forgetAccepted(callId: String) {
+        guard !callId.isEmpty else { return }
+        kAcceptedUUIDByCallIdLock.lock()
+        kAcceptedUUIDByCallId.removeValue(forKey: callId)
+        kAcceptedUUIDByCallIdLock.unlock()
+    }
+
     private func persistPendingCall(callId: String,
                                     uuid: UUID,
                                     callerName: String,
@@ -806,6 +963,11 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         if let ud = UserDefaults(suiteName: kAppGroupId) {
             ud.removeObject(forKey: kPendingCallKey)
         }
+        // [2026-10-06 callkit-dedupe] CallKit dropped every call — no accepted
+        // UUID can be live anymore.
+        kAcceptedUUIDByCallIdLock.lock()
+        kAcceptedUUIDByCallId.removeAll()
+        kAcceptedUUIDByCallIdLock.unlock()
     }
 
     public func provider(_ provider: CXProvider, perform action: CXAnswerCallAction) {
@@ -847,6 +1009,12 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         // the missed-call timer so we don't fire .unanswered against a UUID
         // that's actively connecting.
         VoipPushAppDelegateSubscriber.cancelRingTimeout(uuid: uuid)
+        // [2026-10-06 callkit-dedupe] Resolve the callId for this UUID BEFORE
+        // the reverse-map clear below wipes it: stub map/payload first, then the
+        // shared registry (covers a UUID the native WS path reported).
+        let resolvedCallIdEarly: String = Self.stubCallId(forUUID: uuid)
+            ?? ExpoCallKitModule.sharedCallId(forCallKitUUID: uuid)
+            ?? ""
         // [phantom-ring cancel fix 2026-05-26 P0] Clear this UUID from the
         // callId→UUID map (reverse lookup) so a sibling answered_elsewhere /
         // cancel push doesn't tear down our just-answered call.
@@ -882,6 +1050,33 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
                 }
             }
         }
+
+        // [2026-10-06 callkit-dedupe] 3b. Still nothing? This UUID was minted
+        //    by a path that didn't stash here (pre-fix WS invite) while a
+        //    sibling UUID for the SAME callId (VoIP push) holds the payload.
+        //    Take the sibling's payload so the answer still presents the VC,
+        //    preconnects and fires call_answered. Never skip silently.
+        if payload == nil {
+            if let sib = Self.siblingPayload(forCallId: resolvedCallIdEarly, excluding: uuid) {
+                payload = sib.1
+                nativeCallDiag("voipstub_fallback_sibling_payload", resolvedCallIdEarly,
+                               "answered=\(uuid.uuidString) sibling=\(sib.0.uuidString)")
+            } else {
+                nativeCallDiag("voipstub_no_payload", resolvedCallIdEarly.isEmpty ? uuid.uuidString : resolvedCallIdEarly,
+                               "uuid=\(uuid.uuidString) registryCallId=\(ExpoCallKitModule.sharedCallId(forCallKitUUID: uuid) ?? "-")")
+            }
+        }
+        // Remember which UUID the user accepted for this callId so the
+        // CXEndCallAction iOS fires for a duplicate sibling UUID (1 call
+        // group) is NOT mistaken for a user decline.
+        let acceptedCallId: String = {
+            if let p = payload {
+                if let s = p["callId"] as? String, !s.isEmpty { return s }
+                if let s = p["call_id"] as? String, !s.isEmpty { return s }
+            }
+            return resolvedCallIdEarly
+        }()
+        Self.rememberAccepted(uuid: uuid, callId: acceptedCallId)
 
         // 4. Kick off the LiveKit Room connect in a Task — we MUST NOT block
         //    this CXAnswer callback. fulfill() runs synchronously below.
@@ -1023,6 +1218,52 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         // hung up first — cancel the ring timer so we don't fire .unanswered
         // on top of an already-ended call.
         VoipPushAppDelegateSubscriber.cancelRingTimeout(uuid: action.callUUID)
+
+        // [2026-10-06 callkit-dedupe] Is this UUID a DUPLICATE that lost the
+        // dedupe (same callId answered under another UUID, or the live mapping
+        // points at another UUID)? iOS ends it for us right after the answer
+        // (maximumCallGroups=1) — that is NOT a user decline. Resolve the callId
+        // BEFORE the reverse-map clear below. Rules:
+        //   * an accepted UUID exists for the callId and it is NOT this one →
+        //     duplicate loser → end quietly;
+        //   * no accept yet but kCallIdToUUID[callId] is another live UUID →
+        //     duplicate loser → end quietly;
+        //   * otherwise (normal decline / hangup of the accepted call) → the
+        //     existing path below runs unchanged.
+        let endingCallId: String = Self.stubCallId(forUUID: action.callUUID)
+            ?? ExpoCallKitModule.sharedCallId(forCallKitUUID: action.callUUID)
+            ?? ""
+        let acceptedForCallId = Self.acceptedUUID(forCallId: endingCallId)
+        let mappedForCallId = Self.stubUUID(forCallId: endingCallId)
+        let isDuplicateLoser: Bool = {
+            guard !endingCallId.isEmpty else { return false }
+            if let acc = acceptedForCallId { return acc != action.callUUID }
+            if let m = mappedForCallId { return m != action.callUUID }
+            return false
+        }()
+        if isDuplicateLoser {
+            NSLog("[VoipSubscriber] CXEnd \(action.callUUID.uuidString) is a duplicate UUID for \(endingCallId) (live=\(acceptedForCallId?.uuidString ?? mappedForCallId?.uuidString ?? "-")) — ending quietly, NOT a decline")
+            nativeCallDiag("voipstub_duplicate_uuid_quiet_end", endingCallId,
+                           "ended=\(action.callUUID.uuidString) live=\(acceptedForCallId?.uuidString ?? mappedForCallId?.uuidString ?? "-") accepted=\(acceptedForCallId != nil)")
+            // Drop only THIS UUID's stash. clearCallIdMapping is a reverse lookup
+            // by UUID, so it cannot clobber the live sibling's callId mapping.
+            VoipPushAppDelegateSubscriber.clearCallIdMapping(forUUID: action.callUUID)
+            kPendingAnswerPayloadsLock.lock()
+            kPendingAnswerPayloads.removeValue(forKey: action.callUUID)
+            kPendingAnswerPayloadsLock.unlock()
+            // No pendingEndUUID (the module would replay callEnded for this
+            // callId), no call_end "declined" to the caller, no
+            // NativeCallRoom.disconnect() (it would kill the call we just
+            // answered). Fulfilling the action is what ends this UUID.
+            action.fulfill()
+            return
+        }
+        if let acc = acceptedForCallId, acc == action.callUUID {
+            // The accepted call itself is ending — forget the accept so a
+            // re-dial reusing this callId starts clean.
+            Self.forgetAccepted(callId: endingCallId)
+        }
+
         // [phantom-ring cancel fix 2026-05-26 P0] Clear this UUID from the
         // callId→UUID map so a trailing cancel push doesn't re-end a dead UUID
         // and a re-dial with the same callId can ring again.

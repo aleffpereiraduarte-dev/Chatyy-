@@ -172,12 +172,33 @@ public class ExpoCallKitModule: Module {
   /// instead of minting a second one, which would ring CallKit twice / show 2
   /// entries when the app is alive in background. First writer wins — never
   /// overwrites an existing entry.
-  static func registerIncomingCallKitUUIDIfAbsent(_ uuid: UUID, forCallId callId: String) {
+  ///
+  /// [2026-10-06 callkit-dedupe] Now returns the WINNING UUID (the existing
+  /// entry when one was already registered, otherwise `uuid`). This makes the
+  /// claim atomic for callers: compare the result with the UUID you passed —
+  /// if they differ, another path (VoIP push vs. native WS) already reported
+  /// this callId and you must NOT call reportNewIncomingCall again. Existing
+  /// fire-and-forget callers are unaffected (`@discardableResult`).
+  @discardableResult
+  static func registerIncomingCallKitUUIDIfAbsent(_ uuid: UUID, forCallId callId: String) -> UUID {
     sharedUUIDLock.lock()
     defer { sharedUUIDLock.unlock() }
-    if sharedUUIDByCallId[callId] == nil {
-      sharedUUIDByCallId[callId] = uuid
+    if let existing = sharedUUIDByCallId[callId] {
+      return existing
     }
+    sharedUUIDByCallId[callId] = uuid
+    return uuid
+  }
+
+  /// [2026-10-06 callkit-dedupe] Reverse lookup on the shared registry:
+  /// CallKit UUID → server callId. Static so the cold-start stub
+  /// (VoipPushAppDelegateSubscriber CXAnswer/CXEnd) can resolve the callId of
+  /// a UUID it did not mint itself (e.g. the WS path reported it) without an
+  /// instance of the module being alive.
+  static func sharedCallId(forCallKitUUID uuid: UUID) -> String? {
+    sharedUUIDLock.lock()
+    defer { sharedUUIDLock.unlock() }
+    return sharedUUIDByCallId.first(where: { $0.value == uuid })?.key
   }
 
   /// [#1171 redux dismiss, 2026-05-19] Public bridge so CallViewController can

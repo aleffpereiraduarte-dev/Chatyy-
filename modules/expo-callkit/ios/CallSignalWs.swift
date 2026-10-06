@@ -1,5 +1,6 @@
 import Foundation
 import CallKit
+import PushKit
 
 /**
  * [2026-05-16 native call signaling] CallSignalWs (iOS)
@@ -55,6 +56,11 @@ final class CallSignalWs: NSObject {
     private let maxQueue = 64
     private let maxReconnect = 3
     private let backoffSec: [TimeInterval] = [1, 2, 4]
+    // [2026-10-06 callkit-dedupe] How long the native WS `call_invite` path
+    // waits for the VoIP push (which owns the richer payload + lk_token +
+    // ring timer) before reporting to CallKit itself. Field data: the WS frame
+    // lands 0.3-1s BEFORE the push when the app is alive in background.
+    private let kWsInviteYieldToPushSeconds: TimeInterval = 1.8
 
     // MARK: – State (serial queue protected)
     private let queue = DispatchQueue(label: "com.onemundo.callkit.signalws")
@@ -836,30 +842,136 @@ final class CallSignalWs: NSObject {
         // background. Reuse the existing UUID for our call_end bookkeeping and
         // SKIP the duplicate report. The push path already posted
         // ExpoCallKitPendingVoipCall, so the module still gets onIncomingCall.
-        if let existing = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId) {
+        if let existing = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId)
+            ?? VoipPushAppDelegateSubscriber.stubUUID(forCallId: callId) {
             NSLog("[CallSignalWs] call_invite \(callId): VoIP push already reported as \(existing.uuidString) — reusing UUID, skipping duplicate CallKit report")
-            inviteUUIDsByCallId.append((callId: callId, uuid: existing))
-            while inviteUUIDsByCallId.count > kInviteUUIDMax {
-                inviteUUIDsByCallId.removeFirst()
+            rememberInviteUUIDLocked(callId: callId, uuid: existing)
+            return
+        }
+
+        // [2026-10-06 callkit-dedupe] YIELD TO THE PUSH. The app is in
+        // background here (foreground returned above). When VoIP pushes are
+        // registered, the server is also sending a PushKit push for this call —
+        // it carries the richer payload (lk_token/lk_url, caller_phone, avatar),
+        // arms the 45s missed-call timer and stashes the stub answer payload.
+        // Field data (founder's iPhone, 2026-10-06): the WS frame landed 0.3-1s
+        // BEFORE the push; this path reported UUID-A first, the push then minted
+        // UUID-B → the user answered UUID-A whose stub payload was nil → no call
+        // UI, no call_answered, and iOS ending UUID-B was read as a decline.
+        // So: wait ~1.8s; if the push registered the callId meanwhile, reuse its
+        // UUID and skip; if the call was cancelled meanwhile (call_end /
+        // call_cancel drop our dedup entry), do nothing; otherwise report.
+        let voipPushRegistered: Bool = {
+            if let tok = VoipPushAppDelegateSubscriber.voipRegistry?.pushToken(for: .voIP), !tok.isEmpty {
+                return true
+            }
+            if let ud = UserDefaults(suiteName: kAppGroupId),
+               let t = ud.string(forKey: "voipToken"), !t.isEmpty {
+                return true
+            }
+            return false
+        }()
+        if voipPushRegistered {
+            NSLog("[CallSignalWs] call_invite \(callId): app background + VoIP registered — yielding \(kWsInviteYieldToPushSeconds)s to the push path")
+            nativeCallDiag("ws_yield_to_push", callId, "delayMs=\(Int(kWsInviteYieldToPushSeconds * 1000))")
+            queue.asyncAfter(deadline: .now() + kWsInviteYieldToPushSeconds) { [weak self] in
+                guard let self = self else { return }
+                // call_end / call_cancel landed during the yield → the invite
+                // is dead; never ring a cancelled call.
+                guard self.seenIncomingInvites.contains(callId) else {
+                    NSLog("[CallSignalWs] call_invite \(callId): cancelled during yield — not reporting")
+                    nativeCallDiag("ws_yield_aborted_call_gone", callId)
+                    return
+                }
+                if let existing = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId)
+                    ?? VoipPushAppDelegateSubscriber.stubUUID(forCallId: callId) {
+                    NSLog("[CallSignalWs] call_invite \(callId): push won during yield (uuid=\(existing.uuidString)) — reusing, skipping CallKit report")
+                    nativeCallDiag("ws_yield_push_won", callId, "uuid=\(existing.uuidString)")
+                    self.rememberInviteUUIDLocked(callId: callId, uuid: existing)
+                    return
+                }
+                NSLog("[CallSignalWs] call_invite \(callId): no push after yield — WS path reports to CallKit")
+                nativeCallDiag("ws_yield_push_absent_reporting", callId)
+                self.reportInviteToCallKitLocked(
+                    callId: callId,
+                    callerName: callerName,
+                    callerEmail: callerEmail,
+                    conversationId: conversationId,
+                    hasVideo: hasVideo
+                )
             }
             return
         }
 
+        reportInviteToCallKitLocked(
+            callId: callId,
+            callerName: callerName,
+            callerEmail: callerEmail,
+            conversationId: conversationId,
+            hasVideo: hasVideo
+        )
+    }
+
+    /// [2026-10-06 callkit-dedupe] Called on `queue`. FIFO-bounded append to
+    /// the callId→UUID stash consumed by handleIncomingCallEndLocked.
+    private func rememberInviteUUIDLocked(callId: String, uuid: UUID) {
+        inviteUUIDsByCallId.append((callId: callId, uuid: uuid))
+        while inviteUUIDsByCallId.count > kInviteUUIDMax {
+            inviteUUIDsByCallId.removeFirst()
+        }
+    }
+
+    /// [2026-10-06 callkit-dedupe] Called on `queue`. Claims the callId in the
+    /// ONE shared registry (ExpoCallKitModule.sharedUUIDByCallId), and only if
+    /// WE won the claim: stashes the answer payload into the cold-start stub
+    /// (so its CXAnswer/CXEnd handlers — which own earlyProvider's actions —
+    /// never run with `payload == nil`), reports to CallKit on earlyProvider and
+    /// notifies ExpoCallKitModule. Body is the pre-existing report block.
+    private func reportInviteToCallKitLocked(callId: String,
+                                             callerName: String,
+                                             callerEmail: String,
+                                             conversationId: String,
+                                             hasVideo: Bool) {
         NSLog("[CallSignalWs] call_invite \(callId) from \(callerEmail) — reporting to CallKit")
-        let uuid = UUID()
+        let minted = UUID()
         // [cross-path dedup 2026-10-04 P1.2] Eagerly mirror our minted UUID into
         // the shared store now (adoptPendingCall also does this, but async via
         // the ExpoCallKitPendingVoipCall post below). This keeps the shared
         // callId→UUID map populated synchronously so the inbound call_end
         // shared-map fallback (handleIncomingCallEndLocked) resolves even before
         // the module has processed the notification.
-        ExpoCallKitModule.registerIncomingCallKitUUIDIfAbsent(uuid, forCallId: callId)
+        // [2026-10-06 callkit-dedupe] The claim is atomic now: if the returned
+        // UUID is not ours, the push path won the race between our check above
+        // and this line → reuse its UUID and do NOT report a 2nd CallKit call.
+        let uuid = ExpoCallKitModule.registerIncomingCallKitUUIDIfAbsent(minted, forCallId: callId)
         // [#1179 cleanup, 2026-05-19] Remember the UUID so a later inbound
         // call_end frame can dismiss the matching CallKit entry. FIFO trim.
-        inviteUUIDsByCallId.append((callId: callId, uuid: uuid))
-        while inviteUUIDsByCallId.count > kInviteUUIDMax {
-            inviteUUIDsByCallId.removeFirst()
+        rememberInviteUUIDLocked(callId: callId, uuid: uuid)
+        if uuid != minted {
+            NSLog("[CallSignalWs] call_invite \(callId): lost the registry claim to \(uuid.uuidString) — reusing, skipping duplicate CallKit report")
+            nativeCallDiag("ws_claim_lost_reuse_uuid", callId, "uuid=\(uuid.uuidString)")
+            return
         }
+
+        // [2026-10-06 callkit-dedupe] Stash the answer payload into the stub
+        // under OUR UUID (+ callId→UUID + App Group persist). The stub's
+        // CXAnswer presents CallViewController, preconnects LiveKit and fires
+        // call_answered from this payload; its CXEnd fires call_end "declined"
+        // from it. Same shape the VoIP push stashes (callId/call_id,
+        // callerName/caller_name, caller_email, conversation_id, hasVideo/video).
+        let stubPayload: [String: Any] = [
+            "callId": callId,
+            "call_id": callId,
+            "callerName": callerName.isEmpty ? "Chatyy" : callerName,
+            "caller_name": callerName,
+            "caller_email": callerEmail,
+            "conversation_id": conversationId,
+            "hasVideo": hasVideo,
+            "video": hasVideo ? "1" : "0",
+            "source": "ws",
+        ]
+        VoipPushAppDelegateSubscriber.stashAnswerPayload(uuid: uuid, callId: callId, payload: stubPayload)
+        nativeCallDiag("ws_invite_reported", callId, "uuid=\(uuid.uuidString) hasVideo=\(hasVideo)")
 
         // 1. Report to CallKit FIRST (Apple deadline is paranoid; mirror the
         //    PushKit ordering). Hop to main — CXProvider should be touched on
