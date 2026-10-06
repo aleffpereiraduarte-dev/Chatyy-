@@ -24,6 +24,7 @@
 import React, { useRef } from 'react';
 import { TouchableOpacity, Animated } from 'react-native';
 import { haptic as themeHaptic } from '../constants/theme';
+import { isReduceMotionEnabled } from './reducedMotion';
 
 export default function PressableScale({
   children,
@@ -43,14 +44,18 @@ export default function PressableScale({
 
   const handlePressIn = (e) => {
     if (!disabled) {
-      // CLEAN 2026: snap-down suave (tension 340 vs 460) — sente responsivo
-      // mas leve, sem "tapa". Combina com o scale sutil 0.97.
-      Animated.spring(scaleAnim, {
-        toValue: scaleTo,
-        useNativeDriver: true,
-        tension: 340,
-        friction: 12,
-      }).start();
+      // Reduce Motion: skip the scale spring (keep the haptic — a tactile tick
+      // isn't "motion" and still confirms the tap for low-animation users).
+      if (!isReduceMotionEnabled()) {
+        // CLEAN 2026: snap-down suave (tension 340 vs 460) — sente responsivo
+        // mas leve, sem "tapa". Combina com o scale sutil 0.97.
+        Animated.spring(scaleAnim, {
+          toValue: scaleTo,
+          useNativeDriver: true,
+          tension: 340,
+          friction: 12,
+        }).start();
+      }
       // Tactile tick on press-in — feels instant, like iMessage / WhatsApp.
       if (haptic && themeHaptic?.[haptic]) {
         try { themeHaptic[haptic](); } catch {}
@@ -60,7 +65,7 @@ export default function PressableScale({
   };
 
   const handlePressOut = (e) => {
-    if (!disabled) {
+    if (!disabled && !isReduceMotionEnabled()) {
       Animated.spring(scaleAnim, {
         toValue: 1,
         useNativeDriver: true,

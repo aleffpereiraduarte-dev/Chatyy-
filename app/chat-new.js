@@ -498,10 +498,14 @@ export default function ChatNewScreen() {
       if (result.error === 'permission_denied') {
         Alert.alert(
           t('chat.contactPermissionDeniedTitle') || 'Permissão negada',
-          t('chat.contactPermissionDeniedMsg') || 'Pra encontrar seus amigos no Chatyy, abra Ajustes do iPhone → Chatyy → Contatos e habilite o acesso.',
+          t('chat.contactPermissionDeniedMsg') || 'Pra encontrar seus amigos no Chatyy, abra os Ajustes do dispositivo → Chatyy → Contatos e habilite o acesso.',
           [
             { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
-            { text: t('chat.openSettings') || 'Abrir Ajustes', onPress: () => { try { require('react-native').Linking.openURL('app-settings:'); } catch {} } },
+            // [bug 2026-10-05 android-dead-end] openURL('app-settings:') is an
+            // iOS-only scheme — on Android it threw/failed silently and the user
+            // was stuck. Linking.openSettings() opens the app's settings page on
+            // both platforms.
+            { text: t('chat.openSettings') || 'Abrir Ajustes', onPress: () => { try { require('react-native').Linking.openSettings(); } catch {} } },
           ]
         );
       } else if (result.error) {

@@ -13,6 +13,9 @@ import {
 
 const ONBOARDING_KEY = '@chatyy_onboarding_done';
 const BRAND = '#111111';
+// Accent da marca (verde Chatyy) — usado no CTA, dots e brilho dos heróis.
+const ACCENT = '#25D366';
+const ACCENT_DARK = '#1EBE5A';
 
 // React Native invariant: a regular FlatList cannot use `onScroll` with
 // `useNativeDriver: true`. The list MUST be wrapped via
@@ -29,36 +32,32 @@ const SLIDES = [
     Icon: IconMessageSquare,
     titleKey: 'onboarding.slideChatTitle',
     descKey: 'onboarding.slideChatDesc',
-    blob1: '#111111',
-    blob2: '#111111',
-    blob3: '#6366F1',
+    accent: '#25D366',
+    accent2: '#1EBE5A',
   },
   {
     key: 'reels',
     Icon: IconPlay,
     titleKey: 'onboarding.slideReelsTitle',
     descKey: 'onboarding.slideReelsDesc',
-    blob1: '#111111',
-    blob2: '#111111',
-    blob3: '#111111',
+    accent: '#8B5CF6',
+    accent2: '#EC4899',
   },
   {
     key: 'email',
     Icon: IconMail,
     titleKey: 'onboarding.slideEmailTitle',
     descKey: 'onboarding.slideEmailDesc',
-    blob1: '#6366F1',
-    blob2: '#111111',
-    blob3: '#111111',
+    accent: '#6366F1',
+    accent2: '#4F46E5',
   },
   {
     key: 'privacy',
     Icon: IconShield,
     titleKey: 'onboarding.slidePrivacyTitle',
     descKey: 'onboarding.slidePrivacyDesc',
-    blob1: '#111111',
-    blob2: '#6366F1',
-    blob3: '#111111',
+    accent: '#10B981',
+    accent2: '#059669',
   },
 ];
 
@@ -103,6 +102,9 @@ function Blob({ color, size, top, left, right, bottom, delay = 0 }) {
           top, left, right, bottom,
           transform: [{ translateX: tx }, { translateY: ty }, { scale }],
         },
+        // Native não tem blur de CSS: mantemos os blobs como tintas MUITO suaves
+        // (opacity baixa) pra dar profundidade sem virar círculos sólidos.
+        Platform.OS !== 'web' && { opacity: 0.12 },
         Platform.OS === 'web' && {
           filter: 'blur(80px)',
           WebkitFilter: 'blur(80px)',
@@ -113,8 +115,44 @@ function Blob({ color, size, top, left, right, bottom, delay = 0 }) {
   );
 }
 
+// Anel de "respiração" concêntrico atrás do herói — pulso lento que faz o
+// ícone parecer vivo e acolhedor sem roubar a atenção. Só native driver.
+function PulseRing({ color, size, delay = 0 }) {
+  const p = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.timing(p, {
+        toValue: 1,
+        duration: 2800,
+        delay,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [p, delay]);
+  const scale = p.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.45] });
+  const opacity = p.interpolate({ inputRange: [0, 0.12, 1], outputRange: [0, 0.3, 0] });
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.pulseRing,
+        { width: size, height: size, borderRadius: size / 2, borderColor: color, transform: [{ scale }], opacity },
+      ]}
+    />
+  );
+}
+
 export default function Onboarding({ onDone }) {
   const { colors, isDark } = useTheme();
+  // [2026-10-05] Fluxo de entrada é MONOCROMÁTICO (decisão do founder): preto/branco
+  // em onboarding+cadastro+login; o verde fica reservado pro chat (a cara WhatsApp).
+  // Tokens adaptam a claro/escuro p/ contraste em ambos os fundos.
+  const INK = isDark ? '#FFFFFF' : '#111111';     // CTA bg, dots
+  const INK_FG = isDark ? '#111111' : '#FFFFFF';  // texto sobre INK
+  const HERO = isDark ? '#2A2A33' : '#111111';    // círculo do herói (ícone branco)
   const { t } = useLanguage();
   const [currentIndex, setCurrentIndex] = useState(0);
   const flatListRef = useRef(null);
@@ -189,30 +227,34 @@ export default function Onboarding({ onDone }) {
               { transform: [{ scale: heroScale }], opacity: heroOpacity },
             ]}
           >
-            <View
-              style={[
-                styles.heroOuter,
-                isDesktop && styles.heroOuterDesktop,
-                Platform.OS === 'web' && {
-                  background: 'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))',
-                  backdropFilter: 'blur(20px)',
-                  WebkitBackdropFilter: 'blur(20px)',
-                  boxShadow: '0 24px 60px rgba(17, 17, 17, 0.35), inset 0 1px 0 rgba(255,255,255,0.4)',
-                },
-              ]}
-            >
+            <View style={styles.heroRing}>
+              <PulseRing color={HERO} size={isDesktop ? 300 : 248} delay={0} />
+              <PulseRing color={HERO} size={isDesktop ? 300 : 248} delay={1400} />
               <View
                 style={[
-                  styles.heroInner,
-                  isDesktop && styles.heroInnerDesktop,
+                  styles.heroOuter,
+                  isDesktop && styles.heroOuterDesktop,
                   Platform.OS === 'web' && {
-                    background: `linear-gradient(135deg, ${item.blob1}, ${item.blob2})`,
-                    boxShadow: `0 16px 48px ${item.blob2}66`,
+                    background: 'linear-gradient(135deg, rgba(255,255,255,0.18), rgba(255,255,255,0.06))',
+                    backdropFilter: 'blur(20px)',
+                    WebkitBackdropFilter: 'blur(20px)',
+                    boxShadow: `0 24px 60px ${HERO}40, inset 0 1px 0 rgba(255,255,255,0.4)`,
                   },
-                  Platform.OS !== 'web' && { backgroundColor: item.blob2 },
                 ]}
               >
-                <Icon size={isDesktop ? 72 : 56} color="#fff" />
+                <View
+                  style={[
+                    styles.heroInner,
+                    isDesktop && styles.heroInnerDesktop,
+                    Platform.OS === 'web' && {
+                      background: `linear-gradient(135deg, ${HERO}, ${HERO})`,
+                      boxShadow: `0 16px 48px ${HERO}66`,
+                    },
+                    Platform.OS !== 'web' && { backgroundColor: HERO },
+                  ]}
+                >
+                  <Icon size={isDesktop ? 72 : 56} color="#fff" />
+                </View>
               </View>
             </View>
           </Animated.View>
@@ -270,10 +312,10 @@ export default function Onboarding({ onDone }) {
     <View style={[styles.container, { backgroundColor: baseBg }]}>
       {/* Animated gradient mesh background — purple → pink → indigo */}
       <View pointerEvents="none" style={StyleSheet.absoluteFill}>
-        <Blob color="#111111" size={420} top={-120} left={-120} delay={0} />
-        <Blob color="#111111" size={360} top={120} right={-140} delay={1200} />
-        <Blob color="#6366F1" size={500} bottom={-180} left={-80} delay={2400} />
-        <Blob color="#111111" size={300} bottom={140} right={-60} delay={1800} />
+        <Blob color="#8696A0" size={420} top={-120} left={-120} delay={0} />
+        <Blob color="#8696A0" size={360} top={120} right={-140} delay={1200} />
+        <Blob color="#8696A0" size={500} bottom={-180} left={-80} delay={2400} />
+        <Blob color="#8696A0" size={300} bottom={140} right={-60} delay={1800} />
       </View>
 
       {/* Skip glass pill top-right */}
@@ -324,36 +366,25 @@ export default function Onboarding({ onDone }) {
         style={styles.flatList}
       />
 
-      {/* Progress bar — smooth fill driven by scrollX (replaces dot indicators).
-          Why: dots feel dated; a progressive bar gives clear "you're 60% through"
-          feedback during scroll, scales gracefully with slide count, and the
-          gradient mirrors the CTA so the eye links progress → action. */}
-      <View style={[styles.progressTrack, isDesktop && styles.progressTrackDesktop, {
-        backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17,0.10)',
-      }]}
-      >
-        <Animated.View
-          style={[
-            styles.progressFill,
-            {
-              width: scrollX.interpolate({
-                inputRange: [0, Math.max(1, (SLIDES.length - 1) * SCREEN_WIDTH)],
-                outputRange: ['18%', '100%'],
-                extrapolate: 'clamp',
-              }),
-            },
-            Platform.OS === 'web' && {
-              background: `linear-gradient(90deg, ${BRAND}, #111111)`,
-              boxShadow: `0 1px 8px ${BRAND}66`,
-            },
-            Platform.OS !== 'web' && { backgroundColor: BRAND },
-          ]}
-        />
-      </View>
-      <View style={styles.progressLabelRow}>
-        <Text style={[styles.progressLabel, { color: isDark ? 'rgba(255,255,255,0.65)' : 'rgba(17, 17, 17,0.65)' }]}>
-          {Math.min(currentIndex + 1, SLIDES.length)} / {SLIDES.length}
-        </Text>
+      {/* Dots expansíveis animados — paginação estilo WhatsApp/Instagram que
+          cresce suavemente a pílula do slide ativo conforme o scroll. O brilho
+          verde liga o progresso → CTA. Decorativo (pointerEvents none). */}
+      <View style={[styles.dotsRow, isDesktop && styles.dotsRowDesktop]} pointerEvents="none">
+        {SLIDES.map((_, i) => {
+          const range = [(i - 1) * SCREEN_WIDTH, i * SCREEN_WIDTH, (i + 1) * SCREEN_WIDTH];
+          const dotWidth = scrollX.interpolate({ inputRange: range, outputRange: [7, 26, 7], extrapolate: 'clamp' });
+          const dotOpacity = scrollX.interpolate({ inputRange: range, outputRange: [0.3, 1, 0.3], extrapolate: 'clamp' });
+          return (
+            <Animated.View
+              key={i}
+              style={[
+                styles.dot,
+                { width: dotWidth, opacity: dotOpacity, backgroundColor: INK },
+                Platform.OS === 'web' && { boxShadow: `0 1px 6px ${INK}44` },
+              ]}
+            />
+          );
+        })}
       </View>
 
       {/* Primary CTA — purple gradient pill, full width, glow */}
@@ -369,13 +400,13 @@ export default function Onboarding({ onDone }) {
             style={[
               styles.cta,
               Platform.OS === 'web' && {
-                background: `linear-gradient(135deg, ${BRAND} 0%, #111111 50%, #111111 100%)`,
-                boxShadow: `0 12px 32px ${BRAND}66, 0 4px 12px ${BRAND}44, inset 0 1px 0 rgba(255,255,255,0.35)`,
+                background: `linear-gradient(135deg, ${INK} 0%, ${INK} 100%)`,
+                boxShadow: `0 12px 32px ${INK}33, 0 4px 12px ${INK}22, inset 0 1px 0 rgba(255,255,255,0.18)`,
                 transition: 'transform 0.18s ease',
               },
               Platform.OS !== 'web' && {
-                backgroundColor: BRAND,
-                shadowColor: BRAND,
+                backgroundColor: INK,
+                shadowColor: INK,
                 shadowOffset: { width: 0, height: 8 },
                 shadowOpacity: 0.45,
                 shadowRadius: 20,
@@ -383,7 +414,7 @@ export default function Onboarding({ onDone }) {
               },
             ]}
           >
-            <Text style={styles.ctaText}>
+            <Text style={[styles.ctaText, { color: INK_FG }]}>
               {isLast ? t('onboarding.start') : t('onboarding.next')}
             </Text>
           </TouchableOpacity>
@@ -470,6 +501,14 @@ const styles = StyleSheet.create({
   heroWrapDesktop: {
     marginBottom: 56,
   },
+  heroRing: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pulseRing: {
+    position: 'absolute',
+    borderWidth: 2,
+  },
   heroOuter: {
     width: 200,
     height: 200,
@@ -531,33 +570,21 @@ const styles = StyleSheet.create({
     lineHeight: 30,
     maxWidth: 460,
   },
-  // Progressive bar (replaces dot indicators).
-  progressTrack: {
-    height: 4,
-    borderRadius: 3,
-    marginHorizontal: 56,
-    marginBottom: 8,
-    overflow: 'hidden',
-  },
-  progressTrackDesktop: {
-    height: 5,
-    marginHorizontal: 'auto',
-    width: 320,
-    marginBottom: 10,
-  },
-  progressFill: {
-    height: '100%',
-    borderRadius: 3,
-  },
-  progressLabelRow: {
+  // Dots expansíveis animados (substituem a barra de progresso).
+  dotsRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 18,
+    gap: 7,
+    marginTop: 8,
+    marginBottom: 24,
   },
-  progressLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 1.2,
-    textTransform: 'uppercase',
+  dotsRowDesktop: {
+    marginBottom: 28,
+  },
+  dot: {
+    height: 7,
+    borderRadius: 4,
   },
   ctaWrap: {
     width: '100%',

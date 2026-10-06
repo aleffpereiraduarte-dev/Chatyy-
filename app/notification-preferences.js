@@ -37,17 +37,21 @@ import { Spacing, FontSize, BorderRadius } from '../constants/theme';
 // and per-conversation pickers stay aligned. 'default' falls through to
 // the OS default sound. See ChatNotificationSettingsSheet.SYSTEM_RINGTONES
 // for the matching list — keep these two in sync.
+// Proper-noun sound names (Argon, Beat, …) are brand sound labels and read
+// the same in every language, so they carry a literal `label`. Only the three
+// translatable names carry a `labelKey` routed through t(). `soundLabel()`
+// below resolves either form.
 const SYSTEM_SOUNDS = [
-  { value: 'default',          label: 'Padrão' },
+  { value: 'default',          label: 'Padrão', labelKey: 'notifPref.snd.default' },
   { value: 'argon',            label: 'Argon' },
   { value: 'beat',             label: 'Beat' },
   { value: 'bellbird',         label: 'Bellbird' },
   { value: 'bottle',           label: 'Bottle' },
   { value: 'cesium',           label: 'Cesium' },
   { value: 'chime',            label: 'Chime' },
-  { value: 'classic',          label: 'Clássico' },
+  { value: 'classic',          label: 'Clássico', labelKey: 'notifPref.snd.classic' },
   { value: 'crystal',          label: 'Crystal' },
-  { value: 'flutey',           label: 'Flautim' },
+  { value: 'flutey',           label: 'Flautim', labelKey: 'notifPref.snd.flutey' },
   { value: 'hello',            label: 'Hello' },
   { value: 'kuiper',           label: 'Kuiper' },
   { value: 'machina',          label: 'Machina' },
@@ -55,16 +59,22 @@ const SYSTEM_SOUNDS = [
   { value: 'pixie',            label: 'Pixie' },
   { value: 'tinkle',           label: 'Tinkle' },
 ];
+// Resolve a sound's display label given the active t(). Falls back to the
+// literal proper-noun label when there's no translation key.
+function soundLabel(entry, t) {
+  if (!entry) return '';
+  return (entry.labelKey && t) ? (t(entry.labelKey) || entry.label) : entry.label;
+}
 
 const PREVIEW_OPTIONS = [
-  { value: 'always',   label: 'Sempre' },
-  { value: 'unlocked', label: 'Apenas quando desbloqueado' },
-  { value: 'never',    label: 'Nunca' },
+  { value: 'always',   labelKey: 'notifPref.previewAlways' },
+  { value: 'unlocked', labelKey: 'notifPref.previewUnlocked' },
+  { value: 'never',    labelKey: 'notifPref.previewNever' },
 ];
 const VISIBILITY_OPTIONS = [
-  { value: 'public',  label: 'Mostrar tudo' },
-  { value: 'private', label: 'Esconder conteúdo sensível' },
-  { value: 'secret',  label: 'Não mostrar notificação' },
+  { value: 'public',  labelKey: 'notifPref.visPublic' },
+  { value: 'private', labelKey: 'notifPref.visPrivate' },
+  { value: 'secret',  labelKey: 'notifPref.visSecret' },
 ];
 
 export default function NotificationPreferences() {
@@ -135,15 +145,15 @@ export default function NotificationPreferences() {
       if (r?.success === false) throw new Error(r?.error || 'failed');
     } catch (e) {
       setPrefs(prev);
-      Alert.alert('Erro', 'Não foi possível salvar');
+      Alert.alert(t('common.error'), t('notifPref.saveFailed'));
     }
-  }, [prefs]);
+  }, [prefs, t]);
 
   const addKeyword = useCallback(async () => {
     const kw = newKeyword.trim();
     if (!kw) return;
     if (kw.length > 64) {
-      Alert.alert('Erro', 'Máximo 64 caracteres');
+      Alert.alert(t('common.error'), t('notifPref.max64'));
       return;
     }
     try {
@@ -157,24 +167,24 @@ export default function NotificationPreferences() {
         }, ...prev]);
         setNewKeyword('');
       } else if (r?.data?.skipped === 'duplicate') {
-        Alert.alert('Já existe', 'Você já adicionou essa palavra');
+        Alert.alert(t('notifPref.dupTitle'), t('notifPref.dupBody'));
         setNewKeyword('');
       } else {
-        Alert.alert('Erro', r?.error || 'Não foi possível adicionar');
+        Alert.alert(t('common.error'), r?.error || t('notifPref.addFailed'));
       }
     } catch (e) {
-      Alert.alert('Erro', e?.message || 'Falha na conexão');
+      Alert.alert(t('common.error'), e?.message || t('notifPref.connFailed'));
     }
-  }, [newKeyword]);
+  }, [newKeyword, t]);
 
   const removeKeyword = useCallback(async (id) => {
     try {
       await apiCall('chat_user_keywords_remove', { id }, 'POST');
       setKeywords(prev => prev.filter(k => k.id !== id));
     } catch (e) {
-      Alert.alert('Erro', e?.message || 'Falha na conexão');
+      Alert.alert(t('common.error'), e?.message || t('notifPref.connFailed'));
     }
-  }, []);
+  }, [t]);
 
   // Per-keyword sound picker (gap_notifications #3 refinement). Optimistic
   // local update; rollback on server failure to keep the picker honest.
@@ -186,11 +196,11 @@ export default function NotificationPreferences() {
       if (r?.success === false) throw new Error(r?.error || 'failed');
     } catch (e) {
       setKeywords(prev);
-      Alert.alert('Erro', 'Não foi possível atualizar o som');
+      Alert.alert(t('common.error'), t('notifPref.soundUpdateFailed'));
     } finally {
       setEditingSoundForId(null);
     }
-  }, [keywords]);
+  }, [keywords, t]);
 
   // Snooze actions (gap_notifications #4 tail)
   const snoozeFor = useCallback(async (minutes) => {
@@ -200,9 +210,9 @@ export default function NotificationPreferences() {
         setPrefs(p => ({ ...p, snooze_until: r.data?.snooze_until || null }));
       }
     } catch (e) {
-      Alert.alert('Erro', e?.message || 'Falha');
+      Alert.alert(t('common.error'), e?.message || t('notifPref.genericFail'));
     }
-  }, []);
+  }, [t]);
   const clearSnooze = useCallback(async () => {
     try {
       await apiCall('chat_user_snooze_clear', {}, 'POST');
@@ -216,8 +226,16 @@ export default function NotificationPreferences() {
     const ts = Date.parse(prefs.snooze_until);
     if (!Number.isFinite(ts) || ts <= Date.now()) return null;
     const d = new Date(ts);
-    return `ativo até ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
-  }, [prefs.snooze_until]);
+    const time = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    return t('notifPref.snoozeUntil', { time });
+  }, [prefs.snooze_until, t]);
+
+  // Resolve segmented-picker option labels through t() (options tables hold
+  // only labelKey at module scope since t isn't available there).
+  const previewOpts = useMemo(
+    () => PREVIEW_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) })), [t]);
+  const visibilityOpts = useMemo(
+    () => VISIBILITY_OPTIONS.map(o => ({ value: o.value, label: t(o.labelKey) })), [t]);
 
   return (
     <View style={[s.container, { backgroundColor: colors.background }]}>
@@ -225,7 +243,7 @@ export default function NotificationPreferences() {
         <TouchableOpacity onPress={() => router.back()} style={s.backBtn}>
           <Text style={[s.backBtnText, { color: colors.primary }]}>{t('common.back') || 'Voltar'}</Text>
         </TouchableOpacity>
-        <Text style={[s.headerTitle, { color: colors.text }]}>Notificações</Text>
+        <Text style={[s.headerTitle, { color: colors.text }]}>{t('notifPref.title')}</Text>
         <View style={s.backBtn} />
       </View>
 
@@ -233,13 +251,12 @@ export default function NotificationPreferences() {
       <ScrollView style={s.scroll} contentContainerStyle={{ paddingBottom: 40 }}>
         {/* ─── Mention-only ──────────────────────────────────────────── */}
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>Notificações de chat</Text>
+          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('notifPref.chatSection')}</Text>
           <View style={[s.row, { borderBottomColor: colors.borderLight }]}>
             <View style={s.rowInfo}>
-              <Text style={[s.rowLabel, { color: colors.text }]}>Receber push só de menções</Text>
+              <Text style={[s.rowLabel, { color: colors.text }]}>{t('notifPref.mentionOnly')}</Text>
               <Text style={[s.rowDesc, { color: colors.textTertiary }]}>
-                Você só receberá push quando alguém te mencionar (@você ou @everyone).
-                Outras mensagens continuam aparecendo no app, mas sem som / vibração.
+                {t('notifPref.mentionOnlyDesc')}
               </Text>
             </View>
             <Switch
@@ -254,14 +271,14 @@ export default function NotificationPreferences() {
           {/* Snooze 1h shortcut */}
           <View style={[s.row, { borderBottomColor: colors.borderLight }]}>
             <View style={s.rowInfo}>
-              <Text style={[s.rowLabel, { color: colors.text }]}>Soneca 1 hora</Text>
+              <Text style={[s.rowLabel, { color: colors.text }]}>{t('notifPref.snooze1h')}</Text>
               <Text style={[s.rowDesc, { color: colors.textTertiary }]}>
-                {snoozeLabel ? `Soneca ${snoozeLabel}. Apenas menções e palavras-chave irão notificar.` : 'Suspende notificações de chat por 1 hora.'}
+                {snoozeLabel ? t('notifPref.snoozeActiveDesc', { label: snoozeLabel }) : t('notifPref.snoozeIdleDesc')}
               </Text>
             </View>
             {snoozeLabel ? (
               <TouchableOpacity onPress={clearSnooze} style={[s.pill, { backgroundColor: '#ef4444' }]}>
-                <Text style={s.pillText}>Desligar</Text>
+                <Text style={s.pillText}>{t('notifPref.turnOff')}</Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity onPress={() => snoozeFor(60)} style={[s.pill, { backgroundColor: colors.primary }]}>
@@ -273,22 +290,22 @@ export default function NotificationPreferences() {
 
         {/* ─── Privacy / Preview ─────────────────────────────────────── */}
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>Privacidade</Text>
+          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('notifPref.privacySection')}</Text>
           <Text style={[s.sectionDesc, { color: colors.textTertiary }]}>
-            Controle o que aparece no banner do sistema operacional.
+            {t('notifPref.privacyDesc')}
           </Text>
 
-          <Text style={[s.subLabel, { color: colors.textSecondary }]}>Mostrar preview de mensagens</Text>
+          <Text style={[s.subLabel, { color: colors.textSecondary }]}>{t('notifPref.showPreview')}</Text>
           <SegmentedPicker
-            options={PREVIEW_OPTIONS}
+            options={previewOpts}
             value={prefs.preview_global}
             onChange={(v) => savePref({ preview_global: v })}
             colors={colors}
           />
 
-          <Text style={[s.subLabel, { color: colors.textSecondary, marginTop: Spacing.md }]}>Tela de bloqueio</Text>
+          <Text style={[s.subLabel, { color: colors.textSecondary, marginTop: Spacing.md }]}>{t('notifPref.lockscreen')}</Text>
           <SegmentedPicker
-            options={VISIBILITY_OPTIONS}
+            options={visibilityOpts}
             value={prefs.lockscreen_visibility}
             onChange={(v) => savePref({ lockscreen_visibility: v })}
             colors={colors}
@@ -296,11 +313,9 @@ export default function NotificationPreferences() {
 
           <View style={[s.row, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}>
             <View style={s.rowInfo}>
-              <Text style={[s.rowLabel, { color: colors.text }]}>Respeitar Não Perturbe do sistema</Text>
+              <Text style={[s.rowLabel, { color: colors.text }]}>{t('notifPref.respectSystemDnd')}</Text>
               <Text style={[s.rowDesc, { color: colors.textTertiary }]}>
-                Quando o modo Foco / DND do iOS ou Android estiver ativo, suas
-                notificações de chat ficam silenciosas (menções e palavras-chave
-                continuam piercing).
+                {t('notifPref.respectSystemDndDesc')}
               </Text>
             </View>
             <Switch
@@ -314,13 +329,12 @@ export default function NotificationPreferences() {
 
         {/* ─── DND schedule ─────────────────────────────────────────── */}
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>Não perturbe (horário)</Text>
+          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('notifPref.dndSection')}</Text>
           <View style={[s.row, { borderBottomColor: colors.borderLight }]}>
             <View style={s.rowInfo}>
-              <Text style={[s.rowLabel, { color: colors.text }]}>Ativar horário silencioso</Text>
+              <Text style={[s.rowLabel, { color: colors.text }]}>{t('notifPref.dndEnable')}</Text>
               <Text style={[s.rowDesc, { color: colors.textTertiary }]}>
-                Silencia notificações de chat dentro do horário definido.
-                Menções e palavras-chave continuam piercing.
+                {t('notifPref.dndEnableDesc')}
               </Text>
             </View>
             <Switch
@@ -333,7 +347,7 @@ export default function NotificationPreferences() {
           {prefs.dnd_enabled && (
             <View style={{ flexDirection: 'row', gap: 12, paddingTop: Spacing.md }}>
               <View style={{ flex: 1 }}>
-                <Text style={[s.rowDesc, { color: colors.textTertiary, marginBottom: 4 }]}>Início</Text>
+                <Text style={[s.rowDesc, { color: colors.textTertiary, marginBottom: 4 }]}>{t('settings.dndStart') || 'Início'}</Text>
                 <TextInput
                   value={prefs.dnd_start_time || ''}
                   onChangeText={(v) => setPrefs(p => ({ ...p, dnd_start_time: v }))}
@@ -354,7 +368,7 @@ export default function NotificationPreferences() {
                 />
               </View>
               <View style={{ flex: 1 }}>
-                <Text style={[s.rowDesc, { color: colors.textTertiary, marginBottom: 4 }]}>Fim</Text>
+                <Text style={[s.rowDesc, { color: colors.textTertiary, marginBottom: 4 }]}>{t('settings.dndEnd') || 'Fim'}</Text>
                 <TextInput
                   value={prefs.dnd_end_time || ''}
                   onChangeText={(v) => setPrefs(p => ({ ...p, dnd_end_time: v }))}
@@ -380,11 +394,9 @@ export default function NotificationPreferences() {
 
         {/* ─── Keywords (with per-keyword sound) ─────────────────────── */}
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight }]}>
-          <Text style={[s.sectionTitle, { color: colors.text }]}>Palavras-chave</Text>
+          <Text style={[s.sectionTitle, { color: colors.text }]}>{t('notifPref.keywordsSection')}</Text>
           <Text style={[s.sectionDesc, { color: colors.textTertiary }]}>
-            Você receberá um push prioritário (com som distinto) quando uma das
-            mensagens recebidas contiver uma destas palavras. Toque na palavra
-            para escolher um som personalizado.
+            {t('notifPref.keywordsDesc')}
           </Text>
 
           <View style={[s.inputRow, { borderBottomColor: colors.borderLight }]}>
@@ -392,7 +404,7 @@ export default function NotificationPreferences() {
               style={[s.input, { color: colors.text, borderColor: colors.divider, backgroundColor: colors.background }]}
               value={newKeyword}
               onChangeText={setNewKeyword}
-              placeholder="Ex.: urgente, deadline, projeto X"
+              placeholder={t('notifPref.keywordPlaceholder')}
               placeholderTextColor={colors.textTertiary}
               maxLength={64}
               returnKeyType="done"
@@ -403,25 +415,25 @@ export default function NotificationPreferences() {
               onPress={addKeyword}
               disabled={!newKeyword.trim()}
             >
-              <Text style={s.addBtnText}>Adicionar</Text>
+              <Text style={s.addBtnText}>{t('notifPref.add')}</Text>
             </TouchableOpacity>
           </View>
 
           {keywords.length === 0 && !loading && (
-            <Text style={[s.empty, { color: colors.textTertiary }]}>Nenhuma palavra-chave configurada.</Text>
+            <Text style={[s.empty, { color: colors.textTertiary }]}>{t('notifPref.noKeywords')}</Text>
           )}
           {keywords.map(k => {
-            const soundLabel = (SYSTEM_SOUNDS.find(x => x.value === (k.sound || 'default')) || SYSTEM_SOUNDS[0]).label;
+            const sndLabel = soundLabel(SYSTEM_SOUNDS.find(x => x.value === (k.sound || 'default')) || SYSTEM_SOUNDS[0], t);
             return (
               <View key={k.id} style={[s.kwRow, { borderBottomColor: colors.borderLight }]}>
                 <View style={{ flex: 1 }}>
                   <Text style={[s.kwText, { color: colors.text }]}>{k.keyword}</Text>
                   <TouchableOpacity onPress={() => setEditingSoundForId(k.id)}>
-                    <Text style={[s.kwSound, { color: colors.primary }]}>Som: {soundLabel} ›</Text>
+                    <Text style={[s.kwSound, { color: colors.primary }]}>{t('notifPref.soundRow', { sound: sndLabel })}</Text>
                   </TouchableOpacity>
                 </View>
                 <TouchableOpacity onPress={() => removeKeyword(k.id)}>
-                  <Text style={[s.kwRemove, { color: '#ef4444' }]}>Remover</Text>
+                  <Text style={[s.kwRemove, { color: '#ef4444' }]}>{t('notifPref.remove')}</Text>
                 </TouchableOpacity>
               </View>
             );
@@ -439,6 +451,7 @@ export default function NotificationPreferences() {
         onClose={() => setEditingSoundForId(null)}
         onPick={(sound) => updateKeywordSound(editingSoundForId, sound)}
         colors={colors}
+        t={t}
       />
     </View>
   );
@@ -481,7 +494,7 @@ function SegmentedPicker({ options, value, onChange, colors }) {
   );
 }
 
-function SoundPickerModal({ visible, keyword, value, onClose, onPick, colors }) {
+function SoundPickerModal({ visible, keyword, value, onClose, onPick, colors, t }) {
   if (!visible) return null;
   return (
     <Modal visible transparent animationType="slide" onRequestClose={onClose}>
@@ -500,9 +513,9 @@ function SoundPickerModal({ visible, keyword, value, onClose, onPick, colors }) 
             <View style={{ width: 40, height: 4, borderRadius: 2, backgroundColor: colors.divider }} />
           </View>
           <View style={{ paddingHorizontal: 18, paddingVertical: 12 }}>
-            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>Som para "{keyword}"</Text>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>{t('notifPref.soundForTitle', { keyword })}</Text>
             <Text style={{ fontSize: 12, color: colors.textTertiary, marginTop: 4 }}>
-              16 sons do sistema. Toque para selecionar.
+              {t('notifPref.soundPickerDesc')}
             </Text>
           </View>
           <ScrollView style={{ maxHeight: 480 }}>
@@ -519,7 +532,7 @@ function SoundPickerModal({ visible, keyword, value, onClose, onPick, colors }) 
                     borderBottomColor: colors.borderLight,
                   }}
                 >
-                  <Text style={{ flex: 1, fontSize: 15, color: colors.text }}>{opt.label}</Text>
+                  <Text style={{ flex: 1, fontSize: 15, color: colors.text }}>{soundLabel(opt, t)}</Text>
                   {active && (
                     <IconCheck size={18} color={colors.primary} strokeWidth={2.5} />
                   )}

@@ -67,6 +67,19 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 const ACCENT = '#111111';
 const ACCENT2 = '#111111';
 const ACCENT_GLOW = 'rgba(17, 17, 17,0.35)';
+// ── WhatsApp-parity green accents (2026-10-04) ──
+// The founder wants the conversation list to carry WhatsApp's signature green
+// on the attention cues: the unread count pill, the unread timestamp, the
+// mention badge and the selected filter pill. Kept as brand constants (the
+// bright #25D366 reads the same in light/dark, like WhatsApp). The dark/light
+// variants below are only for the *selected filter pill* (fill + text), which
+// WhatsApp tints as a soft green chip rather than a solid bright fill.
+const WA_GREEN = '#25D366';           // unread badge, mention badge (bright)
+const WA_GREEN_TIME = '#00a884';      // unread timestamp (slightly teal, high-contrast on white)
+const WA_PILL_BG_LIGHT = '#d9fdd3';   // selected filter pill fill (light)
+const WA_PILL_BG_DARK = 'rgba(0,168,132,0.26)'; // selected filter pill fill (dark)
+const WA_PILL_TXT_LIGHT = '#027d69';  // selected filter pill text (light)
+const WA_PILL_TXT_DARK = '#4ee6b8';   // selected filter pill text (dark)
 const SWIPE_THRESHOLD = 40; // lowered from 60 for better responsiveness
 // Must match the `.swipeActionsLeft/.swipeActionsRight` width below (160)
 // so the row opens EXACTLY flush with the action buttons — otherwise the
@@ -444,6 +457,61 @@ function ListReceiptIcon({ statusType, isDark }) {
   );
 }
 
+// ── Typing-indicator helpers (shared by the WS handlers + row render) ──
+// typingUsers[convId] has carried three shapes over time:
+//   • legacy 1:1:  a bare display-name string
+//   • group v1:    an array of display-name strings
+//   • current:     an array of { email, name, recording } objects, keyed by
+//                  EMAIL so two members with the same display name no longer
+//                  overwrite/clear each other, and carrying a `recording` flag
+//                  so the row can say "gravando áudio…" vs "digitando…".
+// _normalizeTypers() coerces any of the three into the current object array so
+// every reader is shape-agnostic (old cached state survives an OTA swap).
+function _normalizeTypers(raw) {
+  if (!raw) return [];
+  const arr = Array.isArray(raw) ? raw : [raw];
+  const out = [];
+  for (const v of arr) {
+    if (v == null) continue;
+    if (typeof v === 'string') {
+      out.push({ email: '', name: v, recording: false });
+    } else if (typeof v === 'object') {
+      out.push({
+        email: String(v.email || '').toLowerCase(),
+        name: v.name || emailToDisplayName(v.email || '') || '',
+        recording: !!v.recording,
+      });
+    }
+  }
+  return out;
+}
+// Change-identity for the areEqual comparator: a row only needs to repaint when
+// the visible names OR the recording flags change (email is the dedup key, not
+// rendered, so it's excluded).
+function _typersSignature(raw) {
+  return _normalizeTypers(raw).map(e => `${e.name}:${e.recording ? 1 : 0}`).join('|');
+}
+// Remove one typer (by email) from a typingUsers map, dropping the conv key
+// entirely when no typer is left. Returns the same ref when nothing changed so
+// setState stays a no-op. An empty email clears ALL typers for the conv (a
+// stopped_typing frame that omits the email can only mean "clear this conv").
+function _removeTyperByEmail(prev, convId, email) {
+  const cur = prev[convId];
+  if (cur == null) return prev;
+  if (!email) {
+    const next = { ...prev };
+    delete next[convId];
+    return next;
+  }
+  const arr = _normalizeTypers(cur);
+  const left = arr.filter(e => e.email !== email);
+  if (left.length === arr.length) return prev; // nothing removed
+  const next = { ...prev };
+  if (left.length) next[convId] = left;
+  else delete next[convId];
+  return next;
+}
+
 const ConversationRow = React.memo(function ConversationRow({
   conversation, colors, onPress, onPressIn, onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail,
   currentEmail, t, language, isOnline: isOnlineProp, isDark, isLocked, typingUsers,
@@ -502,16 +570,20 @@ const ConversationRow = React.memo(function ConversationRow({
 
   const isOnline = !!isOnlineProp;
 
-  // typingUsers[convId] may be a string (legacy 1:1) or an array (group, one
-  // entry per active typer). Normalize to an array for rendering, then derive
-  // a single display string ("Ana", "Ana, João", "Ana e mais 2").
-  const _typingRaw = typingUsers?.[conversation.id];
-  const typingNames = Array.isArray(_typingRaw) ? _typingRaw : (_typingRaw ? [_typingRaw] : []);
+  // typingUsers[convId] is normalized (string/array legacy → object array) via
+  // _normalizeTypers. Derive a single display string ("Ana", "Ana, João",
+  // "Ana e mais 2") plus a recording flag for the subtitle.
+  const _typers = _normalizeTypers(typingUsers?.[conversation.id]);
+  const typingNames = _typers.map(e => e.name).filter(Boolean);
   const typingName = typingNames.length
     ? (typingNames.length <= 2
         ? typingNames.join(', ')
         : `${typingNames.slice(0, 2).join(', ')} +${typingNames.length - 2}`)
     : null;
+  // "gravando áudio…" only when EVERY active typer is recording a voice note
+  // (always true for a 1:1, conservative for a group so a mix never mislabels
+  // a plain typist as recording).
+  const typingRecording = _typers.length > 0 && _typers.every(e => e.recording);
 
   // Scheduled-message indicator: surface a tiny clock prefix on the row when
   // there's a pending scheduled outgoing message. Backend may attach this on
@@ -546,7 +618,11 @@ const ConversationRow = React.memo(function ConversationRow({
       // ENTREGUE. Azul só quando read_at E delivered_at (uma msg não entregue
       // não pode estar lida — matava o azul falso no chat, agora igual na lista).
       // Leitura real sempre vem com entrega (servidor + WS marcam junto).
-      const _deliv = !!lastMsg.delivered_at;
+      // [2026-10-04] belt-and-suspenders: ler implica entregar. Se o backend
+      // mandou read_at mas delivered_at veio null (peer leu via watermark), não
+      // rebaixa pra cinza — o servidor já sintetiza delivered=read, isto cobre
+      // respostas em cache antigas.
+      const _deliv = !!lastMsg.delivered_at || !!lastMsg.read_at;
       if (lastMsg.read_at && _deliv && (!isGroup || lastMsg.all_read)) statusType = 'read';
       else if (_deliv) statusType = 'delivered';
       else statusType = 'sent';
@@ -642,10 +718,22 @@ const ConversationRow = React.memo(function ConversationRow({
     if (lastMsg.type === 'call_card' && !/Chamada/.test(content)) {
       content = '\uD83D\uDCDE ' + (t('chat.voiceCall') || 'Chamada');
     }
-    if (lastMsg.type === 'image') content = '\uD83D\uDCF7 ' + (caption || _plainBody || t('chat.photo') || 'Foto');
+    // [2026-10-05] Preview de foto/v\u00EDdeo: N\u00C3O mostrar nome de arquivo/URL (feio,
+    // ex. "IMG_1234.jpg" / "image_173...jpg" / "https://..."). O _plainBody s\u00F3 \u00E9
+    // legenda leg\u00EDtima quando \u00E9 texto de verdade; se parece filename/URL/chave,
+    // ignora e mostra s\u00F3 "Foto"/"V\u00EDdeo" (paridade WhatsApp).
+    const _isFileNameLike = (s) => {
+      if (!s) return false; const v = String(s).trim();
+      if (/^https?:\/\//i.test(v)) return true;
+      if (/\.(jpe?g|png|gif|webp|heic|heif|bmp|mp4|mov|m4v|webm|avif|mp3|m4a|ogg|wav)$/i.test(v)) return true;
+      if (!/\s/.test(v) && v.length > 14 && /[_\-/\d]/.test(v) && !/[\u00E1\u00E0\u00E2\u00E3\u00E9\u00EA\u00ED\u00F3\u00F4\u00F5\u00FA\u00E7]/i.test(v)) return true; // chave/uuid/IMG_ sem espa\u00E7os
+      return false;
+    };
+    const _mediaCap = (cap, body) => cap || (body && !_isFileNameLike(body) ? body : '');
+    if (lastMsg.type === 'image') content = '\uD83D\uDCF7 ' + (_mediaCap(caption, _plainBody) || t('chat.photo') || 'Foto');
     else if (lastMsg.type === 'gif') content = '\uD83C\uDFAC ' + (caption || 'GIF');
     else if (lastMsg.type === 'sticker') content = '\uD83D\uDCAB ' + (caption || t('chat.sticker') || 'Sticker');
-    else if (lastMsg.type === 'video' && !content.startsWith('\uD83C\uDFA5')) content = '\uD83C\uDFA5 ' + (caption || _plainBody || t('chat.video') || 'Video');
+    else if (lastMsg.type === 'video' && !content.startsWith('\uD83C\uDFA5')) content = '\uD83C\uDFA5 ' + (_mediaCap(caption, _plainBody) || t('chat.video') || 'Video');
     else if (lastMsg.type === 'audio' && !content.startsWith('\uD83D\uDCDE')) content = '\uD83C\uDFB5 ' + (caption || t('chat.audio') || 'Audio');
     else if (lastMsg.type === 'file') content = '\uD83D\uDCCE ' + (lastMsg.file_name || caption || _plainBody || t('chat.file') || 'Arquivo');
     else if (lastMsg.type === 'poll') content = '\uD83D\uDCCA ' + (caption || t('chat.poll') || 'Enquete');
@@ -821,35 +909,56 @@ const ConversationRow = React.memo(function ConversationRow({
   // flips true → the if-branch is skipped → hooks count drops → React crashes).
   // React's Rules of Hooks: never conditional.
   const swipeRef = useRef(null);
+  // [polish 2026-10-05] WhatsApp-parity swipe actions: colored (not flat
+  // grey), labeled icon+text stacked, and toggle-aware (Mute/Unmute,
+  // Pin/Unpin, Archive/Unarchive) so the action matches the chat's current
+  // state. Purely presentational — the onPress handlers (and their order)
+  // are untouched, so the data/action wiring is identical to before.
+  const MuteIc = isMuted ? IconBell : IconVolume2;
   const renderLeftActions = useCallback((progress, dragX) => {
     const scale = dragX.interpolate({ inputRange: [0, 80], outputRange: [0.5, 1], extrapolate: 'clamp' });
     return (
       <View style={{ flexDirection: 'row' }}>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#3F3F46' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMute?.(conversation); }}>
-          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconVolume2 size={20} color="#fff" /></Animated.View>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#64748B' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMute?.(conversation); }}>
+          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
+            <MuteIc size={20} color="#fff" />
+            <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{isMuted ? (t('chat.unmute') || 'Reativar') : (t('chat.mute') || 'Silenciar')}</Text>
+          </Animated.View>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#52525B' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onPin?.(conversation); }}>
-          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconPin size={20} color="#fff" /></Animated.View>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#F59E0B' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onPin?.(conversation); }}>
+          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
+            <IconPin size={20} color="#fff" />
+            <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{isPinned ? (t('chat.unpin') || 'Desafixar') : (t('chat.pin') || 'Fixar')}</Text>
+          </Animated.View>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#6B7280' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onEmail?.(conversation); }}>
-          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconMail size={20} color="#fff" /></Animated.View>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#0EA5E9' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onEmail?.(conversation); }}>
+          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
+            <IconMail size={20} color="#fff" />
+            <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{t('chat.email') || 'E-mail'}</Text>
+          </Animated.View>
         </TouchableOpacity>
       </View>
     );
-  }, [conversation]);
+  }, [conversation, isMuted, isPinned, t]);
   const renderRightActions = useCallback((progress, dragX) => {
     const scale = dragX.interpolate({ inputRange: [-80, 0], outputRange: [1, 0.5], extrapolate: 'clamp' });
     return (
       <View style={{ flexDirection: 'row' }}>
-        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#4B5563' }]} onPress={() => { try { haptic.success(); } catch {} swipeRef.current?.close(); propsRef.current.onArchive?.(conversation); }}>
-          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconArchive size={20} color="#fff" /></Animated.View>
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#00A884' }]} onPress={() => { try { haptic.success(); } catch {} swipeRef.current?.close(); propsRef.current.onArchive?.(conversation); }}>
+          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
+            <IconArchive size={20} color="#fff" />
+            <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{isArchived ? (t('chat.unarchive') || 'Desarquivar') : (t('chat.archive') || 'Arquivar')}</Text>
+          </Animated.View>
         </TouchableOpacity>
         <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#EF4444' }]} onPress={() => { try { haptic.medium(); } catch {} swipeRef.current?.close(); propsRef.current.onDelete?.(conversation); }}>
-          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}><IconTrash size={20} color="#fff" /></Animated.View>
+          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
+            <IconTrash size={20} color="#fff" />
+            <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{t('chat.delete') || 'Excluir'}</Text>
+          </Animated.View>
         </TouchableOpacity>
       </View>
     );
-  }, [conversation]);
+  }, [conversation, isArchived, t]);
 
   // ── Status checkmarks (WhatsApp parity: blue on read, gray on delivered/sent) ──
   // [2026-05-21] User explicit request: "quando ver fica azul" — matches
@@ -958,7 +1067,7 @@ const ConversationRow = React.memo(function ConversationRow({
           <View style={s.avatarWrap}>
             {isChannel ? (
               <View style={{
-                width: 52, height: 52, borderRadius: 26,
+                width: 56, height: 56, borderRadius: 28,
                 backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)',
                 alignItems: 'center', justifyContent: 'center',
               }}>
@@ -968,7 +1077,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 </Svg>
               </View>
             ) : isGroup ? (
-              <GroupAvatarStack conversation={conversation} size={52} isDark={isDark} />
+              <GroupAvatarStack conversation={conversation} size={56} isDark={isDark} />
             ) : (
               <View>
                 {/* [beauty 2026-10-01] Removed the unread "halo" ring and the
@@ -978,7 +1087,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 <AvatarCircle
                   name={displayName}
                   email={otherEmail}
-                  size={52}
+                  size={56}
                   // WAVE 95: tap-avatar → fullscreen lightbox (only for direct
                   // chats; group/channel avatars don't have a single photo to
                   // enlarge — the row tap still opens the conversation).
@@ -1030,7 +1139,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 )}
                 {isLocked && <IconLock size={12} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} />}
                 <Text style={[s.rowTime, unread ? {
-                  color: ACCENT, fontWeight: '700',
+                  color: WA_GREEN_TIME, fontWeight: '700',
                 } : {
                   color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)',
                 }]}>
@@ -1096,7 +1205,7 @@ const ConversationRow = React.memo(function ConversationRow({
                 <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 10 }}>
                   <TypingDotsInline color={ACCENT} />
                   <Text style={[s.rowPreview, { color: ACCENT, fontStyle: 'italic', fontWeight: '600', flex: 0 }]} numberOfLines={1}>
-                    {isGroup ? `${typingName} ` : ''}{(isGroup && typingNames.length > 1) ? (t('chat.typingMultiple') || 'estão digitando...') : (t('chat.typing') || 'digitando...')}
+                    {isGroup ? `${typingName} ` : ''}{typingRecording ? (t('chat.recordingAudio') || 'gravando áudio...') : ((isGroup && typingNames.length > 1) ? (t('chat.typingMultiple') || 'estão digitando...') : (t('chat.typing') || 'digitando...'))}
                   </Text>
                 </View>
               ) : (
@@ -1150,7 +1259,7 @@ const ConversationRow = React.memo(function ConversationRow({
                     — it's differentiated from the count pill by the @ glyph +
                     weight, not by a new hue. Spring-pops when the count rises. */}
                 {conversation.unread_mentions > 0 && (
-                  <Animated.View style={[s.unreadBadge, s.unreadBadgeShadow, { backgroundColor: ACCENT, marginRight: 4, minWidth: 22, transform: [{ scale: mentionScale }] }]}>
+                  <Animated.View style={[s.unreadBadge, s.unreadBadgeShadow, { backgroundColor: WA_GREEN, marginRight: 4, minWidth: 22, transform: [{ scale: mentionScale }] }]}>
                     <Text style={[s.unreadText, { fontSize: 13, fontWeight: '900' }]}>@</Text>
                   </Animated.View>
                 )}
@@ -1208,21 +1317,21 @@ const ConversationRow = React.memo(function ConversationRow({
   return (
     <View style={s.swipeContainer}>
       <Animated.View style={[s.swipeActionsLeft, { opacity: leftOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#111111' }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
-          <IconVolume2 size={22} color="#fff" />
-          <Text style={s.swipeActionLabel}>{t('chat.mute') || 'Mute'}</Text>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#64748B' }]} onPress={() => { resetSwipe(); propsRef.current.onMute?.(conversation); }}>
+          {isMuted ? <IconBell size={22} color="#fff" /> : <IconVolume2 size={22} color="#fff" />}
+          <Text style={s.swipeActionLabel}>{isMuted ? (t('chat.unmute') || 'Unmute') : (t('chat.mute') || 'Mute')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#52525B' }]} onPress={() => { resetSwipe(); propsRef.current.onPin?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#F59E0B' }]} onPress={() => { resetSwipe(); propsRef.current.onPin?.(conversation); }}>
           <IconPin size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isPinned ? (t('chat.unpin') || 'Unpin') : (t('chat.pin') || 'Pin')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#6B7280' }]} onPress={() => { resetSwipe(); propsRef.current.onMarkUnread?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#0EA5E9' }]} onPress={() => { resetSwipe(); propsRef.current.onMarkUnread?.(conversation); }}>
           <IconMail size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{t('chat.markUnread') || 'Unread'}</Text>
         </TouchableOpacity>
       </Animated.View>
       <Animated.View style={[s.swipeActionsRight, { opacity: rightOpacity }]}>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#4B5563' }]} onPress={() => { try { haptic.success(); } catch {} resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginLeft: 4, marginVertical: 3, backgroundColor: '#00A884' }]} onPress={() => { try { haptic.success(); } catch {} resetSwipe(); propsRef.current.onArchive?.(conversation); }}>
           <IconArchive size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isArchived ? (t('chat.unarchive') || 'Unarchive') : (t('chat.archive') || 'Archive')}</Text>
         </TouchableOpacity>
@@ -1278,11 +1387,11 @@ const ConversationRow = React.memo(function ConversationRow({
   if ((prevConv.display_name || prevConv.name) !== (nextConv.display_name || nextConv.name)) return false;
 
   // Compare typing only for THIS conversation, not all (comparing all caused every row to re-render when anyone typed)
-  // typingUsers[convId] is now an array (per-typer list); compare by joined
-  // content so a brand-new array reference with the same names is a no-op.
+  // typingUsers[convId] is a per-typer object array; compare by a signature of
+  // visible names + recording flags so a brand-new array reference carrying the
+  // same content is a no-op (and a typing<->recording flip DOES repaint).
   const convId = prev.conversation?.id;
-  const _typKey = (v) => Array.isArray(v) ? v.join('') : (v == null ? '' : String(v));
-  if (_typKey(prev.typingUsers?.[convId]) !== _typKey(next.typingUsers?.[convId])) return false;
+  if (_typersSignature(prev.typingUsers?.[convId]) !== _typersSignature(next.typingUsers?.[convId])) return false;
 
   return true; // All properties match, skip re-render
 });
@@ -2863,6 +2972,14 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
   const [filter, setFilter] = useState('all');
   const presencesRef = useRef(new Map());
   const [presenceVersion, setPresenceVersion] = useState(0);
+  // [FIX P2] Real-time online-dot repaint. presenceVersion is deliberately kept
+  // OUT of the FlashList extraData (it bumps on every ~45s poll and would churn
+  // 200 rows). This token bumps ONLY on a real-time `presence` WS event, and is
+  // DEBOUNCED (~500ms) so a burst of online/offline frames coalesces into one
+  // list-wide repaint — enough to flip the green dot live without resurrecting
+  // the poll-driven churn.
+  const [presenceRtToken, setPresenceRtToken] = useState(0);
+  const presenceRtTimerRef = useRef(null);
   // Ghost-online guard: while OUR socket is down we can't receive presence
   // updates, so any cached "online" is untrustworthy and the green dot would
   // be a lie. Mirrors the conversation header (which already hides "online"
@@ -2982,9 +3099,12 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
   // the presence poll and, when carried here, forced a full FlashList re-render
   // list-wide every cycle (visible flicker + wasted work). Rows already read
   // live presence through presencesRef, so dropping it costs no correctness.
+  // presenceRtToken (debounced, real-time `presence` events ONLY — never the
+  // poll) IS carried so the green online-dot repaints live without reviving the
+  // poll churn.
   const extraDataMemo = React.useMemo(
-    () => ({ typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, socketUp }),
-    [typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, socketUp]
+    () => ({ typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, socketUp, presenceRtToken }),
+    [typingUsers, selectionMode, lockedIds, unlockedIds, isDark, colors, socketUp, presenceRtToken]
   );
   const [selectedIds, setSelectedIds] = useState(new Set());
   // Contact-discovery banner (WhatsApp pattern: surface "X amigos no Chatyy"
@@ -3428,13 +3548,42 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
     } catch {}
   }, [applyEventsAndReceipts]);
 
-  // Light steady-state reconcile: every 25s while mounted, catch a receipt
-  // broadcast that never landed on the list. Cheap — chatSync single-flights +
-  // debounces concurrent callers into one coalesced chat_sync delta, and we
-  // only setState for rows whose covered id actually advanced.
+  // Steady-state reconcile: catch a receipt broadcast that never landed on the
+  // list. Cheap per-call (chatSync single-flights + debounces concurrent callers
+  // into one coalesced chat_sync delta, and we only setState for rows whose
+  // covered id actually advanced) — but the OLD "every 25s, unconditionally, up
+  // to 200 convs" was a permanent QPS FLOOR on the backend delta-sync path
+  // (known ceiling ~1.5k msg/s). [FIX P2] Gate it:
+  //   (a) only while the app is FOREGROUNDED (a backgrounded app can't show the
+  //       list anyway, and reconnect catch-up heals it on resume),
+  //   (b) cadence widened 25s → 60s (a healthy socket already streams receipts
+  //       in real time, so the periodic pass is pure backstop),
+  //   (c) an IMMEDIATE pass on bg→fg resume and on WS reconnect — the two
+  //       moments a dropped receipt actually needs reconciling — so the slower
+  //       cadence costs no freshness where it matters.
   useEffect(() => {
-    const id = setInterval(() => { reconcileReceipts(); }, 25000);
-    return () => clearInterval(id);
+    let mailWs;
+    try { mailWs = require('../services/websocket').default; } catch {}
+    let appActive = AppState.currentState === 'active';
+    const id = setInterval(() => {
+      if (appActive) { try { reconcileReceipts(); } catch {} }
+    }, 60000);
+    const appSub = AppState.addEventListener('change', (s) => {
+      const nowActive = (s === 'active');
+      // bg→fg transition: reconcile once right away, then resume slow cadence.
+      if (nowActive && !appActive) { try { reconcileReceipts(); } catch {} }
+      appActive = nowActive;
+    });
+    // Post-reconnection catch-up: a receipt may have been missed while the
+    // socket was down — reconcile immediately instead of waiting up to 60s.
+    const unsubConn = mailWs?.on?.('connection', (data) => {
+      if (data?.status === 'authenticated' && appActive) { try { reconcileReceipts(); } catch {} }
+    });
+    return () => {
+      clearInterval(id);
+      try { appSub?.remove?.(); } catch {}
+      try { unsubConn?.(); } catch {}
+    };
   }, [reconcileReceipts]);
 
   useEffect(() => {
@@ -3681,34 +3830,60 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
 
       unsubs.push(mailWs.on('typing', (data) => {
         if (!data?.conversation_id || data?.email === user?.email) return;
+        const email = String(data.email || '').toLowerCase();
         const name = emailToDisplayName(data.name || data.email || '');
+        const recording = !!data.recording;
         const convId = data.conversation_id;
-        // Track an ARRAY of names per conversation so a group with several
+        // Track an ARRAY of typers per conversation so a group with several
         // people typing shows "Ana, João estão digitando…" instead of
-        // flickering between single names. Each typer has its own 3s expiry
-        // timer keyed by "convId::name" so one person stopping doesn't reset
-        // the others. typingUsers[convId] is normalized to an array; the row
-        // renderer joins it.
+        // flickering between single names. Each typer is keyed by EMAIL
+        // (two members with the SAME display name no longer overwrite/clear
+        // each other) and carries a `recording` flag so the row can show
+        // "gravando áudio…" vs "digitando…". typingUsers[convId] is an object
+        // array; _normalizeTypers keeps it shape-agnostic.
         setTypingUsers(prev => {
-          const cur = prev[convId];
-          const arr = Array.isArray(cur) ? cur : (cur ? [cur] : []);
-          if (arr.includes(name)) return prev;
-          return { ...prev, [convId]: [...arr, name] };
+          const arr = _normalizeTypers(prev[convId]);
+          const idx = arr.findIndex(e => e.email === email);
+          if (idx >= 0) {
+            const old = arr[idx];
+            if (old.name === name && old.recording === recording) return prev; // unchanged
+            const nextArr = arr.slice();
+            nextArr[idx] = { email, name, recording };
+            return { ...prev, [convId]: nextArr };
+          }
+          return { ...prev, [convId]: [...arr, { email, name, recording }] };
         });
-        const tkey = `${convId}::${name}`;
+        // Expiry timer keyed by "convId::email". TTL raised 3s → 6s to match
+        // websocket.js TYPING_STOP_DELAY=6000 — the old 3s receiver TTL equalled
+        // the 3s sender re-send cadence and flickered the indicator on/off. Safe
+        // now that the explicit stopped_typing handler below clears the row the
+        // instant the peer actually pauses, so a genuine stop no longer waits
+        // the full 6s.
+        const tkey = `${convId}::${email}`;
         if (typingTimeoutsRef.current[tkey]) clearTimeout(typingTimeoutsRef.current[tkey]);
         typingTimeoutsRef.current[tkey] = setTimeout(() => {
-          setTypingUsers(prev => {
-            const cur = prev[convId];
-            const arr = Array.isArray(cur) ? cur : (cur ? [cur] : []);
-            const left = arr.filter(n => n !== name);
-            const next = { ...prev };
-            if (left.length) next[convId] = left;
-            else delete next[convId];
-            return next;
-          });
+          setTypingUsers(prev => _removeTyperByEmail(prev, convId, email));
           delete typingTimeoutsRef.current[tkey];
-        }, 3000);
+        }, 6000);
+      }));
+
+      // [FIX P1] Explicit stopped_typing — the peer stopped typing WITHOUT
+      // sending (cleared the box / lost focus). The hub emits stopped_typing on
+      // the user's channel; the list previously ignored it, so "digitando…"
+      // lingered until the TTL expired (read as "stuck typing"). Mirror of
+      // app/chat-conversation.js's handler: drop that typer immediately and
+      // cancel its pending expiry timer. Registered in `unsubs` so it is torn
+      // down with the other WS listeners on unmount/account-switch.
+      unsubs.push(mailWs.on('stopped_typing', (data) => {
+        if (!data?.conversation_id || data?.email === user?.email) return;
+        const convId = data.conversation_id;
+        const email = String(data.email || '').toLowerCase();
+        const tkey = `${convId}::${email}`;
+        if (email && typingTimeoutsRef.current[tkey]) {
+          clearTimeout(typingTimeoutsRef.current[tkey]);
+          delete typingTimeoutsRef.current[tkey];
+        }
+        setTypingUsers(prev => _removeTyperByEmail(prev, convId, email));
       }));
 
       // Debounce the "notification" side effects (sound + haptic) so a burst
@@ -3804,23 +3979,20 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
             // subtitle still said "digitando…". Removes only the sender's name
             // so other typers in a group keep their indicator.
             try {
-              const _typerName = emailToDisplayName(data.sender_name || data.sender_email || data.sender || '');
-              const _tkey = `${data.conversation_id}::${_typerName}`;
-              if (typingTimeoutsRef.current[_tkey]) {
-                clearTimeout(typingTimeoutsRef.current[_tkey]);
-                delete typingTimeoutsRef.current[_tkey];
+              // Typers are keyed by EMAIL (see the 'typing' handler), so clear
+              // by the sender's email too — not their display name.
+              const _senderEmail = String(data.sender_email || data.sender || '').toLowerCase();
+              const _tkey = `${data.conversation_id}::${_senderEmail}`;
+              if (_senderEmail) {
+                if (typingTimeoutsRef.current[_tkey]) {
+                  clearTimeout(typingTimeoutsRef.current[_tkey]);
+                  delete typingTimeoutsRef.current[_tkey];
+                }
+                // Removes only this sender's entry so other group typers keep
+                // their indicator. Skip entirely when the email is unknown
+                // rather than clearing the whole conversation.
+                setTypingUsers(prev => _removeTyperByEmail(prev, data.conversation_id, _senderEmail));
               }
-              setTypingUsers(prev => {
-                const cur = prev[data.conversation_id];
-                if (cur == null) return prev;
-                const arr = Array.isArray(cur) ? cur : [cur];
-                const left = arr.filter(n => n !== _typerName);
-                if (left.length === arr.length) return prev; // nothing to clear
-                const nextTU = { ...prev };
-                if (left.length) nextTU[data.conversation_id] = left;
-                else delete nextTU[data.conversation_id];
-                return nextTU;
-              });
             } catch {}
           }
           // Spring LayoutAnimation when conversation moves to top
@@ -4503,6 +4675,16 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
           merged.set(data.email, newVal);
           presencesRef.current = merged;
           setPresenceVersion(v => v + 1);
+          // [FIX P2] Real-time dot repaint — DEBOUNCED token into extraData so
+          // the FlashList actually re-diffs rows (presenceVersion alone never
+          // reaches extraData). Only here, in the real-time `presence` handler;
+          // the 45s poll (presence_result above) deliberately does NOT bump it,
+          // so steady-state churn stays dead. 500ms coalesces presence bursts.
+          if (presenceRtTimerRef.current) clearTimeout(presenceRtTimerRef.current);
+          presenceRtTimerRef.current = setTimeout(() => {
+            presenceRtTimerRef.current = null;
+            setPresenceRtToken(v => (v + 1) % 1000000);
+          }, 500);
         }
       }
     });
@@ -4519,6 +4701,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
       unsubResult?.();
       unsubPresence?.();
       if (intervalId) clearInterval(intervalId);
+      if (presenceRtTimerRef.current) { clearTimeout(presenceRtTimerRef.current); presenceRtTimerRef.current = null; }
     };
   }, [conversations, user?.email]);
 
@@ -4801,9 +4984,23 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
       onSelect: (conv) => enterSelectionMode(conv.id),
       onDelete: (conv) => handleDeleteConversation(conv),
       onLockToggle: async (conv) => {
+        // Lock state = server flag OR the chat_get_locked id-set (covers the
+        // Rust list path). Flip to the opposite, update BOTH the per-conv flag
+        // and lockedIds so the row hides/shows immediately regardless of which
+        // list transport served it. unlockedIds is reset for this conv so a
+        // freshly-locked chat demands biometric again on next open.
+        const willLock = !(conv.locked || lockedIds.has(conv.id));
         try {
-          await api.chatLock(conv.id, !conv.locked);
-          setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, locked: !conv.locked ? 1 : 0 } : c));
+          await api.chatLock(conv.id, willLock);
+          setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, locked: willLock ? 1 : 0 } : c));
+          setLockedIds(prev => {
+            const next = new Set(prev);
+            if (willLock) next.add(conv.id); else next.delete(conv.id);
+            return next;
+          });
+          if (!willLock) {
+            setUnlockedIds(prev => { const n = new Set(prev); n.delete(conv.id); return n; });
+          }
         } catch {}
       },
       onClear: (conv) => {
@@ -5397,9 +5594,14 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
   // home screen reveals no peer name, no preview, no avatar. The user
   // opens the folder explicitly (biometric / PIN gate handled per-row in
   // ChatLongPressSheet → onLockToggle).
+  // [chat-lock 2026-10-04] A conv is locked when the server stamped
+  // `locked:1` (PHP chat_list path) OR when its id is in the chat_get_locked
+  // set. The id-set is what covers the Rust /chat/list fast-path, which never
+  // returns the per-conv `locked` flag — without it a locked chat would leak
+  // (with full preview) into the main list whenever Rust served the page.
   const lockedConversations = useMemo(
-    () => conversations.filter(c => !!c.locked && !c.archived),
-    [conversations]
+    () => conversations.filter(c => (!!c.locked || lockedIds.has(c.id)) && !c.archived),
+    [conversations, lockedIds]
   );
   const lockedCount = lockedConversations.length;
 
@@ -5431,7 +5633,8 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
       // here keeps the main list free of "redacted" rows that would
       // otherwise leak metadata (timestamp, unread count) to a shoulder-
       // surfer even when the bubble preview was already redacted.
-      if (c.locked) return false;
+      // lockedIds covers the Rust fast-path (no per-conv `locked` flag).
+      if (c.locked || lockedIds.has(c.id)) return false;
       if (c.type === 'group' || c.type === 'channel') return true;
       const hasName = !!(c.display_name || c.name);
       const hasPeer = !!(c.other_email || c.contact_email || c.peer_email || c.email);
@@ -5527,7 +5730,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
       return kb - ka;
     });
     return list;
-  }, [filter, conversations, archivedConversations, lockedConversations, debouncedQuery, chatFolders, user?.email]);
+  }, [filter, conversations, archivedConversations, lockedConversations, lockedIds, debouncedQuery, chatFolders, user?.email]);
 
   // Feature C — partition drafts at the top so we can render a collapsible
   // "Rascunhos (X)" section above the rest. When 2+ drafts exist:
@@ -5709,6 +5912,18 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
     return base.filter(c => !draftConvIds.has(String(c.id)));
   }, [filteredConversations, hasDraftSection, draftsSectionOpen, draftConvIds, pinnedAvatarsMode, pinnedConversations]);
 
+  // [perf] Stable contentContainerStyle for the list. Was an inline array
+  // literal rebuilt on EVERY ChatListTab render (presence tick, typing, badge,
+  // theme) → a fresh prop reference each time forced the native scroll
+  // container to reconcile its contentContainerStyle. The only value that
+  // actually varies is the empty-state flag; the tablet/web centering is
+  // constant. Memoizing kills the churn without changing layout.
+  const listIsEmpty = visibleConversations.length === 0;
+  const listContentContainerStyle = useMemo(() => [
+    listIsEmpty && s.listEmpty,
+    (Platform.OS === 'web' || RESP_IS_TABLET) && { maxWidth: CONTENT_MAX_WIDTH, width: '100%', alignSelf: 'center' },
+  ], [listIsEmpty]);
+
   // [F.5 2026-05-29] Long-press a user-created list chip → confirm → delete.
   // Only the manual folder chips (those passed a `folder` prop) are deletable;
   // the built-in filters (all/unread/groups/…) ignore long-press.
@@ -5737,16 +5952,22 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
 
   const FilterChip = useCallback(({ label, value, count, folder }) => {
     const active = filter === value;
+    // WhatsApp-parity pills: selected = soft green fill + dark-green text + a
+    // thin green border; unselected = thin gray outline + muted gray text.
+    const pillBg = active
+      ? (isDark ? WA_PILL_BG_DARK : WA_PILL_BG_LIGHT)
+      : 'transparent';
+    const pillBorder = active
+      ? (isDark ? 'rgba(78,230,184,0.35)' : 'rgba(2,125,105,0.22)')
+      : (isDark ? 'rgba(255,255,255,0.18)' : 'rgba(17,17,17,0.16)');
+    const pillTxt = active
+      ? (isDark ? WA_PILL_TXT_DARK : WA_PILL_TXT_LIGHT)
+      : (isDark ? '#8696a0' : '#667781');
     return (
       <TouchableOpacity
         style={[
           s.chip,
-          active
-            ? [s.chipActive, isDark && { backgroundColor: '#e9edef', borderColor: '#e9edef' }]
-            : {
-                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)',
-                borderColor: 'transparent',
-              },
+          { backgroundColor: pillBg, borderColor: pillBorder },
           isWeb && { transition: 'all 0.18s cubic-bezier(0.4,0,0.2,1)', cursor: 'pointer' },
         ]}
         onPress={() => setFilter(filter === value ? 'all' : value)}
@@ -5754,17 +5975,19 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
         delayLongPress={350}
         activeOpacity={0.7}
       >
-        <Text style={[s.chipText, active ? { color: isDark ? '#0e1621' : '#fff' } : { color: isDark ? '#8696a0' : '#667781' }]}>
+        <Text style={[s.chipText, { color: pillTxt }]}>
           {label}
         </Text>
         {count > 0 ? (
           <View style={[
             s.chipBadge,
             {
-              backgroundColor: active ? (isDark ? 'rgba(14,22,33,0.15)' : 'rgba(255,255,255,0.28)') : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.08)'),
+              backgroundColor: active
+                ? (isDark ? 'rgba(78,230,184,0.22)' : 'rgba(2,125,105,0.16)')
+                : (isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.08)'),
             },
           ]}>
-            <Text style={[s.chipBadgeText, { color: active ? (isDark ? '#0e1621' : '#fff') : (isDark ? '#8696a0' : '#667781') }]}>{count > 99 ? '99+' : count}</Text>
+            <Text style={[s.chipBadgeText, { color: pillTxt }]}>{count > 99 ? '99+' : count}</Text>
           </View>
         ) : null}
       </TouchableOpacity>
@@ -6180,20 +6403,13 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
       const typed = (debouncedQuery || '').trim();
       if (typed !== secretCode) return null;
     }
-    // Entering the hidden section is itself gated by Face ID / passcode.
-    // The per-chat gate still fires when the user opens one of the rows,
-    // but the index-level gate stops a shoulder-surfer from even reading
-    // the redacted-row count / order without authenticating once.
-    const openLocked = async () => {
-      try {
-        const { confirmWithBiometric } = require('../services/biometricGate');
-        const ok = await confirmWithBiometric({
-          reason: t('chat.hiddenSection') || 'Conversas trancadas',
-        });
-        if (!ok) return;
-      } catch {}
-      setFilter('locked');
-    };
+    // [chat-lock 2026-10-04] Entering the hidden section opens the dedicated
+    // /locked-chats screen, which performs the Face ID / passcode gate on
+    // mount and fetches the locked conversations UNMASKED (filter=locked).
+    // The in-list filter='locked' path is no longer used for entry because
+    // the main-feed payload masks locked previews on the wire — only the
+    // dedicated screen's fetch carries the real last-message text.
+    const openLocked = () => { router.push('/locked-chats'); };
     return (
       <TouchableOpacity
         style={[s.archivedHeader, {
@@ -6760,7 +6976,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
   ), [loading, t, router]);
 
   const ItemSeparatorComponent = useCallback(() => (
-    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', marginLeft: 80, marginRight: 0 }]} />
+    <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', marginLeft: 84, marginRight: 0 }]} />
   ), [isDark]);
 
   return (
@@ -6926,12 +7142,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
           ListFooterComponent={ListFooterComponent}
           renderItem={renderItem}
           ListEmptyComponent={ListEmptyComponent}
-          contentContainerStyle={[
-            visibleConversations.length === 0 && s.listEmpty,
-            // Tablet/desktop/web: centraliza a coluna de conversas numa largura
-            // confortável em vez de esticar (lista de telefone esticada = feia no iPad).
-            (Platform.OS === 'web' || RESP_IS_TABLET) && { maxWidth: CONTENT_MAX_WIDTH, width: '100%', alignSelf: 'center' },
-          ]}
+          contentContainerStyle={listContentContainerStyle}
           ItemSeparatorComponent={ItemSeparatorComponent}
           removeClippedSubviews={Platform.OS !== 'web'}
           initialNumToRender={15}
@@ -6948,8 +7159,6 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
             />
           }
           extraData={extraDataMemo}
-          onScroll={onListScroll}
-          scrollEventThrottle={16}
         />
         </FadeSlideIn>
       )}
@@ -7038,24 +7247,9 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
         </TouchableOpacity>
       )}
 
-      {/* FAB button — Telegram-grade glass orb */}
-      <BrandFab
-        style={{ position: 'absolute', right: 18, bottom: 80 }}
-        onPress={toggleFabMenu}
-        onLongPress={() => setShowBroadcast(true)}
-        size={58}
-        radius={18}
-        color={ACCENT}
-        accessibilityLabel={t?.('chat.newConversation') || 'New conversation'}
-        contentTransform={[{
-          rotate: fabMenuAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '45deg'] }),
-        }]}
-      >
-        <Svg width={26} height={26} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth={2.4} strokeLinecap="round" strokeLinejoin="round">
-          <Line x1="12" y1="5" x2="12" y2="19" />
-          <Line x1="5" y1="12" x2="19" y2="12" />
-        </Svg>
-      </BrandFab>
+      {/* [2026-10-05] FAB flutuante REMOVIDO (pedido do founder — pegada WhatsApp,
+          que não tem "+" flutuante na lista). Nova conversa/grupo/canal agora é só
+          pelo "+" verde do cabeçalho → /chat-new (que já cria chat, grupo e canal). */}
 
       {/* Broadcast Modal */}
       <BroadcastModal
@@ -8323,16 +8517,17 @@ const s = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 7,
-    backgroundColor: '#111111',
+    // WhatsApp-parity: unread count sits in a bright green pill.
+    backgroundColor: WA_GREEN,
   },
   // [beauty 2026-05-31] One soft, tasteful shadow — no glow stack. Calmed from a
   // heavier purple bloom (0.38 / 0 2px 7px 0.4) to a single gentle lift so the
   // pill reads as a clean colored count, not a glowing blob.
   unreadBadgeShadow: {
     ...Platform.select({
-      ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.22, shadowRadius: 3 },
+      ios: { shadowColor: WA_GREEN, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.3, shadowRadius: 3 },
       android: { elevation: 2 },
-      web: { boxShadow: '0 1px 4px rgba(17, 17, 17,0.28)' },
+      web: { boxShadow: '0 1px 4px rgba(37,211,102,0.4)' },
       default: {},
     }),
   },
@@ -8381,9 +8576,19 @@ const s = StyleSheet.create({
     textTransform: 'uppercase',
   },
   nativeSwipeBtn: {
-    width: 72,
+    width: 74,
     justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 3,
+  },
+  // Label under the swipe-action icon (WhatsApp parity). adjustsFontSizeToFit
+  // on the <Text> keeps longer verbs (e.g. "Desarquivar") inside the 74px
+  // button without wrapping to a second line.
+  nativeSwipeLabel: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 4,
   },
   archivedHeader: {
     flexDirection: 'row',

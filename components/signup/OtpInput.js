@@ -1,14 +1,30 @@
 import { useState, useRef, useEffect } from 'react';
-import { View, TextInput, StyleSheet, Platform } from 'react-native';
+import { View, TextInput, StyleSheet, Platform, Animated, Easing } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 
 const DIGITS = 6;
+// Animatable TextInput so each box can spring on fill without a wrapping View
+// that would perturb the fixed 44x52 layout.
+const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
 
 export default function OtpInput({ value = '', onChange = () => {}, autoFocus = true }) {
   const { colors } = useTheme();
   const [digits, setDigits] = useState(Array(DIGITS).fill(''));
   const [focusedIdx, setFocusedIdx] = useState(-1);
   const refs = useRef([]);
+  // Per-box scale-pop (1 → 1.12 → 1) when a box transitions empty → filled.
+  // WhatsApp/iMessage OTP feel — gives each tapped-in digit a tiny bit of life.
+  const scales = useRef(Array.from({ length: DIGITS }, () => new Animated.Value(1))).current;
+  const popBox = (i) => {
+    const sv = scales[i];
+    if (!sv) return;
+    try {
+      Animated.sequence([
+        Animated.timing(sv, { toValue: 1.12, duration: 70, useNativeDriver: true }),
+        Animated.timing(sv, { toValue: 1, duration: 90, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      ]).start();
+    } catch { /* native driver may be unavailable on web in some states */ }
+  };
 
   // Sync from parent when value changes externally (e.g., reset to empty).
   // prevValueRef inicia undefined → primeiro render compara com value e
@@ -34,15 +50,21 @@ export default function OtpInput({ value = '', onChange = () => {}, autoFocus = 
       prevValueRef.current = joined;
       onChange(joined);
       refs.current[Math.min(clean.length, DIGITS - 1)]?.focus();
+      // Stagger-pop each box that a paste newly filled.
+      for (let j = 0; j < clean.length; j++) {
+        if (!digits[j]) popBox(j);
+      }
       return;
     }
     const clean = text.replace(/\D/g, '');
+    const wasEmpty = !digits[index];
     const newDigits = [...digits];
     newDigits[index] = clean;
     setDigits(newDigits);
     const joined = newDigits.join('');
     prevValueRef.current = joined;
     onChange(joined);
+    if (clean && wasEmpty) popBox(index);
     if (clean && index < DIGITS - 1) refs.current[index + 1]?.focus();
   };
 
@@ -59,7 +81,7 @@ export default function OtpInput({ value = '', onChange = () => {}, autoFocus = 
   return (
     <View style={s.row}>
       {digits.map((d, i) => (
-        <TextInput
+        <AnimatedTextInput
           key={i}
           ref={el => refs.current[i] = el}
           style={[
@@ -68,6 +90,7 @@ export default function OtpInput({ value = '', onChange = () => {}, autoFocus = 
               color: colors.text,
               backgroundColor: colors.authInputBg,
               borderColor: d ? colors.primary : (focusedIdx === i ? colors.authInputFocusBorder : colors.authInputBorder),
+              transform: [{ scale: scales[i] }],
             },
             focusedIdx === i && {
               borderWidth: 2,

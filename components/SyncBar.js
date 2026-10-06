@@ -4,7 +4,7 @@
  * Shows sync progress during initial sync
  */
 import { useState, useEffect, useRef } from 'react';
-import { View, Text, StyleSheet, Animated, Platform } from 'react-native';
+import { View, Text, StyleSheet, Animated, Platform, AppState } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing } from '../constants/theme';
@@ -117,7 +117,19 @@ export default function SyncBar() {
       clearTimeout(graceTimer.current);
       // Already authed? nothing to announce — and clear any stale offline bar.
       if (mailWs?.authenticated) { if (statusRef.current === 'offline') hide(); return; }
-      const grace = hasConnectedOnceRef.current ? (Platform.OS === 'web' ? 5000 : 3000) : 12000;
+      // [2026-10-05 iOS foreground] Native grace 3000→8000: ao voltar do 2º
+      // plano no iOS o rádio precisa acordar e o socket reconectar+reautenticar
+      // (1-5s), e o grace de 3s pintava "Conectando" em TODA volta. 8s tolera o
+      // reconnect do foreground em silêncio (o cache já está na tela), alinhado
+      // à paciência de 9s do banner da conversa. Só surge num problema REAL.
+      // [2026-10-05] Grace base + BUMP pós-foreground: ao acordar do 2º plano o
+      // rádio iOS renegocia 1-2s ANTES do WS tentar handshake+auth (BR→NY ~150ms
+      // em cellular frio), estourando os 8s → SÓ o banner do topo (SyncBar)
+      // pintava "Conectando" enquanto ChatListTab(15s) e a conversa(9s) ficavam
+      // quietos. Alinha ao bump de 15s do ChatListTab nos primeiros 3s pós-wake.
+      const base = hasConnectedOnceRef.current ? (Platform.OS === 'web' ? 5000 : 8000) : 12000;
+      const sinceFg = Date.now() - (_lastForegroundTs || 0);
+      const grace = base + (Platform.OS !== 'web' && sinceFg < 3000 ? 7000 : 0);
       graceTimer.current = setTimeout(() => {
         if (!mountedRef.current || mailWs?.authenticated) return;
         // [WA-parity 2026-05-31] Honest copy: only say "Conectando…" when the
@@ -286,13 +298,52 @@ export default function SyncBar() {
       } catch {}
     }
 
+    // [2026-10-05 "Conectando toda vez que abro o app"] Reset the connecting
+    // state across background→foreground. iOS kills the socket ~30s into
+    // background; the grace armed on that disconnect EXPIRES WHILE BACKGROUNDED,
+    // so status was already 'connecting' the instant the user reopened the app
+    // — a guaranteed "Conectando…" flash on EVERY open until the fresh reconnect
+    // authenticated (~0.5-1s later). Fix: on background, clear timers + drop any
+    // connecting banner (nothing is visible anyway); on foreground, if already
+    // authed hide immediately, else give the reconnect a FRESH grace window from
+    // now (so the quick foreground reconnect stays silent — WhatsApp parity).
+    let _lastAppState = AppState.currentState;
+    // [2026-10-05] timestamp da última volta do 2º plano — scheduleConnecting
+    // usa p/ estender o grace (rádio iOS leva 1-2s só pra renegociar antes do
+    // WS sequer tentar handshake+auth, estourando 8s na acordada).
+    let _lastForegroundTs = 0;
+    const appStateSub = AppState.addEventListener('change', (next) => {
+      if (!mountedRef.current) return;
+      if (next === 'inactive') return; // ignore transient (iOS/Android quirk)
+      if (next === 'background') {
+        clearTimeout(graceTimer.current);
+        if (statusRef.current === 'connecting') hide();
+        _lastAppState = next;
+        return;
+      }
+      if (next === 'active' && _lastAppState !== 'active') {
+        _lastAppState = next;
+        _lastForegroundTs = Date.now();
+        if (mailWs?.authenticated) { hide(); return; }
+        // Not yet authed on reopen: clear any stale 'connecting' and re-arm a
+        // fresh grace so a sub-second reconnect never paints the bar.
+        if (statusRef.current === 'connecting') hide();
+        clearTimeout(graceTimer.current);
+        scheduleConnecting();
+      }
+    });
+
     // [false-offline fix 2026-10-03] "Live socket wins" safety poll: if the WS
     // is authenticated but a stale 'offline' banner is still up (NetInfo never
     // sent a recovery event — the classic stuck-banner case), clear it. Same
     // 1s pattern OfflineNotice.js uses.
     const socketPoll = setInterval(() => {
       if (!mountedRef.current) return;
-      if (mailWs?.authenticated && statusRef.current === 'offline') {
+      // [2026-10-05] Cura banner preso em 'offline' OU 'connecting': se o socket
+      // já autenticou mas o banner ficou pintado (o evento connected/authenticated
+      // chegou ANTES do banner, então nenhum novo evento virá escondê-lo), derruba
+      // em ~1s em vez de esperar o teto de 7s.
+      if (mailWs?.authenticated && (statusRef.current === 'offline' || statusRef.current === 'connecting')) {
         deviceOnlineRef.current = true;
         hide();
       }
@@ -304,6 +355,7 @@ export default function SyncBar() {
       clearTimeout(syncStallTimer.current);
       clearTimeout(offlineDebounce);
       clearInterval(socketPoll);
+      appStateSub?.remove?.();
       mailWs?.off?.('connection', handleConnection);
       mailWs?.off?.('sync_progress', handleSync);
       mailWs?.off?.('chat_bootstrap_progress', handleBootstrap);

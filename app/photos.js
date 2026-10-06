@@ -2698,8 +2698,13 @@ function PhotosScreenInner() {
   // GRID SIZE
   // ============================================================
   const gridItemSize = useMemo(() => {
-    const gap = 2; // explicit 2px gap between items
-    return (width - gap * (gridColumns + 1)) / gridColumns;
+    // Dense, perfectly-aligned grid: each cell carries 1px of margin on every
+    // side (s.gridItem), so a cell occupies size + 2px horizontally. Filling
+    // the row exactly ⇒ size = width/cols − 2. The old formula assumed a 2px
+    // gap that didn't match the 1.5px item margin, leaving a sub-pixel drift
+    // that made the right column clip — hence the "solto/desalinhado" look.
+    const GRID_GAP = 2;
+    return width / gridColumns - GRID_GAP;
   }, [width, gridColumns]);
 
   const cycleGridColumns = useCallback(() => {
@@ -2794,13 +2799,20 @@ function PhotosScreenInner() {
     const _bannerDeviceCount = deviceTotalCount || devicePhotos.length || 0;
     const _bannerRealPending = Math.max(0, _bannerDeviceCount - (backedUpTotal || 0));
     if (backupStatus === 'complete' && _bannerRealPending === 0 && _bannerDeviceCount > 0 && _perAssetCorroborates) {
+      // Single unified "complete" status block: count + storage in one line
+      // (no separate green toast + storage card anymore).
+      const _cloudCount = Math.max(backedUpTotal || 0, _bannerDeviceCount || 0);
       return (
         <View style={[s.backupBanner, { backgroundColor: isDark ? '#052e16' : '#f0fdf4', borderColor: isDark ? '#16a34a40' : '#bbf7d040' }]}>
           <View style={s.backupBannerLeft}>
-            <IconCloudCheck size={20} color={colors.success || '#16a34a'} />
+            <View style={s.backupBannerIconWrap}>
+              <IconCloudCheck size={20} color={colors.success || '#16a34a'} />
+            </View>
             <View style={{ marginLeft: 10, flex: 1 }}>
               <Text style={[s.backupBannerTitle, { color: colors.success || '#16a34a' }]}>{t('photos.backupComplete')}</Text>
-              {storageText ? <Text style={[s.backupBannerSub, { color: colors.textSecondary }]}>{storageText}</Text> : null}
+              <Text style={[s.backupBannerSub, { color: colors.textSecondary }]} numberOfLines={1}>
+                {t('photos.photosSafeInCloud', { count: _cloudCount })}{storageText ? ` · ${storageText}` : ''}
+              </Text>
             </View>
           </View>
         </View>
@@ -2835,10 +2847,14 @@ function PhotosScreenInner() {
         return (
           <View style={[s.backupBanner, { backgroundColor: isDark ? '#052e16' : '#f0fdf4', borderColor: isDark ? '#16a34a40' : '#bbf7d040' }]}>
             <View style={s.backupBannerLeft}>
-              <IconCloudCheck size={20} color={colors.success || '#16a34a'} />
+              <View style={s.backupBannerIconWrap}>
+                <IconCloudCheck size={20} color={colors.success || '#16a34a'} />
+              </View>
               <View style={{ marginLeft: 10, flex: 1 }}>
-                <Text style={[s.backupBannerTitle, { color: colors.success || '#16a34a' }]}>{backedUpTotal} fotos salvas na nuvem</Text>
-                {storageText ? <Text style={[s.backupBannerSub, { color: colors.textSecondary }]}>{storageText}</Text> : null}
+                <Text style={[s.backupBannerTitle, { color: colors.success || '#16a34a' }]}>{t('photos.backupComplete')}</Text>
+                <Text style={[s.backupBannerSub, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {t('photos.photosSafeInCloud', { count: backedUpTotal })}{storageText ? ` · ${storageText}` : ''}
+                </Text>
               </View>
             </View>
           </View>
@@ -3102,7 +3118,7 @@ function PhotosScreenInner() {
         onLongPress={onLongPress}
         style={[
           s.gridItem,
-          { width: gis, height: gis, borderRadius: 8 },
+          { width: gis, height: gis, borderRadius: 6 },
           isSelected && { borderWidth: 3, borderColor: primaryColor },
         ]}
       >
@@ -3142,15 +3158,21 @@ function PhotosScreenInner() {
           </View>
         )}
 
-        {/* Backup status indicator */}
-        {photo.isDevice && (
-          <View style={s.backupIndicator}>
-            {photo.backedUp ? (
-              <IconCloudCheck size={14} color="#16a34a" />
-            ) : (
-              <IconCloudOff size={14} color="#94a3b8" />
-            )}
-          </View>
+        {/* Backup status seal — discreet (WhatsApp / Google Photos style).
+            Backed-up photos get a small, low-key translucent tick instead of a
+            loud green check-in-a-white-box on every single thumb; photos that
+            are NOT yet backed up get a subtle amber cloud so they stand out as
+            the ones still pending. */}
+        {photo.isDevice && !sm && (
+          photo.backedUp ? (
+            <View style={s.syncSeal} pointerEvents="none">
+              <IconCheck size={9} color="#fff" />
+            </View>
+          ) : (
+            <View style={[s.syncSeal, s.syncSealPending]} pointerEvents="none">
+              <IconCloudOff size={10} color="#fff" />
+            </View>
+          )
         )}
 
         {/* Favorite heart overlay (Google Photos style) — top-right */}
@@ -4858,8 +4880,12 @@ function PhotosScreenInner() {
           </>
         )}
 
-        {/* Fixed backup progress banner (Google Photos style - visible across all tabs) */}
-        {backupStatus === 'backing_up' && (
+        {/* Compact cross-tab backup strip. On the Photos tab this is suppressed
+            because renderBackupBanner() already shows a single, richer status
+            block in the list header — rendering both produced the duplicated
+            "Backup completo" the founder flagged. Keep it only for the tabs
+            (Albums/Pessoas/Mapa) that have no inline banner. */}
+        {activeTab !== 'photos' && backupStatus === 'backing_up' && (
           <View style={{ backgroundColor: isDark ? '#172554' : '#F1F3F5', paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
             <ActivityIndicator size="small" color={colors.primary} />
             <View style={{ flex: 1 }}>
@@ -4872,7 +4898,7 @@ function PhotosScreenInner() {
             </View>
           </View>
         )}
-        {backupStatus === 'complete' && (() => {
+        {activeTab !== 'photos' && backupStatus === 'complete' && (() => {
           // Use the SAME pending math as the Backup tab card (deviceCount −
           // serverCount) instead of the native scanLibrary `pendingCount`.
           // The native count can lie when UserDefaults has stale IDs (e.g.
@@ -5684,19 +5710,29 @@ function MemoriesCarousel({
     animsRef.current = Array.from({ length: totalCards }, () => new Animated.Value(0));
   }
   useEffect(() => {
-    const anims = animsRef.current.map((v, i) =>
-      Animated.timing(v, {
+    // BUGFIX (buraco branco): the card-entrance values are rebuilt to fresh
+    // Animated.Value(0) in render whenever `totalCards` changes — which happens
+    // when the async `drive_memories` buckets land AFTER first mount (count
+    // goes 8 → 9). The old effect had an empty dep array, so it never re-fired
+    // the stagger for the rebuilt values: every card stayed at opacity 0 and
+    // the whole strip rendered as an invisible ~180px band — the "giant white
+    // gap" under "MEMÓRIAS (9)". Keying the effect on `totalCards` re-runs the
+    // entrance for the new value set, so the cards actually paint. It still
+    // won't replay on a plain filter toggle (count unchanged).
+    if (!animsRef.current || animsRef.current.length === 0) return;
+    const anims = animsRef.current.map((v, i) => {
+      v.setValue(0);
+      return Animated.timing(v, {
         toValue: 1,
         duration: 380,
         delay: i * 80,
         useNativeDriver: false,
-      })
-    );
-    Animated.parallel(anims).start();
-    // Run once on mount — entrance only plays the first time the section
-    // appears (we don't want it replaying on filter toggle).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+      });
+    });
+    const run = Animated.parallel(anims);
+    run.start();
+    return () => { try { run.stop(); } catch {} };
+  }, [totalCards]);
 
   const renderAnimCard = (idx, children) => {
     const v = animsRef.current[idx] || new Animated.Value(1);
@@ -6103,6 +6139,14 @@ const s = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
   },
+  backupBannerIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(22,163,74,0.12)',
+  },
   backupBannerTitle: {
     fontSize: FontSize.sm,
     fontWeight: '700',
@@ -6145,10 +6189,10 @@ const s = StyleSheet.create({
     flexWrap: 'wrap',
   },
   gridItem: {
-    margin: 1.5,
+    margin: 1,
     overflow: 'hidden',
     position: 'relative',
-    borderRadius: 8,
+    borderRadius: 6,
     backgroundColor: '#e5e7eb',
   },
   gridImage: {
@@ -6179,6 +6223,23 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.9)',
     borderRadius: 10,
     padding: 2,
+  },
+  // Discreet sync seal — tiny translucent circle, bottom-right, legible on any
+  // photo without shouting. Backed-up = neutral dark glass + white tick;
+  // pending = soft amber + cloud-off.
+  syncSeal: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    width: 15,
+    height: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.38)',
+  },
+  syncSealPending: {
+    backgroundColor: 'rgba(217,119,6,0.88)',
   },
   selectCircle: {
     position: 'absolute',
@@ -6524,7 +6585,12 @@ const s = StyleSheet.create({
   // iOS uses similar values on the Memories carousel in Photos.app.
   memoryCardLg: {
     width: 320,
-    aspectRatio: 16 / 9,
+    // Explicit height (320 × 9/16 = 180) instead of aspectRatio: a horizontal
+    // ScrollView nested in the SectionList header does not always impose a
+    // cross-axis constraint, and an aspectRatio-only child can resolve to 0 on
+    // some native passes. A fixed height guarantees the strip reserves its
+    // real size and never collapses.
+    height: 180,
     borderRadius: 20,
     overflow: 'hidden',
     position: 'relative',

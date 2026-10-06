@@ -171,6 +171,10 @@ const ACCENT = '#111111';
 const ACCENT_DARK = '#111111';
 const ACCENT_GLOW = 'rgba(17, 17, 17,0.35)';
 const ACCENT2 = '#111111';
+// WhatsApp-parity accent (2026-10-04) — the founder wants the Conversas list to
+// carry WhatsApp's signature green on the "new chat" action. Kept as a single
+// brand constant (same in light/dark, like WhatsApp itself).
+const WA_GREEN = '#25D366';
 const DESKTOP_BREAKPOINT = 900;
 
 // Mobile bottom bar: 4 tabs — Reels + Chats + Calls + Apps.
@@ -827,9 +831,15 @@ function ChatHub() {
             hitSlop={6} style={btnStyle} accessibilityLabel="Search">
             <IconSearch size={18} color={headerIconColor} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => router.push('/chat-new')} activeOpacity={0.6}
-            hitSlop={6} style={btnStyle} accessibilityLabel="New chat">
-            <IconPlus size={18} color={headerIconColor} />
+          {/* WhatsApp-parity: "new chat" is a filled GREEN circle (the one
+              pop of color in the otherwise clean header). */}
+          <TouchableOpacity onPress={() => router.push('/chat-new')} activeOpacity={0.75}
+            hitSlop={6} style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]} accessibilityLabel="New chat">
+            {/* [2026-10-06 founder] "+" do topo era VERDE (#25D366 + ícone branco) e
+                chamava atenção demais; WhatsApp usa ícones neutros no header.
+                Agora igual aos outros botões do topo: fundo cinza + ícone na cor
+                do texto. (headerPlusGreen fica no stylesheet p/ eventual uso.) */}
+            <IconPlus size={20} color={headerIconColor} />
           </TouchableOpacity>
         </>
       );
@@ -1070,7 +1080,11 @@ function ChatHub() {
         )}
         <View style={[styles.titleWrap, { flex: 1 }]}>
           {activeTab === 'chats' ? (
-            <BrandTitle colors={colors} />
+            // WhatsApp iOS "pegada": big bold left-aligned title instead of the
+            // Chatyy wordmark. Uses the i18n label already defined in `titles`.
+            <Text style={[styles.bigTitle, { color: colors.text }]} numberOfLines={1}>
+              {titles.chats}
+            </Text>
           ) : (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <TouchableOpacity onPress={() => handleTabPress('chats')} hitSlop={10}>
@@ -1968,6 +1982,23 @@ const styles = StyleSheet.create({
   },
   headerAccentBtn: {
     backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  // WhatsApp-parity filled green "new chat" circle.
+  headerPlusGreen: {
+    backgroundColor: WA_GREEN,
+    marginLeft: 2,
+    ...Platform.select({
+      ios: { shadowColor: WA_GREEN, shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.3, shadowRadius: 4 },
+      android: { elevation: 2 },
+      web: { boxShadow: '0 1px 5px rgba(37,211,102,0.4)' },
+      default: {},
+    }),
+  },
+  // WhatsApp iOS large title ("Conversas") — big, bold, left-aligned.
+  bigTitle: {
+    fontSize: 32,
+    fontWeight: '800',
+    letterSpacing: -0.9,
   },
 
   // Search bar

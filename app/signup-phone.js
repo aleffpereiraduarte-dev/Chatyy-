@@ -232,6 +232,10 @@ export default function SignupPhone() {
   const doneScale = useRef(new Animated.Value(0)).current;
   // Username availability check pop — Instagram-style spring from 0 → 1.2 → 1.
   const checkScale = useRef(new Animated.Value(0)).current;
+  // Phone-valid check pop — same spring, fires when the typed number reaches a
+  // plausible length for the selected country (WhatsApp parity: a green check
+  // confirms "this looks like a real number" before the user even submits).
+  const phoneCheckScale = useRef(new Animated.Value(0)).current;
   // OTP caret blink — custom 2x24 caret rendered absolutely inside the focused
   // OTP box. Native TextInput's caret can't be styled and is hidden via
   // caretHidden; this Animated.Value loops 1↔0 every 530ms (matches iOS
@@ -276,6 +280,31 @@ export default function SignupPhone() {
     const c = COUNTRIES.find(x => x.code === countryCode) || COUNTRIES[0];
     return toE164(c.dial, phone);
   }, [countryCode, phone]);
+
+  // Live phone validity — true once the digits reach a plausible length for
+  // the selected country AND the composed E.164 passes the format regex. Drives
+  // the inline green check + success-tinted hairline on the phone step so the
+  // user gets positive feedback the moment the number looks complete. Purely
+  // presentational — the CTA's own disabled gate (>= 8 digits) is unchanged.
+  const phoneValid = useMemo(() => {
+    const c = COUNTRIES.find(x => x.code === countryCode) || COUNTRIES[0];
+    const digits = phone.replace(/\D/g, '');
+    const min = Math.max(8, (c.maxDigits || 11) - 1);
+    return digits.length >= min && E164_RE.test(fullPhone);
+  }, [countryCode, phone, fullPhone]);
+
+  // Pop the phone-valid check when validity flips to true; reset otherwise so
+  // the next valid transition re-triggers a fresh spring.
+  useEffect(() => {
+    try {
+      if (phoneValid) {
+        phoneCheckScale.setValue(0);
+        Animated.spring(phoneCheckScale, { toValue: 1, friction: 5, tension: 120, useNativeDriver: true }).start();
+      } else {
+        phoneCheckScale.setValue(0);
+      }
+    } catch { /* native driver may be unavailable on web in some states */ }
+  }, [phoneValid, phoneCheckScale]);
 
   // Auto-suggest handle from name when entering the handle step. Runs on
   // back-navigate too (vs goName one-shot below). Slug rule: lowercase, strip
@@ -959,8 +988,8 @@ export default function SignupPhone() {
                       </TouchableOpacity>
                       <View style={{
                         flexDirection: 'row', alignItems: 'center',
-                        borderBottomWidth: _isFocused ? 2 : StyleSheet.hairlineWidth,
-                        borderBottomColor: _isFocused ? _hairlineActive : _hairline,
+                        borderBottomWidth: (_isFocused || phoneValid) ? 2 : StyleSheet.hairlineWidth,
+                        borderBottomColor: phoneValid ? colors.success : (_isFocused ? _hairlineActive : _hairline),
                         marginTop: -StyleSheet.hairlineWidth,
                       }}>
                         <View style={{ width: 64, paddingVertical: 14, paddingRight: 8 }}>
@@ -991,6 +1020,14 @@ export default function SignupPhone() {
                           onBlur={() => setFocused('')}
                           autoFocus
                         />
+                        {/* Inline valid-number check — springs in when the typed
+                            digits look complete for the country. WhatsApp parity:
+                            confirms the number before the user taps Continue. */}
+                        {phoneValid && (
+                          <Animated.View style={{ marginLeft: 8, transform: [{ scale: phoneCheckScale }] }}>
+                            <IconCheckCircle size={20} color={colors.success} />
+                          </Animated.View>
+                        )}
                       </View>
                     </View>
                   );
@@ -1277,6 +1314,11 @@ export default function SignupPhone() {
               const _hairline = colors.border;
               const _isFirstFocused = focused === 'firstName';
               const _isLastFocused  = focused === 'lastName';
+              // Initials preview — when there's no photo yet but the user has
+              // started typing, show their initial(s) in the avatar circle
+              // instead of the generic person glyph. Updates live as they type,
+              // mirroring how WhatsApp/iMessage previews the monogram avatar.
+              const _initials = ((firstName || '').trim().charAt(0) + (lastName || '').trim().charAt(0)).toUpperCase();
               const _pickAvatar = () => {
                 // Telegram pattern: 2 options only — Open Gallery / Cancel.
                 // Camera + random-avatar dropped (deferred).
@@ -1323,6 +1365,10 @@ export default function SignupPhone() {
                           source={{ uri: avatarUri }}
                           style={{ width: 96, height: 96, borderRadius: 48 }}
                         />
+                      ) : _initials ? (
+                        <Text style={{ fontSize: 34, fontWeight: '800', color: colors.primary, letterSpacing: 0.5 }}>
+                          {_initials}
+                        </Text>
                       ) : (
                         <IconUser size={36} color={colors.textTertiary} />
                       )}

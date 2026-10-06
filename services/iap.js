@@ -149,7 +149,7 @@ export const STORAGE_TIERS = [
     skuAnnualGoogle:  'chatyy_storage_5tb',  basePlanAnnualGoogle:  'annual' },
 ];
 
-export const STORAGE_FREE_GB = 50;
+export const STORAGE_FREE_GB = 20; // [2026-10-04] free = 20GB (era 50 stale; bate com backend plans.php)
 
 // Catalog used by DiamondTopUpSheet to render the grid before the StoreKit
 // fetchProducts() response lands. Keep in sync with the server catalog —

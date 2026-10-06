@@ -9,9 +9,62 @@ let Device = null;
 
 // Foreground notification callback — set by _layout to show in-app toast
 let _onForegroundNotification = null;
-export function setForegroundNotificationHandler(handler) {
-  _onForegroundNotification = handler;
+// [2026-10-05 WhatsApp-parity] Toast dedupe. The same chat message can reach
+// the foreground app twice within ~1s (FCM push handler + WS new_message →
+// _triggerForegroundToast, or handleNotification + receivedSub on some
+// platforms) and used to pop two identical toasts. Key by message_id (fallback:
+// conversation_id+body) inside a 15s window; the first one wins.
+const _toastSeen = new Map();
+function _toastDedupeKey(notif) {
+  try {
+    const d = notif?.data || {};
+    if (d.message_id) return 'm:' + String(d.message_id);
+    if (d.conversation_id) return 'c:' + String(d.conversation_id) + ':' + String(notif?.body || '').slice(0, 80);
+  } catch {}
+  return null;
 }
+function _toastIsDuplicate(notif) {
+  const key = _toastDedupeKey(notif);
+  if (!key) return false;
+  const now = Date.now();
+  const prev = _toastSeen.get(key);
+  if (prev && now - prev < 15000) return true;
+  _toastSeen.set(key, now);
+  if (_toastSeen.size > 200) {
+    for (const [k, t] of _toastSeen) { if (now - t > 15000) _toastSeen.delete(k); }
+  }
+  return false;
+}
+export function setForegroundNotificationHandler(handler) {
+  _onForegroundNotification = (typeof handler === 'function')
+    ? (notif) => {
+        try {
+          // Never toast the conversation the user is looking at (the thread
+          // itself renders the bubble) and never toast a duplicate.
+          const cid = notif?.data?.conversation_id;
+          if (cid != null && _activeConversationId != null && String(cid) === String(_activeConversationId)) return;
+          if (_toastIsDuplicate(notif)) return;
+        } catch {}
+        handler(notif);
+      }
+    : handler;
+}
+
+// Master "push enabled" switch mirror (ProfileSettingsSheet → "Notificações
+// push"). When the user turns push OFF we unregister the device token
+// server-side (so the backend stops delivering), but a push already in
+// flight — or one from another account/session on the same device — can
+// still land. This in-memory flag lets the notification handler fully
+// silence content-type notifications locally as a belt-and-suspenders gate.
+// Default TRUE so a cold start before the toggle hydrates never silently
+// drops notifications; ProfileSettingsSheet calls setPushMasterEnabled() on
+// mount and on every toggle to keep it honest.
+let _pushMasterEnabled = true;
+export function setPushMasterEnabled(enabled) {
+  _pushMasterEnabled = enabled !== false;
+  try { globalThis.__chatyy_push_master_enabled = _pushMasterEnabled; } catch {}
+}
+export function isPushMasterEnabled() { return _pushMasterEnabled; }
 
 // Active conversation tracker — set by chat-conversation.js to suppress notifications for the open chat
 let _activeConversationId = null;
@@ -261,6 +314,19 @@ async function loadModules() {
             shouldPlaySound: false,
             shouldSetBadge: false,
           };
+        }
+
+        // Master push switch (ProfileSettingsSheet "Notificações push"). When
+        // the user turned push OFF we also unregistered the device token
+        // server-side, but a push already in flight (or from another
+        // account/session on this device) can still land. Fully silence
+        // content-type notifications locally. Signaling pushes (incoming_call,
+        // login_challenge, silent_sync, location_*) were short-circuited above
+        // and are intentionally NOT gated here — a disabled "push" toggle must
+        // never swallow an incoming call or a login-approval prompt. Badge is
+        // left off too so a disabled user sees no count bump.
+        if (_pushMasterEnabled === false) {
+          return { shouldShowAlert: false, shouldPlaySound: false, shouldSetBadge: false };
         }
 
         // Suppress notification if the user is already viewing this conversation
@@ -797,18 +863,21 @@ export async function registerForPushNotifications() {
       },
     ]);
 
+    // [2026-10-05] Action button titles follow the app language (pt/en/es).
+    const L = await _notifActionLabels();
+
     await Notifications.setNotificationCategoryAsync('CHAT', [
       {
         identifier: 'REPLY',
-        buttonTitle: 'Responder',
+        buttonTitle: L.reply,
         textInput: {
-          submitButtonTitle: 'Enviar',
-          placeholder: 'Mensagem...',
+          submitButtonTitle: L.send,
+          placeholder: L.placeholder,
         },
       },
       {
         identifier: 'MARK_READ',
-        buttonTitle: 'Marcar como lido',
+        buttonTitle: L.markRead,
       },
     ]);
 
@@ -819,16 +888,16 @@ export async function registerForPushNotifications() {
     await Notifications.setNotificationCategoryAsync('chat_message', [
       {
         identifier: 'reply',
-        buttonTitle: 'Responder',
+        buttonTitle: L.reply,
         textInput: {
-          submitButtonTitle: 'Enviar',
-          placeholder: 'Mensagem...',
+          submitButtonTitle: L.send,
+          placeholder: L.placeholder,
         },
         options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
       },
       {
         identifier: 'mark_read',
-        buttonTitle: 'Marcar como lido',
+        buttonTitle: L.markRead,
         options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
       },
     ]);
@@ -869,16 +938,17 @@ export async function registerForPushNotifications() {
     await Notifications.setNotificationCategoryAsync('chat_mention', [
       {
         identifier: 'REPLY',
-        buttonTitle: 'Responder',
+        buttonTitle: L.reply,
         textInput: {
-          submitButtonTitle: 'Enviar',
-          placeholder: 'Responder menção...',
+          submitButtonTitle: L.send,
+          placeholder: L.replyMention,
         },
+        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
       },
       {
         identifier: 'MARK_READ',
-        buttonTitle: 'Marcar como lido',
-        options: { isDestructive: false, isAuthenticationRequired: false },
+        buttonTitle: L.markRead,
+        options: { isDestructive: false, isAuthenticationRequired: false, opensAppToForeground: false },
       },
     ]);
 
@@ -906,12 +976,12 @@ export async function registerForPushNotifications() {
     await Notifications.setNotificationCategoryAsync('chat_with_mute', [
       {
         identifier: 'reply',
-        buttonTitle: 'Responder',
-        textInput: { submitButtonTitle: 'Enviar', placeholder: 'Mensagem...' },
+        buttonTitle: L.reply,
+        textInput: { submitButtonTitle: L.send, placeholder: L.placeholder },
       },
-      { identifier: 'mark_read', buttonTitle: 'Marcar como lido' },
-      { identifier: 'mute_8h', buttonTitle: 'Silenciar 8h' },
-      { identifier: 'snooze_1h', buttonTitle: 'Soneca 1h' },
+      { identifier: 'mark_read', buttonTitle: L.markRead },
+      { identifier: 'mute_8h', buttonTitle: L.mute8h },
+      { identifier: 'snooze_1h', buttonTitle: L.snooze1h },
     ]);
 
     // feed_like / feed_comment / feed_follow — social actions (view only, no text reply)
@@ -1160,12 +1230,50 @@ export async function sendTokenToBackend(pushToken) {
   }
 }
 
+// Two-letter language code of the UI: the user's manual choice (Settings →
+// Idioma, mirrored to AsyncStorage by LanguageContext) wins, else the device
+// locale (expo-localization), else 'pt'. Only pt/en/es are rendered server-side.
+async function _deviceLangCode() {
+  let code = '';
+  try {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    code = (await AsyncStorage.getItem('app_language_manual')) || '';
+  } catch {}
+  if (!code) {
+    try {
+      const Localization = require('expo-localization');
+      const locs = Localization.getLocales?.() || [];
+      code = locs[0]?.languageCode || Localization.locale || '';
+    } catch {}
+  }
+  code = String(code || '').toLowerCase().slice(0, 2);
+  return ['pt', 'en', 'es'].includes(code) ? code : 'pt';
+}
+
+// Localized titles for the notification ACTION buttons. iOS/Android render
+// these natively from the registered category, so they must be literal strings
+// at registration time (re-registered on every registerForPushNotifications).
+const _NOTIF_ACTION_LABELS = {
+  pt: { reply: 'Responder', send: 'Enviar', placeholder: 'Mensagem...', markRead: 'Marcar como lida', view: 'Ver', mute8h: 'Silenciar 8h', snooze1h: 'Soneca 1h', replyMention: 'Responder menção...' },
+  en: { reply: 'Reply', send: 'Send', placeholder: 'Message...', markRead: 'Mark as read', view: 'View', mute8h: 'Mute 8h', snooze1h: 'Snooze 1h', replyMention: 'Reply to mention...' },
+  es: { reply: 'Responder', send: 'Enviar', placeholder: 'Mensaje...', markRead: 'Marcar como leído', view: 'Ver', mute8h: 'Silenciar 8h', snooze1h: 'Posponer 1h', replyMention: 'Responder mención...' },
+};
+async function _notifActionLabels() {
+  const code = await _deviceLangCode();
+  return _NOTIF_ACTION_LABELS[code] || _NOTIF_ACTION_LABELS.pt;
+}
+
 async function _sendTokenToBackendInner(pushToken) {
   _diagPush('send_start', pushToken ? ('len=' + String(pushToken).length) : 'no token');
   const email = await _getActiveEmailSafe();
   try {
     const { apiCall } = require('./api');
-    const r1 = await apiCall('register_push_token', { token: pushToken, platform: Platform.OS }, 'POST');
+    // [2026-10-05] Device language rides with the token so the backend can
+    // render chat push previews ("📷 Foto" / "📷 Photo") in the recipient's
+    // language (chat.php _chatPushLang reads tokens.json[].lang → data.json
+    // language → pt). Ignored by backends that don't store it yet.
+    const _lang = await _deviceLangCode();
+    const r1 = await apiCall('register_push_token', { token: pushToken, platform: Platform.OS, lang: _lang }, 'POST');
     _diagPush('send_expo', r1?.success ? 'ok' : ('fail:' + (r1?.error || 'unknown')));
     if (r1?.success) {
       _markFlushed(pushToken + '|' + email + '|');
@@ -1183,6 +1291,7 @@ async function _sendTokenToBackendInner(pushToken) {
           token: fcmTok,
           platform: 'android',
           token_type: 'fcm_device',
+          lang: _lang,
         }, 'POST');
         _diagPush('send_fcm', r2?.success ? 'ok' : ('fail:' + (r2?.error || 'unknown')));
         if (r2?.success) {
@@ -1245,6 +1354,7 @@ export async function flushPendingTokens() {
     try {
       const payload = { token: entry.token, platform: entry.platform || Platform.OS };
       if (entry.token_type) payload.token_type = entry.token_type;
+      try { payload.lang = await _deviceLangCode(); } catch {}
       const r = await apiCall('register_push_token', payload, 'POST');
       if (r?.success) {
         flushed++;
@@ -1318,8 +1428,37 @@ async function _writeJsonKey(key, val) {
  *                                 retry from the stale-token banner tap).
  * @returns {Promise<{ok:boolean, throttled?:boolean, token?:string}>}
  */
+// Read the user's master "push enabled" switch (per-account, with legacy
+// global fallback). Default TRUE when unset. Mirrors the namespacing
+// ProfileSettingsSheet uses so the two never disagree.
+async function _readPushMasterPref() {
+  try {
+    const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+    const email = await _getActiveEmailSafe();
+    const nk = email ? `push_enabled:${email}` : 'push_enabled';
+    let v = await AsyncStorage.getItem(nk);
+    if (v == null && nk !== 'push_enabled') v = await AsyncStorage.getItem('push_enabled');
+    return v !== 'false';
+  } catch { return true; }
+}
+
 export async function ensurePushTokenFresh(opts = {}) {
   if (Platform.OS === 'web') return { ok: false };
+  // Respect the master "push enabled" switch (ProfileSettingsSheet). When the
+  // user turned push OFF, the automatic cold-start / foreground re-register
+  // must NOT silently re-register the device token — otherwise the backend
+  // would resume delivery and the toggle would look broken (the unregister it
+  // did would be undone on the next app open). Also keep the in-memory
+  // handler flag in sync and make sure no stale token lingers server-side.
+  // `opts.ignoreMaster` lets an explicit user-initiated re-enable bypass this.
+  if (!opts.ignoreMaster) {
+    const masterEnabled = await _readPushMasterPref();
+    setPushMasterEnabled(masterEnabled);
+    if (!masterEnabled) {
+      try { await removeTokenFromBackend(); } catch {}
+      return { ok: false, disabled: true };
+    }
+  }
   const now = Date.now();
   if (!opts.force) {
     const lastAt = await _readJsonKey(PUSH_REFRESH_LAST_KEY, 0);
@@ -1399,20 +1538,14 @@ export async function setupNotificationListeners() {
   const loaded = await loadModules();
   if (!loaded) return () => {};
 
-  // Explicitly request permissions early so iOS prompts on first launch
-  try {
-    const { status: existingStatus } = await Notifications.getPermissionsAsync();
-    if (existingStatus !== 'granted') {
-      await Notifications.requestPermissionsAsync({
-        ios: {
-          allowAlert: true,
-          allowBadge: true,
-          allowSound: true,
-          allowProvisional: false,
-        },
-      });
-    }
-  } catch {}
+  // [FIX push-prompt 2026-10-05] The early permission REQUEST that used to
+  // live here was removed. Wiring the listeners below needs no permission,
+  // but calling requestPermissionsAsync() here fired the iOS/Android push
+  // dialog on the very first screen — before the user had even logged in.
+  // The permission request now happens only via ensurePushTokenFresh →
+  // registerForPushNotifications, which _layout/AuthContext invoke AFTER
+  // authentication (gated on auth?.user). See registerForPushNotifications()
+  // which still requests permission when a token is actually needed.
 
   // [2026-06-09 sweep] FCM/APNs token ROTATION listener. The OS can rotate the
   // push token at any time (app restore, GMS update, APNs re-issue); before
@@ -1511,6 +1644,17 @@ export async function setupNotificationListeners() {
     }
   });
 
+  // [2026-10-05] After an inline chat action (Responder / Marcar como lida), the
+  // tapped banner — and every other banner of that conversation (iOS stacks
+  // them per thread) — is dismissed, like WhatsApp. Fire-and-forget.
+  const _dismissAfterChatAction = (response, conversationId) => {
+    try {
+      const id = response?.notification?.request?.identifier;
+      if (id) Notifications.dismissNotificationAsync(id).catch?.(() => {});
+    } catch {}
+    try { dismissConversationNotifications(conversationId).catch(() => {}); } catch {}
+  };
+
   const _dispatchNotificationResponse = (response) => {
     if (!response) return;
     // Dedup by notification id so the cold-start replay below can't re-handle a
@@ -1553,6 +1697,9 @@ export async function setupNotificationListeners() {
       const userText = response.userText;
       if (userText?.trim()) {
         handleChatReplyFromNotification(data.conversation_id, userText.trim());
+        // WhatsApp parity: replying from the banner = you read the chat → clear
+        // this conversation's notifications from the tray (and trim the badge).
+        _dismissAfterChatAction(response, data.conversation_id);
       }
       return;
     }
@@ -1560,6 +1707,7 @@ export async function setupNotificationListeners() {
     // but that branch guards on `data?.uid` so chat pushes (with `conversation_id`) fall through here.
     if ((actionId === 'mark_read' || actionId === 'MARK_READ' || actionId === 'mark_read_chat') && data?.conversation_id) {
       handleMarkReadChatFromNotification(data.conversation_id);
+      _dismissAfterChatAction(response, data.conversation_id);
       return;
     }
     // [notif-p0p1] Smart-reply chip tap: NSE registers UNTextInputNotificationActions

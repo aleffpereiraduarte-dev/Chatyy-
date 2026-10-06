@@ -3397,6 +3397,15 @@ export default function OneScreen() {
         try { audioRecordingRef.current.stop(); } catch {}
         audioRecordingRef.current = null;
       }
+      // [2026-10-04 P0] Encerra também a sessão WebRTC de voz ao vivo. Antes, sair
+      // da tela da Bia (navegação/back/troca de conta) com a voz ativa desmontava
+      // o componente SEM chamar realtimeRef.stop() → RTCPeerConnection, o track do
+      // microfone, o <audio> remoto e (nativo) a sessão de áudio em modo gravação
+      // ficavam VIVOS: mic preso ligado + som de outros apps abafado.
+      if (realtimeRef.current) {
+        try { realtimeRef.current.stop(); } catch {}
+        realtimeRef.current = null;
+      }
     };
   }, []);
 

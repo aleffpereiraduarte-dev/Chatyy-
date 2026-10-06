@@ -12,6 +12,7 @@ try { autoBackupMod = require('../services/autoBackup'); } catch {}
 import { clearAudioCache, getAudioCacheSize, getAudioCacheCount } from '../services/audioCache';
 import Svg, { Path, Circle as SvgCircle, Rect, Line, Polygon } from 'react-native-svg';
 import AvatarCircle from './AvatarCircle';
+import WallpaperPicker from './WallpaperPicker';
 import SettingsSegmented from './SettingsSegmented';
 import {
   IconUser, IconEdit, IconCamera, IconChevronRight, IconLock, IconArrowLeft,
@@ -1386,124 +1387,27 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
   // ─── Wallpaper picker sub-screen ───
   if (subScreen === 'wallpaper') {
-    const WALLPAPER_COLORS = [
-      '#111111', '#0C8767', '#E4DCD4', '#008069', '#1B3A2D',
-      '#111B21', '#D5DBDF', '#EFEAE2', '#B3C8D6', '#FFC4C4',
-    ];
-    const currentWp = settings.wallpaper || 'none';
-    const selectWallpaper = (val) => {
-      saveSettings({ wallpaper: val });
-    };
+    // New WhatsApp-iOS-style picker. Presented over a plain backdrop; closing
+    // returns to the settings root (same as the old SubHeader back button).
+    // Scope defaults to "Todas as conversas" (global) since there is no single
+    // conversation in context here — applying persists via the existing
+    // account-wide chat setting (settings.wallpaper → chatUpdateSettings).
     return (
       <View style={[styles.container, { backgroundColor: screenBg }]}>
-        <SubHeader title={t?.('config.wallpaper') || 'Papel de parede do chat'} />
-        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 100 }}>
-          <SectionCard>
-            <SectionLabel label={t?.('config.wallpaperDefault') || 'Padrao'} />
-            <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 20, paddingBottom: 20 }}>
-              <TouchableOpacity
-                onPress={() => selectWallpaper('none')}
-                style={{
-                  width: 52, height: 52, borderRadius: 26, borderWidth: 3,
-                  borderColor: currentWp === 'none' ? ACCENT : (isDark ? '#374151' : '#e5e7eb'),
-                  backgroundColor: isDark ? '#1f2937' : '#f9fafb', alignItems: 'center', justifyContent: 'center',
-                }}
-                activeOpacity={0.7}
-              >
-                {currentWp === 'none' && <IconCheck size={20} color={ACCENT} />}
-              </TouchableOpacity>
-              <View style={{ justifyContent: 'center' }}>
-                <Text style={{ fontSize: 15, color: colors.text, fontWeight: '500' }}>{t?.('config.wallpaperNone') || 'Sem papel de parede'}</Text>
-              </View>
-            </View>
-          </SectionCard>
-
-          <SectionCard style={{ marginTop: 12 }}>
-            <SectionLabel label={t?.('config.wallpaperSolid') || 'Cores solidas'} />
-            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 14, paddingHorizontal: 20, paddingBottom: 20 }}>
-              {WALLPAPER_COLORS.map(c => (
-                <TouchableOpacity
-                  key={c}
-                  onPress={() => selectWallpaper(c)}
-                  style={{
-                    width: 52, height: 52, borderRadius: 26, backgroundColor: c, borderWidth: 3,
-                    borderColor: currentWp === c ? '#fff' : 'transparent',
-                    alignItems: 'center', justifyContent: 'center',
-                    ...(currentWp === c ? Platform.select({
-                      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4 },
-                      android: { elevation: 4 },
-                      web: { boxShadow: '0 2px 8px rgba(0,0,0,0.3)' },
-                    }) : {}),
-                  }}
-                  activeOpacity={0.7}
-                >
-                  {currentWp === c && <IconCheck size={20} color="#fff" />}
-                </TouchableOpacity>
-              ))}
-            </View>
-          </SectionCard>
-
-          {/* Upload custom wallpaper */}
-          <SectionCard style={{ marginTop: 12 }}>
-            <SectionLabel label={t?.('config.wallpaperCustom') || 'Personalizado'} />
-            <TouchableOpacity
-              style={[styles.linkRowModern, { paddingVertical: 14 }]}
-              onPress={async () => {
-                if (Platform.OS === 'web') {
-                  const input = document.createElement('input');
-                  input.type = 'file';
-                  input.accept = 'image/*';
-                  input.onchange = async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    try {
-                      const reader = new FileReader();
-                      reader.onload = () => {
-                        const dataUrl = reader.result;
-                        saveSettings({ wallpaper: dataUrl.substring(0, 500000) });
-                      };
-                      reader.readAsDataURL(file);
-                    } catch {}
-                  };
-                  input.click();
-                } else {
-                  try {
-                    const { launchImageLibraryAsync } = await import('expo-image-picker');
-                    const result = await launchImageLibraryAsync({
-                      mediaTypes: ['images'],
-                      quality: 0.6, allowsEditing: true,
-                    });
-                    if (!result.canceled && result.assets?.[0]) {
-                      saveSettings({ wallpaper: result.assets[0].uri });
-                    }
-                  } catch {}
-                }
-              }}
-              activeOpacity={0.7}
-            >
-              <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.1)' : '#ecfdf5' }]}>
-                <IconUpload size={16} color={ACCENT} />
-              </View>
-              <Text style={[styles.linkText, { color: colors.text }]}>{t?.('config.wallpaperUpload') || 'Enviar imagem'}</Text>
-              <IconChevronRight size={16} color={isDark ? '#4b5563' : '#c5c5c5'} />
-            </TouchableOpacity>
-            {/* Preview current custom wallpaper */}
-            {settings.wallpaper && !settings.wallpaper.startsWith('#') && settings.wallpaper !== 'none' && settings.wallpaper.length > 20 && (
-              <View style={{ paddingHorizontal: 20, paddingBottom: 16 }}>
-                <View style={{ width: '100%', height: 120, borderRadius: 12, overflow: 'hidden', backgroundColor: isDark ? '#1f2937' : '#f3f4f6' }}>
-                  <RNImage source={{ uri: settings.wallpaper }} style={{ width: '100%', height: '100%' }} resizeMode="cover" />
-                </View>
-                <TouchableOpacity
-                  onPress={() => selectWallpaper('none')}
-                  style={{ marginTop: 8, alignSelf: 'center', paddingHorizontal: 16, paddingVertical: 6, borderRadius: 16, backgroundColor: isDark ? 'rgba(220,38,38,0.1)' : '#fef2f2' }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={{ color: '#dc2626', fontSize: 12, fontWeight: '600' }}>{t?.('common.remove') || 'Remover'}</Text>
-                </TouchableOpacity>
-              </View>
-            )}
-          </SectionCard>
-        </ScrollView>
+        <WallpaperPicker
+          visible
+          onClose={() => setSubScreen(null)}
+          colors={colors}
+          isDark={isDark}
+          t={t}
+          conversationId={null}
+          currentValue={settings.wallpaper || 'none'}
+          defaultScope="all"
+          onApply={(value, scope) => {
+            // Only the global scope is actionable from settings (no conversation).
+            saveSettings({ wallpaper: value });
+          }}
+        />
       </View>
     );
   }

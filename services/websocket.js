@@ -111,6 +111,16 @@ const PING_INTERVAL = 5000;
 // RTT spikes (would need a 12s round-trip to false-positive) and open-thread
 // drops to 10s via _chatActive (see _startPing).
 const PING_TIMEOUT = 12000;
+// [2026-10-05 conectando-preso] Client-side auth watchdog. A socket can reach
+// OPEN and keep answering pings (so the zombie detector never trips, since
+// the server pongs pre-auth too) yet never receive auth_success — e.g. the
+// auth frame or its reply was lost on a flaky link. Without a client guard the
+// socket sits connected-but-unauthenticated until the server's 30s AuthTimeout
+// closes it, which the user sees as a ~30s "Conectando". If we don't get
+// auth_success within this window, tear down and reconnect fast. Comfortably
+// above a worst-case handshake RTT (auth lands in ~167ms in prod) so a healthy
+// slow link never false-positives.
+const AUTH_WATCHDOG_MS = 6000;
 // [P0 2026-05-25 auth-reject storm] After this many consecutive
 // refreshed-but-still-rejected auth attempts, stop auto-reconnecting and
 // force a real re-login instead of storming the server. A single transient
@@ -128,7 +138,17 @@ const AUTH_REJECT_BACKOFF_MAX = 60000;
 // real-time relay to online peers was lost). 500 ≈ a very chatty offline burst.
 const MAX_QUEUE_SIZE = 500;
 const TYPING_DEBOUNCE = 3000;   // Send typing every 3s max
-const TYPING_STOP_DELAY = 3000; // Send stopped_typing after 3s idle
+// [2026-10-05 typing-flicker] Auto-stop backstop MUST be strictly greater than
+// TYPING_DEBOUNCE. When the two were equal (both 3000), the per-conversation
+// auto-stop timer fired at the exact 3s boundary where the next throttled
+// `typing` frame is due — so a continuously-typing user emitted a spurious
+// `stopped_typing` right before each re-send, flickering the peer's
+// "digitando…" off-then-on. At 2x the debounce the periodic re-send always
+// re-arms this timer before it can fire, so it only ever triggers after the
+// user has genuinely paused (and acts purely as a safety net — the primary
+// stop is the explicit sendStoppedTyping the UI fires 3s after the last
+// keystroke / on send / on background).
+const TYPING_STOP_DELAY = 6000; // Auto-stop backstop: 2x debounce (was 3000 — raced the re-send)
 const CLIENT_MSG_RETRY_MS = 3000; // Retry outgoing messages after 3s
 const CLIENT_MSG_MAX_RETRIES = 3;
 // Hard cap on the in-flight ACK-tracking map. If an app sits for hours with
@@ -157,6 +177,7 @@ class MailWebSocket {
     this.reconnectAttempt = 0;
     this.reconnectTimer = null;
     this.pingTimer = null;
+    this._authWatchdog = null;    // [2026-10-05] timer: force reconnect if auth_success never arrives
     this.destroyed = false;
     this._hidden = false;
     this.lastPongTime = 0;
@@ -295,6 +316,32 @@ class MailWebSocket {
         if (socketDead && this.token && !this.destroyed) {
           this.reconnectAttempt = 0;
           this.connect(this.token);
+        } else if (this._lastNetType && state.type && state.type !== this._lastNetType
+                   && this.ws && this.ws.readyState === WebSocket.OPEN && !this.destroyed) {
+          // [2026-10-05 handoff/WhatsApp-tier] Genuine interface switch
+          // (wifi↔cellular): the socket frequently goes HALF-OPEN — readyState
+          // still OPEN but packets are black-holed — which is the classic
+          // "perdeu conexão sem perceber". Instead of waiting ~18s for the pong
+          // watchdog, PROBE immediately (one ping, 1.8s pong deadline) and
+          // force-reconnect only if the probe proves the socket dead. We only
+          // PROBE (never blind-reconnect) so iOS NetInfo type-flaps on a healthy
+          // socket just cost one ping — the returning pong cancels the timer and
+          // nothing thrashes. Preserves the "don't reconnect on every flip" policy.
+          try {
+            const probeSentAt = Date.now();
+            this._pingTs = probeSentAt;
+            try { this._send({ type: 'ping', ts: probeSentAt }); } catch {}
+            const t = setTimeout(() => {
+              if (this.destroyed) return;
+              if (this.lastPongTime < probeSentAt && this.token) {
+                try { console.warn('[WS] net handoff probe failed — forcing reconnect'); } catch {}
+                try { this._cleanup(); } catch {}
+                this.reconnectAttempt = 0;
+                this.connect(this.token);
+              }
+            }, 1800);
+            const un = this.on('pong', () => { clearTimeout(t); try { un(); } catch {} });
+          } catch {}
         }
         this._lastNetType = state.type;
       });
@@ -522,6 +569,16 @@ class MailWebSocket {
         if (this.connected && this.authenticated && !this.pingTimer) this._startPing();
         return;
       }
+      // [2026-10-05 churn 1005] Handshake em curso (<3s) NÃO é morto nem por
+      // token diferente — o auth usa o token já enviado; se for rejeitado, o
+      // path de auth_error faz refresh+reconnect. Evita o "abre→mata→abre"
+      // visto no hub (3 sockets do mesmo aparelho fechando 1005 no segundo
+      // em que abriram, depois 2 duplicados sobrevivendo).
+      if (this.ws && typeof WebSocket !== 'undefined' &&
+          this.ws.readyState === WebSocket.CONNECTING &&
+          this._lastConnectAt && (Date.now() - this._lastConnectAt) < 3000) {
+        return;
+      }
       // [2026-10-02 churn fix] Burst coalesce. Multiple reconnect triggers
       // (AppState 'active' + NetInfo 'online' + resurrect + scheduleReconnect +
       // MailContext effect) fire within the same ~second, and because each one
@@ -600,6 +657,31 @@ class MailWebSocket {
 
       // Start heartbeat
       this._startPing();
+
+      // [2026-10-05 conectando-preso] Arm the auth watchdog. If auth_success
+      // doesn't land within AUTH_WATCHDOG_MS, this socket is wedged
+      // connected-but-unauthenticated (lost auth frame / reply). Tear it down
+      // and reconnect fast instead of waiting out the server's 30s AuthTimeout.
+      // Cleared on auth_success (and by _cleanup on any teardown).
+      this._clearAuthWatchdog();
+      this._authWatchdog = setTimeout(() => {
+        this._authWatchdog = null;
+        if (this.destroyed || this._authReloginStopped) return;
+        if (this.authenticated) return;
+        try { console.warn('[WS] auth watchdog: no auth_success in ' + AUTH_WATCHDOG_MS + 'ms — forcing reconnect'); } catch {}
+        try { this._logGhost?.('auth_watchdog_timeout', {}); } catch {}
+        this._cleanup();
+        if (!this.destroyed) {
+          // [2026-10-05] Só trata como "handshake perdido" (retry rápido) se
+          // NÃO recebemos auth_error neste socket. Se o servidor REJEITOU o
+          // token, zerar o backoff aqui criava loop infinito a cada ~7s:
+          // connect → auth_error → (segura) → watchdog 6s → attempt=0 →
+          // reconnect 2s → … (visto no hub: 1 IP, 290 reconexões/dia).
+          const rejectedRecently = !!(this._lastAuthErrorAt && (Date.now() - this._lastAuthErrorAt) < (AUTH_WATCHDOG_MS + 2000));
+          this.reconnectAttempt = rejectedRecently ? Math.max(this.reconnectAttempt, 4) : 0;
+          this._scheduleReconnect();
+        }
+      }, AUTH_WATCHDOG_MS);
 
       // Wake voice session resume + offline-queue replay sweep. Any
       // streaming voice upload that stalled mid-recording when the WS
@@ -843,6 +925,21 @@ class MailWebSocket {
       }
       try { console.warn('[WS] resurrect() — reason=' + reason + ' destroyed=' + this.destroyed + ' connected=' + this.connected + ' authed=' + this.authenticated + ' attempt=' + this._resurrectAttempt); } catch {}
       this._logGhost('resurrect_kick', { reason, attempt: this._resurrectAttempt });
+      // [2026-10-05 churn 1005] Socket já EM VOO (CONNECTING/OPEN, mesmo token,
+      // aberto há <8s) = handshake/auth em andamento. Matá-lo aqui e reabrir
+      // era a origem dos fechamentos "1005 (no status)" no MESMO segundo da
+      // abertura (AppState 'active' → resurrect atropelava o reconnect em
+      // curso) → churn + sockets duplicados → "Conectando". Deixa terminar;
+      // o retry agendado abaixo cobre o caso de ele morrer de verdade.
+      try {
+        if (this.ws && typeof WebSocket !== 'undefined' && this.token === token &&
+            (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN) &&
+            this._lastConnectAt && (Date.now() - this._lastConnectAt) < 8000) {
+          this._logGhost?.('resurrect_inflight_skip', { reason });
+          this._scheduleResurrectRetry(reason);
+          return false;
+        }
+      } catch {}
       try { this._cleanup(); } catch {}
       this.destroyed = false;
       this.reconnectAttempt = 0;
@@ -963,6 +1060,9 @@ class MailWebSocket {
       clearTimeout(this._fgWatchdog);
       this._fgWatchdog = null;
     }
+    // [2026-10-05] Drop the auth watchdog on any teardown so it can't fire a
+    // phantom reconnect against an already-reconnecting flow.
+    this._clearAuthWatchdog();
     for (const timer of this._typingStopTimers.values()) {
       clearTimeout(timer);
     }
@@ -1128,8 +1228,21 @@ class MailWebSocket {
         if (!this.destroyed) this._scheduleReconnect();
         return;
       }
+      const _prevPingTs = this._pingTs || 0;
       this._pingTs = Date.now();
       this._send({ type: 'ping', ts: this._pingTs });
+      // [2026-10-05 falso-zumbi de 60s] Se o PRÓPRIO timer foi estrangulado ou
+      // suspenso (Chrome dispara setInterval de aba oculta 1x/min; iOS congela o
+      // JS em background), o "pong atrasado" é artefato: o ping anterior saiu há
+      // 60s+. Declarar zumbi aqui matava um socket SAUDÁVEL a cada minuto —
+      // hub/nginx: socket vive 59,4s → close 1005 → reconecta → repete, com um
+      // 2º socket duplicado morrendo na hora. Pula a sentença neste tick com
+      // baseline fresca; o próximo tick (já desestrangulado) julga de verdade,
+      // e o hub (PongWait 90s) limpa socket morto enquanto a aba está oculta.
+      if (_prevPingTs && (this._pingTs - _prevPingTs) > (interval * 2 + 1000)) {
+        this.lastPongTime = this._pingTs;
+        return;
+      }
       // No pong in timeout = dead socket (Telegram-style aggressive).
       if (this.lastPongTime && (Date.now() - this.lastPongTime) > timeout) {
         this._droppedCount++;
@@ -1256,6 +1369,15 @@ class MailWebSocket {
     this.pingTimer = null;
   }
 
+  // [2026-10-05] Cancel the connected-but-unauthenticated watchdog armed in
+  // onopen. Safe to call unconditionally.
+  _clearAuthWatchdog() {
+    if (this._authWatchdog) {
+      clearTimeout(this._authWatchdog);
+      this._authWatchdog = null;
+    }
+  }
+
   // [P0 2026-05-25] Enter the "needs re-login" hard-stop. Called when the
   // server keeps rejecting a freshly-refreshed token (auth-reject storm).
   // Stops all auto-reconnect: clears the reconnect timer, sets the stop flag
@@ -1350,15 +1472,28 @@ class MailWebSocket {
     // 4-5 climbed to 7-13s — banner appeared and lingered for what felt like
     // an outage. Only attempt 5+ allows the full 30s backoff for sustained
     // failures (e.g. real network outage), giving the device time to recover.
-    const fastAttempts = 4;
-    let cap;
-    if (this.reconnectAttempt < fastAttempts) {
-      // Fast lane: 800ms → 1.6s → 2.4s → 2.4s (capped)
-      cap = Math.min(RECONNECT_BASE * (this.reconnectAttempt + 1), 2400);
+    // [2026-10-05 WhatsApp-tier start] The FIRST retry is near-instant so a
+    // transient drop (carrier handoff, AP roam, brief server reload — the
+    // overwhelming majority of drops) heals before the user perceives
+    // anything. The old ladder forced a flat RECONNECT_BASE (500ms) floor on
+    // EVERY attempt including the first, adding ~500ms of dead air to the
+    // common case. We now fire attempt 0 immediately and only space out once a
+    // retry has actually failed: 0 → ~250ms → ~500ms → ~1s → exponential to
+    // RECONNECT_MAX (3s). Safe because (a) onclose/ping-timeout already reset
+    // reconnectAttempt=0 for genuine drops, (b) the 9s banner grace in
+    // chat-conversation means these fast retries never paint "Reconectando",
+    // and (c) the hub absorbs the load (memgate on HeapInuse, not per-connect).
+    const EARLY_DELAYS = [0, 250, 500, 1000];
+    let delay;
+    if (this.reconnectAttempt < EARLY_DELAYS.length) {
+      // Small additive jitter (0-150ms) so a fleet reconnecting after a shared
+      // outage doesn't hit the hub in lockstep, while keeping attempt 0 ~instant.
+      delay = EARLY_DELAYS[this.reconnectAttempt] + Math.floor(Math.random() * 150);
     } else {
-      cap = Math.min(RECONNECT_BASE * Math.pow(2, Math.min(this.reconnectAttempt, 5)), RECONNECT_MAX);
+      // Sustained outage: full-jitter exponential backoff capped at RECONNECT_MAX.
+      const cap = Math.min(RECONNECT_BASE * Math.pow(2, Math.min(this.reconnectAttempt, 5)), RECONNECT_MAX);
+      delay = Math.max(RECONNECT_BASE, Math.floor(Math.random() * cap));
     }
-    const delay = Math.max(RECONNECT_BASE, Math.floor(Math.random() * cap));
     this.reconnectAttempt++;
     this._emit('connection', {
       status: 'reconnecting',
@@ -1412,6 +1547,8 @@ class MailWebSocket {
     switch (msg.type) {
       case 'auth_success':
         this.authenticated = true;
+        // [2026-10-05] Handshake completed — disarm the auth watchdog.
+        this._clearAuthWatchdog();
         this._authFailStreak = 0;
         // [P0 2026-05-25] Any successful auth clears the storm guard: the
         // session is alive, so reset the refreshed-but-still-rejected streak,
@@ -1444,6 +1581,25 @@ class MailWebSocket {
 
       case 'auth_error':
         this.authenticated = false;
+        this._lastAuthErrorAt = Date.now();
+        // [2026-10-05] Rejeição FATAL (servidor: token revogado / logged_out via
+        // PG auth_tokens.revoked_at). Não adianta refresh nem reconectar com
+        // este bearer — ele está morto em TODAS as regiões. Para o loop aqui,
+        // entra no estado needs-relogin (circuit-breaker já existente) e avisa
+        // o app pra mostrar o re-login. Antes o hub mandava só "Invalid or
+        // expired token" genérico e o cliente ficava em loop ~7s pra sempre.
+        if (msg.fatal === true || msg.reason === 'logged_out') {
+          try { console.warn('[WS] auth_error FATAL (logged_out) — parando reconexão, pedindo re-login'); } catch {}
+          this._cleanup();
+          this._authReloginStopped = true;
+          this._authRejectStreak = 0;
+          this._authRejectBackoff = 0;
+          this._emit('connection', { status: 'needs_relogin', reason: 'logged_out' });
+          try {
+            if (typeof globalThis !== 'undefined' && globalThis.dispatchEvent) globalThis.dispatchEvent(new Event('chatyy:authFailure'));
+          } catch {}
+          break;
+        }
         this._emit('connection', { status: 'auth_error', message: msg.message });
         // Refresh token from storage before reconnecting (may have been updated by API layer)
         this._cleanup();
@@ -1976,6 +2132,15 @@ class MailWebSocket {
       case 'resume_full_sync':
         this._resumeInFlight = false;
         try {
+          // [2026-10-05] Adota o high-water do servidor. Sem isto _lastEventId
+          // ficava preso no valor velho e TODA reconexão repetia gap>cap →
+          // full_sync (hub: gap=887 em cada auth do mesmo usuário) — sync
+          // pesado a cada volta do 2º plano. O chat_sync HTTP que este evento
+          // dispara (via 'foreground') já cobre os eventos pulados.
+          if (typeof msg.current_event_id === 'number' && msg.current_event_id > this._lastEventId) {
+            this._lastEventId = msg.current_event_id;
+            this._persistLastEventId();
+          }
           this._emit('resume_full_sync', {
             reason: msg.reason || 'unknown',
             gap: msg.gap || 0,
@@ -2180,12 +2345,16 @@ class MailWebSocket {
   sendTyping(conversationId, recording = false) {
     if (!this.isConnected) return;
     const now = Date.now();
-    const lastSent = this._lastTypingSent.get(conversationId) || 0;
-    if (now - lastSent < TYPING_DEBOUNCE) return;
-    this._lastTypingSent.set(conversationId, now);
-    this._send({ type: 'typing', conversation_id: conversationId, recording });
 
-    // Reset the stopped_typing timer
+    // [2026-10-05 typing-flicker] (Re)arm the auto-stop backstop on EVERY
+    // call, BEFORE the throttle early-return below. Previously this lived
+    // AFTER the throttle guard, so a caller invoking sendTyping faster than
+    // TYPING_DEBOUNCE kept the indicator's `typing` frame throttled (correct)
+    // but never pushed the stop timer out — it kept firing TYPING_STOP_DELAY
+    // after the FIRST frame and dropped the peer's "digitando…" mid-typing.
+    // Arming it here keeps the indicator alive until the user actually pauses.
+    // Cheap: one timer swap per call. Does NOT change the on-the-wire `typing`
+    // cadence (still throttled below).
     const existing = this._typingStopTimers.get(conversationId);
     if (existing) clearTimeout(existing);
     this._typingStopTimers.set(conversationId, setTimeout(() => {
@@ -2193,6 +2362,13 @@ class MailWebSocket {
       this._typingStopTimers.delete(conversationId);
       this._lastTypingSent.delete(conversationId);
     }, TYPING_STOP_DELAY));
+
+    // Throttle ONLY the outbound `typing` frame — max once per TYPING_DEBOUNCE
+    // per conversation — so continuous typing never floods the hub.
+    const lastSent = this._lastTypingSent.get(conversationId) || 0;
+    if (now - lastSent < TYPING_DEBOUNCE) return;
+    this._lastTypingSent.set(conversationId, now);
+    this._send({ type: 'typing', conversation_id: conversationId, recording });
   }
 
   // Explicitly stop typing (e.g., when message is sent)

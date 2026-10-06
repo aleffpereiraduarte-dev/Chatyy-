@@ -6,8 +6,21 @@ import { DEFAULT_E2EE } from '../constants/featureFlags';
 // Remembers the best server in MMKV so next app open is instant.
 
 const EDGE_SERVERS = [
-  { url: 'https://chatyy.com.br', region: 'br', base: 'https://chatyy.com.br' },
+  // US = origin/master (NY). BR = São Paulo replica. EU = Frankfurt replica.
+  // All three replicate auth (auth_tokens) + chat (PG) from US, so the SAME
+  // bearer works on every region and we can always fall back to US.
+  { url: 'https://chatyy.com.br', region: 'us', base: 'https://chatyy.com.br' },
+  { url: 'https://api-br.chatyy.com.br', region: 'br', base: 'https://api-br.chatyy.com.br' },
+  { url: 'https://api-eu.chatyy.com.br', region: 'eu', base: 'https://api-eu.chatyy.com.br' },
 ];
+
+// US origin/master is the INVIOLABLE fallback. Whenever latency detection has
+// not run, failed, or every edge probe timed out, API+chat resolve here.
+const US_FALLBACK_BASE = 'https://chatyy.com.br';
+// Bump whenever EDGE_SERVERS changes so upgrading clients re-probe instead of
+// restoring a stale/dead edge. v11 = 3 regional edges (us/br/eu).
+const EDGE_CACHE_VERSION = 11;
+const VALID_REGIONS = ['us', 'br', 'eu'];
 
 let _bestServer = null;
 let _detecting = false;
@@ -24,9 +37,10 @@ try {
       let shouldClear = true;
       try {
         const parsed = JSON.parse(cached);
-        // Only keep cache if it points to the 'br' region (chatyy.com.br origin)
-        // AND has the latest version. Any other cached value is purged.
-        if (parsed.region === 'br' && parsed.v === 10) shouldClear = false;
+        // Only keep cache if it points to a known region (us/br/eu) AND has the
+        // latest version. Any other cached value (old dead edges, old version)
+        // is purged, which forces re-detection and defaults to US meanwhile.
+        if (VALID_REGIONS.includes(parsed.region) && parsed.v === EDGE_CACHE_VERSION) shouldClear = false;
       } catch {}
       if (shouldClear && typeof _mig.setString === 'function') {
         _mig.setString('edge_best_server', '');
@@ -40,7 +54,7 @@ try {
     if (cached) {
       try {
         const parsed = JSON.parse(cached);
-        if (!(parsed.region === 'br' && parsed.v === 10)) {
+        if (!(VALID_REGIONS.includes(parsed.region) && parsed.v === EDGE_CACHE_VERSION)) {
           localStorage.removeItem('edge_best_server');
         }
       } catch { localStorage.removeItem('edge_best_server'); }
@@ -84,13 +98,27 @@ export function parseServerDate(value) {
   return new Date(s);
 }
 export let BASE_URL = 'https://chatyy.com.br';
-// [2026-09-28] MIGRAÇÃO BRASIL: o CHAT (tempo-real, baixa latência) roda em São
-// Paulo (chat.chatyy.com.br → SP, ~15ms pro usuário BR). O EMAIL fica em NY
-// (BASE_URL = chatyy.com.br, tolera latência). As chamadas de chat (chat.php +
-// /api/rust/chat) usam CHAT_BASE_URL; o resto usa BASE_URL. Rollback: apontar
-// CHAT_BASE_URL de volta pra BASE_URL e o chat volta pro NY.
-export let CHAT_BASE_URL = 'https://chat.chatyy.com.br';
-export function getChatBase() { return CHAT_BASE_URL; }
+// [2026-10-05] ROTEAMENTO REGIONAL: o CHAT (tempo-real, baixa latência) segue o
+// MESMO edge que a detecção por latência escolheu (US/SP/EU), o mais próximo do
+// usuário. CHAT_BASE_URL deriva de `base` do servidor selecionado — NÃO é mais
+// fixo em chat.chatyy.com.br (host aposentado na migração). Fallback inviolável:
+// enquanto a seleção não rodou/falhou OU o edge escolhido não respondeu ao
+// probe, CHAT_BASE_URL permanece no US (US_FALLBACK_BASE) — o chat NUNCA fica
+// sem base. _applySelectedServer() abaixo mantém BASE_URL e CHAT_BASE_URL juntos.
+export let CHAT_BASE_URL = US_FALLBACK_BASE;
+export function getChatBase() { return CHAT_BASE_URL || US_FALLBACK_BASE; }
+
+// Single point that applies a latency-selected edge to every resolved base.
+// Keeps API_URL / BASE_URL / CHAT_BASE_URL pointing at the SAME region so chat
+// and the rest of the API stay co-located. A missing/invalid base degrades to
+// the US origin so no caller is ever left without a host.
+function _applySelectedServer(server) {
+  const base = (server && server.base) ? server.base : US_FALLBACK_BASE;
+  const url = (server && server.url) ? server.url : US_FALLBACK_BASE;
+  API_URL = url + '/api/email.php';
+  BASE_URL = base;
+  CHAT_BASE_URL = base;
+}
 // [2026-05-30] media.chatyy.com.br is a Cloudflare CNAME → public.r2.dev (R2)
 // that was NEVER bound to a bucket → it 404s EVERY /data/ path (verified: even
 // `/` 404s). The actual chat/status/sticker/reel files live on the origin disk,
@@ -115,13 +143,12 @@ function _restoreCachedServer() {
     const cached = mmkv.getString('edge_best_server');
     if (cached) {
       const parsed = JSON.parse(cached);
-      // Invalidate cache if edge list changed (version 10 = single 'br' edge: chatyy.com.br)
-      if (parsed.v !== 10) { mmkv.delete('edge_best_server'); return; }
+      // Invalidate cache if edge list changed (v11 = us/br/eu regional edges).
+      if (parsed.v !== EDGE_CACHE_VERSION) { mmkv.delete('edge_best_server'); return; }
       const match = EDGE_SERVERS.find(s => s.region === parsed.region);
       if (match) {
         _bestServer = { ...match, latency: parsed.latency };
-        API_URL = match.url + '/api/email.php';
-        BASE_URL = match.base;
+        _applySelectedServer(match);
         if (__DEV__) console.log('[API] Restored edge: ' + match.region + ' (' + parsed.latency + 'ms cached)');
       }
     }
@@ -137,7 +164,10 @@ async function detectFastestServer() {
       EDGE_SERVERS.map(async (s) => {
         const start = Date.now();
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 4000);
+        // Short probe: an edge that doesn't answer /health within 2.5s is
+        // treated as unreachable (latency 99999) so it can NEVER become the
+        // selected server — detection then prefers a healthy edge or US.
+        const timeout = setTimeout(() => controller.abort(), 2500);
         try {
           await fetch(s.url + '/health', { signal: controller.signal, cache: 'no-store' });
           clearTimeout(timeout);
@@ -149,15 +179,14 @@ async function detectFastestServer() {
       .filter(r => r.status === 'fulfilled')
       .map(r => r.value)
       .sort((a, b) => a.latency - b.latency);
-    if (sorted.length > 0 && sorted[0].latency < 4000) {
+    if (sorted.length > 0 && sorted[0].latency < 2500) {
       _bestServer = sorted[0];
-      API_URL = _bestServer.url + '/api/email.php';
-      BASE_URL = _bestServer.base;
+      _applySelectedServer(_bestServer);
       if (__DEV__) console.log(`[API] Best server: ${_bestServer.region} (${_bestServer.latency}ms)`);
       // Save to MMKV for instant restore on next app open
       try {
         const mmkv = require('./mmkv');
-        mmkv.setString('edge_best_server', JSON.stringify({ region: _bestServer.region, latency: _bestServer.latency, v: 10 }));
+        mmkv.setString('edge_best_server', JSON.stringify({ region: _bestServer.region, latency: _bestServer.latency, v: EDGE_CACHE_VERSION }));
       } catch {}
     }
   } catch {} finally { _detecting = false; }
@@ -1132,6 +1161,58 @@ const EMAIL_MUTATION_ACTIONS = new Set([
   'bulk_archive', 'snooze', 'add_label', 'remove_label', 'report_spam',
 ]);
 
+// ── Pure-READ actions sent over POST ──────────────────────────────────────
+// chat.php / feed are POST-based, so a bunch of SIDE-EFFECT-FREE reads were
+// issued as POST and therefore bypassed BOTH the GET in-flight dedup AND the
+// SWR cache below (the whole readable fast-path was gated on method==='GET').
+// Several of these are even in SWR_ALLOW already, so the allowlist entry was
+// dead. We now treat them as "readable": same dedup + (optionally) SWR as a
+// GET. They carry no mutation, so caching/deduping them is semantically
+// identical to caching a GET read — no data-contract change. Background
+// revalidation keeps them fresh, and the SWR cache is cleared on account
+// switch / logout (swrInvalidate()) so there is no cross-account leak.
+//
+// Split in two tiers:
+//   • POST_READ_SWR    — low-stakes settings/metadata + feed; ≤TTL staleness
+//                        is harmless and the next open revalidates. Gets
+//                        dedup + SWR.
+//   • POST_READ_DEDUP  — makes the POST "readable" so it gets in-flight dedup
+//                        (collapses concurrent identical reads — big win for
+//                        per-row fan-out like chat_check_blocked/common_contacts).
+//                        It ALSO caches via SWR *iff* the action is already in
+//                        SWR_ALLOW (several of these — starred/pinned/blocked/
+//                        pending-members — were listed there but the entry was
+//                        dead because the cache path was GET-only; honoring it
+//                        now matches the original intent). Entries NOT in
+//                        SWR_ALLOW (scheduled/bot list, check_blocked,
+//                        common_contacts) get dedup only — always fresh.
+const POST_READ_SWR = new Set([
+  'chat_privacy_get', 'chat_dnd_get', 'chat_get_theme',
+  'chat_get_auto_translate', 'chat_user_notif_prefs_get',
+  'chat_user_defaults_get', 'chat_get_user_defaults',
+  'chat_discoverable_get', 'chat_user_conv_settings_get',
+  'status_archive_list', 'follow_suggestions', 'feed_list',
+]);
+const POST_READ_DEDUP = new Set([
+  'chat_starred_messages', 'chat_pinned_messages', 'chat_pending_members',
+  'chat_scheduled_list', 'chat_blocked_list', 'chat_bot_list',
+  'chat_check_blocked', 'common_contacts',
+]);
+function _isReadablePost(action) {
+  return POST_READ_SWR.has(action) || POST_READ_DEDUP.has(action);
+}
+// Pure chat_* reads that must NOT nuke the chat_list SWR cache. The blanket
+// `action.startsWith('chat_') → swrInvalidate('chat_list')` below fired for
+// pure reads too (chat_privacy_get, chat_dnd_get, chat_get_theme, …), blowing
+// the hot list cache on every settings peek and forcing a full re-fetch. The
+// readable reads above already return before the invalidation line, but a few
+// uncached pure reads still reach it — list them so a mutation default of
+// "invalidate" is preserved while reads stop thrashing the cache.
+const CHAT_READ_NO_INVALIDATE = new Set([
+  ...POST_READ_SWR, ...POST_READ_DEDUP,
+  'chat_get_locked', 'chat_check_pin', 'chat_draft_get',
+]);
+
 // Persist SWR cache to sessionStorage on web so navigating back to the app
 // after a page reload still paints from memory instantly. sessionStorage
 // (not localStorage) scopes to the tab — avoids showing one user's cached
@@ -1242,20 +1323,26 @@ export async function apiCall(action, params = {}, method = 'GET', opts = {}) {
   // failure (background pollers ignore it; the send outbox queues the message).
   // navigator.onLine is only ever `false` on web; on native it's undefined, so
   // this is a no-op there (native has its own NetInfo-based handling).
+  // Readable = a GET, or a side-effect-free POST read (see POST_READ_* above).
+  const _readable = method === 'GET' || _isReadablePost(action);
   if (typeof navigator !== 'undefined' && navigator.onLine === false && !opts.ignoreOffline) {
-    if (method === 'GET') {
+    if (_readable) {
       const cachedOffline = _swrCache.get(_inflightKey(action, params));
       if (cachedOffline) return cachedOffline.data;
     }
     const _offErr = new Error('offline'); _offErr.offline = true; throw _offErr;
   }
-  if (method === 'GET') {
+  if (_readable) {
     const key = _inflightKey(action, params);
     // In-flight dedup
     const existing = _inflight.get(key);
     if (existing) return existing;
 
-    const swrEnabled = opts.swr === true || SWR_ALLOW.has(action);
+    // SWR is enabled for GET/SWR_ALLOW reads and POST_READ_SWR; a POST read
+    // that is readable only via POST_READ_DEDUP (and not SWR_ALLOW) gets
+    // in-flight dedup but no caching, so it always hits network and never
+    // serves a stale copy right after the user mutated it.
+    const swrEnabled = opts.swr === true || SWR_ALLOW.has(action) || POST_READ_SWR.has(action);
     const ttl = opts.swrTtl || _SWR_TTL_DEFAULT;
     if (swrEnabled) {
       const cached = _swrCache.get(key);
@@ -1296,8 +1383,13 @@ export async function apiCall(action, params = {}, method = 'GET', opts = {}) {
     return promise;
   }
   // Mutation — invalidate any cached reads that look related so the next
-  // GET fetches fresh data.
-  if (action.startsWith('chat_')) swrInvalidate('chat_list');
+  // GET fetches fresh data. Pure chat_* READS (settings/privacy/metadata
+  // peeks) must NOT drop the hot chat_list cache — doing so on every read
+  // forced a full list re-fetch constantly. Default stays "invalidate" for
+  // anything not explicitly a known read, so no mutation is ever missed.
+  if (action.startsWith('chat_')) {
+    if (!CHAT_READ_NO_INVALIDATE.has(action)) swrInvalidate('chat_list');
+  }
   else if (EMAIL_MUTATION_ACTIONS.has(action)) { swrInvalidate('inbox'); swrInvalidate('folders'); }
   return _apiCallImpl(action, params, method);
 }
@@ -2126,8 +2218,14 @@ export async function logout() {
   // if the network call fails — otherwise a flaky logout leaves stale
   // credentials in memory + storage.
   let r;
+  // [2026-10-05] Captura o bearer ANTES e manda também no CORPO (`token`).
+  // Evidência (nginx): o logout real chegou SEM Authorization (8ms, 57 bytes) →
+  // servidor pulou unlink+revoke → token anterior ficou válido (10y). Com o
+  // token no body o backend (email.php case 'logout') revoga mesmo que o
+  // header se perca / authToken já esteja vazio nesse instante.
+  const _tokForRevoke = (() => { try { return authToken || getAuthToken?.() || ''; } catch { return ''; } })();
   try {
-    r = await apiCall('logout', {}, 'POST');
+    r = await apiCall('logout', _tokForRevoke ? { token: _tokForRevoke } : {}, 'POST');
   } catch (e) {
     r = { success: false, error: e?.message };
   }
@@ -4389,6 +4487,10 @@ export async function chatUpdateLiveLocation(messageId, latitude, longitude, add
   } else if (opts && typeof opts.duration_seconds === 'number') {
     payload.duration_seconds = opts.duration_seconds;
   }
+  // [2026-10-05] static=true → pin FIXO (não é live-share). O backend só grava
+  // label/coords no balão e NÃO cria share/grant (senão vira "share fantasma"
+  // de 1h que aparece no mapa do amigo e pode rebaixar um share ilimitado).
+  if (opts && opts.static) payload.static = true;
   if (opts && opts.conversation_id) payload.conversation_id = opts.conversation_id;
   return apiCall('chat_update_live_location', payload, 'POST');
 }
@@ -4643,6 +4745,16 @@ export async function chatDeliveryAck(conversationId, messageIds) {
 // dedup is handled internally so calling N times for the same id is cheap.
 const _ackQueues = new Map(); // conversationId → Set<messageId>
 const _ackTimers = new Map(); // conversationId → timeoutHandle
+// [2026-10-04] Retry do ack de entrega. Antes era .catch(()=>{}) seco: um POST
+// que falhasse (rede instável) PERDIA o ✓✓ (ficava 1 cinza preso) até o
+// destinatário reabrir. Agora tenta 3× com backoff antes de desistir.
+function _ackWithRetry(conversationId, ids, attempt = 0) {
+  chatDeliveryAck(conversationId, ids).catch(() => {
+    if (attempt < 2) {
+      setTimeout(() => _ackWithRetry(conversationId, ids, attempt + 1), 1500 * (attempt + 1));
+    }
+  });
+}
 export function chatDeliveryAckBatched(conversationId, messageIds) {
   if (!conversationId || !messageIds?.length) return;
   let q = _ackQueues.get(conversationId);
@@ -4654,7 +4766,7 @@ export function chatDeliveryAckBatched(conversationId, messageIds) {
     const ids = Array.from(_ackQueues.get(conversationId) || []);
     _ackQueues.delete(conversationId);
     if (ids.length === 0) return;
-    chatDeliveryAck(conversationId, ids).catch(() => {});
+    _ackWithRetry(conversationId, ids);
   }, 250);
   _ackTimers.set(conversationId, handle);
 }
@@ -4666,7 +4778,7 @@ export function chatDeliveryAckFlush() {
     clearTimeout(handle);
     const ids = Array.from(_ackQueues.get(convId) || []);
     _ackQueues.delete(convId);
-    if (ids.length > 0) chatDeliveryAck(convId, ids).catch(() => {});
+    if (ids.length > 0) _ackWithRetry(convId, ids);
   }
   _ackTimers.clear();
 }
@@ -5743,6 +5855,23 @@ export async function chatLock(conversationId, locked) {
 
 export async function chatGetLocked() {
   return apiCall('chat_get_locked', {}, 'POST');
+}
+
+// [chat-lock 2026-10-04] Full locked-conversation rows (WITH last-message
+// preview) for the dedicated "Conversas bloqueadas" screen. Goes straight to
+// PHP (filter=locked), bypassing the Rust /chat/list fast-path and the normal
+// feed's preview masking — only this call is allowed to carry locked content,
+// and the screen gates it behind a biometric prompt before rendering.
+export async function chatLockedConversations() {
+  return apiCall('chat_list', { filter: 'locked' }, 'POST');
+}
+
+// Explicit lock / unlock endpoints (per-user flag; never touches the peer).
+export async function chatLockConversation(conversationId) {
+  return apiCall('chat_lock_conversation', { conversation_id: conversationId }, 'POST');
+}
+export async function chatUnlockConversation(conversationId) {
+  return apiCall('chat_unlock_conversation', { conversation_id: conversationId }, 'POST');
 }
 
 // Chat PIN lock (2FA)

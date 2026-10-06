@@ -1864,6 +1864,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// developer must open the project in Xcode once and verify the build
     /// phase order on the extension target (Sign on Copy: enabled).
     private var screenSharing: Bool = false
+
+    // [more-menu 2026-10-05] Custom dark "Mais opções" overlay (replaces the
+    // system action sheet). Both are plain UIKit subviews of `view`; we keep
+    // weak refs so dismissMoreMenu() can animate + tear them down. The card is
+    // a SIBLING of the backdrop (not a child) so the backdrop's tap-to-dismiss
+    // gesture never fires when the user taps a row inside the card.
+    private weak var moreMenuBackdrop: UIView?
+    private weak var moreMenuCard: UIView?
+
     private func toggleScreenShare() {
         guard let r = self.room else { return }
         let desired = !screenSharing
@@ -3114,46 +3123,238 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     @objc private func uikitOnMoreTap() {
         tapFeedback(view.viewWithTag(9007) as? UIButton)
         resetControlsAutoHide()
-        let sheet = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
+        presentMoreMenu()
+    }
 
-        // Reactions → nested emoji picker (sendReaction exists).
-        sheet.addAction(UIAlertAction(title: "Reações", style: .default) { [weak self] _ in
-            self?.presentReactionPicker()
-        })
-        // Screen share (toggleScreenShare exists; surfaces ReplayKit picker).
-        sheet.addAction(UIAlertAction(title: screenSharing ? "Parar compartilhamento" : "Compartilhar tela", style: .default) { [weak self] _ in
-            self?.toggleScreenShare()
-        })
-        // [button-removal 2026-05-26 / 2026-10-04] "Redução de ruído" toggle +
-        // hand-raise control REMOVED per founder. Noise suppression is handled
-        // by WebRTC's built-in NS + Apple VPIO/HW-AEC (always on via
-        // defaultAudioCaptureOptions) — there is NO RNNoise processing (that was
-        // a never-linked facade, removed 2026-10-04). (iOS had no hand-raise
-        // action in this sheet — it lived only in the dead SwiftUI CallView.)
-        // Background effect cycle (cycleBackground exists; MediaPipe blur).
-        sheet.addAction(UIAlertAction(title: "Efeito de fundo", style: .default) { [weak self] _ in
-            self?.cycleBackground()
-        })
-        // Hold (applyHold exists; routes through CallKit).
-        sheet.addAction(UIAlertAction(title: session.onHold ? "Retomar" : "Colocar em espera", style: .default) { [weak self] _ in
-            guard let self = self else { return }
-            self.session.onHold = !self.session.onHold
-            self.applyHold(self.session.onHold)
-        })
-        // [add-participant 2026-05-26] Add participant — ALWAYS available (not
-        // just group calls). On a 1:1 this is WhatsApp's "add to call" that
-        // converts the 1:1 into a group call on the same LiveKit room.
-        sheet.addAction(UIAlertAction(title: "Adicionar participante", style: .default) { [weak self] _ in
-            self?.handleAddMember()
-        })
-        sheet.addAction(UIAlertAction(title: "Cancelar", style: .cancel, handler: nil))
+    // MARK: - Custom "Mais opções" overlay (2026-10-05)
+    //
+    // Replaces the washed-out system UIAlertController(.actionSheet) with a
+    // dark, rounded floating card that matches the call screen's identity
+    // (fundo ~#141F27, SF Symbols in tinted circles, spring entrance). Pure
+    // UIKit — mirrors the glass-button / Auto-Layout anchor patterns used by
+    // the control bar above. EVERY row re-wires the exact same existing method
+    // the old action sheet called (presentReactionPicker / toggleScreenShare /
+    // cycleBackground / session.onHold toggle + applyHold / handleAddMember);
+    // no new call infra is introduced. Tap outside the card = close.
+    private func presentMoreMenu() {
+        // Don't stack a second copy if it's already up.
+        guard moreMenuBackdrop == nil else { return }
 
-        // iPad popover anchor (no-op on iPhone). Anchor to the More button.
-        if let pop = sheet.popoverPresentationController, let anchor = view.viewWithTag(9007) {
-            pop.sourceView = anchor
-            pop.sourceRect = anchor.bounds
+        // Dimmed backdrop over the whole call screen. Tap outside the card
+        // closes the menu. The card is a SIBLING above the backdrop (not a
+        // child), so hit-testing routes taps on the card to the card and the
+        // backdrop's gesture only fires for taps on the darkened area.
+        let backdrop = UIView()
+        backdrop.translatesAutoresizingMaskIntoConstraints = false
+        backdrop.backgroundColor = UIColor.black.withAlphaComponent(0.45)
+        backdrop.alpha = 0
+        view.addSubview(backdrop)
+        NSLayoutConstraint.activate([
+            backdrop.topAnchor.constraint(equalTo: view.topAnchor),
+            backdrop.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            backdrop.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            backdrop.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        ])
+        let dismissTap = UITapGestureRecognizer(target: self, action: #selector(dismissMoreMenu))
+        backdrop.addGestureRecognizer(dismissTap)
+        moreMenuBackdrop = backdrop
+
+        // Dark rounded card, floating above the bottom safe area.
+        let card = UIView()
+        card.translatesAutoresizingMaskIntoConstraints = false
+        card.backgroundColor = UIColor(red: 0x14/255.0, green: 0x1F/255.0, blue: 0x27/255.0, alpha: 1.0)
+        card.layer.cornerRadius = 24
+        card.clipsToBounds = false
+        card.layer.borderWidth = 0.5
+        card.layer.borderColor = UIColor.white.withAlphaComponent(0.08).cgColor
+        card.layer.shadowColor = UIColor.black.cgColor
+        card.layer.shadowOpacity = 0.5
+        card.layer.shadowRadius = 24
+        card.layer.shadowOffset = CGSize(width: 0, height: 8)
+        card.alpha = 0
+        view.addSubview(card)
+        moreMenuCard = card
+
+        // Grabber handle (decorative, matches the system sheet affordance).
+        let grabber = UIView()
+        grabber.translatesAutoresizingMaskIntoConstraints = false
+        grabber.backgroundColor = UIColor.white.withAlphaComponent(0.25)
+        grabber.layer.cornerRadius = 2.5
+        card.addSubview(grabber)
+
+        let header = UILabel()
+        header.translatesAutoresizingMaskIntoConstraints = false
+        header.text = "Mais opções"
+        header.textColor = .white
+        header.font = .systemFont(ofSize: 18, weight: .semibold)
+        header.textAlignment = .center
+        card.addSubview(header)
+
+        // Rows — the screen-share + hold rows reflect current state (title +
+        // symbol), exactly like the old action sheet did.
+        let shareTitle  = screenSharing ? "Parar compartilhamento" : "Compartilhar tela"
+        let shareSymbol = screenSharing ? "stop.circle" : "rectangle.on.rectangle"
+        let holdTitle   = session.onHold ? "Retomar" : "Colocar em espera"
+        let holdSymbol  = session.onHold ? "play.fill" : "pause.fill"
+
+        let rows: [UIButton] = [
+            moreMenuRow(symbol: "face.smiling",         title: "Reações",                 tag: 9071, action: #selector(moreMenuReactions)),
+            moreMenuRow(symbol: shareSymbol,            title: shareTitle,                tag: 9072, action: #selector(moreMenuScreenShare)),
+            moreMenuRow(symbol: "person.crop.rectangle", title: "Efeito de fundo",        tag: 9073, action: #selector(moreMenuBackground)),
+            moreMenuRow(symbol: holdSymbol,             title: holdTitle,                 tag: 9074, action: #selector(moreMenuHold)),
+            moreMenuRow(symbol: "person.badge.plus",    title: "Adicionar participante",  tag: 9075, action: #selector(moreMenuAddMember)),
+        ]
+        let rowStack = UIStackView(arrangedSubviews: rows)
+        rowStack.translatesAutoresizingMaskIntoConstraints = false
+        rowStack.axis = .vertical
+        rowStack.spacing = 4
+        card.addSubview(rowStack)
+
+        NSLayoutConstraint.activate([
+            // Card floats with side insets, pinned just above the safe-area bottom.
+            card.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 10),
+            card.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -10),
+            card.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -10),
+
+            grabber.topAnchor.constraint(equalTo: card.topAnchor, constant: 10),
+            grabber.centerXAnchor.constraint(equalTo: card.centerXAnchor),
+            grabber.widthAnchor.constraint(equalToConstant: 40),
+            grabber.heightAnchor.constraint(equalToConstant: 5),
+
+            header.topAnchor.constraint(equalTo: grabber.bottomAnchor, constant: 12),
+            header.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 16),
+            header.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -16),
+
+            rowStack.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 14),
+            rowStack.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
+            rowStack.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
+            rowStack.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -12),
+        ])
+
+        // Spring/fade entrance (slide up from +40pt), mirroring the tactile
+        // animation style the control buttons use via tapFeedback().
+        view.layoutIfNeeded()
+        card.transform = CGAffineTransform(translationX: 0, y: 40)
+        UIView.animate(withDuration: 0.28, delay: 0,
+                       usingSpringWithDamping: 0.85, initialSpringVelocity: 0.6,
+                       options: [.allowUserInteraction, .curveEaseOut], animations: {
+            backdrop.alpha = 1
+            card.alpha = 1
+            card.transform = .identity
+        })
+    }
+
+    /// One menu row: a round tinted SF-Symbol glyph + a white title, with a
+    /// press highlight. Returned as a UIButton so the row's whole area is
+    /// tappable. Subviews disable interaction so taps always reach the button.
+    private func moreMenuRow(symbol: String, title: String, tag: Int, action: Selector) -> UIButton {
+        let btn = UIButton(type: .custom)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+        btn.tag = tag
+        btn.layer.cornerRadius = 12
+        btn.clipsToBounds = true
+        btn.backgroundColor = UIColor.white.withAlphaComponent(0.05)
+        btn.addTarget(self, action: action, for: .touchUpInside)
+        btn.addTarget(self, action: #selector(moreRowTouchDown(_:)), for: [.touchDown, .touchDragEnter])
+        btn.addTarget(self, action: #selector(moreRowTouchUp(_:)), for: [.touchUpInside, .touchUpOutside, .touchCancel, .touchDragExit])
+        btn.heightAnchor.constraint(equalToConstant: 56).isActive = true
+
+        let iconWrap = UIView()
+        iconWrap.translatesAutoresizingMaskIntoConstraints = false
+        iconWrap.backgroundColor = UIColor.white.withAlphaComponent(0.10)
+        iconWrap.layer.cornerRadius = 18
+        iconWrap.isUserInteractionEnabled = false
+        btn.addSubview(iconWrap)
+
+        let icon = UIImageView()
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.tintColor = .white
+        icon.contentMode = .center
+        let cfg = UIImage.SymbolConfiguration(pointSize: 17, weight: .semibold)
+        icon.image = UIImage(systemName: symbol, withConfiguration: cfg)
+        icon.isUserInteractionEnabled = false
+        iconWrap.addSubview(icon)
+
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.text = title
+        label.textColor = .white
+        label.font = .systemFont(ofSize: 16, weight: .medium)
+        label.isUserInteractionEnabled = false
+        btn.addSubview(label)
+
+        NSLayoutConstraint.activate([
+            iconWrap.leadingAnchor.constraint(equalTo: btn.leadingAnchor, constant: 10),
+            iconWrap.centerYAnchor.constraint(equalTo: btn.centerYAnchor),
+            iconWrap.widthAnchor.constraint(equalToConstant: 36),
+            iconWrap.heightAnchor.constraint(equalToConstant: 36),
+
+            icon.centerXAnchor.constraint(equalTo: iconWrap.centerXAnchor),
+            icon.centerYAnchor.constraint(equalTo: iconWrap.centerYAnchor),
+
+            label.leadingAnchor.constraint(equalTo: iconWrap.trailingAnchor, constant: 14),
+            label.centerYAnchor.constraint(equalTo: btn.centerYAnchor),
+            label.trailingAnchor.constraint(lessThanOrEqualTo: btn.trailingAnchor, constant: -14),
+        ])
+        return btn
+    }
+
+    @objc private func moreRowTouchDown(_ sender: UIButton) {
+        UIView.animate(withDuration: 0.12) {
+            sender.backgroundColor = UIColor.white.withAlphaComponent(0.14)
         }
-        present(sheet, animated: true, completion: nil)
+    }
+
+    @objc private func moreRowTouchUp(_ sender: UIButton) {
+        UIView.animate(withDuration: 0.2) {
+            sender.backgroundColor = UIColor.white.withAlphaComponent(0.05)
+        }
+    }
+
+    /// Animate the overlay out and remove both views. Safe to call when
+    /// nothing is up (guard). Also used as the backdrop tap-to-dismiss target.
+    @objc private func dismissMoreMenu() {
+        guard let backdrop = moreMenuBackdrop else { return }
+        let card = moreMenuCard
+        moreMenuBackdrop = nil
+        moreMenuCard = nil
+        UIView.animate(withDuration: 0.18, delay: 0, options: [.curveEaseIn], animations: {
+            backdrop.alpha = 0
+            card?.alpha = 0
+            card?.transform = CGAffineTransform(translationX: 0, y: 40)
+        }, completion: { _ in
+            card?.removeFromSuperview()
+            backdrop.removeFromSuperview()
+        })
+    }
+
+    // Row actions — each closes the menu, then calls the SAME existing method
+    // the old action sheet invoked. Wiring preserved exactly.
+    @objc private func moreMenuReactions() {
+        tapFeedback(view.viewWithTag(9071) as? UIButton)
+        dismissMoreMenu()
+        presentReactionPicker()
+    }
+    @objc private func moreMenuScreenShare() {
+        tapFeedback(view.viewWithTag(9072) as? UIButton)
+        dismissMoreMenu()
+        toggleScreenShare()
+    }
+    @objc private func moreMenuBackground() {
+        tapFeedback(view.viewWithTag(9073) as? UIButton)
+        dismissMoreMenu()
+        cycleBackground()
+    }
+    @objc private func moreMenuHold() {
+        tapFeedback(view.viewWithTag(9074) as? UIButton)
+        dismissMoreMenu()
+        session.onHold = !session.onHold
+        applyHold(session.onHold)
+    }
+    @objc private func moreMenuAddMember() {
+        tapFeedback(view.viewWithTag(9075) as? UIButton)
+        dismissMoreMenu()
+        handleAddMember()
     }
 
     /// Nested emoji picker for the More → Reactions path. Each emoji calls the

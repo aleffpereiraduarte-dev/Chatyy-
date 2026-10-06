@@ -389,6 +389,16 @@ export async function runInitialSync(api, options = {}) {
   }
 }
 
+// Contacts change rarely, but runDeltaSync runs on every resume/reconnect AND
+// every 60s — so step 3 below used to re-pull the WHOLE contact list dozens of
+// times an hour for data that almost never changes (pure redundant network +
+// radio wakeups). Throttle the contacts refresh to once every 15 min; the
+// conversation/message delta (the part that actually needs to be live) is
+// untouched and still runs every tick.
+const _CONTACTS_DELTA_MIN_INTERVAL_MS = 15 * 60 * 1000;
+let _lastContactsDeltaAt = 0;
+let _lastContactsDeltaAcct = '';
+
 /**
  * Delta sync — only new data since last sync
  * Called on: app resume, reconnect, periodic (every 60s)
@@ -420,15 +430,24 @@ export async function runDeltaSync(api) {
       );
     }
 
-    // 3. Contacts refresh (light)
-    try {
-      const r = await api.getContacts();
-      if (r.success) {
-        const contacts = Array.isArray(r.data) ? r.data : (r.data?.contacts || []);
-        setJSON('cached_contacts', contacts);
-        if (isNative && isDbReady()) await dbSaveContacts(contacts);
-      }
-    } catch {}
+    // 3. Contacts refresh (light) — throttled to every 15 min (rarely change).
+    // An account switch always forces a refresh so we never serve the previous
+    // account's cached contacts through the throttle window.
+    let _acctNow = '';
+    try { _acctNow = (typeof api.getActiveAccountEmail === 'function') ? (api.getActiveAccountEmail() || '') : ''; } catch {}
+    const _acctChanged = _acctNow !== _lastContactsDeltaAcct;
+    if (_acctChanged || Date.now() - _lastContactsDeltaAt >= _CONTACTS_DELTA_MIN_INTERVAL_MS) {
+      _lastContactsDeltaAt = Date.now();
+      _lastContactsDeltaAcct = _acctNow;
+      try {
+        const r = await api.getContacts();
+        if (r.success) {
+          const contacts = Array.isArray(r.data) ? r.data : (r.data?.contacts || []);
+          setJSON('cached_contacts', contacts);
+          if (isNative && isDbReady()) await dbSaveContacts(contacts);
+        }
+      } catch {}
+    }
 
   } catch {}
 }

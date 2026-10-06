@@ -13,15 +13,22 @@
  * (web uses Service Worker for push and doesn't go through this path).
  */
 import React, { useEffect, useState } from 'react';
-import { Platform, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { Platform, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Linking } from 'react-native';
 import { IconX } from './Icons';
+import { useLanguage } from '../context/LanguageContext';
 
 const POLL_MS = 1000;
 
 export default function PushTokenStaleBanner() {
+  const { t } = useLanguage();
   const [visible, setVisible] = useState(false);
   const [dismissed, setDismissed] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  // When the OS will NEVER show the permission dialog again (user denied once
+  // on iOS, or denied on Android 13+), re-requesting is a dead end — the only
+  // way back is the system Settings app. We detect that whenever the banner
+  // is shown and switch the CTA to deep-link into Settings instead.
+  const [openSettingsMode, setOpenSettingsMode] = useState(false);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -40,11 +47,38 @@ export default function PushTokenStaleBanner() {
     return () => { mounted = false; clearInterval(id); };
   }, []);
 
+  // Resolve the permission state once the banner becomes visible so we know
+  // whether a retry can even re-prompt. getPermissionsAsync is cheap and only
+  // runs on the (rare) transition into the visible state.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (!visible || dismissed) return;
+    let alive = true;
+    (async () => {
+      try {
+        const Notifications = require('expo-notifications');
+        const perm = await Notifications.getPermissionsAsync();
+        if (alive) {
+          setOpenSettingsMode(!!perm && perm.status !== 'granted' && perm.canAskAgain === false);
+        }
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [visible, dismissed]);
+
   if (Platform.OS === 'web') return null;
   if (!visible || dismissed) return null;
 
   const onRetry = async () => {
     if (retrying) return;
+    // Permission permanently denied → re-requesting silently no-ops on iOS.
+    // Send the user straight to the system Settings app where they can flip
+    // notifications back on. openSettings() is cross-platform.
+    if (openSettingsMode) {
+      try { await Linking.openSettings(); } catch {}
+      setDismissed(true);
+      return;
+    }
     setRetrying(true);
     try {
       const { retryPushTokenRegistration } = require('../services/pushNotifications');
@@ -63,19 +97,21 @@ export default function PushTokenStaleBanner() {
     setRetrying(false);
   };
 
+  const label = retrying
+    ? t('pushBanner.retrying')
+    : (openSettingsMode ? t('pushBanner.openSettings') : t('pushBanner.stale'));
+
   return (
     <TouchableOpacity
       onPress={onRetry}
       activeOpacity={0.85}
       style={s.bar}
       accessibilityRole="button"
-      accessibilityLabel="Toque para reativar notificações de chamada"
+      accessibilityLabel={t('pushBanner.a11y')}
       accessibilityLiveRegion="polite"
     >
       <Text style={s.text} numberOfLines={2}>
-        {retrying
-          ? 'Reativando notificações…'
-          : 'Notificações de chamada podem não chegar — toque pra reativar'}
+        {label}
       </Text>
       {retrying ? (
         <ActivityIndicator size="small" color="#7c5e00" />
@@ -83,7 +119,7 @@ export default function PushTokenStaleBanner() {
         <TouchableOpacity
           onPress={(e) => { e?.stopPropagation?.(); setDismissed(true); }}
           style={s.closeBtn}
-          accessibilityLabel="Fechar aviso"
+          accessibilityLabel={t('pushBanner.dismiss')}
           accessibilityRole="button"
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >

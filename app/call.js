@@ -379,7 +379,10 @@ function CallScreenInner() {
   useEffect(() => { audioMutedRef.current = audioMuted; }, [audioMuted]);
   useEffect(() => { videoEnabledRef.current = videoEnabled; }, [videoEnabled]);
 
-  const [speakerOn, setSpeakerOn] = useState(isVideoCall ? true : false);
+  // [group-call 2026-10-04] Group calls default to viva-voz (speaker), matching
+  // WhatsApp/Telegram — a group audio call on the earpiece is near-useless. 1:1
+  // audio keeps earpiece; 1:1 video keeps speaker. isGroupCall declared above.
+  const [speakerOn, setSpeakerOn] = useState((isVideoCall || isGroupCall) ? true : false);
   // True once the USER deliberately changed the audio route — stops the
   // post-connect earpiece re-assert (viva-voz fix) from fighting their choice.
   const speakerToggledRef = useRef(false);
@@ -627,13 +630,53 @@ function CallScreenInner() {
   // the leak). Callee and group calls are unaffected.
   const remoteAudioSeenRef = useRef(false);
   const _micGateOpen = () => !isCaller || isGroupCall || callAcceptedRef.current || remoteAudioSeenRef.current;
+  // [2026-10-06 caller-silent fix] SFU log for the 3 iOS→Android calls of
+  // 2026-10-05 (rooms tfcg2mksb / tdjpf1018 / zbvtxnps2): the caller NEVER
+  // published an audio track — the callee heard silence — while the camera
+  // (same gate, _openCallerCam) did publish on answer. The old code fired
+  // setMicrophoneEnabled(true) once, fire-and-forget, with the failure only
+  // appended to the LOCAL diag ring. Now: await it, VERIFY a Microphone
+  // publication actually exists ~1.2s later, retry once (toggle off→on, which
+  // re-creates the capture track — LK RN sometimes no-ops a second enable(true)
+  // when the pre-answer enable(false) left a stale track), and report any
+  // failure to the server-side voip_diag so it is visible without a device.
+  const _reportMicDiag = (evt, detail) => {
+    try { _callDiagAppend('warn', evt, { call_id: callId, ...detail }); } catch {}
+    try {
+      const { voipDiag } = require('../services/voipDiag');
+      if (typeof voipDiag === 'function') voipDiag('js_' + evt, callId, detail);
+    } catch {}
+  };
   const _openCallerMic = () => {
     if (!isCaller || isGroupCall) return;
     const r = roomRef.current;
     if (!r || audioMutedRef.current) return;
-    r.localParticipant.setMicrophoneEnabled(true).catch((e) => {
-      try { _callDiagAppend('warn', 'caller mic publish-on-answer failed', { call_id: callId, msg: String(e?.message || e).slice(0, 200) }); } catch {}
-    });
+    (async () => {
+      const hasMicPub = () => {
+        try {
+          const pub = r.localParticipant.getTrackPublication(Track.Source.Microphone);
+          return !!(pub && (pub.track || pub.trackSid));
+        } catch { return false; }
+      };
+      try {
+        await r.localParticipant.setMicrophoneEnabled(true);
+      } catch (e) {
+        _reportMicDiag('caller_mic_publish_on_answer_failed', { msg: String(e?.message || e).slice(0, 200) });
+      }
+      await new Promise((res) => setTimeout(res, 1200));
+      if (endedRef.current || audioMutedRef.current || roomRef.current !== r) return;
+      if (hasMicPub()) return;
+      _reportMicDiag('caller_mic_not_published_retry', { state: String(r.state || '') });
+      try {
+        try { await r.localParticipant.setMicrophoneEnabled(false); } catch {}
+        await r.localParticipant.setMicrophoneEnabled(true);
+      } catch (e) {
+        _reportMicDiag('caller_mic_retry_failed', { msg: String(e?.message || e).slice(0, 200) });
+      }
+      await new Promise((res) => setTimeout(res, 1200));
+      if (endedRef.current || audioMutedRef.current || roomRef.current !== r) return;
+      if (!hasMicPub()) _reportMicDiag('caller_mic_still_unpublished', { state: String(r.state || '') });
+    })();
   };
   // [2026-10-03 PRIVACY ring-leak fix — video] Camera analogue of _openCallerMic.
   // The 1:1 CALLER pre-connects to the SFU during the ring but must NOT publish
@@ -1289,7 +1332,21 @@ function CallScreenInner() {
       const token = data?.token;
       const url = data?.url || data?.livekitUrl || 'wss://livekit.chatyy.com.br';
       const iceServers = Array.isArray(data?.iceServers) ? data.iceServers : [];
-      if (!token) throw new Error('No token returned');
+      if (!token) {
+        // [group-call 2026-10-04] Room-full: the backend authorizes group joins
+        // by membership but caps the room at MAX_CALL_PARTICIPANTS and returns
+        // 403 "Call full" (no token) once it's at capacity. Tag the error so the
+        // connect catch can show a specific "call is full" message instead of a
+        // generic "could not connect". Match on the server's message text/status.
+        const st = res?.status || data?.status;
+        const body = String(data?.error || data?.message || '').toLowerCase();
+        if (st === 403 || /full|cheia|lotad|máximo|maximo|too many|capacity/.test(body)) {
+          const err = new Error('call_full');
+          err.callFull = true;
+          throw err;
+        }
+        throw new Error('No token returned');
+      }
       return { token, url, room, iceServers };
     } catch (e) {
       console.error('[Call] fetchLivekitToken err:', e?.message);
@@ -1311,6 +1368,31 @@ function CallScreenInner() {
       setGroupPeers(new Map(groupPeersRef.current));
     }
   }, []);
+  // [group-call 2026-10-04] Re-derive a peer's live video track + mic-muted
+  // state from the CURRENT publication set and push it into the grid entry.
+  // Called on TrackSubscribed/Unsubscribed/Muted/Unmuted so a remote toggling
+  // their camera or mic is reflected on their tile immediately (the grid falls
+  // back to the avatar when the camera is off, and shows a muted-mic badge).
+  // The single-tile 1:1 path has its own _refreshRemoteTracks — this is the
+  // per-participant equivalent for the group grid only.
+  const _refreshGroupPeerTracks = useCallback((participant) => {
+    if (!participant || !participant.identity) return;
+    const { cam } = _pickVideoTrack(participant);
+    let micMuted = false;
+    try {
+      const micPub = participant.getTrackPublication
+        ? participant.getTrackPublication(Track.Source.Microphone)
+        : null;
+      // No mic publication yet → treat as muted (nothing audible).
+      micMuted = !micPub || !!micPub.isMuted;
+    } catch {}
+    _updateGroupPeer(participant.identity, {
+      participant,
+      name: participant.name || participant.identity,
+      videoTrack: cam || null,
+      micMuted,
+    });
+  }, [_pickVideoTrack, _updateGroupPeer]);
 
   // ───── Web mic permission pre-flight ─────
   // Returns true if mic is (or just got) granted. Returns false and sets
@@ -1520,7 +1602,7 @@ function CallScreenInner() {
             // subscribes, so remote audio lands on a live route from the start.
             await LK_AudioSession.configureAudio({
               android: {
-                preferredOutputList: [isVideoCall ? 'speaker' : 'earpiece'],
+                preferredOutputList: [(isVideoCall || isGroupCall) ? 'speaker' : 'earpiece'],
                 audioTypeOptions: lkrn.AndroidAudioTypePresets.communication,
               },
             });
@@ -1537,7 +1619,7 @@ function CallScreenInner() {
         // up in viva-voz unintentionally. Video calls default to speaker
         // which is also explicitly set so the route is deterministic.
         try {
-          const initialRoute = isVideoCall ? 'speaker' : 'earpiece';
+          const initialRoute = (isVideoCall || isGroupCall) ? 'speaker' : 'earpiece';
           await LK_AudioSession.selectAudioOutput?.(lkOutputId(initialRoute));
         } catch (eRoute) {
           console.warn('[Call] initial selectAudioOutput err:', eRoute?.message);
@@ -1555,7 +1637,7 @@ function CallScreenInner() {
     if (Platform.OS === 'ios') {
       try {
         const ck = require('../services/callkeep');
-        ck.setSpeakerEnabled?.(!!isVideoCall);
+        ck.setSpeakerEnabled?.(!!(isVideoCall || isGroupCall));
       } catch {}
       // [viva-voz fix 2026-05-27] The earpiece route set above runs on MOUNT,
       // but CallKit's didActivate + LiveKit's audio-session activation fire a
@@ -1564,7 +1646,9 @@ function CallScreenInner() {
       // earpiece a couple times AFTER those late activations to win the race.
       // Audio calls only; guarded by speakerToggledRef so we never fight a user
       // who deliberately tapped speaker in the first 2s.
-      if (!isVideoCall) {
+      // [group-call 2026-10-04] Group audio defaults to viva-voz, so NEVER
+      // re-assert earpiece for a group — that's a 1:1-audio-only behavior.
+      if (!isVideoCall && !isGroupCall) {
         const reEarpiece = () => {
           if (speakerToggledRef.current) return;
           try { require('../services/callkeep').setSpeakerEnabled?.(false); } catch {}
@@ -1736,6 +1820,15 @@ function CallScreenInner() {
       _diag('token_ok', { url, room, ice_count: iceServers?.length || 0 });
     } catch (e) {
       _diag('token_err', { msg: String(e?.message || e), stack: String(e?.stack || '').slice(0, 500) });
+      // [group-call 2026-10-04] Room at capacity (backend 403 "Call full"). This
+      // is a terminal, actionable state — show the specific message and stop,
+      // never defer to the native-adopt recovery (there's no room to join).
+      if (e?.callFull) {
+        try { _diag('call_full'); } catch {}
+        setErrorMsg(t('call.roomFull') || 'A chamada está cheia (máximo de participantes atingido).');
+        setConnectionFailed(true);
+        return;
+      }
       // [2026-05-26] Cold-start iOS callee w/ adoptNative: a transient token
       // failure (timeout / 401 before WS/session warmed up) used to immediately
       // hard-fail. But on this path the native side may still be establishing
@@ -2120,6 +2213,9 @@ function CallScreenInner() {
         }
         for (const p of others) {
           _updateGroupPeer(p.identity, { participant: p, name: p.name || p.identity });
+          // Seed any already-published camera/mic state (refined later as their
+          // tracks subscribe). Covers joining a group call already in progress.
+          _refreshGroupPeerTracks(p);
         }
       } catch {}
     });
@@ -2237,6 +2333,28 @@ function CallScreenInner() {
       // End button should terminate.
       console.warn('[Call] LiveKit Disconnected after peer joined — showing Reconnecting');
       setReconnecting(true);
+      // [bug 2026-10-05 stuck-reconnecting] A terminal Disconnected (DUPLICATE_IDENTITY,
+      // server shutdown, kick) fires WITHOUT a preceding Reconnecting event, so the hard
+      // timeout armed in the Reconnecting handler never runs and the user is stranded on
+      // the orange banner forever. Arm the same grace timer here — identical ref, constant
+      // and cleanup — so we fall into connectionFailed after RECONNECT_HARD_TIMEOUT_MS if
+      // LK never recovers.
+      if (reconnectGraceTimerRef.current) {
+        try { clearTimeout(reconnectGraceTimerRef.current); } catch {}
+        reconnectGraceTimerRef.current = null;
+      }
+      reconnectGraceTimerRef.current = setTimeout(() => {
+        if (endedRef.current) return;
+        try {
+          const state = r?.state;
+          if (state === ConnectionState.Connected) return;
+        } catch {}
+        console.warn('[Call] hard reconnect timeout after', RECONNECT_HARD_TIMEOUT_MS, 'ms');
+        try { _diag('reconnect_hard_timeout', { ms: RECONNECT_HARD_TIMEOUT_MS }); } catch {}
+        setReconnecting(false);
+        setConnectionFailed(true);
+        try { setErrorMsg(t('call.reconnectFailed') || 'Não foi possível reconectar. Tente novamente.'); } catch {}
+      }, RECONNECT_HARD_TIMEOUT_MS);
     });
 
     r.on(RoomEvent.ParticipantConnected, (participant) => {
@@ -2337,13 +2455,30 @@ function CallScreenInner() {
           remoteAudioSeenRef.current = true;
           _openCallerMic();
           _openCallerCam();
+          // [viva-voz fix 2026-10-04] iOS: o roteamento SÓ pula pra viva-voz quando
+          // o áudio REMOTO realmente assina — e isso costuma acontecer DEPOIS da
+          // janela de re-assert de 700/1800ms do mount, então a chamada de voz
+          // ficava presa no alto-falante (print do founder). Re-afirma o fone AGORA
+          // (momento exato do flip) + alguns beats depois, só em áudio e só se o
+          // usuário não escolheu viva-voz de propósito.
+          if (Platform.OS === 'ios' && !isVideoCall && !isGroupCall) {
+            const _reEar = () => {
+              if (speakerToggledRef.current) return;
+              try { require('../services/callkeep').setSpeakerEnabled?.(false); } catch {}
+              try { LK_AudioSession?.selectAudioOutput?.(lkOutputId('earpiece')); } catch {}
+            };
+            _reEar();
+            setTimeout(_reEar, 400);
+            setTimeout(_reEar, 1200);
+            setTimeout(_reEar, 2500);
+          }
         }
       } catch {}
       _refreshRemoteTracks(participant);
-      _updateGroupPeer(participant.identity, {
-        participant,
-        videoTrack: publication.source === Track.Source.Camera ? track : (groupPeersRef.current.get(participant.identity)?.videoTrack || null),
-      });
+      // Group grid: re-derive this peer's live camera + mic-muted state from the
+      // current publications so their tile flips avatar↔video and shows the
+      // muted badge as they toggle. (Non-group keeps the single-tile path only.)
+      _refreshGroupPeerTracks(participant);
       // [gap D4 2026-05-25 fix] Ask the SFU for a fresh keyframe the moment a
       // remote VIDEO track is subscribed. Otherwise the renderer waits for the
       // next GOP (4-8s on a 30fps publisher) before the first decodable I-frame
@@ -2360,6 +2495,7 @@ function CallScreenInner() {
     r.on(RoomEvent.TrackUnsubscribed, (track, publication, participant) => {
       console.log('[Call] TrackUnsubscribed', track.kind, 'from', participant.identity);
       _refreshRemoteTracks(participant);
+      _refreshGroupPeerTracks(participant);
     });
 
     r.on(RoomEvent.TrackMuted, (publication, participant) => {
@@ -2367,6 +2503,7 @@ function CallScreenInner() {
       // peerVideoEnabled / remoteAudioMuted flags need to follow.
       if (participant && participant !== r.localParticipant) {
         _refreshRemoteTracks(participant);
+        _refreshGroupPeerTracks(participant);
         // [WAVE 104F] Log remote audio mute events (audio only — video mute is less critical).
         try {
           if (publication?.track?.kind === 'audio' || publication?.kind === 'audio') {
@@ -2378,6 +2515,7 @@ function CallScreenInner() {
     r.on(RoomEvent.TrackUnmuted, (publication, participant) => {
       if (participant && participant !== r.localParticipant) {
         _refreshRemoteTracks(participant);
+        _refreshGroupPeerTracks(participant);
         // [WAVE 104F] Log remote audio unmute events.
         try {
           if (publication?.track?.kind === 'audio' || publication?.kind === 'audio') {
@@ -4706,6 +4844,7 @@ function CallScreenInner() {
           videoTrack: (videoEnabled && localVideoTrack) ? localVideoTrack : null,
           mirror: facingFront,
           isSpeaking: false,
+          micMuted: audioMuted,
         });
         for (const [ident, p] of groupPeers.entries()) {
           const vt = p?.videoTrack || null;
@@ -4719,6 +4858,7 @@ function CallScreenInner() {
             videoTrack: (vt && !vt.isMuted) ? vt : null,
             mirror: false,
             isSpeaking: !!p?.isSpeaking,
+            micMuted: !!p?.micMuted,
           });
         }
 
@@ -4770,7 +4910,9 @@ function CallScreenInner() {
                       </View>
                     )}
                     <View pointerEvents="none" style={styles.groupTileLabelWrap}>
-                      {tile.isSpeaking && <View style={styles.groupTileSpeakingDot} />}
+                      {tile.micMuted
+                        ? <IconMicOff size={12} color="#f87171" />
+                        : (tile.isSpeaking && <View style={styles.groupTileSpeakingDot} />)}
                       <Text style={styles.groupTileName} numberOfLines={1}>
                         {tile.isLocal ? (t('call.you') || 'Você') : tile.name}
                       </Text>

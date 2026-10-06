@@ -45,6 +45,35 @@ import { WALLET_ENABLED, MONETIZATION_ENABLED } from '../constants/featureFlags'
 
 const ACCENT = '#111111';
 
+// [FIX cross-account cache leak 2026-10-05] These sender-local flags
+// (strip-EXIF, sealed-sender, phone-visibility cache, push master switch)
+// used to live under GLOBAL AsyncStorage keys, so a device with more than
+// one logged-in account made account B inherit account A's choices. Scope
+// every key to the active account email. `_acctKey` returns the bare key
+// only when no account is resolvable (logged-out edge) — it never resolves
+// to a DIFFERENT account's value.
+function _activeEmail() {
+  try {
+    return (typeof api.getActiveAccountEmail === 'function' ? api.getActiveAccountEmail() : '') || '';
+  } catch { return ''; }
+}
+function _acctKey(base) {
+  const email = _activeEmail();
+  return email ? `${base}:${email}` : base;
+}
+// Read a per-account flag, falling back ONCE to the legacy global key so an
+// existing single-account user's saved choice survives the upgrade. Never
+// reads another account's namespaced value.
+async function _readAcctFlag(AsyncStorage, base) {
+  const nk = _acctKey(base);
+  let v = null;
+  try { v = await AsyncStorage.getItem(nk); } catch {}
+  if (v == null && nk !== base) {
+    try { v = await AsyncStorage.getItem(base); } catch {}
+  }
+  return v;
+}
+
 // ─── Shared building blocks ──────────────────────────────────────────
 // Row — iconTint is the brand colour for the icon glyph + a 14% bg tint
 // behind it. When omitted, falls back to the previous neutral "surface
@@ -976,20 +1005,36 @@ function PrivacyScreen({ colors, t }) {
       } catch {}
       try {
         const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-        const v = await AsyncStorage.getItem('chatyy_strip_exif');
+        // [FIX cross-account leak 2026-10-05] Read per-account (with one-time
+        // migration from the legacy global key).
+        const v = await _readAcctFlag(AsyncStorage, 'chatyy_strip_exif');
         // Default ON when key is absent — only flip OFF on explicit 'false'.
+        const stripVal = v === 'false' ? false : true;
         if (v === 'false') setStripExif(false);
-        // Sealed-sender flag persists locally — chat-conversation.js reads
-        // it from the same key when dispatching sends.
-        const ss = await AsyncStorage.getItem('chatyy_sealed_sender');
+        // Sealed-sender flag persists locally — chat-conversation.js /
+        // imageSendPipeline.js read the GLOBAL key when dispatching sends, so
+        // we keep the global key in sync with the active account below.
+        const ss = await _readAcctFlag(AsyncStorage, 'chatyy_sealed_sender');
+        const sealedVal = ss === 'true';
         if (ss === 'true') setSealedSender(true);
+        // Re-assert the ACTIVE account's resolved values onto the legacy
+        // global keys the chat-send readers still use. Without this, after an
+        // account switch those readers would keep using the previous account's
+        // choice (the cross-account leak) until the user next toggled. Safe
+        // direction only (defaults are the privacy-preserving values).
+        try {
+          await AsyncStorage.setItem(_acctKey('chatyy_strip_exif'), stripVal ? 'true' : 'false');
+          await AsyncStorage.setItem('chatyy_strip_exif', stripVal ? 'true' : 'false');
+          await AsyncStorage.setItem(_acctKey('chatyy_sealed_sender'), sealedVal ? 'true' : 'false');
+          await AsyncStorage.setItem('chatyy_sealed_sender', sealedVal ? 'true' : 'false');
+        } catch {}
         // Phone_visibility is now authoritative on the server (chat.php
         // chat_user_privacy.phone_visibility). We only fall back to the
         // local cache if chat_privacy_get didn't return it (cold start with
         // no network) — this avoids the previous bug where stale local
         // state silently overrode the server's current value.
         if (!settings.phone_visibility) {
-          const pv = await AsyncStorage.getItem('privacy_phone_visibility');
+          const pv = await _readAcctFlag(AsyncStorage, 'privacy_phone_visibility');
           if (pv) setSettings(prev => (prev.phone_visibility ? prev : { ...prev, phone_visibility: pv }));
         }
       } catch {}
@@ -1003,9 +1048,10 @@ function PrivacyScreen({ colors, t }) {
       // Mirror to local cache for offline hydration. Backend
       // chat_user_privacy.phone_visibility is authoritative — the cache is
       // only read when chat_privacy_get hasn't returned yet on cold start.
+      // Per-account key only (no external reader of this cache).
       try {
         const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-        await AsyncStorage.setItem('privacy_phone_visibility', patch.phone_visibility);
+        await AsyncStorage.setItem(_acctKey('privacy_phone_visibility'), patch.phone_visibility);
       } catch {}
     }
     try { await api.apiCall?.('chat_privacy_set', patch, 'POST'); } catch {}
@@ -1015,6 +1061,10 @@ function PrivacyScreen({ colors, t }) {
     setStripExif(v);
     try {
       const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      // Dual-write: per-account key (isolates the UI state) + legacy global
+      // key (so chat-conversation.js / imageSendPipeline.js keep reading the
+      // active account's choice without touching those files).
+      await AsyncStorage.setItem(_acctKey('chatyy_strip_exif'), v ? 'true' : 'false');
       await AsyncStorage.setItem('chatyy_strip_exif', v ? 'true' : 'false');
     } catch {}
   };
@@ -1023,6 +1073,7 @@ function PrivacyScreen({ colors, t }) {
     setSealedSender(v);
     try {
       const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      await AsyncStorage.setItem(_acctKey('chatyy_sealed_sender'), v ? 'true' : 'false');
       await AsyncStorage.setItem('chatyy_sealed_sender', v ? 'true' : 'false');
     } catch {}
   };
@@ -1147,8 +1198,8 @@ function PrivacyScreen({ colors, t }) {
             chat-conversation.js#kickoff before compress/upload. */}
         <ToggleRow
           icon={IconMapPin}
-          label="Remover dados de localização das fotos"
-          description="Protege sua privacidade ao compartilhar fotos"
+          label={t?.('privacy.stripExif') || 'Remover dados de localização das fotos'}
+          description={t?.('privacy.stripExifDesc') || 'Protege sua privacidade ao compartilhar fotos'}
           value={stripExif}
           onChange={updateStripExif}
           colors={colors}
@@ -1160,8 +1211,8 @@ function PrivacyScreen({ colors, t }) {
             spelled out inline (avoids new i18n keys / tooltip surface). */}
         <ToggleRow
           icon={IconStar}
-          label="Salvar conversas na nuvem (sincronizar entre dispositivos)"
-          description="Quando desligado, mensagens só ficam nos aparelhos dos dois e somem se ambos estiverem offline."
+          label={t?.('privacy.cloudChats') || 'Salvar conversas na nuvem (sincronizar entre dispositivos)'}
+          description={t?.('privacy.cloudChatsDesc') || 'Quando desligado, mensagens só ficam nos aparelhos dos dois e somem se ambos estiverem offline.'}
           value={settings.cloud_chats_default !== false}
           onChange={(v) => update({ cloud_chats_default: !!v })}
           colors={colors}
@@ -1173,8 +1224,8 @@ function PrivacyScreen({ colors, t }) {
             Trade-off displayed inline so the user understands the cost. */}
         <ToggleRow
           icon={IconLock}
-          label="Modo sealed sender"
-          description="Oculta quem enviou no servidor (Signal-mode, spam control mais fraco)"
+          label={t?.('privacy.sealedSender') || 'Modo sealed sender'}
+          description={t?.('privacy.sealedSenderDesc') || 'Oculta quem enviou no servidor (Signal-mode, spam control mais fraco)'}
           value={sealedSender}
           onChange={updateSealedSender}
           colors={colors}
@@ -1206,14 +1257,13 @@ function PrivacyScreen({ colors, t }) {
 }
 
 // ─── Screen: Notifications ───────────────────────────────────────────
-function NotificationsScreen({ colors, t }) {
+function NotificationsScreen({ colors, t, router, onClose }) {
   const [prefs, setPrefs] = useState({
     push_enabled: true,
     sound: true,
     vibration: true,
     group_by_conversation: true,
   });
-  const [dnd, setDnd] = useState({ enabled: false, start: '22:00', end: '07:00' });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -1226,33 +1276,21 @@ function NotificationsScreen({ colors, t }) {
             sound: r.data.notification_sound ?? true,
             vibration: r.data.notification_vibration ?? true,
           }));
-          if (r.data.dnd_window && typeof r.data.dnd_window === 'object') {
-            setDnd(prev => ({
-              enabled: !!r.data.dnd_window.enabled,
-              start: r.data.dnd_window.start || prev.start,
-              end: r.data.dnd_window.end || prev.end,
-            }));
-          }
         }
-        // Per-device push token state is managed separately; for the toggle
-        // we just read AsyncStorage so user intent survives app restart.
+        // Per-device push master switch. Read per-account (FIX cross-account
+        // leak) so intent survives restart AND doesn't bleed between accounts.
         const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-        const v = await AsyncStorage.getItem('push_enabled');
-        setPrefs(p => ({ ...p, push_enabled: v !== 'false' }));
-        // Hydrate DnD from MMKV-equivalent storage; fall back to whatever we
-        // got from server (which may have been just-now persisted from
-        // another device).
-        const stored = await AsyncStorage.getItem('dnd_window');
-        if (stored) {
-          try {
-            const parsed = JSON.parse(stored);
-            setDnd(prev => ({
-              enabled: !!parsed.enabled,
-              start: parsed.start || prev.start,
-              end: parsed.end || prev.end,
-            }));
-          } catch {}
-        }
+        const v = await _readAcctFlag(AsyncStorage, 'push_enabled');
+        const enabled = v !== 'false';
+        setPrefs(p => ({ ...p, push_enabled: enabled }));
+        // Sync the notification handler's in-memory master flag so the local
+        // foreground gate reflects the stored intent as soon as the user
+        // opens this screen (belt-and-suspenders beside the server-side
+        // token unregister).
+        try {
+          const push = await import('../services/pushNotifications');
+          push.setPushMasterEnabled?.(enabled);
+        } catch {}
       } catch {}
       setLoading(false);
     })();
@@ -1262,8 +1300,28 @@ function NotificationsScreen({ colors, t }) {
     setPrefs(prev => ({ ...prev, ...patch }));
     try {
       if ('push_enabled' in patch) {
+        const enabled = !!patch.push_enabled;
         const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-        await AsyncStorage.setItem('push_enabled', patch.push_enabled ? 'true' : 'false');
+        await AsyncStorage.setItem(_acctKey('push_enabled'), enabled ? 'true' : 'false');
+        // [FIX push no-op 2026-10-05] The master switch used to only write a
+        // dead flag. Now drive the REAL push pipeline:
+        //  - gate the local foreground notification handler immediately;
+        //  - OFF → unregister this device's token so the backend STOPS
+        //    delivering; ON → re-register so it resumes.
+        try {
+          const push = await import('../services/pushNotifications');
+          push.setPushMasterEnabled?.(enabled);
+          if (enabled) {
+            // ignoreMaster: this IS the explicit user re-enable; don't let the
+            // freshly-written pref read race against us.
+            push.ensurePushTokenFresh?.({ force: true, ignoreMaster: true })?.catch?.(() => {});
+          } else {
+            push.removeTokenFromBackend?.()?.catch?.(() => {});
+          }
+        } catch {}
+        // Persist the preference server-side via the settings endpoint already
+        // used here so the backend can also skip delivery for this user.
+        try { if (api.updateSettings) await api.updateSettings({ push_enabled: enabled }); } catch {}
       }
       // Persist sound/vibration via the existing settings API
       const serverPatch = {};
@@ -1275,23 +1333,17 @@ function NotificationsScreen({ colors, t }) {
     } catch {}
   };
 
-  // Persist DnD window locally + push to server so push-notify can suppress
-  // notifications inside the user's quiet hours. Server enforcement is
-  // best-effort — if the column doesn't exist yet the update is just stored
-  // client-side and the UI keeps working.
-  const updateDnd = async (patch) => {
-    const next = { ...dnd, ...patch };
-    setDnd(next);
-    try {
-      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
-      await AsyncStorage.setItem('dnd_window', JSON.stringify(next));
-      if (api.updateSettings) {
-        await api.updateSettings({ dnd_window: next });
-      }
-    } catch {}
+  // [FIX 2026-10-05] Rich notification controls (Do Not Disturb schedule,
+  // mention-only, keywords, preview privacy, lock-screen visibility, respect
+  // system DND) live in /notification-preferences. Deep-link there instead of
+  // the panel's old DND writer, which wrote `dnd_window` that nothing read and
+  // duplicated the real dnd_enabled/dnd_start_time screen. Navigate BEFORE
+  // closing the sheet (iOS cancels a post-dismiss push) — mirrors
+  // SecurityScreen.goDetailedSettings.
+  const goNotifPrefs = () => {
+    try { router?.push('/notification-preferences'); } catch {}
+    setTimeout(() => { try { onClose?.(); } catch {} }, 60);
   };
-
-  const validateTime = (s) => /^\d{2}:\d{2}$/.test(s);
 
   if (loading) {
     return <View style={{ paddingVertical: 40, alignItems: 'center' }}><ActivityIndicator color={ACCENT} /></View>;
@@ -1325,53 +1377,14 @@ function NotificationsScreen({ colors, t }) {
           />
         )}
       </Section>
-      <Section title={t?.('settings.doNotDisturb') || 'Não perturbe'} colors={colors}>
-        <ToggleRow
+      <Section title={t?.('settings.notifications') || 'Notificações'} colors={colors}>
+        <Row
           icon={IconClock}
-          label={t?.('settings.doNotDisturb') || 'Não perturbe'}
-          description={dnd.enabled ? `${dnd.start} – ${dnd.end}` : (t?.('settings.dndOffDesc') || 'Silenciar notificações em horários definidos')}
-          value={dnd.enabled}
-          onChange={(v) => updateDnd({ enabled: v })}
+          label={t?.('notif.moreOptions') || 'Mais opções de notificação'}
+          value={t?.('notif.moreOptionsDesc') || 'Menções, palavras-chave, preview e tela de bloqueio'}
+          onPress={goNotifPrefs}
           colors={colors}
         />
-        {dnd.enabled && (
-          <View style={{ flexDirection: 'row', gap: 12, paddingHorizontal: 16, paddingVertical: 10 }}>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 12, color: colors?.textSecondary, marginBottom: 4 }}>
-                {t?.('settings.dndStart') || 'Início'}
-              </Text>
-              <TextInput
-                value={dnd.start}
-                onChangeText={(v) => setDnd(prev => ({ ...prev, start: v }))}
-                onBlur={() => { if (validateTime(dnd.start)) updateDnd({ start: dnd.start }); }}
-                placeholder="22:00"
-                placeholderTextColor={colors?.textTertiary}
-                style={{
-                  backgroundColor: colors?.surface, color: colors?.text,
-                  borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 16,
-                  borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border,
-                }}
-              />
-            </View>
-            <View style={{ flex: 1 }}>
-              <Text style={{ fontSize: 12, color: colors?.textSecondary, marginBottom: 4 }}>
-                {t?.('settings.dndEnd') || 'Fim'}
-              </Text>
-              <TextInput
-                value={dnd.end}
-                onChangeText={(v) => setDnd(prev => ({ ...prev, end: v }))}
-                onBlur={() => { if (validateTime(dnd.end)) updateDnd({ end: dnd.end }); }}
-                placeholder="07:00"
-                placeholderTextColor={colors?.textTertiary}
-                style={{
-                  backgroundColor: colors?.surface, color: colors?.text,
-                  borderRadius: 8, paddingVertical: 10, paddingHorizontal: 12, fontSize: 16,
-                  borderWidth: StyleSheet.hairlineWidth, borderColor: colors?.border,
-                }}
-              />
-            </View>
-          </View>
-        )}
       </Section>
     </ScrollView>
   );
@@ -2967,7 +2980,7 @@ export default function ProfileSettingsSheet({
       case 'security':      return <SecurityScreen colors={colors} t={t} router={router} onClose={onClose} />;
       case 'devices':       return <DevicesScreen colors={colors} t={t} onClose={onClose} />;
       case 'privacy':       return <PrivacyScreen colors={colors} t={t} />;
-      case 'notifications': return <NotificationsScreen colors={colors} t={t} />;
+      case 'notifications': return <NotificationsScreen colors={colors} t={t} router={router} onClose={onClose} />;
       case 'language':      return <LanguageScreen colors={colors} t={t} />;
       case 'reading':       return <ReadingScreen colors={colors} t={t} />;
       case 'email':         return <EmailComposeScreen colors={colors} t={t} push={push} />;

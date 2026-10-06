@@ -11,6 +11,8 @@ import { View, Text, TouchableOpacity, Modal, Animated, Dimensions, StyleSheet, 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as api from '../services/api';
 import { IconPhone, IconSparkles, IconVideo, IconStar, IconShield, IconArrowLeft } from './Icons';
+import { useLanguage } from '../context/LanguageContext';
+import PressableScale from './PressableScale';
 // [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag
 import { PLANS_ENABLED } from '../constants/featureFlags';
 
@@ -18,11 +20,11 @@ const { width: SCREEN_W } = Dimensions.get('window');
 const SEEN_KEY = 'plus_onboarding_seen_v1';
 
 const SLIDES = [
-  { Icon: IconPhone,    color: '#111111', title: 'Chamadas ilimitadas',   body: 'Áudio e vídeo, Chatyy↔Chatyy ou pra qualquer telefone — sem cap de minutos.' },
-  { Icon: IconSparkles, color: '#111111', title: 'IA prioritária',         body: 'Smart reply, resumo de conversa, transcrição de áudio sem limite. Tudo via Groq.' },
-  { Icon: IconVideo,    color: '#111111', title: 'Reels e vídeo HD',       body: 'Upload em 1080p, sem compressão agressiva. Sua arte sai bonita.' },
-  { Icon: IconStar,     color: '#f59e0b', title: 'Modo invisível e VIP',   body: 'Mensagens efêmeras, anel dourado no perfil, badge verificado, prioridade no support.' },
-  { Icon: IconShield,   color: '#10b981', title: 'Backup ilimitado',       body: 'Suas conversas e mídia salvos com criptografia. Restaure em qualquer aparelho.' },
+  { Icon: IconPhone,    color: '#25D366', titleKey: 'plusTour.callsTitle',  bodyKey: 'plusTour.callsDesc' },
+  { Icon: IconSparkles, color: '#8B5CF6', titleKey: 'plusTour.aiTitle',     bodyKey: 'plusTour.aiDesc' },
+  { Icon: IconVideo,    color: '#EC4899', titleKey: 'plusTour.reelsTitle',  bodyKey: 'plusTour.reelsDesc' },
+  { Icon: IconStar,     color: '#f59e0b', titleKey: 'plusTour.vipTitle',    bodyKey: 'plusTour.vipDesc' },
+  { Icon: IconShield,   color: '#10b981', titleKey: 'plusTour.backupTitle', bodyKey: 'plusTour.backupDesc' },
 ];
 
 export async function checkShouldShowPlusOnboarding() {
@@ -45,10 +47,14 @@ export function markPlusOnboardingSeen() {
 }
 
 export default function PlusOnboardingTour({ visible, onClose, colors, isDark }) {
+  const { t } = useLanguage();
   const [idx, setIdx] = useState(0);
   const slide = SLIDES[idx] || SLIDES[0];
   const { Icon } = slide;
   const fade = useRef(new Animated.Value(0)).current;
+  // slideIn: cada troca de slide entra com um leve deslize vertical + fade,
+  // dando a sensação viva/premium (em vez de só trocar o conteúdo).
+  const slideIn = useRef(new Animated.Value(0)).current;
   const next = useCallback(() => {
     if (idx < SLIDES.length - 1) setIdx(idx + 1);
     else { markPlusOnboardingSeen(); onClose?.(); }
@@ -57,8 +63,12 @@ export default function PlusOnboardingTour({ visible, onClose, colors, isDark })
   useEffect(() => {
     if (!visible) { setIdx(0); return; }
     fade.setValue(0);
-    Animated.timing(fade, { toValue: 1, duration: 180, useNativeDriver: true }).start();
-  }, [visible, idx, fade]);
+    slideIn.setValue(14);
+    Animated.parallel([
+      Animated.timing(fade, { toValue: 1, duration: 200, useNativeDriver: true }),
+      Animated.spring(slideIn, { toValue: 0, tension: 180, friction: 18, useNativeDriver: true }),
+    ]).start();
+  }, [visible, idx, fade, slideIn]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={() => { markPlusOnboardingSeen(); onClose?.(); }}>
@@ -72,11 +82,13 @@ export default function PlusOnboardingTour({ visible, onClose, colors, isDark })
           </View>
 
           <View style={styles.content}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'center', marginBottom: 6 }}>
-              <Text style={{ fontSize: 11, fontWeight: '800', letterSpacing: 1.5, color: slide.color }}>CHATYY ONE</Text>
-            </View>
-            <Text style={[styles.title, { color: colors.text || '#000' }]}>{slide.title}</Text>
-            <Text style={[styles.body, { color: colors.textSecondary || '#666' }]}>{slide.body}</Text>
+            <Animated.View style={{ opacity: fade, transform: [{ translateY: slideIn }] }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'center', marginBottom: 6 }}>
+                <Text style={{ fontSize: 11, fontWeight: '800', letterSpacing: 1.5, color: slide.color }}>{t('plusTour.badge')}</Text>
+              </View>
+              <Text style={[styles.title, { color: colors.text || '#000' }]}>{t(slide.titleKey)}</Text>
+              <Text style={[styles.body, { color: colors.textSecondary || '#666' }]}>{t(slide.bodyKey)}</Text>
+            </Animated.View>
 
             {/* Dots indicator */}
             <View style={styles.dots}>
@@ -91,17 +103,19 @@ export default function PlusOnboardingTour({ visible, onClose, colors, isDark })
             {/* Actions */}
             <View style={styles.actions}>
               {idx > 0
-                ? <TouchableOpacity onPress={prev} style={styles.backBtn}><IconArrowLeft size={20} color={colors.text || '#000'} /></TouchableOpacity>
+                ? <TouchableOpacity onPress={prev} style={styles.backBtn} accessibilityRole="button"><IconArrowLeft size={20} color={colors.text || '#000'} /></TouchableOpacity>
                 : <View style={{ width: 44 }} />}
-              <TouchableOpacity
+              <PressableScale
                 onPress={next}
-                activeOpacity={0.85}
+                activeOpacity={0.9}
+                haptic="light"
                 style={[styles.nextBtn, { backgroundColor: slide.color }]}
+                accessibilityRole="button"
               >
-                <Text style={styles.nextLabel}>{idx === SLIDES.length - 1 ? 'Vamos lá' : 'Continuar'}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => { markPlusOnboardingSeen(); onClose?.(); }}>
-                <Text style={[styles.skipLabel, { color: colors.textTertiary || '#999' }]}>Pular</Text>
+                <Text style={styles.nextLabel}>{idx === SLIDES.length - 1 ? t('plusTour.start') : t('plusTour.next')}</Text>
+              </PressableScale>
+              <TouchableOpacity onPress={() => { markPlusOnboardingSeen(); onClose?.(); }} accessibilityRole="button">
+                <Text style={[styles.skipLabel, { color: colors.textTertiary || '#999' }]}>{t('plusTour.skip')}</Text>
               </TouchableOpacity>
             </View>
           </View>

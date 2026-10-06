@@ -2742,11 +2742,15 @@ export default function LoginScreen() {
                     <>
                       <Text style={[s.title, { color: colors.text }]}>{t('login.welcome')}</Text>
 
-                      {/* User chip (email with avatar) */}
+                      {/* User chip (email with avatar) — soft filled pill so it
+                          reads as a tappable "switch account" affordance,
+                          matching the filled pills used across the signup flow. */}
                       <TouchableOpacity
-                        style={[s.userChip, { borderColor: colors.authInputBorder }]}
+                        style={[s.userChip, { borderColor: colors.authInputBorder, backgroundColor: colors.surfaceVariant }]}
                         onPress={() => animateStep(1)}
                         activeOpacity={0.7}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('login.changeAccount') || t('login.welcome')}
                       >
                         <View style={[s.userAvatar, { backgroundColor: colors.primary }]}>
                           <Text style={s.userAvatarLetter}>{(email || '?')[0].toUpperCase()}</Text>
@@ -3274,7 +3278,7 @@ const s = StyleSheet.create({
   },
   langModal: {
     width: '90%', maxWidth: 360, maxHeight: '70%',
-    borderRadius: 8, borderWidth: 1, overflow: 'hidden',
+    borderRadius: 16, borderWidth: 1, overflow: 'hidden',
   },
   langModalTitle: {
     fontSize: 16, fontWeight: '600', textAlign: 'center',
@@ -3326,21 +3330,24 @@ const s = StyleSheet.create({
   },
   tabText: { fontSize: 13, fontWeight: '600' },
 
-  /* Typography — clean, Google-like */
+  /* Typography — bold brand voice, matched 1:1 with the signup flow
+     (app/signup-phone.js → title 30/800, -0.8). Login used to run a
+     lighter Google-Sans 24/400 which read as a different product next to
+     cadastro; unifying the weight/size makes the two flows feel like one
+     app. */
   title: {
-    fontSize: 24, fontWeight: '400', textAlign: 'center', marginBottom: 6,
-    letterSpacing: -0.4,
-    ...Platform.select({ web: { fontFamily: "'Google Sans', 'Segoe UI', Roboto, Arial, sans-serif" }, default: {} }),
+    fontSize: 28, fontWeight: '800', textAlign: 'center', marginBottom: 8,
+    letterSpacing: -0.7, lineHeight: 34,
   },
   subtitle: {
-    fontSize: 16, textAlign: 'center', marginBottom: 28, lineHeight: 24,
+    fontSize: 15, textAlign: 'center', marginBottom: 24, lineHeight: 22,
     letterSpacing: 0.1,
   },
 
   /* Error */
   errorBox: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
-    padding: 12, borderRadius: 8, marginBottom: 16, borderWidth: 1,
+    padding: 13, borderRadius: 12, marginBottom: 16, borderWidth: 1,
   },
   errorText: { fontSize: 13, flex: 1, fontWeight: '600' },
 
@@ -3377,9 +3384,9 @@ const s = StyleSheet.create({
     borderWidth: 1, marginTop: 8, marginBottom: 28,
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
-  userAvatar: { width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
-  userAvatarLetter: { color: '#fff', fontSize: 12, fontWeight: '600' },
-  userEmail: { fontSize: 14, fontWeight: '400', flexShrink: 1 },
+  userAvatar: { width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
+  userAvatarLetter: { color: '#fff', fontSize: 13, fontWeight: '700' },
+  userEmail: { fontSize: 14, fontWeight: '500', flexShrink: 1 },
 
   /* Checkbox row */
   checkboxRow: {
@@ -3419,7 +3426,7 @@ const s = StyleSheet.create({
     alignItems: 'center', justifyContent: 'center', minWidth: 110,
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
-  primaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 0.2 },
+  primaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
   loadingBtnContent: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
   },
@@ -3441,7 +3448,7 @@ const s = StyleSheet.create({
   /* IG-style primary CTA — full width, 46pt, 10pt radius, branded purple
      shadow for premium presence. semibold 14pt label. */
   igPrimaryBtn: {
-    width: '100%', height: 50, borderRadius: 12,
+    width: '100%', height: 52, borderRadius: 12,
     alignItems: 'center', justifyContent: 'center',
     marginTop: 10,
     ...Platform.select({
@@ -3454,7 +3461,7 @@ const s = StyleSheet.create({
       android: { elevation: 6 },
     }),
   },
-  igPrimaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '600', letterSpacing: 0.2 },
+  igPrimaryBtnText: { color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.2 },
   /* Ghost text-link below the primary CTA. */
   igGhostBtn: {
     width: '100%', alignItems: 'center', justifyContent: 'center',
@@ -3501,7 +3508,7 @@ const s = StyleSheet.create({
 
   /* QR Scanner Modal */
   qrScanModal: {
-    width: '90%', maxWidth: 400, borderRadius: 8, borderWidth: 1,
+    width: '90%', maxWidth: 400, borderRadius: 16, borderWidth: 1,
     padding: 24, overflow: 'hidden',
   },
   qrScanModalTitle: {
@@ -3526,8 +3533,8 @@ const s = StyleSheet.create({
   /* Biometric login */
   biometricBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    marginTop: 16, paddingVertical: 12, paddingHorizontal: 20,
-    borderRadius: 4, borderWidth: 1, gap: 10,
+    marginTop: 16, paddingVertical: 14, paddingHorizontal: 20,
+    borderRadius: 14, borderWidth: 1, gap: 10,
   },
   biometricIcon: {
     width: 36, height: 36, borderRadius: 18,

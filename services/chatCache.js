@@ -361,6 +361,16 @@ export async function getLastSyncId(conversationId) {
   } catch { return 0; }
 }
 
+// [2026-10-05 anti-vazamento multi-conta] A lista de conversas no MMKV era GLOBAL
+// ('chat_conversations') → Conta B pintava a lista da Conta A após a troca. Agora é
+// POR-CONTA. É só CACHE (perder = re-fetch), então sem migração; purgo a chave
+// global legada 1× pra o vazamento não persistir em quem já tinha o app.
+function _convAcct() {
+  try { const { getActiveAccountEmail } = require('./api'); const e = getActiveAccountEmail && getActiveAccountEmail(); return e ? String(e).toLowerCase() : '_noacct'; } catch { return '_noacct'; }
+}
+function _convKey() { return 'chat_conversations_' + _convAcct(); }
+try { remove('chat_conversations'); } catch {}
+
 // Cache conversation list
 export async function cacheConversations(conversations) {
   if (!conversations?.length) return;
@@ -370,7 +380,7 @@ export async function cacheConversations(conversations) {
   }
 
   try {
-    setString('chat_conversations', JSON.stringify(conversations.slice(0, 100)));
+    setString(_convKey(), JSON.stringify(conversations.slice(0, 100)));
     if (Platform.OS === 'web') {
       try { const { webSaveConversations } = require('./localDb'); webSaveConversations(conversations.slice(0, 100)); } catch {}
       // Synchronous mirror for instant-paint on next page load. IndexedDB is
@@ -460,7 +470,7 @@ export async function getCachedConversations() {
 
   // Fallback to MMKV
   try {
-    const raw = getString('chat_conversations');
+    const raw = getString(_convKey());
     return _hydrateList(raw ? JSON.parse(raw) : []);
   } catch { return []; }
 }
@@ -486,12 +496,12 @@ export async function removeConversationFromCache(conversationId) {
   }
   // MMKV synchronous mirror.
   try {
-    const raw = getString('chat_conversations');
+    const raw = getString(_convKey());
     if (raw) {
       const list = JSON.parse(raw);
       if (Array.isArray(list)) {
         const next = list.filter(c => !sameId(c));
-        if (next.length !== list.length) setString('chat_conversations', JSON.stringify(next));
+        if (next.length !== list.length) setString(_convKey(), JSON.stringify(next));
       }
     }
   } catch {}

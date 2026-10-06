@@ -332,7 +332,7 @@ export default function SignupIntro({ onFinish }) {
               hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}
             >
               <Animated.View style={[styles.dot, {
-                backgroundColor: isActive ? '#111111' : (isDark ? '#374151' : '#d1d5db'),
+                backgroundColor: isActive ? colors.primary : (isDark ? '#374151' : '#d1d5db'),
                 width: widthInterp,
                 opacity: opacityInterp,
               }]} />
@@ -356,13 +356,14 @@ export default function SignupIntro({ onFinish }) {
                 onPressIn={_pressIn}
                 onPressOut={_pressOut}
                 style={[styles.cta, {
-                  // Saturated brand purple — mockup matches `#111111`. The previous
-                  // washed `#111111` looked anemic next to the bold typography.
-                  backgroundColor: '#111111',
+                  // Brand accent pulled from the theme (colors.primary) instead
+                  // of a hardcoded hex, so the CTA tracks light/dark and the rest
+                  // of the signup flow — which is all driven by useTheme().
+                  backgroundColor: colors.primary,
                   ...(Platform.OS === 'web'
-                    ? { boxShadow: '0 8px 24px rgba(17, 17, 17,0.42), inset 0 1px 0 rgba(255,255,255,0.18)' }
+                    ? { boxShadow: `0 8px 24px ${colors.primary}6b, inset 0 1px 0 rgba(255,255,255,0.18)` }
                     : Platform.select({
-                        ios: { shadowColor: '#111111', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.42, shadowRadius: 18 },
+                        ios: { shadowColor: colors.primary, shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.42, shadowRadius: 18 },
                         android: { elevation: 8 },
                       })),
                 }]}

@@ -863,6 +863,10 @@ export function IconBrush({ size, color, style }) {
 export function IconUndo2({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polyline points="3 7 3 13 9 13"/><Path d="M3 13a9 9 0 1 0 3-6.7L3 9"/></I>;
 }
+// Artist palette — used by the chat Wallpaper picker ("Definir cor").
+export function IconPalette({ size, color, style }) {
+  return <I size={size} color={color} style={style}><Path d="M12 2a10 10 0 1 0 0 20c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01a1.49 1.49 0 0 1 1.09-2.49H16a6 6 0 0 0 6-6c0-5.52-4.48-9-10-9z"/><Circle cx="6.5" cy="11.5" r="1.3" fill={color} stroke="none"/><Circle cx="9.5" cy="7.5" r="1.3" fill={color} stroke="none"/><Circle cx="14.5" cy="7.5" r="1.3" fill={color} stroke="none"/><Circle cx="17.5" cy="11.5" r="1.3" fill={color} stroke="none"/></I>;
+}
 
 export function IconNavigation({ size, color, style }) {
   return <I size={size} color={color} style={style}><Polygon points="3 11 22 2 13 21 11 13 3 11"/></I>;

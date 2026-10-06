@@ -10,11 +10,29 @@
 // GPS resolves, then a small preview map + the address, with one explicit
 // "Enviar localização atual" CTA. That's what we mirror here.
 //
-// We don't have `react-native-maps` (would require a native rebuild) so the
-// preview is a single <Image> from our self-hosted BoraUm tile server's Static
-// Image API (OpenStreetMap, MapLibre) — see components/BoraMap.js. No Google,
-// no API key, no billing. The tileserver doesn't draw a pin, so we overlay a
-// centered red pin on top (the image is centered on the coords).
+// Visual redesign (2026-10-05)
+// ----------------------------
+// Presentation-only refresh to match the parallel chat-sheet redesign:
+// rounded-top sheet with grab handle, a tinted WhatsApp-green pin badge in the
+// header, a close "X" in a soft circle, a premium map-preview card with a
+// stylized center pin (halo + shadow), a full-width green CTA, and the live
+// chips as a clean 2×2 grid. NONE of the GPS/send/live/API logic changed.
+//
+// Map preview (the "gray box" fix)
+// --------------------------------
+// We don't have `react-native-maps` (native rebuild) so the preview uses our
+// self-hosted BoraUm tileserver (OpenStreetMap, MapLibre GL JS) inside a
+// WebView — see components/BoraMap.js. The OLD preview rendered as a gray box
+// with a lone red dot: the simple boraMapHtml never called `map.resize()`, so
+// inside a sliding <Modal> the WebView was laid out AFTER MapLibre grabbed a
+// 0×0 drawing buffer → the canvas painted nothing (gray), while the marker DOM
+// still positioned (the red dot). This is the exact WKWebView race snap-map.js
+// already works around. Our `mapPreviewHtml` below mirrors snap-map's fix:
+// deferred `map.resize()` calls + a style-reload watchdog, and it posts
+// ready/error back so we can fall through to a gorgeous gradient placeholder
+// (never a flat gray box) when tiles can't paint. The centered pin is drawn in
+// RN as an overlay (the preview is non-interactive and centered on the coords),
+// so it looks identical whether the real map paints or the placeholder shows.
 //
 // Props
 // -----
@@ -27,37 +45,213 @@
 import React, { useEffect, useState, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, Pressable, ActivityIndicator,
-  Image, Platform, KeyboardAvoidingView, TextInput,
+  Platform, KeyboardAvoidingView, TextInput,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
+import Svg, { Defs, RadialGradient, LinearGradient, Stop, Rect, Circle, Path, Ellipse, G } from 'react-native-svg';
 import { IconMapPin, IconX } from './Icons';
 import * as api from '../services/api';
-import { boraStaticMapUrl, boraMapHtml } from './BoraMap';
+import { boraStyleUrl } from './BoraMap';
 
-// [fix 2026-10-01] The BoraUm STATIC-image map endpoint (/maptiles/.../static/
-// …png) went 404 (tileserver running -light, no raster renderer), so the <Image>
-// preview rendered as a gray box ("mapazinho cinza"). The interactive MapLibre
-// vector endpoints are still healthy, so we render a NON-interactive MapLibre
-// WebView instead (react-native-webview is already bundled → OTA-safe). It draws
-// its own centered marker, so no overlay pin is needed.
-function BoraMapPreview({ lat, lng, height }) {
+// WhatsApp-style action green used as this sheet's accent (header badge, CTA,
+// chips, pin). The app's structural `colors.primary` is neutral black; the
+// chat sheets are being re-accented to this green in parallel.
+const ACCENT = '#25D366';
+const ACCENT_DEEP = '#1DA851';
+
+// Alpha helper so we can tint the accent without hardcoding every rgba.
+const tint = (hex, a) => {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+};
+
+// Robust dark-mode detection: ThemeContext may not always expose `isDark`, so
+// fall back to sniffing the (near-black) background hex — same heuristic the
+// old dup-session card used.
+const themeIsDark = (colors) =>
+  !!colors?.isDark || (colors?.background && /^#0|^#1|^#2/.test(String(colors.background)));
+
+// Non-interactive MapLibre preview HTML with the WKWebView resize fix. Marker
+// is intentionally NOT drawn here — RN overlays a styled pin at dead center.
+function mapPreviewHtml({ lat, lng, isDark }) {
+  const la = Number(lat) || 0;
+  const lo = Number(lng) || 0;
+  // Dark mode gets the purpose-built dark style (same one snap-map uses); light
+  // mode uses the per-country coverage style picker.
+  const styleUrl = isDark
+    ? 'https://boraum.com.br/maptiles/styles/boraum-mapa-escuro/style.json'
+    : boraStyleUrl(lo, la);
+  const styleJson = JSON.stringify(styleUrl);
+  return `<!DOCTYPE html><html><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<link href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet"/>
+<script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
+<style>html,body{margin:0;padding:0;width:100%;height:100%;background:transparent}
+#map{position:absolute;inset:0;opacity:0;transition:opacity .35s ease}</style>
+</head><body>
+<div id="map"></div>
+<script>
+  function post(o){try{if(window.ReactNativeWebView&&window.ReactNativeWebView.postMessage){window.ReactNativeWebView.postMessage(JSON.stringify(o));}}catch(_){}}
+  if(typeof maplibregl==='undefined'){ post({type:'map_error',stage:'no_lib'}); }
+  else{
+    var ready=false;
+    var map=new maplibregl.Map({container:'map',style:${styleJson},center:[${lo},${la}],zoom:16,attributionControl:false,interactive:false});
+    try{map.scrollZoom.disable();map.dragPan.disable();map.doubleClickZoom.disable();map.touchZoomRotate.disable();map.keyboard.disable();}catch(_){}
+    function reveal(){ if(ready)return; ready=true; var el=document.getElementById('map'); if(el)el.style.opacity='1'; post({type:'map_ready'}); }
+    map.on('load', function(){ try{map.resize();}catch(_){} });
+    map.on('idle', reveal);
+    map.on('error', function(e){ var m=(e&&e.error&&(e.error.message||e.error))||'err'; post({type:'map_error',stage:'maplibre',message:String(m)}); });
+    // WKWebView lays the WebView out AFTER the map is constructed, so MapLibre
+    // grabs a 0×0 drawing buffer and paints gray. Deferred resizes re-measure
+    // once the modal slide-in settles — zero-risk no-op if size was correct.
+    setTimeout(function(){try{map.resize();}catch(_){}},350);
+    setTimeout(function(){try{map.resize();}catch(_){}},1200);
+    setTimeout(function(){try{map.resize();}catch(_){}},2500);
+    // Watchdog: if tiles never reach 'idle', reload the style a couple of times
+    // (flaky CDN/tiles) before giving up so the RN host can show the placeholder.
+    var tries=0;
+    function wd(){ if(ready)return; tries++; if(tries<=2){ try{map.setStyle(${styleJson});}catch(_){} setTimeout(function(){try{map.resize();}catch(_){}},300); setTimeout(wd,6000);} else { post({type:'map_error',stage:'timeout'}); } }
+    setTimeout(wd,7000);
+  }
+</script>
+</body></html>`;
+}
+
+// Premium gradient placeholder shown behind the live map (during load) and in
+// place of it if tiles can't paint — a soft themed gradient with faint "street"
+// hints, NOT a flat gray box.
+function MapCanvasBackdrop({ isDark }) {
+  const c = isDark
+    ? { c0: '#1b2a33', c1: '#101c24', street: 'rgba(255,255,255,0.05)', block: 'rgba(255,255,255,0.035)', green: tint(ACCENT, 0.10) }
+    : { c0: '#eef6f0', c1: '#dcebe0', street: 'rgba(255,255,255,0.75)', block: 'rgba(17,27,33,0.035)', green: tint(ACCENT, 0.10) };
   return (
-    <WebView
-      source={{ html: boraMapHtml({ lat, lng, zoom: 16, interactive: false, markerColor: '#dc2626' }) }}
-      style={{ width: '100%', height, position: 'absolute', top: 0, left: 0, backgroundColor: 'transparent' }}
-      originWhitelist={['*']}
-      scrollEnabled={false}
-      pointerEvents="none"
-      androidLayerType="hardware"
-      javaScriptEnabled
-      domStorageEnabled
-    />
+    <Svg width="100%" height="100%" viewBox="0 0 320 180" preserveAspectRatio="xMidYMid slice">
+      <Defs>
+        <RadialGradient id="bg" cx="50%" cy="42%" r="75%">
+          <Stop offset="0%" stopColor={c.c0} />
+          <Stop offset="100%" stopColor={c.c1} />
+        </RadialGradient>
+      </Defs>
+      <Rect x="0" y="0" width="320" height="180" fill="url(#bg)" />
+      {/* faint park/block + water tints for map texture */}
+      <Rect x="18" y="20" width="78" height="52" rx="10" fill={c.green} />
+      <Rect x="222" y="104" width="86" height="62" rx="10" fill={c.block} />
+      <Rect x="18" y="120" width="60" height="44" rx="10" fill={c.block} />
+      {/* faint streets */}
+      <G stroke={c.street} strokeWidth="6" strokeLinecap="round" fill="none">
+        <Path d="M-10 60 H 330" />
+        <Path d="M-10 128 H 330" />
+        <Path d="M120 -10 V 190" />
+        <Path d="M232 -10 V 190" />
+        <Path d="M-10 160 L 120 128 L 232 160" strokeWidth="4" />
+      </G>
+    </Svg>
   );
 }
 
-// [2026-06-24] Google Maps REMOVIDO. Preview do mapa vem da Static Image API do
-// nosso tile server self-hosted (BoraUm / OpenStreetMap) — sem chave, sem billing.
-// O tileserver não desenha o pin → desenhamos um pin sobreposto centralizado.
+// Stylized center pin overlay (halo + head + white dot + ground shadow).
+// Rendered on top of the map/placeholder, perfectly centered on the coords.
+function CenterPin({ pulse }) {
+  return (
+    <Svg width={74} height={82} viewBox="0 0 74 82">
+      {/* ground shadow */}
+      <Ellipse cx="37" cy="70" rx="12" ry="3.5" fill="rgba(0,0,0,0.22)" />
+      {/* soft halo */}
+      <Circle cx="37" cy="31" r={pulse ? 30 : 26} fill={tint(ACCENT, 0.12)} />
+      <Circle cx="37" cy="31" r="20" fill={tint(ACCENT, 0.18)} />
+      {/* pin head (teardrop) with white rim */}
+      <Path
+        d="M37 67 C 27 51 21 42 21 31 A 16 16 0 1 1 53 31 C 53 42 47 51 37 67 Z"
+        fill={ACCENT}
+        stroke="#ffffff"
+        strokeWidth="2.5"
+      />
+      {/* inner dot */}
+      <Circle cx="37" cy="31" r="6" fill="#ffffff" />
+    </Svg>
+  );
+}
+
+// The full map-preview card: real MapLibre WebView with a graceful premium
+// placeholder fallback + centered styled pin + optional accuracy chip.
+function MapPreviewCard({ lat, lng, accuracy, height, radius = 18, colors, isDark, t }) {
+  const [failed, setFailed] = useState(false);
+  const onMsg = (ev) => {
+    try {
+      const d = JSON.parse(ev?.nativeEvent?.data || '{}');
+      if (d.type === 'map_error') setFailed(true);
+      else if (d.type === 'map_ready') setFailed(false);
+    } catch { /* ignore */ }
+  };
+  return (
+    <View style={{
+      height, borderRadius: radius, overflow: 'hidden', marginBottom: 16,
+      borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,27,33,0.06)',
+      backgroundColor: isDark ? '#101c24' : '#eef6f0',
+    }}>
+      {/* premium gradient backdrop — always behind the map */}
+      <View style={{ position: 'absolute', inset: 0 }}>
+        <MapCanvasBackdrop isDark={isDark} />
+      </View>
+
+      {/* real map — fades itself in once tiles paint; stays hidden on failure */}
+      {!failed && (
+        <WebView
+          key={`${lat.toFixed(5)},${lng.toFixed(5)},${isDark ? 'd' : 'l'}`}
+          source={{ html: mapPreviewHtml({ lat, lng, isDark }), baseUrl: 'https://boraum.com.br/' }}
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'transparent' }}
+          originWhitelist={['*']}
+          scrollEnabled={false}
+          pointerEvents="none"
+          androidLayerType="hardware"
+          mixedContentMode="always"
+          javaScriptEnabled
+          domStorageEnabled
+          onMessage={onMsg}
+        />
+      )}
+
+      {/* subtle top sheen for depth */}
+      <Svg width="100%" height="40" style={{ position: 'absolute', top: 0, left: 0 }} viewBox="0 0 100 40" preserveAspectRatio="none">
+        <Defs>
+          <LinearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0%" stopColor="rgba(0,0,0,0.12)" />
+            <Stop offset="100%" stopColor="rgba(0,0,0,0)" />
+          </LinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width="100" height="40" fill="url(#sheen)" />
+      </Svg>
+
+      {/* centered styled pin */}
+      <View style={{ position: 'absolute', inset: 0, alignItems: 'center', justifyContent: 'center' }} pointerEvents="none">
+        {/* nudge up so the pin TIP sits on the center point */}
+        <View style={{ marginTop: -22 }}>
+          <CenterPin />
+        </View>
+      </View>
+
+      {/* accuracy chip */}
+      {accuracy ? (
+        <View style={{
+          position: 'absolute', left: 10, bottom: 10,
+          flexDirection: 'row', alignItems: 'center', gap: 5,
+          backgroundColor: isDark ? 'rgba(13,22,27,0.82)' : 'rgba(255,255,255,0.92)',
+          borderRadius: 11, paddingHorizontal: 9, paddingVertical: 5,
+          borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,27,33,0.06)',
+        }}>
+          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: ACCENT }} />
+          <Text style={{ fontSize: 11, fontWeight: '700', color: colors.text }}>
+            ±{Math.round(accuracy)}m
+          </Text>
+        </View>
+      ) : null}
+    </View>
+  );
+}
 
 const LIVE_DURATIONS = [
   { key: '15m', label: '15 min', seconds: 15 * 60 },
@@ -107,13 +301,6 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
   // so the parent can include it in the live-location WS payload.
   const [liveConfirm, setLiveConfirm] = useState(null); // { seconds, label }
   const [liveCaption, setLiveCaption] = useState('');
-  // [fix 2026-07-05, QA print 20260705-032342] The static-map <Image> had no
-  // onError handling: one failed tile-server response (transient render
-  // timeout/network blip) left a permanently blank white box behind the pin
-  // for the whole sheet session. On error we retry up to 2× with a
-  // cache-busting query param (endpoint verified to accept it) so RN's image
-  // cache can't pin the failure.
-  const [mapRetry, setMapRetry] = useState(0);
   const cancelRef = useRef(false);
   // 1s tick to repaint the dup-session guard's countdown. We only spin the
   // interval while the sheet is visible AND a live session is active —
@@ -144,7 +331,6 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
     setCoords(null);
     setAddress('');
     setApproxOnly(false);
-    setMapRetry(0);
 
     (async () => {
       try {
@@ -257,13 +443,8 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
     // Parent closes the sheet; we keep `sending` true to lock the button.
   };
 
-  const baseMapUrl = coords
-    ? boraStaticMapUrl(coords.latitude, coords.longitude, 16, 320, 160)
-    : null;
-  const mapUrl = baseMapUrl
-    ? (mapRetry > 0 ? `${baseMapUrl}?r=${mapRetry}` : baseMapUrl)
-    : null;
-  const onMapError = () => setMapRetry(r => (r < 2 ? r + 1 : r));
+  const isDark = themeIsDark(colors);
+  const gutter = 20;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -275,19 +456,34 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
         <View style={{
           backgroundColor: colors.surface,
           borderTopLeftRadius: 24, borderTopRightRadius: 24,
-          paddingHorizontal: 18, paddingTop: 16, paddingBottom: 28,
+          paddingHorizontal: gutter, paddingTop: 10,
+          paddingBottom: 28 + (Platform.OS === 'ios' ? 12 : 0),
         }}>
-          {/* Drag handle */}
-          <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: colors.border, marginBottom: 14 }} />
+          {/* Grab handle */}
+          <View style={{ alignSelf: 'center', width: 44, height: 5, borderRadius: 3, backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(17,27,33,0.14)', marginBottom: 18 }} />
 
-          {/* Header */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14 }}>
-            <IconMapPin size={20} color={colors.primary} style={{ marginRight: 8 }} />
-            <Text style={{ flex: 1, fontSize: 18, fontWeight: '700', color: colors.text }}>
+          {/* Header: tinted pin badge + big title + soft close */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 18 }}>
+            <View style={{
+              width: 44, height: 44, borderRadius: 22,
+              backgroundColor: tint(ACCENT, isDark ? 0.18 : 0.14),
+              alignItems: 'center', justifyContent: 'center', marginRight: 12,
+            }}>
+              <IconMapPin size={24} color={ACCENT} />
+            </View>
+            <Text style={{ flex: 1, fontSize: 22, fontWeight: '800', color: colors.text, letterSpacing: -0.3 }}>
               {t?.('chatConv.locationShare') || 'Compartilhar localização'}
             </Text>
-            <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}>
-              <IconX size={22} color={colors.textSecondary} />
+            <TouchableOpacity
+              onPress={onClose}
+              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+              style={{
+                width: 34, height: 34, borderRadius: 17,
+                backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,27,33,0.05)',
+                alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              <IconX size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
 
@@ -309,25 +505,24 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
             // Theme-aware bg/text — we keep the red/burgundy palette
             // because the card communicates "ongoing broadcast, action
             // required to stop". Light: rose-100. Dark: rose-900-ish.
-            const isDark = !!colors?.isDark || (colors?.background && /^#0|^#1|^#2/.test(String(colors.background)));
             const bg = isDark ? '#7F1D1D33' : '#FEE2E2';
             const fg = isDark ? '#FECACA' : '#7F1D1D';
             return (
               <View style={{
                 flexDirection: 'row', alignItems: 'center',
-                backgroundColor: bg, borderRadius: 12,
-                paddingHorizontal: 12, paddingVertical: 10,
-                marginBottom: 14,
+                backgroundColor: bg, borderRadius: 16,
+                paddingHorizontal: 14, paddingVertical: 12,
+                marginBottom: 18,
               }}>
                 <View style={{
-                  width: 32, height: 32, borderRadius: 16,
+                  width: 34, height: 34, borderRadius: 17,
                   backgroundColor: isDark ? '#991B1B66' : '#FCA5A580',
-                  alignItems: 'center', justifyContent: 'center', marginRight: 10,
+                  alignItems: 'center', justifyContent: 'center', marginRight: 12,
                 }}>
                   <IconMapPin size={18} color={fg} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ color: fg, fontSize: 13, fontWeight: '700' }} numberOfLines={1}>
+                  <Text style={{ color: fg, fontSize: 13.5, fontWeight: '700' }} numberOfLines={1}>
                     {t?.('chatConv.liveAlreadySharing') || 'Você já está dividindo localização ao vivo'}
                   </Text>
                   {!!subtitle && (
@@ -339,7 +534,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                 <TouchableOpacity
                   onPress={() => onStopLive?.()}
                   hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-                  style={{ paddingHorizontal: 10, paddingVertical: 6 }}
+                  style={{ paddingHorizontal: 12, paddingVertical: 7, borderRadius: 12, backgroundColor: isDark ? 'rgba(239,68,68,0.16)' : 'rgba(239,68,68,0.12)' }}
                   accessibilityRole="button"
                   accessibilityLabel={t?.('chatConv.liveStop') || 'Parar'}
                 >
@@ -353,24 +548,37 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
 
           {/* Body: loading / error / preview */}
           {loading && !coords && (
-            <View style={{ height: 200, alignItems: 'center', justifyContent: 'center' }}>
-              <ActivityIndicator size="large" color={colors.primary} />
-              <Text style={{ marginTop: 12, color: colors.textSecondary, fontSize: 14 }}>
+            <View style={{ height: 220, alignItems: 'center', justifyContent: 'center' }}>
+              <View style={{
+                width: 60, height: 60, borderRadius: 30,
+                backgroundColor: tint(ACCENT, isDark ? 0.16 : 0.12),
+                alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+              }}>
+                <ActivityIndicator size="large" color={ACCENT} />
+              </View>
+              <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
                 {t?.('chatConv.locationFetching') || 'Buscando sua localização…'}
               </Text>
             </View>
           )}
 
           {error && !coords && (
-            <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-              <Text style={{ fontSize: 14, color: '#ef4444', textAlign: 'center', marginBottom: 16, lineHeight: 20 }}>
+            <View style={{ paddingVertical: 28, alignItems: 'center' }}>
+              <View style={{
+                width: 60, height: 60, borderRadius: 30,
+                backgroundColor: isDark ? 'rgba(239,68,68,0.16)' : 'rgba(239,68,68,0.10)',
+                alignItems: 'center', justifyContent: 'center', marginBottom: 16,
+              }}>
+                <IconMapPin size={26} color="#ef4444" />
+              </View>
+              <Text style={{ fontSize: 14.5, color: colors.text, textAlign: 'center', marginBottom: 20, lineHeight: 21, paddingHorizontal: 8 }}>
                 {error}
               </Text>
               <TouchableOpacity
                 onPress={onClose}
-                style={{ paddingHorizontal: 20, paddingVertical: 12, borderRadius: 24, backgroundColor: colors.border + '40' }}
+                style={{ paddingHorizontal: 28, paddingVertical: 13, borderRadius: 14, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,27,33,0.06)' }}
               >
-                <Text style={{ color: colors.text, fontSize: 15, fontWeight: '600' }}>
+                <Text style={{ color: colors.text, fontSize: 15, fontWeight: '700' }}>
                   {t?.('common.close') || 'Fechar'}
                 </Text>
               </TouchableOpacity>
@@ -380,19 +588,21 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
           {coords && !liveConfirm && (
             <>
               {/* Map preview */}
-              <View style={{ borderRadius: 14, overflow: 'hidden', backgroundColor: colors.border + '20', marginBottom: 14 }}>
-                {coords ? (
-                  <View style={{ width: '100%', height: 180 }}>
-                    <BoraMapPreview lat={coords.latitude} lng={coords.longitude} height={180} />
-                  </View>
-                ) : null}
-              </View>
+              <MapPreviewCard
+                lat={coords.latitude}
+                lng={coords.longitude}
+                accuracy={coords.accuracy}
+                height={190}
+                colors={colors}
+                isDark={isDark}
+                t={t}
+              />
 
               {/* Address line */}
-              <Text style={{ fontSize: 14, color: colors.text, marginBottom: 4, fontWeight: '600' }} numberOfLines={2}>
+              <Text style={{ fontSize: 15.5, color: colors.text, marginBottom: 4, fontWeight: '700', letterSpacing: -0.2 }} numberOfLines={2}>
                 {address || (t?.('chatConv.locationCurrent') || 'Sua localização atual')}
               </Text>
-              <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: approxOnly ? 6 : 18 }}>
+              <Text style={{ fontSize: 12.5, color: colors.textSecondary, marginBottom: approxOnly ? 6 : 20 }}>
                 {coords.latitude.toFixed(5)}, {coords.longitude.toFixed(5)}
                 {coords.accuracy ? ` · ±${Math.round(coords.accuracy)}m` : ''}
                 {loading ? ` · ${t?.('chatConv.locationRefining') || 'refinando…'}` : ''}
@@ -401,7 +611,7 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                   we have is an aged cache (>30s) and a fresh GPS read hasn't
                   returned yet. Sending is still allowed. */}
               {approxOnly && (
-                <Text style={{ fontSize: 11, color: '#D97706', marginBottom: 18, fontWeight: '600' }} numberOfLines={1}>
+                <Text style={{ fontSize: 11.5, color: '#D97706', marginBottom: 20, fontWeight: '700' }} numberOfLines={1}>
                   {t?.('chatConv.locationApprox') || 'Localização aproximada'}
                 </Text>
               )}
@@ -410,17 +620,20 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
               <TouchableOpacity
                 onPress={handleSend}
                 disabled={sending}
+                activeOpacity={0.85}
                 style={{
-                  backgroundColor: colors.primary,
-                  borderRadius: 26,
-                  paddingVertical: 14,
+                  backgroundColor: ACCENT,
+                  borderRadius: 14,
+                  paddingVertical: 15,
                   alignItems: 'center',
                   opacity: sending ? 0.6 : 1,
-                  flexDirection: 'row', justifyContent: 'center', gap: 8,
+                  flexDirection: 'row', justifyContent: 'center', gap: 9,
+                  shadowColor: ACCENT_DEEP, shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 6 },
+                  elevation: 3,
                 }}
               >
-                <IconMapPin size={18} color="#fff" />
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+                <IconMapPin size={19} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.1 }}>
                   {sending
                     ? (t?.('common.sending') || 'Enviando…')
                     : (t?.('chatConv.locationSend') || 'Enviar localização atual')}
@@ -432,14 +645,13 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                   (WhatsApp parity: avoids accidental "I just shared my
                   live location with 2 hours of tracking" taps).
                   Snap-Map 2026-05-18: "Sempre" chip = unlimited until
-                  user stops manually (highlighted differently so it reads
-                  as a power-user choice, not a default). */}
+                  user stops manually. */}
               {onLiveStart && !activeLive && (
-                <View style={{ marginTop: 18 }}>
-                  <Text style={{ fontSize: 12, fontWeight: '700', color: colors.textSecondary, marginBottom: 8, letterSpacing: 0.5 }}>
+                <View style={{ marginTop: 22 }}>
+                  <Text style={{ fontSize: 11.5, fontWeight: '800', color: colors.textSecondary, marginBottom: 12, letterSpacing: 1 }}>
                     {(t?.('chatConv.liveLocation') || 'COMPARTILHAR AO VIVO').toUpperCase()}
                   </Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10 }}>
                     {LIVE_DURATIONS.map(d => {
                       const inf = d.seconds === -1;
                       return (
@@ -450,19 +662,20 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                             setLiveConfirm({ seconds: d.seconds, label: d.label, unlimited: inf });
                           }}
                           disabled={sending}
+                          activeOpacity={0.7}
                           style={{
                             flexBasis: '47%',
                             flexGrow: 1,
-                            paddingVertical: 12,
-                            borderRadius: 22,
+                            paddingVertical: 14,
+                            borderRadius: 999,
                             borderWidth: 1.5,
-                            borderColor: inf ? '#11111190' : colors.primary + '50',
-                            backgroundColor: inf ? '#11111115' : colors.primary + '10',
+                            borderColor: tint(ACCENT, isDark ? 0.4 : 0.35),
+                            backgroundColor: tint(ACCENT, isDark ? 0.12 : 0.08),
                             alignItems: 'center',
                             opacity: sending ? 0.5 : 1,
                           }}
                         >
-                          <Text style={{ color: inf ? '#111111' : colors.primary, fontSize: 14, fontWeight: '700' }}>
+                          <Text style={{ color: isDark ? ACCENT : ACCENT_DEEP, fontSize: 14.5, fontWeight: '700' }}>
                             {inf ? '∞ ' : ''}{d.label}
                           </Text>
                         </TouchableOpacity>
@@ -481,54 +694,57 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
               CTA. Back arrow returns to the chips. */}
           {coords && liveConfirm && (
             <>
-              <View style={{ borderRadius: 14, overflow: 'hidden', backgroundColor: colors.border + '20', marginBottom: 14 }}>
-                {coords ? (
-                  <View style={{ width: '100%', height: 160 }}>
-                    <BoraMapPreview lat={coords.latitude} lng={coords.longitude} height={160} />
-                  </View>
-                ) : null}
-              </View>
+              <MapPreviewCard
+                lat={coords.latitude}
+                lng={coords.longitude}
+                accuracy={coords.accuracy}
+                height={168}
+                colors={colors}
+                isDark={isDark}
+                t={t}
+              />
 
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 14, gap: 8 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 16, gap: 12 }}>
                 <View style={{
-                  width: 36, height: 36, borderRadius: 18,
-                  backgroundColor: colors.primary + '15',
+                  width: 40, height: 40, borderRadius: 20,
+                  backgroundColor: tint(ACCENT, isDark ? 0.18 : 0.14),
                   alignItems: 'center', justifyContent: 'center',
                 }}>
-                  <IconMapPin size={18} color={colors.primary} />
+                  <IconMapPin size={20} color={ACCENT} />
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text }} numberOfLines={1}>
+                  <Text style={{ fontSize: 15.5, fontWeight: '700', color: colors.text, letterSpacing: -0.2 }} numberOfLines={1}>
                     {address || (t?.('chatConv.locationCurrent') || 'Sua localização atual')}
                   </Text>
-                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
+                  <Text style={{ fontSize: 12.5, color: colors.textSecondary, marginTop: 2 }}>
                     {t?.('chatConv.liveDurationLabel') || 'Atualizando por'}: {liveConfirm.label}
                   </Text>
                 </View>
               </View>
 
               {/* Duration switcher — pre-selected pill highlighted */}
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginBottom: 14 }}>
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
                 {LIVE_DURATIONS.map(d => {
-                  const active = d.seconds === liveConfirm.seconds;
+                  const sel = d.seconds === liveConfirm.seconds;
                   const inf = d.seconds === -1;
                   return (
                     <TouchableOpacity
                       key={d.key}
                       onPress={() => setLiveConfirm({ seconds: d.seconds, label: d.label, unlimited: inf })}
                       disabled={sending}
+                      activeOpacity={0.7}
                       style={{
-                        flexBasis: '23%',
+                        flexBasis: '22%',
                         flexGrow: 1,
-                        paddingVertical: 10,
-                        borderRadius: 18,
+                        paddingVertical: 11,
+                        borderRadius: 999,
                         borderWidth: 1.5,
-                        borderColor: active ? (inf ? '#111111' : colors.primary) : colors.border + '60',
-                        backgroundColor: active ? (inf ? '#11111115' : colors.primary + '15') : 'transparent',
+                        borderColor: sel ? ACCENT : (isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17,27,33,0.12)'),
+                        backgroundColor: sel ? tint(ACCENT, isDark ? 0.16 : 0.1) : 'transparent',
                         alignItems: 'center',
                       }}
                     >
-                      <Text style={{ color: active ? (inf ? '#111111' : colors.primary) : colors.textSecondary, fontSize: 13, fontWeight: '700' }}>
+                      <Text style={{ color: sel ? (isDark ? ACCENT : ACCENT_DEEP) : colors.textSecondary, fontSize: 13, fontWeight: '700' }}>
                         {inf ? '∞ ' : ''}{d.label}
                       </Text>
                     </TouchableOpacity>
@@ -546,13 +762,15 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                 placeholderTextColor={colors.textSecondary}
                 maxLength={120}
                 style={{
-                  backgroundColor: colors.border + '20',
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,27,33,0.04)',
                   borderRadius: 14,
-                  paddingHorizontal: 14,
-                  paddingVertical: 10,
-                  fontSize: 14,
+                  borderWidth: 1,
+                  borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,27,33,0.05)',
+                  paddingHorizontal: 15,
+                  paddingVertical: 12,
+                  fontSize: 14.5,
                   color: colors.text,
-                  marginBottom: 12,
+                  marginBottom: 14,
                 }}
               />
 
@@ -560,11 +778,20 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                   helps adoption since users worry about who sees their
                   pin. Snap-Map 2026-05-18: "Sempre" mode gets a stronger
                   warning because there's no auto-expiry. */}
-              <Text style={{ fontSize: 11, color: liveConfirm.unlimited ? '#111111' : colors.textSecondary, lineHeight: 16, marginBottom: 16, fontWeight: liveConfirm.unlimited ? '600' : '400' }}>
-                {liveConfirm.unlimited
-                  ? (t?.('chatConv.livePrivacyUnlimited') || 'Sempre ativo: sua localização continua sendo compartilhada até você desligar manualmente. Toque na bolha para parar.')
-                  : (t?.('chatConv.livePrivacyNote') || 'Apenas pessoas desta conversa veem sua localização. Você pode parar a qualquer momento.')}
-              </Text>
+              <View style={{
+                flexDirection: 'row', gap: 10, alignItems: 'flex-start',
+                backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(17,27,33,0.03)',
+                borderRadius: 14, paddingHorizontal: 14, paddingVertical: 12, marginBottom: 18,
+              }}>
+                <View style={{ marginTop: 1 }}>
+                  <IconMapPin size={16} color={liveConfirm.unlimited ? '#D97706' : ACCENT} />
+                </View>
+                <Text style={{ flex: 1, fontSize: 12, color: colors.textSecondary, lineHeight: 17, fontWeight: liveConfirm.unlimited ? '600' : '400' }}>
+                  {liveConfirm.unlimited
+                    ? (t?.('chatConv.livePrivacyUnlimited') || 'Sempre ativo: sua localização continua sendo compartilhada até você desligar manualmente. Toque na bolha para parar.')
+                    : (t?.('chatConv.livePrivacyNote') || 'Apenas pessoas desta conversa veem sua localização. Você pode parar a qualquer momento.')}
+                </Text>
+              </View>
 
               {/* Primary CTA + secondary back */}
               <TouchableOpacity
@@ -579,18 +806,21 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                   });
                 }}
                 disabled={sending}
+                activeOpacity={0.85}
                 style={{
-                  backgroundColor: colors.primary,
-                  borderRadius: 26,
-                  paddingVertical: 14,
+                  backgroundColor: ACCENT,
+                  borderRadius: 14,
+                  paddingVertical: 15,
                   alignItems: 'center',
                   opacity: sending ? 0.6 : 1,
-                  flexDirection: 'row', justifyContent: 'center', gap: 8,
-                  marginBottom: 8,
+                  flexDirection: 'row', justifyContent: 'center', gap: 9,
+                  marginBottom: 6,
+                  shadowColor: ACCENT_DEEP, shadowOpacity: 0.3, shadowRadius: 12, shadowOffset: { width: 0, height: 6 },
+                  elevation: 3,
                 }}
               >
-                <IconMapPin size={18} color="#fff" />
-                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700' }}>
+                <IconMapPin size={19} color="#fff" />
+                <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.1 }}>
                   {sending
                     ? (t?.('common.sending') || 'Enviando…')
                     : (t?.('chatConv.liveShareConfirm') || 'Compartilhar ao vivo')}
@@ -599,9 +829,9 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
               <TouchableOpacity
                 onPress={() => setLiveConfirm(null)}
                 disabled={sending}
-                style={{ paddingVertical: 10, alignItems: 'center' }}
+                style={{ paddingVertical: 12, alignItems: 'center' }}
               >
-                <Text style={{ color: colors.textSecondary, fontSize: 14, fontWeight: '600' }}>
+                <Text style={{ color: colors.textSecondary, fontSize: 14.5, fontWeight: '700' }}>
                   {t?.('common.back') || 'Voltar'}
                 </Text>
               </TouchableOpacity>

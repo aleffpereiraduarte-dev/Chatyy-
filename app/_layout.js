@@ -294,6 +294,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '../services/queryClient';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { ConfirmProvider } from '../components/ConfirmModal';
+import { useReducedMotion } from '../components/reducedMotion'; // [2026-10-04] honor OS Reduce Motion in nav
 import ChildRestrictionGuard from '../components/ChildRestrictionGuard';
 import { MailProvider } from '../context/MailContext';
 import { ThemeProvider } from '../context/ThemeContext';
@@ -1172,21 +1173,18 @@ function AppInit({ onNotification, setOtaToast }) {
     (async () => {
       try {
         const {
-          ensurePushTokenFresh,
           setupNotificationListeners,
           clearBadge,
         } = await import('../services/pushNotifications');
 
         if (!mounted) return;
 
+        // Listener SETUP needs no permission — safe to wire on cold start,
+        // even before login. The push PERMISSION request + token registration
+        // (ensurePushTokenFresh → registerForPushNotifications) is deferred to
+        // the auth-gated effect below so a brand-new user never sees the push
+        // dialog before they log in. [FIX push-prompt 2026-10-05]
         cleanupRef.current = await setupNotificationListeners();
-
-        // Boot-time registration. force:true so the helper's 6h throttle
-        // doesn't skip the cold-start call when AppState briefly fired
-        // 'active' during a previous session. AuthContext re-runs on login
-        // and on AppState 'active' (5min throttled) so the steady-state
-        // refresh path is covered there.
-        await ensurePushTokenFresh({ force: true });
 
         // Clear badge when app opens
         clearBadge();
@@ -1330,6 +1328,28 @@ function AppInit({ onNotification, setOtaToast }) {
       if (relayResponderUnsub) relayResponderUnsub();
     };
   }, []);
+
+  // [FIX push-prompt 2026-10-05] Auth-gated push token registration.
+  // registerForPushNotifications() is what triggers the OS push-permission
+  // dialog, so we only run it once the user is authenticated — a brand-new
+  // user reaching the login screen never sees the push prompt first. This
+  // covers cold start with an already-hydrated session; AuthContext's
+  // registerPushAfterAuth covers explicit login / account switch. Both go
+  // through ensurePushTokenFresh, whose per-{token,account} send guard makes
+  // the overlap a no-op. Native only — web uses the Service Worker path.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    if (!authUser?.email) return;
+    let alive = true;
+    (async () => {
+      try {
+        const { ensurePushTokenFresh } = await import('../services/pushNotifications');
+        if (!alive) return;
+        await ensurePushTokenFresh({ force: true });
+      } catch {}
+    })();
+    return () => { alive = false; };
+  }, [authUser?.email]);
 
   return null;
 }
@@ -1478,6 +1498,10 @@ export default function RootLayout() {
     return () => { alive = false; };
   }, [_osScheme]);
   const _navBg = _navIsDark ? '#0d0d0d' : '#ffffff';
+  // [2026-10-04] Reduce Motion: swap directional slides for a quick cross-fade
+  // (Apple HIG: replace slide transitions with a dissolve under Reduce Motion).
+  const _reduceMotion = useReducedMotion();
+  const _navAnim = (anim) => (_reduceMotion ? 'fade' : anim);
   // Cache-ready gate: services/mmkv.js hydrates the in-memory cache from
   // AsyncStorage asynchronously at module load. Before that finishes,
   // SmartCache.getCachedMessagesSync / getCachedConversationsSync return
@@ -1629,12 +1653,13 @@ export default function RootLayout() {
                   <Stack.Screen name="chat" options={{ presentation: 'card', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="chat-conversation" options={{
                     presentation: 'card',
-                    animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right',
-                    animationDuration: 150,
+                    animation: _navAnim(Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right'),
+                    animationDuration: _reduceMotion ? 120 : 150,
                     gestureEnabled: true,
                     ...(Platform.OS !== 'web' ? { fullScreenGestureEnabled: true } : {}),
                   }} />
                   <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 150 }} />
+                  <Stack.Screen name="locked-chats" options={{ headerShown: false, presentation: 'card', animation: _navAnim(Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right'), animationDuration: 150 }} />
                   <Stack.Screen name="saved-messages" options={{ headerShown: false, animation: 'fade', animationDuration: 100 }} />
                   <Stack.Screen name="call-schedule" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
                   <Stack.Screen name="close-friends" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />

@@ -119,6 +119,11 @@ class NotificationService: UNNotificationServiceExtension {
         self.contentHandler = contentHandler
         self.bestAttemptContent = request.content.mutableCopy() as? UNMutableNotificationContent
 
+        // [2026-10-05] Visto-no-push (paridade WhatsApp): POST do token d_ack
+        // assinado -> marca ENTREGUE no instante que ESTE aparelho recebe o push,
+        // app FECHADO e sem WS. Roda em paralelo ao download da imagem abaixo.
+        Self.reportDelivered(userInfo: request.content.userInfo)
+
         guard let bestAttemptContent = self.bestAttemptContent else {
             contentHandler(request.content)
             return
@@ -152,6 +157,28 @@ class NotificationService: UNNotificationServiceExtension {
         if let contentHandler = contentHandler, let bestAttemptContent = bestAttemptContent {
             contentHandler(bestAttemptContent)
         }
+    }
+
+    // [2026-10-05] Delivered-on-receipt. O d_ack é um token HMAC assinado pelo
+    // backend (firebase_push.php) escopado a (msg, conversa, destinatario, exp) —
+    // nenhum segredo embarcado aqui. FCM-direct poe no topo; Expo aninha em "body".
+    private static func reportDelivered(userInfo: [AnyHashable: Any]) {
+        func field(_ k: String) -> String? {
+            if let v = userInfo[k] as? String { return v }
+            if let body = userInfo["body"] as? String,
+               let d = body.data(using: .utf8),
+               let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+               let v = j[k] as? String { return v }
+            return nil
+        }
+        guard let dAck = field("d_ack"), !dAck.isEmpty,
+              let url = URL(string: "https://chatyy.com.br/api/chat.php?action=chat_push_delivered")
+        else { return }
+        var req = URLRequest(url: url, timeoutInterval: 8)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["d_ack": dAck])
+        URLSession.shared.dataTask(with: req).resume()
     }
 
     private static func extractImageURL(from userInfo: [AnyHashable: Any]) -> URL? {

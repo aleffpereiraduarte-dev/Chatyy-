@@ -2,7 +2,7 @@
   "expo": {
     "name": "Chatyy",
     "slug": "webmail-app",
-    "version": "5.0.1",
+    "version": "5.0.2",
     "platforms": [
       "ios",
       "android",
@@ -19,7 +19,7 @@
     "runtimeVersion": "2.5.0",
     "updates": {
       "enabled": true,
-      "fallbackToCacheTimeout": 0,
+      "fallbackToCacheTimeout": 3000,
       "checkAutomatically": "ON_LOAD",
       "url": "https://u.expo.dev/c95f3d04-7288-4f3d-8da3-42a128986467",
       "requestHeaders": {
@@ -108,11 +108,11 @@
         ],
         "NSSpeechRecognitionUsageDescription": "Allow $(PRODUCT_NAME) to use speech recognition."
       },
-      "buildNumber": "629"
+      "buildNumber": "631"
     },
     "android": {
       "package": "com.onemundo.mail",
-      "versionCode": 577,
+      "versionCode": 578,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.VIBRATE",

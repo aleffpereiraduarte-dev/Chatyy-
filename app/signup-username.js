@@ -69,6 +69,10 @@ export default function SignupUsername() {
   // Hero orb scale-pop on each step.
   const heroScale = useRef(new Animated.Value(0.6)).current;
   const heroIconFade = useRef(new Animated.Value(1)).current;
+  // Soft breathing halo behind the orb — parity with signup-phone so the
+  // username path feels equally alive. 4s cycle, opacity + scale only on the
+  // halos (the orb itself stays still). Calm, not flashy.
+  const heroPulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (step === 'done') return;
     heroScale.setValue(0.6);
@@ -76,6 +80,17 @@ export default function SignupUsername() {
     heroIconFade.setValue(0);
     Animated.timing(heroIconFade, { toValue: 1, duration: 280, easing: Easing.bezier(0.23, 1, 0.32, 1), useNativeDriver: true }).start();
   }, [step, heroScale, heroIconFade]);
+  useEffect(() => {
+    if (step === 'done') return;
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(heroPulse, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        Animated.timing(heroPulse, { toValue: 0, duration: 2000, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [step, heroPulse]);
 
   useEffect(() => {
     if (step === 'done') {
@@ -243,9 +258,19 @@ export default function SignupUsername() {
                 width: 200, height: 200, alignItems: 'center', justifyContent: 'center',
                 transform: [{ scale: heroScale }],
               }}>
-                <View style={{
+                {/* Outer halo — biggest, softest, breathes with heroPulse. */}
+                <Animated.View style={{
+                  position: 'absolute', width: 200, height: 200, borderRadius: 100,
+                  backgroundColor: `${colors.primary}1A`,
+                  opacity: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.45, 0.85] }),
+                  transform: [{ scale: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1.08] }) }],
+                }} />
+                {/* Middle halo — primary brand glow, in-phase with the breath. */}
+                <Animated.View style={{
                   position: 'absolute', width: 148, height: 148, borderRadius: 74,
                   backgroundColor: `${colors.primary}26`,
+                  opacity: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0.9] }),
+                  transform: [{ scale: heroPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] }) }],
                 }} />
                 <View style={{
                   width: 92, height: 92, borderRadius: 46,
@@ -330,6 +355,28 @@ export default function SignupUsername() {
                           <Text style={{ fontSize: 13, color: colors.primary, fontWeight: '600' }}>{s}</Text>
                         </TouchableOpacity>
                       ))}
+                    </View>
+                  )}
+
+                  {/* Live @handle preview card — parity with signup-phone so the
+                      username path gets the same "here's your Chatyy address"
+                      delight. Tints red while the handle is taken. */}
+                  {!!username && (
+                    <View style={{
+                      marginTop: 14, padding: 12, borderRadius: 12,
+                      backgroundColor: usernameAvailable === false ? `${colors.error}14` : (isDark ? `${colors.primary}1f` : `${colors.primary}0f`),
+                    }}>
+                      <Text style={{ fontSize: 11, fontWeight: '700', letterSpacing: 0.5, textTransform: 'uppercase', color: colors.textTertiary }}>
+                        {t('onb.handlePreview')}
+                      </Text>
+                      <Text style={{ fontSize: 15, fontWeight: '700', color: colors.text, marginTop: 3 }} numberOfLines={1}>
+                        {username}@chatyy.com.br
+                      </Text>
+                      {usernameAvailable !== null && !usernameChecking && (
+                        <Text style={{ fontSize: 12, fontWeight: '600', marginTop: 3, color: usernameAvailable ? colors.success : colors.error }}>
+                          {usernameAvailable ? t('onb.available') : t('onb.taken')}
+                        </Text>
+                      )}
                     </View>
                   )}
 
@@ -456,8 +503,20 @@ export default function SignupUsername() {
               );
             })()}
 
+            {/* Inline error — iconized + left-aligned for parity with the
+                phone-signup flow (was a bare centered line that read like a
+                toast). The lucide alert glyph sits beside the field it relates
+                to so the failure feels anchored, not floating. */}
             {!!error && step !== 'done' && (
-              <Text style={{ color: colors.error, fontSize: 13, marginTop: 12, textAlign: 'center' }}>{error}</Text>
+              <View style={{
+                flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+                marginTop: 12, paddingHorizontal: 2,
+              }}>
+                <IconAlertTriangle size={15} color={colors.error} style={{ marginTop: 2 }} />
+                <Text style={{ color: colors.error, fontSize: 13, lineHeight: 18, flex: 1 }}>
+                  {error}
+                </Text>
+              </View>
             )}
           </View>
         </Animated.View>

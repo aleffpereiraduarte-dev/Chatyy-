@@ -417,6 +417,43 @@ export function applyEvents(events, messagesById, setMessages, hydratedMessages 
     if (__DEV__) console.warn('[chatSync] applyEvents SQLite mirror failed (non-fatal):', e?.message || e);
   }
 
+  // [2026-10-05] DELIVERED-ON-RECONNECT. A message that arrived while THIS device
+  // was offline is pulled in here by syncConversations' catch-up — but until now
+  // nothing acked it as delivered, so the SENDER's bubble stayed at ✓ (sent)
+  // until the recipient actually OPENED the thread. The live WS handler
+  // (websocket.js) and the foreground push handler (pushNotifications.js) ack on
+  // receipt, but the delta-sync path (reconnect / app-foreground catch-up) was a
+  // blind spot. WhatsApp flips ✓✓ the moment the device ingests the message, by
+  // any route. Mirror that: collect every incoming (sender ≠ me) new_message we
+  // just learned and fire a coalesced delivery ack. chatDeliveryAckBatched dedups
+  // + retries; the server is idempotent (COALESCE), so re-acking what the live
+  // path already handled is a cheap no-op. Non-members get a silent server no-op.
+  try {
+    let _me = '';
+    try { _me = String(require('./sqliteStore').getActiveAccount() || '').toLowerCase(); } catch {}
+    const _ackByConv = new Map(); // convId -> Set<messageId>
+    for (const ev of events) {
+      if (ev?.type !== 'new_message') continue;
+      const mid = Number(ev?.payload?.message_id) || 0;
+      if (!mid) continue;
+      const hyd = hydratedMap.get(mid);
+      if (!hyd || !hyd.conversation_id) continue;
+      const snd = String(hyd.sender_email || '').toLowerCase();
+      if (!snd || (_me && snd === _me)) continue; // never ack our OWN messages
+      let s = _ackByConv.get(hyd.conversation_id);
+      if (!s) { s = new Set(); _ackByConv.set(hyd.conversation_id, s); }
+      s.add(mid);
+    }
+    if (_ackByConv.size) {
+      const _api = require('./api');
+      for (const [cid, set] of _ackByConv.entries()) {
+        try { _api.chatDeliveryAckBatched?.(cid, Array.from(set)); } catch {}
+      }
+    }
+  } catch (e) {
+    if (__DEV__) console.warn('[chatSync] applyEvents delivered-ack failed (non-fatal):', e?.message || e);
+  }
+
   setMessages(prev => {
     const next = [...prev];
     const indexById = new Map(next.map((m, i) => [Number(m.id), i]));

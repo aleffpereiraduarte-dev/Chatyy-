@@ -9,7 +9,29 @@ import { isConnected as networkIsConnected } from './networkInfo';
 const CACHE_PREFIX = 'omc_';
 const MAX_EMAILS_PER_FOLDER = 200;
 const MAX_CACHED_MESSAGES = 200; // Email messages (not chat — chat uses chatCache.js)
-const QUEUE_KEY = CACHE_PREFIX + 'offline_queue';
+const QUEUE_KEY_LEGACY = CACHE_PREFIX + 'offline_queue'; // LEGACY global (pré-namespace)
+// [2026-10-05 anti-vazamento multi-conta] A fila offline era GLOBAL → um chat_send
+// enfileirado pela Conta A era replayado pela conta ATIVA no replay (mandava pela
+// conta ERRADA). Agora a fila é POR-CONTA (_queueKey). _migrateLegacyQueueOnce()
+// move a fila antiga 1× pra conta ativa (best-effort; itens expiram em 7d).
+function _queueKey() { return CACHE_PREFIX + 'offline_queue_' + _acctNS(); }
+let _legacyQueueMigrated = false;
+function _migrateLegacyQueueOnce() {
+  if (_legacyQueueMigrated) return;
+  if (_acctNS() === '_noacct') return; // espera uma conta ativa (não manda pro limbo)
+  _legacyQueueMigrated = true;
+  try {
+    const legacy = getJSON(QUEUE_KEY_LEGACY);
+    if (Array.isArray(legacy) && legacy.length) {
+      const qk = _queueKey();
+      const cur = getJSON(qk) || [];
+      const seen = new Set(cur.map(a => a && a.id).filter(Boolean));
+      const add = legacy.filter(a => a && (!a.id || !seen.has(a.id))).map(a => ({ ...a, _acct: a._acct || _acctNS() }));
+      if (add.length) setJSON(qk, cur.concat(add));
+    }
+    remove(QUEUE_KEY_LEGACY);
+  } catch {}
+}
 
 // [2026-06-14] FIX "(sem conteúdo)" PERSISTENTE no iOS — causa raiz achada por
 // 4 agentes: builds VELHOS (<10/06, antes do fallback Rust-vazio→PHP) gravavam
@@ -396,9 +418,12 @@ export async function getCachedProfile() {
 // Actions performed while offline are queued and replayed when back online
 
 export async function queueOfflineAction(action) {
-  const queue = getJSON(QUEUE_KEY) || [];
-  queue.push({ ...action, ts: Date.now(), id: Date.now() + '_' + Math.random().toString(36).slice(2, 8) });
-  setJSON(QUEUE_KEY, queue);
+  _migrateLegacyQueueOnce();
+  const qk = _queueKey();
+  const queue = getJSON(qk) || [];
+  // _acct carimba a conta DONA da ação — garante que só replaya pela conta certa.
+  queue.push({ ...action, _acct: _acctNS(), ts: Date.now(), id: Date.now() + '_' + Math.random().toString(36).slice(2, 8) });
+  setJSON(qk, queue);
 }
 
 // 7d TTL — WhatsApp keeps unsent indefinitely, but at some point a stuck
@@ -409,20 +434,23 @@ export async function queueOfflineAction(action) {
 const OFFLINE_QUEUE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function getOfflineQueue() {
-  const queue = getJSON(QUEUE_KEY) || [];
+  _migrateLegacyQueueOnce();
+  const qk = _queueKey();
+  const queue = getJSON(qk) || [];
   const cutoff = Date.now() - OFFLINE_QUEUE_TTL_MS;
   const fresh = queue.filter(a => !a?.ts || a.ts >= cutoff);
-  if (fresh.length !== queue.length) setJSON(QUEUE_KEY, fresh);
+  if (fresh.length !== queue.length) setJSON(qk, fresh);
   return fresh;
 }
 
 export async function clearOfflineQueue() {
-  setJSON(QUEUE_KEY, []);
+  setJSON(_queueKey(), []);
 }
 
 export async function removeFromQueue(actionId) {
-  const queue = getJSON(QUEUE_KEY) || [];
-  setJSON(QUEUE_KEY, queue.filter(a => a.id !== actionId));
+  const qk = _queueKey();
+  const queue = getJSON(qk) || [];
+  setJSON(qk, queue.filter(a => a.id !== actionId));
 }
 
 // Cancel a queued chat_send by client_message_id — used when the original
@@ -432,7 +460,8 @@ export async function removeFromQueue(actionId) {
 // but still wasteful and can flicker the UI).
 export async function removeChatSendFromQueueByClientMsgId(clientMsgId) {
   if (!clientMsgId) return;
-  const queue = getJSON(QUEUE_KEY) || [];
+  const qk = _queueKey();
+  const queue = getJSON(qk) || [];
   // Match every send-shaped action for this message, not just chat_send —
   // failed media queues as chat_file_upload/chat_audio_upload with the same
   // client_message_id, and leaving those behind meant a photo/audio the user
@@ -443,7 +472,7 @@ export async function removeChatSendFromQueueByClientMsgId(clientMsgId) {
   const filtered = queue.filter(a =>
     !(SEND_TYPES.includes(a?.type) && a?.client_message_id === clientMsgId)
   );
-  if (filtered.length !== queue.length) setJSON(QUEUE_KEY, filtered);
+  if (filtered.length !== queue.length) setJSON(qk, filtered);
 }
 
 // Global mutex: 3 trigger points (OfflineNotice, conversation mount, send-catch
@@ -457,6 +486,9 @@ let _replayInFlight = null;
 export async function replayOfflineQueue(api) {
   if (_replayInFlight) return _replayInFlight;
   _replayInFlight = (async () => {
+  // Captura a chave da conta ATIVA no início — o writeback no fim usa ESTA chave,
+  // então uma troca de conta no meio do replay não grava na fila da conta errada.
+  const _replayQk = _queueKey();
   const queue = await getOfflineQueue();
   if (!queue.length) return { replayed: 0, failed: 0 };
 
@@ -1383,9 +1415,9 @@ export async function replayOfflineQueue(api) {
   // entries whose id wasn't in our snapshot — those are the fresh arrivals.
   const snapshotIds = new Set(queue.map(a => a && a.id).filter(Boolean));
   let liveNow = [];
-  try { liveNow = getJSON(QUEUE_KEY) || []; } catch {}
+  try { liveNow = getJSON(_replayQk) || []; } catch {}
   const newArrivals = liveNow.filter(a => a && a.id && !snapshotIds.has(a.id));
-  setJSON(QUEUE_KEY, [...failedFromBackoff, ...failedActions, ...newArrivals]);
+  setJSON(_replayQk, [...failedFromBackoff, ...failedActions, ...newArrivals]);
   return { replayed, failed };
   })().finally(() => { _replayInFlight = null; });
   return _replayInFlight;
@@ -1425,6 +1457,6 @@ export function getCacheStats() {
     contacts: omcKeys.filter(k => k.includes('contacts')).length,
     files: omcKeys.filter(k => k.includes('files')).length,
     chat: chatKeys.length,
-    queue: (getJSON(QUEUE_KEY) || []).length,
+    queue: (getJSON(_queueKey()) || []).length,
   };
 }

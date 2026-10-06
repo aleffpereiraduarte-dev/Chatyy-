@@ -155,8 +155,16 @@ export class OneRealtimeSession {
 
     this.pc.oniceconnectionstatechange = () => {
       const s = this.pc?.iceConnectionState;
-      if (s === 'failed' || s === 'disconnected') {
-        this._emit('onError', new Error('ICE ' + s));
+      if (s === 'failed') {
+        // [2026-10-04 P1] Estado terminal: libera mic/pc e sinaliza close pra o
+        // app cair no fallback (Whisper) em vez de deixar o orb "ouvindo" morto
+        // com o microfone preso. (stop() zera active antes de fechar, então o
+        // onClose do data-channel não dispara em dobro.)
+        this._emit('onError', new Error('ICE failed'));
+        if (this.active) this._emit('onClose');
+        this.stop();
+      } else if (s === 'disconnected') {
+        this._emit('onError', new Error('ICE disconnected'));
       }
     };
 

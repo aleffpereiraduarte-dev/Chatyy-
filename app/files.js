@@ -1789,32 +1789,61 @@ function FilesScreenInner() {
 
       const result = await DocumentPicker.getDocumentAsync({
         type: '*/*',
-        multiple: false,
+        multiple: true,
         copyToCacheDirectory: true,
       });
 
+      // Cancellation / empty selection — nothing to upload.
       if (result.canceled || !result.assets || result.assets.length === 0) return;
 
-      const asset = result.assets[0];
-      setUploadingFile(asset.name || '');
-      setUploadProgress(0);
-      setUploading(true);
+      const assets = result.assets;
+      const targetFolder = tab === 'all' ? currentFolderId : null;
+      const total = assets.length;
+      let okCount = 0;
+      let failCount = 0;
+      let lastErr = null;
+      // Sequential upload — same fileUploadDirect path/worker the picker and
+      // the web drag-drop already use. One file in flight at a time keeps the
+      // progress bar meaningful and avoids hammering the origin.
+      for (const asset of assets) {
+        setUploadingFile(asset.name || '');
+        setUploadProgress(0);
+        setUploading(true);
+        const fileData = isWeb && asset.file
+          ? { _raw: asset.file, name: asset.name, type: asset.mimeType, size: asset.size }
+          : { uri: asset.uri, name: asset.name, mimeType: asset.mimeType, size: asset.size };
+        try {
+          const r = await api.fileUploadDirect(
+            fileData,
+            targetFolder,
+            (pct) => setUploadProgress(pct),
+          );
+          if (r?.success) okCount += 1;
+          else { failCount += 1; lastErr = r; }
+        } catch (e) {
+          failCount += 1; lastErr = e;
+        }
+      }
 
-      const fileData = isWeb && asset.file
-        ? { _raw: asset.file, name: asset.name, type: asset.mimeType, size: asset.size }
-        : { uri: asset.uri, name: asset.name, mimeType: asset.mimeType, size: asset.size };
-
-      const r = await api.fileUploadDirect(
-        fileData,
-        tab === 'all' ? currentFolderId : null,
-        (pct) => setUploadProgress(pct),
-      );
-      if (r.success) {
-        showToast(t('files.fileUploaded'));
+      if (okCount > 0) {
+        // Single file keeps the simple "File uploaded" toast; batches get a count.
+        showToast(total === 1
+          ? t('files.fileUploaded')
+          : (t('files.uploadedCount') || '{ok} de {total} enviados').replace('{ok}', okCount).replace('{total}', total));
         loadAllFiles(false);
         loadStorageInfo();
-      } else {
-        safeAlert(t('files.uploadFailed'), mapApiError(r, t, 'files'));
+      }
+      // ALWAYS surface failures — even a partial failure in a batch — instead of
+      // letting them disappear behind a success toast.
+      if (failCount > 0) {
+        if (total === 1) {
+          safeAlert(t('files.uploadFailed'), mapApiError(lastErr, t, 'files'));
+        } else {
+          safeAlert(
+            t('files.uploadFailed'),
+            (t('files.uploadSomeFailed') || '{fail} de {total} não puderam ser enviados.').replace('{fail}', failCount).replace('{total}', total),
+          );
+        }
       }
     } catch (err) {
       safeAlert(t('common.error'), mapApiError(err, t, 'files'));
@@ -1823,7 +1852,7 @@ function FilesScreenInner() {
       setUploadingFile('');
       setUploadProgress(0);
     }
-  }, [currentFolderId, tab, showToast, loadAllFiles, loadStorageInfo]);
+  }, [currentFolderId, tab, showToast, loadAllFiles, loadStorageInfo, t]);
 
   // ---- DRAG-AND-DROP UPLOAD (web only) ----
   // Uploads an array of native web File objects sequentially, reusing the
@@ -1857,12 +1886,18 @@ function FilesScreenInner() {
     if (okCount > 0) {
       showToast(files.length === 1
         ? t('files.fileUploaded')
-        : `${okCount}/${files.length}`);
+        : (t('files.uploadedCount') || '{ok} de {total} enviados').replace('{ok}', okCount).replace('{total}', files.length));
       loadAllFiles(false);
       loadStorageInfo();
     }
-    if (failCount > 0 && okCount === 0) {
-      safeAlert(t('files.uploadFailed'), '');
+    // ALWAYS surface failures. Previously this only fired when okCount===0, so a
+    // partial failure (e.g. 3/5) left the user with just a bare count toast and no
+    // warning that 2 files never made it.
+    if (failCount > 0) {
+      safeAlert(
+        t('files.uploadFailed'),
+        (t('files.uploadSomeFailed') || '{fail} de {total} não puderam ser enviados.').replace('{fail}', failCount).replace('{total}', files.length),
+      );
     }
   }, [currentFolderId, tab, showToast, loadAllFiles, loadStorageInfo, t]);
 

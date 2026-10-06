@@ -1279,22 +1279,20 @@ function SettingsScreenInner() {
 
   // ── Category catalog (WhatsApp/iOS-style home list) ──────────────────
   // Each entry maps to the `activeCategory` key used by the section gates
-  // below. `icon` is an already-imported SVG component. Subtitles are short
-  // pt-BR hints. Falls back to inline strings when an i18n key is absent.
-  // Titles/subtitles are inline pt-BR strings on purpose: i18n has no
-  // `settings.cat.*` keys and this file's `t()` returns the raw key (not a
-  // falsy) for misses, so `t(...) || fallback` would leak the key. Inline
-  // strings keep the labels correct without touching the i18n files.
+  // below. `icon` is an already-imported SVG component. Titles/subtitles are
+  // routed through t() (keys added under `settings.cat.*` to pt-BR/en/es, so
+  // the en→pt-BR fallback chain covers every other locale — no raw-key leak).
+  // Inline pt-BR kept as a `||` fallback belt-and-suspenders.
   const categoryList = [
-    { key: 'account',      Icon: IconUser,         title: 'Conta',                    sub: 'Perfil, foto, trocar conta' },
-    { key: 'appearance',   Icon: IconBrush,        title: 'Aparência',                sub: 'Tema e idioma' },
-    { key: 'notifications',Icon: IconBell,         title: 'Notificações',             sub: 'Alertas e preferências' },
-    { key: 'privacy',      Icon: IconShield,       title: 'Privacidade e segurança',  sub: 'Visto por último, bloqueio, encaminhamento' },
-    { key: 'chat',         Icon: IconMessageSquare,title: 'Chat',                     sub: 'Preferências e temporárias' },
-    { key: 'email',        Icon: IconMail,         title: 'Email',                    sub: 'Assinaturas, filtros, leitura' },
-    { key: 'bia',          Icon: IconSparkles,     title: 'Bia',                      sub: 'Seu assistente de IA' },
-    { key: 'storage_data', Icon: IconDatabase,     title: 'Armazenamento e dados',    sub: 'Mídia e armazenamento' },
-    { key: 'help',         Icon: IconHelpCircle,   title: 'Ajuda e sobre',            sub: 'Central de ajuda, sobre, legal' },
+    { key: 'account',      Icon: IconUser,         title: t('settings.cat.account') || 'Conta',                   sub: t('settings.cat.accountSub') || 'Perfil, foto, trocar conta' },
+    { key: 'appearance',   Icon: IconBrush,        title: t('settings.cat.appearance') || 'Aparência',            sub: t('settings.cat.appearanceSub') || 'Tema e idioma' },
+    { key: 'notifications',Icon: IconBell,         title: t('settings.cat.notifications') || 'Notificações',      sub: t('settings.cat.notificationsSub') || 'Alertas e preferências' },
+    { key: 'privacy',      Icon: IconShield,       title: t('settings.cat.privacy') || 'Privacidade e segurança', sub: t('settings.cat.privacySub') || 'Visto por último, bloqueio, encaminhamento' },
+    { key: 'chat',         Icon: IconMessageSquare,title: t('settings.cat.chat') || 'Chat',                       sub: t('settings.cat.chatSub') || 'Preferências e temporárias' },
+    { key: 'email',        Icon: IconMail,         title: t('settings.cat.email') || 'Email',                     sub: t('settings.cat.emailSub') || 'Assinaturas, filtros, leitura' },
+    { key: 'bia',          Icon: IconSparkles,     title: t('settings.cat.bia') || 'Bia',                         sub: t('settings.cat.biaSub') || 'Seu assistente de IA' },
+    { key: 'storage_data', Icon: IconDatabase,     title: t('settings.cat.storageData') || 'Armazenamento e dados', sub: t('settings.cat.storageDataSub') || 'Mídia e armazenamento' },
+    { key: 'help',         Icon: IconHelpCircle,   title: t('settings.cat.help') || 'Ajuda e sobre',              sub: t('settings.cat.helpSub') || 'Central de ajuda, sobre, legal' },
   ];
   const activeCategoryTitle = (categoryList.find(c => c.key === activeCategory) || {}).title || t('settings.title');
 

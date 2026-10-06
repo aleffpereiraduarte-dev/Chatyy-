@@ -27,6 +27,7 @@
 // it runs on the UI thread and never jank-blocks JS.
 import React, { useRef, useEffect } from 'react';
 import { Animated, Easing } from 'react-native';
+import { isReduceMotionEnabled } from './reducedMotion';
 
 export default function FadeSlideIn({
   children,
@@ -35,10 +36,14 @@ export default function FadeSlideIn({
   duration = 220,
   style,
 }) {
-  const fade = useRef(new Animated.Value(0)).current;
-  const slide = useRef(new Animated.Value(distance)).current;
+  // Reduce Motion: skip the fade + slide-up entirely — content appears
+  // settled (opacity 1, no offset) so low-animation users get no movement.
+  const reduceMotion = isReduceMotionEnabled();
+  const fade = useRef(new Animated.Value(reduceMotion ? 1 : 0)).current;
+  const slide = useRef(new Animated.Value(reduceMotion ? 0 : distance)).current;
 
   useEffect(() => {
+    if (reduceMotion) return;
     const anim = Animated.parallel([
       Animated.timing(fade, {
         toValue: 1,
