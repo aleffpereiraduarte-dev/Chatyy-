@@ -17,6 +17,16 @@ import { NativeModules } from 'react-native';
 // maxToRenderPerBatch, updateCellsBatchingPeriod, removeClippedSubviews,
 // initialNumToRender, onScrollToIndexFailed) o FlashList ignora sem quebrar.
 // Se o scroll invertido regredir → trocar `<FlashList` de volta por `<FlatList`.
+// [2026-10-06 thread-tech] ⚠️ O comentário acima está DESATUALIZADO: a lista
+// de mensagens é um FlatList. Migração p/ FlashList avaliada e ADIADA: a
+// @shopify/flash-list instalada (2.0.2) NÃO tem mais a prop `inverted` (chat
+// em v2 = dados oldest-first + maintainVisibleContentPosition
+// {startRenderingFromBottom} + onStartReached), o que inverte a semântica de
+// ~22 chamadas scrollToOffset/scrollToIndex (offset 0 = mais nova hoje), do
+// FAB "ir pro fim"/isScrolledUp (contentOffset.y≈0), do onEndReached
+// (load-more), de header/footer, do índice da viewability (read receipts,
+// pílula de data, prefetch) e do onScrollToIndexFailed (inexistente na v2).
+// Ver relatório thread-tech 2026-10-06 p/ o plano.
 // [perf 2026-10-06] `_MsgFlashList` require removed — it was never referenced
 // (the list below is a FlatList); the eager require just loaded the module.
 // Native chat view (iOS Swift UICollectionView) — handles all message
@@ -32,6 +42,8 @@ import { NativeModules } from 'react-native';
 const _NativeChatView = null;
 import Svg, { Path } from 'react-native-svg';
 import CircularProgressArc from '../components/CircularProgressArc';
+// [2026-10-06 thread-tech] per-row overlay store (download %, painted, error, delete-fade, translation)
+import { useRowOverlayStore, useOverlaySetter, useRowOverlayVersion, useComposerTextStore, ThreadComposerHost } from '../utils/threadRowOverlay';
 import PressableScale from '../components/PressableScale'; // [2026-10-06 UX2] contact info sheet
 import FadeSlideIn from '../components/FadeSlideIn'; // [2026-10-06 UX2]
 import { isReduceMotionEnabled } from '../components/reducedMotion'; // [2026-10-04] honor OS Reduce Motion
@@ -721,7 +733,7 @@ function ScrollDownFabAnim({ onPress, isDark, colors, newMsgCount, t }) {
     <Animated.View style={{ opacity, transform: [{ translateY }, { scale }] }}>
       <TouchableOpacity
         onPress={onPress}
-        style={[styles.scrollDownFab, { backgroundColor: isDark ? '#111111' : '#fff' }]}
+        style={[styles.scrollDownFab, { backgroundColor: colors.chatBubbleOther || (isDark ? '#1F2C33' : '#fff') }]} /* [2026-10-06 wa-look] WA: FAB = bubble surface (#202C33 dark), not pure black */
         activeOpacity={0.75}
         accessibilityLabel={t('chatConv.scrollToBottom') || 'Scroll to bottom'}
         accessibilityRole="button"
@@ -1094,17 +1106,21 @@ function UnreadSeparatorPulse({ isDark, t }) {
     Animated.timing(opacity, { toValue: 1, duration: 260, useNativeDriver: true }).start();
   }, []);
   return (
-    <Animated.View style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 8, paddingHorizontal: 12, opacity }}>
-      <View style={{ flex: 1, height: 1, backgroundColor: '#E74C3C' }} />
-      <View style={{
-        marginHorizontal: 12, paddingHorizontal: 10, paddingVertical: 3,
-        backgroundColor: isDark ? '#3A1416' : '#FDECEA', borderRadius: 12,
+    // [2026-10-06 wa-look] WhatsApp parity: a full-bleed translucent band
+    // across the thread (bleeds past the list's 6px gutter) with a centered,
+    // muted uppercase label — not red rules + red pill.
+    <Animated.View style={{
+      marginVertical: 10, marginHorizontal: -6, paddingVertical: 5,
+      alignItems: 'center', justifyContent: 'center', opacity,
+      backgroundColor: isDark ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.72)',
+      ...(Platform.OS === 'web' ? { backdropFilter: 'blur(6px)', WebkitBackdropFilter: 'blur(6px)' } : {}),
+    }}>
+      <Text style={{
+        fontSize: 12, fontWeight: '600', letterSpacing: 0.4, textTransform: 'uppercase',
+        color: isDark ? 'rgba(233,237,239,0.78)' : 'rgba(17,27,33,0.62)',
       }}>
-        <Text style={{ fontSize: 11, fontWeight: '700', color: '#E74C3C', letterSpacing: 0.2 }}>
-          {t('chatConv.unreadMessages') || 'Mensagens não lidas'}
-        </Text>
-      </View>
-      <View style={{ flex: 1, height: 1, backgroundColor: '#E74C3C' }} />
+        {t('chatConv.unreadMessages') || 'Mensagens não lidas'}
+      </Text>
     </Animated.View>
   );
 }
@@ -1702,6 +1718,23 @@ function _renderInline(parts, style, colors, keyBase) {
 const _QUOTE_LINE_RE = /^\s*>\s(.*)$/;
 const _BULLET_LINE_RE = /^(\s*)[-*]\s+(.*)$/;
 const _NUM_LINE_RE = /^(\s*)(\d+)\.\s+(.*)$/;
+// [2026-10-06 wa-look] Invisible trailing run appended to a plain-text bubble
+// so the floated time+ticks never overlap the last line (WhatsApp technique).
+// Leading normal space = break opportunity (if the meta doesn't fit, the whole
+// ghost wraps to a new line, exactly like WA); the rest is NO-BREAK so it wraps
+// as one unit. Width ~= meta row: time text mirrored at the same font size,
+// +4 NBSP (~11px@11px) per inline icon, +5 NBSP (~15px) for the tick glyph
+// (the floated meta sits 8px further right than the text column, which
+// absorbs the rest of the tick width -> ~6px text-to-time gap, like WA).
+const _NB = '\u00A0';
+function _waMetaGhost({ time, own, edited, icons }) {
+  let s = ' ' + _NB + _NB + _NB; // ~8px text-to-time gap
+  if (edited) s += String(edited).replace(/ /g, _NB) + _NB;
+  if (icons > 0) s += _NB.repeat(icons * 4);
+  s += String(time || '00:00').replace(/ /g, _NB);
+  if (own) s += _NB.repeat(5);
+  return s;
+}
 function _hasBlockMarkdown(text) {
   if (!text || text.indexOf('\n') === -1 && !_QUOTE_LINE_RE.test(text) && !_BULLET_LINE_RE.test(text) && !_NUM_LINE_RE.test(text)) return false;
   const lines = text.split('\n');
@@ -2876,7 +2909,78 @@ function HeaderPresencePip({ online, dimmedOnline, hidden }) {
   );
 }
 
-const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, renderRef }) {
+// [2026-10-06 thread-tech] Memoized JSON.parse for per-bubble payloads.
+// renderMessage parsed the same strings on EVERY row render (image_variants
+// 5x per image bubble, call/meetup/playlist/voicemail content, meta). Rows
+// re-render on every overlay/selection/receipt change, so this was ~25
+// parses per bubble render. Bounded Map keyed by the source string (string
+// hashing << JSON.parse). Parsed objects are SHARED — callers treat them as
+// read-only (audited: no in-place mutation in renderMessage).
+const _JSON_MEMO = new Map();
+const _JSON_FAIL = { __jsonFail: true };
+const _JSON_MEMO_MAX = 1500;
+function _memoJSONRaw(str) {
+  let v = _JSON_MEMO.get(str);
+  if (v === undefined) {
+    try { v = JSON.parse(str); } catch { v = _JSON_FAIL; }
+    if (_JSON_MEMO.size >= _JSON_MEMO_MAX) {
+      // drop the oldest ~1/4 (Map iterates in insertion order)
+      let n = 0; for (const k of _JSON_MEMO.keys()) { _JSON_MEMO.delete(k); if (++n >= 375) break; }
+    }
+    _JSON_MEMO.set(str, v);
+  }
+  return v;
+}
+// Drop-in for JSON.parse(str): same throw-on-invalid contract.
+function _memoJSON(str) {
+  if (typeof str !== 'string') return JSON.parse(str);
+  const v = _memoJSONRaw(str);
+  if (v === _JSON_FAIL) throw new SyntaxError('JSON parse (memo)');
+  return v;
+}
+// Non-throwing variant for "maybe JSON" content (null on invalid). Cheap
+// bail-out for plain text so normal messages never pay a parse/throw.
+function _memoJSONSafe(str) {
+  if (typeof str !== 'string') return null;
+  const c = str.charCodeAt(0);
+  if (c !== 123 /* { */ && c !== 91 /* [ */) {
+    const tr = str.trimStart();
+    if (!tr || (tr[0] !== '{' && tr[0] !== '[')) return null;
+  }
+  const v = _memoJSONRaw(str);
+  return v === _JSON_FAIL ? null : v;
+}
+
+// [2026-10-06 thread-tech] Location bubble map: the HTML (MapLibre page) was
+// rebuilt on EVERY row render and handed to <WebView> as a NEW source object.
+// The BoraUm static-PNG / raster endpoints are 404 (verified 2026-10-06:
+// /styles/<id>/static/... and /styles/<id>/{z}/{x}/{y}.png), so we can't swap
+// to an <Image>; instead cache ONE stable `{ html }` object per coordinate so
+// re-renders never hand the WebView a new source (no reload / re-layout).
+const _LOC_MAP_SRC = new Map();
+function _locMapSource(lat, lng) {
+  const k = `${Number(lat).toFixed(6)},${Number(lng).toFixed(6)}`;
+  let v = _LOC_MAP_SRC.get(k);
+  if (!v) {
+    v = { html: boraMapHtml({ lat, lng, zoom: 15, interactive: false, markerColor: '#EF4444' }) };
+    if (_LOC_MAP_SRC.size > 200) { const first = _LOC_MAP_SRC.keys().next().value; _LOC_MAP_SRC.delete(first); }
+    _LOC_MAP_SRC.set(k, v);
+  }
+  return v;
+}
+
+// [2026-10-06 thread-tech] markdown / @mention / :emoji: detector for the
+// iOS RichTextOverlay gate (was a screen-level useMemo on inputText).
+const _RICH_INPUT_RE = /[*_~`]|(^|\s)@[\w.]|:[a-z0-9_]{2,32}:/;
+
+const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, renderRef, overlayStore }) {
+  // [2026-10-06 thread-tech] Subscribe to THIS row's overlay key: a download
+  // tick / image-painted / error / delete-fade / translation for this id
+  // re-renders only this row (the memo comparator below can't see store state,
+  // the subscription bypasses it by design).
+  const _rowKey = item && item._type !== 'separator' && item._type !== 'unread_separator' ? item.id : null;
+  useRowOverlayVersion(overlayStore, _rowKey);
+  const _ov = overlayStore ? overlayStore.snapshot(_rowKey) : null;
   // Silent-fail audit: a single malformed payload (corrupt content JSON,
   // missing required field, unexpected type, etc.) thrown inside
   // renderMessage used to crash the WHOLE FlatList — the user would back
@@ -2887,7 +2991,7 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
   // missing rather than a silent gap.
   let rendered = null;
   try {
-    rendered = renderRef.current(item);
+    rendered = renderRef.current(item, _ov);
   } catch (e) {
     console.warn('[renderMessage] threw for item', item?.id, e?.message);
     return (
@@ -2911,6 +3015,11 @@ const MemoizedMessageRow = React.memo(function MemoizedMessageRow({ item, render
     </MessageBubbleEffect>
   );
 }, (prev, next) => {
+  if (prev.overlayStore !== next.overlayStore) return false;
+  // [2026-10-06 thread-tech] Theme signal: rows rendered before the dark theme
+  // resolved (or before a theme switch with the chat open) kept LIGHT colors
+  // forever because nothing here looked at the theme. Repaint on change.
+  if (prev.isDark !== next.isDark || prev.themeColors !== next.themeColors) return false;
   const a = prev.item;
   const b = next.item;
   // Date separators — compare by date string
@@ -8946,16 +9055,19 @@ function ChatConversationInner() {
   const pollVoteLocksRef = useRef(new Set()); // Per-poll-id mutex for vote requests
   const clearInflightRef = useRef(false); // Guard for chat_clear action
   const webBlobUrlsRef = useRef(new Set()); // Revokable blob URLs from web file picks
-  const [inputText, setInputText] = useState('');
+  // [2026-10-06 thread-tech] Composer text moved OUT of screen state: the live
+  // value lives in composerStore and only <ThreadComposerHost> re-renders per
+  // keystroke. setInputText keeps the setState API (updater fn ok). Handlers
+  // must read composerStore.get() at CALL time (never a render-time copy).
+  const composerStore = useComposerTextStore();
+  const setInputText = composerStore.set;
   // [2026-09-24 digitação instantânea] O RichTextOverlay (iOS) repinta os glifos
   // a cada tecla porque o texto do TextInput fica transparente e o overlay
   // pinta por cima — isso causava o micro-delay ao escrever/apagar. Só é preciso
   // quando o texto TEM formatação markdown / @menção / :emoji:. Pra texto normal
   // (99% do tempo) deixamos o TextInput nativo pintar sozinho = instantâneo.
-  const hasRichInput = useMemo(
-    () => /[*_~`]|(^|\s)@[\w.]|:[a-z0-9_]{2,32}:/.test(inputText),
-    [inputText]
-  );
+  // [2026-10-06 thread-tech] now computed inside the composer render (per
+  // keystroke, composer-only) — see _RICH_INPUT_RE / ThreadComposerHost.
   const [aiQuickReplies, setAiQuickReplies] = useState([]);
   const lastQuickReplyMsgId = useRef(null);
   const [chatLeakWarning, setChatLeakWarning] = useState(null);
@@ -9191,7 +9303,13 @@ function ChatConversationInner() {
   const [inputFocused, setInputFocused] = useState(false);
   const [readReceipts, setReadReceipts] = useState([]);
   const [messageInfoModal, setMessageInfoModal] = useState(null); // { message, receipts, sent_at, loading }
+  // [2026-10-06 thread-tech] Per-row overlay store (see utils/threadRowOverlay).
+  const rowOverlayStore = useRowOverlayStore();
   const [translatedMessages, setTranslatedMessages] = useState({}); // { [msgId]: { text, loading } }
+  // [2026-10-06 thread-tech] translatedMessages stays screen state (effects +
+  // the action menu read it; it changes rarely) but is MIRRORED into the row
+  // overlay store so the memoized bubble actually repaints with the result.
+  useEffect(() => { rowOverlayStore.setField('tr', translatedMessages); }, [translatedMessages, rowOverlayStore]);
 
   // Group invite link state
   const [inviteLink, setInviteLink] = useState(null);
@@ -9284,23 +9402,29 @@ function ChatConversationInner() {
   // arrives as a single onChangeText within ~250ms of send. Squash AT MOST
   // once per send and only inside that tight window — otherwise fast typists
   // who start the next message right away get their first keystroke eaten.
-  useEffect(() => {
+  // [2026-10-06 thread-tech] was useEffect([inputText]) → now a composerStore
+  // subscription (same semantics, no screen render per keystroke).
+  useEffect(() => composerStore.subscribe((inputText) => {
     if (!inputText) return;
     const sinceSend = Date.now() - lastSentAtRef.current;
     if (sinceSend < 250 && !autocorrectSquashedRef.current) {
       autocorrectSquashedRef.current = true;
-      setInputText('');
+      // Deferred like the old post-commit effect (never set inside a notify).
+      setTimeout(() => setInputText(''), 0);
       // No inputRef.clear() — see handleSend comment about iOS keyboard flicker.
     }
-  }, [inputText]);
+  }), [composerStore]);
 
+  // [2026-10-06 thread-tech] Debounced draft autosave, re-armed on every
+  // composerStore change (was useEffect([inputText, conversationId])).
   useEffect(() => {
+    const _arm = () => {
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
     draftTimerRef.current = setTimeout(async () => {
       try {
         const AsyncStorage = require('@react-native-async-storage/async-storage').default;
         const { DeviceEventEmitter } = require('react-native');
-        const trimmed = inputText.trim();
+        const trimmed = composerStore.get().trim();
         // Skip if this text matches what we just sent within the last 3s —
         // prevents the autosave from writing a "ghost draft" of the message
         // the user already sent while the state transition is still settling.
@@ -9327,8 +9451,11 @@ function ChatConversationInner() {
         }
       } catch {}
     }, 800);
-    return () => { if (draftTimerRef.current) clearTimeout(draftTimerRef.current); };
-  }, [inputText, conversationId]);
+    };
+    _arm();
+    const _unsub = composerStore.subscribe(_arm);
+    return () => { _unsub(); if (draftTimerRef.current) clearTimeout(draftTimerRef.current); };
+  }, [conversationId, composerStore]);
 
   useEffect(() => {
     const mailWs = require('../services/websocket').default;
@@ -9336,7 +9463,7 @@ function ChatConversationInner() {
       try {
         if (!data || String(data.conversation_id) !== String(conversationId)) return;
         const text = String(data.text || '');
-        if (text === inputText || text === draftSavedRef.current) return;
+        if (text === composerStore.get() || text === draftSavedRef.current) return;
         // Reject echoes of a message we just sent — the autosave + the send
         // clear run concurrently, and the server can broadcast the autosaved
         // draft back to us AFTER we cleared the input. Without this guard,
@@ -9363,7 +9490,7 @@ function ChatConversationInner() {
       } catch {}
     });
     return () => { try { unsub?.(); } catch {} };
-  }, [conversationId, inputText]);
+  }, [conversationId, composerStore]);
 
   // Clear draft on successful send. Also kills any pending autosave timer
   // — without that clear, an in-flight 2s autosave can fire AFTER the
@@ -9494,14 +9621,18 @@ function ChatConversationInner() {
   // full image/video is being fetched from the CDN). Keyed by message id so a
   // stale state for an off-screen bubble doesn't bleed into a new message
   // with the same URL. Each entry is 0-100; removed on load-end.
-  const [downloadProgress, setDownloadProgress] = useState({});
+  // [2026-10-06 thread-tech] Was screen useState → every tick re-rendered the
+  // whole screen AND the memoized row never saw it. Now an external keyed
+  // store: setters keep the setState(prev=>next) API, only the affected row
+  // repaints (MemoizedMessageRow subscribes to its own id).
+  const setDownloadProgress = useOverlaySetter(rowOverlayStore, 'dl');
   // [WAVE 34 2026-05-20] Track per-msg media load errors so we can render a
   // tap-to-retry placeholder instead of leaving the slot blank. User report:
   // "carrega 100% mas fica branco gigante" — root cause: onError fired
   // (transient CDN 502 / file:// path bust after WAVE 31) but the bubble had
   // no fallback UI, just an empty 280x220 box. Keyed by msg.id; cleared on
   // successful retry / load-end.
-  const [mediaErrors, setMediaErrors] = useState({});
+  const setMediaErrors = useOverlaySetter(rowOverlayStore, 'err'); // [2026-10-06 thread-tech]
   // [BUG-1 2026-10-01] Track which image bubbles have finished painting the
   // FULL-resolution bytes (ChatMedia onLoadEnd). Root cause of "foto fica
   // borrada e pede pra baixar de novo": the blurred backdrop layers AND the
@@ -9518,7 +9649,7 @@ function ChatConversationInner() {
   // so the blur is only ever a BRIEF placeholder WHILE loading. Keyed by
   // msg.id; set on onLoadEnd, cleared on onError (evicted/corrupt → let the
   // backdrop + retry path show again).
-  const [loadedImages, setLoadedImages] = useState({});
+  const setLoadedImages = useOverlaySetter(rowOverlayStore, 'loaded'); // [2026-10-06 thread-tech]
   // [WAVE 34 2026-05-20] Shared shimmer animation for media skeletons. Single
   // Animated.Value driven by a global loop so every loading bubble pulses in
   // sync (cheaper than N independent loops, and visually feels more cohesive
@@ -9833,11 +9964,14 @@ function ChatConversationInner() {
     } catch {}
     setMessages(prev => prev.map(m => m.id === id ? { ...m, _txHidden: willHide } : m));
   }, [TX_HIDDEN_KEY]);
+  // [2026-10-06 thread-tech] composerStore subscription (was useEffect on inputText).
   useEffect(() => {
-    if (!inputText || !inputText.trim()) {
-      if (stickerSuggestionsHidden) setStickerSuggestionsHidden(false);
-    }
-  }, [inputText, stickerSuggestionsHidden]);
+    const _chk = (inputText) => {
+      if (!inputText || !inputText.trim()) setStickerSuggestionsHidden(h => (h ? false : h));
+    };
+    _chk(composerStore.get());
+    return composerStore.subscribe(_chk);
+  }, [composerStore, stickerSuggestionsHidden]);
 
   // Telegram-style swipe-on-composer to toggle the GIF picker. Threshold
   // is 60px horizontal with strong horizontal-over-vertical bias so the
@@ -13950,9 +14084,74 @@ function ChatConversationInner() {
         // Soft pop sound for incoming messages from OTHER users (not own echo)
         const isFromOther = msg.sender_email && msg.sender_email !== user?.email;
         const tcpClientMsgIdOuter = msg.client_message_id || msg._client_id || data?.client_message_id || data?._client_id;
+        // [2026-10-06 thread-tech] The setMessages updater below used to run
+        // AsyncStorage / native-cache writes, sound, haptics, screen effects
+        // and the delivery-ack POST INSIDE the updater (render phase: runs
+        // lazily during React's render, twice under StrictMode). Now the
+        // updater stays pure and only *schedules* idempotent effect bundles
+        // (once-guards) that run in a microtask (Promise.then) after it decides the outcome.
+        let _tcpFxDone = false;
+        let _tcpPendingCleanupDone = false;
+        const _tcpCleanupPending = (tmpId, cid) => {
+          if (_tcpPendingCleanupDone) return; _tcpPendingCleanupDone = true;
+          Promise.resolve().then(() => {
+            try { removePendingMessage(conversationId, tmpId).catch(() => {}); } catch {}
+            try {
+              const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
+              if (cid) removeChatSendFromQueueByClientMsgId(cid).catch(() => {});
+            } catch {}
+          }).catch(() => {});
+        };
+        const _tcpNewMsgFx = () => {
+          if (_tcpFxDone) return; _tcpFxDone = true;
+          Promise.resolve().then(() => {
+          // Save to native cache and reload — await before reload so the
+          // native view actually sees the new row.
+          (async () => {
+            try {
+              const cleanMsg = _sanitizeNativeMsg(msg);
+              const p = cleanMsg ? _NativeChatCache?.saveMessages?.(conversationId, [cleanMsg]) : null;
+              if (p && typeof p.then === 'function') await p;
+            } catch {}
+            cacheSingleMessage(conversationId, msg).catch(() => {});
+            try { _nativeChatViewRef.current?.reload?.(); } catch {}
+          })();
+          // Task #886 — TCP receive path audio prefetch (see WS path).
+          if (msg.file_url && (msg.type === 'audio' || msg.type === 'voice') && Platform.OS !== 'web') {
+            try {
+              const { prefetchAudioMessage } = require('../services/mediaCache');
+              prefetchAudioMessage(api.getMediaUrl(msg.file_url)).catch(() => {});
+            } catch {}
+          }
+          if (!mountedRef.current) return;
+          // Trigger receive sound only for genuinely new messages from others
+          if (isFromOther) {
+            try { require('../services/notificationSound').playChatReceiveSound(); } catch {}
+            // iMessage-style mini-tap haptic when a new bubble slides in.
+            if (Platform.OS !== 'web') {
+              try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+            }
+            if (msg.effect && SCREEN_EFFECT_IDS.has(msg.effect)) {
+              playScreenEffect(msg.effect);
+              if (msg.id && !String(msg.id).startsWith('tmp_')) {
+                try {
+                  const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+                  AsyncStorage.setItem(userScopedKey(`chatyy:effect_seen:${msg.id}`), '1').catch(() => {});
+                } catch {}
+              }
+            }
+          }
+          // Delivery ack — batched (Telegram parity), TCP-arrived-first case.
+          if (isFromOther && typeof msg.id === 'number') {
+            api.chatDeliveryAckBatched?.(conversationId, [msg.id]);
+          }
+          }).catch(() => {});
+        };
+        const _tcpSortKey = (r) => (typeof r.id === 'number' ? r.id : (r._negId || 0));
         setMessages(prev => {
           const incomingIdStr = String(msg.id);
-          if (prev.some(m => String(m.id) === incomingIdStr)) return prev;
+          // [2026-10-06 thread-tech] scan from the tail (new/echoed rows live there)
+          for (let _i = prev.length - 1; _i >= 0; _i--) { const _r = prev[_i]; if (_r && (_r.id === msg.id || String(_r.id) === incomingIdStr)) return prev; }
           // Mirror WS path dedup: if ANY existing row shares the
           // client_message_id, REPLACE it instead of appending. Previously
           // this branch required !startsWith('tmp_') on the existing id —
@@ -13988,13 +14187,7 @@ function ChatConversationInner() {
               // backgrounded tab) — without this the outbox stays around and
               // re-sends on reconnect.
               const existingTempId = (existing && typeof existing.id === 'string' && existing.id.startsWith('tmp_')) ? existing.id : null;
-              if (existingTempId) {
-                try { removePendingMessage(conversationId, existingTempId).catch(() => {}); } catch {}
-                try {
-                  const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
-                  if (preservedClientId) removeChatSendFromQueueByClientMsgId(preservedClientId).catch(() => {});
-                } catch {}
-              }
+              if (existingTempId) _tcpCleanupPending(existingTempId, preservedClientId); // [2026-10-06 thread-tech] deferred, once
               const next = [...prev];
               next[existingIdx] = { ...msg, _pending: false, reply_to: preservedReplyTo, sender_email: preservedSenderEmail, _client_id: preservedClientId };
               return next;
@@ -14020,72 +14213,26 @@ function ChatConversationInner() {
             // outcome no longer matters for this message.
             const preservedClientId = optimistic?._client_id || msg._client_id || msg.client_message_id || tcpClientMsgIdOuter;
             if (typeof optimistic?.id === 'string' && optimistic.id.startsWith('tmp_')) {
-              try { removePendingMessage(conversationId, optimistic.id).catch(() => {}); } catch {}
-              try {
-                const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
-                if (preservedClientId) removeChatSendFromQueueByClientMsgId(preservedClientId).catch(() => {});
-              } catch {}
+              _tcpCleanupPending(optimistic.id, preservedClientId); // [2026-10-06 thread-tech] deferred, once
             }
             next[tempIdx] = { ...msg, _pending: false, sender_email: preservedSenderEmail, _client_id: preservedClientId };
             return next;
           }
-          // Save to native cache and reload — await before reload so the
-          // native view actually sees the new row.
-          (async () => {
-            try {
-              const cleanMsg = _sanitizeNativeMsg(msg);
-              const p = cleanMsg ? _NativeChatCache?.saveMessages?.(conversationId, [cleanMsg]) : null;
-              if (p && typeof p.then === 'function') await p;
-            } catch {}
-            cacheSingleMessage(conversationId, msg).catch(() => {});
-            try { _nativeChatViewRef.current?.reload?.(); } catch {}
-          })();
-          // Task #886 — TCP receive path was silent on audio prefetch. The WS
-          // path already auto-saves all media, but TCP was the orphan branch
-          // and on devices where the TCP signal-server delivers first (sender
-          // device on cellular, e.g.), the audio stayed un-cached until the
-          // user tapped it. Fire-and-forget — saveMediaPermanent inside the
-          // helper handles dedup vs the WS path's saveMediaPermanent.
-          if (msg.file_url && (msg.type === 'audio' || msg.type === 'voice') && Platform.OS !== 'web') {
-            try {
-              const { prefetchAudioMessage } = require('../services/mediaCache');
-              prefetchAudioMessage(api.getMediaUrl(msg.file_url)).catch(() => {});
-            } catch {}
+          // [2026-10-06 thread-tech] genuinely new row → schedule the effect
+          // bundle (cache/sound/haptic/effect/ack) once, after the updater.
+          _tcpNewMsgFx();
+          // Append (O(n) copy) — sort ONLY when the row isn't the newest
+          // (out-of-order WS/TCP arrival). Before: copy + full O(n log n)
+          // sort on every incoming message.
+          const _newRow = { ...msg, _animateIn: !!isFromOther };
+          const _last = prev.length ? prev[prev.length - 1] : null;
+          if (!_last || _tcpSortKey(_newRow) >= _tcpSortKey(_last)) {
+            return [...prev, _newRow];
           }
-          // Trigger receive sound only for genuinely new messages from others
-          if (isFromOther) {
-            try { require('../services/notificationSound').playChatReceiveSound(); } catch {}
-            // iMessage-style mini-tap haptic when a new bubble slides in.
-            // Keeps it to Light so it feels like a "tap on the shoulder", not a buzz.
-            if (Platform.OS !== 'web') {
-              try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
-            }
-            if (msg.effect && SCREEN_EFFECT_IDS.has(msg.effect)) {
-              playScreenEffect(msg.effect);
-              if (msg.id && !String(msg.id).startsWith('tmp_')) {
-                try {
-                  const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-                  AsyncStorage.setItem(userScopedKey(`chatyy:effect_seen:${msg.id}`), '1').catch(() => {});
-                } catch {}
-              }
-            }
-          }
-          // Delivery ack — fires when the TCP path arrived first (WS handler
-          // sends its own ack at line 5207). Sender's ticks go from gray
-          // single-check → gray double-check once this lands. Batched so a
-          // burst of 20 messages = 1 POST (Telegram parity).
-          if (isFromOther && typeof msg.id === 'number') {
-            api.chatDeliveryAckBatched?.(conversationId, [msg.id]);
-          }
-          // Append then sort by numeric id — out-of-order arrival between
-          // WS/TCP paths used to leave the list in the wrong sequence.
-          const appended = [...prev, { ...msg, _animateIn: !!isFromOther }];
-          appended.sort((a, b) => {
-            const av = typeof a.id === 'number' ? a.id : (a._negId || 0);
-            const bv = typeof b.id === 'number' ? b.id : (b._negId || 0);
-            return av - bv;
-          });
+          const appended = [...prev, _newRow];
+          appended.sort((a, b) => _tcpSortKey(a) - _tcpSortKey(b));
           return appended;
+          // [2026-10-06 thread-tech] (former inline cache/sound/haptic/ack block now lives in _tcpNewMsgFx above)
         });
       };
       tcpClient.on('chat_message', onChatMessage);
@@ -14698,6 +14845,7 @@ function ChatConversationInner() {
     // (server-local curl is 0.1-0.4s; the wall-clock the user feels is the
     // cellular HTTP round-trip + any client-side waits). Reported at markSent.
     const _sendStartedAt = Date.now();
+    const inputText = composerStore.get(); // [2026-10-06 thread-tech] live value at call time
     _reportChatDebug('handleSend-start', { len: inputText?.length || 0, hasReply: !!replyTo, conversationId });
     const text = compressText(inputText.trim());
     // Whitespace-only guard: even after trim, weird unicode whitespace
@@ -15732,7 +15880,7 @@ function ChatConversationInner() {
   // ============================================================
 
   const handleScheduleMessage = async (scheduledAt) => {
-    const text = inputText.trim();
+    const text = composerStore.get().trim(); // [2026-10-06 thread-tech]
     if (!text) return;
     setShowScheduleMenu(false);
     setShowCustomSchedule(false);
@@ -18267,17 +18415,19 @@ function ChatConversationInner() {
   };
 
   // Delete fade-out animation state: Set<msgId>
-  const [deletingIds, setDeletingIds] = useState(new Set());
+  // [2026-10-06 thread-tech] map {id:true} in the row overlay store (was a
+  // screen Set the row comparator never saw → MessageDeleteAnim never ran).
+  const setDeletingIds = useOverlaySetter(rowOverlayStore, 'del');
   // Track pending setTimeout handles so we can cancel them on unmount —
   // without this, a delayed filter callback fires into a destroyed component.
   const deleteTimersRef = useRef(new Set());
   const animateDeleteThenRemove = useCallback((msgId) => {
-    setDeletingIds(prev => new Set(prev).add(msgId));
+    setDeletingIds(prev => (prev[msgId] ? prev : { ...prev, [msgId]: true }));
     const h = setTimeout(() => {
       deleteTimersRef.current.delete(h);
       if (!mountedRef.current) return;
       setMessages(prev => prev.filter(m => String(m.id) !== String(msgId)));
-      setDeletingIds(prev => { const next = new Set(prev); next.delete(msgId); return next; });
+      setDeletingIds(prev => { if (!prev[msgId]) return prev; const next = { ...prev }; delete next[msgId]; return next; });
     }, 280);
     deleteTimersRef.current.add(h);
   }, []);
@@ -20626,6 +20776,9 @@ function ChatConversationInner() {
   // re-diff every cell. Memoize so the no-op (non-saved) path returns the
   // same `enrichedMessages` reference and the saved path only recomputes
   // when filter/query actually changes.
+  // [2026-10-06 thread-tech] live ref for onViewableItemsChanged prefetch
+  // (its `index` refers to THIS array, newest-first — not messagesRef).
+  const flatListDataRef = useRef(null);
   const flatListData = useMemo(() => {
     // Disappearing messages: hide bubbles older than the TTL ON-SCREEN even
     // before the server cron hard-deletes them. The cron (cron-disappearing.php)
@@ -20673,6 +20826,7 @@ function ChatConversationInner() {
       return true;
     });
   }, [selectionOverlayMessages, isSavedMode, savedSearch, savedFilter, disappearingTimer, disappearingSetAt, vanishTickNow]);
+  flatListDataRef.current = flatListData; // [2026-10-06 thread-tech]
 
   // PERF: stable callback for FlatList — was an inline arrow recreated
   // every render, which `windowSize`-aware FlatList treats as a new prop
@@ -20992,16 +21146,27 @@ function ChatConversationInner() {
       let maxIdx = -1;
       for (const v of viewableItems) { if (typeof v?.index === 'number' && v.index > maxIdx) maxIdx = v.index; }
       if (maxIdx >= 0) {
-        const list = messagesRef.current;
+        // [2026-10-06 thread-tech] BUG: `v.index` is an index into the
+        // INVERTED list data (newest-first: flatListData), but this indexed
+        // messagesRef (chronological, oldest-first) → it prefetched the
+        // OLDEST messages of the thread, never the ones about to scroll in.
+        // Index the same array the list renders; maxIdx+1.. = next OLDER
+        // rows = the direction the user is scrolling (up). Albums: prefetch
+        // their cells too.
+        const list = flatListDataRef.current || [];
         let budget = 4;
-        for (let i = maxIdx + 1; i < Math.min(maxIdx + 6, list.length) && budget > 0; i++) {
-          const mm = list[i];
-          if (!mm?.file_url || (mm.type !== 'image' && mm.type !== 'video')) continue;
+        const _pf = (mm) => {
+          if (!mm?.file_url || (mm.type !== 'image' && mm.type !== 'video')) return;
           const absURL = mm.file_url.startsWith('http') ? mm.file_url : `https://chatyy.com.br${mm.file_url}`;
-          if (_prefetchedURLs.has(absURL)) continue;
+          if (_prefetchedURLs.has(absURL)) return;
           _prefetchedURLs.add(absURL); budget--;
           if (Platform.OS === 'ios' || Platform.OS === 'android') { try { _expoImagePrefetch?.(absURL); } catch {} }
           else if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof window.Image === 'function') { try { const img = new window.Image(); img.src = absURL; } catch {} }
+        };
+        for (let i = maxIdx + 1; i < Math.min(maxIdx + 6, list.length) && budget > 0; i++) {
+          const mm = list[i];
+          if (mm && mm._type === 'album' && Array.isArray(mm._items)) { for (const c of mm._items) { if (budget <= 0) break; _pf(c); } continue; }
+          _pf(mm);
         }
         if (_prefetchedURLs.size > 300) { let n = 0; for (const k of _prefetchedURLs) { _prefetchedURLs.delete(k); if (++n >= 100) break; } }
       }
@@ -21176,14 +21341,19 @@ function ChatConversationInner() {
   // so that the memo wrapper never invalidates due to function identity change.
   const renderMessageRef = useRef(null);
 
-  const renderMessage = ({ item }) => {
+  const renderMessage = ({ item, ov }) => {
+    // [2026-10-06 thread-tech] Per-row overlay (dl%, painted, error, deleting,
+    // translation) — passed by MemoizedMessageRow, which subscribes to this id
+    // in rowOverlayStore. Fallback read for any non-row caller.
+    const __ov = ov || rowOverlayStore.snapshot(item && item.id);
     if (item._type === 'separator') {
       return (
         <View style={styles.dateSeparator}>
           {/* Date pill — harmonized to the purple brand (was WhatsApp green
               #E1F2DA, which clashed with the violet header/bubbles). Light:
               soft lavender wash + violet ink. Dark: deep glass + muted text. */}
-          <Text style={[styles.dateText, { color: isDark ? 'rgba(240,241,243,0.88)' : '#111111', backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(17,17,17,0.06)' }]}>
+          {/* [2026-10-06 wa-look] WA day pill: received-bubble surface + muted ink. */}
+          <Text style={[styles.dateText, { color: colors.textSecondary || (isDark ? 'rgba(233,237,239,0.78)' : '#54656F'), backgroundColor: colors.chatBubbleOther }]}>
             {item._label || formatDateSeparator(item.date, t)}
           </Text>
         </View>
@@ -21242,7 +21412,7 @@ function ChatConversationInner() {
         let _cellThumbUri = null;
         if (m.image_variants) {
           try {
-            const v = typeof m.image_variants === 'string' ? JSON.parse(m.image_variants) : m.image_variants;
+            const v = typeof m.image_variants === 'string' ? _memoJSON(m.image_variants) : m.image_variants; // [2026-10-06 thread-tech]
             if (v?.thumb) _cellThumbUri = v.thumb.startsWith('http') ? v.thumb : `https://chatyy.com.br${v.thumb}`;
           } catch {}
         }
@@ -21290,7 +21460,8 @@ function ChatConversationInner() {
             }}
             style={cellStyle(w, h)}
           >
-            <Image source={{ uri: poster }} style={{ width: w, height: h }} resizeMode="cover" />
+            {/* [2026-10-06 thread-tech] expo-image: disk+memory cache, cell recycling key */}
+            <ExpoImage source={{ uri: poster }} style={{ width: w, height: h }} contentFit="cover" resizeMode="cover" cachePolicy="memory-disk" recyclingKey={String(m.id || poster)} transition={0} />
             {isVideoCell && (
               <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }}>
                 <View style={{ width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.92)', alignItems: 'center', justifyContent: 'center' }}>
@@ -21453,8 +21624,8 @@ function ChatConversationInner() {
 
     if (isSystem) {
       // Check if it's a call message (JSON with call_type)
-      let callData;
-      try { callData = JSON.parse(msg.content); } catch {}
+      // [2026-10-06 thread-tech] memo + no throw for plain-text system rows
+      const callData = _memoJSONSafe(msg.content);
       if (callData?.call_type) {
         const isCaller = callData.caller_email === currentEmail;
         const isVideo = callData.call_type === 'video';
@@ -21606,6 +21777,13 @@ function ChatConversationInner() {
         </Text>
       </View>
     );
+    // [2026-10-06 wa-look] WhatsApp "ghost spacer": plain-text bubbles get the
+    // time+ticks floated INSIDE the last text line (bottom-right) instead of a
+    // separate row under the text. The text branch of renderContent() flips
+    // this flag when it appended the invisible spacer; the meta row below then
+    // switches to absolute positioning. renderContent() runs before the meta
+    // JSX is evaluated (children are evaluated in order), so the flag is set.
+    let _waInlineMeta = false;
     const renderContent = () => {
       // Non-view-once deleted → show tombstone early. View-once deleted
       // continues through the ViewOnceMessage path so the component's hook
@@ -21680,7 +21858,7 @@ function ChatConversationInner() {
           // 280x220 when neither dimension is known (legacy rows).
           let imgVariants = null;
           if (msg.image_variants) {
-            try { imgVariants = typeof msg.image_variants === 'string' ? JSON.parse(msg.image_variants) : msg.image_variants; } catch {}
+            try { imgVariants = typeof msg.image_variants === 'string' ? _memoJSON(msg.image_variants) : msg.image_variants; } catch {} // [2026-10-06 thread-tech] memo
           }
           const _w = Number(msg.width) || Number(imgVariants?.full_w) || 0;
           const _h = Number(msg.height) || Number(imgVariants?.full_h) || 0;
@@ -21695,11 +21873,11 @@ function ChatConversationInner() {
           // [WAVE 34 2026-05-20] Per-msg error flag — see mediaErrors state up
           // top. When onError fires AND there's no local cache to fall back
           // to, we render a tap-to-retry placeholder instead of the bare box.
-          const imgFailed = !!mediaErrors[msg.id];
+          const imgFailed = __ov.err;
           // [BUG-1 2026-10-01] True once ChatMedia has painted the full bytes.
           // Used to retire the blur backdrops + loading ring so they behave as
           // a brief placeholder WHILE loading only (see loadedImages state).
-          const imgLoaded = !!loadedImages[msg.id];
+          const imgLoaded = __ov.loaded;
           // PERF: reuse `imgVariants` parsed just above instead of re-running
           // JSON.parse on the same string a second time per image-row render.
           const thumbUri = imgVariants?.thumb
@@ -22064,7 +22242,7 @@ function ChatConversationInner() {
                     nenhuma (nem _localUri nem imgLocalPath nem fullUri file://).
                     Antes (WAVE 34) ficava preso em msgs com local_path no SQLite
                     porque _localUri pode estar vazio mesmo com arquivo no disco. */}
-                {!imgUploading && !imgFailed && downloadProgress[msg.id] !== undefined && !msg._localUri && !imgLocalPath && !(typeof fullUri === 'string' && fullUri.startsWith('file://')) && (
+                {!imgUploading && !imgFailed && __ov.dl !== undefined && !msg._localUri && !imgLocalPath && !(typeof fullUri === 'string' && fullUri.startsWith('file://')) && (
                   /* [WAVE 39 2026-05-20] zIndex 2 so shimmer sits ABOVE both HSL
                      base layer (z=0) AND blurhash/lqip backdrop (z=1). */
                   <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: imgBoxW, height: imgBoxH, overflow: 'hidden', zIndex: 2 }}>
@@ -22288,8 +22466,8 @@ function ChatConversationInner() {
                     that anything was happening. Spinner shape when progress=0,
                     real % when it's been populated. */}
                 {!imgUploading && !imgFailed && !imgLoaded && !msg._localUri && !imgLocalPath && !(typeof fullUri === 'string' && fullUri.startsWith('file://')) && msg.file_url && (() => {
-                  const hasPct = downloadProgress[msg.id] !== undefined;
-                  const dlPct = hasPct ? (downloadProgress[msg.id] || 0) : 0;
+                  const hasPct = __ov.dl !== undefined;
+                  const dlPct = hasPct ? (__ov.dl || 0) : 0;
                   if (hasPct && dlPct >= 100) return null;
                   return (
                     <View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.18)', zIndex: 2 }}>
@@ -22350,7 +22528,7 @@ function ChatConversationInner() {
               ? (msg.local_path.startsWith('file://') ? msg.local_path : `file://${msg.local_path}`)
               : null;
             const sVUri = msg._localUri || sVLocalPath || resolveMediaUri(msg.file_url);
-            const sVMeta = (typeof msg.meta === 'string') ? (() => { try { return JSON.parse(msg.meta); } catch { return null; } })() : (msg.meta || null);
+            const sVMeta = (typeof msg.meta === 'string') ? _memoJSONSafe(msg.meta) : (msg.meta || null); // [2026-10-06 thread-tech]
             return (
               <ShortVideoBubble
                 uri={sVUri}
@@ -22417,7 +22595,7 @@ function ChatConversationInner() {
           let _vidWidth = Number(msg.width) || 0;
           if ((!_vidHeight || !_vidWidth) && msg.image_variants) {
             try {
-              const _iv = typeof msg.image_variants === 'string' ? JSON.parse(msg.image_variants) : msg.image_variants;
+              const _iv = typeof msg.image_variants === 'string' ? _memoJSON(msg.image_variants) : msg.image_variants;
               _vidHeight = _vidHeight || Number(_iv?.full_h) || 0;
               _vidWidth = _vidWidth || Number(_iv?.full_w) || 0;
             } catch {}
@@ -22440,7 +22618,7 @@ function ChatConversationInner() {
           // o vídeo ainda não foi baixado localmente. Assim user sabe que
           // precisa tappear pra carregar (não é só lento — é download).
           const vidIsLocal = typeof videoUrl === 'string' && (videoUrl.startsWith('file://') || videoUrl.startsWith('blob:') || videoUrl.startsWith('data:'));
-          const vidDlProgress = downloadProgress[msg.id]; // 0-100 ou undefined
+          const vidDlProgress = __ov.dl; // 0-100 ou undefined
           const vidIsDownloading = vidDlProgress !== undefined && vidDlProgress < 100;
           return (
             <TouchableOpacity
@@ -22481,7 +22659,7 @@ function ChatConversationInner() {
                       let _ivThumb = null;
                       if (msg.image_variants) {
                         try {
-                          const _iv = typeof msg.image_variants === 'string' ? JSON.parse(msg.image_variants) : msg.image_variants;
+                          const _iv = typeof msg.image_variants === 'string' ? _memoJSON(msg.image_variants) : msg.image_variants;
                           _ivThumb = _iv?.thumb || _iv?.poster || null;
                         } catch {}
                       }
@@ -22578,11 +22756,15 @@ function ChatConversationInner() {
                       move_uploaded_file() step. If it doesn't exist the
                       Image's onError hides it so the gradient stays. */}
                   {_vidLqipB64 && !vidUploading && (
-                    <Image
+                    <ExpoImage
                       source={{ uri: `data:image/jpeg;base64,${_vidLqipB64}` }}
                       style={{ position: 'absolute', top: 0, left: 0, width: _vbW, height: _vbH, opacity: 0.9 }}
+                      contentFit="cover"
                       resizeMode="cover"
                       blurRadius={8}
+                      cachePolicy="memory"
+                      recyclingKey={String(msg.id) /* [2026-10-06 thread-tech] */}
+                      transition={0}
                     />
                   )}
                   {msg.file_url && !vidUploading && (() => {
@@ -22593,7 +22775,7 @@ function ChatConversationInner() {
                     let _ivThumb = null;
                     if (msg.image_variants) {
                       try {
-                        const _iv = typeof msg.image_variants === 'string' ? JSON.parse(msg.image_variants) : msg.image_variants;
+                        const _iv = typeof msg.image_variants === 'string' ? _memoJSON(msg.image_variants) : msg.image_variants;
                         _ivThumb = _iv?.thumb || _iv?.poster || null;
                       } catch {}
                     }
@@ -22701,7 +22883,7 @@ function ChatConversationInner() {
                       while it's still loading. Reuses the same mediaShimmerAnim
                       driver as the photo bubble so we don't spawn a new RAF loop.
                       Hidden once download completes or upload finishes. */}
-                  {!vidUploading && !vidIsDownloading && !vidIsLocal && downloadProgress[msg.id] === undefined && (
+                  {!vidUploading && !vidIsDownloading && !vidIsLocal && __ov.dl === undefined && (
                     <View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, width: 280, height: 200, overflow: 'hidden' }}>
                       <Animated.View
                         style={{
@@ -22936,7 +23118,7 @@ function ChatConversationInner() {
                   translatedMessages[msg.id] same as text — render it here
                   so the audio bubble shows both transcript + translation. */}
               {(() => {
-                const tx = translatedMessages[msg.id];
+                const tx = __ov.tr;
                 if (!tx) return null;
                 if (tx.loading) {
                   return (
@@ -23109,7 +23291,7 @@ function ChatConversationInner() {
                       (react-native-webview already bundled; location bubbles are
                       rare so no list-jank concern). It draws its own red marker. */}
                   <WebView
-                    source={{ html: boraMapHtml({ lat, lng, zoom: 15, interactive: false, markerColor: '#EF4444' }) }}
+                    source={_locMapSource(lat, lng) /* [2026-10-06 thread-tech] stable, memoized per coord */}
                     style={{ width: '100%', height: '100%', backgroundColor: isDark ? '#0B141A' : '#E5E7EB' }}
                     originWhitelist={['*']}
                     scrollEnabled={false}
@@ -23665,7 +23847,7 @@ function ChatConversationInner() {
         case 'call_card': {
           // Call card: { call_type, call_status, duration, started_at, participant_email }
           let callData;
-          try { callData = JSON.parse(msg.content); } catch { callData = null; }
+          callData = _memoJSONSafe(msg.content); // [2026-10-06 thread-tech]
           if (!callData) return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{msg.content}</Text>;
 
           const isVideo = callData.call_type === 'video';
@@ -23742,7 +23924,7 @@ function ChatConversationInner() {
           // play button + waveform. Tap → fetch audio_url + auto-mark
           // listened. Italic transcription line below once available.
           let vm;
-          try { vm = JSON.parse(msg.content); } catch { vm = null; }
+          vm = _memoJSONSafe(msg.content); // [2026-10-06 thread-tech]
           if (!vm || !vm.voicemail_id) {
             return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{t('voicemail.unavailable') || 'Mensagem de voz indisponível'}</Text>;
           }
@@ -23780,7 +23962,7 @@ function ChatConversationInner() {
           // Tap on the card opens the original status (if still within 24h).
           let payload = msg.status_reply;
           if (!payload) {
-            try { payload = JSON.parse(msg.content); } catch { payload = null; }
+            payload = _memoJSONSafe(msg.content); // [2026-10-06 thread-tech]
           }
           if (!payload || !payload.status) {
             // Defensive: NEVER dump raw JSON. Render the reply text alone (or
@@ -23885,7 +24067,7 @@ function ChatConversationInner() {
                     multiple times achando que e bug. */}
                 {mediaUrl ? (
                   <View style={{ width: 44, height: 56, borderRadius: 6, overflow: 'hidden', backgroundColor: '#222' }}>
-                    <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%', opacity: isStatusExpired ? 0.55 : 1 }} />
+                    <ExpoImage source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%', opacity: isStatusExpired ? 0.55 : 1 }} contentFit="cover" cachePolicy="memory-disk" recyclingKey={String(msg.id || mediaUrl)} transition={0} /* [2026-10-06 thread-tech] */ />
                     {isVideo && !isStatusExpired ? (
                       <View style={{
                         position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
@@ -23957,7 +24139,7 @@ function ChatConversationInner() {
 
         case 'meetup': {
           let meetup;
-          try { meetup = JSON.parse(msg.content); } catch { meetup = null; }
+          meetup = _memoJSONSafe(msg.content); // [2026-10-06 thread-tech]
           if (!meetup) return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{msg.content}</Text>;
           const rsvpList = meetup.rsvp || {};
           const goingCount = Object.values(rsvpList).filter(v => v === 'going').length;
@@ -24080,7 +24262,7 @@ function ChatConversationInner() {
 
         case 'playlist': {
           let playlist;
-          try { playlist = JSON.parse(msg.content); } catch { playlist = null; }
+          playlist = _memoJSONSafe(msg.content); // [2026-10-06 thread-tech]
           if (!playlist) return <Text style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text }]}>{msg.content}</Text>;
           const songs = playlist.songs || [];
           return (
@@ -24189,7 +24371,7 @@ function ChatConversationInner() {
           // primeiro tap dispara `cacheMedia` antes de abrir o viewer.
           const fileResolved = msg._localUri || resolveMediaUri(msg.file_url);
           const fileIsLocal = typeof fileResolved === 'string' && (fileResolved.startsWith('file://') || fileResolved.startsWith('blob:') || fileResolved.startsWith('data:'));
-          const fileDlPct = downloadProgress[msg.id]; // 0-100 ou undefined
+          const fileDlPct = __ov.dl; // 0-100 ou undefined
           const fileIsDownloading = fileDlPct !== undefined && fileDlPct < 100;
 
           const triggerFileDownload = () => {
@@ -24971,7 +25153,7 @@ function ChatConversationInner() {
           }
           const urlMatch = msg.content && msg.content.match(URL_REGEX);
           const firstUrl = urlMatch ? urlMatch[0] : null;
-          const msgTranslation = translatedMessages[msg.id];
+          const msgTranslation = __ov.tr;
           // Telegram auto-translate UX: when the translation came from the
           // per-conversation auto-translate (msgTranslation._auto) AND the
           // user hasn't expanded the source via the "(original)" toggle, we
@@ -25071,10 +25253,49 @@ function ChatConversationInner() {
                     </View>
                   );
                 }
+                const _txtStyle = [styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }];
+                // [2026-10-06 wa-look] Inline meta only for "simple" text: no
+                // block markdown / code fence / spoiler (those render <View>s
+                // that can't live inside a <Text>), and nothing rendered BELOW
+                // the text (translation, link card, smart actions, failed/queued
+                // status text) — those keep the classic meta row.
+                const _c = msg.content;
+                const _canInline = typeof _c === 'string' && _c.length > 0 && _c.length < 4000
+                  && !msgTranslation && !firstUrl && !(msg._filtered && msg._hidden)
+                  && _c.indexOf('```') === -1 && _c.indexOf('||') === -1 && !_hasBlockMarkdown(_c)
+                  && !msg._failed && !msg._queued && msg.pending_state !== 'queued'
+                  && detectSmartActions(_c).length === 0;
+                if (_canInline) {
+                  _waInlineMeta = true;
+                  const _ec = Number(msg.edited_count) || 0;
+                  const _editedTxt = msg.edited_at
+                    ? (_ec > 1 ? `(${(t('chatConv.edited') || 'editada')} ${_ec}x)` : (t('chatConv.edited') || 'editado'))
+                    : '';
+                  return (
+                    <Text style={_txtStyle} selectable={true}>
+                      <TextWithLinks
+                        text={_c}
+                        style={_txtStyle}
+                        linkColor={isOwn ? '#111111' : colors.primary}
+                        mentionColor={isOwn ? '#111111' : '#1a73e8'}
+                        colors={colors}
+                        router={router}
+                      />
+                      <Text style={styles.metaGhost} selectable={false} accessible={false} importantForAccessibility="no">
+                        {_waMetaGhost({
+                          time: formatTime(msg.created_at),
+                          own: isOwn,
+                          edited: _editedTxt,
+                          icons: (msg.starred ? 1 : 0) + (msg._e2e ? 1 : 0) + (disappearingTimer > 0 ? 1 : 0) + (msg.vanish_at ? 3 : 0),
+                        })}
+                      </Text>
+                    </Text>
+                  );
+                }
                 return (
                   <TextWithLinks
                     text={msg.content}
-                    style={[styles.msgText, { color: isOwn ? ownTextColor : colors.text, fontSize: msgFontSize, lineHeight: msgLineHeight }]}
+                    style={_txtStyle}
                     linkColor={isOwn ? '#111111' : colors.primary}
                     mentionColor={isOwn ? '#111111' : '#1a73e8'}
                     colors={colors}
@@ -25191,10 +25412,10 @@ function ChatConversationInner() {
     const isAlbumLast = isAlbumMember && msg._albumIndex === (msg._albumSize - 1);
     const wrapMargin = isAlbumMember && !isAlbumLast
       ? 1
-      : (isLastInGroup ? 6 : 2);
+      : (isLastInGroup ? 6 : 1); // [2026-10-06 wa-look] 2→1: ~3px inside a group (WA)
 
     return (
-      <MessageDeleteAnim deleting={deletingIds.has(msg.id)}>
+      <MessageDeleteAnim deleting={__ov.deleting}>
       <MessageSendAnim animate={!!msg._pending} fromOther={!!msg._animateIn && !isOwn}>
       <SwipeReplyWrap
         disabled={isDeleted || isSystem}
@@ -25699,7 +25920,7 @@ function ChatConversationInner() {
           })()}
           {renderContent()}
           {msg.type !== 'sticker' && msg.type !== 'gif' && !(msg.type === 'image' && !(msg.content && msg.content !== msg.file_name)) && msg.type !== 'video' && (
-            <View style={styles.msgMeta}>
+            <View style={[styles.msgMeta, _waInlineMeta && styles.msgMetaInline]}>
               {(() => {
                 // Disappearing clock indicator — show ONLY on messages that
                 // actually vanish: those sent at/after the timer was enabled
@@ -26106,10 +26327,14 @@ function ChatConversationInner() {
                       the user picked. Legacy "heart"/"thumbsup" keys fall
                       back through REACTION_EMOJI_MAP. */}
                   {emoji.startsWith('sticker:') ? (
-                    <Image
+                    <ExpoImage
                       source={{ uri: api.getMediaUrl(emoji.slice(8)) }}
                       style={{ width: 28, height: 28, borderRadius: 4 }}
+                      contentFit="contain"
                       resizeMode="contain"
+                      cachePolicy="memory-disk"
+                      recyclingKey={emoji /* [2026-10-06 thread-tech] */}
+                      transition={0}
                     />
                   ) : (
                     <Text style={styles.reactionEmoji}>{REACTION_EMOJI_MAP[emoji] || emoji}</Text>
@@ -26150,7 +26375,7 @@ function ChatConversationInner() {
   };
 
   // Keep ref pointing at the latest renderMessage closure
-  renderMessageRef.current = (item) => renderMessage({ item });
+  renderMessageRef.current = (item, ov) => renderMessage({ item, ov });
 
   // Keep a stable ref to the messages array so memoizedRenderItem can read the
   // current list without taking it as a dependency (avoids full FlatList re-renders
@@ -26169,8 +26394,10 @@ function ChatConversationInner() {
     // socando main-thread + rede no meio do gesto = rolagem picotada. Agora o
     // prefetch acontece no onViewableItemsChanged (dispara só quando um item
     // fica visível, não a cada render). renderItem volta a ser barato: só a row.
-    return <MemoizedMessageRow item={item} renderRef={renderMessageRef} />;
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    return <MemoizedMessageRow item={item} renderRef={renderMessageRef} overlayStore={rowOverlayStore} isDark={isDark} themeColors={colors} />;
+    // [2026-10-06 thread-tech] theme deps: a new renderItem makes the FlatList
+    // re-run renderItem for mounted cells; the comparator then repaints them.
+  }, [isDark, colors]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Drag-and-drop on web: arrastar foto/vídeo/arquivo pro chat envia ───
   // Native (iOS/Android) doesn't expose HTML drag events; the existing
@@ -27613,7 +27840,7 @@ function ChatConversationInner() {
                     if (!v) return;
                     const dt = new Date(v);
                     if (!dt.getTime() || dt.getTime() <= Date.now()) return;
-                    const text = (inputText || '').trim();
+                    const text = (composerStore.get() || '').trim(); // [2026-10-06 thread-tech]
                     if (!text) return;
                     await api.chatScheduleMessage(conversationId, text, dt.toISOString());
                     setInputText('');
@@ -27634,7 +27861,7 @@ function ChatConversationInner() {
                     key={i}
                     onPress={async () => {
                       try {
-                        const text = (inputText || '').trim();
+                        const text = (composerStore.get() || '').trim(); // [2026-10-06 thread-tech]
                         if (!text) { setShowSavedReminder(false); return; }
                         const dt = opt.fn ? opt.fn() : new Date(Date.now() + opt.ms);
                         await api.chatScheduleMessage(conversationId, text, dt.toISOString());
@@ -28128,6 +28355,14 @@ function ChatConversationInner() {
           the finger is on the mic ('hold') the recorder is an absolute
           overlay over the pill and the input bar (with the mic) stays
           mounted, keeping the mic's touch responder alive until release. */}
+      {/* [2026-10-06 thread-tech] Composer subtree rendered by ThreadComposerHost:
+          it subscribes to composerStore, so a keystroke re-renders ONLY this
+          subtree (the `inputText` param below shadows the old screen state).
+          The render fn is recreated per screen render → always sees the
+          latest screen state (replyTo, sending, members, colors…). */}
+      <ThreadComposerHost store={composerStore} render={(inputText) => {
+      const hasRichInput = _RICH_INPUT_RE.test(inputText);
+      return (<>
       {!composerBlocked && (<View style={{ position: 'relative' }}>
       {isRecording ? (
         <View
@@ -28956,6 +29191,8 @@ function ChatConversationInner() {
         </View>
       ) : null}
       </View>)}
+      </>);
+      }} />
 
       <ScheduleToast visible={!!scheduleToast} message={scheduleToast} colors={colors} />
       <ReminderSheet
@@ -29077,7 +29314,7 @@ function ChatConversationInner() {
         }}
         // Live preview bubble shows the real draft text (falls back to a
         // sample inside the picker when the composer is empty).
-        messageText={inputText}
+        messageText={composerStore.get() /* [2026-10-06 thread-tech] read when picker renders */}
         t={t}
         isDark={isDark}
       />
@@ -30569,7 +30806,7 @@ function ChatConversationInner() {
                 let _thumbUri = null;
                 if (m.image_variants) {
                   try {
-                    const v = typeof m.image_variants === 'string' ? JSON.parse(m.image_variants) : m.image_variants;
+                    const v = typeof m.image_variants === 'string' ? _memoJSON(m.image_variants) : m.image_variants; // [2026-10-06 thread-tech]
                     if (v?.thumb) _thumbUri = v.thumb.startsWith('http') ? v.thumb : `https://chatyy.com.br${v.thumb}`;
                   } catch {}
                 }
@@ -33378,13 +33615,13 @@ function ChatConversationInner() {
                   <TouchableOpacity
                     key={opt.key}
                     onPress={async () => {
-                      if (opt.key === 'fix' && !inputText.trim()) {
+                      if (opt.key === 'fix' && !composerStore.get().trim()) { // [2026-10-06 thread-tech]
                         try { Alert.alert(t('chatAi.noText') || 'Type some text first'); } catch { try { window.alert(t('chatAi.noText') || 'Type some text first'); } catch {} }
                         return;
                       }
                       setAiLoading(true);
                       try {
-                        const r = await api.chatAiAssist(conversationId, opt.key, inputText.trim());
+                        const r = await api.chatAiAssist(conversationId, opt.key, composerStore.get().trim());
                         if (r?.success && r.data?.result) {
                           setAiResult(r.data.result);
                         } else {
@@ -33552,7 +33789,7 @@ function ChatConversationInner() {
 // da palavra (foto do founder: "coca ca", "valac"). Um valor em px derivado da
 // TELA é estável desde o primeiro frame. Capado em 620 pra não ficar gigante em
 // iPad/web (lá a coluna já é centralizada).
-const BUBBLE_MAX_W = Math.round(Math.min(Dimensions.get('window').width, 620) * 0.84);
+const BUBBLE_MAX_W = Math.round(Math.min(Dimensions.get('window').width, 620) * 0.80); // [2026-10-06 wa-look] 0.84→0.80 (WA ~78-80%)
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
@@ -33603,7 +33840,7 @@ const styles = StyleSheet.create({
     // [beauty 2026-05-31] 14→16 so the pill floats with clear air above/below
     // the surrounding bubbles — reads as a deliberate day-divider, not crowding
     // the last/next message.
-    marginVertical: 16,
+    marginVertical: 10, // [2026-10-06 wa-look] 16→10 (WA ~8-12)
   },
   dateText: {
     // Pill geometry tuned for the lavender brand wash: a touch more letter
@@ -33616,14 +33853,15 @@ const styles = StyleSheet.create({
     // and read as an intentional pill, not a tight tag.
     // Clean, flat day-divider pill — the subtle gray wash carries it; no drop
     // shadow (2026: dividers read as quiet structure, not floating chips).
-    fontSize: 11.5, fontWeight: '600', letterSpacing: 0.2,
-    paddingHorizontal: 12, paddingVertical: 4,
-    borderRadius: 999, overflow: 'hidden',
+    // [2026-10-06 wa-look] WA geometry: 12.5px/500, 7.5px radius-ish pill
+    // (rounded rect, not a full capsule), hairline lift like a bubble.
+    fontSize: 12.5, fontWeight: '500', letterSpacing: 0.1,
+    paddingHorizontal: 10, paddingVertical: 5,
+    borderRadius: 8, overflow: 'hidden',
     ...Platform.select({
-      web: {
-        backdropFilter: 'blur(12px) saturate(160%)',
-        WebkitBackdropFilter: 'blur(12px) saturate(160%)',
-      },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 1 },
+      android: { elevation: 1 },
+      web: { boxShadow: '0 1px 0.5px rgba(11,20,26,0.13)' },
     }),
   },
   systemMsg: { alignItems: 'center', marginVertical: 8, paddingHorizontal: Spacing.lg },
@@ -33664,7 +33902,7 @@ const styles = StyleSheet.create({
   // last msg in the group so the next speaker's bubble has clear visual
   // separation (~8dp, WhatsApp standard).
   msgRow: { maxWidth: BUBBLE_MAX_W, marginBottom: ChatBubble.gap },
-  msgRowGroupEnd: { marginBottom: ChatBubble.gapGroup + 2 },
+  msgRowGroupEnd: { marginBottom: ChatBubble.gapGroup - 2 }, // [2026-10-06 wa-look] +2→-2: ~9px between speaker groups (with wrap 6)
   msgRowOwn: { alignSelf: 'flex-end', marginRight: 10 },
   msgRowOther: { alignSelf: 'flex-start', marginLeft: 10 },
   // [beauty 2026-05-31] marginBottom 6→5 + tiny marginTop so the group-sender
@@ -33782,6 +34020,11 @@ const styles = StyleSheet.create({
   },
   editedLabel: { fontSize: 10, fontStyle: 'italic', opacity: 0.55 },
   msgTime: { fontSize: 11, fontWeight: '400', letterSpacing: 0.1, opacity: 0.78, flexShrink: 0 },
+  // [2026-10-06 wa-look] Floated meta (time+ticks) for ghost-spaced text bubbles.
+  msgMetaInline: { position: 'absolute', right: 9, bottom: 4, marginTop: 0 },
+  // Same font size/letter-spacing as msgTime so the mirrored width matches;
+  // transparent ink, never selectable.
+  metaGhost: { fontSize: 11, letterSpacing: 0.1, color: 'transparent', ...(Platform.OS === 'web' ? { userSelect: 'none' } : {}) },
   videoOverlayAbsolute: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     alignItems: 'center', justifyContent: 'center',
