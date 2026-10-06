@@ -300,12 +300,13 @@ function withBroadcastTarget(config) {
         s.MARKETING_VERSION = `"${marketingVersion}"`;
         s.CURRENT_PROJECT_VERSION = `"${projectVersion}"`;
         s.SKIP_INSTALL = 'YES';
-        // The extension links the SAME pods as the app (inherit! :complete);
-        // those pod targets are shared with the app so CocoaPods builds them
-        // with APPLICATION_EXTENSION_API_ONLY=NO. Xcode refuses an appex with
-        // the flag YES linking such libraries → keep it NO here. LiveKitClient
-        // is designed to run inside broadcast extensions.
-        s.APPLICATION_EXTENSION_API_ONLY = 'NO';
+        // [2026-10-06 build 635 ERRORED] Xcode (15+) REFUSES an app-extension
+        // target with APPLICATION_EXTENSION_API_ONLY=NO: "Application extensions
+        // and any libraries they link to must be built with ... YES (in target
+        // 'ChatyyBroadcastExtension')". Must be YES. The extension now has its
+        // OWN top-level Pods aggregate (only LiveKitClient + deps, no RN) — see
+        // withBroadcastPodTarget — so no app-only pod gets linked into it.
+        s.APPLICATION_EXTENSION_API_ONLY = 'YES';
         s.LD_RUNPATH_SEARCH_PATHS = '"$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"';
       }
     }
@@ -358,21 +359,28 @@ function withBroadcastPodTarget(config) {
       // ignores it (no LiveKitClient linked → "no such module 'LiveKit'").
       // Position inside the parent block is irrelevant to CocoaPods: the DSL
       // is fully evaluated before dependency inheritance is resolved.
-      const insertAt = mainLine + 1;
+      // [2026-10-06 build 635] TOP-LEVEL target (inserted BEFORE the main
+      // target, NOT nested): the appex gets its own Pods aggregate with only
+      // LiveKitClient (+ its deps). Nested + `inherit! :complete` dragged the
+      // whole RN pod set into the extension (50MB ReplayKit limit) and those
+      // pods are built with APPLICATION_EXTENSION_API_ONLY=NO; nested +
+      // `inherit! :search_paths` deduped LiveKitClient away ("no such module").
+      // A sibling target shares the LiveKitClient pod target (one version,
+      // resolved once by CocoaPods) with a hard dependency, so the module is
+      // built before SampleHandler.swift compiles.
+      const insertAt = mainLine;
       const nested = [
-        `  # [2026-10-06 screen-share iOS] Auto-injected by plugins/with-broadcast-extension.js.`,
-        `  # inherit! :complete (NOT :search_paths): with search_paths CocoaPods`,
-        `  # dedupes LiveKitClient against the parent and the extension gets no`,
-        `  # module/dependency -> "no such module 'LiveKit'" (Wave 19 breakage).`,
-        `  target '${EXT_NAME}' do`,
-        `    inherit! :complete`,
-        `    platform :ios, '${DEPLOYMENT_TARGET}'`,
-        `    pod 'LiveKitClient', '~> 2.0'`,
-        `  end`,
+        `# [2026-10-06 screen-share iOS] Auto-injected by plugins/with-broadcast-extension.js.`,
+        `# Top-level (sibling) target: only LiveKitClient is linked into the appex.`,
+        `target '${EXT_NAME}' do`,
+        `  platform :ios, '${DEPLOYMENT_TARGET}'`,
+        `  pod 'LiveKitClient', '~> 2.0'`,
+        `end`,
+        ``,
       ];
       lines.splice(insertAt, 0, ...nested);
       fs.writeFileSync(podfilePath, lines.join('\n'));
-      console.log(`[with-broadcast-extension] Injected nested ${EXT_NAME} pod target right after main target line ${mainLine + 1}`);
+      console.log(`[with-broadcast-extension] Injected top-level ${EXT_NAME} pod target before main target line ${mainLine + 1}`);
       return cfg;
     },
   ]);
