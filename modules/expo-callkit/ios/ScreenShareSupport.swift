@@ -45,7 +45,7 @@
 //
 
 import Foundation
-import LiveKit
+import LiveKitClient
 import ReplayKit
 import UIKit
 
