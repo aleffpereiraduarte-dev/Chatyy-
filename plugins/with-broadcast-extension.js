@@ -157,7 +157,6 @@ import ReplayKit
 import LiveKitClient
 
 class SampleHandler: LKSampleHandler {
-    override var enableLogging: Bool { true }
 }
 `;
 
