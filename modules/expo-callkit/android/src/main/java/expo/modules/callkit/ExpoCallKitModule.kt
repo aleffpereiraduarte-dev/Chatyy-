@@ -1097,6 +1097,27 @@ class ExpoCallKitModule : Module() {
       catch (_: Throwable) { false }
     }
 
+    // [2026-10-06 UX2] "Qualidade HD (1080p)" toggle. Backed by the same
+    // SharedPreferences key CallVideoQuality reads at publish time
+    // ("chatyy_call_prefs" / "chatyy_call_hd"), so flipping it here changes
+    // the ladder of the NEXT call. Android CallActivity has no "more" menu,
+    // so the switch lives in JS (app/settings.js). Mirrors iOS UserDefaults.
+    Function("setCallHdPreferred") { on: Boolean ->
+      try {
+        CallVideoQuality.setHdPreferred(context, on)
+        Log.d(TAG, "setCallHdPreferred: $on")
+        true
+      } catch (t: Throwable) {
+        Log.w(TAG, "setCallHdPreferred failed: ${t.message}")
+        false
+      }
+    }
+
+    Function("getCallHdPreferred") {
+      try { CallVideoQuality.isHdPreferred(appContext.reactContext) }
+      catch (_: Throwable) { false }
+    }
+
     // ─── MediaPipe background blur / virtual background (2026-05-17) ──────
     //
     // Mode + asset are state on the singleton BackgroundProcessor; the

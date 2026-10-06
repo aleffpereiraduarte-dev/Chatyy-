@@ -400,7 +400,7 @@ export function markMissedCallsRead() {
     if (!Array.isArray(cur) || cur.length === 0) return;
     let touched = false;
     const next = cur.map(c => {
-      if (c?.type === 'missed' && !(c?.read === true || c?.read === 1)) {
+      if (callDirection(c) === 'missed' && !(c?.read === true || c?.read === 1)) { // [2026-10-06 UX2]
         touched = true;
         return { ...c, read: true };
       }
@@ -511,16 +511,45 @@ function formatDurationLong(seconds) {
   return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
 
+// [2026-10-06 UX2] Direction resolver. Server rows (chat_call_history_list)
+// carry the MEDIA kind in `type` (audio|video|group), the direction in
+// `direction` (outgoing|incoming) and the outcome in `status` (answered|
+// missed|declined|busy|ringing). Local rows (addCallToHistory / voip merge)
+// still use the legacy `type` = outgoing|incoming|missed. Rendering code was
+// checking `item.type === 'outgoing'` only, so every server row fell through
+// to the "incoming" branch and labels showed raw "audio". Single source of
+// truth here — never read direction from `type` directly again.
+function callDirection(item) {
+  if (!item) return 'outgoing';
+  const dir = String(item.direction || '').toLowerCase();
+  const status = String(item.status || '').toLowerCase();
+  if (dir === 'outgoing') return 'outgoing';
+  if (dir === 'missed' || status === 'missed') return 'missed';
+  if (dir === 'incoming') return 'incoming';
+  const legacy = String(item.type || '').toLowerCase();
+  if (legacy === 'outgoing' || legacy === 'incoming' || legacy === 'missed') return legacy;
+  if (typeof item.is_outgoing === 'boolean') return item.is_outgoing ? 'outgoing' : 'incoming';
+  const caller = String(item.caller_email || '').toLowerCase();
+  const contact = String(item.contact_email || item.contactEmail || '').toLowerCase();
+  if (caller && contact) return caller === contact ? 'incoming' : 'outgoing';
+  return 'outgoing';
+}
+// [2026-10-06 UX2] Media kind (audio vs video) — distinct from direction.
+function callIsVideo(item) {
+  return !!(item && (item.video || item.is_video || String(item.type || '').toLowerCase() === 'video'));
+}
+
 function getCallLabel(type, t) {
   if (t) {
     const keys = { outgoing: 'calls.outgoing', incoming: 'calls.incoming', missed: 'calls.missed' };
     const translated = t(keys[type]);
     if (translated && translated !== keys[type]) return translated;
   }
+  // [2026-10-06 UX2] pt-BR fallbacks (project default language); t() first.
   switch (type) {
-    case 'outgoing': return 'Outgoing';
-    case 'incoming': return 'Incoming';
-    case 'missed': return 'Missed';
+    case 'outgoing': return 'Realizada';
+    case 'incoming': return 'Recebida';
+    case 'missed': return 'Perdida';
     default: return type;
   }
 }
@@ -719,11 +748,13 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
   // declined|busy|ringing). Checking only `item.type === 'missed'` meant
   // server rows NEVER went red — only locally-added missed entries did
   // (#949 regression). Honor both, and never paint an outgoing call red.
-  const isMissed = (item.status === 'missed' || item.type === 'missed')
-    && item.direction !== 'outgoing';
+  // [2026-10-06 UX2] direction via callDirection() (direction > status > legacy type).
+  const direction = callDirection(item);
+  const isMissed = direction === 'missed';
   const nameColor = isMissed ? RED : (isDark ? '#ffffff' : '#000000');
   const subColor = isDark ? '#8e8e93' : '#8e8e93';
-  const label = getCallLabel(item.type, t);
+  const label = getCallLabel(direction, t);
+  const isVideoCall = callIsVideo(item);
   const durationStr = formatDuration(item.duration);
   const country = detectCountry(item.to_number || item.contactEmail);
   const isChatyy = item.source === 'chat';
@@ -782,7 +813,7 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
           {/* Semantic colors: missed=red, incoming=green, outgoing=gray. */}
           {isMissed ? (
             <ArrowIncoming size={12} color={RED} />
-          ) : item.type === 'outgoing' ? (
+          ) : direction === 'outgoing' ? ( // [2026-10-06 UX2]
             <ArrowOutgoing size={12} color={isDark ? '#8e8e93' : '#6c6c70'} />
           ) : (
             <ArrowIncoming size={12} color={GREEN} />
@@ -790,7 +821,7 @@ const CallHistoryRow = memo(function CallHistoryRow({ item, isDark, t, language,
           <Text style={[s.historyType, { color: subColor }]}>
             {isChatyy ? (t?.('calls.chatyyCall') || 'Chatyy') : (item.to_number ? formatPhoneDisplay(item.to_number) : label)}
           </Text>
-          {item.video && (
+          {isVideoCall && ( // [2026-10-06 UX2] media kind, not direction
             <IconVideo size={12} color={subColor} />
           )}
           {durationStr ? (
@@ -1025,7 +1056,7 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
                 ) : (
                   <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.phoneCall') || 'Telefone'}</Text>
                 )}
-                {item.video ? (
+                {callIsVideo(item) ? ( // [2026-10-06 UX2]
                   <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.video') || 'Vídeo'}</Text>
                 ) : (
                   <Text style={[s.modalDetailValue, { color: textColor }]}>{t?.('calls.audio') || 'Áudio'}</Text>
@@ -1044,11 +1075,12 @@ function CallInfoModal({ item, visible, onClose, isDark, t, onCallAgain }) {
             </View>
             <View style={[s.modalDetailSep, { backgroundColor: sepColor }]} />
             <View style={s.modalDetailRow}>
-              <Text style={[s.modalDetailLabel, { color: subColor }]}>{getCallLabel(item.type, t)}</Text>
+              {/* [2026-10-06 UX2] direction via callDirection() */}
+              <Text style={[s.modalDetailLabel, { color: subColor }]}>{getCallLabel(callDirection(item), t)}</Text>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                {item.type === 'missed' ? (
+                {callDirection(item) === 'missed' ? (
                   <IconMissedCall size={14} color={RED} />
-                ) : item.type === 'outgoing' ? (
+                ) : callDirection(item) === 'outgoing' ? (
                   <ArrowOutgoing size={14} color={GREEN} />
                 ) : (
                   <ArrowIncoming size={14} color={GREEN} />
@@ -3050,7 +3082,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
     // [gap H5 2026-05-20] Missed-call rows pre-fill the chat input with a
     // "Voltei sua ligação" draft so the user can shoot a quick context
     // message before re-dialing. chat-conversation.js reads ?prefill=.
-    const isMissed = item.type === 'missed' || item.status === 'missed';
+    const isMissed = callDirection(item) === 'missed'; // [2026-10-06 UX2]
     const prefillText = isMissed
       ? (t?.('calls.callBackPrefill') || 'Voltei sua ligação')
       : '';
@@ -3370,6 +3402,7 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
       merged.push({
         id: `voip_${v.id}`,
         type: v.status === 'completed' ? 'outgoing' : (v.status === 'failed' ? 'missed' : 'outgoing'),
+        direction: v.status === 'failed' ? 'missed' : 'outgoing', // [2026-10-06 UX2] PSTN rows are always placed by us
         contactName: v.contact_name || '',
         contactEmail: '',
         to_number: v.to_number,
@@ -3404,15 +3437,23 @@ function ChatCallsTab({ colors, isDark, t, user, router }) {
         });
         if (match?.name) resolvedName = match.name;
       }
+      // [2026-10-06 UX2] Server rows: type=audio|video|group (media kind),
+      // direction=outgoing|incoming, status=answered|missed|..., duration in
+      // `duration_seconds`, time in `started_at`. The merge used to drop
+      // direction/status and read `c.type` as the direction, so every server
+      // call rendered as "incoming"/"audio". Carry the resolved direction +
+      // raw status through, and fall back to the server field names.
       merged.push({
         id: `chat_${c.id}`,
         type: c.type || 'outgoing',
+        direction: callDirection(c),
+        status: c.status,
         contactName: resolvedName,
         contactEmail: c.contactEmail || c.contact_email || '',
         to_number: isPhone ? (c.contactEmail || c.contact_email || '') : '',
-        duration: c.duration || 0,
-        timestamp: c.timestamp || c.created_at,
-        video: !!c.video,
+        duration: c.duration || c.duration_seconds || 0,
+        timestamp: c.timestamp || c.created_at || c.started_at,
+        video: callIsVideo(c),
         source: isPhone ? 'voip' : 'chat',
       });
     }

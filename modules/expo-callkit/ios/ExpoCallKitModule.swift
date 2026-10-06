@@ -733,6 +733,19 @@ public class ExpoCallKitModule: Module {
       return false
     }
 
+    // [2026-10-06 UX2] "Qualidade HD (1080p)" toggle — same UserDefaults key
+    // the native in-call "Mais opções" menu flips (CallViewController
+    // CallVideoQuality.hdPrefKey = "chatyy_call_hd"), exposed to JS so the
+    // Settings screen can show one switch for both platforms.
+    Function("setCallHdPreferred") { (on: Bool) -> Bool in
+      UserDefaults.standard.set(on, forKey: "chatyy_call_hd")
+      return true
+    }
+
+    Function("getCallHdPreferred") { () -> Bool in
+      return UserDefaults.standard.bool(forKey: "chatyy_call_hd")
+    }
+
     // ─── MediaPipe Background blur / virtual background (2026-05-17) ────
     Function("setBackgroundMode") { (mode: String, imageAsset: String?) -> Bool in
       let proc = BackgroundProcessor.shared

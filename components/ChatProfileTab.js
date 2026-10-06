@@ -861,8 +861,9 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
               <KidsIconSOS size={24} color="#fff" />
             </View>
             <View>
-              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>Botao de Emergencia</Text>
-              <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: '500' }}>Toque para alertar seus pais</Text>
+              {/* [2026-10-06 UX2] i18n + acentos (era "Botao de Emergencia" fixo) */}
+              <Text style={{ color: '#fff', fontSize: 18, fontWeight: '800' }}>{(typeof t === 'function' && t('kids.sosButton')) || 'Botão de Emergência'}</Text>
+              <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: '500' }}>{(typeof t === 'function' && t('kids.sosButtonHint')) || 'Toque para alertar seus pais'}</Text>
             </View>
           </TouchableOpacity>
 

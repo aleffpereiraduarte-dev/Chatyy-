@@ -6,7 +6,8 @@
 //     layer populated from AsyncStorage at splash; localStorage on web).
 //   - Per-conversation keys so writes are granular (no monolithic blob).
 //   - Write coalescing: debounced 500ms per conversation.
-//   - LRU eviction when the total persisted footprint exceeds 5 MB.
+//   - LRU eviction when the total persisted footprint exceeds TOTAL_BYTE_BUDGET
+//     (24 MB Android / 40 MB iOS — see below).
 //   - Pure JS, no native modules, no SQLite, no FTS — zero crash surface.
 //
 // Hot path (called inside `useState(() => ...)` initializers):
@@ -17,7 +18,7 @@
 // Writes are fire-and-forget; the caller never awaits.
 
 import { Platform } from 'react-native';
-import { getString, setString, remove, getAllKeys, getJSON, setJSON, waitForCacheReady } from './mmkv';
+import { getString, setString, remove, getAllKeys, getJSON, setJSON, waitForCacheReady, isKeyPending, ensureLoaded, onKeysLoaded } from './mmkv';
 import { normAccount, accountKeyHash } from './chatStore/schema';
 
 // ─── Configuration ─────────────────────────────────────────────────────────
@@ -45,8 +46,19 @@ function _indexKey() { return INDEX_KEY + _acctSuffix; }
 const MAX_MSGS_PER_CONV = 1500;      // persisted cap por conversa (era 200)
 const MAX_MEMORY_MSGS = 1000;        // in-memory scroll window (era 500)
 const FLUSH_DEBOUNCE_MS = 500;
-const TOTAL_BYTE_BUDGET = 40 * 1024 * 1024;  // 40 MB (era 5MB — LRU ainda protege)
-const EVICT_DOWN_TO = 36 * 1024 * 1024;    // hysteresis (~90% do teto)
+// [2026-10-06 android-storage-ceiling] Android AsyncStorage is ONE SQLite DB
+// capped by gradle prop AsyncStorage_db_size_in_MB (64 via
+// plugins/withAsyncStorageSize.js; 6 MB on binaries built before it). That DB
+// also holds chatCache's legacy `chat_msgs_*` copy, email bodies, indexes and
+// every other mmkv_* key → this accelerator gets 24 MB there (≤ 64 − margin).
+// iOS AsyncStorage is file-backed (no DB ceiling) → keeps the 40 MB budget.
+// Per-conversation blobs are additionally capped at MAX_VALUE_BYTES (1.5 MB,
+// Android CursorWindow) by services/mmkv.js.
+const TOTAL_BYTE_BUDGET = (Platform.OS === 'android' ? 24 : 40) * 1024 * 1024;
+const EVICT_DOWN_TO = Math.floor(TOTAL_BYTE_BUDGET * 0.9);    // hysteresis (~90% do teto)
+// Conversations whose message blob is warmed in the background right after the
+// cache-ready gate (most-recently-used first). The rest load on first access.
+const PREFETCH_CONVS = 20;
 
 // ─── In-memory authoritative state ─────────────────────────────────────────
 const _msgs = new Map();  // convId → Message[]
@@ -84,20 +96,76 @@ function _doHydrate() {
         }
       } catch {}
     }
-    for (const idStr of Object.keys(_index.lru)) {
+    // [2026-10-06 android-storage-ceiling] Message blobs are LAZY in mmkv.js
+    // (not hydrated at boot). Parse the ones already in memory; for the rest,
+    // warm only the PREFETCH_CONVS most-recent in the background — the others
+    // load on first getCachedMessagesSync (miss → async load → onKeysLoaded).
+    const toPrefetch = [];
+    const byRecency = Object.entries(_index.lru).sort((a, b) => (b[1] || 0) - (a[1] || 0));
+    for (const [idStr] of byRecency) {
       const convId = Number(idStr) || idStr;
       // [perf 2026-10-06] Check BEFORE parsing — the async retry pass used to
       // JSON.parse every conversation blob again just to discard it.
       if (_msgs.has(convId)) continue;
-      const raw = getString(_msgKey(idStr));
+      const key = _msgKey(idStr);
+      if (isKeyPending(key)) {
+        if (toPrefetch.length < PREFETCH_CONVS) toPrefetch.push(key);
+        continue;
+      }
+      const raw = getString(key);
       if (!raw) continue;
       try {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed) && !_msgs.has(convId)) _msgs.set(convId, parsed);
       } catch {}
     }
+    if (toPrefetch.length) { try { ensureLoaded(toPrefetch).catch(() => {}); } catch {} }
   } catch {}
 }
+
+// Map a loaded mmkv key back to a convId of the ACTIVE account (null if the key
+// belongs to another account / another cache).
+function _convIdFromKey(key) {
+  const head = MSG_KEY_PREFIX + (_acctSuffix ? _acctSuffix + '_' : '');
+  if (typeof key !== 'string' || !key.startsWith(head)) return null;
+  const rest = key.substring(head.length);
+  if (!rest || rest.charAt(0) === '_') return null; // another account's key
+  return Number(rest) || rest;
+}
+
+// Fold a persisted blob into memory WITHOUT letting it override anything that
+// arrived while it was loading (memory wins; persisted only fills gaps).
+function _mergePersisted(convId, persisted) {
+  if (!Array.isArray(persisted) || persisted.length === 0) return;
+  const cur = _msgs.get(convId) || _msgs.get(String(convId)) || _msgs.get(Number(convId));
+  if (!cur || cur.length === 0) { _msgs.set(convId, persisted); return; }
+  const have = new Set(cur.map(m => String(m?.id)));
+  const extra = persisted.filter(m => m && !have.has(String(m.id)));
+  if (!extra.length) return;
+  // Same ordering as _mergeIntoMemory but capped at MAX_MSGS_PER_CONV (what a
+  // full boot hydrate used to keep), not the smaller MAX_MEMORY_MSGS window —
+  // otherwise the next flush would shrink the persisted history.
+  const arr = extra.concat(cur).sort((a, b) => {
+    const ai = typeof a.id === 'number' ? a.id : 0;
+    const bi = typeof b.id === 'number' ? b.id : 0;
+    if (ai !== bi) return ai - bi;
+    const at = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const bt = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return at - bt;
+  });
+  _msgs.set(convId, arr.length > MAX_MSGS_PER_CONV ? arr.slice(-MAX_MSGS_PER_CONV) : arr);
+}
+
+// Lazy blobs landing after boot → warm the in-memory window.
+try {
+  onKeysLoaded((keys) => {
+    for (const k of keys) {
+      const convId = _convIdFromKey(k);
+      if (convId == null) continue;
+      try { _mergePersisted(convId, JSON.parse(getString(k) || 'null')); } catch {}
+    }
+  });
+} catch {}
 (function hydrate() {
   // [perf 2026-10-06] On a native cold start the mmkv map is still empty here
   // (async AsyncStorage hydrate) — the sync pass can only find nothing. Skip it
@@ -197,6 +265,19 @@ function _scheduleFlush(convId) {
 }
 
 function _flushOne(convId) {
+  // [2026-10-06] The persisted blob may still be lazy (not read yet): writing
+  // now would replace up to 1500 stored messages with just the few that
+  // arrived this session. Load it, fold it in (memory wins), then flush.
+  try {
+    const key = _msgKey(convId);
+    if (isKeyPending(key)) {
+      ensureLoaded(key).then(() => {
+        try { _mergePersisted(convId, JSON.parse(getString(key) || 'null')); } catch {}
+        if (!isKeyPending(key)) _flushOne(convId);
+      }).catch(() => {});
+      return;
+    }
+  } catch {}
   try {
     const arr = _msgs.get(convId) || [];
     // Only persist confirmed (numeric-id) messages, capped to MAX_MSGS_PER_CONV newest.

@@ -446,6 +446,24 @@ function SettingsScreenInner() {
   // when this is OFF the auto-roaming detector force-enables low-data when
   // NetInfo flags an expensive cellular link.
   const [lowDataCalls, setLowDataCalls] = useState(false);
+  // [2026-10-06 UX2] "Qualidade HD (1080p)" em chamadas. Lives in the NATIVE
+  // pref the call engine reads (Android SharedPreferences chatyy_call_hd /
+  // iOS UserDefaults chatyy_call_hd) via the expo-callkit bridge — not in
+  // AsyncStorage. The row is hidden until the installed binary exposes the
+  // bridge (OTA'd JS on an older build must not crash).
+  const [hdCalls, setHdCalls] = useState(false);
+  const [hdCallsAvailable, setHdCallsAvailable] = useState(false);
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    try {
+      const ck = require('../modules/expo-callkit');
+      if (typeof ck.isCallHdPreferenceAvailable === 'function' && ck.isCallHdPreferenceAvailable()
+          && typeof ck.getCallHdPreferred === 'function') {
+        const v = ck.getCallHdPreferred();
+        if (typeof v === 'boolean') { setHdCalls(v); setHdCallsAvailable(true); }
+      }
+    } catch {}
+  }, []);
   // [WhatsApp "Media visibility" 2026-05-26] Auto-save received photos/videos
   // into the phone gallery / camera roll. Default ON, like WhatsApp. Persisted
   // under `autoSaveMediaToGallery`; mediaCache reads the same key + mirrors it
@@ -926,6 +944,15 @@ function SettingsScreenInner() {
             mute_call_ringtone:
               r.data.mute_call_ringtone !== undefined ? !!r.data.mute_call_ringtone : false,
           }));
+          // [2026-10-06 rt-client] Espelha o gate de typing no WS (typing agora
+          // é só via socket; o gate do PHP chat_typing deixou de ser chamado).
+          try {
+            require('../services/websocket').default?.setTypingPrivacy?.({
+              read_receipts: r.data.read_receipts !== undefined ? !!r.data.read_receipts : undefined,
+              last_seen: r.data.last_seen,
+              online: r.data.online,
+            });
+          } catch {}
           // [mute-call-ringtone, 2026-05-19] Mirror to local storage so
           // services/ringtone.js can read it synchronously on the next
           // inbound ring (it ships before the next chat_privacy_get
@@ -969,9 +996,15 @@ function SettingsScreenInner() {
           }
         } catch {}
       };
+      // [2026-10-06 rt-client] read_receipts / last_seen / online também gateiam o
+      // typing via WS — espelha no websocket.js quando o servidor confirmar.
+      const _mirrorTypingPrivacy = () => {
+        if (!('read_receipts' in patch) && !('last_seen' in patch) && !('online' in patch)) return;
+        try { require('../services/websocket').default?.setTypingPrivacy?.(patch); } catch {}
+      };
       const _p = api.chatPrivacySet?.(patch);
       if (_p && typeof _p.then === 'function') {
-        _p.then((r) => { if (r?.success !== false) _mirrorMuteRingtone(); }).catch(() => {});
+        _p.then((r) => { if (r?.success !== false) { _mirrorMuteRingtone(); _mirrorTypingPrivacy(); } }).catch(() => {});
       } else {
         // No promise returned (API stub missing) — fall back to mirroring so
         // local-only builds still pick up the toggle.
@@ -3758,6 +3791,49 @@ function SettingsScreenInner() {
               thumbColor={lowDataCalls ? colors.primary : '#fff'}
             />
           </View>
+
+          {/* [2026-10-06 UX2] Qualidade HD (1080p) em chamadas de vídeo. Flips
+              the native pref CallVideoQuality reads when publishing the camera
+              (Android had no UI for it — CallActivity has no "more" menu; iOS
+              mirrors its in-call menu toggle). Only honoured on Wi-Fi/good
+              network by the engine; hidden when the binary lacks the bridge. */}
+          {hdCallsAvailable && (
+          <View
+            style={[
+              s.settingRow,
+              {
+                borderBottomColor: colors.borderLight,
+                borderBottomWidth: 0,
+                marginTop: Spacing.sm,
+                paddingTop: Spacing.md,
+                borderTopWidth: StyleSheet.hairlineWidth,
+                borderTopColor: colors.borderLight,
+              },
+            ]}
+          >
+            <View style={s.settingInfo}>
+              <Text style={[s.settingLabel, { color: colors.text }]}>
+                {t('settings.hdCalls.title') || 'Qualidade HD (1080p)'}
+              </Text>
+              <Text style={[s.settingDesc, { color: colors.textTertiary }]}>
+                {t('settings.hdCalls.desc') || 'Usa mais dados; só em Wi-Fi/rede boa'}
+              </Text>
+            </View>
+            <Switch
+              value={hdCalls}
+              onValueChange={(v) => {
+                setHdCalls(v);
+                try { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); } catch {}
+                try {
+                  const ck = require('../modules/expo-callkit');
+                  if (typeof ck.setCallHdPreferred === 'function') ck.setCallHdPreferred(v);
+                } catch {}
+              }}
+              trackColor={{ false: colors.divider, true: colors.primaryLight }}
+              thumbColor={hdCalls ? colors.primary : '#fff'}
+            />
+          </View>
+          )}
         </View>
         )}
 

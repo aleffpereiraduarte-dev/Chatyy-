@@ -1740,7 +1740,11 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
         const ML = require('expo-media-library');
         const perm = await ML.requestPermissionsAsync(true); // true = write access
         if (perm.status !== 'granted' && perm.accessPrivileges !== 'all') {
-          Alert.alert('Permissão necessária', 'Vá em Ajustes > Chatyy > Fotos e selecione "Todas as fotos".');
+          // [2026-10-06 UX2] i18n (t is an optional prop in this viewer)
+          Alert.alert(
+            (typeof t === 'function' && t('common.permission')) || 'Permissão necessária',
+            (typeof t === 'function' && t('viewer.photosPermissionHint')) || 'Vá em Ajustes > Chatyy > Fotos e selecione "Todas as fotos".',
+          );
           setSaving(false);
           return;
         }

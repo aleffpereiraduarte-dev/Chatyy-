@@ -216,3 +216,29 @@ export function toE164(dial, rawDigits) {
   return `${dial}${digits}`;
 }
 export const E164_RE = /^\+[1-9]\d{7,14}$/;
+
+// [2026-10-06 UX2] Localized country name for pickers. COUNTRIES keeps English
+// `name` as the canonical/searchable value; this prefers the OS/JS-engine
+// translation via Intl.DisplayNames (region) for the active app locale and
+// falls back to the English name when the API is missing (Hermes on some
+// Android builds) or throws. One DisplayNames instance is cached per locale.
+const _displayNamesCache = {};
+export function countryDisplayName(c, locale) {
+  if (!c) return '';
+  const code = typeof c.code === 'string' ? c.code.toUpperCase() : '';
+  const loc = String(locale || 'en').replace('_', '-');
+  try {
+    if (code && typeof Intl !== 'undefined' && typeof Intl.DisplayNames === 'function') {
+      let dn = _displayNamesCache[loc];
+      if (dn === undefined) {
+        try { dn = new Intl.DisplayNames([loc], { type: 'region' }); } catch { dn = null; }
+        _displayNamesCache[loc] = dn;
+      }
+      if (dn) {
+        const n = dn.of(code);
+        if (typeof n === 'string' && n && n !== code) return n;
+      }
+    }
+  } catch {}
+  return c.name || code || '';
+}

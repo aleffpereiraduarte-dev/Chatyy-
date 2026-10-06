@@ -115,7 +115,20 @@ function _schedulePersist() {
       const mmkv = require('./mmkv');
       const obj = {};
       for (const [k, v] of syncIndex.entries()) obj[k] = v;
-      mmkv.setString?.(INDEX_MMKV_KEY, JSON.stringify(obj));
+      let json = JSON.stringify(obj);
+      // [2026-10-06 android-storage-ceiling] mmkv refuses values > 1.5 MB on
+      // Android (CursorWindow). Keep the newest entries (Map insertion order)
+      // so the index keeps persisting instead of freezing at an old snapshot.
+      const cap = Math.floor((mmkv.MAX_VALUE_BYTES || 1572864) * 0.8);
+      if (json.length > cap / 3) {
+        const entries = Object.entries(obj);
+        let keep = entries.length;
+        while (keep > 0 && (mmkv.utf8Bytes ? mmkv.utf8Bytes(json) : json.length * 3) > cap) {
+          keep = Math.floor(keep * 0.8);
+          json = JSON.stringify(Object.fromEntries(entries.slice(entries.length - keep)));
+        }
+      }
+      mmkv.setString?.(INDEX_MMKV_KEY, json);
     } catch {}
   }, 2000);
 }

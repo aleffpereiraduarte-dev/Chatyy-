@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Platform, NativeModules } from 'react-native';
+import { Platform, NativeModules, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { translations, DEFAULT_LANGUAGE, loadLocale, isLocaleSupported } from '../i18n';
+import { translations, DEFAULT_LANGUAGE, ensureLocaleLoaded, onLocaleLoaded, isLocaleSupported } from '../i18n';
 import { setUserLanguage as apiSetUserLanguage } from '../services/api';
 
 const LanguageContext = createContext(null);
@@ -104,17 +104,37 @@ export function LanguageProvider({ children }) {
   // (e os consumidores a re-renderizarem) com as traduções recém-injetadas.
   const [loadedTick, setLoadedTick] = useState(0);
 
-  // Carrega o idioma ativo sob demanda. pt-BR/en/es já estão na entrada; os
-  // outros 60 são importados aqui (chunk próprio) na 1ª vez que viram ativos.
-  // Enquanto não carrega, o t() cai no fallback en→pt-BR (nunca chave crua).
+  // [2026-10-06 i18n-remote] Carrega o idioma ativo sob demanda. pt-BR/en/es/
+  // pt-PT já estão no bundle; os outros 55 vêm do servidor (JSON + cache em
+  // disco) via ensureLocaleLoaded(). A troca de idioma é imediata e, enquanto
+  // o JSON não chega, o t() cai no fallback en→pt-BR (nunca chave crua, nunca
+  // tela em branco). Quando chega (ou num retry tardio) o tick re-renderiza.
+  const languageRef = useRef(language);
+  languageRef.current = language;
   useEffect(() => {
     if (!language || translations[language]) return; // já disponível
     let alive = true;
-    loadLocale(language).then((ok) => {
+    ensureLocaleLoaded(language).then((ok) => {
       if (alive && ok) setLoadedTick((n) => n + 1);
     }).catch(() => {});
     return () => { alive = false; };
   }, [language]);
+  // Retry tardio / manifest novo → só re-renderiza se for o idioma ativo.
+  useEffect(() => {
+    const off = onLocaleLoaded((code) => {
+      if (code === languageRef.current) setLoadedTick((n) => n + 1);
+    });
+    return () => { try { off && off(); } catch {} };
+  }, []);
+  // Voltou pro foreground ainda sem o idioma (falhou offline)? Tenta de novo.
+  useEffect(() => {
+    if (Platform.OS === 'web' || !AppState || typeof AppState.addEventListener !== 'function') return;
+    const sub = AppState.addEventListener('change', (st) => {
+      const code = languageRef.current;
+      if (st === 'active' && code && !translations[code]) ensureLocaleLoaded(code).catch(() => {});
+    });
+    return () => { try { sub && sub.remove && sub.remove(); } catch {} };
+  }, []);
 
   // Propagate the selected language to the API layer so every backend call
   // carries an X-User-Language header. AI prompts read this to respond in
@@ -167,6 +187,9 @@ export function LanguageProvider({ children }) {
 
   const changeLanguage = useCallback((code) => {
     if (!isLocaleSupported(code)) return;
+    // Dispara o download antes do setState (o effect acima só roda após o
+    // render) → o JSON chega alguns ms mais cedo; idempotente/single-flight.
+    ensureLocaleLoaded(code).catch(() => {});
     setLanguage(code);
     _persistLanguage(code);
     if (!_suppressBroadcast.current) _broadcastLanguage(code);

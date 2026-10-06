@@ -966,10 +966,23 @@ const ConversationRow = React.memo(function ConversationRow({
   // state. Purely presentational — the onPress handlers (and their order)
   // are untouched, so the data/action wiring is identical to before.
   const MuteIc = isMuted ? IconBell : IconVolume2;
+  // [2026-10-06 UX2] WhatsApp-parity "Não lida"/"Lida" on the LEFT swipe
+  // (first button). Toggle-aware: unread → "Marcar como lida" (check icon),
+  // read → "Marcar como não lida" (bubble icon). onMarkUnread toggles in the
+  // parent based on unread_count, so one prop serves both states.
+  const UnreadIc = unread ? IconCheck : IconMessageSquare;
+  const unreadSwipeLabel = unread ? (t('chat.markRead') || 'Marcar como lida') : (t('chat.markUnread') || 'Marcar como não lida');
   const renderLeftActions = useCallback((progress, dragX) => {
     const scale = dragX.interpolate({ inputRange: [0, 80], outputRange: [0.5, 1], extrapolate: 'clamp' });
     return (
       <View style={{ flexDirection: 'row' }}>
+        {/* [2026-10-06 UX2] read/unread toggle */}
+        <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#6366F1' }]} onPress={() => { try { haptic.select(); } catch {} swipeRef.current?.close(); propsRef.current.onMarkUnread?.(conversation); }}>
+          <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
+            <UnreadIc size={20} color="#fff" />
+            <Text style={s.nativeSwipeLabel} numberOfLines={1} adjustsFontSizeToFit>{unreadSwipeLabel}</Text>
+          </Animated.View>
+        </TouchableOpacity>
         <TouchableOpacity style={[s.nativeSwipeBtn, { backgroundColor: '#64748B' }]} onPress={() => { swipeRef.current?.close(); propsRef.current.onMute?.(conversation); }}>
           <Animated.View style={{ transform: [{ scale }], alignItems: 'center' }}>
             <MuteIc size={20} color="#fff" />
@@ -990,7 +1003,7 @@ const ConversationRow = React.memo(function ConversationRow({
         </TouchableOpacity>
       </View>
     );
-  }, [conversation, isMuted, isPinned, t]);
+  }, [conversation, isMuted, isPinned, unread, t]); // [2026-10-06 UX2] + unread
   const renderRightActions = useCallback((progress, dragX) => {
     const scale = dragX.interpolate({ inputRange: [-80, 0], outputRange: [1, 0.5], extrapolate: 'clamp' });
     return (
@@ -1377,9 +1390,10 @@ const ConversationRow = React.memo(function ConversationRow({
           <IconPin size={22} color="#fff" />
           <Text style={s.swipeActionLabel}>{isPinned ? (t('chat.unpin') || 'Unpin') : (t('chat.pin') || 'Pin')}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#0EA5E9' }]} onPress={() => { resetSwipe(); propsRef.current.onMarkUnread?.(conversation); }}>
-          <IconMail size={22} color="#fff" />
-          <Text style={s.swipeActionLabel}>{t('chat.markUnread') || 'Unread'}</Text>
+        {/* [2026-10-06 UX2] toggle-aware read/unread (parity with native Swipeable) */}
+        <TouchableOpacity style={[s.swipeActionBtnWide, { borderRadius: 14, marginRight: 4, marginVertical: 3, backgroundColor: '#6366F1' }]} onPress={() => { try { haptic.select(); } catch {} resetSwipe(); propsRef.current.onMarkUnread?.(conversation); }}>
+          <UnreadIc size={22} color="#fff" />
+          <Text style={s.swipeActionLabel}>{unreadSwipeLabel}</Text>
         </TouchableOpacity>
       </Animated.View>
       <Animated.View style={[s.swipeActionsRight, { opacity: rightOpacity }]}>
@@ -3880,8 +3894,11 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
         } catch {}
       }));
 
+      // [2026-10-06 rt-client] Frames já chegam normalizados por websocket.js
+      // (hub Go flat OU evento PHP {data:{…}} → mesmo shape plano, email em
+      // minúsculas); compara o próprio e-mail também em minúsculas.
       unsubs.push(mailWs.on('typing', (data) => {
-        if (!data?.conversation_id || data?.email === user?.email) return;
+        if (!data?.conversation_id || String(data?.email || '').toLowerCase() === String(user?.email || '').toLowerCase()) return;
         const email = String(data.email || '').toLowerCase();
         const name = emailToDisplayName(data.name || data.email || '');
         const recording = !!data.recording;
@@ -3927,7 +3944,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
       // cancel its pending expiry timer. Registered in `unsubs` so it is torn
       // down with the other WS listeners on unmount/account-switch.
       unsubs.push(mailWs.on('stopped_typing', (data) => {
-        if (!data?.conversation_id || data?.email === user?.email) return;
+        if (!data?.conversation_id || String(data?.email || '').toLowerCase() === String(user?.email || '').toLowerCase()) return;
         const convId = data.conversation_id;
         const email = String(data.email || '').toLowerCase();
         const tkey = `${convId}::${email}`;
@@ -5007,11 +5024,29 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
     }
   }, [conversations, loadConversations]);
 
+  // [2026-10-06 UX2] Toggle read/unread. Every caller (swipe, long-press
+  // sheet, ActionSheet) already renders a toggle-aware label
+  // ("Marcar como lida" when unread_count > 0) but always fired mark-UNREAD,
+  // so "Marcar como lida" was a no-op. Now: unread → chat_mark_read with the
+  // last message id (server falls back to MAX(id) when 0) + optimistic
+  // unread_count: 0; read → chat_mark_unread + optimistic unread_count: 1.
+  // Reverts the optimistic state on API failure like mute/pin do.
   const handleMarkUnreadConversation = useCallback(async (conv) => {
+    const prevUnread = conv.unread_count || 0;
+    const markRead = prevUnread > 0;
     try {
-      setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, unread_count: Math.max(c.unread_count || 0, 1) } : c));
-      await api.chatMarkUnread(conv.id);
-    } catch {}
+      setConversations(prev => prev.map(c => c.id === conv.id
+        ? { ...c, unread_count: markRead ? 0 : Math.max(c.unread_count || 0, 1) }
+        : c));
+      if (markRead) {
+        const lastId = conv.last_message?.id || conv.last_message_id || 0;
+        await api.chatRead(conv.id, lastId);
+      } else {
+        await api.chatMarkUnread(conv.id);
+      }
+    } catch {
+      setConversations(prev => prev.map(c => c.id === conv.id ? { ...c, unread_count: prevUnread } : c));
+    }
   }, []);
 
   // Real implementação do long-press menu (referenciada via lpMenuRef).
@@ -5900,6 +5935,13 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
       try {
         const s = await api.chatGetSettings();
         if (cancelled) return;
+        // [2026-10-06 rt-client] read_receipts (mesclado de chat_user_privacy)
+        // alimenta o gate de typing-via-WS desde a lista, antes de abrir thread.
+        try {
+          if (s?.success && s.data && s.data.read_receipts !== undefined) {
+            require('../services/websocket').default?.setTypingPrivacy?.({ read_receipts: s.data.read_receipts }, user?.email);
+          }
+        } catch {}
         const on = !!(s?.data?.smart_pin_enabled);
         setSmartPinEnabled(on);
         if (on) {

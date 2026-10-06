@@ -29,7 +29,7 @@ import * as api from '../services/api';
 import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../services/firebasePhone';
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
 import useIsMounted from '../hooks/useIsMounted';
-import { COUNTRIES, formatPhone, toE164, E164_RE } from '../constants/countries';
+import { COUNTRIES, formatPhone, toE164, E164_RE, countryDisplayName } from '../constants/countries'; // [2026-10-06 UX2] countryDisplayName
 import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, IconAtSign, IconAlertTriangle, IconPhone, IconShield, IconSparkles, IconZap, IconCamera, IconChevronRight, IconLock, IconEye, IconEyeOff, IconX, IconMessageCircle, IconSmartphone, IconUsers } from '../components/Icons';
 import SignupIntro from '../components/SignupIntro';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -50,7 +50,7 @@ export default function SignupPhone() {
   // account with the same digits already typed (no double-entry friction).
   const params = useLocalSearchParams();
   const { colors, isDark } = useAuthTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage(); // [2026-10-06 UX2] language → nome do país localizado
   const { loginWithToken } = useAuth();
   // Reactive window width for the responsive handle-step layout.
   const { width: _winW } = useWindowDimensions();
@@ -1008,7 +1008,7 @@ export default function SignupPhone() {
                           {_country?.flag || ''}
                         </Text>
                         <Text style={{ flex: 1, fontSize: 16, fontWeight: '500', color: colors.text }}>
-                          {_country?.name || (t('login.selectCountry') || 'País')}
+                          {countryDisplayName(_country, language) || (t('login.selectCountry') || 'País')}
                         </Text>
                         <IconChevronRight size={16} color={colors.textTertiary} />
                       </TouchableOpacity>
@@ -1911,7 +1911,7 @@ export default function SignupPhone() {
                   }}
                 >
                   <Text style={{ fontSize: 22, marginRight: 12 }}>{c.flag}</Text>
-                  <Text style={{ flex: 1, fontSize: 15, color: colors.text }} numberOfLines={1}>{c.name}</Text>
+                  <Text style={{ flex: 1, fontSize: 15, color: colors.text }} numberOfLines={1}>{countryDisplayName(c, language)}</Text>
                   <Text style={{ fontSize: 14, color: colors.textSecondary }}>{c.dial}</Text>
                 </TouchableOpacity>
               );
@@ -1926,8 +1926,10 @@ export default function SignupPhone() {
               );
               if (countrySearch) {
                 const _q = countrySearch.toLowerCase();
+                // [2026-10-06 UX2] match localized AND English names
                 return COUNTRIES.filter(c =>
                   c.name.toLowerCase().includes(_q) ||
+                  countryDisplayName(c, language).toLowerCase().includes(_q) ||
                   c.code.toLowerCase().includes(_q) ||
                   c.dial.includes(countrySearch)
                 ).map(_renderRow);

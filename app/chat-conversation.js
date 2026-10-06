@@ -32,6 +32,8 @@ import { NativeModules } from 'react-native';
 const _NativeChatView = null;
 import Svg, { Path } from 'react-native-svg';
 import CircularProgressArc from '../components/CircularProgressArc';
+import PressableScale from '../components/PressableScale'; // [2026-10-06 UX2] contact info sheet
+import FadeSlideIn from '../components/FadeSlideIn'; // [2026-10-06 UX2]
 import { isReduceMotionEnabled } from '../components/reducedMotion'; // [2026-10-04] honor OS Reduce Motion
 import MediaSendOverlay, { MediaPopIn } from '../components/MediaSendOverlay'; // [2026-10-04] WhatsApp-level send motion
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -67,6 +69,7 @@ import {
   IconRotateCw, IconRotateCcw, IconFlipHorizontal, IconFlipVertical, IconCrop, IconPencil, IconUndo,
   IconLink, IconAlertCircle, IconPenTool,
   IconChevronRight, IconLogOut, IconGrid, IconRefresh,
+  IconFlag, // [2026-10-06 UX2] contact info sheet → Denunciar
 } from '../components/Icons';
 import * as Clipboard from 'expo-clipboard';
 import { WebView } from 'react-native-webview';
@@ -6134,7 +6137,11 @@ function safeAlert(title, message, buttons) {
 // AUDIO RECORDER
 // ============================================================
 
-function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
+// [2026-10-06 UX2] holdMode: null (tap-to-record) | 'hold' (finger on the mic,
+// rendered as a compact overlay pill) | 'locked' (hands-free controls).
+// holdCtlRef receives { move, cancel, lock, release } so the composer's mic
+// gesture can drive this recorder without re-rendering per touch move.
+function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode = null, holdCtlRef = null, onShortHold }) {
   const [recording, setRecording] = useState(null);
   const [duration, setDuration] = useState(0);
   const [error, setError] = useState(null);
@@ -6186,6 +6193,16 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   // interval is cleared in stop/cancel/unmount.
   const voiceDraftPersistRef = useRef(null);
   const voiceDraftUriRef = useRef(null);
+  // [2026-10-06 UX2] Leak guards + hold-to-record plumbing.
+  // recordingRef mirrors `recording` so the unmount / AppState handlers (stale
+  // closures) can always reach the live recorder and release the mic.
+  const recordingRef = useRef(null);
+  const holdModeRef = useRef(holdMode);
+  holdModeRef.current = holdMode;
+  const latestRef = useRef({});
+  const [holdTrashing, setHoldTrashing] = useState(false);
+  const trashAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => { recordingRef.current = recording; }, [recording]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -6232,7 +6249,42 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
         } catch {}
         try { audioCtxRef.current?.close(); } catch {}
       }
+      // [2026-10-06 UX2] Native leak fix: unmounting mid-recording (navigate
+      // away, ErrorBoundary reset, hold released before stop) used to leave
+      // the native recorder running with the mic + allowsRecording session
+      // grabbed. handleStop/handleCancel null the ref themselves, so this
+      // only fires for a recorder nobody stopped.
+      const _rec = recordingRef.current;
+      recordingRef.current = null;
+      if (Platform.OS !== 'web' && _rec && _rec !== 'web') {
+        Promise.resolve()
+          .then(() => (_rec.__native && _rec.NativeAudio?.cancelRecording) ? _rec.NativeAudio.cancelRecording() : _rec.stop?.())
+          .catch(() => {})
+          .then(() => { try { return require('expo-audio').setAudioModeAsync({ allowsRecording: false }); } catch {} })
+          .catch(() => {});
+      }
+      if (voiceSessionRef.current) { voiceSessionRef.current.alive = false; }
+      if (holdCtlRef) holdCtlRef.current = null;
     };
+  }, []);
+
+  // [2026-10-06 UX2] App goes to background: a held recording can't survive
+  // (the touch is gone) → cancel it. Hands-free/locked recording is stopped
+  // into the preview (keeps the audio, releases the mic) instead of silently
+  // recording in background.
+  useEffect(() => {
+    if (Platform.OS === 'web') return undefined;
+    const sub = AppState.addEventListener('change', (st) => {
+      const L = latestRef.current;
+      if (holdModeRef.current === 'hold' && (st === 'background' || st === 'inactive')) {
+        try { L.handleCancel?.(); } catch {}
+        return;
+      }
+      if (st === 'background' && recordingRef.current) {
+        try { L.handleStop?.(); } catch {}
+      }
+    });
+    return () => { try { sub?.remove?.(); } catch {} };
   }, []);
 
   // Direct-send: handleStop assembles the audio into `previewData`; if the user
@@ -6290,7 +6342,12 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
       // without the auto-stop the recording silently fails on send. WhatsApp
       // pattern: stop and present preview so user can send what they got.
       if (d >= 300) {
-        try { handleStop(); } catch {}
+        // [2026-10-06 UX2] go through latestRef — this interval's closure is
+        // from the render where `recording` was still null, so calling
+        // handleStop directly was a no-op. While held, ship it (the overlay
+        // preview isn't interactive).
+        const L = latestRef.current || {};
+        try { (holdModeRef.current === 'hold' ? L.handleStopAndSend : L.handleStop)?.(); } catch {}
       }
     }, 1000);
     // Persist a recording-in-progress draft every 500ms so that if the app
@@ -6567,7 +6624,12 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           return;
         }
       }
-      if (!mountedRef.current) { try { await recorder.stop(); } catch {} return; }
+      if (!mountedRef.current) {
+        try { await recorder.stop(); } catch {}
+        // [2026-10-06 UX2] also drop the recording audio session (hold released early)
+        try { await expoAudio.setAudioModeAsync({ allowsRecording: false }); } catch {}
+        return;
+      }
       setRecording(recorder);
       startTimer();
     } catch (e) {
@@ -6602,6 +6664,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   // STOP recording -> enter preview mode (WhatsApp-style: listen, then send or delete)
   const handleStop = async () => {
     if (!recording) return;
+    recordingRef.current = null; // [2026-10-06 UX2] we own the stop now
     if (intervalRef.current) clearInterval(intervalRef.current);
     if (waveIntervalRef.current) clearInterval(waveIntervalRef.current);
     if (voiceDraftPersistRef.current) { clearInterval(voiceDraftPersistRef.current); voiceDraftPersistRef.current = null; }
@@ -6860,6 +6923,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   };
 
   const handleCancel = async () => {
+    recordingRef.current = null; // [2026-10-06 UX2] we own the teardown now
     if (intervalRef.current) clearInterval(intervalRef.current);
     // Release the preview player + audio session too (covers cancelling
     // straight from the preview pill, not just an in-progress recording).
@@ -6898,7 +6962,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
           <IconAlertTriangle size={18} color={colors.error || '#ef4444'} />
           <Text style={[recStyles.errorText, { color: colors.error || '#ef4444' }]}>{error}</Text>
         </View>
-        <TouchableOpacity onPress={onCancel} style={recStyles.iconBtn} accessibilityLabel="Cancelar gravação">
+        <TouchableOpacity onPress={onCancel} style={recStyles.iconBtn} accessibilityLabel={t('chatConv.cancelRecording') || 'Cancelar gravação'}>
           <IconX size={20} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
@@ -6910,6 +6974,73 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
   const previewBg = isDarkBg ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.08)';
   const waveColor = '#111111';
   const slideCancelColor = colors.textSecondary;
+
+  // ─── [2026-10-06 UX2] HOLD-TO-RECORD controller ───
+  // Re-assigned every render so it always closes over the live `recording`.
+  latestRef.current = { handleCancel, handleStop, handleStopAndSend };
+  if (holdCtlRef) {
+    holdCtlRef.current = {
+      move: ({ dx = 0 } = {}) => {
+        if (holdTrashing) return;
+        slideX.setValue(Math.max(Math.min(0, dx), -140));
+      },
+      cancel: () => {
+        // WhatsApp: the mic drops into a trash can, then the pill closes.
+        setHoldTrashing(true);
+        try { if (Platform.OS !== 'web') require('../services/haptics').tap('heavy'); } catch {}
+        if (isReduceMotionEnabled()) { handleCancel(); return; }
+        trashAnim.setValue(0);
+        Animated.timing(trashAnim, { toValue: 1, duration: 380, easing: Easing.out(Easing.cubic), useNativeDriver: true })
+          .start(() => { handleCancel(); });
+      },
+      lock: () => {
+        Animated.spring(slideX, { toValue: 0, tension: 220, friction: 14, useNativeDriver: false }).start();
+      },
+      release: () => {
+        const elapsed = startTimeRef.current ? Date.now() - startTimeRef.current : 0;
+        if (!recording || elapsed < 1000) {
+          // Too short (or recorder still warming up) → discard + teach the gesture.
+          try { onShortHold?.(); } catch {}
+          handleCancel();
+          return;
+        }
+        handleStopAndSend();
+      },
+    };
+  }
+
+  if (holdMode === 'hold' && !previewData) {
+    const holdHintOpacity = slideX.interpolate({ inputRange: [-120, 0], outputRange: [0.15, 1], extrapolate: 'clamp' });
+    const trashScale = trashAnim.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0.6, 1.25, 0.2] });
+    const trashRotate = trashAnim.interpolate({ inputRange: [0, 0.4, 1], outputRange: ['0deg', '-14deg', '0deg'] });
+    const trashOpacity = trashAnim.interpolate({ inputRange: [0, 0.75, 1], outputRange: [1, 1, 0] });
+    return (
+      <View style={[recStyles.holdPill, { backgroundColor: recBg }]}>
+        <View style={recStyles.holdLeft}>
+          {holdTrashing ? (
+            <Animated.View style={{ width: 24, alignItems: 'center', opacity: trashOpacity, transform: [{ scale: trashScale }, { rotate: trashRotate }] }}>
+              <IconTrash size={22} color={colors.error || '#ef4444'} />
+            </Animated.View>
+          ) : (
+            <View style={recStyles.dotOuter}>
+              <Animated.View style={[recStyles.dotRing, { transform: [{ scale: pulseAnim }] }]} />
+              <View style={recStyles.dotCore} />
+            </View>
+          )}
+          <Text style={[recStyles.timer, { color: colors.text, marginLeft: 8 }]}>{formatDuration(duration)}</Text>
+        </View>
+        <Animated.View
+          style={[recStyles.holdHintRow, { opacity: holdTrashing ? 0 : holdHintOpacity, transform: [{ translateX: slideX }] }]}
+          accessibilityLiveRegion="polite"
+        >
+          <IconChevronLeft size={16} color={slideCancelColor} />
+          <Text style={[recStyles.slideHint, { color: slideCancelColor }]} numberOfLines={1}>
+            {t('chatConv.slideToCancel') || 'Deslize para cancelar'}
+          </Text>
+        </Animated.View>
+      </View>
+    );
+  }
 
   // ─── PREVIEW MODE (after stopping recording, before sending) ───
   if (previewData) {
@@ -6976,7 +7107,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
         </TouchableOpacity>
 
         {/* Send */}
-        <TouchableOpacity onPress={handleConfirmSend} style={recStyles.sendBtn} accessibilityLabel="Enviar áudio">
+        <TouchableOpacity onPress={handleConfirmSend} style={recStyles.sendBtn} accessibilityLabel={t('chatConv.sendAudio') || 'Enviar áudio'}>
           <IconSend size={20} color="#fff" />
         </TouchableOpacity>
       </View>
@@ -7038,7 +7169,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
     >
       {/* Left: cancel (X) — discards the recording. Always available so the
           user has a clear way out regardless of the slide-to-cancel gesture. */}
-      <TouchableOpacity onPress={handleCancel} style={recStyles.iconBtn} accessibilityLabel="Cancelar gravação">
+      <TouchableOpacity onPress={handleCancel} style={recStyles.iconBtn} accessibilityLabel={t('chatConv.cancelRecording') || 'Cancelar gravação'}>
         <View style={recStyles.trashWrap}>
           <IconX size={20} color={colors.error || '#ef4444'} />
         </View>
@@ -7149,7 +7280,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
         <TouchableOpacity
           onPress={handleStop}
           style={recStyles.lockedStopBtn}
-          accessibilityLabel="Parar e pré-ouvir"
+          accessibilityLabel={t('chatConv.stopAndPreview') || 'Parar e pré-ouvir'}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <View style={recStyles.stopSquare} />
@@ -7158,7 +7289,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
         <TouchableOpacity
           onPress={handleStopAndSend}
           style={recStyles.lockedSendBtn}
-          accessibilityLabel="Enviar áudio"
+          accessibilityLabel={t('chatConv.sendAudio') || 'Enviar áudio'}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
         >
           <IconSend size={20} color="#fff" />
@@ -7169,6 +7300,20 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId }) {
 }
 
 const recStyles = StyleSheet.create({
+  // [2026-10-06 UX2] compact pill shown while the mic is being held
+  holdPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 50,
+    marginLeft: 10,
+    marginRight: 4,
+    marginBottom: 4,
+    borderRadius: 26,
+    paddingHorizontal: 14,
+    overflow: 'hidden',
+  },
+  holdLeft: { flexDirection: 'row', alignItems: 'center', minWidth: 72 },
+  holdHintRow: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4 },
   container: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -8242,7 +8387,16 @@ function ChatConversationInner() {
   settingsRef.current = chatyySettings;
   useEffect(() => {
     api.chatGetSettings().then(r => {
-      if (r.success && r.data) setChatyySettings(r.data);
+      if (r.success && r.data) {
+        setChatyySettings(r.data);
+        // [2026-10-06 rt-client] read_receipts aqui já vem mesclado de
+        // chat_user_privacy (autoritativo) → alimenta o gate de typing do WS.
+        try {
+          require('../services/websocket').default?.setTypingPrivacy?.(
+            { read_receipts: r.data.read_receipts }, user?.email
+          );
+        } catch {}
+      }
     }).catch(() => {});
   }, []);
 
@@ -9321,6 +9475,13 @@ function ChatConversationInner() {
   const [showPlaylistCreator, setShowPlaylistCreator] = useState(false);
   const [playlistEditor, setPlaylistEditor] = useState(null); // { messageId, playlist }
   const [isRecording, setIsRecording] = useState(false);
+  // [2026-10-06 UX2] WhatsApp hold-to-record: null = tap mode (legacy),
+  // 'hold' = finger on the mic (recorder rendered as an overlay so the mic
+  // keeps the touch responder), 'locked' = slid up → hands-free controls.
+  const [voiceHoldMode, setVoiceHoldMode] = useState(null);
+  const voiceRecCtlRef = useRef(null); // { move, cancel, lock, release } — set by AudioRecorder
+  const voiceHoldOwnRef = useRef(false); // this touch owns the recorder (ignore a 2nd hold while one is finishing)
+  useEffect(() => { if (!isRecording) setVoiceHoldMode(null); }, [isRecording]);
   // Chat 2026 — round-video-note recorder (Telegram-style). Lives in its
   // own component so the composer doesn't gain another 400 LoC.
   const [showVideoNoteRecorder, setShowVideoNoteRecorder] = useState(false);
@@ -9724,6 +9885,13 @@ function ChatConversationInner() {
   // inputSelection moved to inputSelectionRef to avoid re-renders on every cursor move
   const [showExportModal, setShowExportModal] = useState(false);
   const [showGroupInfo, setShowGroupInfo] = useState(false);
+  // [2026-10-06 UX2] WhatsApp "Dados do contato" sheet for 1:1 chats (header
+  // tap / ⋮ → Info do contato). Reuses the group-info building blocks
+  // (GroupCard/GroupRow/GroupSectionLabel) and wires every row to the SAME
+  // handlers/modals the ⋮ menu uses — no duplicated business logic.
+  const [showContactInfo, setShowContactInfo] = useState(false);
+  const [contactIdentity, setContactIdentity] = useState(null); // profile_get identity
+  const [contactPinned, setContactPinned] = useState(null);     // null = unknown
   const [adminOnlyMessages, setAdminOnlyMessages] = useState(false);
   const [showSlowModePicker, setShowSlowModePicker] = useState(false);
   const [slowModeSeconds, setSlowModeSeconds] = useState(0);
@@ -12500,14 +12668,20 @@ function ChatConversationInner() {
       // only runs for the single OPEN conversation.
       let _lastPollAt = Date.now();
       const safetyPoll = setInterval(() => {
+        // [2026-10-06 rt-client] Poll de segurança ADAPTATIVO (era 3.5 s fixo /
+        // 2 s zumbi = 17-30 chat_sync/min por conversa aberta, mesmo com o socket
+        // perfeitamente saudável). Agora:
+        //   • app em background → não polla (AppState 'active' já dispara
+        //     loadMessages + full_sync no resume);
+        //   • socket NÃO autenticado OU zumbi (nenhum frame inbound há >10 s —
+        //     com a thread aberta o ping anda a 5 s, então 10 s = 2 pongs
+        //     perdidos) → 3.5 s: é a garantia de que a mensagem nunca fica
+        //     invisível na thread aberta quando o WS morre em silêncio;
+        //   • socket saudável → 10 s (rede de segurança, ~O(0) pts-based).
+        if (!appActiveRef.current) return;
         const inbound = mailWs?.lastInboundAt || 0;
-        // [2026-09-24 "demora sincronizar"] Detecta o socket quieto MAIS cedo (6s
-        // em vez de 9s) e faz catch-up mais rápido: 3.5s normal / 2s quando quieto
-        // (era 5s / 2.5s). O sync é pts-based (~O(0) quando não há nada novo) e roda
-        // só pra a conversa ABERTA, então o custo extra é desprezível e a mensagem
-        // aparece bem mais rápido quando o WS morre silencioso (zumbi de rede móvel).
-        const looksZombie = (Date.now() - inbound) > 6000;
-        const gap = looksZombie ? 2000 : 3500;
+        const looksZombie = !mailWs?.authenticated || (Date.now() - inbound) > 10000;
+        const gap = looksZombie ? 3500 : 10000;
         if (Date.now() - _lastPollAt >= gap) {
           _lastPollAt = Date.now();
           runDeltaSync();
@@ -18871,6 +19045,57 @@ function ChatConversationInner() {
       safeAlert(t('common.error') || 'Erro', String(e?.message || t('chatConv.inviteLinkError') || 'Falha ao gerar link'));
     } finally {
       setInviteLinkLoading(false);
+    }
+  };
+
+  // ─── [2026-10-06 UX2] "Dados do contato" (1:1) ───
+  const getContactPeerEmail = () => {
+    const _meLc = (currentEmail || '').toLowerCase();
+    const fromMembers = (membersRef.current || []).find(m => (m?.email || '').toLowerCase() !== _meLc && (m?.email || ''))?.email;
+    const cand = fromMembers || params.email || '';
+    return cand && cand.toLowerCase() !== _meLc ? cand : '';
+  };
+  // Close the sheet, then run the action. iOS can drop a Modal presented in
+  // the same frame another one is dismissing, so defer a beat there.
+  const contactInfoGo = (fn) => {
+    setShowContactInfo(false);
+    if (Platform.OS === 'ios') setTimeout(() => { try { fn(); } catch {} }, 350);
+    else { try { fn(); } catch {} }
+  };
+  useEffect(() => {
+    if (!showContactInfo) return undefined;
+    let alive = true;
+    const peer = getContactPeerEmail();
+    if (peer) {
+      Promise.resolve(api.profileGet?.(peer))
+        .then((r) => { if (alive && r?.success !== false && r?.data?.identity) setContactIdentity(r.data.identity); })
+        .catch(() => {});
+    }
+    // Pinned ("Favoritas" in the list = pinned) — read from the account-scoped
+    // conversation cache; the chat screen has no other source for it.
+    try {
+      Promise.resolve(require('../services/chatCache').getCachedConversations?.())
+        .then((list) => {
+          if (!alive || !Array.isArray(list)) return;
+          const c = list.find(x => String(x?.id) === String(conversationId));
+          if (c) setContactPinned(!!c.pinned);
+        })
+        .catch(() => {});
+    } catch {}
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showContactInfo, conversationId]);
+  const handleToggleContactPinned = async () => {
+    const willPin = !contactPinned;
+    setContactPinned(willPin);
+    try { Haptics.selectionAsync(); } catch {}
+    try {
+      // Same endpoint + explicit intent as ChatListTab.handlePinConversation.
+      const r = await api.apiCall('chat_pin_conversation', { conversation_id: conversationId, pinned: willPin }, 'POST');
+      if (r?.success === false) throw new Error(r?.message || 'pin failed');
+    } catch (e) {
+      setContactPinned(!willPin);
+      safeAlert(t('common.error') || 'Erro', String(e?.message || e));
     }
   };
 
@@ -26186,6 +26411,8 @@ function ChatConversationInner() {
             setEditGroupName(conversationName);
             loadGroupMembers();
             setShowGroupInfo(true);
+          } else if (conversationType === 'direct' && getContactPeerEmail()) {
+            setShowContactInfo(true); // [2026-10-06 UX2] WhatsApp "Dados do contato"
           } else {
             setProfileViewer({ name: conversationName, email: params.email || '' });
           }
@@ -27895,19 +28122,42 @@ function ChatConversationInner() {
           native module crash, undefined URI) crashed the whole chat-conversation
           tree. ErrorBoundary catches the render error and shows a friendly fallback
           with a "Cancelar" button so the user can recover without restarting the app. */}
-      {!composerBlocked && (isRecording ? (
-        <View style={{ paddingBottom: keyboardHeight > 0 ? 0 : Math.max(insets.bottom, Spacing.sm) }}>
-          <ErrorBoundary onReset={() => setIsRecording(false)}>
+      {/* [2026-10-06 UX2] Stable wrapper: the recorder and the input bar are
+          siblings at fixed positions so switching hold → locked never
+          remounts AudioRecorder (which would restart the recording). While
+          the finger is on the mic ('hold') the recorder is an absolute
+          overlay over the pill and the input bar (with the mic) stays
+          mounted, keeping the mic's touch responder alive until release. */}
+      {!composerBlocked && (<View style={{ position: 'relative' }}>
+      {isRecording ? (
+        <View
+          pointerEvents={voiceHoldMode === 'hold' ? 'none' : 'auto'}
+          style={voiceHoldMode === 'hold' ? {
+            position: 'absolute', left: 0, right: 92, top: 0, bottom: 0,
+            zIndex: 30, elevation: 10,
+            justifyContent: 'flex-end',
+            backgroundColor: isDark ? '#111b21' : '#f0f2f5',
+            paddingBottom: keyboardHeight > 0 ? 6 : Math.max(insets.bottom, Spacing.sm),
+          } : { paddingBottom: keyboardHeight > 0 ? 0 : Math.max(insets.bottom, Spacing.sm) }}
+        >
+          <ErrorBoundary onReset={() => { setIsRecording(false); setVoiceHoldMode(null); }}>
             <AudioRecorder
               onSend={handleSendAudio}
-              onCancel={() => setIsRecording(false)}
+              onCancel={() => { setIsRecording(false); setVoiceHoldMode(null); }}
               colors={colors}
               t={t}
               conversationId={conversationId}
+              holdMode={voiceHoldMode}
+              holdCtlRef={voiceRecCtlRef}
+              onShortHold={() => {
+                setScheduleToast(t('chatConv.holdToRecordHint') || 'Segure para gravar, solte para enviar');
+                setTimeout(() => setScheduleToast(''), 2400);
+              }}
             />
           </ErrorBoundary>
         </View>
-      ) : (
+      ) : null}
+      {(!isRecording || voiceHoldMode === 'hold') ? (
         /* Input Bar with Mention Autocomplete */
         <View style={{ position: 'relative' }}>
         {conversationType === 'group' && showMentionPopup && (
@@ -28315,19 +28565,17 @@ function ChatConversationInner() {
                 if (text.length > 0) {
                   if (now - typingLastSentAt.current > TYPING_THROTTLE_MS) {
                     typingLastSentAt.current = now;
+                    // [2026-10-06 rt-client] Typing é SÓ via WS. O POST
+                    // chat_typing (1 a cada 3 s = 20 req/min por digitador)
+                    // foi removido: o hub Go agora replica typing/stopped_typing
+                    // também no canal per-user (chat_user_<membro>) de cada
+                    // membro — a LISTA vê "digitando…" sem passar pelo PHP. O
+                    // gate de privacidade que vivia no PHP (read_receipts off /
+                    // invisível) está em mailWs.typingAllowed() (hidratado por
+                    // chat_get_settings abaixo + tela de privacidade).
                     try {
                       const mailWs = require('../services/websocket').default;
                       mailWs.sendTyping(conversationId);
-                    } catch {}
-                    // HTTP belt-and-suspenders — the WS hub (C++ rewrite,
-                    // 2026-05-19) doesn't relay `type: typing` frames yet,
-                    // so the WS-only path is a dead-end. POSTing to
-                    // chat_typing makes chat.php fan out via _broadcast-
-                    // TypingToConv to every member's chat_user_ channel.
-                    // Fire-and-forget; throttled by the same 3s gate
-                    // above so we never burst.
-                    try {
-                      require('../services/api').chatTyping?.(conversationId);
                     } catch {}
                   }
                   // Reset auto-stop timer on every keystroke
@@ -28341,15 +28589,7 @@ function ChatConversationInner() {
                       const mailWs = require('../services/websocket').default;
                       mailWs.sendStoppedTyping?.(conversationId);
                     } catch {}
-                    // HTTP fallback for the stop signal — same reason as
-                    // above. chat_typing accepts `typing: false` to fire
-                    // a synthetic `stopped_typing` event on peers' WS.
-                    try {
-                      require('../services/api').apiCall?.('chat_typing', {
-                        conversation_id: conversationId,
-                        typing: false,
-                      }, 'POST');
-                    } catch {}
+                    // [2026-10-06 rt-client] stop também só via WS (POST removido).
                     typingLastSentAt.current = 0;
                   }, TYPING_STOP_MS);
                 } else if (typingStopTimerRef.current) {
@@ -28360,12 +28600,7 @@ function ChatConversationInner() {
                     const mailWs = require('../services/websocket').default;
                     mailWs.sendStoppedTyping?.(conversationId);
                   } catch {}
-                  try {
-                    require('../services/api').apiCall?.('chat_typing', {
-                      conversation_id: conversationId,
-                      typing: false,
-                    }, 'POST');
-                  } catch {}
+                  // [2026-10-06 rt-client] stop só via WS (POST chat_typing removido).
                   typingLastSentAt.current = 0;
                 }
               }}
@@ -28405,12 +28640,7 @@ function ChatConversationInner() {
                     const mailWs = require('../services/websocket').default;
                     mailWs.sendStoppedTyping?.(conversationId);
                   } catch {}
-                  try {
-                    require('../services/api').apiCall?.('chat_typing', {
-                      conversation_id: conversationId,
-                      typing: false,
-                    }, 'POST');
-                  } catch {}
+                  // [2026-10-06 rt-client] stop só via WS (POST chat_typing removido).
                   typingLastSentAt.current = 0;
                 }
               }}
@@ -28514,7 +28744,7 @@ function ChatConversationInner() {
                     setInputText(cur + sep + '## ');
                   }}
                   style={{ width: 36, height: 44, alignItems: 'center', justifyContent: 'center' }}
-                  accessibilityLabel="Cabeçalho"
+                  accessibilityLabel={t('chatConv.savedHeading') || 'Cabeçalho'}
                   accessibilityRole="button"
                 >
                   <Text style={{ color: isDark ? '#8696a0' : '#8696a0', fontWeight: '800', fontSize: 15 }}>H</Text>
@@ -28530,7 +28760,7 @@ function ChatConversationInner() {
                     setShowSavedReminder(true);
                   }}
                   style={{ width: 36, height: 44, alignItems: 'center', justifyContent: 'center' }}
-                  accessibilityLabel="Lembrar-me em"
+                  accessibilityLabel={t('chatConv.savedRemindMe') || 'Lembrar-me em'}
                   accessibilityRole="button"
                 >
                   <IconClock size={20} color={isDark ? '#8696a0' : '#8696a0'} />
@@ -28643,6 +28873,44 @@ function ChatConversationInner() {
               ) : null}
               {VoiceMicButton ? (
                 <VoiceMicButton
+                  // [2026-10-06 UX2] hold-to-record: hold → record, slide left →
+                  // cancel, slide up → lock, release → send. Tap = legacy flow.
+                  onHoldStart={() => {
+                    if (isRecording) { voiceHoldOwnRef.current = false; return; }
+                    voiceHoldOwnRef.current = true;
+                    setVoiceHoldMode('hold');
+                    setIsRecording(true);
+                    if (typingStopTimerRef.current) { clearTimeout(typingStopTimerRef.current); typingStopTimerRef.current = null; }
+                    typingLastSentAt.current = 0;
+                    try {
+                      const mailWs = require('../services/websocket').default;
+                      mailWs.sendStoppedTyping?.(conversationId);
+                      mailWs.sendTyping(conversationId, true);
+                    } catch {}
+                  }}
+                  onHoldMove={(g) => { if (!voiceHoldOwnRef.current) return; try { voiceRecCtlRef.current?.move?.(g); } catch {} }}
+                  onHoldCancel={() => {
+                    if (!voiceHoldOwnRef.current) return;
+                    voiceHoldOwnRef.current = false;
+                    const ctl = voiceRecCtlRef.current;
+                    if (ctl?.cancel) { try { ctl.cancel(); } catch { setIsRecording(false); } }
+                    else { setIsRecording(false); setVoiceHoldMode(null); }
+                  }}
+                  onHoldLock={() => {
+                    if (!voiceHoldOwnRef.current) return;
+                    voiceHoldOwnRef.current = false;
+                    setVoiceHoldMode('locked');
+                    try { voiceRecCtlRef.current?.lock?.(); } catch {}
+                  }}
+                  onHoldRelease={() => {
+                    if (!voiceHoldOwnRef.current) return;
+                    voiceHoldOwnRef.current = false;
+                    const ctl = voiceRecCtlRef.current;
+                    if (ctl?.release) { try { ctl.release(); } catch { setIsRecording(false); } }
+                    else { setIsRecording(false); setVoiceHoldMode(null); }
+                  }}
+                  locked={voiceHoldMode === 'locked'}
+                  lockHintLabel={t('chatConv.slideUpToLock') || 'Deslize para cima para travar'}
                   onActivate={() => {
                     setIsRecording(true);
                     // Switch from "typing" → "recording" presence: cancel any
@@ -28686,7 +28954,8 @@ function ChatConversationInner() {
         </>
         )}
         </View>
-      ))}
+      ) : null}
+      </View>)}
 
       <ScheduleToast visible={!!scheduleToast} message={scheduleToast} colors={colors} />
       <ReminderSheet
@@ -30540,6 +30809,163 @@ function ChatConversationInner() {
         onClose={() => setAvatarLightbox(null)}
       />
 
+      {/* [2026-10-06 UX2] "Dados do contato" — WhatsApp-style 1:1 info sheet.
+          Same shell as the Group Info modal (hero + round actions + GroupCard
+          sections). Every row delegates to the existing ⋮-menu handlers /
+          modals; the full profile peek stays reachable via "Ver perfil". */}
+      {conversationType === 'direct' && (
+      <Modal
+        visible={showContactInfo}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowContactInfo(false)}
+      >
+        <View style={[styles.forwardModal, { backgroundColor: colors.background }]}>
+          <View style={[styles.forwardHeader, { borderBottomColor: colors.border }]}>
+            <Text style={[styles.forwardTitle, { color: colors.text }]}>{t('chatConv.contactInfoTitle') || 'Dados do contato'}</Text>
+            <TouchableOpacity onPress={() => setShowContactInfo(false)} accessibilityRole="button" accessibilityLabel={t('common.close') || 'Fechar'} hitSlop={8}>
+              <IconX size={22} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+          <ScrollView style={{ flex: 1, backgroundColor: isDark ? colors.background : '#f0f2f5' }} contentContainerStyle={{ paddingBottom: Spacing.xl + insets.bottom }}>
+            {(() => {
+              const peerEmail = getContactPeerEmail();
+              const ident = contactIdentity && (contactIdentity.email || '').toLowerCase() === (peerEmail || '').toLowerCase() ? contactIdentity : null;
+              const subtitleLine = ident?.phone || (ident?.username ? `@${ident.username}` : peerEmail);
+              const muteSubtitle = !mutedUntil
+                ? (t('common.off') || 'Desativado')
+                : (String(mutedUntil).startsWith('2099')
+                    ? (t('chatConv.mutedForever') || 'Sempre')
+                    : `${t('chatConv.mutedUntil') || 'Até'} ${(() => { try { return new Date(mutedUntil).toLocaleString(undefined, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } })()}`);
+              const disappearingSubtitle = disappearingTimer > 0
+                ? (disappearingTimer >= 86400 ? `${Math.round(disappearingTimer / 86400)}d` : disappearingTimer >= 3600 ? `${Math.round(disappearingTimer / 3600)}h` : `${Math.round(disappearingTimer / 60)}m`)
+                : (t('common.off') || 'Desativado');
+              return (
+                <>
+                  <FadeSlideIn>
+                  <View style={{ alignItems: 'center', paddingTop: 24, paddingBottom: 24, paddingHorizontal: Spacing.md, backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border, marginBottom: 16 }}>
+                    <TouchableOpacity
+                      activeOpacity={0.85}
+                      style={{ marginBottom: 16 }}
+                      onPress={() => contactInfoGo(() => setAvatarLightbox({ name: conversationName, email: peerEmail, uri: null }))}
+                      accessibilityRole="imagebutton"
+                      accessibilityLabel={t('chatConv.viewPhoto') || 'Ver foto'}
+                    >
+                      <AvatarCircle name={conversationName} email={peerEmail} size={112} />
+                    </TouchableOpacity>
+                    <Text style={{ fontSize: 23, fontWeight: '700', color: colors.text, textAlign: 'center', marginBottom: 5, letterSpacing: -0.3 }} numberOfLines={2}>
+                      {conversationName}
+                    </Text>
+                    {!!subtitleLine && (
+                      <Text style={{ fontSize: 14, color: colors.textSecondary, fontWeight: '500' }} numberOfLines={1} selectable>
+                        {subtitleLine}
+                      </Text>
+                    )}
+                    <View style={{ flexDirection: 'row', gap: 10, marginTop: 22 }}>
+                      {[
+                        { Icon: IconPhone, tint: GI_ACCENT, label: t('chatConv.audio') || 'Áudio', onPress: () => contactInfoGo(() => handleStartAudioCall()) },
+                        { Icon: IconVideo, tint: '#0A84FF', label: t('chatConv.video') || 'Vídeo', onPress: () => contactInfoGo(() => handleStartVideoCall()) },
+                        { Icon: IconSearch, tint: '#5856D6', label: t('chatConv.search') || 'Buscar', onPress: () => contactInfoGo(() => { setShowSearchBar(true); setTimeout(() => searchInputRef.current?.focus(), 200); }) },
+                      ].map((a, ai) => (
+                        <PressableScale key={ai} onPress={a.onPress} style={{ alignItems: 'center', width: 76 }} accessibilityRole="button" accessibilityLabel={a.label}>
+                          <View style={{ width: 54, height: 54, borderRadius: 27, backgroundColor: a.tint + '1F', alignItems: 'center', justifyContent: 'center' }}>
+                            <a.Icon size={21} color={a.tint} />
+                          </View>
+                          <Text style={{ fontSize: 11.5, color: colors.textSecondary, marginTop: 7, fontWeight: '500' }} numberOfLines={1}>{a.label}</Text>
+                        </PressableScale>
+                      ))}
+                    </View>
+                  </View>
+                  </FadeSlideIn>
+
+                  <View style={{ paddingHorizontal: Spacing.md }}>
+                    {!!ident?.bio && (
+                      <>
+                        <GroupSectionLabel colors={colors}>{t('chatConv.about') || 'Recado'}</GroupSectionLabel>
+                        <GroupCard colors={colors} isDark={isDark}>
+                          <Text style={{ color: colors.text, fontSize: 15, lineHeight: 21, paddingHorizontal: 14, paddingVertical: 13 }} selectable>{ident.bio}</Text>
+                        </GroupCard>
+                      </>
+                    )}
+
+                    <GroupCard colors={colors} isDark={isDark} style={{ marginTop: 12 }}>
+                      <GroupRow colors={colors} Icon={IconImage} tint="#0A84FF"
+                        title={t('chatConv.media') || 'Mídia, links e docs'} right="chevron"
+                        onPress={() => contactInfoGo(() => setShowMediaGallery(true))} />
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconStar} tint="#F59E0B"
+                        title={t('chat.starredMessages') || 'Mensagens favoritas'} right="chevron"
+                        onPress={() => contactInfoGo(() => { setShowStarredModal(true); loadStarredMessages(); })} />
+                    </GroupCard>
+
+                    <GroupCard colors={colors} isDark={isDark} style={{ marginTop: 12 }}>
+                      <GroupRow colors={colors} Icon={IconBell} tint={mutedUntil ? '#FF9500' : '#8E8E93'}
+                        title={t('chatConv.muteChat') || 'Silenciar'} subtitle={muteSubtitle} right="chevron"
+                        accessibilityLabel={`${t('chatConv.muteChat') || 'Silenciar'}: ${muteSubtitle}`}
+                        onPress={() => contactInfoGo(() => setShowMuteModal(true))} />
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconBell} tint="#111111"
+                        title={t('notifications.title') || 'Notificações'} right="chevron"
+                        onPress={() => contactInfoGo(() => setShowNotifSettingsSheet(true))} />
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconClock} tint={disappearingTimer > 0 ? '#10b981' : '#8E8E93'}
+                        title={t('chat.disappearing') || 'Mensagens temporárias'} subtitle={disappearingSubtitle} right="chevron"
+                        onPress={() => contactInfoGo(() => setShowDisappearingModal(true))} />
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconShield} tint={e2eEnabled ? '#10b981' : '#8E8E93'}
+                        title={t('chatConv.e2eTitle') || 'Criptografia'}
+                        subtitle={e2eEnabled ? (t('chatConv.e2eActive') || 'Criptografia ponta-a-ponta ativa') : (t('chatConv.e2eInactive') || 'Criptografia desativada')}
+                        onPress={() => safeAlert(
+                          t('chatConv.e2eTitle') || 'Criptografia',
+                          e2eEnabled
+                            ? (t('chatConv.e2eActiveDesc') || 'Suas mensagens são protegidas com criptografia ponta-a-ponta. Nem o Chatyy pode ler.')
+                            : (t('chatConv.e2eInactiveDesc') || 'A criptografia será ativada automaticamente quando ambos os participantes estiverem com chaves configuradas.')
+                        )} />
+                    </GroupCard>
+
+                    <GroupCard colors={colors} isDark={isDark} style={{ marginTop: 12 }}>
+                      {contactPinned !== null && (
+                        <>
+                          <GroupRow colors={colors} Icon={IconPin} tint="#F59E0B"
+                            title={contactPinned ? (t('chatConv.removeFromFavorites') || 'Remover das favoritas') : (t('chatConv.addToFavorites') || 'Adicionar às favoritas')}
+                            accessibilityRole="switch" accessibilityState={{ checked: !!contactPinned }}
+                            onPress={handleToggleContactPinned} />
+                          <GroupDivider colors={colors} />
+                        </>
+                      )}
+                      <GroupRow colors={colors} Icon={IconForward} tint="#10B981"
+                        title={t('chatConv.exportChat') || 'Exportar conversa'} right="chevron"
+                        onPress={() => contactInfoGo(() => setShowExportModal(true))} />
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconUser} tint="#5856D6"
+                        title={t('chatConv.viewFullProfile') || 'Ver perfil'} right="chevron"
+                        onPress={() => contactInfoGo(() => setProfileViewer({ name: conversationName, email: peerEmail || params.email || '' }))} />
+                    </GroupCard>
+
+                    <GroupCard colors={colors} isDark={isDark} style={{ marginTop: 12 }}>
+                      {iBlockedThem ? (
+                        <GroupRow colors={colors} Icon={IconAlertTriangle} tint="#8E8E93"
+                          title={`${t('chat.unblockUser') || 'Desbloquear'} ${conversationName || ''}`.trim()}
+                          onPress={() => contactInfoGo(() => handleUnblockUser(peerEmail || params.email || ''))} />
+                      ) : (
+                        <GroupRow colors={colors} Icon={IconAlertTriangle} tint="#EF4444" titleColor="#EF4444"
+                          title={`${t('chat.blockUser') || 'Bloquear'} ${conversationName || ''}`.trim()}
+                          onPress={() => contactInfoGo(() => handleBlockUser(peerEmail || params.email || ''))} />
+                      )}
+                      <GroupDivider colors={colors} />
+                      <GroupRow colors={colors} Icon={IconFlag} tint="#EF4444" titleColor="#EF4444"
+                        title={`${t('chat.reportUser') || 'Denunciar'} ${conversationName || ''}`.trim()}
+                        onPress={() => contactInfoGo(() => handleReportUser(peerEmail || params.email || ''))} />
+                    </GroupCard>
+                  </View>
+                </>
+              );
+            })()}
+          </ScrollView>
+        </View>
+      </Modal>
+      )}
+
       {/* Profile viewer modal */}
       {/* Unified Profile (replaces ProfileViewerModal). Same peek sheet,
           but now backed by /api/profile_get — 1 fetch, real shared media,
@@ -30626,6 +31052,7 @@ function ChatConversationInner() {
                   { Icon: IconUsers, tint: '#111111', label: conversationType === 'group' ? (t('chatConv.groupInfo') || 'Info do grupo') : (t('chatConv.contactInfo') || 'Info do contato'), onPress: () => {
                     setShowHeaderMenu(false);
                     if (conversationType === 'group') { setEditGroupName(conversationName); loadGroupMembers(); setShowGroupInfo(true); }
+                    else if (conversationType === 'direct' && getContactPeerEmail()) { setShowContactInfo(true); } // [2026-10-06 UX2]
                     else { setProfileViewer({ name: conversationName, email: params.email || '' }); }
                   }},
                 ]},

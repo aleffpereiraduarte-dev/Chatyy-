@@ -149,6 +149,13 @@ const TYPING_DEBOUNCE = 3000;   // Send typing every 3s max
 // stop is the explicit sendStoppedTyping the UI fires 3s after the last
 // keystroke / on send / on background).
 const TYPING_STOP_DELAY = 6000; // Auto-stop backstop: 2x debounce (was 3000 — raced the re-send)
+// [2026-10-06 rt-client] Typing agora é SÓ via WS (o POST chat_typing a cada 3 s
+// foi removido do cliente). O gate de privacidade que vivia no PHP (chat_typing:
+// read_receipts=off / last_seen='nobody' / online='nobody' → não fan-out) passa a
+// ser aplicado AQUI, antes de emitir o frame — o hub Go só gateia presença no
+// fan-out per-user e NÃO gateia o canal da thread nem read_receipts. Espelho
+// persistido POR CONTA (sem vazar entre contas) pra valer desde a 1ª tecla.
+const WS_TYPING_PRIVACY_KEY = 'ws_typing_privacy_v1:';
 const CLIENT_MSG_RETRY_MS = 3000; // Retry outgoing messages after 3s
 const CLIENT_MSG_MAX_RETRIES = 3;
 // Hard cap on the in-flight ACK-tracking map. If an app sits for hours with
@@ -194,6 +201,9 @@ class MailWebSocket {
     // Typing debounce state
     this._lastTypingSent = new Map();  // conversation_id -> timestamp
     this._typingStopTimers = new Map(); // conversation_id -> timer
+    // [2026-10-06 rt-client] { email, read_receipts, last_seen, online } | null
+    // (null = ainda não hidratado → permite, igual ao comportamento WS anterior).
+    this._typingPrivacy = null;
 
     // Server time offset for clock sync
     this._serverTimeOffset = 0;
@@ -1561,6 +1571,8 @@ class MailWebSocket {
         this._orphanHealTried = false;
         this.userId = msg.user_id || msg.account_id;
         this.email = msg.email;
+        // [2026-10-06 rt-client] Hidrata o espelho de privacidade de typing da conta.
+        try { this._hydrateTypingPrivacy(msg.email); } catch {}
         // Seed lastPongTime so the ping-timeout watchdog has a valid baseline.
         // Without this seed, the first-ping check could compare Date.now()
         // against a stale value from the previous connection.
@@ -2036,10 +2048,30 @@ class MailWebSocket {
         this._emit('presence_result', msg.presences || {});
         break;
 
-      // Stopped typing
-      case 'stopped_typing':
-        this._emit('stopped_typing', msg.data || msg);
+      // [2026-10-06 rt-client] typing / stopped_typing chegam em DUAS formas:
+      //   • frame do hub Go (fan-out direto, thread + per-user):
+      //       { type, email, name, conversation_id: "123", recording, typing: bool }
+      //   • evento PHP via /broadcast (legado chat_typing, ainda emitido por
+      //     clientes antigos / web sem OTA):
+      //       { type, data: { conversation_id: 123, email, name, typing, recording? } }
+      // Normaliza pra UM shape plano e emite o evento interno certo pelo campo
+      // `typing` (um frame `typing` com typing:false vira `stopped_typing`), pra a
+      // LISTA (ChatListTab) e a THREAD verem exatamente o mesmo evento.
+      case 'typing':
+      case 'stopped_typing': {
+        const d = (msg.data && typeof msg.data === 'object') ? msg.data : msg;
+        const isTyping = msg.type === 'typing' && d.typing !== false;
+        const flat = {
+          conversation_id: d.conversation_id ?? msg.conversation_id,
+          email: String(d.email || msg.email || '').toLowerCase(),
+          name: d.name || msg.name || '',
+          recording: isTyping && !!d.recording,
+          typing: isTyping,
+        };
+        if (!flat.conversation_id) break;
+        this._emit(isTyping ? 'typing' : 'stopped_typing', flat);
         break;
+      }
 
       // Stage 6 — web↔phone history relay RESPONSE (web requester side).
       // The phone read SQLite and is sending the rows back, OR the server is
@@ -2343,9 +2375,67 @@ class MailWebSocket {
     });
   }
 
+  // [2026-10-06 rt-client] Privacidade de typing (paridade com o gate do PHP
+  // chat_typing que o cliente deixou de chamar): não emite typing se a conta
+  // desligou confirmações de leitura OU está invisível (last_seen/online='nobody').
+  // Alimentado por chat_get_settings (thread/lista) e chat_privacy_get/_set
+  // (tela de privacidade); persistido por e-mail em AsyncStorage.
+  setTypingPrivacy(patch, email) {
+    const em = String(email || this.email || '').toLowerCase();
+    if (!em || !patch || typeof patch !== 'object') return;
+    const cur = (this._typingPrivacy && this._typingPrivacy.email === em) ? this._typingPrivacy : { email: em };
+    const next = { ...cur };
+    if (Object.prototype.hasOwnProperty.call(patch, 'read_receipts') && patch.read_receipts !== undefined && patch.read_receipts !== null) {
+      next.read_receipts = !!patch.read_receipts;
+    }
+    if (typeof patch.last_seen === 'string' && patch.last_seen) next.last_seen = patch.last_seen;
+    if (typeof patch.online === 'string' && patch.online) next.online = patch.online;
+    this._typingPrivacy = next;
+    try { AsyncStorage.setItem(WS_TYPING_PRIVACY_KEY + em, JSON.stringify(next)).catch(() => {}); } catch {}
+    // Privacidade acabou de fechar enquanto digitava → corta o indicador nos peers.
+    if (!this.typingAllowed()) {
+      try {
+        for (const [convId, t] of this._typingStopTimers.entries()) {
+          clearTimeout(t);
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            this._send({ type: 'stopped_typing', conversation_id: convId });
+          }
+        }
+      } catch {}
+      this._typingStopTimers.clear();
+      this._lastTypingSent.clear();
+    }
+  }
+
+  typingAllowed() {
+    const p = this._typingPrivacy;
+    if (!p) return true; // não hidratado ainda — mesmo comportamento WS anterior
+    if (this.email && p.email && p.email !== String(this.email).toLowerCase()) return true; // espelho de outra conta: ignora
+    if (p.read_receipts === false) return false;
+    if (p.last_seen === 'nobody' || p.online === 'nobody') return false;
+    return true;
+  }
+
+  _hydrateTypingPrivacy(email) {
+    const em = String(email || '').toLowerCase();
+    if (!em) return;
+    if (this._typingPrivacy && this._typingPrivacy.email === em) return;
+    // Troca de conta: nunca herda o espelho da conta anterior.
+    this._typingPrivacy = null;
+    AsyncStorage.getItem(WS_TYPING_PRIVACY_KEY + em).then((raw) => {
+      if (!raw) return;
+      if (this._typingPrivacy && this._typingPrivacy.email === em) return; // já chegou do servidor
+      if (String(this.email || '').toLowerCase() !== em) return;
+      const v = JSON.parse(raw);
+      if (v && typeof v === 'object') this._typingPrivacy = { ...v, email: em };
+    }).catch(() => {});
+  }
+
   // Send typing indicator (debounced: max once per 3s per conversation)
   sendTyping(conversationId, recording = false) {
     if (!this.isConnected) return;
+    // [2026-10-06 rt-client] gate de privacidade (ver setTypingPrivacy).
+    if (!this.typingAllowed()) return;
     const now = Date.now();
 
     // [2026-10-05 typing-flicker] (Re)arm the auto-stop backstop on EVERY
@@ -2378,9 +2468,34 @@ class MailWebSocket {
     const timer = this._typingStopTimers.get(conversationId);
     if (timer) clearTimeout(timer);
     this._typingStopTimers.delete(conversationId);
-    this._lastTypingSent.delete(conversationId);
-    if (this.isConnected) {
+    const hadTyping = this._lastTypingSent.delete(conversationId);
+    // [2026-10-06 rt-client] Só emite stop se algum `typing` saiu pra essa
+    // conversa nesta sessão — um stop órfão é fan-out inútil (e, com a
+    // privacidade fechada, seria o único frame de atividade a vazar).
+    if (this.isConnected && (hadTyping || timer)) {
       this._send({ type: 'stopped_typing', conversation_id: conversationId });
+    }
+  }
+
+  // [2026-10-06 rt-client] Recibo de ENTREGA pelo socket. O hub persiste
+  // ponta-a-ponta (handleDeliveryAck → PHP chat_delivery_ack com X-WS-Internal)
+  // e NÃO responde com ack → sucesso do send em socket OPEN+autenticado+saudável
+  // (pong fresco) é tratado como entregue; qualquer outro estado devolve false e
+  // o chamador (api.js _ackWithRetry) cai no POST HTTP + outbox persistente.
+  // NÃO passa por _send() porque este dropa frames fora da lista de enfileiráveis
+  // quando o socket está fechado — aqui precisamos de um sim/não confiável.
+  sendDeliveryAck(conversationId, messageIds) {
+    if (!conversationId || !Array.isArray(messageIds) || messageIds.length === 0) return false;
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.authenticated || !this.isHealthy) return false;
+    try {
+      this.ws.send(this._encodeOutbound({
+        type: 'delivery_ack',
+        conversation_id: conversationId,
+        message_ids: messageIds.slice(0, 100),
+      }));
+      return true;
+    } catch {
+      return false;
     }
   }
 

@@ -30,7 +30,7 @@ function _scopedConvsKey() {
  */
 import { Platform, AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getString, setString, remove, getAllKeys } from './mmkv';
+import { getString, setString, remove, getAllKeys, isKeyPending, ensureLoaded } from './mmkv';
 import {
   dbSaveMessages, dbGetMessages, dbGetLastMessageId, dbDeleteMessage, dbUpdateMessage,
   dbSaveConversations, dbGetConversations,
@@ -107,6 +107,27 @@ function _kvSet(key, value) {
   if (_mmkvAvailable && _mmkvInstance) {
     try { _mmkvInstance.set(key, value); return; } catch {}
   }
+  // [2026-10-06 android-storage-ceiling] `chat_msgs_*` blobs are lazy in the
+  // mmkv shim (not hydrated at boot). A read-modify-write that ran before the
+  // blob loaded saw [] and would overwrite the whole stored history with just
+  // the new rows → load it first, merge (new rows win), then write.
+  if (typeof key === 'string' && key.startsWith('chat_msgs_') && isKeyPending(key)) {
+    ensureLoaded(key).then(() => {
+      let merged = value;
+      try {
+        const persisted = JSON.parse(getString(key) || '[]');
+        const incoming = JSON.parse(value);
+        if (Array.isArray(persisted) && Array.isArray(incoming) && persisted.length) {
+          let arr = mergeMessages(persisted, incoming);
+          if (arr.length > MAX_CACHED_MESSAGES) arr = arr.slice(-MAX_CACHED_MESSAGES);
+          _hotCache.set(key, arr);
+          merged = JSON.stringify(arr);
+        }
+      } catch {}
+      setString(key, merged);
+    }).catch(() => { try { setString(key, value); } catch {} });
+    return;
+  }
   setString(key, value);
 }
 
@@ -141,6 +162,9 @@ function _readMessages(key) {
   if (hot) return hot;
   try {
     const raw = _kvGet(key);
+    // Lazy blob not loaded yet (mmkv shim) → don't pin [] in the hot cache;
+    // the next read after the async load returns the real history.
+    if (!raw && !_mmkvAvailable && isKeyPending(key)) return [];
     const parsed = raw ? JSON.parse(raw) : [];
     _hotCache.set(key, parsed);
     return parsed;

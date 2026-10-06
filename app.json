@@ -327,6 +327,12 @@
       "expo-video",
       "./plugins/withFixResourceSigning.js",
       "./plugins/withManualIosSigning.js",
+      [
+        "./plugins/withAsyncStorageSize.js",
+        {
+          "dbSizeMB": 64
+        }
+      ],
       "expo-iap",
       [
         "react-native-vision-camera",

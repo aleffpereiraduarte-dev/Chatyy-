@@ -4773,8 +4773,52 @@ const _ackTimers = new Map(); // conversationId → timeoutHandle
 // outbox persistente (offlineCache `chat_delivery_ack`) e é repassado no próximo
 // replayOfflineQueue (reconnect / foreground / mount) — WhatsApp-style receipt
 // outbox. Sobrevive a restart do app. Server idempotente → replay tardio é no-op.
+// [2026-10-06 rt-client] Dedupe WS+HTTP: um id nunca é "ackado" duas vezes
+// (uma pelo socket, outra pelo POST). Set FIFO limitado, chaveado por CONTA
+// (troca de conta zera — ids são PKs globais e a conta B precisa ackar o mesmo
+// id que a conta A já ackou neste mesmo device).
+const _ackedIds = new Set();
+let _ackedOwner = '';
+const ACKED_IDS_MAX = 4000;
+function _ackedKey() {
+  try { return String(require('./websocket').default?.email || '').toLowerCase(); } catch { return ''; }
+}
+function _filterUnacked(conversationId, ids) {
+  const owner = _ackedKey();
+  if (owner !== _ackedOwner) { _ackedIds.clear(); _ackedOwner = owner; }
+  const out = [];
+  for (const id of ids) {
+    if (!_ackedIds.has(`${conversationId}:${id}`)) out.push(id);
+  }
+  return out;
+}
+function _markAcked(conversationId, ids) {
+  for (const id of ids) {
+    _ackedIds.add(`${conversationId}:${id}`);
+    if (_ackedIds.size > ACKED_IDS_MAX) {
+      const first = _ackedIds.values().next().value;
+      if (first !== undefined) _ackedIds.delete(first);
+    }
+  }
+}
 function _ackWithRetry(conversationId, ids, attempt = 0) {
-  chatDeliveryAck(conversationId, ids).catch(() => {
+  if (attempt === 0) {
+    ids = _filterUnacked(conversationId, ids);
+    if (ids.length === 0) return;
+    // [2026-10-06 rt-client] Preferir o SOCKET: `delivery_ack` é persistido pelo
+    // hub ponta-a-ponta (handleDeliveryAck → PHP). Só cai no POST quando o socket
+    // não está OPEN+autenticado+saudável (sendDeliveryAck devolve false).
+    try {
+      const mailWs = require('./websocket').default;
+      if (mailWs && typeof mailWs.sendDeliveryAck === 'function' && mailWs.sendDeliveryAck(conversationId, ids)) {
+        _markAcked(conversationId, ids);
+        return;
+      }
+    } catch {}
+  }
+  chatDeliveryAck(conversationId, ids).then((r) => {
+    if (r && r.success !== false) _markAcked(conversationId, ids);
+  }).catch(() => {
     if (attempt < 2) {
       setTimeout(() => _ackWithRetry(conversationId, ids, attempt + 1), 1500 * (attempt + 1));
       return;

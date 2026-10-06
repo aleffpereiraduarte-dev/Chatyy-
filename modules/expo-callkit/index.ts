@@ -156,6 +156,13 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   getNoiseSuppression(): boolean;
   isNoiseSuppressionAvailable(): boolean;
 
+  // [2026-10-06 UX2] "Qualidade HD (1080p)" per-device toggle. Backed by the
+  // same native pref the call engine reads at publish time (Android
+  // SharedPreferences chatyy_call_prefs/chatyy_call_hd, iOS UserDefaults
+  // chatyy_call_hd). Optional: binaries built before 2026-10-06 lack them.
+  setCallHdPreferred?(on: boolean): boolean;
+  getCallHdPreferred?(): boolean;
+
   // [#1205 live muting fix, 2026-05-19] Reset audio session before live
   // broadcast getUserMedia. Wipes a leaked MODE_IN_COMMUNICATION (Android)
   // or `.voiceChat` AVAudioSession (iOS) that a prior call left behind —
@@ -725,6 +732,28 @@ export function isNoiseSuppressionAvailable(): boolean {
   const m = getModule();
   if (!m) return false;
   try { return !!m.isNoiseSuppressionAvailable(); } catch { return false; }
+}
+
+// ─── [2026-10-06 UX2] Call video quality — "Qualidade HD (1080p)" ───────────
+// The native functions only exist in binaries built on/after 2026-10-06, so an
+// OTA'd JS on an older install must never crash: every call is guarded and the
+// UI should hide the switch when `isCallHdPreferenceAvailable()` is false.
+export function isCallHdPreferenceAvailable(): boolean {
+  const m = getModule();
+  if (!m) return false;
+  try { return typeof m.getCallHdPreferred === 'function' && typeof m.setCallHdPreferred === 'function'; } catch { return false; }
+}
+
+export function setCallHdPreferred(on: boolean): boolean {
+  const m = getModule();
+  if (!m || typeof m.setCallHdPreferred !== 'function') return false;
+  try { return !!m.setCallHdPreferred(!!on); } catch { return false; }
+}
+
+export function getCallHdPreferred(): boolean {
+  const m = getModule();
+  if (!m || typeof m.getCallHdPreferred !== 'function') return false;
+  try { return !!m.getCallHdPreferred(); } catch { return false; }
 }
 
 // ─── Background blur / virtual background (2026-05-17) ───────────────────────

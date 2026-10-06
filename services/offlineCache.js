@@ -1,5 +1,5 @@
 import { Platform } from 'react-native';
-import { getString, setString, remove, getAllKeys, getJSON, setJSON } from './mmkv';
+import { getString, setString, remove, getAllKeys, getJSON, setJSON, ensureLoaded } from './mmkv';
 import { isConnected as networkIsConnected } from './networkInfo';
 
 // Offline Cache v2 — powered by MMKV (<1ms sync reads)
@@ -264,6 +264,8 @@ export async function saveMessageToCache(uid, message, folder) {
 
 export async function getMessageFromCache(uid, folder) {
   const key = _msgKey(uid, folder);
+  // Email bodies are lazy in services/mmkv.js (not hydrated at boot).
+  try { await ensureLoaded(key); } catch {}
   const m = getJSON(key);
   // Entrada SEM corpo é lixo (envenenamento legado) → trata como cache-miss e
   // remove, pra forçar rebusca do servidor (que sempre traz o corpo via PHP).

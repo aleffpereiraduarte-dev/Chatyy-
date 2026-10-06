@@ -7,7 +7,9 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "i18n:json": "node scripts/build-i18n-json.js",
+    "i18n:check": "node scripts/build-i18n-json.js --check"
   },
   "dependencies": {
     "@expo/metro-runtime": "~55.0.6",
