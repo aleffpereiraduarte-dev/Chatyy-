@@ -29,6 +29,11 @@ import messageOutbox, {
   markSent,
   markFailed,
   recoverStuck,
+  retryNow,
+  nextDueAt,
+  refreshBacklog,
+  hasBacklog,
+  classifySendResult,
   cleanup as outboxCleanup,
 } from './messageOutbox';
 
@@ -73,12 +78,62 @@ const PERIODIC_INTERVAL_MS = 60000;
 const CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
 
 let _periodicTimer = null;
+// [send-reliability 2026-10-06] One-shot timer armed at the earliest
+// next_retry_at so a 1s/2s/4s backoff actually fires at 1s/2s/4s. Before, a
+// row put on backoff was only re-examined by the 60s periodic timer (the
+// self-rearm poke ran at t+0, saw it still backing off and skipped it), so the
+// "1s" first retry was really ~60s.
+let _wakeTimer = null;
+let _wakeAt = 0;
+function _scheduleWake(at) {
+  if (_stopped || at == null || !Number.isFinite(Number(at))) return; // at=0 means 'due now'
+  const now = Date.now();
+  const due = Math.max(at, now + 250);
+  if (_wakeTimer && _wakeAt && _wakeAt <= due) return; // an earlier wake already armed
+  if (_wakeTimer) { try { clearTimeout(_wakeTimer); } catch {} }
+  _wakeAt = due;
+  _wakeTimer = setTimeout(() => { _wakeTimer = null; _wakeAt = 0; poke(); }, due - now);
+}
+async function _afterDrain() {
+  try { await refreshBacklog(); } catch {}
+  try {
+    const at = await nextDueAt();
+    if (at != null) _scheduleWake(at);
+  } catch {}
+}
+
+/**
+ * True when a NEW foreground send for this conversation must NOT go straight
+ * to the network because an older message of the same conversation is still
+ * waiting (backoff) or being sent by the worker — sending it now would
+ * overtake the older one (order break). The caller hands the row to the
+ * worker instead (messageOutbox.release + poke).
+ */
+export function isConversationBusy(conversationId) {
+  if (conversationId == null) return false;
+  const c = Number(conversationId);
+  return _inflight.has(c) || _inflight.has(conversationId) || hasBacklog(c);
+}
+
+/**
+ * Connectivity regained (WS authenticated / NetInfo up / foreground / boot):
+ * reclaim orphaned 'sending' rows, make every queued row due now and drain.
+ */
+export function kick(reason = 'kick') {
+  if (_stopped) return Promise.resolve();
+  void reason;
+  return Promise.resolve()
+    .then(() => recoverStuck().catch(() => 0))
+    .then(() => retryNow().catch(() => 0))
+    .then(() => poke());
+}
 let _cleanupTimer = null;
 let _appStateSub = null;
 let _netInfoUnsub = null;
 let _wsAuthedUnsub = null;
 let _wsReconnectedUnsub = null;
 let _wsAckUnsub = null;
+let _outboxSubUnsub = null;
 
 // Lazily-required helpers to avoid circular imports at module load.
 function _api() {
@@ -113,11 +168,18 @@ export function poke(conversationId = null) {
 }
 
 async function _drainLoop(conversationId) {
-  if (conversationId != null) {
-    await _drainOneConversation(conversationId);
-    return;
+  // Reclaim orphaned 'sending' heads (not owned by an in-flight send of this
+  // process) so they can't block their conversation until the next kick.
+  try { await recoverStuck(); } catch {}
+  try {
+    if (conversationId != null) {
+      await _drainOneConversation(conversationId);
+    } else {
+      await _drainAllConversations();
+    }
+  } finally {
+    await _afterDrain();
   }
-  await _drainAllConversations();
 }
 
 // Single-conversation drain: claim the lowest-due row, fan it out, and let
@@ -152,7 +214,12 @@ async function _drainAllConversations() {
     // Already in flight or blocked earlier this pass — never launch a
     // higher-seq row of the same conversation (strict FIFO).
     if (_inflight.has(conv) || startedThisPass.has(conv)) continue;
-    if (row.state !== 'queued') continue;       // skip sending/failed-waiting
+    // [send-reliability] A row 'sending' (foreground HTTP in flight, or an
+    // orphan awaiting recoverStuck) is the head of its conversation: BLOCK the
+    // conversation so a later queued row can't overtake it. 'failed' (hard
+    // reject, waiting for the user's tap) does not block later messages.
+    if (row.state === 'sending') { startedThisPass.add(conv); continue; }
+    if (row.state !== 'queued') continue;
     // Number(), not `| 0`: epoch-ms overflows ToInt32 and the comparison was
     // never true — backoff was dead and failed rows burned all attempts at
     // poke() speed (pair fix with messageOutbox._hydrate).
@@ -270,11 +337,11 @@ async function _uploadAndSendMedia(row) {
   // Web blob lost after reload — hard fail. UI shows "re-attach" prompt
   // bound to the failed row's client_message_id.
   if (p._blob_lost) {
-    await markFailed(cmi, 'blob_lost');
+    await markFailed(cmi, 'blob_lost', { kind: 'hard' });
     return;
   }
   if (!localUri) {
-    await markFailed(cmi, 'no_local_uri');
+    await markFailed(cmi, 'no_local_uri', { kind: 'hard' });
     return;
   }
 
@@ -354,7 +421,7 @@ async function _uploadAndSendMedia(row) {
         const serverMsg = r.data?.message || r.data || { id: serverId, client_message_id: cmi };
         ws?.emit?.('chat_message', {
           conversation_id: p.conversation_id,
-          message: serverMsg,
+          message: { ...serverMsg, client_message_id: serverMsg.client_message_id || cmi },
         });
         ws?.relayChatMessage?.(p.conversation_id, serverMsg, p.temp_id || null, []);
       } catch {}
@@ -362,14 +429,15 @@ async function _uploadAndSendMedia(row) {
     }
 
     const errMsg = r?.message || r?.error || 'upload_failed';
-    // Hard errors (413/415/403/size/mime) shouldn't retry; sentinel the row
-    // so markFailed treats max-attempts as permanent. We don't have a
-    // 'hard fail' flag in messageOutbox, so we fast-fail by pushing attempts
-    // to MAX via marking failed in a loop is overkill — simpler: pass the
-    // error string and let backoff burn off naturally (UI shows failed).
-    await markFailed(cmi, errMsg);
+    // [send-reliability] Hard errors (413/415/403/size/mime) → 'failed' (tap
+    // to retry); anything transient keeps the clock and retries with backoff.
+    let kind = classifySendResult(r);
+    if (kind === 'ok') kind = 'transient';
+    if (/too large|\b413\b|\b415\b|mime|unsupported/i.test(String(errMsg))) kind = 'hard';
+    await markFailed(cmi, errMsg, { kind });
   } catch (e) {
-    await markFailed(cmi, e);
+    const k = classifySendResult(null, e);
+    await markFailed(cmi, e, { kind: k === 'ok' ? 'transient' : k });
   }
 }
 
@@ -448,12 +516,14 @@ async function _tryWsSend(row) {
 async function _httpSend(row) {
   const api = _api();
   if (!api?.chatSend) {
-    await markFailed(row.client_message_id, 'api_unavailable');
+    await markFailed(row.client_message_id, 'api_unavailable', { kind: 'transient' });
     return;
   }
   const p = row.payload || {};
+  const cmi = row.client_message_id;
+  let r = null;
   try {
-    const r = await api.chatSend(
+    r = await api.chatSend(
       p.conversation_id,
       p.content || '',
       p.type || 'text',
@@ -461,25 +531,54 @@ async function _httpSend(row) {
       p.mentions || null,
       p.file_url || null,
       p.temp_id || null,
-      p.client_message_id,
+      p.client_message_id || cmi,
       p.topic_id || null,
-      p.opts || null,
+      // Retries always skip the Rust fast-path (stable temp_id) — PHP dedups
+      // on client_message_id and returns the original row.
+      { ...(p.opts || {}), skipRust: true },
     );
-    if (r && (r.success || r.envelope_mode || r.message_id || r.data?.message_id)) {
-      // chat_send returns the inserted row at r.data.id (NOT message_id / not
-      // data.message) — try that FIRST, else serverId was always null and the
-      // outbox row never recorded its server id.
-      const serverId = r.data?.id || r.message_id || r.data?.message_id || r.message?.id || null;
-      await markSent(row.client_message_id, serverId);
-    } else if (r && r.success === false) {
-      // Server-side rejection — backoff.
-      await markFailed(row.client_message_id, r.message || r.error || 'rejected');
-    } else {
-      await markFailed(row.client_message_id, 'unknown_response');
-    }
   } catch (e) {
-    await markFailed(row.client_message_id, e);
+    const k = classifySendResult(null, e);
+    await markFailed(cmi, e, { kind: k === 'ok' ? 'transient' : k });
+    return;
   }
+  const kind = classifySendResult(r);
+  if (kind === 'ok') {
+    // chat_send returns the inserted (or dedup-hit) row at r.data.id.
+    const serverId = r.data?.id || r.message_id || r.data?.message_id || r.message?.id || null;
+    await markSent(cmi, serverId);
+    _publishServerRow(p, r, cmi);
+    return;
+  }
+  await markFailed(cmi, r?.message || r?.error || ('http_' + (r?.__httpStatus ?? 0)), { kind });
+}
+
+// Reconcile an open chat screen + caches with the server row by client id:
+// emits the same local 'chat_message' event the offline replay uses, which
+// chat-conversation's handler matches on client_message_id/_client_id and
+// swaps the optimistic tmp_ bubble in place (no duplicate bubble). We do NOT
+// relay over WS again: chat_send's server fan-out already broadcast the
+// canonical row to the peers.
+function _publishServerRow(p, r, cmi) {
+  try {
+    const row = (r && r.data && r.data.id != null) ? r.data : null;
+    if (!row || r.envelope_mode) return;
+    const serverMsg = { ...row, client_message_id: row.client_message_id || cmi };
+    if (p && p.display_content && serverMsg.content !== p.display_content && p._e2e) {
+      serverMsg.content = p.display_content; serverMsg._e2e = true;
+    }
+    try {
+      const cc = require('./chatCache');
+      cc.removePendingMessage?.(p.conversation_id, p.temp_id)?.catch?.(() => {});
+      cc.cacheSingleMessage?.(p.conversation_id, serverMsg)?.catch?.(() => {});
+    } catch {}
+    try {
+      const { removeChatSendFromQueueByClientMsgId } = require('./offlineCache');
+      removeChatSendFromQueueByClientMsgId?.(cmi)?.catch?.(() => {});
+    } catch {}
+    const ws = _ws();
+    ws?.emit?.('chat_message', { conversation_id: p.conversation_id, message: serverMsg });
+  } catch {}
 }
 
 // ---------------------------------------------------------------------------
@@ -495,20 +594,26 @@ export function start() {
   _started = true;
   _stopped = false;
 
-  // On boot, recover any rows stuck mid-flight from a previous crash.
+  // On boot, recover any rows stuck mid-flight from a previous crash. Nothing
+  // is owned yet in this fresh JS context, so EVERY 'sending' row is an
+  // orphan of the previous process → requeued immediately (attempt not
+  // counted), then drained in seq order. Backlog set is rebuilt so the
+  // foreground won't overtake them.
   recoverStuck().then((n) => {
     if (n > 0) {
       try { console.log('[sendWorker] recovered', n, 'stuck row(s)'); } catch {}
     }
+    return refreshBacklog();
   }).catch(() => {});
 
   // Initial drain after a short delay so the app finishes booting first.
-  setTimeout(() => { poke(); }, 2000);
+  setTimeout(() => { kick('boot'); }, 1500);
 
-  // AppState — drain on foreground transition.
+  // AppState — drain on foreground transition (backoff reset: the network may
+  // have come back while we were suspended and no timer fired).
   try {
     _appStateSub = AppState.addEventListener?.('change', (state) => {
-      if (state === 'active') poke();
+      if (state === 'active') kick('foreground');
     });
   } catch {}
 
@@ -517,10 +622,14 @@ export function start() {
     const NetInfo = require('@react-native-community/netinfo');
     const Net = NetInfo?.default || NetInfo;
     if (Net?.addEventListener) {
+      let _wasOnline = null;
       _netInfoUnsub = Net.addEventListener((state) => {
-        if (state?.isConnected && state?.isInternetReachable !== false) {
-          poke();
-        }
+        const online = !!(state?.isConnected && state?.isInternetReachable !== false);
+        // Only an offline→online EDGE resets backoff (NetInfo re-emits the
+        // same state often; a plain poke is enough for those).
+        if (online && _wasOnline === false) kick('netinfo');
+        else if (online) poke();
+        _wasOnline = online;
       });
     }
   } catch {}
@@ -541,16 +650,34 @@ export function start() {
     if (ws?.on) {
       const connListener = (data) => {
         const st = data?.status;
-        if (st === 'authenticated' || st === 'connected') poke();
+        // Authenticated socket = transport + session are proven alive → reset
+        // backoff and flush now. 'connected' (pre-auth) just pokes.
+        if (st === 'authenticated') kick('ws_auth');
+        else if (st === 'connected') poke();
       };
       _wsAuthedUnsub = ws.on('connection', connListener);
       _wsAckUnsub = ws.on('message_ack', (msg) => {
-        const cmi = msg?.client_message_id || msg?.temp_id;
+        // [send-reliability] Only a PERSISTENCE ack (carries the outbox's
+        // client_message_id) may flip a row to 'sent'. The Go hub's
+        // message_ack is a RELAY ack keyed by temp_id — the message reached
+        // the hub, not PG — so trusting it could mark an unsaved row sent
+        // and stop its retries (silent loss).
+        const cmi = msg?.client_message_id;
         if (!cmi) return;
         const serverId = msg?.msg_id || msg?.server_id || msg?.id || null;
         markSent(cmi, serverId).catch(() => {});
       });
     }
+  } catch {}
+
+  // [send-reliability] Any outbox transition (foreground ✓ / failure, a
+  // release, a requeue from tap-to-retry) re-arms the drain: rows queued
+  // behind a just-finished head go out immediately instead of on the 60s tick.
+  try {
+    _outboxSubUnsub = messageOutbox.subscribe('*', (snap) => {
+      const st = snap && snap.state;
+      if (st === 'sent' || st === 'queued' || st === 'failed' || st === 'removed') _scheduleWake(Date.now());
+    });
   } catch {}
 
   // Periodic safety net.
@@ -563,6 +690,7 @@ export function stop() {
   _started = false;
   if (_periodicTimer) { try { clearInterval(_periodicTimer); } catch {} _periodicTimer = null; }
   if (_cleanupTimer) { try { clearInterval(_cleanupTimer); } catch {} _cleanupTimer = null; }
+  if (_wakeTimer) { try { clearTimeout(_wakeTimer); } catch {} _wakeTimer = null; _wakeAt = 0; }
   try { _appStateSub?.remove?.(); } catch {}
   _appStateSub = null;
   try { _netInfoUnsub?.(); } catch {}
@@ -573,7 +701,9 @@ export function stop() {
   _wsReconnectedUnsub = null;
   try { _wsAckUnsub?.(); } catch {}
   _wsAckUnsub = null;
+  try { _outboxSubUnsub?.(); } catch {}
+  _outboxSubUnsub = null;
   _inflight.clear();
 }
 
-export default { start, stop, poke, send };
+export default { start, stop, poke, send, kick, isConversationBusy };

@@ -321,6 +321,10 @@ import { CurrencyProvider } from '../context/CurrencyContext';
 import { BiometricProvider } from '../context/BiometricContext';
 import { PhotosProvider } from '../context/PhotosContext';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+// [2026-10-06 keyboard-controller] Root KeyboardProvider (native only; web =
+// passthrough via utils/threadKeyboard.js). Mounted disabled — the chat thread
+// switches it on while mounted. See utils/threadKeyboard.native.js.
+import { ChatyyKeyboardProvider } from '../utils/threadKeyboard';
 import ErrorBoundary from '../components/ErrorBoundary';
 import OfflineNotice from '../components/OfflineNotice';
 import NotificationToast from '../components/NotificationToast';
@@ -1601,6 +1605,7 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+    <ChatyyKeyboardProvider>
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
       <SafeAreaProvider>
@@ -1842,6 +1847,7 @@ export default function RootLayout() {
       </SafeAreaProvider>
       </QueryClientProvider>
     </ErrorBoundary>
+    </ChatyyKeyboardProvider>
     </GestureHandlerRootView>
   );
 }

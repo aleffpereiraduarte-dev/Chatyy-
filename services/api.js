@@ -998,6 +998,9 @@ if (Platform.OS === 'web') {
 
 let _reloginPromise = null;
 
+// [send-reliability 2026-10-06] Per-action fetch timeout overrides (ms).
+const _ACTION_TIMEOUT_MS = { chat_send: 10000 };
+
 async function _rawApiCall(action, params = {}, method = 'GET') {
   // CRITICAL: On native iOS, authToken is read from SecureStore asynchronously.
   // Without awaiting this, the first few requests (chat_send, check_auth, etc.)
@@ -1083,7 +1086,11 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
 
   const controller = new AbortController();
   options.signal = controller.signal;
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  // [send-reliability 2026-10-06] chat_send gets a short budget: it is a tiny
+  // idempotent POST (server dedups on client_message_id), so a stalled socket
+  // is better abandoned at 10s and retried by the outbox than held for 25s
+  // while the bubble sits on the clock and later messages queue behind it.
+  const timeout = setTimeout(() => controller.abort(), _ACTION_TIMEOUT_MS[action] || TIMEOUT_MS);
 
   try {
     const res = await fetch(url, options);
@@ -1109,17 +1116,32 @@ async function _rawApiCall(action, params = {}, method = 'GET') {
       // Store CSRF token from login/check_auth responses
       const respCsrf = data?.data?.csrf_token;
       if (respCsrf) csrfToken = respCsrf;
-      return { data, status: res.status };
+      return { data: _withHttpStatus(data, res.status), status: res.status };
     } catch {
-      return { data: { success: false, message: 'Servidor indisponivel' }, status: res.status };
+      return { data: _withHttpStatus({ success: false, message: 'Servidor indisponivel' }, res.status), status: res.status };
     }
   } catch (err) {
     clearTimeout(timeout);
     if (err.name === 'AbortError') {
-      return { data: { success: false, message: 'Tempo limite excedido' }, status: 0 };
+      return { data: _withHttpStatus({ success: false, message: 'Tempo limite excedido' }, 0), status: 0 };
     }
-    return { data: { success: false, message: 'Connection error' }, status: 0 };
+    return { data: _withHttpStatus({ success: false, message: 'Connection error' }, 0), status: 0 };
   }
+}
+
+
+// [send-reliability 2026-10-06] apiCall() hands callers only the response BODY,
+// so the send pipeline could not tell a definitive 4xx (drop → red "!") from a
+// 5xx / edge 503 / timeout (retry with the clock). Attach the HTTP status as a
+// NON-enumerable property: invisible to JSON.stringify / spreads / SWR cache
+// equality, readable as `r.__httpStatus` by messageOutbox.classifySendResult.
+function _withHttpStatus(data, status) {
+  try {
+    if (data && typeof data === 'object' && !Object.isFrozen(data)) {
+      Object.defineProperty(data, '__httpStatus', { value: Number(status) || 0, enumerable: false, configurable: true, writable: true });
+    }
+  } catch {}
+  return data;
 }
 
 // In-flight deduplication: if a second caller fires the same (action+params)

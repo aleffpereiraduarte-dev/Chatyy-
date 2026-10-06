@@ -164,6 +164,14 @@ function _heapMB() {
 }
 
 // Compact context string for the `info` field (<= ~160 chars).
+// [2026-10-06 ws rock-solid] Leitura SÍNCRONA do anon id (sem gerar/persistir):
+// o WS manda no auth como device_id só pra forense por aparelho no log do hub.
+// Dispara a hidratação em background pra próxima conexão já levar o id.
+export function getAnonIdSync() {
+  if (!_anonId) { try { _ensureAnonId().catch(() => {}); } catch {} }
+  return _anonId || '';
+}
+
 export function getCrashContext() {
   const c = _staticCtx();
   const out = { ...c, up: Math.round((Date.now() - _bootAt) / 1000) };

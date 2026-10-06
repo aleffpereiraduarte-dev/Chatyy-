@@ -90,7 +90,10 @@ const RECONNECT_BASE = 500;
 // back. 3s ceiling means worst-case 1-3 reconnect attempts per second
 // during a sustained outage, which the server can absorb (eviction loop
 // fixed separately).
-const RECONNECT_MAX = 3000;     // Max 3s between retries (was 30s)
+const RECONNECT_MAX = 10000;    // [2026-10-06 rock-solid] 3s→10s cap. Foreground/network-up/user actions
+                                // bypass the backoff entirely (ensureConnected urgent), so the cap only
+                                // governs SUSTAINED outages — 3s meant ~175 handshakes per 5-min outage
+                                // per device (harness), burning battery and hammering the hub on recovery.
 // WhatsApp-tier liveness — detect a silently-dead socket in ~18s instead of
 // the TCP keepalive default (~60-120s). Cost is negligible (~3 B/s of ping
 // frames). During an active call we drop to 8s/15s via _callActive (see
@@ -111,6 +114,40 @@ const PING_INTERVAL = 5000;
 // RTT spikes (would need a 12s round-trip to false-positive) and open-thread
 // drops to 10s via _chatActive (see _startPing).
 const PING_TIMEOUT = 12000;
+// [2026-10-06 rock-solid heartbeat] Cadência por contexto (ver _heartbeatProfile):
+//   • idle (lista/fg sem thread): ping 20s. O hub já manda ping de protocolo a
+//     cada 25s (writer PingPeriod) e o cliente auto-responde → o NAT da operadora
+//     nunca fica >25s ocioso; o ping de app a 5s mantinha o rádio LTE/5G
+//     permanentemente em estado "connected" (tail ~10s) = bateria, sem ganho de NAT.
+//   • thread aberta: ping 5s (detecção rápida onde o usuário percebe).
+//   • chamada: ping 8s.
+// Detecção half-open: cada ping arma um deadline; se NENHUM frame chegar (pong
+// ou qualquer outro) até o deadline → socket morto → reconecta. Pior caso idle
+// = 20s+10s, thread = 5s+6s.
+const PING_IDLE_MS = 20000;
+const PING_CHAT_MS = 5000;
+const PING_CALL_MS = 8000;
+const PONG_DEADLINE_IDLE_MS = 10000;
+const PONG_DEADLINE_CHAT_MS = 6000;
+const PONG_DEADLINE_CALL_MS = 10000;
+// Probe ao voltar do background / troca de rede: 1 ping, reconecta só se nada
+// chegar nesse prazo (não reconecta às cegas).
+const FG_PROBE_MS = 2500;
+// Socket preso em CONNECTING (handshake TCP/TLS que nunca completa — ex.: aberto
+// durante a queda de rede) não pode bloquear a recuperação até o timeout do SO
+// (~60s no iOS). Passou disso → descarta e reabre.
+const CONNECT_TIMEOUT_MS = 10000;
+// Identidade desta INSTÂNCIA de JS (processo do app / aba do browser). Vai no
+// frame de auth; o hub fecha sockets mais antigos com o MESMO instance_id
+// (fantasmas cujo close nunca chegou porque o rádio já tinha morrido) assim que
+// o novo autentica, em vez de esperar 90s de PongWait. Por instância, não por
+// aparelho: duas abas / app + native CallSignalWs NÃO se derrubam.
+const WS_INSTANCE_ID = (() => {
+  try {
+    const r = Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    return 'js-' + r.slice(0, 20);
+  } catch { return 'js-' + String(Date.now()); }
+})();
 // [2026-10-05 conectando-preso] Client-side auth watchdog. A socket can reach
 // OPEN and keep answering pings (so the zombie detector never trips, since
 // the server pongs pre-auth too) yet never receive auth_success — e.g. the
@@ -270,41 +307,11 @@ class MailWebSocket {
           clearTimeout(this.reconnectTimer);
         } else {
           this._hidden = false;
-          if (this.connected && this.authenticated) {
-            this._startPing();
-            // [audit fix] Returning from a hidden tab: the socket may have
-            // been silently killed by the browser (Chrome aggressively
-            // freezes tabs) but readyState still reads OPEN. Send a probe
-            // ping and if no pong in 3s, force-reconnect instead of waiting
-            // for the next scheduled ping (5s) + ping watchdog (18s) — at
-            // worst the user used to wait 23s for the socket to recover
-            // after switching back to the tab. Now: 3s max.
-            try {
-              const probeSentAt = Date.now();
-              this._pingTs = probeSentAt;
-              try { this._send({ type: 'ping', ts: probeSentAt }); } catch {}
-              const probeTimer = setTimeout(() => {
-                if (this.destroyed || this._hidden) return;
-                if (this.lastPongTime < probeSentAt) {
-                  // No pong within 3s — assume the socket is a zombie.
-                  try { console.warn('[WS] visibility probe failed, forcing reconnect'); } catch {}
-                  try { this._cleanup(); } catch {}
-                  if (this.token && !this.destroyed) {
-                    this.reconnectAttempt = 0;
-                    this.connect(this.token);
-                  }
-                }
-              }, 3000);
-              // If a pong comes back, cancel the watchdog early.
-              const probeUnsub = this.on('pong', () => {
-                clearTimeout(probeTimer);
-                try { probeUnsub(); } catch {}
-              });
-            } catch {}
-          } else if (this.token && !this.destroyed) {
-            this.reconnectAttempt = 0;
-            this.connect(this.token);
-          }
+          // [2026-10-06 rock-solid] Single entry point. Aba voltando: socket
+          // autenticado → só PROBE (1 ping, reconecta só se nada chegar em 3s;
+          // Chrome congela abas ocultas e o readyState mente OPEN). Morto →
+          // reconecta já (urgente = pula o backoff). Em voo → não mexe.
+          try { this.ensureConnected('visible', { probe: true, urgent: true, probeMs: 3000 }); } catch {}
           this._emit('visibility', { visible: true });
         }
       };
@@ -321,37 +328,35 @@ class MailWebSocket {
     try {
       const { onNetworkChange } = require('./networkInfo');
       this._netUnsub = onNetworkChange?.((state) => {
-        if (!state?.isConnected) return;
-        const socketDead = !this.ws || this.ws.readyState !== WebSocket.OPEN;
-        if (socketDead && this.token && !this.destroyed) {
-          this.reconnectAttempt = 0;
-          this.connect(this.token);
-        } else if (this._lastNetType && state.type && state.type !== this._lastNetType
-                   && this.ws && this.ws.readyState === WebSocket.OPEN && !this.destroyed) {
-          // [2026-10-05 handoff/WhatsApp-tier] Genuine interface switch
-          // (wifi↔cellular): the socket frequently goes HALF-OPEN — readyState
-          // still OPEN but packets are black-holed — which is the classic
-          // "perdeu conexão sem perceber". Instead of waiting ~18s for the pong
-          // watchdog, PROBE immediately (one ping, 1.8s pong deadline) and
-          // force-reconnect only if the probe proves the socket dead. We only
-          // PROBE (never blind-reconnect) so iOS NetInfo type-flaps on a healthy
-          // socket just cost one ping — the returning pong cancels the timer and
-          // nothing thrashes. Preserves the "don't reconnect on every flip" policy.
-          try {
-            const probeSentAt = Date.now();
-            this._pingTs = probeSentAt;
-            try { this._send({ type: 'ping', ts: probeSentAt }); } catch {}
-            const t = setTimeout(() => {
-              if (this.destroyed) return;
-              if (this.lastPongTime < probeSentAt && this.token) {
-                try { console.warn('[WS] net handoff probe failed — forcing reconnect'); } catch {}
-                try { this._cleanup(); } catch {}
-                this.reconnectAttempt = 0;
-                this.connect(this.token);
-              }
-            }, 1800);
-            const un = this.on('pong', () => { clearTimeout(t); try { un(); } catch {} });
-          } catch {}
+        if (!state) return;
+        // [2026-10-06 rock-solid] Rede caiu: só anota. Não queima tentativas
+        // de reconexão contra uma interface morta (_scheduleReconnect passa a
+        // usar o teto enquanto offline) e marca o instante pra saber, na volta,
+        // que qualquer socket CONNECTING foi aberto às cegas.
+        if (state.isConnected === false) {
+          if (!this._netOffline) { this._netOffline = true; this._netOfflineAt = Date.now(); }
+          this._lastNetType = state.type;
+          return;
+        }
+        const cameBack = !!this._netOffline;
+        this._netOffline = false;
+        const typeChanged = !!(this._lastNetType && state.type && state.type !== this._lastNetType);
+        this._lastNetType = state.type;
+        if (this.destroyed || !this.token) return;
+        if (cameBack) {
+          // Rede voltou → reconexão RÁPIDA com jitter curto (0-400ms) pra frota
+          // não bater no hub em lockstep depois de uma queda compartilhada.
+          // Socket que estava "em voo" foi aberto durante a queda → descarta.
+          try { this.ensureConnected('net_up', { urgent: true, probe: true, probeMs: 2000, jitterMs: 400, staleBefore: this._netOfflineAt || 0 }); } catch {}
+        } else if (typeChanged) {
+          // [2026-10-05 handoff] wifi↔celular: o socket costuma ficar HALF-OPEN
+          // (readyState OPEN, pacotes no vácuo). PROBE (não reconexão cega):
+          // flap do NetInfo num socket saudável custa 1 ping.
+          try { this.ensureConnected('net_change', { urgent: true, probe: true, probeMs: 2000 }); } catch {}
+        } else {
+          // Evento sem mudança real (iOS dispara bastante): só garante que há
+          // um socket — sem probe, sem matar nada em voo.
+          try { this.ensureConnected('net_event'); } catch {}
         }
         this._lastNetType = state.type;
       });
@@ -373,6 +378,7 @@ class MailWebSocket {
         if (nextState === 'inactive') return;
         if (nextState === 'active') {
           this._hidden = false;
+          if (this._loggedOut) return; // deslogado: nada a reconectar
           // [WAVE 43G 2026-05-21] Foreground = good moment to revive a
           // tombstoned socket. If destroyed=true (8+ auth_error outside
           // grace), the legacy AppState handler below would skip both
@@ -388,45 +394,11 @@ class MailWebSocket {
           // returning to foreground. Pairs with the offline publish
           // on background transition.
           try { this._send && this._send({ type: 'presence', status: 'online' }); } catch {}
-          // Check if WS is still alive
-          if (this.ws && this.ws.readyState === WebSocket.OPEN && this.authenticated) {
-            // Socket SAYS alive, but on iOS the OS often returns
-            // readyState===OPEN for a socket that's been killed by the radio
-            // sleep. Send an immediate ping AND schedule a short pong-watchdog
-            // — if no pong in 8s, force-reconnect. Without this, an incoming
-            // call accept (cold-start path) sat behind a dead socket for the
-            // full 30s timeout before reconnecting.
-            //
-            // 2026-05-18 (invisible-sync): bumped 4s → 8s. The old 4s ceiling
-            // triggered false-positive zombie reconnects on slow cellular
-            // (cross-Atlantic RTT can spike past 4s on 4G under load) which
-            // flashed the "Connecting…/Sincronizando…" badge for users whose
-            // socket was actually fine. 8s is still well under the 30s OS
-            // timeout but tolerates a single RTT hiccup.
-            this._pingTs = Date.now();
-            this._send({ type: 'ping', ts: this._pingTs });
-            this._startPing();
-            const pingedAt = this._pingTs;
-            // Track watchdog so a fast back-to-background doesn't leave
-            // a stale timer that fires a spurious reconnect mid-sleep.
-            if (this._fgWatchdog) clearTimeout(this._fgWatchdog);
-            this._fgWatchdog = setTimeout(() => {
-              this._fgWatchdog = null;
-              if (this._hidden || this.destroyed) return;
-              if (this.lastPongTime < pingedAt) {
-                console.warn('[WS] foreground ping had no pong in 8s — socket is zombie, force reconnect');
-                try { this._cleanup(); } catch {}
-                if (this.token) {
-                  this.reconnectAttempt = 0;
-                  this.connect(this.token);
-                }
-              }
-            }, 8000);
-          } else if (this.token && !this.destroyed) {
-            // Socket is dead, reconnect immediately
-            this.reconnectAttempt = 0;
-            this.connect(this.token);
-          }
+          // [2026-10-06 rock-solid] Foreground: socket vivo-segundo-o-readyState
+          // → PING IMEDIATO e só reconecta se nada chegar em ~2.5s (iOS devolve
+          // OPEN pra socket que o rádio já matou). Morto → reconecta na hora,
+          // pulando o backoff. Em voo → deixa terminar. Nunca reconexão cega.
+          try { this.ensureConnected('foreground', { probe: true, urgent: true, probeMs: FG_PROBE_MS }); } catch {}
           // Either path: fire a chat_sync delta catch-up so any
           // messages that arrived during the background window are
           // pulled even if the WS never delivered them (push-wake path
@@ -443,6 +415,7 @@ class MailWebSocket {
             clearTimeout(this._fgWatchdog);
             this._fgWatchdog = null;
           }
+          this._cancelProbe();
           // Clear any typing timers we have scheduled — if the peer
           // last saw us typing and we go background mid-type, fire
           // stopped_typing NOW instead of letting their UI show a
@@ -536,6 +509,123 @@ class MailWebSocket {
     try { setTimeout(() => tryConnect(MAX_TRIES), 0); } catch {}
   }
 
+  // ─── [2026-10-06 rock-solid] Single owner / idempotent entry point ───────
+  //
+  // TODO caminho que quer "um socket funcionando" passa por aqui: MailContext
+  // (login/troca de conta), AppState foreground, visibilidade (web), NetInfo,
+  // resurrect() (watchdogs de tela), ensureHealthy() (chamadas, lista, thread).
+  // Ninguém fora deste arquivo chama _cleanup()/connect() direto.
+  //
+  // Regras (a ordem importa):
+  //   1. Autenticado → saudável. Com `probe`, manda 1 ping e só reconecta se
+  //      NENHUM frame chegar em probeMs (half-open). Nunca reconexão cega.
+  //   2. Em voo (CONNECTING < CONNECT_TIMEOUT_MS, ou OPEN aguardando
+  //      auth_success < AUTH_WATCHDOG_MS+2s) → NÃO mexe. Matar handshake em
+  //      curso era a causa do churn "abre→fecha em <1s" (hub: 735 sockets/dia
+  //      fechados antes do auth; harness: link lento + watchdog 1.5s da lista
+  //      = 21 sockets em 30s e NUNCA autentica). Exceção: `staleBefore`
+  //      (socket aberto enquanto a rede estava fora) ou `force`.
+  //   3. Reconexão já agendada (backoff) → `urgent` antecipa pra agora
+  //      (+jitter); não-urgente respeita o backoff (watchdogs de 1.5s/2.5s não
+  //      podem transformar o backoff em loop de 1.5s).
+  //   4. Senão → connect().
+  // Retorna: 'healthy' | 'probing' | 'in_flight' | 'scheduled' | 'connecting' | 'no_token' | 'stopped'
+  ensureConnected(reason = 'unknown', opts = {}) {
+    const { probe = false, urgent = false, force = false, probeMs = FG_PROBE_MS, jitterMs = 0, staleBefore = 0 } = opts || {};
+    let token = null;
+    try { token = require('./api').getAuthToken?.() || null; } catch {}
+    // Depois de logout (disconnect) só um token VIVO no api.js reabre — nunca
+    // o bearer antigo que ficou em this.token.
+    if (!token && !this._loggedOut) token = this.token;
+    if (!token) return 'no_token';
+    this._loggedOut = false;
+    if (this._authReloginStopped) {
+      // Só um token NOVO (re-login real) levanta o circuit-breaker.
+      if (token !== this.token) {
+        this._authReloginStopped = false;
+        this._authRejectStreak = 0;
+        this._authRejectBackoff = 0;
+      } else {
+        return 'stopped';
+      }
+    }
+    if (this.destroyed) {
+      // destroyed = tombstone (session_replaced / auth streak) ou disconnect()
+      // de logout. Com token vivo no api.js estamos logados → revive.
+      this.destroyed = false;
+      this._authFailStreak = 0;
+      this._authErrorBackoff = 0;
+    }
+    this._logGhost?.('ensure', { reason, probe, urgent, force });
+    const OPEN = (typeof WebSocket !== 'undefined' && WebSocket.OPEN) || 1;
+    const CONNECTING = (typeof WebSocket !== 'undefined' ? WebSocket.CONNECTING : 0) || 0;
+    const ws = this.ws;
+    const age = this._lastConnectAt ? (Date.now() - this._lastConnectAt) : Infinity;
+
+    if (!force && ws && ws.readyState === OPEN && this.authenticated) {
+      if (token !== this.token) this.token = token; // slide: próximo reconnect usa o fresco
+      if (!this.pingTimer && !this._hidden) this._startPing();
+      if (probe) { this._probe(reason, probeMs); return 'probing'; }
+      return 'healthy';
+    }
+    const openedBeforeOutage = !!(staleBefore && this._lastConnectAt && this._lastConnectAt <= staleBefore);
+    if (!force && !openedBeforeOutage && ws) {
+      if (ws.readyState === CONNECTING && age < CONNECT_TIMEOUT_MS) return 'in_flight';
+      if (ws.readyState === OPEN && !this.authenticated && age < (AUTH_WATCHDOG_MS + 2000)) return 'in_flight';
+    }
+    if (!force && !ws && this.reconnectTimer) {
+      if (!urgent) return 'scheduled';
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    // Vai abrir um socket novo.
+    this.reconnectAttempt = 0;
+    this._lastConnectAt = 0; // libera o coalesce do connect()
+    if (ws) { try { this._cleanup(); } catch {} }
+    this.token = token;
+    const go = () => {
+      this.reconnectTimer = null;
+      if (this.destroyed || this._authReloginStopped) return;
+      // Alguém abriu nesse meio tempo (jitter) → não duplica.
+      if (this.ws && (this.ws.readyState === OPEN || this.ws.readyState === CONNECTING)) return;
+      this.connect(this.token || token);
+    };
+    if (jitterMs > 0) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = setTimeout(go, Math.floor(Math.random() * jitterMs));
+    } else {
+      go();
+    }
+    return 'connecting';
+  }
+
+  // Probe de liveness: 1 ping; se NENHUM frame chegar em `ms`, o socket é
+  // half-open → descarta e reconecta. Coalesce: um probe por vez.
+  _probe(reason, ms = FG_PROBE_MS) {
+    if (this._probeTimer) return;
+    const ws = this.ws;
+    if (!ws) return;
+    const sentAt = Date.now();
+    this._pingTs = sentAt;
+    try { this._send({ type: 'ping', ts: sentAt }); } catch {}
+    this._probeTimer = setTimeout(() => {
+      this._probeTimer = null;
+      if (this.destroyed || this._hidden) return;
+      if (this.ws !== ws) return; // já trocou de socket
+      // Timer estrangulado (JS suspenso / aba congelada): veredito inválido.
+      if (Date.now() - sentAt > ms * 3 + 2000) return;
+      if ((this.lastInboundAt || 0) >= sentAt || (this.lastPongTime || 0) >= sentAt) return;
+      try { console.warn('[WS] probe (' + reason + ') sem resposta em ' + ms + 'ms — socket half-open, reconectando'); } catch {}
+      this._logGhost?.('probe_dead', { reason });
+      this._droppedCount++;
+      this.ensureConnected('probe_dead_' + reason, { force: true });
+    }, ms);
+  }
+
+  _cancelProbe() {
+    if (this._probeTimer) { clearTimeout(this._probeTimer); this._probeTimer = null; }
+  }
+
   connect(token) {
     if (this.destroyed) return;
     // [P0 2026-05-25] In the auth-reject "needs re-login" stopped state, do NOT
@@ -579,6 +669,26 @@ class MailWebSocket {
         if (this.connected && this.authenticated && !this.pingTimer) this._startPing();
         return;
       }
+      // [2026-10-06 rock-solid] Socket JÁ autenticado + token diferente = slide
+      // do bearer (mesma conta). NÃO derruba um socket saudável por isso — o
+      // token novo vale no próximo reconnect. Troca de CONTA passa por
+      // ensureConnected(..., { force: true }) (MailContext), que limpa antes.
+      // Era o "socket fechado 100-900ms após o auth a cada reload" (eager
+      // bootstrap abre com T1, hidratação desliza pra T2, MailContext chama
+      // connect(T2) → _cleanup no socket recém-autenticado).
+      if (this.ws && !this.destroyed && typeof WebSocket !== 'undefined' &&
+          this.ws.readyState === WebSocket.OPEN && this.authenticated) {
+        this.token = liveToken;
+        if (!this.pingTimer && !this._hidden) this._startPing();
+        return;
+      }
+      // Idem pro OPEN aguardando auth_success: o auth já foi com o token
+      // anterior (ainda válido); o auth watchdog cobre se ele falhar.
+      if (this.ws && typeof WebSocket !== 'undefined' &&
+          this.ws.readyState === WebSocket.OPEN && !this.authenticated &&
+          this._lastConnectAt && (Date.now() - this._lastConnectAt) < (AUTH_WATCHDOG_MS + 2000)) {
+        return;
+      }
       // [2026-10-05 churn 1005] Handshake em curso (<3s) NÃO é morto nem por
       // token diferente — o auth usa o token já enviado; se for rejeitado, o
       // path de auth_error faz refresh+reconnect. Evita o "abre→mata→abre"
@@ -586,7 +696,7 @@ class MailWebSocket {
       // em que abriram, depois 2 duplicados sobrevivendo).
       if (this.ws && typeof WebSocket !== 'undefined' &&
           this.ws.readyState === WebSocket.CONNECTING &&
-          this._lastConnectAt && (Date.now() - this._lastConnectAt) < 3000) {
+          this._lastConnectAt && (Date.now() - this._lastConnectAt) < CONNECT_TIMEOUT_MS) {
         return;
       }
       // [2026-10-02 churn fix] Burst coalesce. Multiple reconnect triggers
@@ -649,9 +759,32 @@ class MailWebSocket {
       return;
     }
 
+    // [2026-10-06 rock-solid] Connect timeout: handshake que não completa em
+    // CONNECT_TIMEOUT_MS (TCP/TLS no vácuo — típico de socket aberto durante a
+    // queda de rede ou troca de antena) é descartado e reaberto com backoff, em
+    // vez de prender a recuperação até o timeout do SO (~60s no iOS).
+    {
+      const _thisWs = this.ws;
+      clearTimeout(this._connectTimer);
+      this._connectTimer = setTimeout(() => {
+        this._connectTimer = null;
+        if (this.ws !== _thisWs || this.destroyed) return;
+        if (typeof WebSocket !== 'undefined' && _thisWs.readyState === WebSocket.CONNECTING) {
+          try { console.warn('[WS] connect timeout (' + CONNECT_TIMEOUT_MS + 'ms) — reabrindo'); } catch {}
+          this._logGhost?.('connect_timeout', {});
+          this._cleanup();
+          this._lastConnectAt = 0;
+          this._scheduleReconnect();
+        }
+      }, CONNECT_TIMEOUT_MS);
+    }
+
     this.ws.onopen = () => {
+      clearTimeout(this._connectTimer);
+      this._connectTimer = null;
       this.connected = true;
       this.reconnectAttempt = 0;
+      this.lastInboundAt = Date.now();
       // Detect which subprotocol the server selected. `ws.protocol` is the
       // selected one from the list we advertised (or '' / 'json.legacy'
       // for JSON-only servers). CWP-negotiated sockets serialize the auth
@@ -662,8 +795,22 @@ class MailWebSocket {
       } catch { this.cwpNegotiated = false; }
       this._emit('connection', { status: 'connected', protocol: this.cwpNegotiated ? 'cwp.1' : 'json' });
 
-      // Authenticate with bearer token
-      this._send({ type: 'auth', token: this.token });
+      // Authenticate with bearer token.
+      // [2026-10-06 rock-solid] instance_id (por instância de JS) deixa o hub
+      // derrubar FANTASMAS desta mesma instância (socket velho cujo close nunca
+      // chegou porque o rádio morreu) assim que este autentica. device_id/
+      // client/platform são só diagnóstico (forense por aparelho no log do hub).
+      // Hub antigo ignora campos extras.
+      let _devId = '';
+      try { _devId = require('./crashReporter').getAnonIdSync?.() || ''; } catch {}
+      this._send({
+        type: 'auth',
+        token: this.token,
+        instance_id: WS_INSTANCE_ID,
+        device_id: _devId,
+        client: 'js',
+        platform: Platform.OS,
+      });
 
       // Start heartbeat
       this._startPing();
@@ -804,6 +951,13 @@ class MailWebSocket {
         this._emit('connection', { status: 'session_replaced', message: closeReason });
         return;
       }
+      // [2026-10-06 rock-solid] 4009 = hub fechou este socket porque a MESMA
+      // instância autenticou um mais novo. Socket órfão já tem handlers
+      // soltos (_cleanup) e nem chega aqui; se chegar (corrida), reconecta com
+      // backoff (nunca em loop apertado).
+      if (closeCode === 4009) {
+        this.reconnectAttempt = Math.max(this.reconnectAttempt, 3);
+      }
 
       this._emit('connection', { status: 'disconnected', code: closeCode, reason: closeReason });
       if (wasAuthenticated) this._reconnectCount++;
@@ -827,17 +981,12 @@ class MailWebSocket {
       document.removeEventListener('visibilitychange', this._visibilityHandler);
       this._visibilityHandlerRemoved = true;
     }
-    if (this._appStateHandler) {
-      try { this._appStateHandler.remove(); } catch {}
-      this._appStateHandler = null;
-    }
-    // Tear down NetInfo subscription — without this, every disconnect/reset
-    // cycle (account switch, logout) leaked a listener that kept calling
-    // connect() on the orphaned instance.
-    if (typeof this._netUnsub === 'function') {
-      try { this._netUnsub(); } catch {}
-      this._netUnsub = null;
-    }
+    // [2026-10-06 rock-solid] AppState/NetInfo listeners NÃO são mais removidos
+    // aqui. O MailWebSocket é singleton (globalThis) — não existe "instância
+    // órfã" pra vazar — e removê-los no logout fazia o próximo login da MESMA
+    // sessão ficar sem reconexão no foreground e sem reação a troca de rede
+    // (nada os re-registrava). Os handlers checam _loggedOut/destroyed/token.
+    this._loggedOut = true;
     // Drop any window 'online' listener we attached during offline backoff.
     if (this._onOnlineHandler && typeof window !== 'undefined') {
       try { window.removeEventListener('online', this._onOnlineHandler); } catch {}
@@ -935,34 +1084,21 @@ class MailWebSocket {
         }
         return false;
       }
-      try { console.warn('[WS] resurrect() — reason=' + reason + ' destroyed=' + this.destroyed + ' connected=' + this.connected + ' authed=' + this.authenticated + ' attempt=' + this._resurrectAttempt); } catch {}
       this._logGhost('resurrect_kick', { reason, attempt: this._resurrectAttempt });
-      // [2026-10-05 churn 1005] Socket já EM VOO (CONNECTING/OPEN, mesmo token,
-      // aberto há <8s) = handshake/auth em andamento. Matá-lo aqui e reabrir
-      // era a origem dos fechamentos "1005 (no status)" no MESMO segundo da
-      // abertura (AppState 'active' → resurrect atropelava o reconnect em
-      // curso) → churn + sockets duplicados → "Conectando". Deixa terminar;
-      // o retry agendado abaixo cobre o caso de ele morrer de verdade.
-      try {
-        if (this.ws && typeof WebSocket !== 'undefined' && this.token === token &&
-            (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN) &&
-            this._lastConnectAt && (Date.now() - this._lastConnectAt) < 8000) {
-          this._logGhost?.('resurrect_inflight_skip', { reason });
-          this._scheduleResurrectRetry(reason);
-          return false;
-        }
-      } catch {}
-      try { this._cleanup(); } catch {}
-      this.destroyed = false;
-      this.reconnectAttempt = 0;
-      this._authFailStreak = 0;
-      this._authErrorBackoff = 0;
-      this.token = token;
-      this.connect(token);
-      // Arm a backoff retry in case this connect() never reaches authenticated.
+      // [2026-10-06 rock-solid] Delegado ao dono único. ensureConnected NÃO
+      // mata socket em voo (CONNECTING / aguardando auth) e respeita o backoff
+      // salvo em caminhos urgentes (re-login/refresh de bearer/foreground) —
+      // o watchdog de 2.5s da thread e o de 10s do MailContext podem chamar à
+      // vontade sem gerar churn.
+      const urgent = /^(authcontext|hydrate|appstate)/.test(String(reason || ''));
+      const r = this.ensureConnected('resurrect_' + reason, { urgent });
+      if (r === 'healthy' || r === 'probing') return false;
+      if (r === 'stopped' || r === 'no_token') return false;
+      if ((r === 'in_flight' || r === 'scheduled') && this._resurrectRetryTimer) return false;
+      // Arm a backoff retry in case this never reaches authenticated.
       // _onAuthenticated clears it; otherwise next backoff tick re-tries.
       this._scheduleResurrectRetry(reason);
-      return true;
+      return r === 'connecting';
     } catch (e) {
       try { console.warn('[WS] resurrect() failed:', e?.message); } catch {}
       this._logGhost('resurrect_exception', { reason, err: e?.message });
@@ -1050,7 +1186,11 @@ class MailWebSocket {
     // Long ping silence — the ping watchdog should have caught this, but if
     // it didn't (timer cleared by a botched AppState cycle, etc.) treat the
     // socket as zombie.
-    if (this.lastPongTime && (Date.now() - this.lastPongTime) > (PING_TIMEOUT * 2)) return true;
+    // [2026-10-06] Usa o último frame QUALQUER (não só pong) e o perfil atual
+    // de heartbeat (idle pinga a cada 20s agora).
+    const { interval, deadline } = this._heartbeatProfile();
+    const last = Math.max(this.lastPongTime || 0, this.lastInboundAt || 0);
+    if (last && (Date.now() - last) > (interval * 2 + deadline)) return true;
     return false;
   }
 
@@ -1075,6 +1215,9 @@ class MailWebSocket {
     // [2026-10-05] Drop the auth watchdog on any teardown so it can't fire a
     // phantom reconnect against an already-reconnecting flow.
     this._clearAuthWatchdog();
+    // [2026-10-06 rock-solid] idem connect-timeout + probe pendentes.
+    if (this._connectTimer) { clearTimeout(this._connectTimer); this._connectTimer = null; }
+    this._cancelProbe();
     for (const timer of this._typingStopTimers.values()) {
       clearTimeout(timer);
     }
@@ -1213,58 +1356,65 @@ class MailWebSocket {
     this._send(data);
   }
 
+  // [2026-10-06 rock-solid] Perfil de heartbeat por contexto (ver constantes).
+  _heartbeatProfile() {
+    if (this._callActive) return { interval: PING_CALL_MS, deadline: PONG_DEADLINE_CALL_MS };
+    if (this._chatActive) return { interval: PING_CHAT_MS, deadline: PONG_DEADLINE_CHAT_MS };
+    return { interval: PING_IDLE_MS, deadline: PONG_DEADLINE_IDLE_MS };
+  }
+
   _startPing() {
     this._stopPing();
-    // Aggressive ping cadence so an iOS "zombie" socket (radio killed it but
-    // readyState still reads OPEN → onmessage never fires) is caught fast
-    // instead of leaving a new message stuck until the 15s HTTP safety-poll.
-    //   • call active → 8s ping / 15s timeout (ICE + hangup can't stall)
-    //   • chat open   → 8s ping / 10s timeout (message in the OPEN thread
-    //                   lands within ~10s worst-case even on iOS; this is
-    //                   exactly where the user notices "só aparece quando
-    //                   saio e volto")
-    //   • idle/bg     → 5s ping / 12s timeout (NAT keepalive + list self-heal)
-    // [2026-09-24] Chat-active detecção mais rápida: ping 8s→5s + timeout 10s→8s.
-    // Com interval < timeout a checagem "sem pong" dispara ~10s em vez de ~16s
-    // (o interval de 8s antes só reavaliava a cada 8s → o gap de 10s só era pego
-    // no tick de 16s). Um gap de pong > 8s com o usuário ATIVO na conversa em
-    // foreground = socket morto de verdade (rádio caiu), então reconectar é o
-    // certo; false-positive é raro nesse cenário. Call-active e idle inalterados.
-    const interval = this._callActive ? 8000 : (this._chatActive ? 5000 : PING_INTERVAL);
-    const timeout = this._callActive ? 15000 : (this._chatActive ? 8000 : PING_TIMEOUT);
-    this.pingTimer = setInterval(() => {
-      // Check socket health first
+    // [2026-10-06 rock-solid] Heartbeat + detecção half-open.
+    //   • ping a cada `interval` (idle 20s / thread 5s / chamada 8s);
+    //   • cada ping arma UM deadline; se nenhum frame (pong OU qualquer
+    //     outro — tráfego real também prova vida) chegar até lá → socket
+    //     half-open → força reconexão. Antes: ping fixo a 5s em idle (rádio
+    //     nunca dormia) e veredito só no tick seguinte.
+    //   • timer estrangulado (aba oculta 1x/min, JS congelado no iOS): o
+    //     veredito é inválido → re-baseline e julga no próximo ciclo
+    //     (fix "falso-zumbi 60s" de 2026-10-05 preservado).
+    const { interval, deadline } = this._heartbeatProfile();
+    const tick = () => {
       if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-        this._droppedCount++;
-        this._cleanup();
-        if (!this.destroyed) this._scheduleReconnect();
-        return;
-      }
-      const _prevPingTs = this._pingTs || 0;
-      this._pingTs = Date.now();
-      this._send({ type: 'ping', ts: this._pingTs });
-      // [2026-10-05 falso-zumbi de 60s] Se o PRÓPRIO timer foi estrangulado ou
-      // suspenso (Chrome dispara setInterval de aba oculta 1x/min; iOS congela o
-      // JS em background), o "pong atrasado" é artefato: o ping anterior saiu há
-      // 60s+. Declarar zumbi aqui matava um socket SAUDÁVEL a cada minuto —
-      // hub/nginx: socket vive 59,4s → close 1005 → reconecta → repete, com um
-      // 2º socket duplicado morrendo na hora. Pula a sentença neste tick com
-      // baseline fresca; o próximo tick (já desestrangulado) julga de verdade,
-      // e o hub (PongWait 90s) limpa socket morto enquanto a aba está oculta.
-      if (_prevPingTs && (this._pingTs - _prevPingTs) > (interval * 2 + 1000)) {
-        this.lastPongTime = this._pingTs;
-        return;
-      }
-      // No pong in timeout = dead socket (Telegram-style aggressive).
-      if (this.lastPongTime && (Date.now() - this.lastPongTime) > timeout) {
-        this._droppedCount++;
-        this._cleanup();
-        if (!this.destroyed) {
-          this.reconnectAttempt = 0; // Reset backoff for fast reconnect
-          this._scheduleReconnect();
+        // Socket morreu sem onclose (ou onclose já agendou reconexão).
+        if (!this.reconnectTimer && !this.destroyed) {
+          this._droppedCount++;
+          this.ensureConnected('ping_tick_dead');
         }
+        return;
       }
-    }, interval);
+      const prev = this._lastTickAt || 0;
+      const t = Date.now();
+      this._lastTickAt = t;
+      if (prev && (t - prev) > (interval * 2 + 1000)) {
+        // Timer atrasado = JS esteve suspenso; não condena o socket por isso.
+        this.lastPongTime = t;
+        this.lastInboundAt = Math.max(this.lastInboundAt || 0, t);
+      }
+      const sentAt = t;
+      this._pingTs = sentAt;
+      try { this._send({ type: 'ping', ts: sentAt }); } catch {}
+      // Um deadline POR ping (thread: interval 5s < deadline 6s → até 2
+      // simultâneos), senão a morte logo após um pong só seria julgada um
+      // ciclo depois.
+      const ws = this.ws;
+      if (!this._pongDeadlines) this._pongDeadlines = new Set();
+      const dl = setTimeout(() => {
+        try { this._pongDeadlines && this._pongDeadlines.delete(dl); } catch {}
+        if (this.ws !== ws || this.destroyed || this._hidden) return;
+        const late = Date.now() - sentAt;
+        if (late > deadline + interval * 2 + 1000) return; // timer estrangulado
+        if ((this.lastInboundAt || 0) >= sentAt || (this.lastPongTime || 0) >= sentAt) return;
+        try { console.warn('[WS] sem frame ' + deadline + 'ms após ping — half-open, reconectando'); } catch {}
+        this._logGhost?.('pong_deadline', { interval, deadline });
+        this._droppedCount++;
+        this.ensureConnected('pong_deadline', { force: true });
+      }, deadline);
+      this._pongDeadlines.add(dl);
+    };
+    this._lastTickAt = Date.now();
+    this.pingTimer = setInterval(tick, interval);
   }
 
   // Toggle aggressive ping cadence while a call is in progress. Webrtc.js
@@ -1314,61 +1464,53 @@ class MailWebSocket {
   ensureHealthy(arg) {
     // Token path — caller passed a JWT string.
     if (typeof arg === 'string') {
-      const token = arg;
-      if (this.isConnected && this.authenticated && this.token === token) return false;
-      if (!this.destroyed) {
-        try { this._cleanup(); } catch {}
-      }
-      this.destroyed = false;
-      if (this.token !== token) this.token = token;
-      this.connect(token);
-      return true;
+      // [2026-10-06 rock-solid] Caminho de chamada (IncomingCallListener):
+      // urgente, mas NUNCA mata um socket saudável ou em voo.
+      if (this.isConnected && this.authenticated) return false;
+      const r = this.ensureConnected('ensureHealthy_token', { urgent: true });
+      return r === 'connecting';
     }
     // Original async health-check path (timeoutMs, defaults to 1500).
     return this._ensureHealthyPing(typeof arg === 'number' ? arg : 1500);
   }
 
   async _ensureHealthyPing(timeoutMs = 1500) {
-    if (this.destroyed) return false;
-    // Socket fully dead — force reconnect.
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.authenticated) {
-      try { this._cleanup(); } catch {}
-      this.destroyed = false;
-      this.reconnectAttempt = 0;
-      if (this.token) this.connect(this.token);
+    // [2026-10-06 rock-solid] Antes: socket não-autenticado → _cleanup()+connect()
+    // INCONDICIONAL. Chamado a cada 1.5s pelo heal-watchdog da lista e a cada 3s
+    // pela thread enquanto !isConnected, isso matava o handshake em curso: em
+    // link lento (handshake >1.5s, ex. Europa→US) o socket NUNCA autenticava
+    // (hub: sockets "()" fechando normal ~0.75s após abrir, 1/s; harness: 21
+    // sockets em 30s, 0 auth). Agora passa pelo dono único (não-urgente: não
+    // mata voo nem fura o backoff) e só espera.
+    if (this.destroyed && !this.token) return false;
+    const waitAuthed = (ms) => new Promise((resolve) => {
       const start = Date.now();
-      while (!this.isConnected && Date.now() - start < timeoutMs) {
-        await new Promise(r => setTimeout(r, 100));
-      }
-      return this.isConnected;
+      const check = () => {
+        if (this.isConnected) return resolve(true);
+        if (Date.now() - start >= ms) return resolve(false);
+        setTimeout(check, 100);
+      };
+      check();
+    });
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.authenticated) {
+      this.ensureConnected('ensureHealthy');
+      return waitAuthed(timeoutMs);
     }
-    // Socket says alive — verify with a ping. iOS often returns OPEN for
-    // a socket the radio sleep already killed.
+    // Socket diz que está vivo — confirma com ping (iOS mente OPEN). Qualquer
+    // frame que chegar depois do ping conta como vida, não só o pong.
+    const probeMs = Math.max(1500, Math.min(timeoutMs, 2500));
     return await new Promise((resolve) => {
       const sentAt = Date.now();
       this._pingTs = sentAt;
       try { this._send({ type: 'ping', ts: sentAt }); } catch {}
+      let sub = null;
       const watchdog = setTimeout(() => {
-        if (this.lastPongTime < sentAt) {
-          // Zombie — force reconnect.
-          try { this._cleanup(); } catch {}
-          this.destroyed = false;
-          this.reconnectAttempt = 0;
-          if (this.token) this.connect(this.token);
-          // Wait briefly for handshake.
-          const checkStart = Date.now();
-          const check = () => {
-            if (this.isConnected) return resolve(true);
-            if (Date.now() - checkStart > timeoutMs) return resolve(false);
-            setTimeout(check, 100);
-          };
-          check();
-        } else {
-          resolve(true);
-        }
-      }, Math.min(timeoutMs, 1500));
-      // Pong arrived before watchdog → clear early.
-      const sub = this.on('pong', () => {
+        try { sub && sub(); } catch {}
+        if ((this.lastPongTime || 0) >= sentAt || (this.lastInboundAt || 0) >= sentAt) return resolve(true);
+        this.ensureConnected('ensureHealthy_probe_dead', { force: true });
+        waitAuthed(timeoutMs).then(resolve);
+      }, probeMs);
+      sub = this.on('pong', () => {
         clearTimeout(watchdog);
         try { sub(); } catch {}
         resolve(true);
@@ -1379,6 +1521,10 @@ class MailWebSocket {
   _stopPing() {
     clearInterval(this.pingTimer);
     this.pingTimer = null;
+    if (this._pongDeadlines && this._pongDeadlines.size) {
+      for (const t of this._pongDeadlines) { try { clearTimeout(t); } catch {} }
+      this._pongDeadlines.clear();
+    }
   }
 
   // [2026-10-05] Cancel the connected-but-unauthenticated watchdog armed in
@@ -1495,16 +1641,21 @@ class MailWebSocket {
     // reconnectAttempt=0 for genuine drops, (b) the 9s banner grace in
     // chat-conversation means these fast retries never paint "Reconectando",
     // and (c) the hub absorbs the load (memgate on HeapInuse, not per-connect).
-    const EARLY_DELAYS = [0, 250, 500, 1000];
+    // [2026-10-06 rock-solid] 0 → ~300ms → ~1s → ~2s, depois exponencial com
+    // jitter (equal-jitter: metade fixa + metade aleatória) até RECONNECT_MAX
+    // (10s). Foreground / rede voltando / ação do usuário furam o backoff via
+    // ensureConnected({urgent}). Rede sabidamente offline (NetInfo) → direto
+    // no teto: não adianta martelar uma interface morta; a volta da rede
+    // reconecta na hora.
+    const EARLY_DELAYS = [0, 300, 1000, 2000];
     let delay;
-    if (this.reconnectAttempt < EARLY_DELAYS.length) {
-      // Small additive jitter (0-150ms) so a fleet reconnecting after a shared
-      // outage doesn't hit the hub in lockstep, while keeping attempt 0 ~instant.
-      delay = EARLY_DELAYS[this.reconnectAttempt] + Math.floor(Math.random() * 150);
+    if (this._netOffline) {
+      delay = RECONNECT_MAX + Math.floor(Math.random() * 2000);
+    } else if (this.reconnectAttempt < EARLY_DELAYS.length) {
+      delay = EARLY_DELAYS[this.reconnectAttempt] + Math.floor(Math.random() * 200);
     } else {
-      // Sustained outage: full-jitter exponential backoff capped at RECONNECT_MAX.
-      const cap = Math.min(RECONNECT_BASE * Math.pow(2, Math.min(this.reconnectAttempt, 5)), RECONNECT_MAX);
-      delay = Math.max(RECONNECT_BASE, Math.floor(Math.random() * cap));
+      const cap = Math.min(1000 * Math.pow(2, Math.min(this.reconnectAttempt - 2, 6)), RECONNECT_MAX);
+      delay = Math.floor(cap / 2 + Math.random() * (cap / 2));
     }
     this.reconnectAttempt++;
     this._emit('connection', {
@@ -1904,6 +2055,13 @@ class MailWebSocket {
         break;
 
       case 'welcome':
+        break;
+
+      // [2026-10-06 rock-solid] Hub avisa que esta conexão foi substituída por
+      // uma mais nova da MESMA instância (instance_id) e vai fechá-la (4009).
+      // Nada a fazer: o socket atual já é o novo.
+      case 'superseded':
+        this._logGhost?.('superseded', {});
         break;
 
       // Avatar changed on another device — bust local cache so every

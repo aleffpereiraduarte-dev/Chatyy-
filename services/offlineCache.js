@@ -831,7 +831,10 @@ export async function replayOfflineQueue(api) {
                 { skipRust: true },
               ),
               new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('chat_send_timeout')), 5000)
+                // [send-reliability 2026-10-06] 5s < api.js chat_send budget
+                // (10s): the race abandoned requests that were still in
+                // flight and re-sent them on the next pass. 12s > 10s.
+                setTimeout(() => reject(new Error('chat_send_timeout')), 12000)
               ),
             ]);
           } catch (sendErr) {

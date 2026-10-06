@@ -44,6 +44,9 @@ import Svg, { Path } from 'react-native-svg';
 import CircularProgressArc from '../components/CircularProgressArc';
 // [2026-10-06 thread-tech] per-row overlay store (download %, painted, error, delete-fade, translation)
 import { useRowOverlayStore, useOverlaySetter, useRowOverlayVersion, useComposerTextStore, ThreadComposerHost } from '../utils/threadRowOverlay';
+// [2026-10-06 keyboard-controller] Keyboard glued to the composer on the UI
+// thread (native) / RN KeyboardAvoidingView fallback (web + binaries without KC).
+import { ThreadKeyboardAvoider, ThreadKeyboardGestureArea, THREAD_LIST_KEYBOARD_DISMISS_MODE, THREAD_COMPOSER_NATIVE_ID } from '../utils/threadKeyboard';
 import PressableScale from '../components/PressableScale'; // [2026-10-06 UX2] contact info sheet
 import FadeSlideIn from '../components/FadeSlideIn'; // [2026-10-06 UX2]
 import { isReduceMotionEnabled } from '../components/reducedMotion'; // [2026-10-04] honor OS Reduce Motion
@@ -7834,6 +7837,12 @@ function ChatConversationInner() {
   const confirm = useConfirm();
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  // [2026-10-06 keyboard-controller] Constant bottom inset of the composer
+  // (home indicator / Android nav bar). It no longer flips to 0 while the
+  // keyboard is open — ThreadKeyboardAvoider lifts the screen by
+  // (keyboardHeight - composerBottomPad), so the composer still sits flush on
+  // the keyboard without any React state / re-render / layout jump.
+  const composerBottomPad = Math.max(insets.bottom, Spacing.sm);
   const params = useLocalSearchParams();
   const flatListRef = useRef(null);
   // Declared up here so `safeScrollToMsg`'s useCallback dependency array can
@@ -9874,7 +9883,6 @@ function ChatConversationInner() {
   // gate the "online" label so we never falsely claim a peer is available when
   // the data is stale (no presence push for >35s).
   const presenceUpdatedAtRef = useRef(0);
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [mediaViewer, setMediaViewer] = useState({ visible: false, fileUrl: '', fileName: '', fileSize: 0, type: '', blurhash: null, placeholderUri: null, thumbUri: null });
   // Round video note viewer — stays circular (WhatsApp parity, never rect fullscreen).
   const [roundVideoViewer, setRoundVideoViewer] = useState({ visible: false, uri: null });
@@ -10741,41 +10749,18 @@ function ChatConversationInner() {
   }, [messages, currentEmail, liveLocActive]);
 
   // ============================================================
-  // KEYBOARD HANDLING (fixes modal keyboard overlap on iOS)
+  // KEYBOARD HANDLING
   // ============================================================
+  // [2026-10-06 keyboard-controller] The `keyboardHeight` state + Android
+  // LayoutAnimation are GONE: the keyboard offset now lives on the UI thread
+  // (ThreadKeyboardAvoider, utils/threadKeyboard.native.js), so opening /
+  // closing / interactively dragging the keyboard re-renders NOTHING here.
+  // This listener only keeps the "snap to newest on open" nicety (no state).
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
     const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    // [P0 CRASH FIX 2026-05-26] LayoutAnimation is REMOVED on iOS here.
-    // Under the New Architecture (Fabric) the legacy LayoutAnimation API is
-    // unsafe: a configureNext() tick can be mid-flight when the composer tears
-    // down the AudioRecorder and mounts the new audio bubble (send-voice path),
-    // and Fabric's mounting transaction then dereferences a freed shadow node
-    // → EXC_BAD_ACCESS (SIGSEGV) at 0x18 on the main thread (crash stack:
-    // UIManager::animationTick → LayoutAnimationDelegateProxy::activityDidChange
-    // → RCTMountingManager performTransaction). The keyboard transition on iOS
-    // is already smooth without LayoutAnimation because `keyboardWillShow`/Hide
-    // fire before the frame change; the spacer just snaps to the (already
-    // animated) keyboard height. LayoutAnimation stays ONLY on Android, where
-    // it is stable and the crash does not occur.
-    let LayoutAnimation = null;
-    if (Platform.OS === 'android') {
-      try { ({ LayoutAnimation } = require('react-native')); } catch {}
-    }
-    const onShow = (e) => {
-      try {
-        if (LayoutAnimation) {
-          LayoutAnimation.configureNext({
-            duration: 220,
-            create:   { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-            update:   { type: LayoutAnimation.Types.easeInEaseOut },
-            delete:   { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-          });
-        }
-      } catch {}
-      setKeyboardHeight(e.endCoordinates.height);
+    const onShow = () => {
       // Only snap to newest when already near the bottom. If the user is reading
       // history (scrolled up — e.g. to quote/reply), opening the keyboard must
       // NOT yank them down. Inverted list: offset 0 == bottom (newest).
@@ -10785,29 +10770,11 @@ function ChatConversationInner() {
         });
       }
     };
-    const onHide = (e) => {
-      try {
-        if (LayoutAnimation) {
-          LayoutAnimation.configureNext({
-            duration: 180,
-            create:   { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-            update:   { type: LayoutAnimation.Types.easeInEaseOut },
-            delete:   { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-          });
-        }
-      } catch {}
-      setKeyboardHeight(0);
-    };
     const sub1 = Keyboard.addListener(showEvent, onShow);
-    const sub2 = Keyboard.addListener(hideEvent, onHide);
-    // Reset any stale keyboard offset when the screen mounts. Without this,
-    // navigating to the conversation while the keyboard was open on the
-    // previous screen leaves `keyboardHeight > 0` and the bottom spacer
-    // (line ~9980) pushes the whole chat up by ~300pt — the "fica encima
-    // como se o keyboard tivesse aberto" bug.
-    setKeyboardHeight(0);
+    // Navigating here with the keyboard still up from the previous screen
+    // would otherwise open the thread lifted. Dismiss on mount.
     try { Keyboard.dismiss(); } catch {}
-    return () => { sub1.remove(); sub2.remove(); };
+    return () => { sub1.remove(); };
   }, []);
 
   // ============================================================
@@ -12163,7 +12130,7 @@ function ChatConversationInner() {
             id: p.temp_id || ('tmp_' + cmi),
             conversation_id: conversationId,
             sender_email: p.sender_email || currentEmail,
-            content: p.content || p.caption || '',
+            content: p.display_content || p.content || p.caption || '',
             type: p.type || 'text',
             file_url: p.file_url || p.local_uri || null,
             file_name: p.file_name || null,
@@ -15135,6 +15102,9 @@ function ChatConversationInner() {
             conversation_id: conversationId,
             temp_id: tempId,
             content: text,
+            // [send-reliability] plaintext for the restored bubble; `content`
+            // is swapped for the E2E envelope below once encryption finishes.
+            display_content: text,
             type: 'text',
             reply_to_id: replyId,
             mentions: currentMentions,
@@ -15242,6 +15212,19 @@ function ChatConversationInner() {
         return;
       }
       contentToSend = encrypted;
+      // [send-reliability] A worker retry must send the SAME ciphertext, never
+      // the plaintext that was enqueued before encryption.
+      if (OUTBOX_V2_ONLY) _outboxThen(() => messageOutbox.updatePayload?.(msgId, { content: encrypted, _e2e: true }));
+    }
+
+    // [send-reliability 2026-10-06] Per-conversation FIFO. If an OLDER message
+    // of this conversation is still waiting for a retry (backoff) or is being
+    // sent by the worker, this one must NOT overtake it — neither over HTTP nor
+    // via the WS relay. It stays on the clock and the worker sends both in seq
+    // order (see the deferral inside enqueueChatSend below).
+    let _convBusyAtSend = false;
+    if (OUTBOX_V2_ONLY) {
+      try { _convBusyAtSend = !!require('../services/sendWorker').isConversationBusy?.(conversationId); } catch {}
     }
 
     try {
@@ -15264,7 +15247,7 @@ function ChatConversationInner() {
       // waiting on their own poll cycle.
       // [SEND-07, 2026-05-19] Carry ciphertext envelope (`contentToSend`),
       // NOT the plaintext content. Peers decrypt locally from the envelope.
-      mailWs.relayChatMessage(conversationId, {
+      if (!_convBusyAtSend) mailWs.relayChatMessage(conversationId, {
         ...optimisticMsg,
         content: contentToSend,
         _optimistic: true,
@@ -15291,7 +15274,7 @@ function ChatConversationInner() {
       //      `chat_delivered` now buffers its id (deliveredIdBufferRef) and the
       //      HTTP swap re-applies it; read receipts self-heal via readReceipts
       //      state which is re-evaluated against the server id on every render.
-      if (wsOk) {
+      if (wsOk && !_convBusyAtSend) {
         setMessages(prev => prev.map(m =>
           (m.id === tempId || m._client_id === msgId)
             ? { ...m, _pending: false, _queued: false }
@@ -15401,7 +15384,33 @@ function ChatConversationInner() {
       // user long-presses again to set another effect before the request
       // completes, that's the next message — don't let this one bleed in.
       if (stagedEffect) setStagedEffect(null);
-      const sendPromise = enqueueChatSend(() => api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions, null, tempId, msgId, activeTopic?.id, _sendOpts))
+      const sendPromise = enqueueChatSend(async () => {
+        if (OUTBOX_V2_ONLY) {
+          // Re-check at OUR turn in the per-screen chain: the previous message
+          // may have just failed (it notes the backlog synchronously below).
+          let _busyNow = _convBusyAtSend;
+          if (!_busyNow) { try { _busyNow = !!require('../services/sendWorker').isConversationBusy?.(conversationId); } catch {} }
+          if (_busyNow) {
+            // Hand the row to the worker (state 'sending' → 'queued', due now,
+            // attempt not counted). It flushes the older row(s) first, then this.
+            try { await _outboxReady; } catch {}
+            try { await messageOutbox.release?.(msgId); } catch {}
+            try { require('../services/sendWorker').poke?.(); } catch {}
+            return { success: false, _deferred: true };
+          }
+        }
+        try {
+          const _res = await api.chatSend(conversationId, contentToSend, 'text', replyId, currentMentions, null, tempId, msgId, activeTopic?.id, _sendOpts);
+          if (OUTBOX_V2_ONLY) {
+            const _k = messageOutbox.classifySendResult?.(_res);
+            if (_k === 'transient' || _k === 'offline') messageOutbox.noteBacklog?.(conversationId);
+          }
+          return _res;
+        } catch (_e) {
+          if (OUTBOX_V2_ONLY) { try { messageOutbox.noteBacklog?.(conversationId); } catch {} }
+          throw _e;
+        }
+      })
         .then((res) => {
           // Late success after timeout: reconcile silently so duplicate
           // server rows don't appear; server-side client_message_id dedup
@@ -15592,7 +15601,15 @@ function ChatConversationInner() {
             }
           }
         } catch {}
-        if (!_rescued) {
+        if (!_rescued && OUTBOX_V2_ONLY) {
+          // [send-reliability] The SQLite outbox is the single retry owner on
+          // native: keep the clock, back off, retry after the session heals
+          // (api.js refresh / WS re-auth kicks the worker). No MMKV twin queue.
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: 'unauthorized' } : m));
+          _outboxThen(() => messageOutbox.markFailed(msgId, 'unauthorized', { kind: 'transient' }));
+          _outboxThen(() => { try { require('../services/sendWorker').poke?.(); } catch {} });
+          _dropOptimisticNativeRow();
+        } else if (!_rescued) {
           // Storage didn't help — queue offline (not /login). The offline
           // drainer retries with backoff and the message survives a true
           // session expiry across the next successful login. UI flips to
@@ -15615,6 +15632,25 @@ function ChatConversationInner() {
             _outboxThen(() => messageOutbox.markFailed(msgId, 'unauthorized'));
           }
         }
+      } else if (OUTBOX_V2_ONLY) {
+        // [send-reliability 2026-10-06] Native: the SQLite outbox is the ONLY
+        // retry owner (no MMKV twin queue → no double sender). Transient
+        // (5xx / edge 503 / 429 / timeout / offline) keeps the clock and the
+        // worker retries with backoff + on reconnect/foreground; only a
+        // definitive 4xx turns the bubble red with tap-to-retry. A deferred
+        // send (older message still pending) was already handed to the worker.
+        const _kind = r?._deferred ? 'deferred' : (messageOutbox.classifySendResult?.(r) || 'transient');
+        if (_kind === 'hard') {
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _queued: false, _client_id: msgId, _sendError: r?.message || 'rejected' } : m));
+          _outboxThen(() => messageOutbox.markFailed(msgId, r?.message || r?.error || 'rejected', { kind: 'hard' }));
+        } else {
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId } : m));
+          if (_kind !== 'deferred') {
+            _outboxThen(() => messageOutbox.markFailed(msgId, r?.message || r?.error || 'server_error', { kind: _kind === 'offline' ? 'offline' : 'transient' }));
+          }
+          _outboxThen(() => { try { require('../services/sendWorker').poke?.(); } catch {} });
+        }
+        _dropOptimisticNativeRow();
       } else {
         // Server error — queue for retry instead of showing error (WhatsApp-style).
         // Carry the iMessage-style `effect` so the offline replay still
@@ -15642,9 +15678,21 @@ function ChatConversationInner() {
     } catch (e) {
       // Log the REAL error to console for debugging (visible in Xcode/Safari dev tools)
       console.error('[chat_send] FAILED with error:', e?.message || String(e), 'url:', require('../services/api').getApiUrl?.(), 'err:', e);
-      // Network error → queue for auto-retry when back online (works whether truly offline
-      // or just a transient failure: server dedupes by client_message_id so re-sends are safe).
-      try {
+      if (OUTBOX_V2_ONLY) {
+        // [send-reliability 2026-10-06] Thrown error / UI timeout race → keep
+        // the clock; the outbox worker owns the retry (same client_message_id,
+        // server dedups, so a send that actually landed comes back as the
+        // original row — never a duplicate).
+        const _k = messageOutbox.classifySendResult?.(null, e) || 'transient';
+        if (_k === 'hard') {
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _failed: true, _pending: false, _queued: false, _client_id: msgId, _sendError: e?.message || 'rejected' } : m));
+        } else {
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, _pending: true, _failed: false, _queued: true, _client_id: msgId, _sendError: e?.message || 'network' } : m));
+        }
+        _outboxThen(() => messageOutbox.markFailed(msgId, e?.message || 'network', { kind: _k }));
+        _outboxThen(() => { try { require('../services/sendWorker').poke?.(); } catch {} });
+        _dropOptimisticNativeRow();
+      } else try {
         const { queueOfflineAction, replayOfflineQueue } = require('../services/offlineCache');
         await queueOfflineAction({
           type: 'chat_send',
@@ -26521,18 +26569,16 @@ function ChatConversationInner() {
   }
 
   return (
-    <KeyboardAvoidingView
-      // iOS: padding. Android: 'height' explicitly. Pure adjustResize
-      // alone leaves the composer hidden behind Gboard's TOOLBAR row
-      // (sticker/GIF/emoji shortcuts) on real devices because IME-only
-      // insets don't account for the toolbar. behavior=height shrinks the
-      // KAV by the keyboard's reported height so the composer floats
-      // above. The "phantom strip on close" bug from before is mitigated
-      // by setting keyboardHeight=0 on keyboardDidHide in the listener,
-      // which already runs (line ~7160).
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    <ThreadKeyboardAvoider
+      // [2026-10-06 keyboard-controller] Was RN <KeyboardAvoidingView
+      // behavior=padding|height> driven by the `keyboardHeight` state. Native
+      // (KC available): a Reanimated view whose paddingBottom follows the
+      // keyboard on the UI thread every frame (open/close/interactive). Web or
+      // a binary without KC: RN KeyboardAvoidingView (padding iOS / height
+      // Android) with keyboardVerticalOffset=-bottomInset. See
+      // utils/threadKeyboard(.native).js.
+      bottomInset={composerBottomPad}
       style={[styles.container, { backgroundColor: isDark ? '#0b141a' : '#f0f2f5' }]}
-      keyboardVerticalOffset={0}
     >
       {/* Drag-and-drop overlay (web only) — appears while the user is
           dragging a file over the window. Click-through is disabled so the
@@ -27760,6 +27806,7 @@ function ChatConversationInner() {
             )}
           </View>
         )}
+        <ThreadKeyboardGestureArea>
         <FlatList
           ref={flatListRef}
           data={flatListData}
@@ -27767,8 +27814,12 @@ function ChatConversationInner() {
           keyExtractor={msgKeyExtractor}
           renderItem={memoizedRenderItem}
           contentContainerStyle={messageListContentStyle}
-          // [2026-10-06 android-audit] 'interactive' is iOS-only; Android needs 'on-drag'.
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+          // [2026-10-06 android-audit] 'interactive' is iOS-only on RN's ScrollView.
+          // [2026-10-06 keyboard-controller] iOS: 'interactive' (KC tracks the
+          // drag → composer follows the finger). Android 11+ with KC: the
+          // KeyboardGestureArea wrapper drives the interactive dismiss, so the
+          // list must not also dismiss on drag; older Android / no KC: 'on-drag'.
+          keyboardDismissMode={THREAD_LIST_KEYBOARD_DISMISS_MODE}
           keyboardShouldPersistTaps="handled"
           bounces={false}
           overScrollMode="never"
@@ -27811,6 +27862,7 @@ function ChatConversationInner() {
           // re-enabled clipping on native and brought back the inverted
           // FlatList row-jump bug we already fixed.
         />
+        </ThreadKeyboardGestureArea>
         </>
       )}
 
@@ -28372,8 +28424,8 @@ function ChatConversationInner() {
             zIndex: 30, elevation: 10,
             justifyContent: 'flex-end',
             backgroundColor: isDark ? '#111b21' : '#f0f2f5',
-            paddingBottom: keyboardHeight > 0 ? 6 : Math.max(insets.bottom, Spacing.sm),
-          } : { paddingBottom: keyboardHeight > 0 ? 0 : Math.max(insets.bottom, Spacing.sm) }}
+            paddingBottom: composerBottomPad,
+          } : { paddingBottom: composerBottomPad }}
         >
           <ErrorBoundary onReset={() => { setIsRecording(false); setVoiceHoldMode(null); }}>
             <AudioRecorder
@@ -28643,16 +28695,13 @@ function ChatConversationInner() {
           opacity: (blockedByPeer || iBlockedPeer) && conversationType === 'direct' ? 0.4 : 1,
           // Bottom safe-area so the composer clears the system bar on BOTH
           // platforms: Android nav/gesture bar (insets.bottom ≈ 48px) and iOS
-          // home indicator (≈ 34px). When the keyboard is OPEN the OS draws it
-          // over that area, so padding = 0 (composer sits flush on the keyboard,
-          // no gap). When CLOSED we MUST use the full inset — the old cap at
-          // 16px (2026-05) left the Android nav bar overlapping the bottom of
-          // the composer (reported: "embaixo no Android tá cortando"). The
-          // keyboardHeight==0 branch already handles the dismiss gap, so the
-          // cap was unnecessary and caused the overlap.
-          paddingBottom: keyboardHeight > 0
-            ? 0
-            : Math.max(insets.bottom, Spacing.sm),
+          // home indicator (≈ 34px). Never cap it (the 16px cap of 2026-05 left
+          // the Android nav bar over the composer — "embaixo no Android tá
+          // cortando"). [2026-10-06 keyboard-controller] CONSTANT now, also
+          // with the keyboard open: ThreadKeyboardAvoider lifts the screen by
+          // keyboardHeight - composerBottomPad, so the composer is flush on the
+          // keyboard with no padding flip (= no layout jump, no re-render).
+          paddingBottom: composerBottomPad,
         }]}>
           {/* WhatsApp pill container — 2026 refined.
               Telegram-style horizontal swipe: a short flick LEFT on the
@@ -28696,6 +28745,8 @@ function ChatConversationInner() {
             <View style={{ flex: 1, position: 'relative' }}>
             <TextInput
               ref={inputRef}
+              // KeyboardGestureArea (Android interactive dismiss) is scoped to this input.
+              nativeID={THREAD_COMPOSER_NATIVE_ID}
               style={{
                 width: '100%', fontSize: 15,
                 // [bug 2026-05-14 android-font-strange-while-typing]
@@ -33774,7 +33825,7 @@ function ChatConversationInner() {
           ) : null}
         </View>
       </Modal>
-    </KeyboardAvoidingView>
+    </ThreadKeyboardAvoider>
   );
 }
 

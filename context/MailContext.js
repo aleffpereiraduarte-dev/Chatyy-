@@ -1362,9 +1362,26 @@ export function MailProvider({ children }) {
     if (token && user?.email) {
       authRef.current = token;
       if (lastConnectedEmailRef.current !== user.email) {
+        const prevEmail = lastConnectedEmailRef.current;
         lastConnectedEmailRef.current = user.email;
-        mailWs.reset();
-        mailWs.connect(token);
+        // [2026-10-06 ws rock-solid] Dono único: nada de reset()+connect() às
+        // cegas. No cold start o socket do eager bootstrap já está em voo/
+        // autenticado com o token desta conta → ensureConnected é no-op (antes:
+        // um slide do bearer durante a hidratação fazia o connect() derrubar o
+        // socket 100-900ms depois do auth em TODO reload). Só TROCA DE CONTA
+        // (outro e-mail logado nesta sessão, ou socket autenticado como outra
+        // conta) zera estado e força socket novo.
+        const wsEmail = String(mailWs.email || '').toLowerCase();
+        const accountSwitch = (!!prevEmail && prevEmail !== user.email) ||
+          (!!wsEmail && wsEmail !== String(user.email).toLowerCase());
+        if (accountSwitch) {
+          mailWs.reset();
+          mailWs.ensureConnected?.('account_switch', { force: true });
+        } else if (typeof mailWs.ensureConnected === 'function') {
+          mailWs.ensureConnected('mailcontext_login', { urgent: true });
+        } else {
+          mailWs.connect(token);
+        }
         // ─── Phoenix parallel transport (flag-gated, ADDITIVE) ───
         // Started IN PARALLEL with the Go WS (which stays connected for email
         // real-time). When USE_PHOENIX_HUB is OFF (default / shipped), this is

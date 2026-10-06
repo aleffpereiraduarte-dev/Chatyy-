@@ -81,6 +81,11 @@ object CallSignalWs {
     private val wsRef = AtomicReference<WebSocket?>(null)
     private val authenticated = AtomicBoolean(false)
     private val connecting = AtomicBoolean(false)
+    // [2026-10-06 ws rock-solid] Dedupe de reconexões agendadas + filtro de
+    // callbacks de sockets antigos (onFailure/onClosed de um ws que já não é o
+    // atual disparava onDisconnect → reconnect extra → sockets órfãos
+    // autenticados no hub). Espelho do fix em CallSignalWs.swift.
+    private val reconnectScheduled = AtomicBoolean(false)
     private val reconnectAttempts = AtomicInteger(0)
     private val queue = ConcurrentLinkedQueue<String>()
     private var authTimeoutJob: Job? = null
@@ -327,7 +332,11 @@ object CallSignalWs {
     }
 
     private fun connect() {
+        // Já autenticado num socket vivo → disparo atrasado de reconnect; ignora.
+        if (authenticated.get() && wsRef.get() != null) return
         if (!connecting.compareAndSet(false, true)) return
+        // Nunca deixa um socket anterior vivo/órfão.
+        wsRef.getAndSet(null)?.let { old -> try { old.cancel() } catch (_: Throwable) {} }
         val ctx = appContext ?: run {
             connecting.set(false)
             return
@@ -377,11 +386,16 @@ object CallSignalWs {
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
                 Log.w(TAG, "WS failure: ${t.message}")
+                // Callback de socket antigo (já substituído) → não derruba o atual.
+                val cur = wsRef.get()
+                if (cur != null && cur !== ws) return
                 onDisconnect()
             }
 
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
                 Log.d(TAG, "WS closed: $code $reason")
+                val cur = wsRef.get()
+                if (cur != null && cur !== ws) return
                 onDisconnect()
             }
         }
@@ -760,6 +774,7 @@ object CallSignalWs {
         // path — needs to receive inbound call_invite frames even with an
         // empty outgoing queue).
         if (queue.isEmpty() && !keepAlive.get()) return
+        if (reconnectScheduled.get()) return
         val attempt = reconnectAttempts.getAndIncrement()
         if (attempt >= MAX_RECONNECT) {
             if (keepAlive.get()) {
@@ -768,8 +783,10 @@ object CallSignalWs {
                 // native ring fallback for inbound call_invite.
                 Log.w(TAG, "keep-alive: $MAX_RECONNECT attempts spent — slow retry in 30s")
                 reconnectAttempts.set(0)
+                if (!reconnectScheduled.compareAndSet(false, true)) return
                 scope.launch {
                     delay(30_000L)
+                    reconnectScheduled.set(false)
                     connect()
                 }
                 return
@@ -779,8 +796,10 @@ object CallSignalWs {
         }
         val backoff = RECONNECT_BACKOFF_MS[attempt.coerceAtMost(RECONNECT_BACKOFF_MS.size - 1)]
         Log.d(TAG, "reconnect: attempt ${attempt + 1}/$MAX_RECONNECT in ${backoff}ms")
+        if (!reconnectScheduled.compareAndSet(false, true)) return
         scope.launch {
             delay(backoff)
+            reconnectScheduled.set(false)
             connect()
         }
     }

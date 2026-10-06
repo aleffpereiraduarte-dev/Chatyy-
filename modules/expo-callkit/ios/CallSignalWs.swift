@@ -67,6 +67,16 @@ final class CallSignalWs: NSObject {
     private var session: URLSession?
     private var task: URLSessionWebSocketTask?
     private var authed: Bool = false
+    // [2026-10-06 ws rock-solid] Dedupe de reconexões agendadas. Antes, CADA
+    // callback de falha (receive, send do auth, ping, send do drain, auth
+    // timeout — inclusive de tasks ANTIGAS) chamava onDisconnectLocked →
+    // scheduleReconnectLocked → N asyncAfter(connectLocked). connectLocked só
+    // checava `connecting` (que vira false no auth_success), então o 2º..Nº
+    // disparo abria tasks NOVAS sobrescrevendo `task` sem cancelar a anterior:
+    // sockets órfãos autenticados vivos no hub (prod 2026-10-06: 459 de 570
+    // auths do founder sem `resume` = não-JS; 4-5 sockets abertos 1-2s um do
+    // outro, todos morrendo 1006 juntos quando o iOS suspende o app).
+    private var reconnectScheduled: Bool = false
     private var connecting: Bool = false
     private var pendingMessages: [String] = []
     private var reconnectAttempts: Int = 0
@@ -323,6 +333,9 @@ final class CallSignalWs: NSObject {
     /// Called on `queue`.
     private func connectLocked() {
         guard !connecting else { return }
+        // Já autenticado num task vivo → nada a fazer (disparo atrasado de um
+        // reconnect agendado antes do auth_success).
+        if authed, task != nil { return }
         guard let ud = UserDefaults(suiteName: kAppGroupId),
               let token = ud.string(forKey: "auth_token"), !token.isEmpty else {
             NSLog("[CallSignalWs] connect: no auth_token in App Group — skipping (JS fallback will fire)")
@@ -337,6 +350,11 @@ final class CallSignalWs: NSObject {
             session = URLSession(configuration: cfg, delegate: nil, delegateQueue: nil)
         }
 
+        // Nunca deixa um task anterior vivo/órfão.
+        if let old = task {
+            task = nil
+            old.cancel(with: .goingAway, reason: nil)
+        }
         let newTask = session!.webSocketTask(with: kWsURL)
         task = newTask
         newTask.resume()
@@ -348,7 +366,7 @@ final class CallSignalWs: NSObject {
         newTask.send(.string(authMsg)) { [weak self] err in
             if let err = err {
                 NSLog("[CallSignalWs] auth send failed: \(err.localizedDescription)")
-                self?.queue.async { self?.onDisconnectLocked() }
+                self?.queue.async { self?.onDisconnectLocked(from: newTask) }
             }
         }
 
@@ -358,10 +376,9 @@ final class CallSignalWs: NSObject {
         let work = DispatchWorkItem { [weak self] in
             guard let self = self else { return }
             self.queue.async {
-                if !self.authed {
+                if !self.authed, self.task === newTask {
                     NSLog("[CallSignalWs] auth timeout — closing")
-                    self.task?.cancel(with: .normalClosure, reason: nil)
-                    self.onDisconnectLocked()
+                    self.onDisconnectLocked(from: newTask)
                 }
             }
         }
@@ -380,7 +397,7 @@ final class CallSignalWs: NSObject {
             switch result {
             case .failure(let err):
                 NSLog("[CallSignalWs] receive failure: \(err.localizedDescription)")
-                self.queue.async { self.onDisconnectLocked() }
+                self.queue.async { self.onDisconnectLocked(from: task) }
             case .success(let msg):
                 self.queue.async { self.handleFrameLocked(msg) }
                 self.listenLocked(on: task) // re-arm
@@ -1038,7 +1055,7 @@ final class CallSignalWs: NSObject {
                     // attempt will retry.
                     self?.queue.async {
                         self?.pendingMessages.append(msg)
-                        self?.onDisconnectLocked()
+                        self?.onDisconnectLocked(from: task)
                     }
                 }
             }
@@ -1046,7 +1063,13 @@ final class CallSignalWs: NSObject {
     }
 
     /// Called on `queue`.
-    private func onDisconnectLocked() {
+    private func onDisconnectLocked(from failed: URLSessionWebSocketTask? = nil) {
+        // Callback atrasado de um task que já não é o atual: só garante que
+        // ele morreu — NÃO derruba o task atual nem agenda outra reconexão.
+        if let failed = failed, failed !== task {
+            failed.cancel(with: .goingAway, reason: nil)
+            return
+        }
         authed = false
         connecting = false
         task?.cancel(with: .goingAway, reason: nil)
@@ -1060,6 +1083,7 @@ final class CallSignalWs: NSObject {
 
     /// Called on `queue`.
     private func scheduleReconnectLocked() {
+        if reconnectScheduled { return }
         // Idle: stop reconnecting unless we're in keep-alive mode (callee
         // path — needs to receive inbound call_invite frames even with an
         // empty outgoing queue) OR there's an active call in flight ([P2
@@ -1079,7 +1103,9 @@ final class CallSignalWs: NSObject {
                 let slow = 30.0 + Double.random(in: 0...5)
                 NSLog("[CallSignalWs] keep-alive/active-call: \(maxReconnect) attempts spent — slow retry in \(String(format: "%.1f", slow))s")
                 reconnectAttempts = 0
+                reconnectScheduled = true
                 queue.asyncAfter(deadline: .now() + slow) { [weak self] in
+                    self?.reconnectScheduled = false
                     self?.connectLocked()
                 }
                 return
@@ -1092,7 +1118,9 @@ final class CallSignalWs: NSObject {
         let base = backoffSec[min(attempt, backoffSec.count - 1)]
         let backoff = base + Double.random(in: 0...(base * 0.3))
         NSLog("[CallSignalWs] reconnect: attempt \(attempt + 1)/\(maxReconnect) in \(String(format: "%.2f", backoff))s")
+        reconnectScheduled = true
         queue.asyncAfter(deadline: .now() + backoff) { [weak self] in
+            self?.reconnectScheduled = false
             self?.connectLocked()
         }
     }
@@ -1112,14 +1140,14 @@ final class CallSignalWs: NSObject {
             // reconnect so an active call's signaling isn't stranded.
             if let last = self.lastPongAt, Date().timeIntervalSince(last) > self.pingInterval * 2 {
                 NSLog("[CallSignalWs] pong watchdog: no pong in \(Int(Date().timeIntervalSince(last)))s (>2×\(Int(self.pingInterval))s) — forcing reconnect")
-                self.onDisconnectLocked()
+                self.onDisconnectLocked(from: task)
                 return
             }
             task.sendPing { [weak self] err in
                 guard let self = self else { return }
                 if let err = err {
                     NSLog("[CallSignalWs] ping failed: \(err.localizedDescription)")
-                    self.queue.async { self.onDisconnectLocked() }
+                    self.queue.async { self.onDisconnectLocked(from: task) }
                 } else {
                     // Pong received — socket is healthy.
                     self.queue.async { self.lastPongAt = Date() }

@@ -61,6 +61,105 @@ export const BACKOFF_SCHEDULE_MS = [1000, 2000, 5000, 15000, 60000, 300000, 1800
 // We never truly remove — user owns the message until explicit clear.
 export const MAX_ATTEMPTS = 7;
 
+// ---------------------------------------------------------------------------
+// [send-reliability 2026-10-06] WhatsApp-grade semantics
+// ---------------------------------------------------------------------------
+// • A TRANSIENT failure (timeout, socket drop, offline, 5xx, edge->US 503, 429,
+//   401 while the session refreshes) NEVER flips a row to 'failed'. It goes back
+//   to 'queued' with exponential backoff and the bubble keeps the clock — the
+//   worker retries on reconnect / NetInfo-up / foreground / app start.
+//   MAX_ATTEMPTS is kept only as an export for old callers; it no longer
+//   promotes a transient error to a permanent fail.
+// • While the device is OFFLINE attempts are NOT counted (no backoff growth).
+// • Only a HARD rejection (definitive 4xx: 400/403/404/410/413/415/422, or an
+//   error flagged isHardError / 'chat_send_rejected:') lands in 'failed' (red
+//   "!" + tap-to-retry → requeue()).
+// • Idempotency: every retry reuses the same client_message_id; chat.php dedups
+//   it BEFORE its rate/slow-mode gates and returns the original row.
+export const TRANSIENT_BACKOFF_MS = [1000, 2000, 4000, 8000, 15000, 30000, 60000, 120000, 300000];
+
+/**
+ * Classify a chat_send response / thrown error.
+ * Returns 'ok' | 'hard' | 'offline' | 'transient'.
+ * `r.__httpStatus` is attached (non-enumerable) by api.js _rawApiCall.
+ */
+export function classifySendResult(r, err = null) {
+  if (err) {
+    if (err.isHardError) return 'hard';
+    const m = String(err?.message || err || '');
+    if (/^chat_send_rejected:/.test(m)) return 'hard';
+    if (err.offline || /^offline$/i.test(m)) return 'offline';
+    return 'transient';
+  }
+  if (!r || typeof r !== 'object') return 'transient';
+  if (r.success && (r.data?.id != null || r.message_id || r.data?.message_id || r.envelope_mode)) return 'ok';
+  const status = Number(r.__httpStatus || 0);
+  const msg = String(r.message || r.error || '');
+  if (status === 0) {
+    // Transport-level failure. 'Connection error' = fetch rejected (no route /
+    // DNS / offline); 'Tempo limite excedido' = our AbortController timeout.
+    return /connection error/i.test(msg) ? 'offline' : 'transient';
+  }
+  if (status >= 500 || status === 408 || status === 425 || status === 429 || status === 401) return 'transient';
+  if (status >= 400 && status < 500) return 'hard';
+  // 2xx with success:false and no status hint — treat known permanent strings
+  // as hard, everything else transient (keeps retrying with the clock).
+  if (/\b403\b|forbidden|not.?a.?member|no_permission|permission_denied|conversation.?deleted|admin.?only/i.test(msg)) return 'hard';
+  return 'transient';
+}
+
+function _isDeviceOffline() {
+  try {
+    if (Platform.OS === 'web') return typeof navigator !== 'undefined' && navigator.onLine === false;
+    const ni = require('./networkInfo');
+    if (typeof ni?.isConnected === 'function') return ni.isConnected() === false;
+  } catch {}
+  return false;
+}
+
+// In-process ownership of rows in state 'sending'. A row that is 'sending' in
+// SQLite but NOT owned here was orphaned (app killed / JS reloaded mid-send)
+// and is safe to requeue immediately — no time threshold guesswork. Entries
+// older than OWN_STALE_MS are treated as orphaned too (hung promise guard).
+const _owned = new Map(); // cmi -> claimedAt
+const OWN_STALE_MS = 90000;
+function _own(cmi) { try { _owned.set(String(cmi), Date.now()); } catch {} }
+function _disown(cmi) { try { _owned.delete(String(cmi)); } catch {} }
+export function isOwnedSending(cmi) {
+  const t = _owned.get(String(cmi));
+  return !!t && (Date.now() - t) < OWN_STALE_MS;
+}
+
+// Conversations with at least one row waiting for a retry ('queued'). The
+// foreground send path checks this SYNCHRONOUSLY so a new message never
+// overtakes an older one that is still in backoff (per-conversation FIFO).
+const _backlog = new Set();
+export function hasBacklog(conversationId) {
+  return conversationId != null && _backlog.has(Number(conversationId));
+}
+export function noteBacklog(conversationId) {
+  if (conversationId != null && Number(conversationId)) _backlog.add(Number(conversationId));
+}
+/** Rebuild the backlog set from SQLite (worker calls this after each drain). */
+export async function refreshBacklog() {
+  const db = await _db_or_null();
+  if (!db) return;
+  try {
+    // Rows the foreground currently owns ('sending' in this process) are not
+    // a backlog — the foreground is already sending them in order.
+    const owned = await db.getAllAsync(`SELECT conversation_id AS c, client_message_id AS k, state FROM outbox WHERE state IN ('queued','sending')`);
+    const nonOwned = new Set();
+    for (const r of owned || []) {
+      const c = Number(r?.c);
+      if (!c) continue;
+      if (r.state === 'sending' && isOwnedSending(r.k)) continue;
+      nonOwned.add(c);
+    }
+    _backlog.clear();
+    for (const c of nonOwned) _backlog.add(c);
+  } catch {}
+}
+
 // Subscriber bus — UI components register a callback keyed on
 // client_message_id (or wildcard '*') and get notified on every state
 // transition. Lightweight Set, no react context required.
@@ -351,6 +450,7 @@ export async function enqueue(payload, opts = null) {
       _notify(cmi, await getStatus(cmi));
       return { id: result.id, seq: result.seq, state: result.state, existed: true };
     }
+    if (initialState === 'sending') _own(cmi);
     _notify(cmi, { client_message_id: cmi, state: initialState, attempts: 0, conversation_id: conv, seq: result.seq });
     return { id: result.id, seq: result.seq, state: initialState };
   } catch (e) {
@@ -379,14 +479,17 @@ export async function dequeueNext(conversationId = null) {
         now
       );
     } else {
+      // [send-reliability] Head-of-line: only the LOWEST pending seq of the
+      // conversation may go out. A higher seq that is already due must wait
+      // while an older row is still in backoff or in flight.
       row = await db.getFirstAsync(
         `SELECT * FROM outbox
-          WHERE conversation_id = ? AND state = 'queued' AND next_retry_at <= ?
+          WHERE conversation_id = ? AND state IN ('queued','sending')
           ORDER BY seq ASC
           LIMIT 1`,
-        Number(conversationId),
-        now
+        Number(conversationId)
       );
+      if (row && (row.state !== 'queued' || (Number(row.next_retry_at) || 0) > now)) row = null;
     }
     if (!row) return null;
     return _hydrate(row);
@@ -413,7 +516,7 @@ export async function markSending(cmi) {
       String(cmi),
     );
     const ok = (res?.changes ?? 0) > 0;
-    if (ok) _notify(cmi, await getStatus(cmi));
+    if (ok) { _own(cmi); _notify(cmi, await getStatus(cmi)); }
     return ok;
   } catch (e) {
     try { console.warn('[messageOutbox] markSending:', e?.message); } catch {}
@@ -427,6 +530,7 @@ export async function markSending(cmi) {
  * collection happens via cleanup() on a long timer.
  */
 export async function markSent(cmi, serverId = null) {
+  _disown(cmi);
   const db = await _db_or_null();
   if (!db) return false;
   const now = Date.now();
@@ -437,7 +541,7 @@ export async function markSent(cmi, serverId = null) {
               server_id = COALESCE(?, server_id),
               updated_at = ?,
               last_error = NULL
-        WHERE client_message_id = ?`,
+        WHERE client_message_id = ? AND state NOT IN ('delivered','read')`,
       serverId != null ? Number(serverId) : null,
       now,
       String(cmi),
@@ -459,6 +563,7 @@ export async function markRead(cmi) {
 }
 
 async function _setState(cmi, state) {
+  _disown(cmi);
   const db = await _db_or_null();
   if (!db) return false;
   try {
@@ -472,36 +577,55 @@ async function _setState(cmi, state) {
 }
 
 /**
- * Mark a row failed and schedule retry. attempts increments. If attempts
- * reaches MAX_ATTEMPTS we leave state='failed' indefinitely (UI surface).
- * Otherwise the row goes back to 'queued' with next_retry_at set.
+ * Record a failed attempt. [send-reliability 2026-10-06]
+ *   opts.kind = 'hard'      → state 'failed' (red "!", tap-to-retry). Only for
+ *                             definitive rejections (4xx / isHardError).
+ *   opts.kind = 'offline'   → back to 'queued', attempts NOT incremented, retry
+ *                             in 30s (connectivity events wake it sooner).
+ *   opts.kind = 'transient' → back to 'queued' with exponential backoff
+ *                             (TRANSIENT_BACKOFF_MS, ±20% jitter). Never 'failed'.
+ * When opts.kind is omitted it is derived from `err` (isHardError /
+ * 'chat_send_rejected:' → hard; device offline → offline; else transient), so
+ * legacy callers (offlineCache replay) keep working without changes.
+ * A row already 'sent'/'delivered'/'read' is never demoted (late failure of a
+ * duplicate attempt after another path confirmed it).
  */
-export async function markFailed(cmi, err = null) {
+export async function markFailed(cmi, err = null, opts = null) {
+  _disown(cmi);
   const db = await _db_or_null();
   if (!db) return false;
   const now = Date.now();
   const errStr = err ? String(err?.message || err).slice(0, 500) : null;
+  let kind = opts && opts.kind;
+  if (!kind) {
+    const c = classifySendResult(null, err || new Error('unknown'));
+    kind = c === 'hard' ? 'hard' : (_isDeviceOffline() ? 'offline' : c);
+  }
+  if (kind !== 'hard' && kind !== 'offline') kind = _isDeviceOffline() ? 'offline' : 'transient';
   try {
     const row = await db.getFirstAsync(
-      'SELECT attempts FROM outbox WHERE client_message_id = ?',
+      'SELECT attempts, state, conversation_id FROM outbox WHERE client_message_id = ?',
       String(cmi)
     );
     if (!row) return false;
-    const attempts = ((row.attempts ?? 0) | 0) + 1;
-    if (attempts >= MAX_ATTEMPTS) {
-      // Permanent fail surface — UI will show "Falhou — tocar pra tentar"
+    if (row.state === 'sent' || row.state === 'delivered' || row.state === 'read') return false;
+    const prevAttempts = (row.attempts ?? 0) | 0;
+    if (kind === 'hard') {
       await db.runAsync(
         `UPDATE outbox
             SET state = 'failed', attempts = ?, last_error = ?, updated_at = ?
           WHERE client_message_id = ?`,
-        attempts, errStr, now, String(cmi)
+        prevAttempts + 1, errStr, now, String(cmi)
       );
     } else {
-      // Schedule retry with jitter (±1s).
-      const baseIdx = Math.min(attempts - 1, BACKOFF_SCHEDULE_MS.length - 1);
-      const base = BACKOFF_SCHEDULE_MS[baseIdx];
-      const jitter = Math.floor(Math.random() * 1000);
-      const nextAt = now + base + jitter;
+      const attempts = kind === 'offline' ? prevAttempts : prevAttempts + 1;
+      let delay;
+      if (kind === 'offline') {
+        delay = 30000;
+      } else {
+        const base = TRANSIENT_BACKOFF_MS[Math.min(Math.max(attempts - 1, 0), TRANSIENT_BACKOFF_MS.length - 1)];
+        delay = Math.round(base * (0.8 + Math.random() * 0.4));
+      }
       await db.runAsync(
         `UPDATE outbox
             SET state = 'queued',
@@ -510,8 +634,9 @@ export async function markFailed(cmi, err = null) {
                 last_error = ?,
                 updated_at = ?
           WHERE client_message_id = ?`,
-        attempts, nextAt, errStr, now, String(cmi)
+        attempts, now + delay, errStr, now, String(cmi)
       );
+      noteBacklog(row.conversation_id);
     }
     _notify(cmi, await getStatus(cmi));
     return true;
@@ -522,10 +647,90 @@ export async function markFailed(cmi, err = null) {
 }
 
 /**
+ * [send-reliability] Give a foreground-claimed row back to the worker without
+ * counting an attempt (used when the foreground defers to keep FIFO order).
+ */
+export async function release(cmi) {
+  _disown(cmi);
+  const db = await _db_or_null();
+  if (!db) return false;
+  try {
+    const row = await db.getFirstAsync('SELECT conversation_id FROM outbox WHERE client_message_id = ?', String(cmi));
+    await db.runAsync(
+      `UPDATE outbox SET state = 'queued', next_retry_at = 0, updated_at = ?
+        WHERE client_message_id = ? AND state = 'sending'`,
+      Date.now(), String(cmi)
+    );
+    if (row) noteBacklog(row.conversation_id);
+    _notify(cmi, await getStatus(cmi));
+    return true;
+  } catch { return false; }
+}
+
+/**
+ * [send-reliability] Merge `patch` into a row's JSON payload (e.g. swap the
+ * plaintext for the E2E envelope once encryption finished, so a worker retry
+ * never sends plaintext). No-op when the row is gone.
+ */
+export async function updatePayload(cmi, patch) {
+  const db = await _db_or_null();
+  if (!db || !patch || typeof patch !== 'object') return false;
+  try {
+    const row = await db.getFirstAsync('SELECT payload FROM outbox WHERE client_message_id = ?', String(cmi));
+    if (!row) return false;
+    let p = {};
+    try { p = JSON.parse(row.payload) || {}; } catch {}
+    await db.runAsync('UPDATE outbox SET payload = ?, updated_at = ? WHERE client_message_id = ?',
+      JSON.stringify({ ...p, ...patch }), Date.now(), String(cmi));
+    return true;
+  } catch { return false; }
+}
+
+/**
+ * [send-reliability] Connectivity came back (WS authenticated / NetInfo up /
+ * foreground): every queued row is due NOW — don't sit out a backoff that was
+ * computed while the network was down.
+ */
+export async function retryNow(conversationId = null) {
+  const db = await _db_or_null();
+  if (!db) return 0;
+  try {
+    const res = conversationId == null
+      ? await db.runAsync(`UPDATE outbox SET next_retry_at = 0 WHERE state = 'queued' AND next_retry_at > 0`)
+      : await db.runAsync(`UPDATE outbox SET next_retry_at = 0 WHERE state = 'queued' AND next_retry_at > 0 AND conversation_id = ?`, Number(conversationId));
+    return res?.changes ?? 0;
+  } catch { return 0; }
+}
+
+/** Earliest next_retry_at among queued rows (epoch ms) or null. */
+export async function nextDueAt() {
+  const db = await _db_or_null();
+  if (!db) return null;
+  try {
+    // Only each conversation's HEAD (lowest pending seq) is wakeable: rows
+    // queued behind an older row (in backoff or in flight) can't go out before
+    // it anyway, and the head's own transition re-pokes the worker. Without
+    // this a released (due-now) row behind a backing-off head spun the wake
+    // timer every 250ms.
+    const row = await db.getFirstAsync(
+      `SELECT MIN(o.next_retry_at) AS m FROM outbox o
+        WHERE o.state = 'queued'
+          AND NOT EXISTS (SELECT 1 FROM outbox h
+                           WHERE h.conversation_id = o.conversation_id
+                             AND h.state IN ('queued','sending')
+                             AND h.seq < o.seq)`
+    );
+    const m = row ? (row.m ?? row['m']) : null;
+    return m == null ? null : Number(m);
+  } catch { return null; }
+}
+
+/**
  * Manually requeue a permanently-failed message for another shot at the
  * network. UI calls this when the user taps the failed bubble.
  */
 export async function requeue(cmi) {
+  _disown(cmi);
   const db = await _db_or_null();
   if (!db) return false;
   try {
@@ -548,6 +753,7 @@ export async function requeue(cmi) {
  * Remove a row entirely (user explicitly cleared the message).
  */
 export async function remove(cmi) {
+  _disown(cmi);
   const db = await _db_or_null();
   if (!db) return false;
   try {
@@ -675,22 +881,34 @@ export async function cleanup(olderThanMs = 24 * 60 * 60 * 1000) {
 }
 
 /**
- * Recovery hook for app boot: any row stuck in 'sending' for >30s probably
- * was killed mid-flight (app force-quit, crash). Demote it back to 'queued'
- * so the worker picks it up again.
+ * Recovery: a row in 'sending' that this process does NOT own was orphaned
+ * (app killed / crashed / JS reloaded mid-flight). Demote it to 'queued' (due
+ * now, attempt not counted) so the worker re-sends it — the server dedups on
+ * client_message_id, so a send that actually landed comes back as the
+ * original row. Rows owned by an in-flight send in THIS process are left alone
+ * unless the claim is older than OWN_STALE_MS (hung request).
+ * `thresholdMs` is kept for API compat: orphans younger than it are still
+ * recovered when not owned (ownership is the precise signal).
  */
 export async function recoverStuck(thresholdMs = 30000) {
+  void thresholdMs;
   const db = await _db_or_null();
   if (!db) return 0;
-  const cutoff = Date.now() - thresholdMs;
   try {
-    const res = await db.runAsync(
-      `UPDATE outbox
-          SET state = 'queued', updated_at = ?
-        WHERE state = 'sending' AND updated_at < ?`,
-      Date.now(), cutoff
-    );
-    return res?.changes ?? 0;
+    const rows = await db.getAllAsync(`SELECT client_message_id AS k FROM outbox WHERE state = 'sending'`);
+    let n = 0;
+    for (const r of rows || []) {
+      const k = r?.k;
+      if (!k || isOwnedSending(k)) continue;
+      _disown(k);
+      const res = await db.runAsync(
+        `UPDATE outbox SET state = 'queued', next_retry_at = 0, updated_at = ?
+          WHERE client_message_id = ? AND state = 'sending'`,
+        Date.now(), String(k)
+      );
+      n += res?.changes ?? 0;
+    }
+    return n;
   } catch { return 0; }
 }
 
@@ -736,8 +954,18 @@ export default {
   getStatus,
   cleanup,
   recoverStuck,
+  release,
+  updatePayload,
+  retryNow,
+  nextDueAt,
+  hasBacklog,
+  noteBacklog,
+  refreshBacklog,
+  isOwnedSending,
+  classifySendResult,
   subscribe,
   BACKOFF_SCHEDULE_MS,
+  TRANSIENT_BACKOFF_MS,
   MAX_ATTEMPTS,
   OUTBOX_V2_ONLY,
 };
