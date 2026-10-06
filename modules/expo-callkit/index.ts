@@ -182,6 +182,14 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   // on modules/expo-screen-share.
   startScreenshare(audioShare: boolean): Promise<boolean>;
   stopScreenshare(): Promise<boolean>;
+  // [2026-10-06 screen-share iOS] Toggle the screen share on the NATIVE Room
+  // (the one /call.js adopts via adoptNativeRoom). false = no native Room or
+  // LiveKit threw. iOS only; absent on Android / older binaries.
+  setNativeScreenShare?(enabled: boolean): Promise<boolean>;
+  isNativeScreenSharing?(): boolean;
+  // True when the ReplayKit broadcast extension is bundled (system-wide
+  // capture); false = in-app capture only (shares the app's own window).
+  screenShareBroadcastAvailable?(): boolean;
 
   // [P0 2026-05-18 #1132] Eagerly open the native CallSignalWs so it can
   // receive inbound `call_invite` frames and ring CallKit (iOS) /
@@ -768,6 +776,27 @@ export async function stopScreenshare(): Promise<boolean> {
   const m = getModule();
   if (!m) return false;
   try { return !!(await m.stopScreenshare()); } catch { return false; }
+}
+
+// [2026-10-06 screen-share iOS] Native-Room screen share toggle for /call.js
+// when it has adopted the native Room. Resolves false when unavailable so the
+// caller can fall back to the JS Room path.
+export async function setNativeScreenShare(enabled: boolean): Promise<boolean> {
+  const m = getModule();
+  if (!m || typeof m.setNativeScreenShare !== 'function') return false;
+  try { return !!(await m.setNativeScreenShare(!!enabled)); } catch { return false; }
+}
+
+export function isNativeScreenSharing(): boolean {
+  const m = getModule();
+  if (!m || typeof m.isNativeScreenSharing !== 'function') return false;
+  try { return !!m.isNativeScreenSharing(); } catch { return false; }
+}
+
+export function screenShareBroadcastAvailable(): boolean {
+  const m = getModule();
+  if (!m || typeof m.screenShareBroadcastAvailable !== 'function') return false;
+  try { return !!m.screenShareBroadcastAvailable(); } catch { return false; }
 }
 
 // ─── Native CallSignalWs warm-connect (P0 2026-05-18 #1132) ──────────────────

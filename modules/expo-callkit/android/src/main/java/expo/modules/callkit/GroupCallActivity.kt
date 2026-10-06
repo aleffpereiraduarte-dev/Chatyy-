@@ -30,6 +30,7 @@ import io.livekit.android.RoomOptions
 import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.renderer.SurfaceViewRenderer
+import livekit.org.webrtc.RendererCommon  // [video-quality 2026-10-06] aspect-fill tiles
 import io.livekit.android.room.Room
 import io.livekit.android.room.participant.AudioTrackPublishDefaults
 import io.livekit.android.room.participant.Participant
@@ -275,10 +276,11 @@ class GroupCallActivity : ComponentActivity() {
       RoomOptions(
         adaptiveStream = true,
         dynacast = true,
-        videoTrackPublishDefaults = VideoTrackPublishDefaults(
-          simulcast = true,
-          videoEncoding = VideoPreset169.H720.encoding
-        ),
+        // [video-quality 2026-10-06] Shared ladder: GROUP540 = 960x540@30,
+        // 700 kbps per tile (N× uplink in a grid; tiles are small on screen).
+        // Codec/simulcast pair from NativeCallRoom.preferredVideoCodec()
+        // (h264 → no simulcast; vp8 → simulcast ladder), BALANCED degradation.
+        videoTrackPublishDefaults = CallVideoQuality.publishDefaults(CallVideoQuality.Profile.GROUP540),
         // [HD tuning 2026-05-26] Opus voice resilience for group calls:
         // dtx (silence suppression), red (redundant audio — recovers
         // single/short-burst loss with no retransmit latency), 48 kbps mono
@@ -290,9 +292,9 @@ class GroupCallActivity : ComponentActivity() {
           dtx = true,
           red = true
         ),
-        videoTrackCaptureDefaults = LocalVideoTrackOptions(
-          captureParams = VideoCaptureParameter(width = 1280, height = 720, maxFps = 30)
-        )
+        videoTrackCaptureDefaults = CallVideoQuality.captureDefaults(applicationContext, isGroup = true),
+        screenShareTrackCaptureDefaults = CallVideoQuality.screenShareCaptureDefaults(),
+        screenShareTrackPublishDefaults = CallVideoQuality.screenSharePublishDefaults()
       )
     } catch (t: Throwable) {
       Log.w(TAG, "RoomOptions ctor failed: ${t.message} — defaults")
@@ -457,6 +459,8 @@ class GroupCallActivity : ComponentActivity() {
         ViewGroup.LayoutParams.MATCH_PARENT,
         ViewGroup.LayoutParams.MATCH_PARENT
       )
+      // [video-quality 2026-10-06] fill the tile (no letterbox bars).
+      try { setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL) } catch (_: Throwable) {}
     }
     frame.addView(renderer)
     // EGL init: only safe once room is alive. If we are pre-connect
@@ -628,6 +632,7 @@ class GroupCallActivity : ComponentActivity() {
           topMargin = dp(40)
           rightMargin = dp(16)
         }
+        try { setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL) } catch (_: Throwable) {}
       }
       root.addView(localRenderer)
     }

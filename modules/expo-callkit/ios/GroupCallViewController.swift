@@ -116,9 +116,12 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         // under N>2 calls. Also pin AudioCaptureOptions (AEC+AGC+NS) for the
         // same reasons as the 1:1 path.
         let roomOptions = RoomOptions(
-            defaultCameraCaptureOptions: CallViewController.defaultCameraCaptureOptions(),
+            defaultCameraCaptureOptions: CallViewController.defaultCameraCaptureOptions(isGroup: true),
+            // [2026-10-06 screen-share iOS] Broadcast extension when bundled,
+            // in-app capture otherwise — see ScreenShareSupport.swift.
+            defaultScreenShareCaptureOptions: ScreenShareSupport.captureOptions(),
             defaultAudioCaptureOptions: CallViewController.defaultAudioCaptureOptions(),
-            defaultVideoPublishOptions: CallViewController.defaultVideoPublishOptions(),
+            defaultVideoPublishOptions: CallViewController.defaultVideoPublishOptions(profile: .group540),
             adaptiveStream: true,
             dynacast: true
         )
@@ -139,8 +142,8 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                     // [Wave C, 2026-05-18 / restored 2026-05-19] Pin explicit
                     // captureOptions + publishOptions on first publish so the
                     // simulcast tiers are wired from the very first frame.
-                    let captureOpts = CallViewController.defaultCameraCaptureOptions(position: self.currentCameraPosition)
-                    let publishOpts = CallViewController.defaultVideoPublishOptions()
+                    let captureOpts = CallViewController.defaultCameraCaptureOptions(position: self.currentCameraPosition, profile: .group540)
+                    let publishOpts = CallViewController.defaultVideoPublishOptions(profile: .group540)
                     if let pub = try? await r.localParticipant.setCamera(
                         enabled: true,
                         captureOptions: captureOpts,
@@ -149,7 +152,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
                         await MainActor.run {
                             self.updateLocalParticipant(videoTrack: track)
                         }
-                        print("[GroupCallVC] camera published (simulcast=true preset=h720_169) — room=\(self.roomName)")
+                        print("[GroupCallVC] camera published (h264 single-encoding profile=group540 960x540@30 700k) — room=\(self.roomName)")
                     }
                 }
             } catch {
@@ -236,7 +239,7 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
         Task { [weak self] in
             guard let self = self else { return }
             do {
-                let opts = CameraCaptureOptions(position: next)
+                let opts = CallViewController.defaultCameraCaptureOptions(position: next, profile: .group540)
                 let pub = try await r.localParticipant.setCamera(enabled: true, captureOptions: opts)
                 if let track = pub?.track as? LocalVideoTrack {
                     await MainActor.run { self.updateLocalParticipant(videoTrack: track) }
@@ -253,18 +256,66 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
     }
 
     private var screenSharing: Bool = false
+    private var screenShareInFlight: Bool = false
+    private var broadcastStopToken: ScreenShareSupport.ObserverToken?
+
+    // [2026-10-06 screen-share iOS] Same mechanism as CallViewController:
+    // the Room's defaultScreenShareCaptureOptions picks broadcast-extension vs
+    // in-app capture; the LOCAL publish/unpublish delegate hooks below are the
+    // truth for `screenSharing` (the broadcast path publishes only after the
+    // user confirms the system sheet, and unpublishes on the red pill).
     private func toggleScreenShare() {
         guard let r = self.room else { return }
-        let desired = !screenSharing
-        screenSharing = desired
-        Task {
+        guard !screenShareInFlight else { return }
+        let desired = !(ScreenShareSupport.isSharing(room: r) || screenSharing)
+        screenShareInFlight = true
+        if desired && ScreenShareSupport.useBroadcastExtension && broadcastStopToken == nil {
+            broadcastStopToken = ScreenShareSupport.observeBroadcastStopped { [weak self] in
+                guard let self = self, let r = self.room else { return }
+                self.screenSharing = false
+                Task { try? await ScreenShareSupport.set(room: r, enabled: false) }
+            }
+        }
+        Task { [weak self] in
+            guard let self = self else { return }
             do {
-                // LiveKit Swift SDK: setScreenShareEnabled was renamed to
-                // set(source:enabled:). Use the new API.
-                _ = try await r.localParticipant.set(source: .screenShareVideo, enabled: desired)
+                try await ScreenShareSupport.set(room: r, enabled: desired)
+                await MainActor.run {
+                    self.screenShareInFlight = false
+                    if !desired || !ScreenShareSupport.useBroadcastExtension {
+                        self.screenSharing = desired
+                    }
+                }
             } catch {
                 print("[GroupCallVC] set(.screenShareVideo, enabled: \(desired)) failed: \(error)")
-                self.screenSharing = !desired
+                await MainActor.run {
+                    self.screenShareInFlight = false
+                    self.screenSharing = ScreenShareSupport.isSharing(room: r)
+                }
+            }
+        }
+    }
+
+    func room(_ room: Room,
+              participant: LocalParticipant,
+              didPublishTrack publication: LocalTrackPublication) {
+        guard publication.source == .screenShareVideo else { return }
+        Task { @MainActor [weak self] in
+            self?.screenShareInFlight = false
+            self?.screenSharing = true
+        }
+    }
+
+    func room(_ room: Room,
+              participant: LocalParticipant,
+              didUnpublishTrack publication: LocalTrackPublication) {
+        guard publication.source == .screenShareVideo else { return }
+        Task { @MainActor [weak self] in
+            self?.screenShareInFlight = false
+            self?.screenSharing = false
+            if let tok = self?.broadcastStopToken {
+                ScreenShareSupport.stopObserving(tok)
+                self?.broadcastStopToken = nil
             }
         }
     }
@@ -405,6 +456,8 @@ final class GroupCallViewController: UIViewController, @unchecked Sendable {
     }
 
     deinit {
+        // [2026-10-06 screen-share iOS] Darwin observer holds an unretained token.
+        if let tok = broadcastStopToken { ScreenShareSupport.stopObserving(tok) }
         if let r = self.room { Task { await r.disconnect() } }
     }
 

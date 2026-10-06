@@ -183,6 +183,11 @@ jobs:
           echo "Build number bumped to $NEW"
 
       - name: Run expo prebuild
+        env:
+          # [2026-10-06 screen-share iOS] Gate for plugins/with-broadcast-extension.js:
+          # only add the ChatyyBroadcastExtension target when a provisioning
+          # profile for com.onemundo.mail.broadcast was installed above.
+          CHATYY_BROADCAST_EXT: ${{ steps.profiles.outputs.broadcast_uuid != '' && '1' || '0' }}
         run: |
           npx expo prebuild --platform ios --no-install --clean
           ls -la ios/

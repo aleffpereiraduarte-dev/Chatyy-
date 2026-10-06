@@ -146,6 +146,7 @@ import io.livekit.android.room.track.LocalVideoTrackOptions
 import io.livekit.android.room.track.VideoCaptureParameter
 import io.livekit.android.room.track.VideoPreset169
 import io.livekit.android.renderer.SurfaceViewRenderer
+import livekit.org.webrtc.RendererCommon  // [video-quality 2026-10-06] aspect-fill renderers
 import io.livekit.android.room.Room
 import io.livekit.android.room.track.Track
 import io.livekit.android.room.track.VideoTrack
@@ -311,6 +312,18 @@ class CallActivity : ComponentActivity() {
    *  subsequent calls no-op. */
   @Volatile
   private var finishing: Boolean = false
+
+  /** [2026-10-06 android-outgoing] Set (now + N ms) right before THIS activity
+   *  starts something on top of itself (runtime-permission dialog, picker).
+   *  Android pauses us with userLeaving=true for ANY activity launched over us
+   *  — not just Home/Recents — so onUserLeaveHint used to treat our own
+   *  permission prompt as "the user left" and minimised the call. */
+  @Volatile
+  private var selfLaunchGuardUntilMs: Long = 0L
+  private fun armSelfLaunchGuard(reason: String, ms: Long = 4_000L) {
+    selfLaunchGuardUntilMs = System.currentTimeMillis() + ms
+    Log.i("CallTrace", "[launch-decision] CallActivity self-launch guard armed ($reason, ${ms}ms) callId=$callId")
+  }
 
   /** [2026-10-06 android-incoming] Creation timestamp — closeReceiver uses it
    *  to shield a freshly launched call screen from UNTARGETED (no call_id)
@@ -561,6 +574,14 @@ class CallActivity : ComponentActivity() {
     // are only attached to a window once isVideo is true.
     remoteRenderer = SurfaceViewRenderer(this)
     localRenderer = SurfaceViewRenderer(this)
+    // [video-quality 2026-10-06] Aspect-FILL like iOS VideoView(.fill) / JS
+    // objectFit:"cover": the libwebrtc default (SCALE_ASPECT_BALANCED) shows
+    // letterbox bars + a downscaled picture whenever the frame aspect doesn't
+    // match the view (portrait 720x1280 frame into an edge-to-edge screen).
+    // Full-size renderers also mean adaptiveStream asks the SFU for the HIGH
+    // layer — a view smaller than the frame would pull a lower layer.
+    try { remoteRenderer?.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL) } catch (_: Throwable) {}
+    try { localRenderer?.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FILL) } catch (_: Throwable) {}
 
     // Mount the Compose UI.
     setContent {
@@ -697,7 +718,7 @@ class CallActivity : ComponentActivity() {
             try { ExpoCallKitModule.emitAudioRouteChanged(if (desired) "speaker" else if (state.audioOutputPreferBluetooth) "bluetooth" else "earpiece") } catch (_: Throwable) {}
           },
           onFlipCamera = { flipCamera() },
-          onMinimize = { tryEnterPip() },
+          onMinimize = { tryEnterPip(bringAppForward = true, source = "minimize") },
           onSendReaction = { emoji -> spawnReaction(emoji) },
           onToggleHand = {
             state.isHandRaised = !state.isHandRaised
@@ -810,7 +831,7 @@ class CallActivity : ComponentActivity() {
             // move task to back so the navigation stack is visible while the
             // call stays alive in the foreground service + notification.
             try { ExpoCallKitModule.emitOpenChat(callId, conversationId) } catch (_: Throwable) {}
-            tryEnterPip()
+            tryEnterPip(bringAppForward = true, source = "open_chat")
           },
           onPickAudioDevice = { type ->
             // [Audio output picker, 2026-05-19] Real route switch via
@@ -849,6 +870,15 @@ class CallActivity : ComponentActivity() {
           onRequestVideoUpgrade = { requestVideoUpgrade() },
           onRespondVideoRequest = { accept -> respondVideoRequest(accept) },
         )
+      }
+    }
+
+    // [2026-10-06 android-outgoing] Arm auto-enter PiP up front (API 31+).
+    // Gesture-nav Home/Recents then shrinks us into PiP natively; the
+    // onUserLeaveHint path below only remains for 3-button navigation.
+    if (Build.VERSION.SDK_INT >= 31) {
+      try { setPictureInPictureParams(buildPipParams()) } catch (t: Throwable) {
+        Log.w(TAG, "setPictureInPictureParams(auto-enter) failed: ${t.message}")
       }
     }
 
@@ -1077,6 +1107,8 @@ class CallActivity : ComponentActivity() {
 
   @OptIn(DelicateCoroutinesApi::class)
   override fun onDestroy() {
+    try { videoQualityDiagJob?.cancel() } catch (_: Throwable) {}
+    try { CallVideoQuality.resetCallState() } catch (_: Throwable) {}
     try { unregisterReceiver(closeReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(dtmfReceiver) } catch (_: Exception) {}
     try { unregisterReceiver(callAnsweredReceiver) } catch (_: Exception) {}
@@ -1294,6 +1326,7 @@ class CallActivity : ComponentActivity() {
     state.micPermissionGranted = granted
     if (!granted) {
       Log.w(TAG, "RECORD_AUDIO not granted — requesting at runtime")
+      armSelfLaunchGuard("perm:RECORD_AUDIO")
       try {
         ActivityCompat.requestPermissions(
           this,
@@ -1318,6 +1351,7 @@ class CallActivity : ComponentActivity() {
     ) == PackageManager.PERMISSION_GRANTED
     if (!granted) {
       Log.w(TAG, "CAMERA not granted (video call) — requesting at runtime")
+      armSelfLaunchGuard("perm:CAMERA")
       try {
         ActivityCompat.requestPermissions(
           this,
@@ -1445,92 +1479,40 @@ class CallActivity : ComponentActivity() {
     // otherwise "vp8" WITH simulcast (always available in software). Both
     // the preconnect Room (NativeCallRoom.setCameraEnabled) and this Room use
     // the same pair so the two publish paths can't diverge again.
-    val preferredCodec = NativeCallRoom.preferredVideoCodec()
-    val useSimulcast = preferredCodec != "h264"
+    // [video-quality 2026-10-06] Codec/simulcast pair + resolution/bitrate
+    // ladder now live in ONE place — CallVideoQuality (NativeCallRoom.kt) —
+    // shared with the warm/preconnect Room and GroupCallActivity. Public ctor
+    // params (videoCodec, degradationPreference, screenShare*Defaults) are
+    // verified on livekit-android 2.24.1 via javap, so the reflective
+    // field-poking that used to live here is gone (it also pinned
+    // MAINTAIN_FRAMERATE, which made a congested face 180p-blurry at 30 fps;
+    // camera is BALANCED now, screen share MAINTAIN_RESOLUTION).
+    // Profile pick is network-aware (Wi-Fi → 720p, or 1080p with the HD pref;
+    // cellular → 720p; cellular + poor bars → 540p). Quality is unknown at
+    // bringUpRoom time, so we pass 3 (never start a call pessimistically).
     val publishDefaults = try {
-      VideoTrackPublishDefaults(
-        // [VIDEO FIX 2026-05-26] simulcast=false to match the H.264 codec pin
-        // below. libwebrtc has no H.264 simulcast → with simulcast=true the
-        // camera publish offer is invalid and the peer never gets frames
-        // (remote shows avatar only). H.264 publishes a single encoding anyway.
-        // Mirrors iOS CallViewController/NativeCallRoom (simulcast:false).
-        simulcast = useSimulcast,
-        videoEncoding = VideoPreset169.H720.encoding
-      )
+      CallVideoQuality.publishDefaults()
     } catch (t: Throwable) {
-      Log.w(TAG, "VideoTrackPublishDefaults default ctor failed: ${t.message}")
+      Log.w(TAG, "CallVideoQuality.publishDefaults failed: ${t.message} — SDK defaults")
       VideoTrackPublishDefaults()
-    }
-    // Reflectively pin codec preference + degradation preference. These two
-    // fields appear on LK Android 2.24.x but were not exposed as primary
-    // constructor params, so we set them post-construction.
-    try {
-      val pdCls = publishDefaults.javaClass
-      // [iOS-sees-black fix 2026-05-27] Set EVERY String codec field to h264 —
-      // NOT just the first. firstOrNull{contains "codec"} could land on
-      // `backupCodec` (declared before `videoCodec`), leaving videoCodec at the
-      // SDK default (VP8) OR leaving a VP8 BACKUP encoding the SFU may forward to
-      // the iOS subscriber → "no iOS só imagem preta" while Android (which decodes
-      // VP8/VP9 fine) still shows the iOS h264 stream. Pinning videoCodec AND
-      // backupCodec to h264 removes every non-h264 path. H.264 is HW-decoded on
-      // every iPhone — must match CallViewController.swift / NativeCallRoom.swift.
-      val codecFields = pdCls.declaredFields.filter {
-        it.name.contains("codec", ignoreCase = true) && it.type == String::class.java
-      }
-      if (codecFields.isNotEmpty()) {
-        for (f in codecFields) {
-          try {
-            f.isAccessible = true
-            f.set(publishDefaults, preferredCodec)
-            Log.d(TAG, "VideoTrackPublishDefaults.${f.name} = $preferredCodec (simulcast=$useSimulcast)")
-          } catch (e: Throwable) { Log.w(TAG, "codec set ${f.name} failed: ${e.message}") }
-        }
-      } else {
-        Log.d(TAG, "no String codec field on VideoTrackPublishDefaults — SDK defaults stay (VP8)")
-      }
-      // [HD tuning 2026-05-26] degradationPreference = MAINTAIN_FRAMERATE.
-      // WhatsApp/FaceTime-like default for 1:1 talking-head video: under
-      // network pressure the encoder DROPS RESOLUTION FIRST and holds the
-      // frame rate, so a face stays smooth (motion fidelity > sharpness). The
-      // simulcast ladder (H720→H360→H180) gives the SFU lower-res tiers to
-      // step down to, so it degrades gracefully instead of freezing. (Was
-      // BALANCED; for a static-ish face, keeping fps reads as more "live".)
-      // We accept several enum spellings across WebRTC/LK revs.
-      val degradationField = pdCls.declaredFields.firstOrNull {
-        it.name.contains("degradation", ignoreCase = true)
-      }
-      if (degradationField != null) {
-        degradationField.isAccessible = true
-        val enumType = degradationField.type
-        val value: Any = if (enumType.isEnum) {
-          enumType.enumConstants?.firstOrNull {
-            val n = it.toString()
-            n.equals("MAINTAIN_FRAMERATE", true) || n.equals("MAINTAINFRAMERATE", true)
-          } ?: enumType.enumConstants?.firstOrNull { it.toString().equals("BALANCED", true) }
-            ?: "maintain-framerate"
-        } else "maintain-framerate"
-        degradationField.set(publishDefaults, value)
-        Log.d(TAG, "VideoTrackPublishDefaults.${degradationField.name} = maintain-framerate")
-      }
-    } catch (t: Throwable) {
-      Log.w(TAG, "codec/degradation reflective set failed: ${t.message}")
     }
     val roomOptions = try {
       RoomOptions(
         adaptiveStream = true,
         dynacast = true,
         videoTrackPublishDefaults = publishDefaults,
-        videoTrackCaptureDefaults = LocalVideoTrackOptions(
-          captureParams = VideoCaptureParameter(width = 1280, height = 720, maxFps = 30)
-        )
+        videoTrackCaptureDefaults = CallVideoQuality.captureDefaults(applicationContext, isGroup = false, localQualityScore = 3),
+        screenShareTrackCaptureDefaults = CallVideoQuality.screenShareCaptureDefaults(),
+        screenShareTrackPublishDefaults = CallVideoQuality.screenSharePublishDefaults()
       )
     } catch (t: Throwable) {
       // Some LK Android revs reorder constructor params or split the
       // defaults into a separate type. Fall back to default options if so —
-      // the call still works, just without simulcast tiers.
+      // the call still works, just without the profile ladder.
       Log.w(TAG, "RoomOptions ctor failed: ${t.message} — falling back to defaults")
       RoomOptions()
     }
+    Log.i(TAG, "bringUpRoom video profile=${CallVideoQuality.current.name} codec=${publishDefaults.videoCodec} simulcast=${publishDefaults.simulcast} enc=${publishDefaults.videoEncoding?.maxBitrate}")
     // [Wave B audio, 2026-05-18] Pin LocalAudioTrackOptions on the RoomOptions
     // reflectively. The LK Android 2.x SDK already defaults AEC/AGC/NS on,
     // but a future SDK upgrade could silently flip a default — explicit pin
@@ -1992,6 +1974,8 @@ class CallActivity : ComponentActivity() {
               Log.w(TAG, "remoteRenderer addRenderer failed: ${t.message}")
             }
           }
+          // [video-quality 2026-10-06] t+8s / t+45s "video_quality" beacons.
+          scheduleVideoQualityDiag(r)
           // [WAVE 142 GPT-5.5-pro] Snippet #6 — flip remoteFirstFrame on a
           // ~180ms post-subscribe delay so the Crossfade audio→video kicks
           // in once the first I-frame has decoded. The LK Android Room API
@@ -2145,6 +2129,14 @@ class CallActivity : ComponentActivity() {
         }
         if (event.participant === r.localParticipant) {
           state.localQuality = q
+          // [video-quality 2026-10-06] cellular + 2× poor → 540p capture in place.
+          try {
+            val bgOn = try {
+              val proc = expo.modules.callkit.video.BackgroundProcessor.get(applicationContext)
+              proc.available && proc.mode != expo.modules.callkit.video.BackgroundProcessor.Mode.OFF
+            } catch (_: Throwable) { false }
+            CallVideoQuality.noteLocalQuality(applicationContext, r, q, bgOn, callId)
+          } catch (_: Throwable) {}
         } else {
           state.peerQuality = q
         }
@@ -2349,8 +2341,27 @@ class CallActivity : ComponentActivity() {
     }
   }
 
+  // [video-quality 2026-10-06] Two beacons per video call (t+8s, t+45s) →
+  // push_diag.log step=video_quality with the REAL negotiated numbers (see
+  // CallVideoQuality.reportVideoQuality). Idempotent per Activity.
+  private var videoQualityDiagJob: Job? = null
+  private fun scheduleVideoQualityDiag(r: Room) {
+    if (videoQualityDiagJob != null) return
+    videoQualityDiagJob = lifecycleScope.launch {
+      try {
+        delay(8_000)
+        if (!isFinishing) CallVideoQuality.reportVideoQuality(applicationContext, r, "t8", callId, state.localQuality)
+        delay(37_000)
+        if (!isFinishing) CallVideoQuality.reportVideoQuality(applicationContext, r, "t45", callId, state.localQuality)
+      } catch (_: Throwable) {}
+    }
+  }
+
   private fun bindLocalVideoTrack(track: LocalVideoTrack) {
     state.hasLocalVideo = true
+    // [video-quality 2026-10-06] Local camera up → make sure the beacons run
+    // even if the peer never publishes video.
+    room?.let { scheduleVideoQualityDiag(it) }
     localRenderer?.let { lv -> track.addRenderer(lv) }
     // [2026-05-17 MediaPipe] Hook the BackgroundProcessor into LK's
     // VideoProcessor slot if the SDK exposes it on this rev. Reflective
@@ -2789,35 +2800,67 @@ class CallActivity : ComponentActivity() {
 
   // ────────────── PiP
 
-  private fun tryEnterPip() {
-    // [PiP polish, 2026-05-17] Allow audio-only calls into PiP too — the
-    // Compose UI renders the avatar block when hasRemoteVideo is false,
-    // so the mini-window still shows something useful (caller's circle +
-    // duration). Reverted the prior `if (!hasVideo) return` so backgrounding
-    // a voice call doesn't kill the in-call UX on Android.
-    //
-    // Aspect ratio: 9x16 keeps it portrait (matches CallActivity orientation
-    // lock). The system clamps to 100:239 / 239:100 anyway.
+  /**
+   * [2026-10-06 android-outgoing] PiP entry, rewritten. The previous version
+   * did `startActivity(launchIntent)` (= bring MainActivity's task to the
+   * front) BEFORE `enterPictureInPictureMode`, and ran from onUserLeaveHint
+   * unconditionally. onUserLeaveHint fires for ANY activity that comes over
+   * us (our own RECORD_AUDIO/CAMERA prompt, the ringer, Telecom UI…), not
+   * only Home — so right after "Ligar" the call screen re-fronted the chat
+   * and, whenever PiP was refused (PiP disabled for the app in Settings,
+   * activity not resumed yet, OEM), the user was left on the chat with the
+   * call hidden behind it ("a tela da ligação some, tenho que puxar pela
+   * notificação"). CallActivity lives in its own affinity-less task on
+   * purpose (MainActivity is singleTask: sharing its task would let any
+   * launcher/notification/deep-link clear-top us), so NOTHING may re-front
+   * the RN task except an explicit user intent.
+   *
+   * New contract:
+   *   1. enter PiP FIRST; nothing else happens if the OS refuses.
+   *   2. `bringAppForward` (explicit Minimizar / Abrir chat taps) re-fronts
+   *      the RN app only after PiP succeeded — or, when PiP is impossible,
+   *      still honours the tap (the call lives on in the FGS notification).
+   *   3. onUserLeaveHint never re-fronts the RN app: Home means Home.
+   */
+  private fun tryEnterPip(bringAppForward: Boolean, source: String) {
+    // [PiP polish, 2026-05-17] Audio-only calls enter PiP too — the Compose
+    // UI renders the avatar block when hasRemoteVideo is false, so the
+    // mini-window still shows the caller's circle + duration.
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-    if (isInPictureInPictureMode) return
-    // [BUG 2 fix 2026-05-26] CallActivity lives in an isolated empty-affinity
-    // task; entering PiP shrinks it but never brings the main RN app task
-    // forward, leaving the user on a dead surface where taps go nowhere.
-    // Bring the host app to front BEFORE entering PiP so the mini-window
-    // floats over the live app instead of a blank task.
+    if (finishing || isFinishing) return
+    if (isInPictureInPictureMode) {
+      Log.d(TAG, "tryEnterPip($source): already in PiP")
+      return
+    }
+    val entered = try {
+      enterPictureInPictureMode(buildPipParams())
+    } catch (t: Throwable) {
+      Log.w(TAG, "enterPictureInPictureMode failed: ${t.message}")
+      false
+    }
+    Log.i("CallTrace", "[launch-decision] CallActivity.tryEnterPip source=$source entered=$entered " +
+      "bringAppForward=$bringAppForward callId=$callId outgoing=$isOutgoing status=${state.status}")
+    if (!entered && !bringAppForward) {
+      // Implicit path (user-leave hint): stay full-screen, never hide behind the RN task.
+      return
+    }
+    if (!bringAppForward) return
+    // Explicit minimise: float the mini-window over the live RN app rather
+    // than over whatever task happened to be behind us (lockscreen answer →
+    // launcher). FLAG_ACTIVITY_NO_USER_ACTION so this launch is never
+    // mistaken for a user leave on our side.
     try {
       val launch = packageManager.getLaunchIntentForPackage(packageName)
       if (launch != null) {
-        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        launch.addFlags(
+          Intent.FLAG_ACTIVITY_NEW_TASK
+            or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            or Intent.FLAG_ACTIVITY_NO_USER_ACTION
+        )
+        armSelfLaunchGuard("bring_app_forward:$source", 2_500L)
         startActivity(launch)
       }
     } catch (t: Throwable) { Log.w(TAG, "bring app to front for PiP failed: ${t.message}") }
-    try {
-      enterPictureInPictureMode(buildPipParams())
-      Log.d(TAG, "Entered PiP (hasVideo=$hasVideo remoteRenderer=${remoteRenderer != null})")
-    } catch (t: Throwable) {
-      Log.w(TAG, "enterPictureInPictureMode failed: ${t.message}")
-    }
   }
 
   // [Wave 15 gap G1, 2026-05-20] PiP params com RemoteActions (mute/cam/end).
@@ -2862,7 +2905,49 @@ class CallActivity : ComponentActivity() {
 
   override fun onUserLeaveHint() {
     super.onUserLeaveHint()
-    tryEnterPip()
+    // [2026-10-06 android-outgoing] Fires for Home/Recents AND for any
+    // activity started over us (own permission prompt, ringer overlay,
+    // Telecom UI). Our own launches arm selfLaunchGuardUntilMs — skip those.
+    val now = System.currentTimeMillis()
+    val guard = now < selfLaunchGuardUntilMs
+    Log.i("CallTrace", "[launch-decision] CallActivity.onUserLeaveHint callId=$callId outgoing=$isOutgoing " +
+      "ageMs=${now - createdAtMs} status=${state.status} isInPip=$isInPictureInPictureMode " +
+      "selfLaunchGuard=$guard finishing=$finishing")
+    if (guard) return
+    if (finishing) return
+    // Auto-enter (armed in onCreate, API 31+) already handles gesture-nav
+    // Home; this covers 3-button nav and older OS levels. Never re-fronts
+    // the RN task — see tryEnterPip.
+    tryEnterPip(bringAppForward = false, source = "user_leave_hint")
+  }
+
+  // [2026-10-06 android-outgoing] Lifecycle trace for `adb logcat -s CallTrace`:
+  // tells apart "we were covered by another activity" (onPause w/o finish,
+  // then onStop) from "we finished" and from PiP transitions.
+  override fun onResume() {
+    super.onResume()
+    Log.i("CallTrace", "[launch-decision] CallActivity.onResume callId=$callId outgoing=$isOutgoing " +
+      "ageMs=${System.currentTimeMillis() - createdAtMs} isInPip=$isInPictureInPictureMode taskId=$taskId")
+  }
+
+  override fun onPause() {
+    super.onPause()
+    Log.i("CallTrace", "[launch-decision] CallActivity.onPause callId=$callId outgoing=$isOutgoing " +
+      "ageMs=${System.currentTimeMillis() - createdAtMs} isFinishing=$isFinishing finishing=$finishing " +
+      "isInPip=$isInPictureInPictureMode status=${state.status}")
+  }
+
+  override fun onStop() {
+    super.onStop()
+    Log.i("CallTrace", "[launch-decision] CallActivity.onStop callId=$callId outgoing=$isOutgoing " +
+      "ageMs=${System.currentTimeMillis() - createdAtMs} isFinishing=$isFinishing isInPip=$isInPictureInPictureMode " +
+      "appForeground=${ExpoCallKitModule.isAppForeground}")
+  }
+
+  override fun onTopResumedActivityChanged(isTopResumedActivity: Boolean) {
+    super.onTopResumedActivityChanged(isTopResumedActivity)
+    Log.i("CallTrace", "[launch-decision] CallActivity.onTopResumedActivityChanged top=$isTopResumedActivity " +
+      "callId=$callId ageMs=${System.currentTimeMillis() - createdAtMs} isInPip=$isInPictureInPictureMode")
   }
 
   override fun onPictureInPictureModeChanged(

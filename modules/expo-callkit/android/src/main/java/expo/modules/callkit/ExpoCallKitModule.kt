@@ -692,6 +692,15 @@ class ExpoCallKitModule : Module() {
       } catch (_: Exception) {}
     }
 
+    // [2026-10-06 android-outgoing] Capability probe — mirror of the iOS
+    // Function of the same name. Android has owned outgoing calls natively
+    // since #1217 (CallActivity: signaling via CallSignalWs, LiveKit Room,
+    // ringback, mic/camera, FGS). Advertising it lets the JS side
+    // (services/nativeOutgoingCall.js) run the headless caller tracker and
+    // route any stray /call?isCaller=1 push to NativeOnlyOutgoingBridge
+    // instead of mounting the JS call UI behind CallActivity.
+    Function("supportsNativeOnlyOutgoing") { true }
+
     Function("endCall") { callId: String ->
       // JS calls this both after the user accepts (to dismiss the native UI)
       // and on real hangup. Mark the call as accepting so the deleteIntent
@@ -1347,6 +1356,15 @@ class ExpoCallKitModule : Module() {
           R.anim.call_fade_out,
         )
         val act = appContext.currentActivity
+        // [2026-10-06 android-outgoing] Launch-decision trace (`adb logcat -s CallTrace`).
+        // CallActivity goes into its OWN affinity-less task (manifest
+        // taskAffinity="") on purpose — MainActivity is singleTask and would
+        // clear-top a same-task CallActivity on any launcher/notification/
+        // deep-link launch. Nothing on the outgoing path may re-front the RN
+        // task afterwards (see CallActivity.tryEnterPip / onUserLeaveHint).
+        Log.i("CallTrace", "[launch-decision] startOutgoingCall → CallActivity (own task, NEW_TASK|SINGLE_TOP|REORDER_TO_FRONT|CLEAR_TOP) " +
+          "callId=$callId video=$isVideo hasLkCreds=${!lkUrl.isNullOrEmpty() && !lkToken.isNullOrEmpty()} " +
+          "fromActivity=${act != null} appForeground=$isAppForeground ts=${System.currentTimeMillis()}")
         if (act != null) {
           act.startActivity(intent, opts.toBundle())
         } else {

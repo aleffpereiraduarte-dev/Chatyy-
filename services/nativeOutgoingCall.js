@@ -21,9 +21,21 @@
 // on the installed native build answering supportsNativeOnlyOutgoing() ===
 // true, so an OTA with the flag on cannot strand users on an older binary
 // whose native outgoing screen still relied on JS for audio.
+//
+// [2026-10-06 android-outgoing] Android joins. CallActivity has owned the
+// Android caller since #1217 (chat-conversation.js never pushed /call.js on
+// Android), so for Android this module only ADDS the bookkeeping above and
+// turns any stray /call?isCaller=1 push (app/one.js, deep links) into the
+// headless NativeOnlyOutgoingBridge instead of mounting CallScreenInner in
+// MainActivity behind the native CallActivity (a second, invisible call UI
+// that polled adoptNativeRoom and could re-enter the call). Gated on the
+// native build advertising supportsNativeOnlyOutgoing (vc > 580); older
+// Android binaries keep today's behaviour (native screen, no JS route, no
+// tracker) — never the legacy /call.js push.
 import { Platform } from 'react-native';
 
 export const NATIVE_ONLY_OUTGOING_IOS = true;
+export const NATIVE_ONLY_OUTGOING_ANDROID = true;
 
 let _ExpoCallKit = null;
 function _ck() {
@@ -32,11 +44,17 @@ function _ck() {
   return _ExpoCallKit;
 }
 
-/** True when THIS device should run iOS outgoing calls native-only:
- *  iOS + flag on + the installed native build advertises the capability. */
+/** True when THIS device should run outgoing calls native-only:
+ *  (iOS or Android) + platform flag on + the installed native build
+ *  advertises the capability. */
 export function isNativeOnlyOutgoingActive() {
-  if (Platform.OS !== 'ios') return false;
-  if (!NATIVE_ONLY_OUTGOING_IOS) return false;
+  if (Platform.OS === 'ios') {
+    if (!NATIVE_ONLY_OUTGOING_IOS) return false;
+  } else if (Platform.OS === 'android') {
+    if (!NATIVE_ONLY_OUTGOING_ANDROID) return false;
+  } else {
+    return false;
+  }
   try {
     const ck = _ck();
     return !!(ck && typeof ck.supportsNativeOnlyOutgoing === 'function' && ck.supportsNativeOnlyOutgoing() === true);
@@ -52,7 +70,10 @@ export function nativeOwnsCall(callId) {
   try {
     const ck = _ck();
     const d = ck && typeof ck.getDiagnostics === 'function' ? ck.getDiagnostics() : null;
-    const owned = d && d.nativeRoomCallId ? String(d.nativeRoomCallId) : '';
+    // iOS reports `nativeRoomCallId`; Android getDiagnostics() reports the
+    // NativeCallRoom id as `lkNativeCallId` (ExpoCallKitModule.kt ~842).
+    const owned = d && (d.nativeRoomCallId || d.lkNativeCallId)
+      ? String(d.nativeRoomCallId || d.lkNativeCallId) : '';
     return !!callId && owned === String(callId);
   } catch {
     return false;

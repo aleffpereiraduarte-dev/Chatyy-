@@ -28,6 +28,7 @@ import UIKit
 import SwiftUI
 import LiveKitClient
 import AVKit
+import Network  // [video-quality 2026-10-06] NWPathMonitor snapshot for the profile picker
 import AVFoundation
 import Combine
 // [#1184 dismiss fix, 2026-05-19] CXEndCallAction / CXCallController for the
@@ -315,6 +316,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         guard session.status != "Conectado" else { return }
         session.status = "Conectado"
         nativeCallDiag("call_connected", callId, reason)
+        // [video-quality 2026-10-06] t+8s / t+45s "video_quality" beacons.
+        scheduleVideoQualityDiag()
         if isOutgoing, let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId) {
             if let p = ExpoCallKitModule.sharedProvider {
                 p.reportOutgoingCall(with: uuid, connectedAt: Date())
@@ -871,6 +874,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         let videoCell   = controlCell(symbol: "video.fill", size: 64, tag: 9005, caption: "Vídeo", action: #selector(uikitOnVideoToggle))
         let flipCell    = controlCell(symbol: "arrow.triangle.2.circlepath.camera.fill", size: 64, tag: 9006, caption: "Girar", action: #selector(uikitOnFlipCamera))
         let speakerCell = controlCell(symbol: "speaker.wave.2.fill", size: 64, tag: 9003, caption: "Alto-falante", action: #selector(uikitOnSpeakerTap))
+        // [2026-10-06 screen-share iOS] "Tela" — parity with the JS call screen
+        // (which always had a Tela button). Tag 9009. Shares the bar slot with
+        // "Girar": the bar fits five 64pt cells + the 72pt hangup, not six, so
+        // while the camera is ON (flip visible) this cell hides and screen share
+        // stays reachable from the "Mais opções" sheet (row 9072, unchanged).
+        let screenCell  = controlCell(symbol: "rectangle.on.rectangle", size: 64, tag: 9009, caption: "Tela", action: #selector(uikitOnScreenShareTap))
         let hangupCell  = controlCell(symbol: "phone.down.fill", size: 72, tag: 9004, caption: "Encerrar", action: #selector(uikitOnHangupTap), tint: hangupColor, iconTint: .white)
 
         // Flip starts hidden (whole cell) until the camera publishes. The
@@ -883,7 +892,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // safe-area bottom by the constraints block below — this is the single
         // source of truth that guarantees the controls are always visible.
         let controlBar = UIStackView(arrangedSubviews: [
-            muteCell.cell, videoCell.cell, flipCell.cell, speakerCell.cell, hangupCell.cell
+            muteCell.cell, videoCell.cell, flipCell.cell, speakerCell.cell, screenCell.cell, hangupCell.cell
         ])
         controlBar.translatesAutoresizingMaskIntoConstraints = false
         controlBar.axis = .horizontal
@@ -1217,13 +1226,24 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // Phase-2 upgrade (P2P attempt after 5s) happens in didConnect delegate.
             var roomOpts = RoomOptions(
                 defaultCameraCaptureOptions: Self.defaultCameraCaptureOptions(),
+                // [2026-10-06 screen-share iOS] Broadcast-extension capture when
+                // ChatyyBroadcastExtension.appex is in the bundle (system-wide
+                // ReplayKit picker), in-app capture otherwise. Without this the
+                // SDK default (useBroadcastExtension=false) only ever captured
+                // THIS app's window — i.e. the call screen itself. See
+                // ScreenShareSupport.swift.
+                defaultScreenShareCaptureOptions: ScreenShareSupport.captureOptions(),
                 defaultAudioCaptureOptions: Self.defaultAudioCaptureOptions(),
                 defaultVideoPublishOptions: Self.defaultVideoPublishOptions(),
                 // [HD tuning 2026-05-26] Pin DTX + RED on the published Opus
                 // stream from the very first packet (loss resilience on cellular).
                 defaultAudioPublishOptions: Self.defaultAudioPublishOptions(),
                 adaptiveStream: true,
-                dynacast: true
+                dynacast: true,
+                // [video-quality 2026-10-06] Enables Track.statistics (1 Hz
+                // getStats) so the "video_quality" diag can report the REAL
+                // encoded resolution/bitrate/limitation — stats are nil otherwise.
+                reportRemoteTrackStatistics: true
             )
             // [DISABLED 2026-05-25 — call-connect root-cause] Relay-first ICE
             // (iceTransportPolicy=.relay) is now HARMFUL and the biggest cause
@@ -1827,11 +1847,24 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // camera is off. Fall back to the button itself if the cell can't be
         // resolved.
         let cell: UIView = btn.superview ?? btn
+        // [2026-10-06 screen-share iOS] "Tela" (tag 9009) and "Girar" (9006)
+        // share one slot in the bar — see the controlBar build. Tela shows
+        // while the camera is off; the "Mais opções" row covers camera-on.
+        let screenCell: UIView? = (view.viewWithTag(9009) as? UIButton).map { $0.superview ?? $0 }
         if camEnabled {
             cell.isHidden = false
-            UIView.animate(withDuration: 0.2) { cell.alpha = self.controlsHidden ? 0 : 1 }
+            UIView.animate(withDuration: 0.2, animations: {
+                cell.alpha = self.controlsHidden ? 0 : 1
+                screenCell?.alpha = 0
+            }) { _ in
+                if let s = screenCell, s.alpha == 0 { s.isHidden = true }
+            }
         } else {
-            UIView.animate(withDuration: 0.2, animations: { cell.alpha = 0 }) { _ in
+            screenCell?.isHidden = false
+            UIView.animate(withDuration: 0.2, animations: {
+                cell.alpha = 0
+                screenCell?.alpha = self.controlsHidden ? 0 : 1
+            }) { _ in
                 if cell.alpha == 0 { cell.isHidden = true }
             }
         }
@@ -1922,7 +1955,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // Path 2: fallback to the old republish path. Still happens
             // suspend-async so we don't block the UI thread.
             do {
-                let opts = Self.defaultCameraCaptureOptions(position: next)
+                let opts = Self.defaultCameraCaptureOptions(position: next, profile: CallVideoQuality.current)
                 let pub = try await r.localParticipant.setCamera(
                     enabled: true,
                     captureOptions: opts,
@@ -2015,22 +2048,186 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     private weak var moreMenuBackdrop: UIView?
     private weak var moreMenuCard: UIView?
 
+    // [2026-10-06 screen-share iOS] Top chip "Compartilhando tela · Parar" shown
+    // while our screen-share publication is live, and the Darwin observer that
+    // hears the broadcast extension stop (user tapped the red status pill).
+    private weak var screenShareChip: UIView?
+    private var broadcastStopToken: ScreenShareSupport.ObserverToken?
+    private var screenShareInFlight: Bool = false
+
     private func toggleScreenShare() {
         guard let r = self.room else { return }
-        let desired = !screenSharing
-        screenSharing = desired
-        Task {
-            do {
-                // LiveKit Swift SDK: setScreenShareEnabled was renamed to
-                // set(source:enabled:). Use the new API; ReplayKit picker is
-                // surfaced internally on iOS.
-                _ = try await r.localParticipant.set(source: .screenShareVideo, enabled: desired)
-                print("[CallVC] screenShare → \(desired)")
-            } catch {
-                print("[CallVC] set(.screenShareVideo, enabled: \(desired)) failed: \(error)")
-                self.screenSharing = !desired
+        // Re-entrancy guard — the broadcast path awaits the system picker and
+        // a second tap while it's up fired overlapping set() calls.
+        guard !screenShareInFlight else { return }
+        // Decide off the REAL publication state (same lesson as mute/camera:
+        // the cached bool drifts — e.g. the user stopped from the red pill).
+        let currentlySharing = ScreenShareSupport.isSharing(room: r) || screenSharing
+        let desired = !currentlySharing
+        screenShareInFlight = true
+        nativeCallDiag(desired ? "screen_share_start_tap" : "screen_share_stop_tap", callId)
+        print("[CallVC] screenShare request → \(desired) (broadcastExt=\(ScreenShareSupport.useBroadcastExtension))")
+        if desired && ScreenShareSupport.useBroadcastExtension {
+            // Listen for the extension's "stopped" Darwin notification so a
+            // stop from the system red pill resets our UI even on SDK builds
+            // that leave the frame-less track published.
+            if broadcastStopToken == nil {
+                broadcastStopToken = ScreenShareSupport.observeBroadcastStopped { [weak self] in
+                    self?.handleBroadcastStoppedBySystem()
+                }
             }
         }
+        Task { [weak self] in
+            guard let self = self else { return }
+            do {
+                // Broadcast ext: returns once the system picker is up; the
+                // publication is created by the SDK after the user confirms —
+                // didPublishTrack (LocalParticipant) flips the UI then.
+                // In-app capture: publishes immediately → didPublishTrack too.
+                try await ScreenShareSupport.set(room: r, enabled: desired)
+                await MainActor.run {
+                    self.screenShareInFlight = false
+                    if !desired {
+                        // Stop is synchronous on every SDK build — reflect now.
+                        self.applyScreenShareState(false)
+                    } else if !ScreenShareSupport.useBroadcastExtension {
+                        self.applyScreenShareState(true)
+                    }
+                    // Broadcast + desired: wait for didPublishTrack.
+                }
+            } catch {
+                print("[CallVC] set(.screenShareVideo, enabled: \(desired)) failed: \(error)")
+                nativeCallDiag("screen_share_error", self.callId)
+                await MainActor.run {
+                    self.screenShareInFlight = false
+                    self.applyScreenShareState(ScreenShareSupport.isSharing(room: r))
+                    if desired {
+                        let alert = UIAlertController(
+                            title: "Compartilhar tela",
+                            message: "Não foi possível iniciar o compartilhamento de tela. Tente novamente.",
+                            preferredStyle: .alert)
+                        alert.addAction(UIAlertAction(title: "OK", style: .default))
+                        self.present(alert, animated: true)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Bar button (tag 9009) — same path as the "Mais opções" row.
+    @objc private func uikitOnScreenShareTap() {
+        tapFeedback(view.viewWithTag(9009) as? UIButton)
+        resetControlsAutoHide()
+        toggleScreenShare()
+    }
+
+    /// Extension process told us (Darwin notification) that the broadcast
+    /// ended — the user hit "Parar" on the red status pill or iOS killed it.
+    /// Unpublish defensively (older LK 2.x keeps the track) and reset the UI.
+    private func handleBroadcastStoppedBySystem() {
+        guard screenSharing || (room.map { ScreenShareSupport.isSharing(room: $0) } ?? false) else { return }
+        nativeCallDiag("screen_share_stopped_by_system", callId)
+        applyScreenShareState(false)
+        guard let r = self.room else { return }
+        Task {
+            do { try await ScreenShareSupport.set(room: r, enabled: false) } catch {
+                print("[CallVC] unpublish after system stop failed: \(error)")
+            }
+        }
+    }
+
+    /// Single place that mutates `screenSharing` + the UI (bar button active
+    /// state, top chip). Called from the publish/unpublish RoomDelegate hooks,
+    /// the toggle, and the Darwin stop observer. Main thread only.
+    private func applyScreenShareState(_ sharing: Bool) {
+        screenSharing = sharing
+        if let btn = view.viewWithTag(9009) as? UIButton {
+            setControlActive(btn, active: sharing,
+                             symbol: sharing ? "rectangle.on.rectangle.slash" : "rectangle.on.rectangle")
+        }
+        if sharing { showScreenShareChip() } else { hideScreenShareChip() }
+        if !sharing, let tok = broadcastStopToken {
+            ScreenShareSupport.stopObserving(tok)
+            broadcastStopToken = nil
+        }
+    }
+
+    private func showScreenShareChip() {
+        guard screenShareChip == nil else { return }
+        let chip = UIView()
+        chip.translatesAutoresizingMaskIntoConstraints = false
+        chip.backgroundColor = UIColor(red: 0x1E/255.0, green: 0x8E/255.0, blue: 0x5A/255.0, alpha: 0.96)
+        chip.layer.cornerRadius = 18
+        chip.clipsToBounds = true
+        chip.alpha = 0
+        chip.tag = 9012   // 9010/9011 belong to the top bar (setControlsHidden resolves it via 9010)
+
+        let icon = UIImageView(image: UIImage(systemName: "rectangle.on.rectangle",
+                                              withConfiguration: UIImage.SymbolConfiguration(pointSize: 13, weight: .semibold)))
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.tintColor = .white
+        icon.contentMode = .scaleAspectFit
+
+        let label = UILabel()
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.text = ScreenShareSupport.modeLabel
+        label.textColor = .white
+        label.font = .systemFont(ofSize: 13, weight: .semibold)
+
+        let stop = UIButton(type: .system)
+        stop.translatesAutoresizingMaskIntoConstraints = false
+        stop.setTitle("Parar", for: .normal)
+        stop.setTitleColor(.white, for: .normal)
+        stop.titleLabel?.font = .systemFont(ofSize: 13, weight: .bold)
+        stop.backgroundColor = UIColor.white.withAlphaComponent(0.22)
+        stop.layer.cornerRadius = 12
+        stop.contentEdgeInsets = UIEdgeInsets(top: 4, left: 10, bottom: 4, right: 10)
+        stop.addTarget(self, action: #selector(uikitOnScreenShareChipStop), for: .touchUpInside)
+
+        chip.addSubview(icon)
+        chip.addSubview(label)
+        chip.addSubview(stop)
+        view.addSubview(chip)
+        screenShareChip = chip
+
+        NSLayoutConstraint.activate([
+            // Below the top bar (back/minimize + lock/more sit in the first ~44pt).
+            chip.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 56),
+            chip.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            chip.heightAnchor.constraint(equalToConstant: 36),
+            chip.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 16),
+            chip.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -16),
+
+            icon.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 12),
+            icon.centerYAnchor.constraint(equalTo: chip.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 16),
+            icon.heightAnchor.constraint(equalToConstant: 16),
+
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
+            label.centerYAnchor.constraint(equalTo: chip.centerYAnchor),
+
+            stop.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 10),
+            stop.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -6),
+            stop.centerYAnchor.constraint(equalTo: chip.centerYAnchor),
+        ])
+        view.layoutIfNeeded()
+        chip.transform = CGAffineTransform(translationX: 0, y: -12)
+        UIView.animate(withDuration: 0.25, delay: 0, options: [.curveEaseOut]) {
+            chip.alpha = 1
+            chip.transform = .identity
+        }
+    }
+
+    private func hideScreenShareChip() {
+        guard let chip = screenShareChip else { return }
+        screenShareChip = nil
+        UIView.animate(withDuration: 0.2, animations: { chip.alpha = 0 }) { _ in
+            chip.removeFromSuperview()
+        }
+    }
+
+    @objc private func uikitOnScreenShareChipStop() {
+        toggleScreenShare()
     }
 
     /// [#1189 features, 2026-05-19] Call hold via CallKit. Tapping "Colocar em
@@ -2771,102 +2968,184 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
-    // MARK: - Wave C adaptive video defaults
+    // MARK: - Video quality profiles (2026-10-06 "melhorar a qualidade do vídeo")
+    //
+    // SINGLE SOURCE OF TRUTH for every camera publish on iOS: the 1:1
+    // CallViewController (3 publish sites + switchCamera), the NativeCallRoom
+    // warm/outgoing path and GroupCallViewController all call the two static
+    // builders below. Mirror of Android `NativeCallRoom.CallVideoQuality` and
+    // app/call.js `VIDEO_QUALITY` — the SFU forwards whatever each publisher
+    // offers, so an asymmetric ladder shows up as "um lado nítido, o outro
+    // borrado". Change the numbers HERE, then mirror them on the other two.
+    //
+    // Ladder (16:9, 30 fps, H.264 hardware, single encoding — see the codec
+    // note on `defaultVideoPublishOptions`):
+    //   hd1080   1920x1080  3.5 Mbps   Wi-Fi/ethernet + "Qualidade HD" toggle
+    //   hd720    1280x720   2.3 Mbps   default 1:1 (Wi-Fi or healthy cellular)
+    //   sd540     960x540   1.1 Mbps   cellular + constrained/poor link
+    //   group540  960x540   0.7 Mbps   group tiles (small on screen; N×uplink)
+    // Degradation = .balanced for camera (WebRTC default: sheds a bit of fps
+    // AND res under congestion — maintainFramerate made a congested face go
+    // 180p-blurry while staying 30 fps, which is what the founder saw as
+    // "vídeo ruim"). Screen share is pinned to maintainResolution in
+    // ScreenShareSupport / `screenSharePublishOptions()`.
+    enum CallVideoProfile: String {
+        case hd1080, hd720, sd540, group540
 
-    /// [Wave C, 2026-05-18] CameraCaptureOptions tuned for 1:1 video calls.
-    /// Defaults to 720p capture at 30fps so the SFU has a high-quality source
-    /// for the top simulcast tier; lower tiers come from LK's automatic
-    /// downscale at the encoder.
-    ///
+        var dimensions: Dimensions {
+            switch self {
+            case .hd1080:   return Dimensions(width: Int32(1920), height: Int32(1080))
+            case .hd720:    return Dimensions(width: Int32(1280), height: Int32(720))
+            case .sd540, .group540: return Dimensions(width: Int32(960), height: Int32(540))
+            }
+        }
+        var maxBitrate: Int {
+            switch self {
+            case .hd1080:   return 3_500_000
+            case .hd720:    return 2_300_000
+            case .sd540:    return 1_100_000
+            case .group540: return 700_000
+            }
+        }
+        var maxFps: Int { 30 }
+        /// Rank used by the step-down logic (higher = more demanding).
+        var rank: Int {
+            switch self {
+            case .hd1080: return 3
+            case .hd720:  return 2
+            case .sd540:  return 1
+            case .group540: return 0
+            }
+        }
+    }
+
+    /// Lightweight NWPathMonitor snapshot. Started once (first access) and
+    /// kept alive for the process — cheap, and it means the profile picker
+    /// has a real answer by the time the first call publishes.
+    final class CallNetworkSnapshot {
+        static let shared = CallNetworkSnapshot()
+        private let monitor = NWPathMonitor()
+        private let lock = NSLock()
+        private var _isCellular = false
+        private var _isExpensive = false
+        private var _isConstrained = false
+        private var _label = "unknown"
+        private init() {
+            monitor.pathUpdateHandler = { [weak self] path in
+                guard let self = self else { return }
+                let cellular = path.status == .satisfied && path.usesInterfaceType(.cellular) && !path.usesInterfaceType(.wifi)
+                let label: String
+                if path.status != .satisfied { label = "offline" }
+                else if path.usesInterfaceType(.wifi) { label = "wifi" }
+                else if cellular { label = "cellular" }
+                else if path.usesInterfaceType(.wiredEthernet) { label = "ethernet" }
+                else { label = "online" }
+                self.lock.lock()
+                self._isCellular = cellular
+                self._isExpensive = path.isExpensive
+                self._isConstrained = path.isConstrained
+                self._label = label
+                self.lock.unlock()
+            }
+            monitor.start(queue: DispatchQueue(label: "com.onemundo.callkit.videoq.netmon"))
+        }
+        var isCellular: Bool { lock.lock(); defer { lock.unlock() }; return _isCellular }
+        var isExpensive: Bool { lock.lock(); defer { lock.unlock() }; return _isExpensive }
+        var isConstrained: Bool { lock.lock(); defer { lock.unlock() }; return _isConstrained }
+        var label: String { lock.lock(); defer { lock.unlock() }; return _label }
+    }
+
+    enum CallVideoQuality {
+        /// UserDefaults key for the "Qualidade HD (1080p)" toggle in the native
+        /// "Mais opções" menu. Only honoured on Wi-Fi/ethernet.
+        static let hdPrefKey = "chatyy_call_hd"
+        /// Screen share: 1080p @ 15 fps, ~3 Mbps, keep resolution (text must
+        /// stay legible; frame rate is secondary for slides/documents).
+        static let screenShareDimensions = Dimensions(width: Int32(1920), height: Int32(1080))
+        static let screenShareEncoding = VideoEncoding(maxBitrate: 3_000_000, maxFps: 15)
+        /// Last profile handed to a publish site (diag + step-down read it).
+        /// Default hd720 so the diag never prints "?" before the first publish.
+        private static let lock = NSLock()
+        private static var _current: CallVideoProfile = .hd720
+        static var current: CallVideoProfile {
+            get { lock.lock(); defer { lock.unlock() }; return _current }
+            set { lock.lock(); _current = newValue; lock.unlock() }
+        }
+        static var isHdPreferred: Bool {
+            get { UserDefaults.standard.bool(forKey: hdPrefKey) }
+            set { UserDefaults.standard.set(newValue, forKey: hdPrefKey) }
+        }
+        /// Network-aware pick. `localQualityScore` is the 0-3 bars score the VC
+        /// keeps in `session.connectionQuality` (3 = excellent … 0 = lost).
+        static func profile(isGroup: Bool, localQualityScore: Int = 3) -> CallVideoProfile {
+            if isGroup { return .group540 }
+            let net = CallNetworkSnapshot.shared
+            if net.isCellular || net.isExpensive {
+                if net.isConstrained || localQualityScore <= 1 { return .sd540 }
+                return .hd720
+            }
+            return isHdPreferred ? .hd1080 : .hd720
+        }
+    }
+
+    /// CameraCaptureOptions for the given (or network-picked) profile.
     /// `position` lets switchCamera() rebuild the same options against the
     /// flipped device; everything else stays constant so the capture stack
     /// doesn't have to reinit when we just rotate the lens.
-    static func defaultCameraCaptureOptions(position: AVCaptureDevice.Position = .front) -> CameraCaptureOptions {
-        // VideoParameters.presetH720_169 — 1280x720 @ 30fps @ ~1.7Mbps target.
-        // The 16:9 preset matches portrait-rotated phones (LK auto-rotates).
-        // If the device can't hit 720p (older iPhone SE), LK clamps down to
-        // the nearest supported resolution automatically.
-        // [2026-05-19 forward-fix] Dimensions(width: Int32, height: Int32) —
-        // Swift does NOT auto-promote Int literals to Int32; cast explicitly
-        // to keep Archive compile happy on LK Swift 2.5+.
+    /// [2026-05-19 forward-fix] Dimensions(width: Int32, height: Int32) — Swift
+    /// does NOT auto-promote Int literals to Int32 (Archive compile, LK 2.0.x).
+    /// LK clamps to the nearest supported camera format automatically.
+    static func defaultCameraCaptureOptions(position: AVCaptureDevice.Position = .front,
+                                            profile: CallVideoProfile? = nil,
+                                            isGroup: Bool = false) -> CameraCaptureOptions {
+        let p = profile ?? CallVideoQuality.profile(isGroup: isGroup)
+        CallVideoQuality.current = p
         return CameraCaptureOptions(
             position: position,
-            dimensions: Dimensions(width: Int32(1280), height: Int32(720)),
-            fps: 30
+            dimensions: p.dimensions,
+            fps: p.maxFps
         )
     }
 
-    /// [Wave C, 2026-05-18] VideoPublishOptions with simulcast enabled. LK
-    /// then publishes 3 encodings (h720, h360, h180) and the SFU picks per
-    /// subscriber based on bandwidth + viewport — this is what gives us
-    /// adaptive bitrate without any client-side network probe.
+    /// VideoPublishOptions for the given (or current) profile.
     ///
-    /// [HD tuning 2026-05-26] `degradationPreference: .maintainFramerate` is the
-    /// WhatsApp/FaceTime-like default for 1:1 talking-head calls: under
-    /// congestion the encoder DROPS RESOLUTION FIRST and keeps the frame rate
-    /// smooth (motion fidelity > sharpness on a face that's mostly static). The
-    /// simulcast ladder (below) gives the SFU lower-res tiers to fall back to,
-    /// so a weak link smoothly steps 720p→360p→180p instead of stuttering at
-    /// full res. (Was `.balanced`, which split the difference; for a face,
-    /// keeping fps reads as noticeably more "live".)
-    ///
-    /// Simulcast is ON: LK derives 3 encodings from the 720p capture source —
-    /// ~h180 (low) / ~h360 (mid) / ~h720 (high) — and the SFU forwards the
-    /// best tier each subscriber's bandwidth + viewport can take. That, plus
-    /// adaptiveStream + dynacast on the Room, is what downshifts automatically
-    /// on weak networks instead of freezing.
-    ///
-    /// [remote-video render fix 2026-05-26]
-    ///   - `preferredCodec: .h264` — was `.vp9`. VP9 lacks reliable HW DECODE on
-    ///     many mobile devices (esp. iPhones), so a VP9-published peer track
-    ///     often never produced a frame on the subscriber → "remote video shows
-    ///     only the avatar" while the call was otherwise connected. H.264 is
-    ///     hardware-decoded on every iPhone + Android (the WhatsApp/FaceTime/
-    ///     Meet-mobile interop default). Note: standard libwebrtc does NOT do
-    ///     H.264 simulcast, so with H.264 the encoder publishes a single
-    ///     encoding (the top tier) even though `simulcast: true` is requested —
-    ///     that's a benign no-op, not an error, and reliable rendering is worth
-    ///     losing per-tier downshift in 1:1.
-    ///   - `encoding.maxBitrate = 2.0 Mbps` — top (h720) tier cap. Healthy HD
-    ///     headroom for 720p@30 (target ~1.7M, ceiling 2.0M). On a 1080p-capable
-    ///     good link the SFU/encoder uses the headroom; on weak links the
-    ///     lower simulcast tiers + maintainFramerate keep it smooth.
-    static func defaultVideoPublishOptions() -> VideoPublishOptions {
+    /// [remote-video render fix 2026-05-26] `preferredCodec: .h264` — VP9 lacks
+    /// reliable HW DECODE on many phones (remote stayed on the avatar). H.264 is
+    /// hardware-decoded on every iPhone + Android. Mirror change in
+    /// NativeCallRoom.swift, Android CallActivity/NativeCallRoom and app/call.js —
+    /// all publish sites must agree or the SFU negotiation goes asymmetric.
+    /// [VIDEO FIX 2026-05-26] `simulcast: false` — with `.h264` + simulcast:true
+    /// this SDK built an invalid multi-encoding offer → setCamera() returned a
+    /// dead track (no self-view, remote saw only the avatar). Single H.264
+    /// encoding; adaptiveStream + dynacast + degradation still shed under load.
+    /// [video-quality 2026-10-06] bitrate/dimensions come from the profile
+    /// ladder above; `screenShareEncoding` pinned (1080p15 ~3 Mbps) so a screen
+    /// share published through the Room defaults no longer rides the camera cap;
+    /// degradationPreference .maintainFramerate → .balanced (see ladder note).
+    static func defaultVideoPublishOptions(profile: CallVideoProfile? = nil) -> VideoPublishOptions {
+        let p = profile ?? CallVideoQuality.current
         return VideoPublishOptions(
             name: nil,
-            encoding: VideoEncoding(
-                maxBitrate: 2_000_000, // 2.0 Mbps cap for H.264 720p top tier
-                maxFps: 30
-            ),
-            // [VIDEO FIX 2026-05-26] simulcast MUST be false with H.264.
-            // ROOT CAUSE "nem eu me vejo nem o outro me vê em vídeo": standard
-            // libwebrtc (react-native-webrtc m144) does NOT support H.264
-            // simulcast. With `simulcast: true` + `preferredCodec: .h264` the SDK
-            // builds an invalid multi-encoding H.264 publish offer → setCamera()
-            // throws/returns a dead track, swallowed by the `try?` → local
-            // self-view never gets a track AND nothing reaches the SFU → remote
-            // peer sees only the avatar. H.264 publishes a single encoding anyway,
-            // so disabling simulcast loses nothing in 1:1 and makes publish work.
+            encoding: VideoEncoding(maxBitrate: p.maxBitrate, maxFps: p.maxFps),
+            screenShareEncoding: CallVideoQuality.screenShareEncoding,
             simulcast: false,
-            // [remote-video render fix 2026-05-26] preferredCodec .vp9 → .h264.
-            // ROOT CAUSE of "remote video shows only the avatar while connected":
-            // VP9 has unreliable cross-platform DECODE on mobile. When the Android
-            // peer published VP9 simulcast, this iOS subscriber frequently got a
-            // remote VideoTrack that never produced a decodable frame (many iPhones
-            // lack VP9 HW decode; the LK/WebRTC build here doesn't fall back per-
-            // subscriber once the publisher hard-pinned VP9) → audio + timer fine,
-            // local PiP fine, but the peer's camera never rendered. H.264 is
-            // hardware-decoded on EVERY iPhone and Android device (the WhatsApp/
-            // FaceTime/Meet-mobile interop default), so both directions decode
-            // reliably. We keep simulcast + maintainFramerate; only the codec
-            // changes. Mirror change in NativeCallRoom.swift (preconnect publish)
-            // and Android CallActivity.kt (reflective codec pin) — all three must
-            // agree or the SFU negotiation is asymmetric.
             preferredCodec: .h264,
-            // [Wave 19 fix] LK iOS 2.0.x VideoPublishOptions has no backupCodec
-            // param yet. SFU falls back to negotiated codec list automatically.
-            // [HD tuning 2026-05-26] maintainFramerate — keep fps, shed res first.
-            degradationPreference: .maintainFramerate
+            // [Wave 19 fix] LK iOS 2.0.x has no backupCodec param; the SFU falls
+            // back to the negotiated codec list automatically.
+            degradationPreference: .balanced
+        )
+    }
+
+    /// Publish options for a SCREEN SHARE track (ScreenShareSupport passes
+    /// these explicitly): same codec pin, 1080p15 ~3 Mbps, keep resolution.
+    static func screenSharePublishOptions() -> VideoPublishOptions {
+        return VideoPublishOptions(
+            name: nil,
+            encoding: CallVideoQuality.screenShareEncoding,
+            screenShareEncoding: CallVideoQuality.screenShareEncoding,
+            simulcast: false,
+            preferredCodec: .h264,
+            degradationPreference: .maintainResolution
         )
     }
 
@@ -2920,6 +3199,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // MARK: - Deinit
 
     deinit {
+        // [2026-10-06 screen-share iOS] Darwin observer holds an unretained
+        // pointer to the token — drop it before the VC goes away.
+        if let tok = broadcastStopToken {
+            ScreenShareSupport.stopObserving(tok)
+            broadcastStopToken = nil
+        }
         // [minimize-drop fix 2026-05-26] CRITICAL: do NOT disconnect the Room
         // when this dealloc is the result of a MINIMIZE. The incoming-answer
         // path presents this VC as a plain modal, so when handleMinimize() (or
@@ -3019,7 +3304,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             // [HD tuning 2026-05-26] DTX + RED on the published Opus stream.
             defaultAudioPublishOptions: Self.defaultAudioPublishOptions(),
             adaptiveStream: true,
-            dynacast: true
+            dynacast: true,
+            // [video-quality 2026-10-06] Track.statistics for the diag beacon.
+            reportRemoteTrackStatistics: true
         )
         // delegate: nil — there's no VC yet. CallViewController.viewDidLoad
         // (called when present() lands) will rebind its own RoomDelegate via
@@ -3370,13 +3657,20 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         let holdTitle   = session.onHold ? "Retomar" : "Colocar em espera"
         let holdSymbol  = session.onHold ? "play.fill" : "pause.fill"
 
-        let rows: [UIButton] = [
+        var rows: [UIButton] = [
             moreMenuRow(symbol: "face.smiling",         title: "Reações",                 tag: 9071, action: #selector(moreMenuReactions)),
             moreMenuRow(symbol: shareSymbol,            title: shareTitle,                tag: 9072, action: #selector(moreMenuScreenShare)),
             moreMenuRow(symbol: "person.crop.rectangle", title: "Efeito de fundo",        tag: 9073, action: #selector(moreMenuBackground)),
             moreMenuRow(symbol: holdSymbol,             title: holdTitle,                 tag: 9074, action: #selector(moreMenuHold)),
             moreMenuRow(symbol: "person.badge.plus",    title: "Adicionar participante",  tag: 9075, action: #selector(moreMenuAddMember)),
         ]
+        // [video-quality 2026-10-06] "Qualidade HD" (1080p on Wi-Fi) — video calls only.
+        if hasVideo || session.camEnabled {
+            let hdOn = CallVideoQuality.isHdPreferred
+            rows.append(moreMenuRow(symbol: hdOn ? "checkmark.circle.fill" : "tv",
+                                    title: hdOn ? "Qualidade HD: ligada (1080p)" : "Qualidade HD (1080p no Wi-Fi)",
+                                    tag: 9076, action: #selector(moreMenuToggleHd)))
+        }
         let rowStack = UIStackView(arrangedSubviews: rows)
         rowStack.translatesAutoresizingMaskIntoConstraints = false
         rowStack.axis = .vertical
@@ -3529,6 +3823,21 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         dismissMoreMenu()
         handleAddMember()
     }
+    /// [video-quality 2026-10-06] Toggle the 1080p preference. Applied live
+    /// (capturer restart, no republish) only when the network allows it —
+    /// on cellular the preference is stored and honoured on the next Wi-Fi call.
+    @objc private func moreMenuToggleHd() {
+        tapFeedback(view.viewWithTag(9076) as? UIButton)
+        dismissMoreMenu()
+        let next = !CallVideoQuality.isHdPreferred
+        CallVideoQuality.isHdPreferred = next
+        nativeCallDiag("video_hd_toggle", callId, "on=\(next ? 1 : 0) net=\(CallNetworkSnapshot.shared.label)")
+        guard hasVideo || session.camEnabled else { return }
+        let target = CallVideoQuality.profile(isGroup: session.isGroup, localQualityScore: session.connectionQuality)
+        if target != CallVideoQuality.current {
+            applyVideoProfile(target, reason: next ? "hd_on" : "hd_off")
+        }
+    }
 
     /// Nested emoji picker for the More → Reactions path. Each emoji calls the
     /// existing sendReaction(_:) which bursts locally + publishes over the LK
@@ -3562,7 +3871,124 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         }
     }
 
+    // MARK: - Video quality diag + network step-down (2026-10-06)
+    //
+    // Measurable quality: two beacons per video call (t+8s, t+45s) land in
+    // voip_diag.log as `native_ios_video_quality` with the REAL negotiated
+    // numbers — encoded res/fps/target bitrate/limitation reason/encoder,
+    // codec, received res/fps/drops, chosen profile, network, bars. Read with
+    //   grep video_quality /var/www/mail/data/voip_diag.log | tail
+    // Step-down: cellular + 2 consecutive poor/lost readings on OUR link →
+    // capture drops to 540p IN PLACE (CameraCapturer.set(options:) restarts
+    // the capturer only — same track, no unpublish/republish, the remote side
+    // keeps rendering). One-way per call; WebRTC's balanced degradation
+    // handles the fine-grained ladder below that.
+
+    private var videoQualityDiagWork: [DispatchWorkItem] = []
+    private var localPoorQualityStreak = 0
+    private var videoStepDownDone = false
+
+    private func scheduleVideoQualityDiag() {
+        guard videoQualityDiagWork.isEmpty, hasVideo || session.camEnabled else { return }
+        for (delay, tag) in [(8.0, "t8"), (45.0, "t45")] {
+            let w = DispatchWorkItem { [weak self] in self?.reportVideoQuality(tag: tag) }
+            videoQualityDiagWork.append(w)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: w)
+        }
+    }
+
+    private func cancelVideoQualityDiag() {
+        videoQualityDiagWork.forEach { $0.cancel() }
+        videoQualityDiagWork.removeAll()
+    }
+
+    private func localCameraTrack() -> LocalVideoTrack? {
+        guard let r = room else { return nil }
+        let pub = r.localParticipant.videoTracks.first { $0.source == .camera }
+        return pub?.track as? LocalVideoTrack
+    }
+
+    private func reportVideoQuality(tag: String) {
+        guard !didHangup, let r = room else { return }
+        var parts: [String] = [
+            "tag=\(tag)",
+            "profile=\(CallVideoQuality.current.rawValue)",
+            "net=\(CallNetworkSnapshot.shared.label)",
+            "bars=\(session.connectionQuality)",
+            "hd_pref=\(CallVideoQuality.isHdPreferred ? 1 : 0)",
+        ]
+        if let t = localCameraTrack() {
+            if let d = t.dimensions { parts.append("cap=\(d.width)x\(d.height)") }
+            if let s = t.statistics {
+                if let o = s.outboundRtpStream.first(where: { ($0.frameWidth ?? 0) > 0 }) ?? s.outboundRtpStream.first {
+                    parts.append("out=\(o.frameWidth ?? 0)x\(o.frameHeight ?? 0)@\(Int(o.framesPerSecond ?? 0))")
+                    parts.append("tgt=\(Int((o.targetBitrate ?? 0) / 1000))k")
+                    parts.append("lim=\(o.qualityLimitationReason?.rawValue ?? "?")")
+                    parts.append("enc=\(o.encoderImplementation ?? "?")")
+                    parts.append("pli=\(o.pliCount ?? 0) nack=\(o.nackCount ?? 0)")
+                }
+                if let c = s.codec.first(where: { ($0.mimeType ?? "").hasPrefix("video") }) ?? s.codec.first {
+                    parts.append("codec=\(c.mimeType ?? "?")")
+                }
+            } else {
+                parts.append("out=nostats")
+            }
+        } else {
+            parts.append("cap=none")
+        }
+        if let rp = r.remoteParticipants.values.first,
+           let pub = rp.videoTracks.first(where: { $0.source == .camera }) {
+            if let d = pub.dimensions { parts.append("rx_pub=\(d.width)x\(d.height)") }
+            parts.append("rx_mime=\(pub.mimeType)")
+            if let t = pub.track as? RemoteVideoTrack {
+                if let d = t.dimensions { parts.append("rx_dim=\(d.width)x\(d.height)") }
+                if let s = t.statistics, let i = s.inboundRtpStream.first {
+                    parts.append("rx=\(i.frameWidth ?? 0)x\(i.frameHeight ?? 0)@\(Int(i.framesPerSecond ?? 0)) drop=\(i.framesDropped ?? 0) rx_pli=\(i.pliCount ?? 0) rx_nack=\(i.nackCount ?? 0)")
+                }
+            }
+            parts.append("rx_bars=\(rp.connectionQuality)")
+        }
+        let detail = parts.joined(separator: " ")
+        print("[CallVC] video_quality \(detail)")
+        nativeCallDiag("video_quality", callId, detail)
+    }
+
+    private func noteLocalConnectionQuality(_ score: Int) {
+        if score <= 1 { localPoorQualityStreak += 1 } else { localPoorQualityStreak = 0 }
+        guard !videoStepDownDone, localPoorQualityStreak >= 2 else { return }
+        let net = CallNetworkSnapshot.shared
+        guard net.isCellular || net.isExpensive || net.isConstrained else { return }
+        guard CallVideoQuality.current.rank > CallVideoProfile.sd540.rank else { return }
+        videoStepDownDone = true
+        applyVideoProfile(.sd540, reason: "poor_cellular_x\(localPoorQualityStreak)")
+    }
+
+    /// Re-targets the LIVE camera capture to `profile` without republishing.
+    /// If no camera track is up yet, just records the profile — the next
+    /// setCamera() picks it up through defaultCameraCaptureOptions().
+    private func applyVideoProfile(_ profile: CallVideoProfile, reason: String) {
+        guard let track = localCameraTrack(), let cap = track.capturer as? CameraCapturer else {
+            CallVideoQuality.current = profile
+            return
+        }
+        let opts = Self.defaultCameraCaptureOptions(position: currentCameraPosition, profile: profile)
+        Task { [weak self] in
+            guard let self = self else { return }
+            do {
+                _ = try await cap.set(options: opts)
+                print("[CallVC] video profile → \(profile.rawValue) (\(reason))")
+                nativeCallDiag("video_profile_change", self.callId,
+                               "to=\(profile.rawValue) reason=\(reason) net=\(CallNetworkSnapshot.shared.label)")
+            } catch {
+                print("[CallVC] video profile change failed: \(error)")
+                nativeCallDiag("video_profile_change_failed", self.callId, "to=\(profile.rawValue) err=\(error)")
+            }
+        }
+    }
+
     private func cleanupCallTimers() {
+        // [video-quality 2026-10-06] Drop pending quality beacons on teardown.
+        cancelVideoQualityDiag()
         dotsTimer?.invalidate()
         dotsTimer = nil
         durationTimer?.invalidate()
@@ -4401,6 +4827,51 @@ extension CallViewController: RoomDelegate {
             // so a later spurious unmute can't try to re-bind a dead track.
             self.remoteVideoMuted = false
             self.mutedRemoteVideoTrack = nil
+            // [2026-10-06 screen-share iOS] The peer may publish camera AND
+            // screen share at once; the full-bleed tile shows whichever was
+            // subscribed last. When one of them goes away (typically the
+            // screen share ending), fall back to the other still-subscribed
+            // remote video instead of dropping to the avatar.
+            if let fallback = participant.videoTracks
+                .first(where: { "\($0.sid)" != "\(publication.sid)" && ($0.track as? VideoTrack) != nil })?
+                .track as? VideoTrack {
+                print("[CallVC] didUnsubscribeTrack — falling back to remaining remote video (source=\(fallback.source))")
+                self.session.remoteVideoTrack = fallback
+                if #available(iOS 15.0, *) {
+                    self.attachPiPRenderer(to: fallback)
+                }
+            }
+        }
+    }
+
+    // [2026-10-06 screen-share iOS] LOCAL publish/unpublish — the truth for the
+    // "Tela" toggle. With the broadcast extension the SDK publishes the
+    // screen-share track only after the user confirms the system sheet, and
+    // unpublishes when the broadcast ends (red pill / extension killed), so
+    // the UI must follow these events rather than the toggle call returning.
+    func room(_ room: Room,
+              participant: LocalParticipant,
+              didPublishTrack publication: LocalTrackPublication) {
+        guard publication.source == .screenShareVideo else { return }
+        print("[CallVC] local screen-share published sid=\(publication.sid)")
+        nativeCallDiag("screen_share_published", callId, ScreenShareSupport.useBroadcastExtension ? "broadcast" : "in_app")
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.screenShareInFlight = false
+            self.applyScreenShareState(true)
+        }
+    }
+
+    func room(_ room: Room,
+              participant: LocalParticipant,
+              didUnpublishTrack publication: LocalTrackPublication) {
+        guard publication.source == .screenShareVideo else { return }
+        print("[CallVC] local screen-share unpublished sid=\(publication.sid)")
+        nativeCallDiag("screen_share_unpublished", callId)
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            self.screenShareInFlight = false
+            self.applyScreenShareState(false)
         }
     }
 
@@ -4502,6 +4973,8 @@ extension CallViewController: RoomDelegate {
         }
         DispatchQueue.main.async { [weak self] in
             self?.session.connectionQuality = score
+            // [video-quality 2026-10-06] cellular + sustained poor → 540p capture.
+            self?.noteLocalConnectionQuality(score)
         }
     }
 

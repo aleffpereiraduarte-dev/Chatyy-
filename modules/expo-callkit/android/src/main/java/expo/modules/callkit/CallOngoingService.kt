@@ -92,10 +92,20 @@ class CallOngoingService : Service() {
     private fun buildOngoingNotification(callId: String, callerName: String): Notification {
         // Tap → return to CallActivity. singleTop on the manifest means this
         // reuses the existing instance rather than spawning a second one.
+        // [2026-10-06 android-outgoing] Same flag set as every other
+        // CallActivity launcher (REORDER_TO_FRONT|CLEAR_TOP): the activity
+        // lives in its own affinity-less task, so the tap must re-front THAT
+        // task — never MainActivity's. An intent that only carries call_id +
+        // name hits onNewIntent on the live instance (no re-create).
         val contentIntent = Intent(this, CallActivity::class.java).apply {
             putExtra(CallActivity.EXTRA_CALL_ID, callId)
             putExtra(CallActivity.EXTRA_CALLER_NAME, callerName)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK
+                    or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                    or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            )
         }
         val pi = PendingIntent.getActivity(
             this,

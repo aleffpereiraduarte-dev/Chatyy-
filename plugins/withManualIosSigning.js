@@ -26,6 +26,18 @@ const SIGNING = {
   },
 };
 
+// [2026-10-06 screen-share iOS] ChatyyBroadcastExtension (ReplayKit upload
+// extension, plugins/with-broadcast-extension.js). Its profile UUID differs
+// per machine/run, so it is opt-in via env instead of hardcoded:
+//   IOS_BROADCAST_PROFILE_UUID=<uuid>  (Mac 207 local builds)
+//   BROADCAST_UUID=<uuid>              (GitHub ios-build-local.yml output)
+// Without either, the target stays Automatic and EAS cloud applies the
+// credentials.json `ios.ChatyyBroadcastExtension` entry instead.
+const BROADCAST_UUID = process.env.IOS_BROADCAST_PROFILE_UUID || process.env.BROADCAST_UUID;
+if (BROADCAST_UUID) {
+  SIGNING['com.onemundo.mail.broadcast'] = { profile: BROADCAST_UUID };
+}
+
 const TEAM_ID = 'XN9XN27QCE';
 const SIGN_IDENTITY = 'Apple Distribution';
 

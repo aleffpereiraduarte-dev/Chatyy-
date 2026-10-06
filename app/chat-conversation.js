@@ -19536,7 +19536,14 @@ function ChatConversationInner() {
       // /call.js used to do for the caller (call-active flags, history row,
       // server terminal status). Older binaries / flag off → legacy push.
       // Rollback = services/nativeOutgoingCall.js NATIVE_ONLY_OUTGOING_IOS=false.
-      if (native && Platform.OS === 'ios' && outCallId) {
+      // [2026-10-06 android-outgoing] Android: CallActivity has owned the
+      // caller since #1217 and this screen NEVER pushes /call.js for it (the
+      // JS route would mount a second call UI inside MainActivity behind the
+      // native one). With a native build that advertises
+      // supportsNativeOnlyOutgoing, also run the headless tracker so the
+      // caller gets the same bookkeeping as iOS (call-active flags, history
+      // row, terminal status). Older Android binaries: native screen only.
+      if (native && outCallId && (Platform.OS === 'ios' || Platform.OS === 'android')) {
         let _nativeOnly = false;
         try {
           const nativeOutgoing = require('../services/nativeOutgoingCall');
@@ -19554,7 +19561,9 @@ function ChatConversationInner() {
           console.warn('[startCall] nativeOutgoingCall unavailable — legacy /call.js route:', e?.message || e);
           _nativeOnly = false;
         }
-        if (!_nativeOnly) _jsRoute(outCallId);
+        // iOS legacy (older binary / flag off) → /call.js owns caller audio.
+        // Android never takes the JS route: the native CallActivity is the UI.
+        if (!_nativeOnly && Platform.OS === 'ios') _jsRoute(outCallId);
       }
       // native=false is expected when foreground mobile takes the JS path
       // OR on web. Only surface an error when native genuinely failed

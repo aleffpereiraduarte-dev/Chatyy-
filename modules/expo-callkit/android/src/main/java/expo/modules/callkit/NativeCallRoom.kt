@@ -12,6 +12,23 @@ import io.livekit.android.events.RoomEvent
 import io.livekit.android.events.collect
 import io.livekit.android.room.Room
 import io.livekit.android.room.track.VideoTrack
+// [video-quality 2026-10-06] profile ladder + diag (CallVideoQuality below)
+import android.content.SharedPreferences
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import io.livekit.android.room.participant.VideoTrackPublishDefaults
+import io.livekit.android.room.track.LocalVideoTrack
+import io.livekit.android.room.track.LocalVideoTrackOptions
+import io.livekit.android.room.track.Track
+import io.livekit.android.room.track.VideoCaptureParameter
+import io.livekit.android.room.track.VideoEncoding
+import livekit.org.webrtc.HardwareVideoEncoderFactory
+import livekit.org.webrtc.RTCStatsReport
+import livekit.org.webrtc.RtpParameters
+import org.json.JSONObject
+import java.io.OutputStreamWriter
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -279,8 +296,28 @@ object NativeCallRoom {
      * Every step is try/caught: any failure leaves SDK defaults in place, never
      * crashes/degrades the call (matches the proven block in CallActivity).
      */
-    private fun buildCallRoomOptions(e2ee: E2EEOptions?): RoomOptions {
-        val roomOptions = if (e2ee != null) RoomOptions(e2eeOptions = e2ee) else RoomOptions()
+    private fun buildCallRoomOptions(ctx: Context, e2ee: E2EEOptions?): RoomOptions {
+        // [video-quality 2026-10-06] The warm/preconnect Room used to be built
+        // with NO video defaults — setCameraEnabled(true) on it published the
+        // SDK defaults (VP8 + whatever capture size), which is the VP8
+        // 1280x720 single-layer publish the SFU log showed for the Pixel.
+        // Pin the SAME profile ladder CallActivity.bringUpRoom uses (public
+        // ctor params verified on livekit-android 2.24.1 via javap; adaptive
+        // stream/dynacast intentionally left at the warm-path defaults).
+        val videoCapture = try { CallVideoQuality.captureDefaults(ctx, isGroup = false) } catch (_: Throwable) { null }
+        val videoPublish = try { CallVideoQuality.publishDefaults() } catch (_: Throwable) { null }
+        val roomOptions = try {
+            RoomOptions(
+                e2eeOptions = e2ee,
+                videoTrackCaptureDefaults = videoCapture ?: LocalVideoTrackOptions(),
+                videoTrackPublishDefaults = videoPublish ?: VideoTrackPublishDefaults(),
+                screenShareTrackCaptureDefaults = CallVideoQuality.screenShareCaptureDefaults(),
+                screenShareTrackPublishDefaults = CallVideoQuality.screenSharePublishDefaults()
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "buildCallRoomOptions: video defaults ctor failed (${t.message}) — SDK defaults")
+            if (e2ee != null) RoomOptions(e2eeOptions = e2ee) else RoomOptions()
+        }
         // Capture-side DSP defaults (AEC + AGC + NS via the ctor defaults).
         try {
             val cls = Class.forName("io.livekit.android.room.track.LocalAudioTrackOptions")
@@ -489,6 +526,33 @@ object NativeCallRoom {
 
     fun preferredVideoCodec(): String {
         cachedPreferredCodec?.let { return it }
+        // [video-quality 2026-10-06] Ask libwebrtc ITSELF first. LiveKit builds
+        // its encoder factory as HardwareVideoEncoderFactory(egl, intelVp8=true,
+        // h264HighProfile=false) (javap: RTCModule.videoEncoderFactory →
+        // CustomVideoEncoderFactory → SimulcastVideoEncoderFactoryWrapper), and
+        // libwebrtc m144 only lists H264 when: SDK ≥ 29 → MediaCodecInfo
+        // .isHardwareAccelerated(); SDK < 29 → name starts with OMX.qcom. /
+        // OMX.Exynos.; AND the model is not in H264_HW_EXCEPTION_MODELS AND a
+        // supported YUV color format exists. getSupportedCodecs() is pure Java
+        // (no JNI, no EGL needed with a null context), so it is safe before
+        // LiveKit.create(). If libwebrtc won't offer H264 the SFU negotiates
+        // VP8 anyway — and with simulcast=false that was the worst of both
+        // worlds (software VP8 720p30, no ladder). The MediaCodecList probe
+        // below stays as the fallback if the factory call throws.
+        val probe: String? = try {
+            val hw = HardwareVideoEncoderFactory(null, true, false)
+            val names = hw.supportedCodecs.map { it.name }
+            Log.i(TAG, "[camera] libwebrtc HW encoders=${names.joinToString(",")}")
+            if (names.any { it.equals("H264", ignoreCase = true) }) "h264" else "vp8"
+        } catch (t: Throwable) {
+            Log.w(TAG, "[camera] HardwareVideoEncoderFactory probe failed (${t.message}) — MediaCodecList fallback")
+            null
+        }
+        if (probe != null) {
+            Log.i(TAG, "[camera] preferredVideoCodec=$probe simulcast=${probe != "h264"} (device=${Build.MANUFACTURER} ${Build.MODEL} sdk=${Build.VERSION.SDK_INT})")
+            cachedPreferredCodec = probe
+            return probe
+        }
         val codec = try {
             val list = android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS)
             val hasHwAvcEncoder = list.codecInfos.any { info ->
@@ -521,85 +585,17 @@ object NativeCallRoom {
         scope.launch {
             try {
                 if (enabled) {
-                    // [WAVE 44B, 2026-05-21 gap A3] Mirror the CallActivity
-                    // publish path: VP9 + simulcast + balanced degradation +
-                    // 720p@30 capture. Without this, JS-triggered camera
-                    // enable (adoptNativeRoom path) ends up calling the no-arg
-                    // overload which falls back to VP8/no-simulcast defaults.
-                    // Reflective in case LK Android rev changes the option
-                    // surface — graceful fallback to plain enable on failure.
-                    var usedOpts = false
-                    try {
-                        val publishDefaultsCls = Class.forName(
-                            "io.livekit.android.room.track.VideoTrackPublishDefaults"
-                        )
-                        val captureCls = Class.forName(
-                            "io.livekit.android.room.track.LocalVideoTrackOptions"
-                        )
-                        val captureParamCls = Class.forName(
-                            "io.livekit.android.room.track.VideoCaptureParameter"
-                        )
-                        // Construct VideoCaptureParameter(1280, 720, 30).
-                        val capParam = try {
-                            captureParamCls
-                                .getDeclaredConstructor(Int::class.java, Int::class.java, Int::class.java)
-                                .newInstance(1280, 720, 30)
-                        } catch (_: Throwable) { null }
-                        val captureOpts = try {
-                            // Try (captureParams) named-arg ctor first; fall back to no-arg.
-                            captureCls.declaredConstructors.firstOrNull {
-                                it.parameterTypes.any { p -> p.name.contains("VideoCaptureParameter") }
-                            }?.let { ctor ->
-                                val args = ctor.parameterTypes.map { p ->
-                                    if (p.name.contains("VideoCaptureParameter")) capParam else null
-                                }
-                                ctor.newInstance(*args.toTypedArray())
-                            } ?: captureCls.getDeclaredConstructor().newInstance()
-                        } catch (_: Throwable) { null }
-                        val publishOpts = publishDefaultsCls.getDeclaredConstructor().newInstance()
-                        // [2026-10-06 android-incoming] Same codec/simulcast
-                        // pair as CallActivity.bringUpRoom. This path used to
-                        // pin h264 AND simulcast=true — libwebrtc has no H.264
-                        // simulcast, so the publish offer was invalid and the
-                        // warm-path camera never reached the peer.
-                        val codec = preferredVideoCodec()
-                        val useSimulcast = codec != "h264"
-                        // Pin codec/simulcast/degradation reflectively.
-                        publishDefaultsCls.declaredFields.forEach { f ->
-                            f.isAccessible = true
-                            when {
-                                f.name.contains("simulcast", true) && f.type == Boolean::class.java -> f.set(publishOpts, useSimulcast)
-                                // [remote-video render fix 2026-05-26] vp9 → h264.
-                                // Must match CallActivity.bringUpRoom + the iOS
-                                // publish sites — VP9 doesn't decode reliably
-                                // cross-platform on mobile (iOS subscriber saw
-                                // only the avatar). H.264 is HW-decoded everywhere.
-                                f.name.contains("codec", true) && f.type == String::class.java -> f.set(publishOpts, codec)
-                                f.name.contains("degradation", true) -> {
-                                    val t = f.type
-                                    val v: Any = if (t.isEnum) {
-                                        t.enumConstants?.firstOrNull { it.toString().equals("BALANCED", true) }
-                                            ?: "balanced"
-                                    } else "balanced"
-                                    f.set(publishOpts, v)
-                                }
-                            }
-                        }
-                        // Try the 3-arg overload: setCameraEnabled(true, captureOpts, publishOpts).
-                        val method = r.localParticipant.javaClass.methods.firstOrNull {
-                            it.name == "setCameraEnabled" && it.parameterTypes.size == 3
-                        }
-                        if (method != null && captureOpts != null) {
-                            method.invoke(r.localParticipant, true, captureOpts, publishOpts)
-                            usedOpts = true
-                            Log.d(TAG, "setCameraEnabled(true) with codec=$codec simulcast=$useSimulcast publish opts")
-                        }
-                    } catch (t: Throwable) {
-                        Log.w(TAG, "H264 publish opts reflective set failed (falling back): ${t.message}")
-                    }
-                    if (!usedOpts) {
-                        r.localParticipant.setCameraEnabled(true)
-                    }
+                    // [video-quality 2026-10-06] livekit-android 2.24.1 has NO
+                    // 3-arg setCameraEnabled(enabled, captureOpts, publishOpts)
+                    // (javap: only setCameraEnabled(Boolean, Continuation)), so
+                    // the old reflective lookup here ALWAYS fell through to the
+                    // bare call and published whatever the Room defaults were —
+                    // on the warm Room those were SDK defaults (VP8, no profile).
+                    // The Room is now created with the profile ladder pinned
+                    // (buildCallRoomOptions → CallVideoQuality), so the plain
+                    // call publishes exactly the intended codec/res/bitrate.
+                    r.localParticipant.setCameraEnabled(true)
+                    Log.d(TAG, "setCameraEnabled(true) profile=${CallVideoQuality.current.name} codec=${preferredVideoCodec()}")
                 } else {
                     r.localParticipant.setCameraEnabled(false)
                 }
@@ -802,7 +798,7 @@ object NativeCallRoom {
                 // same audio tuning the group already has (Opus 48k + RED + DTX
                 // + AEC/AGC/NS). buildCallRoomOptions folds e2ee in when present,
                 // so the no-key path == the old default + audio knobs.
-                val r = LiveKit.create(ctx.applicationContext, buildCallRoomOptions(e2ee))
+                val r = LiveKit.create(ctx.applicationContext, buildCallRoomOptions(ctx.applicationContext, e2ee))
                 // publish() here so events.collect is wired BEFORE we await
                 // connect — otherwise the first Connected event might fire
                 // before our listener attaches and JS would miss it.
@@ -982,6 +978,276 @@ object NativeCallRoom {
             // reopen the screen from the ongoing notification.
             Log.e(TAG, "adoptForCall($origin) CallActivity launch failed: ${t.message}")
             false
+        }
+    }
+}
+
+/**
+ * [video-quality 2026-10-06 "melhorar a qualidade do vídeo"]
+ *
+ * SINGLE SOURCE OF TRUTH for every camera / screen-share publish on Android:
+ * CallActivity.bringUpRoom (cold path), NativeCallRoom.buildCallRoomOptions
+ * (warm/preconnect path) and GroupCallActivity all read the ladder below.
+ * Mirror of iOS `CallViewController.CallVideoQuality` and app/call.js
+ * `VIDEO_QUALITY` — the SFU forwards whatever each publisher offers, so an
+ * asymmetric ladder shows up as "um lado nítido, o outro borrado". Change the
+ * numbers HERE, then mirror them on the other two platforms.
+ *
+ * Ladder (16:9, 30 fps):
+ *   HD1080   1920x1080  3.5 Mbps   Wi-Fi/ethernet + "Qualidade HD" pref
+ *   HD720    1280x720   2.3 Mbps   default 1:1 (Wi-Fi or healthy cellular)
+ *   SD540     960x540   1.1 Mbps   cellular + constrained/poor link
+ *   GROUP540  960x540   0.7 Mbps   group tiles (small on screen; N×uplink)
+ *
+ * Codec/simulcast pair comes from NativeCallRoom.preferredVideoCodec():
+ *   "h264" (HW encoder present) → simulcast=false (libwebrtc Android has no
+ *   H.264 simulcast — publish offer is invalid with it, see 2026-05-26/10-06)
+ *   "vp8" otherwise → simulcast=true (SFU ladder from LK's default presets)
+ * Degradation = BALANCED for camera (WebRTC default: sheds some fps AND res;
+ * MAINTAIN_FRAMERATE made a congested face go 180p-blurry at 30 fps), and
+ * MAINTAIN_RESOLUTION for screen share (text legibility first).
+ *
+ * All public ctor parameters verified on livekit-android 2.24.1 via javap:
+ *   VideoTrackPublishDefaults(videoEncoding, simulcast, videoCodec,
+ *     scalabilityMode, backupCodec, degradationPreference, simulcastLayers)
+ *   LocalVideoTrackOptions(isScreencast, deviceId, position, captureParams)
+ *   RoomOptions(..., videoTrackCaptureDefaults, videoTrackPublishDefaults,
+ *     screenShareTrackCaptureDefaults, screenShareTrackPublishDefaults, ...)
+ */
+object CallVideoQuality {
+    private const val TAG = "CallVideoQuality"
+    private const val PREFS = "chatyy_call_prefs"
+    const val HD_PREF_KEY = "chatyy_call_hd"
+    private const val DIAG_ENDPOINT = "https://chatyy.com.br/api/email.php?action=push_diag"
+
+    enum class Profile(val width: Int, val height: Int, val fps: Int, val maxBitrate: Int, val rank: Int) {
+        HD1080(1920, 1080, 30, 3_500_000, 3),
+        HD720(1280, 720, 30, 2_300_000, 2),
+        SD540(960, 540, 30, 1_100_000, 1),
+        GROUP540(960, 540, 30, 700_000, 0);
+    }
+
+    /** Screen share: 1080p @ 15 fps, ~3 Mbps, keep resolution. */
+    private val SCREEN_CAPTURE = VideoCaptureParameter(1920, 1080, 15)
+    private val SCREEN_ENCODING = VideoEncoding(3_000_000, 15)
+
+    /** Last profile handed to a publish site (diag + step-down read it). */
+    @Volatile var current: Profile = Profile.HD720
+
+    // ─── preferences / network ──────────────────────────────────────────────
+    private fun prefs(ctx: Context): SharedPreferences =
+        ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    fun isHdPreferred(ctx: Context?): Boolean =
+        try { ctx != null && prefs(ctx).getBoolean(HD_PREF_KEY, false) } catch (_: Throwable) { false }
+
+    fun setHdPreferred(ctx: Context, on: Boolean) {
+        try { prefs(ctx).edit().putBoolean(HD_PREF_KEY, on).apply() } catch (_: Throwable) {}
+    }
+
+    private data class Net(val label: String, val cellular: Boolean, val metered: Boolean)
+
+    private fun net(ctx: Context?): Net {
+        if (ctx == null) return Net("unknown", false, false)
+        return try {
+            val cm = ctx.applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return Net("unknown", false, false)
+            val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+                ?: return Net("offline", false, false)
+            val wifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+            val eth = caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+            val cell = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) && !wifi && !eth
+            val metered = !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+            val label = when { wifi -> "wifi"; eth -> "ethernet"; cell -> "cellular"; else -> "online" }
+            Net(label, cell, metered)
+        } catch (_: Throwable) { Net("unknown", false, false) }
+    }
+
+    fun networkLabel(ctx: Context?): String = net(ctx).label
+    fun isCellular(ctx: Context?): Boolean = net(ctx).let { it.cellular || it.metered }
+
+    /**
+     * Network-aware pick. `localQualityScore` is the 0-3 bars score
+     * (3 excellent … 1 poor, 0 lost/unknown — pass 3 when unknown).
+     */
+    fun profile(ctx: Context?, isGroup: Boolean, localQualityScore: Int = 3): Profile {
+        if (isGroup) return Profile.GROUP540
+        val n = net(ctx)
+        if (n.cellular || n.metered) {
+            // poor (1) or lost (0) on cellular → 540p; healthy cellular → 720p.
+            return if (localQualityScore <= 1) Profile.SD540 else Profile.HD720
+        }
+        return if (isHdPreferred(ctx)) Profile.HD1080 else Profile.HD720
+    }
+
+    // ─── builders ───────────────────────────────────────────────────────────
+    fun captureParams(p: Profile): VideoCaptureParameter = VideoCaptureParameter(p.width, p.height, p.fps)
+
+    fun captureDefaults(ctx: Context?, isGroup: Boolean, localQualityScore: Int = 3, forced: Profile? = null): LocalVideoTrackOptions {
+        val p = forced ?: profile(ctx, isGroup, localQualityScore)
+        current = p
+        Log.i(TAG, "capture profile=${p.name} ${p.width}x${p.height}@${p.fps} net=${net(ctx).label} hd_pref=${isHdPreferred(ctx)}")
+        return LocalVideoTrackOptions(captureParams = captureParams(p))
+    }
+
+    fun publishDefaults(profile: Profile? = null): VideoTrackPublishDefaults {
+        val p = profile ?: current
+        val codec = NativeCallRoom.preferredVideoCodec()
+        val useSimulcast = codec != "h264"
+        return VideoTrackPublishDefaults(
+            videoEncoding = VideoEncoding(p.maxBitrate, p.fps),
+            simulcast = useSimulcast,
+            videoCodec = codec,
+            degradationPreference = RtpParameters.DegradationPreference.BALANCED
+        )
+    }
+
+    fun screenShareCaptureDefaults(): LocalVideoTrackOptions =
+        LocalVideoTrackOptions(isScreencast = true, captureParams = SCREEN_CAPTURE)
+
+    fun screenSharePublishDefaults(): VideoTrackPublishDefaults =
+        VideoTrackPublishDefaults(
+            videoEncoding = SCREEN_ENCODING,
+            simulcast = false,
+            videoCodec = NativeCallRoom.preferredVideoCodec(),
+            degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION
+        )
+
+    // ─── mid-call step-down (cellular + sustained poor) ─────────────────────
+    @Volatile private var poorStreak = 0
+    @Volatile private var stepDownDone = false
+
+    fun resetCallState() { poorStreak = 0; stepDownDone = false }
+
+    /**
+     * Call on every LOCAL ConnectionQualityChanged (0-3 score). Cellular + 2
+     * consecutive poor/lost → restart the capturer at 540p IN PLACE
+     * (LocalVideoTrack.restartTrack: same track, no republish). Skipped while a
+     * background effect is active — restartTrack(videoProcessor = null) would
+     * drop the processor. One-way per call; BALANCED degradation does the rest.
+     */
+    fun noteLocalQuality(ctx: Context?, room: Room?, score: Int, backgroundEffectOn: Boolean, callId: String) {
+        if (score <= 1) poorStreak++ else poorStreak = 0
+        if (stepDownDone || poorStreak < 2) return
+        if (!isCellular(ctx)) return
+        if (current.rank <= Profile.SD540.rank) return
+        stepDownDone = true
+        if (backgroundEffectOn) {
+            Log.i(TAG, "step-down skipped (background effect active) — encoder degradation only")
+            postDiag("video_profile_change", "cid=${callId.takeLast(12)} to=SD540 skipped=bg_effect net=${net(ctx).label}")
+            return
+        }
+        val track = try {
+            room?.localParticipant?.getTrackPublication(Track.Source.CAMERA)?.track as? LocalVideoTrack
+        } catch (_: Throwable) { null } ?: return
+        try {
+            track.restartTrack(LocalVideoTrackOptions(captureParams = captureParams(Profile.SD540)))
+            current = Profile.SD540
+            Log.i(TAG, "video profile → SD540 (poor_cellular_x$poorStreak)")
+            postDiag("video_profile_change", "cid=${callId.takeLast(12)} to=SD540 reason=poor_cellular_x$poorStreak net=${net(ctx).label}")
+        } catch (t: Throwable) {
+            Log.w(TAG, "restartTrack(SD540) failed: ${t.message}")
+        }
+    }
+
+    // ─── diag beacon (push_diag.log) ────────────────────────────────────────
+    /** Fire-and-forget POST to email.php?action=push_diag (same channel as
+     *  NativeCrashReporter / the JS _diag helper). Never throws. */
+    fun postDiag(step: String, info: String) {
+        try {
+            val body = JSONObject().apply {
+                put("platform", "android")
+                put("step", step.take(40))
+                put("info", info.take(900))
+                put("anon_id", "android-native")
+                put("ts", System.currentTimeMillis())
+            }.toString()
+            Thread {
+                try {
+                    val conn = (URL(DIAG_ENDPOINT).openConnection() as HttpURLConnection).apply {
+                        requestMethod = "POST"
+                        doOutput = true
+                        connectTimeout = 4000
+                        readTimeout = 4000
+                        setRequestProperty("Content-Type", "application/json")
+                    }
+                    try {
+                        OutputStreamWriter(conn.outputStream, Charsets.UTF_8).use { it.write(body) }
+                        conn.responseCode
+                        try { conn.inputStream.close() } catch (_: Throwable) {}
+                    } finally { try { conn.disconnect() } catch (_: Throwable) {} }
+                } catch (_: Throwable) {}
+            }.apply { isDaemon = true }.start()
+        } catch (_: Throwable) {}
+    }
+
+    private fun m(members: Map<String, Any>, key: String): String {
+        val v = members[key] ?: return "?"
+        return when (v) {
+            is Double -> if (v == Math.floor(v)) v.toLong().toString() else String.format("%.1f", v)
+            else -> v.toString()
+        }
+    }
+
+    private fun kbps(members: Map<String, Any>, key: String): String {
+        val v = members[key] as? Number ?: return "?"
+        return "${(v.toDouble() / 1000).toInt()}k"
+    }
+
+    /**
+     * One "video_quality" beacon with the REAL negotiated numbers: encoded
+     * res/fps/target bitrate/limitation/encoder + codec (publisher PC) and
+     * received res/fps/drops + decoder (subscriber PC), plus profile/net/bars.
+     * Read with: grep video_quality /var/www/mail/data/push_diag.log | tail
+     */
+    fun reportVideoQuality(ctx: Context?, room: Room, tag: String, callId: String, bars: Int) {
+        try {
+            val head = "cid=${callId.takeLast(12)} tag=$tag profile=${current.name} codec_pref=${NativeCallRoom.preferredVideoCodec()} net=${net(ctx).label} bars=$bars dev=${Build.MODEL}/${Build.VERSION.SDK_INT}"
+            val camDims = try {
+                (room.localParticipant.getTrackPublication(Track.Source.CAMERA)?.track as? LocalVideoTrack)?.dimensions
+            } catch (_: Throwable) { null }
+            val cap = if (camDims != null) " cap=${camDims.width}x${camDims.height}" else " cap=none"
+            room.getPublisherRTCStats { pub: RTCStatsReport ->
+                val sb = StringBuilder(head).append(cap)
+                try {
+                    val stats = pub.statsMap.values
+                    val codecs = stats.filter { it.type == "codec" }.associateBy({ it.id }, { it.members["mimeType"]?.toString() ?: "?" })
+                    stats.filter { it.type == "outbound-rtp" && (it.members["kind"] == "video" || it.members["mediaType"] == "video") }
+                        .forEach { st ->
+                            val mm = st.members
+                            sb.append(" out=${m(mm, "frameWidth")}x${m(mm, "frameHeight")}@${m(mm, "framesPerSecond")}")
+                            sb.append(" tgt=${kbps(mm, "targetBitrate")}")
+                            sb.append(" lim=${m(mm, "qualityLimitationReason")}")
+                            sb.append(" enc=${m(mm, "encoderImplementation")}")
+                            sb.append(" pli=${m(mm, "pliCount")} nack=${m(mm, "nackCount")}")
+                            sb.append(" codec=${codecs[mm["codecId"]?.toString()] ?: "?"}")
+                            if (mm["rid"] != null) sb.append(" rid=${mm["rid"]}")
+                        }
+                } catch (t: Throwable) { sb.append(" out_err=${t.message}") }
+                try {
+                    room.getSubscriberRTCStats { sub: RTCStatsReport ->
+                        try {
+                            val stats = sub.statsMap.values
+                            val codecs = stats.filter { it.type == "codec" }.associateBy({ it.id }, { it.members["mimeType"]?.toString() ?: "?" })
+                            stats.filter { it.type == "inbound-rtp" && (it.members["kind"] == "video" || it.members["mediaType"] == "video") }
+                                .forEach { st ->
+                                    val mm = st.members
+                                    sb.append(" rx=${m(mm, "frameWidth")}x${m(mm, "frameHeight")}@${m(mm, "framesPerSecond")}")
+                                    sb.append(" drop=${m(mm, "framesDropped")} rx_pli=${m(mm, "pliCount")} rx_nack=${m(mm, "nackCount")}")
+                                    sb.append(" dec=${m(mm, "decoderImplementation")}")
+                                    sb.append(" rx_codec=${codecs[mm["codecId"]?.toString()] ?: "?"}")
+                                }
+                        } catch (t: Throwable) { sb.append(" rx_err=${t.message}") }
+                        Log.i(TAG, "video_quality $sb")
+                        postDiag("video_quality", sb.toString())
+                    }
+                } catch (t: Throwable) {
+                    Log.i(TAG, "video_quality $sb (no subscriber stats: ${t.message})")
+                    postDiag("video_quality", sb.toString())
+                }
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "reportVideoQuality failed: ${t.message}")
         }
     }
 }

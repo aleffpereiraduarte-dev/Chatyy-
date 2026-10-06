@@ -1,49 +1,90 @@
 /**
- * Config plugin — adds the ChatyyBroadcastExtension iOS target to the Xcode
- * project on every `expo prebuild`. Without this, the extension's Swift
- * source under ios/ChatyyBroadcastExtension/ sits orphaned and never gets
- * compiled.
+ * Config plugin — adds the ChatyyBroadcastExtension iOS target (ReplayKit
+ * Broadcast Upload Extension) so "Compartilhar tela" on iOS captures the
+ * WHOLE device screen (system picker) instead of only this app's window.
  *
- * WHAT IT DOES:
- *   1. EMBEDS the extension source files (SampleHandler.swift, Info.plist,
- *      ChatyyBroadcastExtension.entitlements) directly as template strings
- *      below. On every prebuild, withDangerousMod writes them to disk at
- *      `${platformProjectRoot}/ChatyyBroadcastExtension/`. This survives
- *      `expo prebuild --clean` even if the source tree under ios/ was wiped.
- *      The canonical copies in /ios/ChatyyBroadcastExtension/ are kept in
- *      the repo for human reference / diffing only — the plugin does not
- *      depend on them at prebuild time.
- *   2. Adds a new PBXNativeTarget of type appex (com.apple.product-type.app-extension).
- *   3. Sets the bundle id to com.onemundo.mail.broadcast and inherits team
- *      from the main target so EAS signing picks it up automatically.
- *   4. Adds the App Group entitlement (group.com.onemundo.mail) to the main
- *      app so it can read frames the extension wrote. The extension target
- *      has its OWN entitlements file with the same App Group (embedded
- *      below).
- *   5. Adds ReplayKit.framework to the extension's link phase.
+ * [2026-10-06 screen-share iOS] Re-enabled + hardened. History:
+ *   #827 (2026-05-15) created it; Wave 19 disabled it because the nested
+ *   Podfile target used `inherit! :search_paths`, which de-duplicated the
+ *   LiveKitClient pod already autolinked in the parent → the extension had
+ *   no module map / no build dependency → "no such module 'LiveKit'". The
+ *   snippet below uses `inherit! :complete` (the extension gets its own
+ *   Pods-Chatyy-ChatyyBroadcastExtension aggregate with a real dependency
+ *   on LiveKitClient). The plugin was never re-registered in app.json after
+ *   that fix, so no build ever embedded the .appex and Info.plist never got
+ *   `RTCScreenSharingExtension` / `RTCAppGroupIdentifier` — the native call
+ *   screens silently fell back to LiveKit's in-app capturer (app window only).
  *
- * RUN: `expo prebuild --clean` to regenerate, then `pod install` in ios/.
+ * GATE (so a build without provisioning for the new bundle id still ships):
+ *   The target + Info.plist keys are only added when ONE of these holds —
+ *     CHATYY_BROADCAST_EXT=1              (eas.json build.production.env, set by
+ *                                          scripts/asc-create-broadcast-profile.js;
+ *                                          GitHub ios-build-local.yml prebuild step)
+ *     IOS_PROFILE_BROADCAST_BASE64 / BROADCAST_UUID in env (GitHub CI)
+ *     credentials/chatyy-broadcast.mobileprovision exists (local / Mac builds)
+ *   CHATYY_BROADCAST_EXT=0 forces it OFF. When OFF the plugin is a no-op and
+ *   logs a notice; ScreenShareSupport.swift then uses in-app capture and the
+ *   chip says "Compartilhando tela do app".
  *
- * WARNING: This rewrites project.pbxproj. If a developer manually edited
- * the Xcode project, those edits will be clobbered. Always treat ios/ as
- * generated.
+ * WHAT IT DOES (when ON):
+ *   1. Writes the extension sources (SampleHandler.swift, Info.plist,
+ *      entitlements) from the embedded strings below into
+ *      `${platformProjectRoot}/ChatyyBroadcastExtension/` on every prebuild
+ *      (ios/ is gitignored and regenerated on EAS, so embedded is canonical).
+ *   2. Adds a PBXNativeTarget (app_extension) with bundle id
+ *      com.onemundo.mail.broadcast, embeds it in the Chatyy app target, and
+ *      registers the target dependency CocoaPods needs to find the host.
+ *   3. App Group `group.com.onemundo.mail` on the main app (already there for
+ *      ShareExtension) and on the extension (own entitlements file). LiveKit's
+ *      BroadcastScreenCapturer / LKSampleHandler talk over a Unix socket in
+ *      this App Group container.
+ *   4. Host Info.plist: `RTCAppGroupIdentifier` + `RTCScreenSharingExtension`
+ *      — the keys LiveKit Swift (and react-native-webrtc) read to find the
+ *      extension and present RPSystemBroadcastPickerView pre-targeted at it.
+ *   5. Podfile: nested `target 'ChatyyBroadcastExtension'` inside the Chatyy
+ *      target with `inherit! :complete` + `pod 'LiveKitClient', '~> 2.0'`,
+ *      and a post_install hook that drops the auto-generated
+ *      ExpoModulesProvider.swift from the extension's Compile Sources.
  *
- * IF YOU EDIT THE SOURCE FILES: update BOTH the canonical copies under
- * /ios/ChatyyBroadcastExtension/ AND the embedded strings below. The
- * embedded version is what actually compiles; the canonical copies are
- * just reference.
+ * PROVISIONING (not done by this plugin — see scripts/asc-create-broadcast-profile.js):
+ *   bundle id com.onemundo.mail.broadcast with APP_GROUPS capability linked to
+ *   group.com.onemundo.mail, an App Store profile for it, credentials.json
+ *   entry `ios.ChatyyBroadcastExtension`, GitHub secret
+ *   IOS_PROFILE_BROADCAST_BASE64, Mac 207 profile install.
  */
 
 const fs = require('fs');
 const path = require('path');
-const { withXcodeProject, withEntitlementsPlist, withDangerousMod } = require('expo/config-plugins');
+const { withXcodeProject, withEntitlementsPlist, withInfoPlist, withDangerousMod } = require('expo/config-plugins');
 
 const EXT_NAME = 'ChatyyBroadcastExtension';
 const EXT_BUNDLE_ID = 'com.onemundo.mail.broadcast';
 const APP_GROUP = 'group.com.onemundo.mail';
+const DEPLOYMENT_TARGET = '16.0'; // = expo-build-properties ios.deploymentTarget in app.json
+const LOCAL_PROFILE_PATH = path.join('credentials', 'chatyy-broadcast.mobileprovision');
 
 // =====================================================================
-// EMBEDDED SOURCE FILES — kept in sync with /ios/ChatyyBroadcastExtension/
+// GATE
+// =====================================================================
+
+function broadcastGate(projectRoot) {
+  const force = (process.env.CHATYY_BROADCAST_EXT || '').trim().toLowerCase();
+  if (force === '0' || force === 'false' || force === 'off') return { on: false, why: 'CHATYY_BROADCAST_EXT=0' };
+  if (force === '1' || force === 'true' || force === 'on') return { on: true, why: 'CHATYY_BROADCAST_EXT=1' };
+  if (process.env.IOS_PROFILE_BROADCAST_BASE64 || process.env.BROADCAST_UUID) {
+    return { on: true, why: 'broadcast provisioning profile present in CI env' };
+  }
+  if (projectRoot && fs.existsSync(path.join(projectRoot, LOCAL_PROFILE_PATH))) {
+    return { on: true, why: `${LOCAL_PROFILE_PATH} present` };
+  }
+  return {
+    on: false,
+    why: `no provisioning for ${EXT_BUNDLE_ID} — run scripts/asc-create-broadcast-profile.js (sets CHATYY_BROADCAST_EXT=1 in eas.json)`,
+  };
+}
+
+// =====================================================================
+// EMBEDDED SOURCE FILES (canonical — ios/ is regenerated on every prebuild)
 // =====================================================================
 
 const ENTITLEMENTS_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
@@ -65,7 +106,7 @@ const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 \t<key>CFBundleDevelopmentRegion</key>
 \t<string>$(DEVELOPMENT_LANGUAGE)</string>
 \t<key>CFBundleDisplayName</key>
-\t<string>Chatyy Screen Share</string>
+\t<string>Chatyy</string>
 \t<key>CFBundleExecutable</key>
 \t<string>$(EXECUTABLE_NAME)</string>
 \t<key>CFBundleIdentifier</key>
@@ -77,9 +118,11 @@ const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 \t<key>CFBundlePackageType</key>
 \t<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
 \t<key>CFBundleShortVersionString</key>
-\t<string>1.0</string>
+\t<string>$(MARKETING_VERSION)</string>
 \t<key>CFBundleVersion</key>
-\t<string>1</string>
+\t<string>$(CURRENT_PROJECT_VERSION)</string>
+\t<key>RTCAppGroupIdentifier</key>
+\t<string>${APP_GROUP}</string>
 \t<key>NSExtension</key>
 \t<dict>
 \t\t<key>NSExtensionPointIdentifier</key>
@@ -93,85 +136,28 @@ const INFO_PLIST = `<?xml version="1.0" encoding="UTF-8"?>
 </plist>
 `;
 
-// [2026-05-15 refactor #827] Migrated from custom RPBroadcastSampleHandler +
-// App-Group-file IPC to LKSampleHandler (LiveKit-provided base class). The old
-// path captured CMSampleBuffer → JPEG → App Group disk → Darwin notification
-// → host reads frame, but those frames never reached the WebRTC video sender
-// because LiveKit's `setScreenShareEnabled(true)` expects a broadcast
-// extension whose handler is built on top of LKSampleHandler. Now LiveKit
-// owns the entire pipeline: extension publishes a new VideoTrack via the
-// "broadcast room" mechanism, host subscribes inside the active Room.
-//
-// Host-side requirements (see app/call.js):
-//   - `Room` ctor must receive iosScreenSharePreferences = {
-//       broadcastBundleId: 'com.onemundo.mail.broadcast',
-//       useBroadcastExtension: true,
-//     }
-//   - App Group entitlement `group.com.onemundo.mail` must be on BOTH the
-//     main app AND this extension (this plugin sets both — see
-//     withMainAppGroup + ENTITLEMENTS_PLIST below).
-//
-// No more App-Group-file IPC, no manual JPEG encode, no CFNotification
-// polling. LKSampleHandler internally pumps CMSampleBuffers through
-// LiveKit's broadcast room → renders on every subscriber peer in the call.
+// LiveKit-documented pattern: subclass LKSampleHandler and nothing else. The
+// base class connects to the host over the App Group socket (it reads
+// `RTCAppGroupIdentifier` from the EXTENSION's Info.plist above), encodes the
+// CMSampleBuffers and the host's BroadcastScreenCapturer publishes them as
+// the Room's screen-share track. Any extra override here (custom audio IPC,
+// JPEG dumps, non-existent properties) is a compile/runtime risk — keep it
+// minimal.
 const SAMPLE_HANDLER_SWIFT = `//
 //  SampleHandler.swift
 //  ChatyyBroadcastExtension
 //
-//  LiveKit-aware broadcast upload extension. Inherits from LKSampleHandler
-//  so the captured screen frames are published directly into the LiveKit
-//  room via the SDK's internal broadcast pipeline — no custom IPC needed.
-//
-//  [2026-05-20 Wave 17 F2] Hook RPSampleBufferType.audioApp so app audio
-//  (Spotify / YouTube / games) reaches the peer. LKSampleHandler does NOT
-//  pipe audioApp for us. Mic is intentionally skipped here — published by
-//  the main app via Room.localParticipant.setMicrophoneEnabled, double-
-//  piping would duplicate the mic track.
+//  ReplayKit Broadcast Upload Extension entry point. LKSampleHandler
+//  (LiveKitClient pod) owns the whole pipeline: socket in the App Group
+//  container (RTCAppGroupIdentifier) -> host app's LiveKit Room screen-share
+//  track. Generated by plugins/with-broadcast-extension.js — edit it THERE.
 //
 
 import ReplayKit
 import LiveKit
-import CoreMedia
 
 class SampleHandler: LKSampleHandler {
     override var enableLogging: Bool { true }
-    override var broadcastDelayMillis: Int { 50 }
-
-    private static let appGroupId = "group.com.onemundo.mail"
-
-    override func processSampleBuffer(_ sampleBuffer: CMSampleBuffer, with sampleBufferType: RPSampleBufferType) {
-        super.processSampleBuffer(sampleBuffer, with: sampleBufferType)
-        if #available(iOS 14.0, *) {
-            switch sampleBufferType {
-            case .audioApp:
-                publishAppAudioBuffer(sampleBuffer)
-            case .audioMic:
-                break
-            default:
-                break
-            }
-        }
-    }
-
-    private func publishAppAudioBuffer(_ buffer: CMSampleBuffer) {
-        let sampleSize = CMSampleBufferGetTotalSampleSize(buffer)
-        let numSamples = CMSampleBufferGetNumSamples(buffer)
-        NSLog(
-            "[LiveKit][SampleHandler] audioApp buffer received samples=%d size=%d",
-            numSamples,
-            sampleSize
-        )
-        // TODO(F2 follow-up): write PCM into App Group ring buffer so the
-        // main app can publish a LocalAudioTrack with source=.screenShareAudio.
-        if let groupURL = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: SampleHandler.appGroupId
-        ) {
-            let marker = groupURL.appendingPathComponent("screen_audio_active")
-            if !FileManager.default.fileExists(atPath: marker.path) {
-                FileManager.default.createFile(atPath: marker.path, contents: nil, attributes: nil)
-            }
-        }
-    }
 }
 `;
 
@@ -186,19 +172,13 @@ const EMBEDDED_FILES = {
 // =====================================================================
 
 function withBroadcastExtensionFiles(config) {
-  // Write the extension source files into the prebuild output. We always
-  // write from the embedded strings above — that way `prebuild --clean`
-  // (which nukes ios/) leaves us with a fully reconstituted extension dir
-  // even though the canonical copies under /ios/ were deleted.
   return withDangerousMod(config, [
     'ios',
     async (cfg) => {
       const destDir = path.join(cfg.modRequest.platformProjectRoot, EXT_NAME);
       if (!fs.existsSync(destDir)) fs.mkdirSync(destDir, { recursive: true });
-
       for (const [fileName, content] of Object.entries(EMBEDDED_FILES)) {
-        const dst = path.join(destDir, fileName);
-        fs.writeFileSync(dst, content, 'utf8');
+        fs.writeFileSync(path.join(destDir, fileName), content, 'utf8');
       }
       return cfg;
     },
@@ -206,7 +186,6 @@ function withBroadcastExtensionFiles(config) {
 }
 
 function withMainAppGroup(config) {
-  // Main app needs App Group too so it can read frames the extension wrote.
   return withEntitlementsPlist(config, (cfg) => {
     const groups = cfg.modResults['com.apple.security.application-groups'] || [];
     if (!groups.includes(APP_GROUP)) groups.push(APP_GROUP);
@@ -215,252 +194,261 @@ function withMainAppGroup(config) {
   });
 }
 
+// Host Info.plist keys read by LiveKit Swift's BroadcastScreenCapturer (and
+// by @livekit/react-native-webrtc's ScreenCaptureController /
+// ScreenCapturePickerViewManager) to locate the extension + App Group.
+function withBroadcastInfoPlist(config) {
+  return withInfoPlist(config, (cfg) => {
+    cfg.modResults.RTCAppGroupIdentifier = APP_GROUP;
+    cfg.modResults.RTCScreenSharingExtension = EXT_BUNDLE_ID;
+    return cfg;
+  });
+}
+
 function withBroadcastTarget(config) {
   return withXcodeProject(config, (cfg) => {
     const project = cfg.modResults;
-    const projectName = cfg.modRequest.projectName || 'ChatyyMail';
+
+    // xcode npm quirk (see with-notification-service.js): when these sections
+    // don't exist yet, addTarget's internal addTargetDependency silently
+    // fails and CocoaPods can't infer the host ("Unable to find host target").
+    const projObjects = project.hash.project.objects;
+    projObjects.PBXTargetDependency = projObjects.PBXTargetDependency || {};
+    projObjects.PBXContainerItemProxy = projObjects.PBXContainerItemProxy || {};
 
     // Idempotency — skip if already added
-    const existingTarget = project.pbxNativeTargetSection?.();
-    if (existingTarget) {
-      for (const key of Object.keys(existingTarget)) {
-        const t = existingTarget[key];
-        if (t && typeof t === 'object' && t.name === EXT_NAME) {
-          return cfg;
-        }
-      }
+    const existingTarget = project.pbxNativeTargetSection?.() || {};
+    for (const key of Object.keys(existingTarget)) {
+      const t = existingTarget[key];
+      if (t && typeof t === 'object' && t.name === EXT_NAME) return cfg;
     }
 
-    const targetUuid = project.generateUuid();
-    const groupUuid = project.generateUuid();
-
-    // Create a PBXGroup for the extension's files
     const group = project.addPbxGroup(
       ['SampleHandler.swift', 'Info.plist', `${EXT_NAME}.entitlements`],
       EXT_NAME,
       EXT_NAME,
       '"<group>"'
     );
-
-    // Attach group to root
     const rootGroup = project.getFirstProject()['firstProject']['mainGroup'];
     project.addToPbxGroup(group.uuid, rootGroup);
 
-    // Add the target itself
-    const target = project.addTarget(
-      EXT_NAME,
-      'app_extension',
-      EXT_NAME,
-      EXT_BUNDLE_ID
-    );
+    const target = project.addTarget(EXT_NAME, 'app_extension', EXT_NAME, EXT_BUNDLE_ID);
 
-    // Add Swift source build phase
-    project.addBuildPhase(
-      ['SampleHandler.swift'],
-      'PBXSourcesBuildPhase',
-      'Sources',
-      target.uuid
-    );
+    project.addBuildPhase(['SampleHandler.swift'], 'PBXSourcesBuildPhase', 'Sources', target.uuid);
+    project.addBuildPhase(['ReplayKit.framework'], 'PBXFrameworksBuildPhase', 'Frameworks', target.uuid);
 
-    // Frameworks: ReplayKit
-    project.addBuildPhase(
-      ['ReplayKit.framework'],
-      'PBXFrameworksBuildPhase',
-      'Frameworks',
-      target.uuid
-    );
-
-    // Embed the extension into the main app's bundle.
-    // [2026-05-15 fix] CANNOT use getFirstTarget() — if expo-share-intent
-    // ran first, its ShareExtension target may be first. Extensions can't
-    // embed other extensions, so CocoaPods then errors "Unable to find
-    // host target". Find the Chatyy app target explicitly via PRODUCT_TYPE.
+    // Host = the app-type target (NOT getFirstTarget: expo-share-intent's
+    // ShareExtension may be first; extensions can't embed extensions).
     let mainAppTargetUuid = null;
     const nativeTargets = project.pbxNativeTargetSection() || {};
     for (const key of Object.keys(nativeTargets)) {
       const t = nativeTargets[key];
       if (t && typeof t === 'object' && t.productType === '"com.apple.product-type.application"') {
-        mainAppTargetUuid = key.replace(/_comment$/, '');
-        // Strip the _comment suffix to get raw UUID, then verify it's not a comment entry
-        if (!/^[A-F0-9]+$/i.test(mainAppTargetUuid)) continue;
+        const uuid = key.replace(/_comment$/, '');
+        if (!/^[A-F0-9]+$/i.test(uuid)) continue;
+        mainAppTargetUuid = uuid;
         break;
       }
     }
     if (!mainAppTargetUuid) {
       console.warn('[with-broadcast-extension] No app-type target found — falling back to getFirstTarget');
       mainAppTargetUuid = project.getFirstTarget().uuid;
-    } else {
-      console.log(`[with-broadcast-extension] Embedding broadcast into app target UUID ${mainAppTargetUuid}`);
     }
-    project.addBuildPhase(
-      [],
-      'PBXCopyFilesBuildPhase',
-      'Embed App Extensions',
-      mainAppTargetUuid,
-      'app_extension'
-    );
+    project.addBuildPhase([], 'PBXCopyFilesBuildPhase', 'Embed App Extensions', mainAppTargetUuid, 'app_extension');
+    try {
+      project.addTargetDependency(mainAppTargetUuid, [target.uuid]);
+    } catch (e) {
+      console.warn('[with-broadcast-extension] addTargetDependency failed:', e?.message || e);
+    }
 
-    // Build settings — point to entitlements + Info.plist
     const xcConfig = project.pbxXCBuildConfigurationSection();
-    for (const key of Object.keys(xcConfig)) {
-      const c = xcConfig[key];
-      if (c.buildSettings && c.buildSettings.PRODUCT_NAME === `"${EXT_NAME}"`) {
-        c.buildSettings.INFOPLIST_FILE = `"${EXT_NAME}/Info.plist"`;
-        c.buildSettings.CODE_SIGN_ENTITLEMENTS = `"${EXT_NAME}/${EXT_NAME}.entitlements"`;
-        c.buildSettings.IPHONEOS_DEPLOYMENT_TARGET = '"15.0"';
-        c.buildSettings.SWIFT_VERSION = '5.0';
-        c.buildSettings.PRODUCT_BUNDLE_IDENTIFIER = `"${EXT_BUNDLE_ID}"`;
-        c.buildSettings.CODE_SIGN_STYLE = '"Automatic"';
-        c.buildSettings.LD_RUNPATH_SEARCH_PATHS =
-          '"$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"';
+    // App Store validation wants the extension's CFBundleShortVersionString /
+    // CFBundleVersion to match the containing app. Copy the literal values
+    // Expo wrote on the app target (MARKETING_VERSION / CURRENT_PROJECT_VERSION
+    // come from app.json version + ios.buildNumber, already auto-incremented
+    // by EAS at this point). Fall back to the Expo config values.
+    // Expo config first (app.json version / ios.buildNumber — EAS autoIncrement
+    // bumps these before prebuild). The app target's own MARKETING_VERSION /
+    // CURRENT_PROJECT_VERSION build settings are a stale "1.0"/"1" in the Expo
+    // template (the real values live in the app's Info.plist), so they are
+    // only a last-resort fallback.
+    let marketingVersion = cfg.version ? `${cfg.version}` : null;
+    let projectVersion = (cfg.ios && cfg.ios.buildNumber) ? `${cfg.ios.buildNumber}` : null;
+    if (!marketingVersion || !projectVersion) {
+      for (const key of Object.keys(xcConfig)) {
+        const c = xcConfig[key];
+        if (c && c.buildSettings && `${c.buildSettings.PRODUCT_BUNDLE_IDENTIFIER || ''}`.replace(/"/g, '') === 'com.onemundo.mail') {
+          if (!marketingVersion && c.buildSettings.MARKETING_VERSION) marketingVersion = `${c.buildSettings.MARKETING_VERSION}`.replace(/"/g, '');
+          if (!projectVersion && c.buildSettings.CURRENT_PROJECT_VERSION) projectVersion = `${c.buildSettings.CURRENT_PROJECT_VERSION}`.replace(/"/g, '');
+          break;
+        }
       }
     }
-
+    marketingVersion = marketingVersion || '1.0';
+    projectVersion = projectVersion || '1';
+    for (const key of Object.keys(xcConfig)) {
+      const c = xcConfig[key];
+      if (c && c.buildSettings && c.buildSettings.PRODUCT_NAME === `"${EXT_NAME}"`) {
+        const s = c.buildSettings;
+        s.INFOPLIST_FILE = `"${EXT_NAME}/Info.plist"`;
+        s.CODE_SIGN_ENTITLEMENTS = `"${EXT_NAME}/${EXT_NAME}.entitlements"`;
+        s.IPHONEOS_DEPLOYMENT_TARGET = `"${DEPLOYMENT_TARGET}"`;
+        s.SWIFT_VERSION = '5.0';
+        s.PRODUCT_BUNDLE_IDENTIFIER = `"${EXT_BUNDLE_ID}"`;
+        s.CODE_SIGN_STYLE = '"Automatic"'; // EAS (credentials.json) / patch-broadcast-signing.js / withManualIosSigning flip to Manual
+        s.TARGETED_DEVICE_FAMILY = '"1,2"';
+        s.MARKETING_VERSION = `"${marketingVersion}"`;
+        s.CURRENT_PROJECT_VERSION = `"${projectVersion}"`;
+        s.SKIP_INSTALL = 'YES';
+        // The extension links the SAME pods as the app (inherit! :complete);
+        // those pod targets are shared with the app so CocoaPods builds them
+        // with APPLICATION_EXTENSION_API_ONLY=NO. Xcode refuses an appex with
+        // the flag YES linking such libraries → keep it NO here. LiveKitClient
+        // is designed to run inside broadcast extensions.
+        s.APPLICATION_EXTENSION_API_ONLY = 'NO';
+        s.LD_RUNPATH_SEARCH_PATHS = '"$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks"';
+      }
+    }
     return cfg;
   });
 }
 
-// [2026-05-15 #827] Append broadcast target to Podfile so LiveKitClient
-// gets linked into the extension. expo prebuild regenerates Podfile from
-// scratch every build, so a static edit in /ios/Podfile would be wiped —
-// we must inject the snippet at prebuild time. Idempotent: skip if the
-// target string is already present (handles repeated prebuilds in the
-// same build folder).
+// Nested Podfile target so LiveKitClient is linked into the extension.
+// `inherit! :complete` (NOT :search_paths — see header) gives the extension
+// its own pods aggregate with a hard dependency on LiveKitClient, so the
+// Swift module exists before SampleHandler.swift compiles.
 function withBroadcastPodTarget(config) {
   return withDangerousMod(config, [
     'ios',
     async (cfg) => {
       const podfilePath = path.join(cfg.modRequest.platformProjectRoot, 'Podfile');
       if (!fs.existsSync(podfilePath)) return cfg;
-      let pod = fs.readFileSync(podfilePath, 'utf8');
+      const pod = fs.readFileSync(podfilePath, 'utf8');
       const marker = `target '${EXT_NAME}' do`;
       if (pod.includes(marker)) return cfg;
 
-      // [2026-05-15 fix v4] CocoaPods requires extension targets NESTED
-      // INSIDE the main app target — otherwise: "Unable to find host targets
-      // for ChatyyBroadcastExtension".
-      //
-      // v3 tried do/end depth counting from `target 'Chatyy' do` forward —
-      // but it didn't account for Ruby's `if/unless/case/def/begin` block
-      // openers that close with `end` WITHOUT a preceding `do`. The Expo
-      // template has `if ENV[...] == '1' ... else ... end` inside the
-      // main target, so depth zeroed at the inner if-block's `end` and the
-      // nested target landed inside the else clause (syntax error).
-      //
-      // v4 strategy: the Expo template only has 2 top-level `end` lines
-      // (column 0, no leading whitespace) — one early in the file (some
-      // outer block) and one at the very end (closing `target 'Chatyy'`).
-      // Insert before the LAST top-level `end`. Robust against inner
-      // if/case/def/etc blocks because their `end`s are always indented.
       const lines = pod.split('\n');
-
-      // [2026-05-15 fix v5] Strategy: locate `target 'Chatyy' do` SPECIFICALLY,
-      // then find the matching close `end`. The CI Podfile has TWO top-level
-      // targets — expo-share-intent injects `target 'ShareExtension' do` AT
-      // TOP LEVEL alongside `target 'Chatyy' do`. v4's "last top-level end"
-      // pulled ShareExtension's close, putting our nested target inside
-      // ShareExtension. CocoaPods then can't find a host for the broadcast
-      // ext because it's nested in the wrong app target.
-      //
-      // To find the close of `target 'Chatyy' do`, count ALL block openers
-      // (do/if/unless/case/def/class/module/begin/while/until) at any line
-      // start (not modifier-position) and decrement on `end`. Robust against
-      // post_install blocks AND if/else internals.
-      let chatyyLine = -1;
-      // [Wave 19 fix] Expo prebuild can name the main target either after the
-      // slug ('OneMundoMail') or app name ('Chatyy'), depending on version.
-      // Match either. Final fallback: FIRST non-extension top-level target.
+      // Locate `target 'Chatyy' do` (slug fallback) then its matching `end`,
+      // counting Ruby block openers so inner if/else/do blocks don't fool us.
+      let mainLine = -1;
       for (let i = 0; i < lines.length; i++) {
         const m = /^\s*target\s+['"]([^'"]+)['"]\s+do\b/.exec(lines[i]);
-        if (m && (m[1] === 'Chatyy' || m[1] === 'OneMundoMail')) {
-          chatyyLine = i;
-          break;
-        }
+        if (m && (m[1] === 'Chatyy' || m[1] === 'OneMundoMail')) { mainLine = i; break; }
       }
-      if (chatyyLine === -1) {
+      if (mainLine === -1) {
         for (let i = 0; i < lines.length; i++) {
           const m = /^\s*target\s+['"]([^'"]+)['"]\s+do\b/.exec(lines[i]);
-          if (m && m[1] !== EXT_NAME && m[1] !== 'ShareExtension' && m[1] !== 'NotificationService' && m[1] !== 'OneSignalNotificationServiceExtension') {
-            chatyyLine = i;
+          if (m && ![EXT_NAME, 'ShareExtension', 'ChatyyNotificationService', 'NotificationService'].includes(m[1])) {
+            mainLine = i;
             console.log(`[with-broadcast-extension] fallback: nesting inside '${m[1]}'`);
             break;
           }
         }
       }
-      if (chatyyLine === -1) {
-        console.warn('[with-broadcast-extension] No main app target found — skipping');
+      if (mainLine === -1) {
+        console.warn('[with-broadcast-extension] No main app target found in Podfile — skipping pod target');
         return cfg;
       }
-
-      // Count balance from chatyyLine forward. Block opener = `do`, `if`,
-      // `unless`, `case`, `def`, `class`, `module`, `begin`, `while`, `until`,
-      // `for` AT START OF LINE (after whitespace). NOT as modifier suffix.
-      let depth = 1;
-      let mainTargetEndLine = -1;
-      for (let i = chatyyLine + 1; i < lines.length; i++) {
-        const line = lines[i];
-        // Strip leading whitespace for keyword detection
-        const stripped = line.replace(/^\s+/, '');
-        // Opener `do` at end of line (block syntax)
-        if (/\bdo\b(\s*\|[^|]*\|)?\s*$/.test(line)) depth++;
-        // Opener keywords at line start (statement, not modifier)
-        else if (/^(if|unless|case|def|class|module|begin|while|until|for)\b/.test(stripped)
-                 && !/\b(if|unless|while|until)\s+\w+\s*[<>=!]/.test(line)) {
-          depth++;
-        }
-        // Closer
-        if (/^end\b/.test(stripped)) {
-          depth--;
-          if (depth === 0) { mainTargetEndLine = i; break; }
-        }
-      }
-      if (mainTargetEndLine === -1) {
-        console.warn('[with-broadcast-extension] Could not match close end of target Chatyy — skipping');
-        return cfg;
-      }
-      console.log(`[with-broadcast-extension] target 'Chatyy' do @ line ${chatyyLine + 1}, close end @ line ${mainTargetEndLine + 1}`);
-      // [debug v7] Dump first 90 lines of Podfile (after our injection) so
-      // we can see the actual nesting structure in CI logs.
-      console.log('[with-broadcast-extension] === Podfile dump (after injection) ===');
-      if (mainTargetEndLine === -1) {
-        console.warn('[with-broadcast-extension] No top-level `end` found — appending at EOF as fallback');
-        pod += `\n\ntarget '${EXT_NAME}' do\n  platform :ios, '15.0'\n  pod 'LiveKitClient', '~> 2.0'\nend\n`;
-        fs.writeFileSync(podfilePath, pod);
-        return cfg;
-      }
-      const mainTargetName = 'Chatyy (last top-level end @ line ' + (mainTargetEndLine + 1) + ')';
-
+      // Insert the nested target RIGHT AFTER `target 'Chatyy' do`. Earlier
+      // versions walked to the main target's closing `end` by counting Ruby
+      // block openers, but statement-form `if removed > 0` lines inside the
+      // post_install hooks (NSE provider stub) were mis-classified as
+      // modifiers, the count came up one short, and the nested target landed
+      // INSIDE `post_install do |installer| ... end` — where CocoaPods silently
+      // ignores it (no LiveKitClient linked → "no such module 'LiveKit'").
+      // Position inside the parent block is irrelevant to CocoaPods: the DSL
+      // is fully evaluated before dependency inheritance is resolved.
+      const insertAt = mainLine + 1;
       const nested = [
-        `  # [2026-05-15 #827, Wave 19 fix] Auto-injected nested broadcast`,
-        `  # extension target. inherit! :complete (NOT :search_paths) — with`,
-        `  # search_paths, CocoaPods sees LiveKitClient is already autolinked`,
-        `  # in the parent and DEDUPES it for the extension, leaving Swift`,
-        `  # without a module map → "no such module 'LiveKit'" at SampleHandler`,
-        `  # compile. :complete pulls all parent pods into the extension too —`,
-        `  # the binary inflates ~30MB, well under the 50MB ReplayKit cap.`,
+        `  # [2026-10-06 screen-share iOS] Auto-injected by plugins/with-broadcast-extension.js.`,
+        `  # inherit! :complete (NOT :search_paths): with search_paths CocoaPods`,
+        `  # dedupes LiveKitClient against the parent and the extension gets no`,
+        `  # module/dependency -> "no such module 'LiveKit'" (Wave 19 breakage).`,
         `  target '${EXT_NAME}' do`,
         `    inherit! :complete`,
-        `    platform :ios, '15.0'`,
+        `    platform :ios, '${DEPLOYMENT_TARGET}'`,
         `    pod 'LiveKitClient', '~> 2.0'`,
         `  end`,
       ];
-      lines.splice(mainTargetEndLine, 0, ...nested);
+      lines.splice(insertAt, 0, ...nested);
       fs.writeFileSync(podfilePath, lines.join('\n'));
-      console.log(`[with-broadcast-extension] Injected nested ${EXT_NAME} target inside '${mainTargetName}' (before line ${mainTargetEndLine + 1})`);
-      // [debug v7] Print full Podfile post-injection
-      const finalPod = fs.readFileSync(podfilePath, 'utf8');
-      console.log('[with-broadcast-extension] ============== Podfile DUMP ==============');
-      console.log(finalPod);
-      console.log('[with-broadcast-extension] ============== END DUMP ==============');
+      console.log(`[with-broadcast-extension] Injected nested ${EXT_NAME} pod target right after main target line ${mainLine + 1}`);
+      return cfg;
+    },
+  ]);
+}
+
+// expo-modules-core's "[Expo] Configure project" phase regenerates an
+// ExpoModulesProvider.swift for EVERY target on each build. The extension
+// doesn't host React/Expo, so strip the file from its Compile Sources in
+// post_install (same approach as with-notification-service.js). Keeps the
+// appex lean and immune to provider/module mismatches.
+function withBroadcastProviderStub(config) {
+  return withDangerousMod(config, [
+    'ios',
+    async (cfg) => {
+      const podfilePath = path.join(cfg.modRequest.platformProjectRoot, 'Podfile');
+      if (!fs.existsSync(podfilePath)) return cfg;
+      let pod = fs.readFileSync(podfilePath, 'utf8');
+      const sentinel = '# BROADCAST_REMOVE_PROVIDER_v1';
+      if (pod.includes(sentinel)) return cfg;
+      const hook = [
+        '',
+        '  ' + sentinel,
+        '  begin',
+        '    bc_project_path = installer.aggregate_targets.first.user_project_path',
+        '    bc_project = Xcodeproj::Project.open(bc_project_path)',
+        `    bc_target = bc_project.targets.find { |t| t.name == '${EXT_NAME}' }`,
+        '    if bc_target',
+        '      bc_removed = 0',
+        '      bc_target.source_build_phase.files.dup.each do |build_file|',
+        '        ref = build_file.file_ref',
+        '        p = ref && (ref.respond_to?(:path) ? ref.path : nil)',
+        '        d = ref && ref.respond_to?(:display_name) ? ref.display_name : nil',
+        "        if (p && p.include?('ExpoModulesProvider.swift')) || d == 'ExpoModulesProvider.swift'",
+        '          bc_target.source_build_phase.remove_build_file(build_file)',
+        '          bc_removed += 1',
+        '        end',
+        '      end',
+        '      bc_project.save if bc_removed > 0',
+        `      Pod::UI.puts "[broadcast fix] Removed #{bc_removed} ExpoModulesProvider.swift entries from ${EXT_NAME} sources"`,
+        '    else',
+        `      Pod::UI.puts "[broadcast fix] target ${EXT_NAME} not found in user project (plugin gated off?)"`,
+        '    end',
+        '  rescue => e',
+        '    Pod::UI.puts "[broadcast fix] ERROR: #{e.class}: #{e.message}"',
+        '    raise',
+        '  end',
+        '',
+      ].join('\n');
+      const re = /(post_install\s+do\s*\|installer\|)/;
+      if (re.test(pod)) pod = pod.replace(re, `$1\n${hook}`);
+      else pod += `\n\npost_install do |installer|\n${hook}\nend\n`;
+      fs.writeFileSync(podfilePath, pod);
       return cfg;
     },
   ]);
 }
 
 module.exports = function withBroadcastExtension(config) {
+  const projectRoot = (config._internal && config._internal.projectRoot) || process.cwd();
+  const gate = broadcastGate(projectRoot);
+  if (!gate.on) {
+    console.log(`[with-broadcast-extension] OFF — ${gate.why}. iOS screen share falls back to in-app capture.`);
+    return config;
+  }
+  console.log(`[with-broadcast-extension] ON — ${gate.why}`);
   config = withBroadcastExtensionFiles(config);
   config = withMainAppGroup(config);
+  config = withBroadcastInfoPlist(config);
   config = withBroadcastTarget(config);
   config = withBroadcastPodTarget(config);
+  config = withBroadcastProviderStub(config);
   return config;
 };
+
+module.exports.EXT_NAME = EXT_NAME;
+module.exports.EXT_BUNDLE_ID = EXT_BUNDLE_ID;
+module.exports.APP_GROUP = APP_GROUP;
+module.exports.LOCAL_PROFILE_PATH = LOCAL_PROFILE_PATH;
+module.exports.broadcastGate = broadcastGate;

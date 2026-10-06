@@ -787,24 +787,77 @@ public class ExpoCallKitModule: Module {
     // with .mixWithOthers — handled in SampleHandler.swift when LKSampleHandler
     // sees a non-zero `broadcastDelayMillis`.
     AsyncFunction("startScreenshare") { (audioShare: Bool) -> Bool in
-      // Forward via NotificationCenter so the existing ExpoScreenShare module
-      // owns the picker presentation. Keeps native + JS call sites symmetric
-      // (the bridge into the LK Room is the same on both platforms).
+      // [2026-10-06 screen-share iOS] When the native 1:1 Room is alive (every
+      // iOS call today — native-only outgoing + native incoming), publish the
+      // screen share THROUGH IT with the SDK's own picker/broadcast plumbing
+      // (ScreenShareSupport). The legacy NotificationCenter → ExpoScreenShare
+      // path only pops the picker and relies on a JPEG App-Group IPC that the
+      // LKSampleHandler-based extension no longer speaks — keep it strictly as
+      // the fallback for a JS-owned Room (react-native-webrtc getDisplayMedia
+      // opens the App Group socket and still needs someone to show the picker).
+      if let r = NativeCallRoom.shared.currentRoom() {
+        do {
+          try await ScreenShareSupport.set(room: r, enabled: true)
+          NSLog("[ExpoCallKit] startScreenshare: via native Room (broadcastExt=\(ScreenShareSupport.useBroadcastExtension))")
+          return true
+        } catch {
+          NSLog("[ExpoCallKit] startScreenshare: native Room set() failed: \(error)")
+          return false
+        }
+      }
       NotificationCenter.default.post(
         name: Notification.Name("ExpoCallKitRequestScreenshare"),
         object: nil,
         userInfo: ["audioShare": audioShare]
       )
-      NSLog("[ExpoCallKit] startScreenshare: dispatched (audioShare=\(audioShare))")
+      NSLog("[ExpoCallKit] startScreenshare: dispatched picker (audioShare=\(audioShare))")
       return true
     }
 
     AsyncFunction("stopScreenshare") { () -> Bool in
+      if let r = NativeCallRoom.shared.currentRoom() {
+        do {
+          try await ScreenShareSupport.set(room: r, enabled: false)
+          return true
+        } catch {
+          NSLog("[ExpoCallKit] stopScreenshare: native Room set(false) failed: \(error)")
+          return false
+        }
+      }
       NotificationCenter.default.post(
         name: Notification.Name("ExpoCallKitRequestStopScreenshare"),
         object: nil
       )
       return true
+    }
+
+    // [2026-10-06 screen-share iOS] Explicit JS → native-Room toggle used by
+    // /call.js "Tela" when it has adopted the native Room (adoptNativeRoom).
+    // Returns false when there is no native Room (caller falls back to the JS
+    // Room's setScreenShareEnabled) or when LiveKit threw.
+    AsyncFunction("setNativeScreenShare") { (enabled: Bool) -> Bool in
+      guard let r = NativeCallRoom.shared.currentRoom() else { return false }
+      do {
+        try await ScreenShareSupport.set(room: r, enabled: enabled)
+        return true
+      } catch {
+        NSLog("[ExpoCallKit] setNativeScreenShare(\(enabled)) failed: \(error)")
+        return false
+      }
+    }
+
+    /// True while the native Room's local participant publishes a screen-share
+    /// video track (the publication is the truth — see ScreenShareSupport).
+    Function("isNativeScreenSharing") { () -> Bool in
+      guard let r = NativeCallRoom.shared.currentRoom() else { return false }
+      return ScreenShareSupport.isSharing(room: r)
+    }
+
+    /// True when the ReplayKit broadcast extension is bundled in this build
+    /// (system-wide screen share). False = in-app capture only (app's own
+    /// window), which the JS UI should label honestly.
+    Function("screenShareBroadcastAvailable") { () -> Bool in
+      return ScreenShareSupport.useBroadcastExtension
     }
 
     // DEPRECATED — to be removed in v2.5.0

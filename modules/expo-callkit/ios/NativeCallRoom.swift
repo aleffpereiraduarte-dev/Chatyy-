@@ -367,36 +367,20 @@ public enum NativeCallRoomEvent {
         Task {
             do {
                 if enabled {
-                    // [Wave WhatsApp parity, 2026-05-20 gap C1+C4] Mirror the
-                    // CallViewController publish path: VP9 preferred / VP8 backup,
-                    // simulcast on, balanced degradation. Without these options
-                    // the JS-triggered camera enable would publish a default VP8
-                    // track and the SFU would never negotiate VP9 with peers.
-                    let publishOpts = VideoPublishOptions(
-                        name: nil,
-                        encoding: VideoEncoding(maxBitrate: 2_000_000, maxFps: 30),
-                        // [VIDEO FIX 2026-05-26] simulcast=false with H.264 —
-                        // libwebrtc has no H.264 simulcast; true here made the
-                        // camera publish fail silently (no self-view + no remote).
-                        // Mirrors CallViewController.defaultVideoPublishOptions.
-                        simulcast: false,
-                        // [remote-video render fix 2026-05-26] .vp9 → .h264 to
-                        // match CallViewController.defaultVideoPublishOptions. VP9
-                        // decode is unreliable cross-platform on mobile and was why
-                        // the remote peer's camera never rendered (avatar only); H.264
-                        // is HW-decoded everywhere. Must stay in sync with the other
-                        // two publish sites or SFU codec negotiation goes asymmetric.
-                        preferredCodec: .h264,
-                        // [Wave 19 fix] LK iOS 2.0.x has no backupCodec param.
-                        // [HD tuning 2026-05-26] maintainFramerate — keep fps,
-                        // shed resolution first under congestion (talking-head).
-                        // Mirrors CallViewController.defaultVideoPublishOptions.
-                        degradationPreference: .maintainFramerate
-                    )
+                    // [video-quality 2026-10-06] ONE source of truth: the same
+                    // profile ladder + publish options CallViewController uses
+                    // (network-aware 1080p/720p/540p, H.264 single encoding,
+                    // balanced degradation). The literal copy that lived here
+                    // drifted from the VC twice (VP9→H264, simulcast) — never
+                    // duplicate the numbers again.
+                    let captureOpts = CallViewController.defaultCameraCaptureOptions()
+                    let publishOpts = CallViewController.defaultVideoPublishOptions()
                     _ = try await r.localParticipant.setCamera(
                         enabled: true,
+                        captureOptions: captureOpts,
                         publishOptions: publishOpts
                     )
+                    print("[NativeCallRoom] camera published profile=\(CallViewController.CallVideoQuality.current.rawValue) net=\(CallViewController.CallNetworkSnapshot.shared.label)")
                 } else {
                     _ = try await r.localParticipant.setCamera(enabled: false)
                 }

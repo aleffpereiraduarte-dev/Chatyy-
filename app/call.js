@@ -200,10 +200,39 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 // owns outgoing calls end-to-end (ExpoCallKit.supportsNativeOnlyOutgoing), this
 // screen must NOT mount for the caller — the native CallViewController is the
 // only UI. See services/nativeOutgoingCall.js (flag + rollback switch).
+// [2026-10-06 android-outgoing] Same for Android (native CallActivity): a stray
+// /call?isCaller=1 push used to mount CallScreenInner in MainActivity behind
+// the native screen. Platform gating lives in isNativeOnlyOutgoingActive().
 const _nativeOnlyOutgoingActive = () => {
-  if (Platform.OS !== 'ios') return false;
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') return false;
   try { return !!require('../services/nativeOutgoingCall').isNativeOnlyOutgoingActive(); } catch { return false; }
 };
+
+// [video-quality 2026-10-06 "melhorar a qualidade do vídeo"]
+// SINGLE SOURCE OF TRUTH for the JS Room (web + RN fallback + group). Mirror
+// of iOS `CallViewController.CallVideoQuality` and Android
+// `CallVideoQuality` (NativeCallRoom.kt) — the SFU forwards whatever each
+// publisher offers, so an asymmetric ladder shows up as "um lado nítido, o
+// outro borrado". Change the numbers HERE and mirror on both native sides.
+//   hd720    1280x720@30  2.3 Mbps  default 1:1 (Wi-Fi or healthy cellular)
+//   sd540     960x540@30  1.1 Mbps  cellular + poor LK connectionQuality
+//   group540  960x540@30  0.7 Mbps  group tiles (N× uplink, small on screen)
+//   screen   1080p@15     3.0 Mbps  contentHint 'detail' + maintain-resolution
+// Codec: H.264 single encoding (no simulcast — libwebrtc has no H.264
+// simulcast; see the publishDefaults note in connectToRoom). Camera
+// degradation = 'balanced' (maintain-framerate made a congested face
+// 180p-blurry at 30 fps). 1080p "HD" is native-only (needs the native camera
+// pipeline); JS stays at 720p.
+export const VIDEO_QUALITY = {
+  hd720:    { width: 1280, height: 720, frameRate: 30, maxBitrate: 2_300_000 },
+  sd540:    { width: 960,  height: 540, frameRate: 30, maxBitrate: 1_100_000 },
+  group540: { width: 960,  height: 540, frameRate: 30, maxBitrate: 700_000 },
+  screen:   { width: 1920, height: 1080, frameRate: 15, maxBitrate: 3_000_000 },
+  codec: 'h264',
+  degradation: 'balanced',
+};
+const _vqCapture = (p) => ({ width: p.width, height: p.height, frameRate: p.frameRate });
+const _vqEncoding = (p) => ({ maxBitrate: p.maxBitrate, maxFramerate: p.frameRate });
 
 // Max participants per group call. Matches WhatsApp 2025 + native iOS
 // `kMaxCallParticipants` + Android `GroupCallActivity.MAX_PARTICIPANTS`.
@@ -697,6 +726,7 @@ function CallScreenInner() {
   // (WS call_accepted, first remote audio track, 12s fallback). Self-view is
   // unaffected on the callee/group paths (gate is open immediately there).
   const _pendingCamPubOptsRef = useRef(undefined);
+  const _pendingCamCapOptsRef = useRef(undefined); // [video-quality 2026-10-06] 540p capture for the step-down
   const _openCallerCam = () => {
     if (!isCaller || isGroupCall || !isVideoCall) return;
     if (!videoEnabledRef.current) return;
@@ -705,7 +735,7 @@ function CallScreenInner() {
     (async () => {
       try {
         const opts = _pendingCamPubOptsRef.current;
-        if (opts) await r.localParticipant.setCameraEnabled(true, undefined, opts);
+        if (opts) await r.localParticipant.setCameraEnabled(true, _pendingCamCapOptsRef.current, opts);
         else await r.localParticipant.setCameraEnabled(true);
         const camPub = r.localParticipant.getTrackPublication(Track.Source.Camera);
         if (camPub?.videoTrack) setLocalVideoTrack(camPub.videoTrack);
@@ -1918,9 +1948,8 @@ function CallScreenInner() {
         // [2026-10-01] Em GRUPO os tiles são pequenos num grid — capturar/publicar
         // 720p é desperdício. 540p dá qualidade ótima no tamanho real e alivia
         // encode/CPU/bateria. 1:1 (tela cheia) mantém 720p.
-        resolution: isGroupCall
-          ? { width: 960, height: 540, frameRate: 30 }
-          : { width: 1280, height: 720, frameRate: 30 },
+        // [video-quality 2026-10-06] numbers come from VIDEO_QUALITY (top of file).
+        resolution: _vqCapture(isGroupCall ? VIDEO_QUALITY.group540 : VIDEO_QUALITY.hd720),
       },
       publishDefaults: {
         ...audioOpts.publishDefaults,
@@ -1943,27 +1972,33 @@ function CallScreenInner() {
         // + Android (and decodes fine on web), so all FOUR surfaces now agree.
         // No simulcast → single H.264 encoding (benign in 1:1; adaptiveStream +
         // dynacast + maintain-framerate still shed resolution under congestion).
-        videoCodec: 'h264',
+        videoCodec: VIDEO_QUALITY.codec,
         simulcast: false,
         // [2026-10-01] GRUPO cap bitrate MUITO menor. Sem simulcast, cada
-        // receptor baixa N× o bitrate do publisher; 1.8Mbps×N estoura banda em
-        // grupo e não degrada p/ quem está em rede fraca. 600kbps/540p por tile
-        // dá qualidade boa no tamanho real do tile e escala muito melhor. 1:1
-        // (tela cheia) mantém 1.8Mbps.
-        videoEncoding: isGroupCall
-          ? { maxBitrate: 600_000, maxFramerate: 30 }
-          : { maxBitrate: 1_800_000, maxFramerate: 30 },
-        // [HD tuning] maintain-framerate — WhatsApp/FaceTime-like default for a
-        // 1:1 talking head: under congestion drop RESOLUTION first, keep fps
-        // smooth (motion fidelity on a face > sharpness).
-        degradationPreference: 'maintain-framerate',
+        // receptor baixa N× o bitrate do publisher; em grupo 540p/700k por tile
+        // dá qualidade boa no tamanho real do tile e escala muito melhor.
+        // [video-quality 2026-10-06] 1:1 1.8M → 2.3M (720p30 H.264 tem headroom
+        // real pra detalhe/movimento; BWE segura em rede fraca).
+        videoEncoding: _vqEncoding(isGroupCall ? VIDEO_QUALITY.group540 : VIDEO_QUALITY.hd720),
+        // [video-quality 2026-10-06] Screen share published through the Room
+        // defaults: 1080p15 ~3 Mbps instead of livekit-client's 2.5M default.
+        screenShareEncoding: _vqEncoding(VIDEO_QUALITY.screen),
+        // [video-quality 2026-10-06] 'maintain-framerate' → 'balanced' (WebRTC
+        // default). Under congestion shed a bit of fps AND resolution; the old
+        // pin held 30 fps while the face went 180p-blurry — that read as
+        // "vídeo ruim" far more than 24 fps does.
+        degradationPreference: VIDEO_QUALITY.degradation,
       },
-      // [2026-05-15 #827] iOS broadcast extension wiring. When the user taps
-      // "Compartilhar tela", LiveKit's setScreenShareEnabled(true) opens the
-      // system RPSystemBroadcastPickerView, the user picks Chatyy, and the
-      // ChatyyBroadcastExtension (SampleHandler extends LKSampleHandler) starts
-      // publishing screen frames into THIS room. broadcastBundleId must match
-      // the bundle id set in plugins/with-broadcast-extension.js.
+      // [2026-05-15 #827] iOS broadcast extension wiring (JS Room).
+      // [2026-10-06 screen-share iOS] CORRECTION: `iosScreenSharePreferences`
+      // is NOT a livekit-client / @livekit/react-native 2.10.3 option — nothing
+      // reads it (dead key, kept only so older notes still make sense). On iOS
+      // the broadcast extension is selected by the Info.plist keys
+      // `RTCAppGroupIdentifier` + `RTCScreenSharingExtension` (written by
+      // plugins/with-broadcast-extension.js) and, for the native Room every iOS
+      // call actually uses, by ScreenShareSupport.swift. handleScreenShare()
+      // routes the "Tela" tap to the native Room via
+      // ExpoCallKit.setNativeScreenShare.
       iosScreenSharePreferences: {
         broadcastBundleId: 'com.onemundo.mail.broadcast',
         useBroadcastExtension: true,
@@ -2147,6 +2182,44 @@ function CallScreenInner() {
         try { _diag('ttfc_first_connect', { ttfc_ms: ttfcMsRef.current }); } catch {}
       }
       _diag('event_room_connected', { remotes: r.remoteParticipants?.size || 0 });
+      // [video-quality 2026-10-06] Two "lk_video_quality" beacons (t+8s, t+45s)
+      // with the REAL negotiated quality: published dims/mime/bitrate, received
+      // dims/mime/bitrate/requested layer, LK connectionQuality. Read with
+      //   grep lk_video_quality /var/www/mail/data/push_diag.log | tail
+      if (isVideoCall || isGroupCall) {
+        const _vq = (tag) => {
+          try {
+            if (endedRef.current || roomRef.current !== r) return;
+            const lp = r.localParticipant;
+            const camPub = lp?.getTrackPublication?.(Track.Source.Camera);
+            const camTrack = camPub?.videoTrack || camPub?.track;
+            let settings = null;
+            try { settings = camTrack?.mediaStreamTrack?.getSettings?.() || null; } catch {}
+            const out = {
+              tag,
+              group: isGroupCall ? 1 : 0,
+              cq: String(lp?.connectionQuality || ''),
+              pub: camPub ? `${camPub.dimensions?.width || 0}x${camPub.dimensions?.height || 0}` : 'none',
+              pub_mime: camPub?.mimeType || '?',
+              pub_kbps: camTrack ? Math.round((camTrack.currentBitrate || 0) / 1000) : 0,
+              cap: settings ? `${settings.width || 0}x${settings.height || 0}@${Math.round(settings.frameRate || 0)}` : '?',
+              simulcast: camPub?.simulcasted ? 1 : 0,
+            };
+            const rp = Array.from(r.remoteParticipants?.values?.() || [])[0];
+            const rPub = rp?.getTrackPublication?.(Track.Source.Camera);
+            if (rPub) {
+              out.rx = `${rPub.dimensions?.width || 0}x${rPub.dimensions?.height || 0}`;
+              out.rx_mime = rPub.mimeType || '?';
+              out.rx_q = String(rPub.videoQuality ?? '');
+              out.rx_kbps = Math.round(((rPub.videoTrack || rPub.track)?.currentBitrate || 0) / 1000);
+              out.rx_cq = String(rp?.connectionQuality || '');
+            }
+            _diag('video_quality', out);
+          } catch {}
+        };
+        setTimeout(() => _vq('t8'), 8000);
+        setTimeout(() => _vq('t45'), 45000);
+      }
       console.log('[Call] LiveKit Connected to room', room, 'ttfc=', ttfcMsRef.current, 'ms');
       // [CALL-TRACE 2026-05-20 WAVE42] Step 12/12 — JS-owned Room reports
       // Connected. Whether the peer is in the room yet is in `peerConnected`
@@ -2835,19 +2908,30 @@ function CallScreenInner() {
         // (180p + 360p — drop the 720p layer the SFU won't pick anyway).
         let lowData = false;
         let userToggleOn = false;
+        let netIsCellular = false;
         try {
           const flag = await AsyncStorage.getItem('chatyy_low_data_calls');
           if (flag === 'true' || flag === '1') { lowData = true; userToggleOn = true; }
         } catch {}
-        if (!lowData && Platform.OS !== 'web') {
+        if (Platform.OS !== 'web') {
           try {
             const NetInfo = require('@react-native-community/netinfo').default;
             const s = await NetInfo.fetch();
-            if (s?.type === 'cellular' && s?.details?.isConnectionExpensive) {
+            netIsCellular = s?.type === 'cellular';
+            if (!lowData && netIsCellular && s?.details?.isConnectionExpensive) {
               lowData = true;
             }
           } catch {}
         }
+        // [video-quality 2026-10-06] Network-aware step-down (mirrors native):
+        // cellular + LK says our link is poor/lost → publish the sd540 profile
+        // (960x540 @ 1.1 Mbps) instead of 720p. Healthy cellular / Wi-Fi keep
+        // hd720. Mid-call congestion is handled by 'balanced' degradation.
+        let cellularPoor = false;
+        try {
+          const q = String(r.localParticipant?.connectionQuality || '').toLowerCase();
+          cellularPoor = netIsCellular && !isGroupCall && (q === 'poor' || q === 'lost');
+        } catch {}
         // [VIDEO FIX 2026-05-27] H.264 has NO simulcast in libwebrtc, so the
         // low-data publish must also be simulcast:false (was simulcast:true + a
         // 2-layer ladder — under H.264 that builds an invalid multi-encoding
@@ -2856,14 +2940,26 @@ function CallScreenInner() {
         // adaptiveStream still trim it. Must match the publishDefaults pin above.
         const camPubOpts = lowData
           ? {
-              videoCodec: 'h264',
+              videoCodec: VIDEO_QUALITY.codec,
               simulcast: false,
               videoEncoding: { maxBitrate: 200000, maxFramerate: 15 },
             }
-          : undefined;
+          : (cellularPoor
+              ? {
+                  videoCodec: VIDEO_QUALITY.codec,
+                  simulcast: false,
+                  videoEncoding: _vqEncoding(VIDEO_QUALITY.sd540),
+                  degradationPreference: VIDEO_QUALITY.degradation,
+                }
+              : undefined);
+        // Capture opts travel with the publish opts (540p capture for the
+        // step-down; low-data keeps the Room default and lets the cap shrink it).
+        const camCapOpts = cellularPoor && !lowData ? { resolution: _vqCapture(VIDEO_QUALITY.sd540) } : undefined;
+        if (cellularPoor) { try { _diag('video_profile_sd540', { lowData, cq: String(r.localParticipant?.connectionQuality || '') }); } catch {} }
         // [2026-10-03 PRIVACY ring-leak fix — video] Stash the computed publish
         // opts so _openCallerCam() can reuse them when it fires on answer.
         _pendingCamPubOptsRef.current = camPubOpts;
+        _pendingCamCapOptsRef.current = camCapOpts;
         // Mirror the mic gate: the 1:1 CALLER pre-connects during the ring but
         // must NOT publish its camera to the SFU until the callee answers —
         // _micGateOpen() is false for the caller until call_accepted / first
@@ -2877,8 +2973,8 @@ function CallScreenInner() {
             // adaptive loop above will still pull the bitrate down to the
             // matching bucket on the first poll.
             if (camPubOpts) {
-              try { _diag('low_data_mode_on', { auto: !userToggleOn }); } catch {}
-              await r.localParticipant.setCameraEnabled(true, undefined, camPubOpts);
+              if (lowData) { try { _diag('low_data_mode_on', { auto: !userToggleOn }); } catch {} }
+              await r.localParticipant.setCameraEnabled(true, camCapOpts, camPubOpts);
             } else {
               await r.localParticipant.setCameraEnabled(true);
             }
@@ -4233,13 +4329,81 @@ function CallScreenInner() {
   }, [facingFront, resetControlsTimer, flipCameraFadeAnim]);
 
   const handleScreenShare = useCallback(async () => {
+    const newSharing = !screenSharing;
+    // [2026-10-06 screen-share iOS] On iOS the call media lives in the NATIVE
+    // LiveKit Room (adoptNativeRoom / native-only outgoing) — the JS `Room`
+    // here is a proxy or absent. Publishing the screen share must therefore go
+    // through the native Room (ExpoCallKit.setNativeScreenShare →
+    // ScreenShareSupport: ReplayKit broadcast extension when bundled, in-app
+    // capture otherwise). The old path called setScreenShareEnabled on a JS
+    // Room that was not the call → nothing ever reached the peer.
+    if (Platform.OS === 'ios') {
+      try {
+        const ExpoCallKit = require('../modules/expo-callkit');
+        const nativeActive = (() => {
+          try {
+            return globalThis.__chatyyNativeCallActive === true || ExpoCallKit.isNativeRoomConnected?.() === true;
+          } catch { return false; }
+        })();
+        if (nativeActive && typeof ExpoCallKit.setNativeScreenShare === 'function') {
+          const ok = await ExpoCallKit.setNativeScreenShare(newSharing);
+          console.log('[Call] native screen share toggle', { enabled: newSharing, ok });
+          if (ok) {
+            setScreenSharing(newSharing);
+            sendData({ type: 'screen_share', sharing: newSharing });
+          } else if (newSharing) {
+            try {
+              const { Alert } = require('react-native');
+              Alert.alert(
+                t('call.shareScreen') || 'Compartilhar tela',
+                t('call.shareScreenError') || 'Não foi possível iniciar o compartilhamento de tela. Tente novamente.',
+              );
+            } catch {}
+          }
+          resetControlsTimer();
+          return;
+        }
+      } catch (e) {
+        console.warn('[Call] native screen share bridge err:', e?.message);
+      }
+    }
     const r = roomRef.current;
     if (!r) return;
-    const newSharing = !screenSharing;
     try {
-      await r.localParticipant.setScreenShareEnabled(newSharing);
+      // [video-quality 2026-10-06] 1080p @ 15 fps, ~3 Mbps, contentHint
+      // 'detail' (text/slides crisp), degradation maintain-resolution. If this
+      // SDK/platform rejects the options object, fall back to the plain call.
+      if (newSharing) {
+        try {
+          await r.localParticipant.setScreenShareEnabled(true, {
+            contentHint: 'detail',
+            resolution: _vqCapture(VIDEO_QUALITY.screen),
+            audio: false,
+          }, {
+            videoCodec: VIDEO_QUALITY.codec,
+            simulcast: false,
+            screenShareEncoding: _vqEncoding(VIDEO_QUALITY.screen),
+            degradationPreference: 'maintain-resolution',
+          });
+        } catch (optErr) {
+          console.warn('[Call] setScreenShareEnabled(opts) err — plain retry:', optErr?.message);
+          await r.localParticipant.setScreenShareEnabled(true);
+        }
+      } else {
+        await r.localParticipant.setScreenShareEnabled(false);
+      }
       setScreenSharing(newSharing);
       sendData({ type: 'screen_share', sharing: newSharing });
+      if (Platform.OS === 'ios' && newSharing) {
+        // JS-owned Room on iOS (adopt failed): react-native-webrtc's
+        // getDisplayMedia opened the App Group socket and now waits for the
+        // broadcast extension — but nothing shows the system picker. Pop it
+        // (RPSystemBroadcastPickerView pre-targeted at our extension).
+        try {
+          const ExpoCallKit = require('../modules/expo-callkit');
+          await ExpoCallKit.startScreenshare?.(false);
+        } catch {}
+      }
     } catch (e) {
       console.warn('[Call] setScreenShareEnabled err:', e?.message);
       if (Platform.OS === 'android') {

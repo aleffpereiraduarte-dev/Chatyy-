@@ -44,7 +44,8 @@
       "environment": "production",
       "env": {
         "SENTRY_DISABLE_AUTO_UPLOAD": "true",
-        "SENTRY_ALLOW_FAILURE": "true"
+        "SENTRY_ALLOW_FAILURE": "true",
+        "CHATYY_BROADCAST_EXT": "1"
       }
     }
   },
