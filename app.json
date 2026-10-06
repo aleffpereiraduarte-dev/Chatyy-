@@ -112,7 +112,7 @@
     },
     "android": {
       "package": "com.onemundo.mail",
-      "versionCode": 579,
+      "versionCode": 580,
       "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.VIBRATE",
