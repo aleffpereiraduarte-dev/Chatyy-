@@ -1338,12 +1338,14 @@ function IncomingCallListenerWeb() {
           //     autoConfigureAudioSession=false; /call gates Room.connect
           //     on the onCallKitAudioActivated event for callee path.
 
-          // Android: dismiss IncomingCallActivity now that user accepted from
-          // the native screen. Without this, the full-screen Activity lingers
-          // over /call. iOS CallKit auto-dismisses, so skip there.
-          if (Platform.OS === 'android') {
-            try { callKeep.endCall(data.callId); } catch {}
-          }
+          // [2026-10-06 android-audit P0] REMOVED the Android `callKeep.endCall`
+          // that used to run here. ExpoCallKitModule.endCall broadcasts
+          // CLOSE_CALL_ACTIVITY *without* call_id and CallActivity treats that as
+          // "close any" → the CallActivity that IncomingCallActivity.onAccept had
+          // JUST launched was torn down (finishCall → WS call_end to the caller):
+          // "atende e a tela desliga" / "CallActivity não abre". Native onAccept
+          // already cancels the notification + stops CallRingingService; the
+          // ringer activity self-finishes (closeReceiver / 15s safety).
 
           // Use callStateRef if available (populated by onIncomingCall), otherwise use event data
           const currentCall = callStateRef.current;

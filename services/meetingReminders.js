@@ -37,9 +37,15 @@ async function scheduleReminder(meeting) {
         body: meeting.title || 'Reuniao sem titulo',
         data: { type: 'meeting_reminder', room_id: id },
         sound: true,
+      },
+      // [2026-10-06 android-audit] SDK 55 rejects `{ date }` without `type`
+      // (TypeError "needs to contain a type or channelId") → reminders were
+      // NEVER scheduled. Android: channelId lives on the trigger, not content.
+      trigger: {
+        type: 'date',
+        date: reminderTime,
         ...(Platform.OS === 'android' ? { channelId: 'meetings' } : {}),
       },
-      trigger: { date: reminderTime },
     });
     scheduledMeetings.add(id);
   } catch (e) {
@@ -107,6 +113,14 @@ export async function setupMeetingChannel() {
 // Initialize — call on app startup
 export async function initMeetingReminders() {
   await setupMeetingChannel();
+  // Chat "Criar lembrete" reminders: Android channel + re-arm anything the OS
+  // dropped (services/reminders.js). Same boot slot, no extra _layout wiring.
+  try {
+    const { initChatReminders } = await import('./reminders');
+    await initChatReminders();
+  } catch (e) {
+    console.warn('[ChatReminders] init failed:', e?.message || e);
+  }
   await syncMeetingReminders();
 }
 

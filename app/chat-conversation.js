@@ -34,6 +34,9 @@ import CircularProgressArc from '../components/CircularProgressArc';
 import { isReduceMotionEnabled } from '../components/reducedMotion'; // [2026-10-04] honor OS Reduce Motion
 import MediaSendOverlay, { MediaPopIn } from '../components/MediaSendOverlay'; // [2026-10-04] WhatsApp-level send motion
 import { useRouter, useLocalSearchParams } from 'expo-router';
+// [VISTO AZUL FALSO causa-raiz 2026-10-06] useIsFocused: recibo de leitura SÓ
+// quando esta tela é a focada na pilha (não há modal/outra tela por cima).
+import { useIsFocused } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ReactionBurst from '../components/ReactionBurst';
 import { useTheme } from '../context/ThemeContext';
@@ -77,6 +80,8 @@ import { getCachedAudioUri } from '../services/audioCache';
 import Profile from '../components/Profile';
 import { MentionAutocomplete, isMentioning, insertMention, isUserMentioned } from '../components/MentionInput';
 import { ScheduleToast, CustomScheduleModal, ScheduledMessagesModal } from '../components/ScheduleModals';
+import ReminderSheet from '../components/ReminderSheet';
+import { detectReminder as detectChatReminder, createReminder as createChatReminder, formatReminderWhen } from '../services/reminders';
 import GifPickerPanel from '../components/GifPicker';
 import StickerPicker from '../components/StickerPicker';
 import MessageEffectPicker from '../components/MessageEffectPicker';
@@ -1930,11 +1935,11 @@ function detectSmartActions(text) {
   const out = [];
   if (typeof text !== 'string' || !text) return out;
   const low = text.toLowerCase();
-  // Reminder
-  if (/\b(me\s+lembre|lembrar|remind\s*me|recu[eé]rdame|me\s+avisa)\b/i.test(text)) {
-    const d = parseSmartDate(text);
-    if (d) out.push({ type: 'reminder', Icon: IconClock, labelKey: 'chatConv.smartCreateReminder', when: d });
-  }
+  // Reminder — [2026-10-06] parser moved to services/reminderParser.js
+  // (pt/en/es, period defaults: "quando acordar"/"de manhã"=08:00,
+  // tarde=14:00, noite=20:00, sem hora=09:00). Chip only when a date parses.
+  const rem = detectChatReminder(text);
+  if (rem && rem.date) out.push({ type: 'reminder', Icon: IconClock, labelKey: 'chatConv.smartCreateReminder', when: rem.date, hasTime: rem.hasTime });
   // Meeting — requires a clear meeting word + date
   if (/\b(reuni[ãa]o|meeting|meet|encontro|call|ligação|videochamada)\b/i.test(text)) {
     const d = parseSmartDate(text);
@@ -7758,6 +7763,58 @@ function ChatConversationInner() {
   const [newMsgCount, setNewMsgCount] = useState(0);
   const isScrolledUpRef = useRef(false);
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // [VISTO AZUL FALSO — CAUSA-RAIZ 2026-10-06] Gate de VISIBILIDADE REAL para
+  // recibos de leitura (regra WhatsApp: azul SÓ quando o destinatário teve a
+  // conversa VISÍVEL em primeiro plano).
+  //
+  // Prova (conv 916, PG + nginx + push_diag): o iOS do destinatário tinha esta
+  // tela MONTADA, foi pro 2º plano (poll de 3,5s parou às 23:35:46), o JS
+  // acordou por 3s às 23:36:04 (dbSaveMessages/cacheSingleMessage no push_diag)
+  // e disparou chat_mark_read ×2 → delivered_at == read_at ao microssegundo
+  // para msgs que a pessoa NUNCA viu (só voltou ao app às 23:38:50).
+  //
+  // Antes NENHUM caminho que marca lido checava AppState/foco/visibilidade:
+  //   • mount → api.chatRead(conv, 0) ("tudo lido")
+  //   • loadMessages (AppState active, reconnect, poll WS-morto, push_chat_refresh)
+  //     → needsRead → markReadUpTo(última msg)
+  //   • onIncomingMessage (WS/TCP/delta) → markReadUpTo(msg.id) em 0ms
+  //   • onViewableItemsChanged → markReadUpTo
+  //   • flush no unmount
+  // Qualquer execução de JS fora da tela (2º plano iOS/Android, aba web oculta,
+  // modal/outra tela por cima na pilha, wake por push/BG fetch) marcava lido.
+  //
+  // Agora: markReadUpTo (ponto único) e o chatRead do mount só disparam se
+  // app ATIVO + tela FOCADA (+ aba visível no web). Fora disso o id fica
+  // DEFERIDO e é enviado quando a tela volta a ser visível (flush), então
+  // leituras legítimas nunca se perdem — só deixam de ser antecipadas.
+  // ─────────────────────────────────────────────────────────────────────────
+  const isScreenFocused = useIsFocused();
+  const screenFocusedRef = useRef(isScreenFocused);
+  screenFocusedRef.current = isScreenFocused;
+  const appActiveRef = useRef((() => {
+    const s = AppState.currentState;
+    return s !== 'background' && s !== 'inactive';
+  })());
+  // { id: maior msgId deferido, all: mount "marca tudo" deferido }
+  const deferredReadRef = useRef({ id: 0, all: false });
+  const canAckReadNow = () => {
+    if (!mountedRef.current) return false;
+    if (!appActiveRef.current) return false;
+    if (!screenFocusedRef.current) return false;
+    if (Platform.OS === 'web') {
+      try {
+        if (typeof document !== 'undefined' && document.visibilityState && document.visibilityState !== 'visible') return false;
+        // WhatsApp Web: aba visível mas janela SEM foco (usuário noutra janela)
+        // também não marca lido.
+        if (typeof document !== 'undefined' && typeof document.hasFocus === 'function' && !document.hasFocus()) return false;
+      } catch {}
+    }
+    return true;
+  };
+  const canAckReadNowRef = useRef(canAckReadNow);
+  canAckReadNowRef.current = canAckReadNow;
+
   // Multi-select state
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(new Set());
@@ -7942,10 +7999,29 @@ function ChatConversationInner() {
     }
   }, [router]);
 
-  // Android hardware back
+  // Android hardware back. [2026-10-06 android-audit] WhatsApp parity: back
+  // first closes an inline overlay (GIF/sticker panel, selection mode, reply
+  // preview) and only leaves the chat when nothing is open. State is read via
+  // a ref assigned later in render (those useStates are declared further down
+  // — a deps array here would hit the const TDZ and crash the screen).
+  const androidBackOverlayRef = useRef(null);
   useEffect(() => {
     if (Platform.OS !== 'android') return;
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => { goBack(); return true; });
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      try {
+        const o = androidBackOverlayRef.current;
+        if (o) {
+          if (o.showAttachMenu) { o.setShowAttachMenu(false); return true; }
+          if (o.showGifPicker) { o.setShowGifPicker(false); return true; }
+          if (o.showStickerPicker) { o.setShowStickerPicker(false); return true; }
+          if (o.selectionMode) { o.setSelectionMode(false); o.setSelectedIds(new Set()); return true; }
+          if (o.editingMsg) { o.setEditingMsg(null); return true; }
+          if (o.replyTo) { o.setReplyTo(null); return true; }
+        }
+      } catch {}
+      goBack();
+      return true;
+    });
     return () => { try { sub.remove?.(); } catch {} };
   }, [goBack]);
 
@@ -7987,8 +8063,17 @@ function ChatConversationInner() {
       });
     } catch {}
     // Persist on backend after a tiny delay so messages have time to load.
-    // We use 0 as last_read_id which the server interprets as "all current".
+    // We use 0 as last_read_id which the server interprets as "all current"
+    // (chat.php chat_mark_read: message_id=0 → MAX(id) da conversa → stamp de
+    // read_at em TODAS as msgs do peer). Por isso este disparo é o mais
+    // perigoso: uma montagem sem a tela visível pintava a conversa INTEIRA de
+    // azul. [2026-10-06] Só dispara com app ativo + tela focada; senão fica
+    // deferido e o flush manda quando a tela realmente aparecer.
     const t = setTimeout(() => {
+      if (!canAckReadNowRef.current()) {
+        deferredReadRef.current.all = true;
+        return;
+      }
       api.chatRead?.(conversationId, 0).catch(() => {});
     }, 250);
     return () => clearTimeout(t);
@@ -9249,6 +9334,15 @@ function ChatConversationInner() {
   // const, the deps array would TDZ on first render. Inline avoids that.
   const markReadUpTo = useCallback((msgId) => {
     if (!msgId || typeof msgId !== 'number' || msgId <= (lastReadAckRef.current || 0)) return;
+    // [VISTO AZUL FALSO causa-raiz 2026-10-06] Ponto ÚNICO de gate: se o app
+    // não está ativo / a tela não está focada / aba oculta, NÃO manda recibo
+    // (nem HTTP, nem WS fast-path, nem evento local). Guarda o id pra o flush
+    // quando a tela voltar a ser visível. NÃO avança lastReadAckRef aqui —
+    // senão o flush acharia que já foi acked.
+    if (!canAckReadNowRef.current()) {
+      if (msgId > (deferredReadRef.current.id || 0)) deferredReadRef.current.id = msgId;
+      return;
+    }
     lastReadAckRef.current = msgId;
     // [read-regress fix 2026-05-25] Don't swallow the failure. If this HTTP
     // write never lands, the server's last_read_message_id never advances
@@ -9283,6 +9377,60 @@ function ChatConversationInner() {
       });
     } catch {}
   }, [conversationId, user]);
+
+  // [VISTO AZUL FALSO causa-raiz 2026-10-06] Flush dos recibos DEFERIDOS: roda
+  // quando a tela volta a ser visível de verdade (app ativo + tela focada +
+  // aba visível/focada). Só então o "marca tudo" do mount e/ou o maior msgId
+  // visto chegam ao servidor — leitura real nunca se perde, só deixa de ser
+  // antecipada enquanto a pessoa não está olhando.
+  const flushDeferredRead = useCallback(() => {
+    if (!canAckReadNowRef.current()) return;
+    const d = deferredReadRef.current;
+    if (!d.all && !d.id) return;
+    // Se o usuário está com a lista rolada pra cima, as msgs novas NÃO estão
+    // na viewport: não marca aqui (nem o "tudo lido" do mount) —
+    // onViewableItemsChanged marca quando ele rolar até elas (mesma regra do
+    // onIncomingMessage). O deferido fica guardado pro próximo flush.
+    if (isScrolledUpRef.current) return;
+    const id = d.id; const all = d.all;
+    deferredReadRef.current = { id: 0, all: false };
+    if (all && conversationId) {
+      try { api.chatRead?.(conversationId, 0).catch(() => {}); } catch {}
+    }
+    if (id) markReadUpTo(id);
+  }, [conversationId, markReadUpTo]);
+  const flushDeferredReadRef = useRef(flushDeferredRead);
+  flushDeferredReadRef.current = flushDeferredRead;
+
+  // Tela ganhou/perdeu foco na pilha (modal/outra tela por cima, voltar).
+  useEffect(() => {
+    if (isScreenFocused) {
+      // Pequeno atraso: deixa a transição assentar e o AppState se estabilizar.
+      const t = setTimeout(() => { try { flushDeferredReadRef.current(); } catch {} }, 150);
+      return () => clearTimeout(t);
+    }
+  }, [isScreenFocused]);
+
+  // App voltou ao primeiro plano (+ visibilidade/foco da aba no web).
+  useEffect(() => {
+    const onAppState = (s) => {
+      appActiveRef.current = (s !== 'background' && s !== 'inactive');
+      if (appActiveRef.current) {
+        setTimeout(() => { try { flushDeferredReadRef.current(); } catch {} }, 150);
+      }
+    };
+    const sub = AppState.addEventListener('change', onAppState);
+    let onVis = null, onFocus = null;
+    if (Platform.OS === 'web' && typeof document !== 'undefined') {
+      onVis = () => { try { flushDeferredReadRef.current(); } catch {} };
+      onFocus = onVis;
+      try { document.addEventListener('visibilitychange', onVis); window.addEventListener('focus', onFocus); } catch {}
+    }
+    return () => {
+      try { sub?.remove?.(); } catch {}
+      if (onVis) { try { document.removeEventListener('visibilitychange', onVis); window.removeEventListener('focus', onFocus); } catch {} }
+    };
+  }, []);
   // Reply-jump highlight (tap quote → scroll + flash target for ~1.5s)
   const [replyJumpHighlightId, setReplyJumpHighlightId] = useState(null);
   const cancelUpload = useCallback((tempId) => {
@@ -9363,6 +9511,19 @@ function ChatConversationInner() {
   const [forwardSearch, setForwardSearch] = useState('');
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
+  // Snapshot for the Android hardware-back handler declared above (see
+  // androidBackOverlayRef). Effect without deps = refreshed after every commit;
+  // keeps the ref write out of render (React Compiler rule) and avoids TDZ.
+  useEffect(() => {
+    androidBackOverlayRef.current = {
+      showAttachMenu, setShowAttachMenu,
+      showGifPicker, setShowGifPicker,
+      showStickerPicker, setShowStickerPicker,
+      selectionMode, setSelectionMode, setSelectedIds,
+      editingMsg, setEditingMsg,
+      replyTo, setReplyTo,
+    };
+  });
   // Sticker suggestion strip user-dismissal — resets when the input is
   // cleared so the next message gets a fresh chance at suggestions.
   const [stickerSuggestionsHidden, setStickerSuggestionsHidden] = useState(false);
@@ -9872,6 +10033,8 @@ function ChatConversationInner() {
   const [showCustomSchedule, setShowCustomSchedule] = useState(false);
   const [customScheduleDate, setCustomScheduleDate] = useState('');
   const [scheduleToast, setScheduleToast] = useState('');
+  // Smart action "Criar lembrete" → confirmation sheet ({ text, when, messageId })
+  const [reminderSheet, setReminderSheet] = useState(null);
 
   // Block & Report
   const [showReportModal, setShowReportModal] = useState(false);
@@ -13924,7 +14087,9 @@ function ChatConversationInner() {
       });
       if (readDebounceRef.current) {
         clearTimeout(readDebounceRef.current);
-        // Flush the pending read receipt so it's not lost on unmount
+        // Flush the pending read receipt so it's not lost on unmount.
+        // [2026-10-06] markReadUpTo já tem o gate de visibilidade — num unmount
+        // em 2º plano (logout/kill) ele só defere e nada é enviado.
         if (pendingReadMsgIdRef.current) {
           markReadUpTo(pendingReadMsgIdRef.current);
           pendingReadMsgIdRef.current = null;
@@ -19280,8 +19445,33 @@ function ChatConversationInner() {
       // cosmética; o fix correto (1 tela + áudio) = BUILD NATIVO: ou o nativo
       // configura a AudioSession no outgoing (igual faz no answer), ou
       // suppressVCPresent=true mantendo a /call.js como UI.
+      // [2026-10-06 native-only outgoing] Founder: "vamos deixar só nativo".
+      // When the installed iOS build advertises supportsNativeOnlyOutgoing
+      // (native VC owns signaling + LiveKit + mic gate + CallKit audio gating
+      // via LKAudioSessionCallKitBridge), do NOT push /call.js — that was the
+      // second, stacked screen. A headless tracker keeps the bookkeeping
+      // /call.js used to do for the caller (call-active flags, history row,
+      // server terminal status). Older binaries / flag off → legacy push.
+      // Rollback = services/nativeOutgoingCall.js NATIVE_ONLY_OUTGOING_IOS=false.
       if (native && Platform.OS === 'ios' && outCallId) {
-        _jsRoute(outCallId);
+        let _nativeOnly = false;
+        try {
+          const nativeOutgoing = require('../services/nativeOutgoingCall');
+          _nativeOnly = nativeOutgoing.isNativeOnlyOutgoingActive();
+          if (_nativeOnly) {
+            nativeOutgoing.track({
+              callId: outCallId,
+              calleeEmail: otherEmail,
+              calleeName: otherName,
+              isVideo: !!videoEnabled,
+              conversationId,
+            });
+          }
+        } catch (e) {
+          console.warn('[startCall] nativeOutgoingCall unavailable — legacy /call.js route:', e?.message || e);
+          _nativeOnly = false;
+        }
+        if (!_nativeOnly) _jsRoute(outCallId);
       }
       // native=false is expected when foreground mobile takes the JS path
       // OR on web. Only surface an error when native genuinely failed
@@ -20478,6 +20668,13 @@ function ChatConversationInner() {
       // scrolling through older already-read messages must not re-fire
       // chat_read (user noticed the ticks flickering on every open/close).
       if (maxVisibleId > 0 && maxVisibleId > (lastReadAckRef.current || 0)) {
+        // [VISTO AZUL FALSO 2026-10-06] Viewability pode disparar com a tela
+        // montada mas NÃO visível (2º plano / outra tela por cima). Não avança
+        // lastReadAckRef nesse caso — só defere; o flush manda ao voltar.
+        if (!canAckReadNowRef.current()) {
+          if (maxVisibleId > (deferredReadRef.current.id || 0)) deferredReadRef.current.id = maxVisibleId;
+          return;
+        }
         lastReadAckRef.current = maxVisibleId;
         if (readDebounceRef.current) clearTimeout(readDebounceRef.current);
         readDebounceRef.current = setTimeout(() => { markReadUpTo(maxVisibleId); }, 500);
@@ -24567,11 +24764,18 @@ function ChatConversationInner() {
                 onAction={(a) => {
                   if (a.type === 'pix') { try { const { Clipboard } = require('react-native'); Clipboard.setString(a.payload); safeAlert(t('common.copied') || 'Copiado', a.payload); } catch {} return; }
                   if (a.type === 'phone') { try { const { Linking } = require('react-native'); Linking.openURL(`tel:${a.payload.replace(/\D/g,'')}`); } catch {} return; }
-                  if (a.type === 'reminder' || a.type === 'meeting') {
-                    const iso = new Date(a.when).toISOString();
-                    try {
-                      router.push({ pathname: '/event-detail', params: { title: (msg.content || '').slice(0, 80), start: iso, create: '1' } });
-                    } catch {}
+                  // [2026-10-06] ROOT CAUSE "Criar lembrete não funciona": this used to
+                  // router.push('/event-detail', { create:'1', title, start }) but that
+                  // screen only reads params.id → loadEvent() bailed, spinner forever,
+                  // nothing scheduled. Now: confirmation sheet → LOCAL notification
+                  // (services/reminders.js) with visible success/error feedback.
+                  if (a.type === 'reminder') {
+                    const when = a.when instanceof Date ? a.when : new Date(a.when);
+                    setReminderSheet({ text: String(msg.content || ''), when, messageId: msg.id });
+                    return;
+                  }
+                  if (a.type === 'meeting') {
+                    try { router.push('/meeting-create'); } catch {}
                   }
                 }}
               />
@@ -26940,7 +27144,8 @@ function ChatConversationInner() {
           keyExtractor={msgKeyExtractor}
           renderItem={memoizedRenderItem}
           contentContainerStyle={messageListContentStyle}
-          keyboardDismissMode="interactive"
+          // [2026-10-06 android-audit] 'interactive' is iOS-only; Android needs 'on-drag'.
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           keyboardShouldPersistTaps="handled"
           bounces={false}
           overScrollMode="never"
@@ -28315,6 +28520,32 @@ function ChatConversationInner() {
       ))}
 
       <ScheduleToast visible={!!scheduleToast} message={scheduleToast} colors={colors} />
+      <ReminderSheet
+        visible={!!reminderSheet}
+        onClose={() => setReminderSheet(null)}
+        text={reminderSheet?.text || ''}
+        initialWhen={reminderSheet?.when}
+        colors={colors}
+        t={t}
+        onConfirm={async (when) => {
+          // Throws ReminderError on failure → the sheet renders it inline.
+          const rec = await createChatReminder({
+            text: reminderSheet?.text || '',
+            when,
+            conversationId,
+            conversationName,
+            conversationType,
+            messageId: reminderSheet?.messageId,
+            accountEmail: user?.email,
+            title: t('reminder.notifTitle') || 'Lembrete',
+          });
+          setReminderSheet(null);
+          const whenLabel = formatReminderWhen(when, t);
+          setScheduleToast(t(Platform.OS === 'web' ? 'reminder.createdWeb' : 'reminder.created', { when: whenLabel }));
+          setTimeout(() => setScheduleToast(''), 3500);
+          return rec;
+        }}
+      />
       <CustomScheduleModal visible={showCustomSchedule} onClose={() => setShowCustomSchedule(false)} customDate={customScheduleDate} setCustomDate={setCustomScheduleDate} onSchedule={(iso) => { handleScheduleMessage(iso); setCustomScheduleDate(''); }} colors={colors} t={t} />
       <ScheduledMessagesModal visible={showScheduledMessages} onClose={() => setShowScheduledMessages(false)} messages={scheduledMessages} onCancel={handleCancelScheduled} colors={colors} t={t} />
 

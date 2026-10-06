@@ -19,6 +19,30 @@ function _forceBiometricLock() {
   } catch {}
 }
 
+// [2026-10-06 founder: 'Sair no Android fecha o app'] Marca o instante do último
+// doLogout. app/_layout.js lê via wasExplicitLogoutRecently() para mandar o
+// usuário a /login LIMPO (sem `?next=<rota da conta antiga>`) quando o gate
+// de auth percebe `user === null` — fonte única de navegação pós-logout, que
+// funciona mesmo que o router.replace disparado de dentro de um sheet/Modal em
+// desmontagem seja engolido no Android.
+let _explicitLogoutAt = 0;
+export function wasExplicitLogoutRecently(windowMs = 15000) {
+  return _explicitLogoutAt > 0 && (Date.now() - _explicitLogoutAt) < windowMs;
+}
+
+// [2026-10-06] Acesso ao cache nativo expo-chat-cache SEM nunca lançar.
+// Causa-raiz do "Sair fecha o app" no Android (push_diag vc=579, Pixel 10 Pro):
+// `require('../modules/expo-chat-cache')` dentro de try/catch NÃO protege —
+// quando o init do módulo lança ("Cannot find native module
+// 'ExpoChatCacheModule'": o Kotlin registra Name("ExpoChatCache")), o
+// guardedLoadModule do Metro chama ErrorUtils.reportFatalError em vez de
+// repassar ao chamador → JavascriptException → processo morre em release.
+// O módulo agora usa requireOptionalNativeModule (null quando ausente) e este
+// helper centraliza o acesso para os dois pontos de wipe abaixo.
+function _nativeChatCache() {
+  try { return require('../modules/expo-chat-cache').default || null; } catch { return null; }
+}
+
 // Lazy-load to break circular dependency: AuthContext → chatCache → db
 const getLazyClearChatCache = async () => {
   const { clearChatCache } = await import('../services/chatCache');
@@ -421,7 +445,7 @@ async function clearMmkvIfAccountChanged(email) {
       // avatars — not account-namespaced) so a cold start as a DIFFERENT account
       // (clean logout never ran) doesn't paint the previous user's data.
       try {
-        const NativeChatCache = require('../modules/expo-chat-cache').default;
+        const NativeChatCache = _nativeChatCache(); // [2026-10-06] nunca lança (ver helper)
         if (NativeChatCache?.clearAll) await NativeChatCache.clearAll();
       } catch {}
     }
@@ -466,8 +490,10 @@ async function clearAllPerAccountCaches() {
   // touch the JS expo-sqlite store, not this native module). So after logout,
   // account A's inbox rows, Drive files and avatars painted under account B and
   // FTS search returned A's mail. The module exposes clearAll(); call it here.
+  // [2026-10-06] Era `require('../modules/expo-chat-cache').default` direto —
+  // no Android isso matava o app no logout (fatal do Metro, ver _nativeChatCache).
   try {
-    const NativeChatCache = require('../modules/expo-chat-cache').default;
+    const NativeChatCache = _nativeChatCache();
     if (NativeChatCache?.clearAll) await NativeChatCache.clearAll();
   } catch {}
 
@@ -1485,6 +1511,7 @@ export function AuthProvider({ children }) {
     // Audit trail — every logout path records its reason so support can
     // post-mortem "why did Carol get kicked out?". WhatsApp-grade: an
     // unexplained logout is a bug we want to see.
+    _explicitLogoutAt = Date.now(); // [2026-10-06] ver wasExplicitLogoutRecently()
     try { await api.recordLogoutAttempt?.(reason, { source: 'doLogout' }); } catch {}
     // Stop child location tracking
     _childRestrictions = null;
@@ -1528,7 +1555,13 @@ export function AuthProvider({ children }) {
     // SECURITY (P1): drop the biometric lock state on the way out so the
     // outgoing identity's unlocked overlay can't carry into whoever signs in
     // next on this device (the lock will re-arm + re-challenge for them).
-    _forceBiometricLock();
+    // [2026-10-06 founder: 'sai da conta e não vai pra tela de login'] NÃO forçar
+    // o cadeado biométrico no LOGOUT explícito. Ele rodava ANTES de limpar o
+    // token e de navegar: com biometria ativa, o overlay de Face ID subia por
+    // cima do /login e, como o bio_token/bearer são apagados em seguida, não
+    // havia com o que desbloquear → usuário preso no cadeado. Sessão encerrada
+    // não tem nada a proteger. A troca de conta (switchAccount) mantém o seu
+    // próprio _forceBiometricLock().
     // 2. Redirect to login IMMEDIATELY
     try { router.replace('/login'); } catch {}
     // 3. Clear token (prevents auto-relogin on next open) — must happen
@@ -1640,7 +1673,10 @@ export function AuthProvider({ children }) {
         try { ws.listeners.forEach((set) => set?.clear?.()); } catch {}
       }
     } catch {}
-    try { require('../services/tcpChat').default?.disconnect?.(); } catch {}
+    // [2026-10-06] Removido o require preguiçoso de services/tcpChat: o arquivo NÃO existe
+    // no repo (dependência opcional não-resolvida pelo Metro). Um require que
+    // falha no init passa pelo guardedLoadModule → reportFatalError, e o
+    // try/catch do chamador não protege (mesma classe do crash expo-chat-cache).
     // Local-only push cleanup (clears notification badge, dismisses any
     // pending local notifications). The server-side revoke already ran
     // above before the bearer token got cleared.
@@ -1656,6 +1692,16 @@ export function AuthProvider({ children }) {
     // premium flag would leak into the next account that signs in on this
     // device. Run async so logout UI navigation is not blocked.
     clearAllPerAccountCaches().catch(() => {});
+    // 6. [2026-10-06] Re-afirma o destino. O router.replace do passo 2 roda
+    //    ~2-5s antes (push revoke + logout + SecureStore); se ele foi engolido
+    //    (Android: Modal/sheet ainda em desmontagem) ou outra tela empurrou
+    //    rota nesse meio, garantimos /login aqui. Idempotente (replace em
+    //    /login é no-op) e só se NÃO existe sessão nova (login relâmpago em
+    //    outra conta durante a janela não é derrubado).
+    try {
+      const _tok = (api.getAuthToken?.() || '').trim();
+      if (!_tok) router.replace('/login');
+    } catch {}
   }, []);
 
   // Switch to a different stored account using bearer token

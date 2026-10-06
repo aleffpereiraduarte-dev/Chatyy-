@@ -7144,6 +7144,10 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
           ListEmptyComponent={ListEmptyComponent}
           contentContainerStyle={listContentContainerStyle}
           ItemSeparatorComponent={ItemSeparatorComponent}
+          // [2026-10-06 android-audit] With the search keyboard up, Android's
+          // default ('never') eats the first tap on a conversation just to
+          // dismiss the keyboard. 'handled' lets the row press go through.
+          keyboardShouldPersistTaps="handled"
           removeClippedSubviews={Platform.OS !== 'web'}
           initialNumToRender={15}
           maxToRenderPerBatch={10}

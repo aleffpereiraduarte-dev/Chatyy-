@@ -137,7 +137,8 @@ async function showLocalEmailNotification(email) {
         sound: true,
         ...(Platform.OS === 'android' ? { channelId: 'email' } : {}),
       },
-      trigger: null,
+      // [2026-10-06 android-audit] Android channel must be on the trigger.
+      trigger: Platform.OS === 'android' ? { channelId: 'email' } : null,
     });
 
     // Fire-and-forget: get AI summary and show a follow-up notification
@@ -168,7 +169,7 @@ async function getAISummaryForNotification(email, Notifications) {
             sound: false,
             ...(Platform.OS === 'android' ? { channelId: 'email' } : {}),
           },
-          trigger: null,
+          trigger: Platform.OS === 'android' ? { channelId: 'email' } : null,
         });
       }
     }

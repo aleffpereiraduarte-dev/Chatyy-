@@ -171,7 +171,7 @@ export async function start({ id, title, total = 0, body, onCancel }) {
           interruptionLevel: 'passive',
         } : {}),
       },
-      trigger: null, // present immediately
+      trigger: Platform.OS === 'android' ? { channelId: 'upload_progress' } : null, // present immediately (Android: channel on trigger)
     });
   } catch (e) {
     console.warn('[uploadNotif] start failed:', e?.message);
@@ -222,7 +222,7 @@ export async function update(id, { current = 0, total, bodySuffix } = {}) {
         } : {}),
         ...(Platform.OS === 'ios' ? { interruptionLevel: 'passive' } : {}),
       },
-      trigger: null,
+      trigger: Platform.OS === 'android' ? { channelId: 'upload_progress' } : null,
     });
   } catch (e) {
     console.warn('[uploadNotif] update failed:', e?.message);
@@ -258,7 +258,7 @@ export async function complete(id, { successCount = 0, total = 0 } = {}) {
         } : {}),
         ...(Platform.OS === 'ios' ? { interruptionLevel: 'passive' } : {}),
       },
-      trigger: null,
+      trigger: Platform.OS === 'android' ? { channelId: 'upload_progress' } : null,
     });
     // Auto-dismiss after 6s — feels less spammy than letting it linger.
     setTimeout(() => {
@@ -294,7 +294,7 @@ export async function fail(id, { errorMessage = 'Falha no envio' } = {}) {
         } : {}),
         ...(Platform.OS === 'ios' ? { interruptionLevel: 'passive' } : {}),
       },
-      trigger: null,
+      trigger: Platform.OS === 'android' ? { channelId: 'upload_progress' } : null,
     });
     setTimeout(() => {
       try { Notifications.dismissNotificationAsync(_uniqueRequestId(id) + '_err'); } catch {}

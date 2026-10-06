@@ -325,6 +325,14 @@ async function loadModules() {
         // and are intentionally NOT gated here — a disabled "push" toggle must
         // never swallow an incoming call or a login-approval prompt. Badge is
         // left off too so a disabled user sees no count bump.
+        //
+        // [2026-10-06] LOCAL chat reminders (services/reminders.js, user
+        // explicitly asked "me lembra amanhã...") must ALWAYS surface: not
+        // gated by the push master switch, not suppressed when the same
+        // conversation is open, not hidden by the foreground gate.
+        if (data?.type === 'chat_reminder') {
+          return { shouldShowAlert: true, shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false };
+        }
         if (_pushMasterEnabled === false) {
           return { shouldShowAlert: false, shouldPlaySound: false, shouldSetBadge: false };
         }
@@ -614,46 +622,11 @@ export async function registerForPushNotifications() {
       return null;
     }
 
-    // Em standalone production builds expoConfig pode estar undefined —
-    // easConfig.projectId é o fallback documentado.
-    const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-    _diagPush('project_id', projectId || 'undefined');
-    // #836: Android cold-start race vs Google Play Services → SERVICE_NOT_AVAILABLE.
-    // Retry 4× com backoff (250ms → 750ms → 1500ms → 3000ms) antes de desistir.
-    let tokenData;
-    let lastErr = null;
-    const _retryDelays = [0, 250, 750, 1500, 3000];
-    for (let attempt = 0; attempt < _retryDelays.length; attempt++) {
-      if (_retryDelays[attempt] > 0) {
-        await new Promise(r => setTimeout(r, _retryDelays[attempt]));
-      }
-      try {
-        tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
-        if (tokenData?.data) {
-          _diagPush('expo_token', 'len=' + String(tokenData.data).length + (attempt > 0 ? ' attempt=' + (attempt + 1) : ''));
-          lastErr = null;
-          break;
-        }
-        _diagPush('expo_token_empty_attempt' + (attempt + 1), 'no data');
-      } catch (e) {
-        lastErr = e;
-        const msg = e?.message || String(e);
-        _diagPush('expo_token_err_attempt' + (attempt + 1), msg);
-        // Não retry em erros não-transient
-        if (!/SERVICE_NOT_AVAILABLE|TIMEOUT|TIMEDOUT|network/i.test(msg)) break;
-      }
-    }
-    if (lastErr || !tokenData?.data) {
-      _diagPush('expo_token_err_final', lastErr ? (lastErr.message || String(lastErr)) : 'no token after retries');
-      if (lastErr) throw lastErr;
-      // No error thrown but every retry returned empty data. Bail out cleanly
-      // instead of falling through — otherwise the `_setCachedPushToken(tokenData.data)`
-      // below would TypeError on `undefined.data` and we'd hit the outer
-      // catch with a misleading message.
-      return null;
-    }
-
     // Android notification channels.
+    // [2026-10-06 android-audit] Moved BEFORE getExpoPushTokenAsync: channel
+    // creation needs no token, and a token failure (SERVICE_NOT_AVAILABLE,
+    // missing FCM creds) used to skip it → native chat pushes to channel 'chat'
+    // were dropped by Android (no channel). Order is now permission → channels → token.
     //
     // setNotificationChannelAsync is idempotent at the OS level (re-calling
     // with the same id updates the existing channel, it does NOT create a
@@ -667,11 +640,13 @@ export async function registerForPushNotifications() {
     if (Platform.OS === 'android') {
       const CHANNELS_VERSION = 2;
       const CHANNELS_FLAG_KEY = `channels_v${CHANNELS_VERSION}_created`;
-      let _channelsAlreadyCreated = false;
-      try {
-        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-        _channelsAlreadyCreated = (await AsyncStorage.getItem(CHANNELS_FLAG_KEY)) === '1';
-      } catch {}
+      // [2026-10-06 android-audit] ALWAYS (re)create. The AsyncStorage flag
+      // survives a Google backup/restore but the OS channels don't, and the
+      // native ChatMessagingStyleHandler posts straight to 'chat'/'chat_keyword'
+      // with no fallback — a missing channel = push silently dropped by Android.
+      // setNotificationChannelAsync is idempotent and cheap (≈10 native calls,
+      // throttled to 1×/6h by ensurePushTokenFresh).
+      const _channelsAlreadyCreated = false;
 
       if (!_channelsAlreadyCreated) {
       // Main email channel
@@ -842,6 +817,45 @@ export async function registerForPushNotifications() {
           await AsyncStorage.setItem(CHANNELS_FLAG_KEY, '1');
         } catch {}
       }
+    }
+
+    // Em standalone production builds expoConfig pode estar undefined —
+    // easConfig.projectId é o fallback documentado.
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
+    _diagPush('project_id', projectId || 'undefined');
+    // #836: Android cold-start race vs Google Play Services → SERVICE_NOT_AVAILABLE.
+    // Retry 4× com backoff (250ms → 750ms → 1500ms → 3000ms) antes de desistir.
+    let tokenData;
+    let lastErr = null;
+    const _retryDelays = [0, 250, 750, 1500, 3000];
+    for (let attempt = 0; attempt < _retryDelays.length; attempt++) {
+      if (_retryDelays[attempt] > 0) {
+        await new Promise(r => setTimeout(r, _retryDelays[attempt]));
+      }
+      try {
+        tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+        if (tokenData?.data) {
+          _diagPush('expo_token', 'len=' + String(tokenData.data).length + (attempt > 0 ? ' attempt=' + (attempt + 1) : ''));
+          lastErr = null;
+          break;
+        }
+        _diagPush('expo_token_empty_attempt' + (attempt + 1), 'no data');
+      } catch (e) {
+        lastErr = e;
+        const msg = e?.message || String(e);
+        _diagPush('expo_token_err_attempt' + (attempt + 1), msg);
+        // Não retry em erros não-transient
+        if (!/SERVICE_NOT_AVAILABLE|TIMEOUT|TIMEDOUT|network/i.test(msg)) break;
+      }
+    }
+    if (lastErr || !tokenData?.data) {
+      _diagPush('expo_token_err_final', lastErr ? (lastErr.message || String(lastErr)) : 'no token after retries');
+      if (lastErr) throw lastErr;
+      // No error thrown but every retry returned empty data. Bail out cleanly
+      // instead of falling through — otherwise the `_setCachedPushToken(tokenData.data)`
+      // below would TypeError on `undefined.data` and we'd hit the outer
+      // catch with a misleading message.
+      return null;
     }
 
     // Register notification categories with actions
@@ -1966,7 +1980,9 @@ function _navigateForNotification(data) {
       router.push(`/meeting-detail?room_id=${data.room_id}`);
       return;
     }
-    if ((data.type === 'chat_message' || data.type === 'chat_mention' || data.type === 'chat_keyword' || data.type === 'group' || data.type === 'group_message') && data.conversation_id) {
+    // 'chat_reminder' = local reminder scheduled from the chat smart action
+    // (services/reminders.js) — tapping it deep-links back to the conversation.
+    if ((data.type === 'chat_message' || data.type === 'chat_mention' || data.type === 'chat_keyword' || data.type === 'group' || data.type === 'group_message' || data.type === 'chat_reminder') && data.conversation_id) {
       // [2026-07-03] chat_mention / chat_keyword pushes carry conversation_id
       // just like chat_message; tapping them used to fall through to the email
       // Inbox route below. Route them to the conversation too.

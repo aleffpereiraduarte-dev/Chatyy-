@@ -71,6 +71,22 @@
         "track": "production",
         "releaseStatus": "completed"
       }
+    },
+    "internal": {
+      "android": {
+        "serviceAccountKeyPath": "./gcloud-sa-key.json",
+        "track": "internal",
+        "releaseStatus": "completed",
+        "changesNotSentForReview": true
+      },
+      "ios": {
+        "appleId": "jsfkjcb@gmail.com",
+        "ascAppId": "6759975575",
+        "appleTeamId": "XN9XN27QCE",
+        "ascApiKeyId": "QSYM3KX73P",
+        "ascApiKeyIssuerId": "494360d0-0420-4f1f-a1db-6be19eeb2d89",
+        "ascApiKeyPath": "./asc_key.p8"
+      }
     }
   }
 }

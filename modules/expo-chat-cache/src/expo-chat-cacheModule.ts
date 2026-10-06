@@ -1,4 +1,4 @@
-import { NativeModule, requireNativeModule } from 'expo';
+import { NativeModule, requireOptionalNativeModule } from 'expo';
 
 export type CachedMessage = {
   id: number;
@@ -91,4 +91,13 @@ declare class ExpoChatCacheModuleClass extends NativeModule {
   prefetchAvatar(email: string, remoteUrl: string): Promise<void>;
 }
 
-export default requireNativeModule<ExpoChatCacheModuleClass>('ExpoChatCacheModule');
+// [2026-10-06] requireOptionalNativeModule (retorna null) em vez de
+// requireNativeModule (LANÇA no init do módulo). Evidência (push_diag, Android
+// vc=579, Pixel 10 Pro): `JavascriptException: Cannot find native module
+// 'ExpoChatCacheModule'` matando o app ao tocar "Sair" e ao trocar de conta.
+// O Kotlin registra Name("ExpoChatCache") (≠ do JS), então no Android o módulo
+// NUNCA é encontrado — e um `require()` preguiçoso que lança no init passa pelo
+// guardedLoadModule do Metro, que NÃO repassa o erro ao try/catch do chamador:
+// chama ErrorUtils.reportFatalError → processo morre em release. Com null,
+// todos os call sites (`Native?.x?.()`) simplesmente pulam o cache nativo.
+export default requireOptionalNativeModule<ExpoChatCacheModuleClass>('ExpoChatCacheModule');

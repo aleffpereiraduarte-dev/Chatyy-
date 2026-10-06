@@ -196,6 +196,15 @@ if (Platform.OS !== 'web') {
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 
+// [2026-10-06 native-only outgoing] iOS caller: when the installed native build
+// owns outgoing calls end-to-end (ExpoCallKit.supportsNativeOnlyOutgoing), this
+// screen must NOT mount for the caller — the native CallViewController is the
+// only UI. See services/nativeOutgoingCall.js (flag + rollback switch).
+const _nativeOnlyOutgoingActive = () => {
+  if (Platform.OS !== 'ios') return false;
+  try { return !!require('../services/nativeOutgoingCall').isNativeOnlyOutgoingActive(); } catch { return false; }
+};
+
 // Max participants per group call. Matches WhatsApp 2025 + native iOS
 // `kMaxCallParticipants` + Android `GroupCallActivity.MAX_PARTICIPANTS`.
 // Backend chat_call_invite enforces this too — the UI just shows a banner
@@ -1775,6 +1784,24 @@ function CallScreenInner() {
         if (adopted) {
           console.log('[Call] adopting native Room — skip JS Room.connect', { callId, snap });
           _diag('adopted_native_room', { snap_keys: Object.keys(snap || {}).join(',') });
+          // [2026-10-06 native-only outgoing] Defensive: an iOS CALLER should
+          // never reach this screen on a native-only build (CallScreen routes
+          // to NativeOnlyOutgoingBridge). If it does (stale deep link / old
+          // caller), do NOT dismiss the native VC — it IS the call UI and owns
+          // the mic gate. Go headless + pop. minimizedRef keeps the unmount
+          // cleanup from calling LK_AudioSession.stopAudioSession() mid-call.
+          if (isCaller && !isGroupCall && _nativeOnlyOutgoingActive()) {
+            try {
+              require('../services/nativeOutgoingCall').track({
+                callId, calleeEmail: contactEmail, calleeName: callerName,
+                isVideo: isVideoCall, conversationId,
+              });
+            } catch {}
+            try { globalThis.__chatyyNativeCallActive = true; } catch {}
+            minimizedRef.current = true;
+            setTimeout(() => { try { if (router.canGoBack()) router.back(); } catch {} }, 50);
+            return;
+          }
           // [2026-05-25] We've adopted the pre-connected native room and this
           // rich JS UI is now live → dismiss the instant native call screen
           // that the answer path presented as the "floor". Seamless handoff:
@@ -6921,6 +6948,56 @@ function MobileNativeBridge() {
   return null;
 }
 
+// [2026-10-06 native-only outgoing] iOS caller route on a native-only build.
+// chat-conversation.js no longer pushes /call?isCaller=1 on iOS, so this only
+// runs for stragglers (deep link, older caller). If native already published
+// the Room for this callId we just attach the headless tracker; otherwise we
+// start the call through voipNative (native UI) — then pop. Renders nothing.
+function NativeOnlyOutgoingBridge() {
+  const router = useRouter();
+  const params = useLocalSearchParams();
+  const dispatchedRef = useRef(false);
+
+  useEffect(() => {
+    if (dispatchedRef.current) return;
+    dispatchedRef.current = true;
+    const callId = String(params.callId || '');
+    const contactName = String(params.contactName || params.name || '');
+    const contactEmail = String(params.contactEmail || params.email || '');
+    const isVideo = params.isVideo === '1' || params.isVideo === 'true' || params.isVideo === 1 || params.isVideo === true;
+    const conversationId = String(params.conversationId || '');
+    (async () => {
+      try {
+        const nativeOutgoing = require('../services/nativeOutgoingCall');
+        if (callId && nativeOutgoing.nativeOwnsCall(callId)) {
+          nativeOutgoing.track({ callId, calleeEmail: contactEmail, calleeName: contactName, isVideo, conversationId });
+        } else if (contactEmail) {
+          const voipNative = require('../services/voipNative');
+          const r = await voipNative.startOutgoingCall({
+            calleeEmail: contactEmail,
+            calleeName: contactName || contactEmail,
+            isVideo,
+            conversationId,
+            callId: callId || undefined,
+          });
+          if (r?.native && r?.callId) {
+            nativeOutgoing.track({ callId: r.callId, calleeEmail: contactEmail, calleeName: contactName, isVideo, conversationId });
+          }
+        }
+      } catch (e) {
+        console.warn('[CallScreen native-only] dispatch failed:', e?.message || e);
+      } finally {
+        setTimeout(() => {
+          try { if (router.canGoBack()) router.back(); else router.replace('/chat'); } catch {}
+        }, 50);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return null;
+}
+
 export default function CallScreen(props) {
   // ALWAYS call hooks at the top — Rules of Hooks requires unconditional
   // invocation. We read params here once and branch below.
@@ -6952,6 +7029,14 @@ export default function CallScreen(props) {
   // CallFirebaseMessagingService), we keep the native dispatch path so
   // CallKit (iOS) and Telecom + FullScreenIntent (Android) remain in
   // charge of the lock-screen / background ring/answer surface.
+  // [2026-10-06 native-only outgoing] iOS 1:1 caller on a native-only build →
+  // the native CallViewController is the single UI. Group calls keep the JS
+  // grid (no native group outgoing path).
+  const _isGroupRoute = params?.groupCall === '1' || params?.groupCall === 'true';
+  if (isOutgoing && !_isGroupRoute && _nativeOnlyOutgoingActive()) {
+    return <NativeOnlyOutgoingBridge />;
+  }
+
   if (isOutgoing) {
     return (
       <CallErrorBoundary>

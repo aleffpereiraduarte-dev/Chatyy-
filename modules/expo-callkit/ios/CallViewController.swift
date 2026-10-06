@@ -287,9 +287,131 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // VCs are unaffected (isOutgoing == false => never gated).
     private var outgoingMicGateOpen: Bool = false
 
+    // [2026-10-06 native-only outgoing] Native is the ONLY caller UI on iOS now
+    // (chat-conversation no longer pushes /call.js when the build reports
+    // supportsNativeOnlyOutgoing). Everything /call.js used to do for the
+    // caller lives here: state text Chamando → Conectando → Conectado+timer,
+    // 45s no-answer timeout, terminal status wording on remote end, earpiece
+    // re-assert when remote audio starts. See also LKAudioSessionCallKitBridge
+    // (audio unit gated on CallKit didActivate — the actual audio fix).
+    private var statusDotsBase: String = "Conectando"
+    private var outgoingRingTimer: DispatchWorkItem?
+    private var outgoingConnectFallbackTimer: DispatchWorkItem?
+    private var speakerTouchedByUser: Bool = false
+    private var remoteEndObserver: NSObjectProtocol?
+    private static let kOutgoingRingTimeoutSeconds: Int = 45
+    private static let kTerminalStatuses: Set<String> = [
+        "Encerrada", "Recusada", "Ocupado", "Sem resposta",
+        "Atendida em outro dispositivo", "Desconectado", "Erro",
+    ]
+
+    /// Single place that commits "Conectado": opens the caller gate, stops
+    /// ringback, starts the duration timer (via the statusObserver sink) and
+    /// tells CallKit the outgoing call connected. Idempotent.
+    private func markCallConnected(reason: String) {
+        cancelOutgoingConnectFallback()
+        if isOutgoing { openOutgoingMicGate(reason: "connected_" + reason) }
+        stopRingbackTone(reason: "connected_" + reason)
+        guard session.status != "Conectado" else { return }
+        session.status = "Conectado"
+        nativeCallDiag("call_connected", callId, reason)
+        if isOutgoing, let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: callId) {
+            if let p = ExpoCallKitModule.sharedProvider {
+                p.reportOutgoingCall(with: uuid, connectedAt: Date())
+            } else if let p = VoipPushAppDelegateSubscriber.earlyProvider {
+                p.reportOutgoingCall(with: uuid, connectedAt: Date())
+            }
+        }
+    }
+
+    /// Arms a one-shot "flip to Conectado anyway" timer for the two cases where
+    /// media-truth never arrives: WS call_accepted landed but the callee
+    /// publishes no track (mic denied), or a peer is present in the SFU and
+    /// the WS frame was lost. Only flips if a remote participant is actually
+    /// in the Room or the gate is already open — never on a bare timer.
+    private func scheduleOutgoingConnectFallback(reason: String, seconds: Double) {
+        guard isOutgoing, session.status != "Conectado", outgoingConnectFallbackTimer == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.outgoingConnectFallbackTimer = nil
+            guard !self.didHangup, self.session.status != "Conectado" else { return }
+            let peerPresent = (self.room?.remoteParticipants.isEmpty == false)
+            if peerPresent || self.outgoingMicGateOpen {
+                self.markCallConnected(reason: reason)
+            }
+        }
+        outgoingConnectFallbackTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
+    }
+
+    private func cancelOutgoingConnectFallback() {
+        outgoingConnectFallbackTimer?.cancel()
+        outgoingConnectFallbackTimer = nil
+    }
+
+    /// 45s no-answer timeout owned by the VC (the module's timer only reports
+    /// `.unanswered` to CallKit and leaves this screen up — /call.js used to
+    /// own the 60s JS timeout). Ends the call with "Sem resposta" and ships
+    /// call_end{reason:timeout} so the hub cancels the callee's ring + push.
+    private func scheduleOutgoingRingTimer() {
+        guard isOutgoing, outgoingRingTimer == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            self.outgoingRingTimer = nil
+            guard !self.didHangup, !self.outgoingMicGateOpen, self.session.status != "Conectado" else { return }
+            NSLog("[CallVC] outgoing ring timeout \(Self.kOutgoingRingTimeoutSeconds)s — no answer callId=\(self.callId)")
+            nativeCallDiag("outgoing_ring_timeout_vc", self.callId)
+            self.handleHangup(reason: "timeout", statusText: "Sem resposta")
+        }
+        outgoingRingTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(Self.kOutgoingRingTimeoutSeconds), execute: work)
+    }
+
+    private func cancelOutgoingRingTimer() {
+        outgoingRingTimer?.cancel()
+        outgoingRingTimer = nil
+    }
+
+    /// Terminal wording when the OTHER side ends the call (CallSignalWs posts
+    /// ExpoCallKitNativeCallEnded with the hub's reason; the module then
+    /// dismisses this VC). Previously the label stayed on "Chamando..." for the
+    /// dismiss animation. Skipped when WE ended (handleHangup sets its own).
+    private func installRemoteEndStatusObserver() {
+        guard remoteEndObserver == nil else { return }
+        remoteEndObserver = NotificationCenter.default.addObserver(
+            forName: CallViewController.callEndedNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self = self, !self.didHangup else { return }
+            let nid = (note.userInfo?["callId"] as? String) ?? ""
+            guard nid == self.callId else { return }
+            let reason = ((note.userInfo?["reason"] as? String) ?? "").lowercased()
+            let label: String
+            switch reason {
+            case "declined", "rejected", "call_declined":
+                label = "Recusada"
+            case "busy":
+                label = "Ocupado"
+            case "timeout", "unanswered", "missed", "no_answer", "cancelled", "canceled":
+                label = (self.isOutgoing && !self.outgoingMicGateOpen) ? "Sem resposta" : "Encerrada"
+            case "answered_elsewhere":
+                label = "Atendida em outro dispositivo"
+            default:
+                label = "Encerrada"
+            }
+            self.cancelOutgoingRingTimer()
+            self.cancelOutgoingConnectFallback()
+            self.stopRingbackTone(reason: "remote_end_" + reason)
+            if self.session.status != label { self.session.status = label }
+        }
+    }
+
     private func openOutgoingMicGate(reason: String) {
         guard isOutgoing, !outgoingMicGateOpen else { return }
         outgoingMicGateOpen = true
+        // [2026-10-06 native-only outgoing] Answered — the no-answer timer is moot.
+        cancelOutgoingRingTimer()
         nativeCallDiag("outgoing_mic_gate_open", callId, reason)
         guard let r = self.room else { return }
         // [2026-10-04 ring-leak, VIDEO] Publish the caller's camera on answer
@@ -402,6 +524,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // CallSignalWs receiver-loop notification so this VC stops the
         // ringback engine the moment the callee's WS accept frame lands.
         installRemoteAnsweredObserver()
+
+        // [2026-10-06 native-only outgoing] Remote-end wording + the VC-owned
+        // 45s no-answer timeout (see helpers next to openOutgoingMicGate).
+        installRemoteEndStatusObserver()
+        if isOutgoing {
+            scheduleOutgoingRingTimer()
+        }
 
         // [2026-10-04 RNNoise facade removal] We no longer force a bogus
         // "RNNoise ON" here. RNNoise was never actually linked (see
@@ -616,7 +745,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
         let statusLabel = UILabel()
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.text = isOutgoing ? "Chamando" : "Conectando"
+        statusDotsBase = isOutgoing ? "Chamando" : "Conectando"
+        statusLabel.text = statusDotsBase
         statusLabel.textColor = UIColor.white.withAlphaComponent(0.65)
         statusLabel.font = .systemFont(ofSize: 16, weight: .medium)
         statusLabel.textAlignment = .center
@@ -629,7 +759,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                   let lbl = self.view.viewWithTag(9001) as? UILabel else { return }
             if self.callConnectedAt != nil { return }
             self.dotCount = (self.dotCount + 1) % 4
-            let base = self.isOutgoing ? "Chamando" : "Conectando"
+            // [2026-10-06 native-only outgoing] base flips Chamando → Conectando on accept.
+            let base = self.statusDotsBase
             let dots = String(repeating: ".", count: self.dotCount)
             lbl.text = base + dots
         }
@@ -921,6 +1052,12 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                         lbl.text = "Conectado 00:00"
                     }
                 } else if newStatus != "Conectado" {
+                    // [2026-10-06 native-only outgoing] A terminal status must not
+                    // be overwritten by the 420ms "Chamando..." dots ticker.
+                    if CallViewController.kTerminalStatuses.contains(newStatus) {
+                        self.dotsTimer?.invalidate()
+                        self.dotsTimer = nil
+                    }
                     if let lbl = self.view.viewWithTag(9001) as? UILabel {
                         lbl.text = newStatus
                     }
@@ -1251,7 +1388,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // the db5c53ef deinit guard only covered minimize, not the JS handoff).
     private var cededToJs: Bool = false
 
-    private func handleHangup() {
+    // [2026-10-06 native-only outgoing] `reason` goes out on the WS call_end
+    // (hub maps "timeout" while RINGING → call_cancel + push cancel to the
+    // callee); `statusText` is what the user sees during the dismiss.
+    private func handleHangup(reason: String = "user_hangup", statusText: String = "Encerrada") {
         if didHangup {
             // Second tap (or delegate-driven re-entry) — only re-issue the
             // dismiss in case the first one was swallowed by a presentation
@@ -1260,6 +1400,8 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             return
         }
         didHangup = true
+        cancelOutgoingRingTimer()
+        cancelOutgoingConnectFallback()
         // [CALL-CLOSE diag 2026-05-27] Mark this teardown path so the next
         // answered call's voip_diag trace shows EXACTLY which path closed it.
         nativeCallDiag("call_close_handleHangup", callId)
@@ -1279,7 +1421,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         // their hangup had registered. WhatsApp/FaceTime show "Encerrada"
         // for ~250ms before the screen fades — mirror that.
         DispatchQueue.main.async { [weak self] in
-            self?.session.status = "Encerrada"
+            self?.session.status = statusText
         }
         // [Wave B audio, 2026-05-18 / restored 2026-05-19] Drop the route-
         // change listener + clear the speakerphone override before LK
@@ -1296,7 +1438,7 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         CallSignalWs.shared.fireCallEnd(
             callId: callId,
             conversationId: conversationId,
-            reason: "user_hangup",
+            reason: reason,
             targetEmail: callerEmail
         )
         NotificationCenter.default.post(
@@ -2390,7 +2532,16 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             print("[CallVC] remote-answered \(self.callId) — stopping ringback + flipping status")
             self.openOutgoingMicGate(reason: "ws_call_accepted")
             self.stopRingbackTone(reason: "remote_answered")
-            self.session.status = "Conectado"
+            // [2026-10-06 native-only outgoing] WhatsApp-style state text:
+            // Chamando → (accept) Conectando → (first remote media) Conectado +
+            // timer. "Conectado" is committed by markCallConnected() on the first
+            // subscribed remote track; a 5s fallback covers a callee that
+            // answered but publishes nothing (mic denied).
+            if self.session.status != "Conectado" {
+                self.statusDotsBase = "Conectando"
+                self.session.status = "Conectando"
+                self.scheduleOutgoingConnectFallback(reason: "accepted_no_media_5s", seconds: 5)
+            }
 
             // [WAVE 156 2026-05-22] Moved here from roomDidConnect.
             // CallKit only learns "the remote answered" AFTER the WS frame
@@ -2805,6 +2956,10 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         if let obs = audioActivatedObserver { NotificationCenter.default.removeObserver(obs); audioActivatedObserver = nil }
         // [2026-05-22 #1349 fix] Caller-side ringback teardown observer.
         if let obs = remoteAnsweredObserver { NotificationCenter.default.removeObserver(obs); remoteAnsweredObserver = nil }
+        // [2026-10-06 native-only outgoing]
+        if let obs = remoteEndObserver { NotificationCenter.default.removeObserver(obs); remoteEndObserver = nil }
+        outgoingRingTimer?.cancel(); outgoingRingTimer = nil
+        outgoingConnectFallbackTimer?.cancel(); outgoingConnectFallbackTimer = nil
         if #available(iOS 15.0, *), let pip = pipController, pip.isPictureInPictureActive {
             pip.stopPictureInPicture()
         }
@@ -2999,6 +3154,21 @@ final class CallViewController: UIViewController, @unchecked Sendable {
                 // owned by NativeCallRoom.shared / driven by JS). Real hangup
                 // still disconnects via handleHangup, which clears flags first.
                 vc.cededToJs = true
+                // [2026-10-06 native-only outgoing] An OLD JS bundle (legacy
+                // adopt + dismissNativeCallVC on the CALLER) is tearing this VC
+                // down before the callee answered. The ring-leak mic gate lived
+                // on this VC, so nobody would ever publish the caller's mic
+                // ("caller silent", SFU logs 2026-10-05). Hand the gate to the
+                // Room-owning singleton so the mic/camera still go out on answer.
+                if vc.isOutgoing && !vc.outgoingMicGateOpen {
+                    vc.cancelOutgoingRingTimer()
+                    vc.cancelOutgoingConnectFallback()
+                    NativeCallRoom.shared.armOutgoingPublishOnAnswer(
+                        callId: vc.callId,
+                        hasVideo: vc.hasVideo,
+                        micDesired: vc.session.micEnabled
+                    )
+                }
                 vc.dismiss(animated: false, completion: nil)
             }
         }
@@ -3090,6 +3260,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     }
 
     @objc private func uikitOnSpeakerTap() {
+        // [2026-10-06 native-only outgoing] User chose a route — stop the
+        // earpiece re-assert in didSubscribeTrack from fighting them.
+        speakerTouchedByUser = true
         let next = !session.speakerOn
         applySpeaker(next)
         let btn = view.viewWithTag(9003) as? UIButton
@@ -4096,16 +4269,19 @@ extension CallViewController: RoomDelegate {
             // Idempotent: if WS `call_answered` already flipped status earlier,
             // setting it to "Conectado" again is a no-op. Same for
             // reportOutgoingCall(connectedAt:) — CallKit dedups internally.
-            if self.session.status != "Conectado" {
-                self.session.status = "Conectado"
-                NSLog("[CallVC][WAVE161] flip status Conectado on ParticipantConnected (fallback)")
-            }
-            // Also flip CallKit pill from "Connecting…" → in-call duration timer.
-            if let uuid = ExpoCallKitModule.sharedCallKitUUID(forCallId: self.callId) {
-                if let p = ExpoCallKitModule.sharedProvider {
-                    p.reportOutgoingCall(with: uuid, connectedAt: Date())
-                    NSLog("[CallVC][WAVE161] reportOutgoingCall(connectedAt:) on ParticipantConnected")
-                }
+            // [2026-10-06 native-only outgoing] For the CALLER a peer joining the
+            // SFU is NOT proof of answer: Android (FCM) and iOS (VoIP push)
+            // callees pre-connect subscribe-only DURING the ring, so the WAVE 161
+            // flip here started the timer while the callee's phone was still
+            // ringing. Commit only when the answer gate is already open (WS
+            // call_accepted landed); otherwise arm a 6s fallback that flips if
+            // the peer is still present and nothing else confirmed (lost WS
+            // frame + callee whose mic publishes nothing). Incoming unchanged.
+            if !self.isOutgoing || self.outgoingMicGateOpen {
+                self.markCallConnected(reason: "participant_connected")
+            } else {
+                NSLog("[CallVC] ParticipantConnected pre-answer (outgoing) — holding Chamando, 6s fallback armed callId=\(self.callId)")
+                self.scheduleOutgoingConnectFallback(reason: "participant_present_6s", seconds: 6)
             }
             self.remoteParticipantCount += 1
             self.updateParticipantCountLabel()
@@ -4166,8 +4342,24 @@ extension CallViewController: RoomDelegate {
             guard let self = self else { return }
             self.openOutgoingMicGate(reason: "remote_track_subscribed")
             self.stopRingbackTone(reason: "didSubscribeTrack_mediaTruth")
-            if self.session.status != "Conectado" {
-                self.session.status = "Conectado"
+            // [2026-10-06 native-only outgoing] First remote media = Conectado
+            // (+ CallKit connectedAt + duration timer).
+            self.markCallConnected(reason: "remote_track_subscribed")
+            // Audio-only outgoing: re-assert the earpiece when the first remote
+            // audio starts. The LK audio-session reconfigure that runs at that
+            // moment tends to reset the route to the loudspeaker ("presa no
+            // viva-voz", 2026-10-04 — fixed in /call.js then; native owns it
+            // now). overrideOutputAudioPort(.none) = system default, so a BT /
+            // wired headset keeps winning. Skipped once the user touched the
+            // speaker button.
+            if kind == "audio", self.isOutgoing, !self.hasVideo, !self.speakerTouchedByUser {
+                for delayMs in [0, 400, 1200, 2500] {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(delayMs)) { [weak self] in
+                        guard let self = self, !self.speakerTouchedByUser, !self.didHangup else { return }
+                        _ = AudioRouter.shared.setSpeaker(false)
+                        self.session.speakerOn = false
+                    }
+                }
             }
         }
         guard publication.kind == .video else { return }

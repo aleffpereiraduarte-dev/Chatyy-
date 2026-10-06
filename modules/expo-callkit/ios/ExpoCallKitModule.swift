@@ -499,6 +499,16 @@ public class ExpoCallKitModule: Module {
       CallViewController.dismissIfPresented()
     }
 
+    // [2026-10-06 native-only outgoing] Capability probe. JS (chat-conversation
+    // startCall / call.js CallScreen) only skips the legacy /call.js push for
+    // iOS OUTGOING calls when the installed native build answers `true` here —
+    // older binaries (where the outgoing VC still relied on JS to open the
+    // caller mic / configure audio) keep the dual-screen fallback. Sync so the
+    // JS decision is a single bridge hop with no await in the tap handler.
+    Function("supportsNativeOnlyOutgoing") { () -> Bool in
+      return true
+    }
+
     AsyncFunction("displayIncomingCall") { (callId: String, callerName: String, hasVideo: Bool, callerEmail: String?, conversationId: String?) -> Void in
       try await self.reportIncomingCall(callId: callId, callerName: callerName, hasVideo: hasVideo)
     }
@@ -857,6 +867,12 @@ public class ExpoCallKitModule: Module {
         "nativeRoomState": NativeCallRoom.shared.state.rawValue,
         "nativeRoomName": NativeCallRoom.shared.lastRoomName as Any,
         "nativeRoomIdentity": NativeCallRoom.shared.lastIdentity as Any,
+        // [2026-10-06 native-only outgoing] Mirror of supportsNativeOnlyOutgoing
+        // + the callId the native Room is currently published for, so JS can
+        // cheaply tell "native already owns this call" without adoptNativeRoom.
+        "nativeOnlyOutgoing": true,
+        "nativeRoomCallId": NativeCallRoom.shared.currentCallId() as Any,
+        "lkAudioBridgeArmed": LKAudioSessionCallKitBridge.isArmed,
       ]
     }
 
@@ -986,6 +1002,21 @@ public class ExpoCallKitModule: Module {
       // retired (the route still exists for legacy push, but it just
       // dispatches to native and pops).
       let suppressVCPresent = false
+
+      // [2026-10-06 native-only outgoing] Native owns the caller end-to-end now
+      // (no /call.js on iOS outgoing). Two things JS used to do as a side
+      // effect of adoptNativeRoom() must happen here instead:
+      //   1. Register the module as NativeCallRoom listener so the onLk*
+      //      events (connected/disconnected/participant/track) still reach
+      //      the JS headless controller (services/nativeOutgoingCall.js) —
+      //      previously only adoptNativeRoom() added the listener.
+      //   2. Put the LiveKit Swift SDK's audio session in CallKit manual mode
+      //      BEFORE the Room is built, so its audio unit only starts after
+      //      provider:didActivate (see LKAudioSessionCallKitBridge). This is
+      //      what makes the caller's audio work WITHOUT the JS screen that
+      //      used to re-configure the session after adopting the Room.
+      NativeCallRoom.shared.addListener(self)
+      LKAudioSessionCallKitBridge.armForOutgoingCall(callId: callId)
 
       // Stash params for the delegate path AND register the callId↔UUID map
       // so callAnswered/callEnded/endCall route correctly once the callee
@@ -1250,6 +1281,9 @@ public class ExpoCallKitModule: Module {
                 self.pendingOutgoingCalls.removeValue(forKey: uuid)
               }
               ExpoCallKitModule._shared_setUUID(nil, forCallId: callId)
+              // [2026-10-06 native-only outgoing] CallKit never activated the
+              // session for this call — restore automatic LK audio mode.
+              LKAudioSessionCallKitBridge.disarm(reason: "start_tx_failed")
               // [WAVE 117A RESTORE 2026-06-12] The optimistic immediate
               // present above may already have a CallViewController on
               // screen — tear it down so a failed CXStartCallAction doesn't
@@ -3147,6 +3181,10 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
       name: Notification.Name("ExpoCallKitAudioSessionActivated"),
       object: nil
     )
+    // [2026-10-06 native-only outgoing] Native LiveKit stack (LKRTCAudioSession)
+    // — forward the activation + enable its audio unit (no-op unless armed by
+    // startOutgoingCall). The RTCAudioSession block below covers the JS stack.
+    LKAudioSessionCallKitBridge.audioSessionDidActivate(audioSession)
     // [bug 2026-05-14 uplink-mic-silent] When user accepts via native CallKit
     // UI, AVAudioSession.didActivate fires BEFORE JS creates the
     // RTCPeerConnection (cold-start path: onCallAnswered → router.push → JS
@@ -3193,6 +3231,9 @@ private class ProviderDelegate: NSObject, CXProviderDelegate {
   }
   func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
     print("[ExpoCallKit] Audio session deactivated")
+    // [2026-10-06 native-only outgoing] Native LK stack: stop the audio unit
+    // and leave manual mode (no-op unless armed).
+    LKAudioSessionCallKitBridge.audioSessionDidDeactivate(audioSession)
     do {
       try audioSession.setActive(false, options: [.notifyOthersOnDeactivation])
     } catch {

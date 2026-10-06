@@ -1090,6 +1090,11 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
         // port override, never setCategory-after-VPIO.
         AudioRouter.shared.configureForCall(hasVideo: AudioRouter.shared.hasVideo)
         VoipPushAppDelegateSubscriber.setRTCAudioEnabled(true)
+        // [2026-10-06 native-only outgoing] Mirror for the native LK stack —
+        // whichever CXProvider owns the call, the LiveKit Swift audio unit
+        // must only start once CallKit activated the session (no-op unless
+        // startOutgoingCall armed the bridge).
+        LKAudioSessionCallKitBridge.audioSessionDidActivate(audioSession)
         let route = audioSession.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ",")
         nativeCallDiag("voipstub_didactivate", "-", "route=\(route) hasVideo=\(AudioRouter.shared.hasVideo)")
         // [2026-06-12 outgoing-mic-silence fix] Mirror of the module
@@ -1105,6 +1110,8 @@ extension VoipPushAppDelegateSubscriber: CXProviderDelegate {
     public func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
         print("[VoipSubscriber] stub didDeactivate — disabling RTCAudioSession")
         VoipPushAppDelegateSubscriber.setRTCAudioEnabled(false)
+        // [2026-10-06 native-only outgoing] see didActivate above.
+        LKAudioSessionCallKitBridge.audioSessionDidDeactivate(audioSession)
     }
 }
 

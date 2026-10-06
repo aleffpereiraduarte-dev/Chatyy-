@@ -292,7 +292,7 @@ import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { queryClient } from '../services/queryClient';
-import { AuthProvider, useAuth } from '../context/AuthContext';
+import { AuthProvider, useAuth, wasExplicitLogoutRecently } from '../context/AuthContext';
 import { ConfirmProvider } from '../components/ConfirmModal';
 import { useReducedMotion } from '../components/reducedMotion'; // [2026-10-04] honor OS Reduce Motion in nav
 import ChildRestrictionGuard from '../components/ChildRestrictionGuard';
@@ -571,6 +571,13 @@ function AppInit({ onNotification, setOtaToast }) {
     if (authUser) return;
     if (!pathname || pathname === '/' || pathname === '') return;
     if (PUBLIC_ROUTES.some(p => pathname === p || pathname.startsWith(p + '/'))) return;
+    // [2026-10-06 founder: 'Sair não vai pro login' (Android)] Logout EXPLÍCITO
+    // → /login limpo. Este efeito é a fonte única de verdade pós-logout: roda
+    // quando `user` vira null em qualquer rota protegida, mesmo que o
+    // router.replace disparado de dentro do ProfileSettingsSheet (Modal em
+    // desmontagem) tenha sido engolido. Sem `?next=`: voltar depois do login
+    // para /u/<email-da-conta-antiga> seria errado.
+    if (wasExplicitLogoutRecently()) { router.replace('/login'); return; }
     let nextUrl = pathname;
     try {
       if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -1184,7 +1191,12 @@ function AppInit({ onNotification, setOtaToast }) {
         // (ensurePushTokenFresh → registerForPushNotifications) is deferred to
         // the auth-gated effect below so a brand-new user never sees the push
         // dialog before they log in. [FIX push-prompt 2026-10-05]
-        cleanupRef.current = await setupNotificationListeners();
+        // [2026-10-06 android-audit] Compose with any cleanup already stored
+        // (the contacts/badge AppState subscription below is registered
+        // synchronously, before this await resolves) instead of overwriting it.
+        const _notifCleanup = await setupNotificationListeners();
+        const _prevCleanup = cleanupRef.current;
+        cleanupRef.current = () => { try { _notifCleanup?.(); } catch {} try { _prevCleanup?.(); } catch {} };
 
         // Clear badge when app opens
         clearBadge();

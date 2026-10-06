@@ -211,6 +211,9 @@ export function BiometricProvider({ children }) {
     // deep-link to /login while still authenticated), arming the lock is the
     // correct, secure behavior. Suppressing it there would let the previous
     // identity's unlocked overlay carry over.
+    // [2026-10-06] Sem sessão ativa (logout) não há nada a proteger — travar aqui
+    // prendia o usuário atrás de um cadeado sem bio_token/bearer para destravar.
+    if (!_hasActiveSession()) return;
     if (isAuthRouteRef.current && !_hasActiveSession()) return;
     setIsLocked(true);
   }, [biometricEnabled]);
@@ -349,11 +352,17 @@ export function BiometricProvider({ children }) {
   // Auto-authenticate when locked
   useEffect(() => {
     if (isLocked && biometricEnabled && !authenticating) {
+      // [2026-10-06] Se não há sessão (logout em andamento / já deslogado), o
+      // cadeado não tem como ser destravado → libera na hora em vez de prender.
+      if (!_hasActiveSession()) { setIsLocked(false); return; }
       // Small delay to let the UI render the lock screen first
       const timer = setTimeout(() => {
         authenticate();
       }, 300);
-      return () => clearTimeout(timer);
+      // Self-heal: se a sessão for encerrada enquanto o overlay está armado
+      // (token limpo depois do lockNow), solta o cadeado sozinho.
+      const heal = setInterval(() => { if (!_hasActiveSession()) setIsLocked(false); }, 500);
+      return () => { clearTimeout(timer); clearInterval(heal); };
     }
   }, [isLocked, biometricEnabled, authenticating, authenticate]);
 

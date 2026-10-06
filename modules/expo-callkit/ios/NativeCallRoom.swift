@@ -90,6 +90,19 @@ public enum NativeCallRoomEvent {
     /// to add a retain cycle. NSHashTable handles weak storage + dedupe.
     private let listeners = NSHashTable<AnyObject>.weakObjects()
 
+    // [2026-10-06 native-only outgoing] Backward-compat for an OLD JS bundle
+    // still running the legacy flow (push /call.js → adoptNativeRoom →
+    // dismissNativeCallVC) against THIS native build. When the outgoing
+    // CallViewController is dismissed/deallocated before the callee answers,
+    // nobody is left to open its ring-leak mic gate (openOutgoingMicGate lived
+    // on the VC) — root cause of "caller never published audio" seen in the
+    // SFU logs on 2026-10-05. The watcher below outlives the VC: it listens
+    // for the same two answered signals (WS call_accepted notification OR the
+    // first remote track) and publishes the caller mic/camera on the shared
+    // Room. Armed only from CallViewController.dismissIfPresented for an
+    // outgoing VC whose gate is still closed; cleared with the Room.
+    private var outgoingAnswerWatcher: OutgoingAnswerWatcher?
+
     // --- Publication API (called from CallViewController) ---------------------
 
     /// CallViewController calls this AFTER its own Room.connect await
@@ -113,6 +126,10 @@ public enum NativeCallRoomEvent {
         if room != nil {
             print("[NativeCallRoom] clear: dropping room reference (callId=\(_callId ?? "<nil>"))")
         }
+        // [2026-10-06 native-only outgoing] Tear down the answer watcher and
+        // restore automatic LK audio mode with the Room (idempotent).
+        disarmOutgoingAnswerWatcher()
+        LKAudioSessionCallKitBridge.disarm(reason: "room_clear")
         self.room = nil
         self._callId = nil
         self.lastRoomName = nil
@@ -121,6 +138,26 @@ public enum NativeCallRoomEvent {
     }
 
     public func currentCallId() -> String? { return _callId }
+
+    // [2026-10-06 native-only outgoing] See `outgoingAnswerWatcher` docs.
+    public func armOutgoingPublishOnAnswer(callId: String, hasVideo: Bool, micDesired: Bool) {
+        guard let r = room, let active = _callId, active == callId else {
+            print("[NativeCallRoom] armOutgoingPublishOnAnswer: no room for \(callId) — skip")
+            return
+        }
+        if outgoingAnswerWatcher != nil { return }
+        let w = OutgoingAnswerWatcher(callId: callId, hasVideo: hasVideo, micDesired: micDesired, room: r)
+        outgoingAnswerWatcher = w
+        r.add(delegate: w)
+        w.installAnsweredObserver()
+        nativeCallDiag("outgoing_answer_watcher_armed", callId, "video=\(hasVideo) mic=\(micDesired)")
+    }
+
+    private func disarmOutgoingAnswerWatcher() {
+        guard let w = outgoingAnswerWatcher else { return }
+        outgoingAnswerWatcher = nil
+        w.tearDown()
+    }
 
     // --- Listener registration (called from adoptNativeRoom) ------------------
 
@@ -366,6 +403,95 @@ public enum NativeCallRoomEvent {
             } catch {
                 print("[NativeCallRoom] setCameraEnabled(\(enabled)) failed: \(error)")
             }
+        }
+    }
+}
+
+/// [2026-10-06 native-only outgoing] Publishes the caller's mic (+camera) on
+/// the shared outgoing Room once the callee really answered, for the case
+/// where the owning CallViewController was dismissed early by an old JS
+/// bundle (legacy adopt + dismissNativeCallVC flow). Mirrors
+/// CallViewController.openOutgoingMicGate triggers:
+///   * `CallKitCallAnsweredRemote` (CallSignalWs receiver loop), or
+///   * the first remote track we subscribe (callee publishes nothing during
+///     the ring, so this is genuine post-answer media-truth).
+/// Idempotent — fires once. Lifetime: owned by NativeCallRoom until clear().
+final class OutgoingAnswerWatcher: NSObject, RoomDelegate {
+    private let callId: String
+    private let hasVideo: Bool
+    private let micDesired: Bool
+    private weak var room: Room?
+    private var fired = false
+    private var answeredObserver: NSObjectProtocol?
+
+    init(callId: String, hasVideo: Bool, micDesired: Bool, room: Room) {
+        self.callId = callId
+        self.hasVideo = hasVideo
+        self.micDesired = micDesired
+        self.room = room
+        super.init()
+    }
+
+    func installAnsweredObserver() {
+        guard answeredObserver == nil else { return }
+        answeredObserver = NotificationCenter.default.addObserver(
+            forName: Notification.Name("CallKitCallAnsweredRemote"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self = self else { return }
+            let nid = (note.userInfo?["callId"] as? String)
+                ?? (note.userInfo?["call_id"] as? String)
+                ?? ""
+            if !nid.isEmpty, nid != self.callId { return }
+            self.publishOnAnswer(reason: "ws_call_accepted")
+        }
+    }
+
+    func tearDown() {
+        if let o = answeredObserver {
+            NotificationCenter.default.removeObserver(o)
+            answeredObserver = nil
+        }
+        // No explicit Room.remove(delegate:) — LiveKit's MulticastDelegate holds
+        // delegates weakly, so dropping this object (NativeCallRoom.clear())
+        // unregisters it. Avoids depending on an API the pinned pod may rename.
+        room = nil
+    }
+
+    private func publishOnAnswer(reason: String) {
+        guard !fired, let r = room else { return }
+        fired = true
+        nativeCallDiag("outgoing_mic_gate_open_watcher", callId, reason)
+        let wantMic = micDesired
+        let wantCam = hasVideo
+        Task {
+            if wantMic {
+                do {
+                    _ = try await r.localParticipant.setMicrophone(
+                        enabled: true,
+                        captureOptions: AudioCaptureOptions()
+                    )
+                    print("[OutgoingAnswerWatcher] mic published on answer (\(reason)) callId=\(self.callId)")
+                } catch {
+                    print("[OutgoingAnswerWatcher] mic publish failed: \(error)")
+                    nativeCallDiag("outgoing_watcher_mic_failed", self.callId, "\(error)")
+                }
+            }
+            if wantCam {
+                // Same publish options as the JS-driven camera toggle.
+                NativeCallRoom.shared.setCameraEnabled(true)
+            }
+        }
+    }
+
+    // MARK: RoomDelegate (only the one hook we need; the rest keep defaults)
+
+    func room(_ room: Room,
+              participant: RemoteParticipant,
+              didSubscribeTrack publication: RemoteTrackPublication) {
+        DispatchQueue.main.async { [weak self] in
+            self?.publishOnAnswer(reason: "remote_track_subscribed")
         }
     }
 }

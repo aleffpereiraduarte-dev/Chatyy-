@@ -196,6 +196,11 @@ declare class ExpoCallKitModuleType extends NativeModule<ExpoCallKitEvents> {
   /** [share outbox feedback, 2026-05-19] Clear the App Group share_outbox
    *  queue after JS has processed the entries. iOS-only no-op elsewhere. */
   clearShareOutbox?(): void;
+  /** [2026-10-06 native-only outgoing] iOS capability probe: true when the
+   *  installed native build runs outgoing calls end-to-end (signaling, LiveKit
+   *  Room, mic gate, CallKit-gated audio unit) so JS must NOT push /call.js.
+   *  Absent on Android and on older iOS binaries. */
+  supportsNativeOnlyOutgoing?(): boolean;
 }
 
 export interface OpenNativeCallParams {
@@ -280,6 +285,18 @@ export function endCall(callId: string): void {
   try {
     m.endCall(callId);
   } catch {}
+}
+
+// [2026-10-06 native-only outgoing] Capability probe — see
+// services/nativeOutgoingCall.js. False on Android, web and older iOS builds.
+export function supportsNativeOnlyOutgoing(): boolean {
+  const m = getModule();
+  if (!m || typeof m.supportsNativeOnlyOutgoing !== 'function') return false;
+  try {
+    return m.supportsNativeOnlyOutgoing() === true;
+  } catch {
+    return false;
+  }
 }
 
 // [2026-05-25] /call.js calls this after it mounts + adopts the pre-connected
@@ -651,7 +668,11 @@ type LkEventName =
   // __chatyy_native_call_sync 2026-05-19
   | 'onLkLocalAudioChanged' | 'onLkLocalVideoChanged' | 'onLkSpeakerChanged'
   | 'onLkCameraFlipped' | 'onAudioRouteChanged' | 'onCallHoldChanged'
-  | 'onPipChanged';
+  | 'onPipChanged'
+  // [2026-05-22 #1349] caller-side remote signaling bridged from CallSignalWs
+  // (declared in the native Events() list; consumed by
+  // services/nativeOutgoingCall.js since 2026-10-06).
+  | 'onCallAnsweredRemote' | 'onCallDeclinedRemote' | 'onCallCancelledRemote';
 
 export function onLkEvent<K extends LkEventName>(
   event: K,

@@ -109,7 +109,7 @@ export async function start({ sessionId, title }) {
         } : {}),
         ...(Platform.OS === 'ios' ? { interruptionLevel: 'passive' } : {}),
       },
-      trigger: null,
+      trigger: Platform.OS === 'android' ? { channelId: 'live_broadcast_self' } : null,
     });
   } catch (e) {
     console.warn('[liveBroadcastNotif] start failed:', e?.message);
@@ -144,7 +144,7 @@ export async function updateViewers(sessionId, viewers) {
         } : {}),
         ...(Platform.OS === 'ios' ? { interruptionLevel: 'passive' } : {}),
       },
-      trigger: null,
+      trigger: Platform.OS === 'android' ? { channelId: 'live_broadcast_self' } : null,
     });
   } catch (e) {
     console.warn('[liveBroadcastNotif] updateViewers failed:', e?.message);

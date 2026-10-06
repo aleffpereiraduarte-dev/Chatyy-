@@ -1,4 +1,4 @@
-import { NativeModule, requireNativeModule } from 'expo';
+import { NativeModule, requireOptionalNativeModule } from 'expo';
 
 /**
  * Stage 8: Encrypted SQLite chat snapshot backup.
@@ -66,22 +66,31 @@ declare class ExpoChatBackupModuleClass extends NativeModule {
   scheduleAutomaticBackup(intervalDays?: number): Promise<void>;
 }
 
-const ExpoChatBackup = requireNativeModule<ExpoChatBackupModuleClass>('ExpoChatBackupModule');
+// [2026-10-06] requireOptionalNativeModule em vez de requireNativeModule: o
+// segundo LANÇA no init do módulo e, quando o require() é preguiçoso (fora do
+// guard do Metro), vira reportFatalError → o app FECHA (mesma classe do crash
+// "Cannot find native module 'ExpoChatCacheModule'" no logout Android). Aqui
+// cada wrapper rejeita a Promise com um Error normal, que os call sites já tratam.
+const ExpoChatBackup = requireOptionalNativeModule<ExpoChatBackupModuleClass>('ExpoChatBackupModule');
+function N(): ExpoChatBackupModuleClass {
+  if (!ExpoChatBackup) throw new Error('ExpoChatBackupModule native module unavailable on this platform/build');
+  return ExpoChatBackup;
+}
 
 export async function backupNow(password: string): Promise<BackupResult> {
-  return ExpoChatBackup.backupNow(password);
+  return N().backupNow(password);
 }
 
 export async function listBackups(): Promise<BackupInfo[]> {
-  return ExpoChatBackup.listBackups();
+  return N().listBackups();
 }
 
 export async function restoreFromBackup(filename: string, password: string): Promise<RestoreResult> {
-  return ExpoChatBackup.restoreFromBackup(filename, password);
+  return N().restoreFromBackup(filename, password);
 }
 
 export async function scheduleAutomaticBackup(intervalDays: number = 1): Promise<void> {
-  return ExpoChatBackup.scheduleAutomaticBackup(intervalDays);
+  return N().scheduleAutomaticBackup(intervalDays);
 }
 
 export default ExpoChatBackup;
