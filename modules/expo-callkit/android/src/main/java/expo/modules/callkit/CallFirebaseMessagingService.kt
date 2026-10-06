@@ -39,6 +39,13 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
 
         Log.d(TAG, "FCM message received: type=$type, dataKeys=${data.keys}")
 
+        // [2026-10-06] Delivered-on-receipt (WhatsApp ✓✓ gray parity): report
+        // "this DEVICE got it" the instant any chat push lands — app killed or
+        // not, before any rendering. Handles both FCM-direct (top-level data)
+        // and Expo-routed (data["body"] JSON) shapes; no-op for non-chat pushes.
+        // Mirrors the iOS Notification Service Extension's reportDelivered.
+        try { ChatDeliveryReporter.maybeReport(applicationContext, data) } catch (e: Throwable) {}
+
         // [2026-05-16 Stage 4] Silent push wake. When the web companion
         // device needs chat history that only this phone has in SQLite,
         // the server fires a data-only push to wake us briefly. We DO
@@ -89,21 +96,21 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
             // Stop the authoritative looping ringtone (the FCM-fallback ringer
             // is launched directly, not tied to the FGS lifecycle, so an
             // explicit stop is required here). Idempotent.
-            try { IncomingRinger.stop() } catch (_: Throwable) {}
+            try { IncomingRinger.stop() } catch (e: Throwable) {}
             // Cancel the incoming-call heads-up / full-screen notification.
-            try { CallNotificationService.cancelNotification(applicationContext, cancelId) } catch (_: Throwable) {}
+            try { CallNotificationService.cancelNotification(applicationContext, cancelId) } catch (e: Throwable) {}
             // Stop the ringing foreground service (stopRingingForCall semantics:
             // CallRingingService.onStartCommand owns a single ring; stopService
             // → onDestroy stops the ringer + vibration + clears the FGS notif).
             try {
                 applicationContext.stopService(Intent(applicationContext, CallRingingService::class.java))
-            } catch (_: Throwable) {}
+            } catch (e: Throwable) {}
             // [2026-10-06 android-incoming] Telecom teardown + dedupe reset so
             // the Connection doesn't stay RINGING after the caller gave up.
             try {
                 IncomingCallRegistry.endTelecom(cancelId, android.telecom.DisconnectCause.REMOTE, "fcm_$type:$reason")
                 IncomingCallRegistry.forget(cancelId)
-            } catch (_: Throwable) {}
+            } catch (e: Throwable) {}
             // Also finish IncomingCallActivity if it's already on screen.
             try {
                 val closeIntent = Intent("expo.modules.callkit.CLOSE_CALL_ACTIVITY").apply {
@@ -111,7 +118,7 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                     putExtra("call_id", cancelId)
                 }
                 applicationContext.sendBroadcast(closeIntent)
-            } catch (_: Throwable) {}
+            } catch (e: Throwable) {}
             return
         }
 
@@ -388,7 +395,7 @@ class CallFirebaseMessagingService : FirebaseMessagingService() {
                     // ringtone can't loop forever if no FGS/Activity ever owns
                     // teardown (the FGS path stops it in onDestroy at 45s).
                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                        try { IncomingRinger.stop() } catch (_: Throwable) {}
+                        try { IncomingRinger.stop() } catch (e: Throwable) {}
                     }, 45_000L)
                 } catch (t: Throwable) {
                     Log.w(TAG, "fallback IncomingRinger.start failed: ${t.message}")

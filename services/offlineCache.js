@@ -961,6 +961,26 @@ export async function replayOfflineQueue(api) {
           }
           break;
         }
+        case 'chat_delivery_ack': {
+          // [2026-10-06 recibos] Replay do ✓✓ cinza que falhou offline. Antes o
+          // _ackWithRetry (api.js) desistia após 3 tentativas em memória e o
+          // remetente ficava com ✓ preso até o destinatário reabrir a conversa
+          // (WhatsApp enfileira recibos no outbox persistente e repassa no
+          // reconnect). Server é idempotente (COALESCE first-write) — replay
+          // duplicado é no-op. Erros duros (não-membro/404) só descartam.
+          if (!action.conversation_id || !Array.isArray(action.message_ids) || action.message_ids.length === 0) break;
+          try {
+            const r = await api.chatDeliveryAck(action.conversation_id, action.message_ids.slice(0, 100));
+            if (r && r.success === false) {
+              const msg = String(r.message || r.error || '');
+              if (!/not_found|permission|forbidden|invalid|not_member/i.test(msg)) throw new Error('chat_delivery_ack_failed:' + msg);
+            }
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            if (!/not_found|permission|forbidden|not_member/i.test(msg)) throw e;
+          }
+          break;
+        }
         case 'chat_react': {
           // Emoji / sticker reaction replay. message_id required; emoji OR
           // sticker_url determines payload shape.

@@ -4758,11 +4758,20 @@ const _ackTimers = new Map(); // conversationId → timeoutHandle
 // [2026-10-04] Retry do ack de entrega. Antes era .catch(()=>{}) seco: um POST
 // que falhasse (rede instável) PERDIA o ✓✓ (ficava 1 cinza preso) até o
 // destinatário reabrir. Agora tenta 3× com backoff antes de desistir.
+// [2026-10-06 recibos] Após a 3ª falha o ack NÃO é mais descartado: vai pro
+// outbox persistente (offlineCache `chat_delivery_ack`) e é repassado no próximo
+// replayOfflineQueue (reconnect / foreground / mount) — WhatsApp-style receipt
+// outbox. Sobrevive a restart do app. Server idempotente → replay tardio é no-op.
 function _ackWithRetry(conversationId, ids, attempt = 0) {
   chatDeliveryAck(conversationId, ids).catch(() => {
     if (attempt < 2) {
       setTimeout(() => _ackWithRetry(conversationId, ids, attempt + 1), 1500 * (attempt + 1));
+      return;
     }
+    try {
+      const { queueOfflineAction } = require('./offlineCache');
+      queueOfflineAction({ type: 'chat_delivery_ack', conversation_id: conversationId, message_ids: ids.slice(0, 100) }).catch(() => {});
+    } catch {}
   });
 }
 export function chatDeliveryAckBatched(conversationId, messageIds) {

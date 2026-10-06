@@ -171,8 +171,11 @@ class NotificationService: UNNotificationServiceExtension {
                let v = j[k] as? String { return v }
             return nil
         }
+        // [2026-10-06] email.php, NAO chat.php: chat.php chamado direto devolve
+        // 200 com corpo VAZIO (so email.php?action= roteia pro handler) — o ack
+        // de 10-05 apontava pra URL morta.
         guard let dAck = field("d_ack"), !dAck.isEmpty,
-              let url = URL(string: "https://chatyy.com.br/api/chat.php?action=chat_push_delivered")
+              let url = URL(string: "https://chatyy.com.br/api/email.php?action=chat_push_delivered")
         else { return }
         var req = URLRequest(url: url, timeoutInterval: 8)
         req.httpMethod = "POST"
