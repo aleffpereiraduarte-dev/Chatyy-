@@ -32,7 +32,8 @@ if (Platform.OS !== 'web') {
 let _db = null;
 let _ready = false;
 let _readyResolve;
-const _readyPromise = new Promise(r => { _readyResolve = r; });
+let _readyPromise = new Promise(r => { _readyResolve = r; });
+function _resetReadyGate() { _ready = false; _accountColReady = false; _readyPromise = new Promise(r => { _readyResolve = r; }); }
 
 // Web fallback — use MMKV/localStorage (SQLite not available on web)
 const isWeb = Platform.OS === 'web';
@@ -53,11 +54,230 @@ export function getDb() { return _db; }
 export function isDbReady() { return _ready; }
 export function waitForDb() { return _readyPromise; }
 
+// ── Write serialization + self-healing (2026-10-06) ─────────────────────────
+// ROOT CAUSE of the chronic push_diag `sqlite_error_dbSaveMessages` /
+// `sqlite_error_cacheSingleMessage` beacons ("Calling the 'execAsync' function
+// has failed" on iOS, "Call to function 'NativeDatabase.execAsync' has been
+// rejected." on Android — every platform/build since 2026-09-25, 1–5 s after
+// boot_start): every bulk writer in this file used `_db.withTransactionAsync`,
+// which is a bare `BEGIN` / `COMMIT` on ONE shared connection with NO mutual
+// exclusion. On cold start the REST hydrate (dbSaveConversations +
+// cacheMessages) and the WS stream (cacheSingleMessage) overlap, so the second
+// `BEGIN` throws "cannot start a transaction within a transaction"; expo's
+// wrapper then issues an unconditional `ROLLBACK`, which ALSO aborts the first
+// caller's in-flight transaction, whose `COMMIT` then fails with "cannot
+// commit - no transaction is active". Both surface through the native bridge
+// as the generic "execAsync has failed/rejected" (the real SQLite text is in
+// `e.cause`). Net effect: BOTH batches are lost (0 rows) → messages don't
+// persist offline. Reproduced with sqlite3: BEGIN; BEGIN; INSERT; ROLLBACK;
+// COMMIT; SELECT count(*) → 0.
+//
+// Fix:
+//  (1) `_runTx` funnels every transactional write through a promise-chain
+//      queue — one BEGIN at a time. BEGIN IMMEDIATE so busy_timeout applies to
+//      the lock grab (other connections: localDb/messageOutbox/sqliteStore)
+//      instead of a surprise SQLITE_BUSY at COMMIT.
+//  (2) On a recoverable failure (closed handle, torn txn state, locked, missing
+//      column/table) it heals — ROLLBACK a stuck txn, or reopen + re-run the
+//      idempotent migrations — and retries ONCE.
+//  (3) Corruption ("malformed", "not a database", disk I/O) or a long run of
+//      consecutive failures rebuilds the DB file: close sibling handles →
+//      deleteDatabaseAsync → re-init (falls back to DROP+CREATE of the chat
+//      tables when the file can't be deleted). Throttled to once / 10 min.
+//  (4) `sqliteErrMsg` unwraps `e.cause` so the diag beacon finally carries the
+//      actual SQLite error text.
+const DB_FILE = 'chatyy.db';
+let _txTail = Promise.resolve();
+let _initInFlight = null;
+let _healing = null;
+let _consecutiveFailures = 0;
+let _lastRebuildAt = 0;
+const REBUILD_AFTER_CONSECUTIVE_FAILURES = 12;
+const REBUILD_MIN_INTERVAL_MS = 10 * 60 * 1000;
+
+/** Human-readable SQLite error: message + cause chain + code. Never throws. */
+export function sqliteErrMsg(e) {
+  try {
+    if (!e) return 'unknown';
+    if (typeof e === 'string') return e.slice(0, 300);
+    const parts = [];
+    const seen = new Set();
+    const push = (s) => { s = String(s || '').trim(); if (s && !seen.has(s)) { seen.add(s); parts.push(s); } };
+    push(e.message || String(e));
+    let c = e.cause; let hops = 0;
+    while (c && hops++ < 3) { push(typeof c === 'string' ? c : c.message); c = c && c.cause; }
+    if (e.code) push('code=' + e.code);
+    if (e.userInfo && e.userInfo.message) push(e.userInfo.message);
+    return parts.join(' | ').slice(0, 300);
+  } catch { return 'unknown'; }
+}
+
+const RE_CORRUPT = /malformed|not a database|disk image|disk i\/o|file is encrypted|SQLITE_CORRUPT|SQLITE_NOTADB/i;
+const RE_SCHEMA = /no such table|no such column|has no column/i;
+const RE_TXN_STATE = /within a transaction|no transaction is active/i;
+const RE_CLOSED = /closed|has been rejected|has failed|null ?pointer|not open|SQLITE_MISUSE|misuse|not an error/i;
+const RE_BUSY = /database is locked|busy|SQLITE_BUSY/i;
+function _isCorruptErr(e) { return RE_CORRUPT.test(sqliteErrMsg(e)); }
+const RE_LOGIC = /constraint failed|syntax error|datatype mismatch|too many SQL variables|near "/i;
+function _isRecoverableErr(e) {
+  const m = sqliteErrMsg(e);
+  if (RE_LOGIC.test(m) && !RE_CORRUPT.test(m) && !RE_TXN_STATE.test(m)) return false;
+  return RE_CORRUPT.test(m) || RE_SCHEMA.test(m) || RE_TXN_STATE.test(m) || RE_CLOSED.test(m) || RE_BUSY.test(m);
+}
+function _beacon(context, message) {
+  try { require('./crashReporter').reportCrash?.({ type: 'sqlite_heal', context, message: String(message || '').slice(0, 200) }); } catch {}
+}
+
+async function _execTx(task) {
+  const db = _db;
+  if (!db) throw new Error('db handle not open');
+  await db.execAsync('BEGIN IMMEDIATE');
+  try {
+    const r = await task(db);
+    await db.execAsync('COMMIT');
+    return r;
+  } catch (e) {
+    try { await db.execAsync('ROLLBACK'); } catch {}
+    throw e;
+  }
+}
+
+async function _runTxOnce(label, task) {
+  if (!_db) { try { await Promise.race([_readyPromise, new Promise(r => setTimeout(r, 3000))]); } catch {} }
+  try {
+    const r = await _execTx(task);
+    _consecutiveFailures = 0;
+    return r;
+  } catch (e) {
+    _consecutiveFailures++;
+    if (!_isRecoverableErr(e)) throw e;
+    await _heal(e, label);
+    if (!_db) throw e;
+    try {
+      const r = await _execTx(task);
+      _consecutiveFailures = 0;
+      _beacon('retry_ok_' + label, sqliteErrMsg(e));
+      return r;
+    } catch (e2) {
+      _consecutiveFailures++;
+      throw e2;
+    }
+  }
+}
+
+/** Serialized transaction: `task(db)` runs inside BEGIN IMMEDIATE … COMMIT, one at a time. */
+function _runTx(label, task) {
+  const run = _txTail.then(() => _runTxOnce(label, task));
+  _txTail = run.catch(() => {});
+  return run;
+}
+/** Public escape hatch for other modules that must write to chatyy.db transactionally. */
+export function dbRunSerialized(label, task) { return _runTx(label || 'external', task); }
+
+async function _heal(e, label) {
+  if (_healing) return _healing;
+  _healing = (async () => {
+    const msg = sqliteErrMsg(e);
+    try {
+      if (_isCorruptErr(e)) { await _rebuild(label + ': ' + msg); return; }
+      if (RE_BUSY.test(msg)) {
+        // Another connection holds the write lock: back off; never escalate to a rebuild.
+        _consecutiveFailures = Math.max(0, _consecutiveFailures - 1);
+        await new Promise(r => setTimeout(r, 250));
+        return;
+      }
+      if (RE_TXN_STATE.test(msg) && _db) {
+        // A foreign BEGIN (or a torn ROLLBACK) left the connection mid-transaction: clear it.
+        try { await _db.execAsync('ROLLBACK'); } catch {}
+        _beacon('rollback_' + label, msg);
+        return;
+      }
+      if (_consecutiveFailures >= REBUILD_AFTER_CONSECUTIVE_FAILURES) { await _rebuild(label + ': persistent: ' + msg); return; }
+      await _reopen(label + ': ' + msg);
+    } catch (he) {
+      _beacon('heal_failed_' + label, sqliteErrMsg(he));
+    }
+  })().finally(() => { _healing = null; });
+  return _healing;
+}
+
+async function _reopen(reason) {
+  _beacon('reopen', reason);
+  const h = _db; _db = null;
+  try { await h?.closeAsync?.(); } catch {}
+  _resetReadyGate();
+  await initDatabase();
+}
+
+async function _rebuild(reason) {
+  const now = Date.now();
+  if (now - _lastRebuildAt < REBUILD_MIN_INTERVAL_MS) { await _reopen('rebuild_throttled: ' + reason); return; }
+  _lastRebuildAt = now;
+  _beacon('rebuild', reason);
+  // Siblings hold their own connections to the same file; deleteDatabaseAsync
+  // refuses while any connection is open, so close them first (they reopen lazily).
+  try { await require('./localDb').resetLocalDbHandle?.(); } catch {}
+  try { await require('./messageOutbox').resetOutboxDbHandle?.(); } catch {}
+  try { require('./sqliteStore').reset?.(); } catch {}
+  const h = _db; _db = null;
+  try { await h?.closeAsync?.(); } catch {}
+  _resetReadyGate();
+  let deleted = false;
+  try { await SQLite.deleteDatabaseAsync(DB_FILE); deleted = true; }
+  catch (de) { _beacon('rebuild_delete_failed', sqliteErrMsg(de)); }
+  await initDatabase();
+  if (!deleted && _db) {
+    // Fallback: drop + recreate the chat tables in place.
+    try {
+      await _db.execAsync('DROP TABLE IF EXISTS messages_fts; DROP TABLE IF EXISTS messages; DROP TABLE IF EXISTS conversations; DROP TABLE IF EXISTS pending_messages;');
+    } catch (dr) { _beacon('rebuild_drop_failed', sqliteErrMsg(dr)); }
+    const h2 = _db; _db = null;
+    try { await h2?.closeAsync?.(); } catch {}
+    _resetReadyGate();
+    await initDatabase();
+  }
+  _consecutiveFailures = 0;
+}
+
+/**
+ * Idempotent additive migrations: `ALTER TABLE t ADD COLUMN c …` runs ONLY when
+ * PRAGMA table_info(t) lacks `c` (one PRAGMA per table). "duplicate column" is
+ * still swallowed as a belt-and-suspenders fallback.
+ */
+async function _applyAdditiveColumns(alters, tag) {
+  if (!_db) return;
+  const byTable = new Map();
+  for (const sql of alters) {
+    const m = /ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)/i.exec(sql);
+    if (!m) {
+      try { await _db.execAsync(sql); }
+      catch (e) { const msg = sqliteErrMsg(e); if (!/duplicate column/i.test(msg)) console.warn('[DB] migration failed:', tag, sql, msg); }
+      continue;
+    }
+    const table = m[1], col = m[2].toLowerCase();
+    if (!byTable.has(table)) {
+      let cols = null;
+      try { cols = new Set((await _db.getAllAsync('PRAGMA table_info(' + table + ')')).map(c => String(c.name).toLowerCase())); } catch {}
+      byTable.set(table, cols);
+    }
+    const have = byTable.get(table);
+    if (have && have.has(col)) continue;
+    try { await _db.execAsync(sql); if (have) have.add(col); }
+    catch (e) { const msg = sqliteErrMsg(e); if (!/duplicate column/i.test(msg)) console.warn('[DB] migration ALTER failed:', tag, sql, msg); }
+  }
+}
+
 // ── Initialize database ──
 export async function initDatabase() {
   if (isWeb || _ready) return;
+  if (_initInFlight) return _initInFlight;
+  _initInFlight = _initOnce().finally(() => { _initInFlight = null; });
+  return _initInFlight;
+}
+
+async function _initOnce() {
   try {
-    _db = await SQLite.openDatabaseAsync('chatyy.db');
+    _db = await SQLite.openDatabaseAsync(DB_FILE);
 
     // Enable WAL mode for better concurrent read/write performance.
     //
@@ -347,15 +567,7 @@ export async function initDatabase() {
       // (swallowed on "duplicate column").
       "ALTER TABLE messages ADD COLUMN account_email TEXT",
     ];
-    for (const sql of ADDITIVE_COLUMNS) {
-      try { await _db.execAsync(sql); }
-      catch (e) {
-        const msg = String(e?.message || '');
-        if (!/duplicate column/i.test(msg)) {
-          console.warn('[DB] migration ALTER failed:', sql, msg);
-        }
-      }
-    }
+    await _applyAdditiveColumns(ADDITIVE_COLUMNS, 'ADDITIVE_COLUMNS');
     try {
       await _db.execAsync(`
         CREATE INDEX IF NOT EXISTS idx_messages_local_seq ON messages(conversation_id, local_seq);
@@ -378,15 +590,7 @@ export async function initDatabase() {
       "ALTER TABLE pending_messages ADD COLUMN mentions TEXT",
       "ALTER TABLE pending_messages ADD COLUMN updated_at TEXT",
     ];
-    for (const sql of PENDING_ADDITIVE_COLUMNS) {
-      try { await _db.execAsync(sql); }
-      catch (e) {
-        const msg = String(e?.message || '');
-        if (!/duplicate column/i.test(msg)) {
-          console.warn('[DB] pending_messages migration failed:', sql, msg);
-        }
-      }
-    }
+    await _applyAdditiveColumns(PENDING_ADDITIVE_COLUMNS, 'PENDING_ADDITIVE_COLUMNS');
 
     // Read watermark per conversation. The chat-list / open-thread paths
     // advance this as the local "highest message id the user has read" so a
@@ -398,15 +602,7 @@ export async function initDatabase() {
       // Multi-account isolation owner tag (mirrors messages.account_email).
       "ALTER TABLE conversations ADD COLUMN account_email TEXT",
     ];
-    for (const sql of CONV_ADDITIVE_COLUMNS) {
-      try { await _db.execAsync(sql); }
-      catch (e) {
-        const msg = String(e?.message || '');
-        if (!/duplicate column/i.test(msg)) {
-          console.warn('[DB] conversations migration failed:', sql, msg);
-        }
-      }
-    }
+    await _applyAdditiveColumns(CONV_ADDITIVE_COLUMNS, 'CONV_ADDITIVE_COLUMNS');
 
     // ── chatStore additive tables (cursors + conv_read_state) ──
     // Delta-sync cursor watermark + per-conversation read state. Idempotent
@@ -418,13 +614,7 @@ export async function initDatabase() {
     // Belt-and-suspenders: ensure the account_email columns exist even if an
     // older ADDITIVE_COLUMNS block above was edited out of order. Shared source
     // of truth = schema.ACCOUNT_COLUMN_ALTERS.
-    for (const sql of ACCOUNT_COLUMN_ALTERS) {
-      try { await _db.execAsync(sql); }
-      catch (e) {
-        const msg = String(e?.message || '');
-        if (!/duplicate column/i.test(msg)) console.warn('[DB] account column migration:', sql, msg);
-      }
-    }
+    await _applyAdditiveColumns(ACCOUNT_COLUMN_ALTERS, 'ACCOUNT_COLUMN_ALTERS');
     // From here the account_email columns are guaranteed present, so
     // account-scoped reads may reference them.
     _accountColReady = true;
@@ -467,9 +657,13 @@ export async function initDatabase() {
     // /var/www/mail/data/sqlite-diag/YYYY-MM-DD.log.
     _runSelfCheck();
   } catch (err) {
-    console.warn('[DB] Init failed:', err.message);
+    const msg = sqliteErrMsg(err);
+    console.warn('[DB] Init failed:', msg);
+    _beacon('init_failed', msg);
     _ready = true;
     _readyResolve();
+    // Corrupt file → rebuild in the background (throttled); nothing else to do here.
+    if (_isCorruptErr(err)) { _rebuild('init: ' + msg).catch(() => {}); }
   }
 }
 
@@ -532,7 +726,7 @@ async function _runSelfCheck() {
 
 export async function dbSaveConversations(conversations) {
   if (isWeb || !_db || !conversations?.length) return;
-  await _db.withTransactionAsync(async () => {
+  await _runTx('dbSaveConversations', async () => {
     const stmt = await _db.prepareAsync(
       `INSERT OR REPLACE INTO conversations (id, name, type, last_message, last_message_time, last_message_sender, unread_count, avatar_url, pinned, muted, archived, is_group, member_count, description, updated_at, raw_json, account_email)
        VALUES ($id, $name, $type, $lastMsg, $lastTime, $lastSender, $unread, $avatar, $pinned, $muted, $archived, $isGroup, $members, $desc, $updated, $raw, $account)`
@@ -626,7 +820,7 @@ export async function dbSaveMessages(conversationId, messages) {
   // local_path back to NULL. Result: user taps audio offline, msg.local_path
   // is NULL, bubble shows "mídia ainda não foi baixada" — even though the
   // file is on disk. Persisting all media columns closes the gap.
-  await _db.withTransactionAsync(async () => {
+  await _runTx('dbSaveMessages', async () => {
     const stmt = await _db.prepareAsync(
       `INSERT OR REPLACE INTO messages
          (id, conversation_id, sender_email, sender_name, content, type,
@@ -690,7 +884,7 @@ export async function dbSaveMessages(conversationId, messages) {
             $account: m.account_email || _activeAccount || null,
           });
         } catch (rowErr) {
-          try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbSaveMessages_row', message: `id=${m?.id} ${rowErr?.message}`, stack: rowErr?.stack }); } catch {}
+          try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbSaveMessages_row', message: `id=${m?.id} ${sqliteErrMsg(rowErr)}`, stack: rowErr?.stack }); } catch {}
           throw rowErr;
         }
       }
@@ -717,7 +911,7 @@ export async function dbGetMessages(conversationId, limit = 50, beforeId = null)
   try {
     rows = await _db.getAllAsync(query, params);
   } catch (e) {
-    try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbGetMessages', message: `conv=${conversationId} ${e?.message}`, stack: e?.stack }); } catch {}
+    try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbGetMessages', message: `conv=${conversationId} ${sqliteErrMsg(e)}`, stack: e?.stack }); } catch {}
     throw e;
   }
   let corrupt = 0;
@@ -885,7 +1079,7 @@ export async function dbClearLocalPathByFilenames(filenames) {
   if (isWeb || !_db || !Array.isArray(filenames) || filenames.length === 0) return;
   try {
     // Use a single transaction so 50 evicted entries → 1 fsync (with WAL+NORMAL).
-    await _db.withExclusiveTransactionAsync(async (txn) => {
+    await _runTx('dbClearLocalPathByFilenames', async (txn) => {
       const stmt = await txn.prepareAsync(
         `UPDATE messages SET local_path = NULL WHERE local_path LIKE '%/' || $name`
       );
@@ -907,7 +1101,7 @@ export async function dbClearLocalPathByFilenames(filenames) {
 
 export async function dbSaveContacts(contacts) {
   if (isWeb || !_db || !contacts?.length) return;
-  await _db.withTransactionAsync(async () => {
+  await _runTx('dbSaveContacts', async () => {
     const stmt = await _db.prepareAsync(
       `INSERT OR REPLACE INTO contacts (email, name, phone, avatar_url, is_chatyy_user, about, raw_json)
        VALUES ($email, $name, $phone, $avatar, $isChatyy, $about, $raw)`
@@ -949,7 +1143,7 @@ export async function dbSearchContacts(query) {
 
 export async function dbSaveEmails(folder, emails) {
   if (isWeb || !_db || !emails?.length) return;
-  await _db.withTransactionAsync(async () => {
+  await _runTx('dbSaveEmails', async () => {
     const stmt = await _db.prepareAsync(
       `INSERT OR REPLACE INTO emails (uid, folder, from_email, from_name, subject, snippet, date, is_read, is_starred, is_flagged, has_attachments, labels, raw_json)
        VALUES ($uid, $folder, $fromEmail, $fromName, $subject, $snippet, $date, $read, $starred, $flagged, $attach, $labels, $raw)`
@@ -990,7 +1184,7 @@ export async function dbGetEmails(folder = 'INBOX', limit = 50, offset = 0) {
 
 export async function dbSaveEvents(events) {
   if (isWeb || !_db || !events?.length) return;
-  await _db.withTransactionAsync(async () => {
+  await _runTx('dbSaveEvents', async () => {
     const stmt = await _db.prepareAsync(
       `INSERT OR REPLACE INTO calendar_events (id, title, description, start_time, end_time, location, all_day, color, raw_json)
        VALUES ($id, $title, $desc, $start, $end, $loc, $allDay, $color, $raw)`
@@ -1027,7 +1221,7 @@ export async function dbGetEvents(startDate, endDate) {
 
 export async function dbSaveFiles(files) {
   if (isWeb || !_db || !files?.length) return;
-  await _db.withTransactionAsync(async () => {
+  await _runTx('dbSaveFiles', async () => {
     const stmt = await _db.prepareAsync(
       `INSERT OR REPLACE INTO files (id, name, path, parent_id, size, mime_type, is_folder, is_starred, is_trashed, thumbnail_url, cdn_url, created_at, updated_at, raw_json)
        VALUES ($id, $name, $path, $parent, $size, $mime, $isFolder, $starred, $trashed, $thumb, $cdn, $created, $updated, $raw)`
@@ -1183,7 +1377,7 @@ export async function dbSearchMessages(query, limit = 50, conversationId = null)
 
 export async function dbClearAll() {
   if (isWeb || !_db) return;
-  await _db.execAsync(`
+  await _runTx('dbClearAll', async (db) => { await db.execAsync(`
     DELETE FROM messages;
     DELETE FROM conversations;
     DELETE FROM contacts;
@@ -1193,7 +1387,7 @@ export async function dbClearAll() {
     DELETE FROM settings;
     DELETE FROM sync_state;
     DELETE FROM pending_messages;
-  `);
+  `); });
 }
 
 // Retention: delete messages older than `maxAgeDays` (default 90) that have

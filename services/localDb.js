@@ -374,6 +374,31 @@ async function _doInit() {
   }
 }
 
+// [2026-10-06] Serialize this module's own transactions. Same hazard fixed in
+// db.js (_runTx): expo's withTransactionAsync is a bare BEGIN/COMMIT on one
+// connection — two overlapping callers → "cannot start a transaction within a
+// transaction" + a ROLLBACK that aborts BOTH. BEGIN IMMEDIATE + the busy_timeout
+// above make us wait for db.js's write lock instead of throwing SQLITE_BUSY.
+let _txTail = Promise.resolve();
+function _tx(task) {
+  const run = _txTail.then(async () => {
+    const h = db;
+    if (!h) throw new Error('localDb not initialized');
+    await h.execAsync('BEGIN IMMEDIATE');
+    try { const r = await task(); await h.execAsync('COMMIT'); return r; }
+    catch (e) { try { await h.execAsync('ROLLBACK'); } catch {} throw e; }
+  });
+  _txTail = run.catch(() => {});
+  return run;
+}
+
+/** Close + drop this module's handle so db.js can rebuild the shared file. Reopens lazily. */
+export async function resetLocalDbHandle() {
+  const h = db;
+  db = null; _initialized = false; _initPromise = null;
+  try { await h?.closeAsync?.(); } catch {}
+}
+
 async function _ensureDb() {
   if (db) return;
   if (_initPromise) {
@@ -404,6 +429,7 @@ async function _createTables() {
   // `sync_state` creations because those are localDb-exclusive.
   await db.execAsync(`
     PRAGMA journal_mode = WAL;
+    PRAGMA busy_timeout = 5000;
 
     CREATE TABLE IF NOT EXISTS contacts (
       id INTEGER PRIMARY KEY,
@@ -805,7 +831,7 @@ export async function saveMessages(conversationId, messages) {
     }
   } catch (e) {
     console.error('[localDb] saveMessages:', e?.message);
-    try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'localDb_saveMessages', message: `conv=${conversationId} n=${messages?.length} ${e?.message}`, stack: e?.stack }); } catch {}
+    try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'localDb_saveMessages', message: `conv=${conversationId} n=${messages?.length} ${require('./db').sqliteErrMsg(e)}`, stack: e?.stack }); } catch {}
   }
 }
 
@@ -852,7 +878,7 @@ export async function saveMessage(msg) {
     }
   } catch (e) {
     console.error('[localDb] saveMessage:', e?.message);
-    try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'localDb_saveMessage', message: `id=${msg?.id} ctid=${msg?.client_temp_id || msg?.client_message_id} ${e?.message}`, stack: e?.stack }); } catch {}
+    try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'localDb_saveMessage', message: `id=${msg?.id} ctid=${msg?.client_temp_id || msg?.client_message_id} ${require('./db').sqliteErrMsg(e)}`, stack: e?.stack }); } catch {}
   }
 }
 
@@ -909,7 +935,7 @@ export async function saveLocalMessage(msg, pendingState = 'pending') {
     };
   } catch (e) {
     console.error('[localDb] saveLocalMessage:', e?.message);
-    try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'localDb_saveLocalMessage', message: `id=${msg?.id} ${e?.message}`, stack: e?.stack }); } catch {}
+    try { require('./crashReporter').reportCrash?.({ type: 'persistence_error', context: 'localDb_saveLocalMessage', message: `id=${msg?.id} ${require('./db').sqliteErrMsg(e)}`, stack: e?.stack }); } catch {}
     return null;
   }
 }
@@ -1018,7 +1044,7 @@ export async function saveContacts(contacts) {
   if (Platform.OS === 'web' || !contacts?.length) return;
   try {
     await _ensureDb();
-    await db.withTransactionAsync(async () => {
+    await _tx(async () => {
       for (const c of contacts) {
         await db.runAsync(
           `INSERT OR REPLACE INTO contacts (id, name, email, phone, avatar_url, updated_at)
@@ -1059,7 +1085,7 @@ export async function saveEmails(folder, emails) {
   if (Platform.OS === 'web' || !emails?.length) return;
   try {
     await _ensureDb();
-    await db.withTransactionAsync(async () => {
+    await _tx(async () => {
       for (const e of emails) {
         const uid = e.uid || e.id;
         if (!uid) continue;
@@ -1111,7 +1137,7 @@ export async function saveFeedPosts(posts) {
   if (Platform.OS === 'web' || !posts?.length) return;
   try {
     await _ensureDb();
-    await db.withTransactionAsync(async () => {
+    await _tx(async () => {
       for (const p of posts) {
         if (!p.id) continue;
         await db.runAsync(
@@ -1350,7 +1376,7 @@ export async function saveCalendarEvents(events) {
   if (Platform.OS === 'web' || !events?.length) return;
   try {
     await _ensureDb();
-    await db.withTransactionAsync(async () => {
+    await _tx(async () => {
       for (const ev of events) {
         if (!ev.id) continue;
         await db.runAsync(
@@ -1397,7 +1423,7 @@ export async function saveDriveFiles(files) {
   if (Platform.OS === 'web' || !files?.length) return;
   try {
     await _ensureDb();
-    await db.withTransactionAsync(async () => {
+    await _tx(async () => {
       for (const f of files) {
         if (!f.id) continue;
         await db.runAsync(
@@ -1435,7 +1461,7 @@ export async function saveDocuments(docs) {
   if (Platform.OS === 'web' || !docs?.length) return;
   try {
     await _ensureDb();
-    await db.withTransactionAsync(async () => {
+    await _tx(async () => {
       for (const d of docs) {
         if (!d.id) continue;
         await db.runAsync(
@@ -1472,7 +1498,7 @@ export async function saveNotes(notes) {
   if (Platform.OS === 'web' || !notes?.length) return;
   try {
     await _ensureDb();
-    await db.withTransactionAsync(async () => {
+    await _tx(async () => {
       for (const n of notes) {
         if (!n.id) continue;
         await db.runAsync(
@@ -1508,7 +1534,7 @@ export async function saveNotifications(notifs) {
   if (Platform.OS === 'web' || !notifs?.length) return;
   try {
     await _ensureDb();
-    await db.withTransactionAsync(async () => {
+    await _tx(async () => {
       for (const n of notifs) {
         if (!n.id) continue;
         await db.runAsync(
@@ -1562,7 +1588,7 @@ export async function saveMeetingRooms(rooms) {
   if (Platform.OS === 'web' || !rooms?.length) return;
   try {
     await _ensureDb();
-    await db.withTransactionAsync(async () => {
+    await _tx(async () => {
       for (const r of rooms) {
         if (!r.id) continue;
         await db.runAsync(
@@ -1598,7 +1624,7 @@ export async function saveUserProfiles(profiles) {
   if (Platform.OS === 'web' || !profiles?.length) return;
   try {
     await _ensureDb();
-    await db.withTransactionAsync(async () => {
+    await _tx(async () => {
       for (const p of profiles) {
         if (!p.email) continue;
         await db.runAsync(

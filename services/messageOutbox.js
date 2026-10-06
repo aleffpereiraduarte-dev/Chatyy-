@@ -158,6 +158,27 @@ let _db = null;
 let _dbReady = null;
 let _SQLite = null;
 
+// [2026-10-06] Serialized transaction (see db.js _runTx for the nested-BEGIN
+// root cause). Two concurrent enqueue() calls used to nest BEGIN on this one
+// connection → both rows lost (ghost message).
+let _txTail = Promise.resolve();
+function _tx(h, task) {
+  const run = _txTail.then(async () => {
+    await h.execAsync('BEGIN IMMEDIATE');
+    try { const r = await task(); await h.execAsync('COMMIT'); return r; }
+    catch (e) { try { await h.execAsync('ROLLBACK'); } catch {} throw e; }
+  });
+  _txTail = run.catch(() => {});
+  return run;
+}
+
+/** Close + drop this module's handle so db.js can rebuild the shared file. Reopens lazily. */
+export async function resetOutboxDbHandle() {
+  const h = _db;
+  _db = null; _dbReady = null;
+  try { await h?.closeAsync?.(); } catch {}
+}
+
 async function _ensureDb() {
   if (Platform.OS === 'web') return null;
   if (_db) return _db;
@@ -178,6 +199,7 @@ async function _ensureDb() {
       }
       if (!_db) return null;
       // Schema. NOT NULL guards prevent garbage rows from breaking the worker.
+      try { await _db.execAsync('PRAGMA busy_timeout = 5000;'); } catch {}
       await _db.execAsync(`
         CREATE TABLE IF NOT EXISTS outbox (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -257,7 +279,7 @@ export async function enqueue(payload) {
     // through to returning the existing row.
     let result = null;
     if (typeof db.withTransactionAsync === 'function') {
-      await db.withTransactionAsync(async () => {
+      await _tx(db, async () => {
         const existing = await db.getFirstAsync(
           'SELECT id, seq, state FROM outbox WHERE client_message_id = ?',
           cmi

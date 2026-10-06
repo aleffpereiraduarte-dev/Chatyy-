@@ -36,7 +36,7 @@ import {
   dbSaveConversations, dbGetConversations,
   dbSavePending, dbGetPending, dbRemovePending,
   dbPruneOldMessages, dbVacuum,
-  isDbReady, waitForDb,
+  isDbReady, waitForDb, sqliteErrMsg,
 } from './db';
 
 const isNative = Platform.OS !== 'web';
@@ -187,7 +187,7 @@ export async function cacheMessages(conversationId, messages) {
       try { await dbSaveMessages(conversationId, filtered); }
       catch (e) {
         console.error('[chatCache] dbSaveMessages error:', e?.message);
-        try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbSaveMessages', message: e?.message, stack: e?.stack }); } catch {}
+        try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbSaveMessages', message: sqliteErrMsg(e), stack: e?.stack }); } catch {}
       }
     } else {
       console.warn('[chatCache] DB not ready after 1.5s, using MMKV fallback only');
@@ -226,7 +226,7 @@ export async function cacheSingleMessage(conversationId, msg) {
         await dbSaveMessages(conversationId, [msg]);
       } catch (e) {
         console.error('[cacheSingleMessage] dbSaveMessages FAILED for msg', msg.id, ':', e?.message || e);
-        try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'cacheSingleMessage', message: `id=${msg?.id} ${e?.message}`, stack: e?.stack }); } catch {}
+        try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'cacheSingleMessage', message: `id=${msg?.id} ${sqliteErrMsg(e)}`, stack: e?.stack }); } catch {}
       }
     } else {
       console.warn('[cacheSingleMessage] DB not ready — only MMKV will have msg', msg.id);
@@ -311,7 +311,7 @@ export async function getCachedMessages(conversationId, limit = 50, beforeId = n
         const msgs = await dbGetMessages(conversationId, limit, beforeId);
         if (msgs.length > 0) return msgs;
       } catch (e) {
-        try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbGetMessages', message: `conv=${conversationId} ${e?.message}`, stack: e?.stack }); } catch {}
+        try { require('./crashReporter').reportCrash?.({ type: 'sqlite_error', context: 'dbGetMessages', message: `conv=${conversationId} ${sqliteErrMsg(e)}`, stack: e?.stack }); } catch {}
       }
     }
   }
@@ -587,9 +587,11 @@ export async function clearConversationMessages(conversationId) {
   try { await clearPendingMessages(cid); } catch {}
   if (Platform.OS === 'web') {
     try {
-      const { webSaveMessagesForConversation } = require('./localDb');
-      if (typeof webSaveMessagesForConversation === 'function') {
-        await webSaveMessagesForConversation(cid, []);
+      // [2026-10-06] localDb nunca exportou webSaveMessagesForConversation
+      // (o typeof virava no-op → limpar conversa no web não limpava o IndexedDB).
+      const { webSaveMessages } = require('./localDb');
+      if (typeof webSaveMessages === 'function') {
+        await webSaveMessages(cid, []);
       }
     } catch {}
   }
