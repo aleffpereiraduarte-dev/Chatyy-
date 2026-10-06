@@ -154,7 +154,7 @@ const SAMPLE_HANDLER_SWIFT = `//
 //
 
 import ReplayKit
-import LiveKit
+import LiveKitClient
 
 class SampleHandler: LKSampleHandler {
     override var enableLogging: Bool { true }
