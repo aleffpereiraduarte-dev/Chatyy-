@@ -163,12 +163,18 @@ export function BiometricProvider({ children }) {
     const task = InteractionManager.runAfterInteractions(() => {
       (async () => {
         try {
-          const hasHw = await LocalAuthentication.hasHardwareAsync();
-          const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+          // [perf 2026-10-06] The 4 probes are independent — run them in
+          // parallel (was 4 serial bridge round-trips, keychain being the
+          // slowest). Same values, same handling below.
+          const [hasHw, isEnrolled, stored, ivalPref] = await Promise.all([
+            LocalAuthentication.hasHardwareAsync().catch(() => false),
+            LocalAuthentication.isEnrolledAsync().catch(() => false),
+            getStoredPref(BIOMETRIC_PREF_KEY).catch(() => null),
+            getStoredPref(AUTO_LOCK_INTERVAL_KEY).catch(() => null),
+          ]);
           setBiometricAvailable(hasHw && isEnrolled);
 
           // Load saved preference
-          const stored = await getStoredPref(BIOMETRIC_PREF_KEY);
           if (stored === 'true' && hasHw && isEnrolled) {
             setBiometricEnabled(true);
           } else if (_coldLock) {
@@ -181,7 +187,7 @@ export function BiometricProvider({ children }) {
           // Load saved auto-lock interval pref. Accept both numeric strings
           // and the literal 'never'.
           try {
-            const ival = await getStoredPref(AUTO_LOCK_INTERVAL_KEY);
+            const ival = ivalPref;
             if (ival === 'never') {
               setAutoLockIntervalState('never');
             } else if (ival != null && /^\d+$/.test(String(ival))) {

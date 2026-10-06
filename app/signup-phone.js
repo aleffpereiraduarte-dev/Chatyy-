@@ -22,7 +22,7 @@ import * as Localization from 'expo-localization';
 import * as ImagePicker from 'expo-image-picker';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path, Rect, Circle as SvgCircle, Line } from 'react-native-svg';
-import { useTheme } from '../context/ThemeContext';
+import { useAuthTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
@@ -32,6 +32,7 @@ import useIsMounted from '../hooks/useIsMounted';
 import { COUNTRIES, formatPhone, toE164, E164_RE } from '../constants/countries';
 import { IconArrowLeft, IconArrowRight, IconCheck, IconCheckCircle, IconUser, IconAtSign, IconAlertTriangle, IconPhone, IconShield, IconSparkles, IconZap, IconCamera, IconChevronRight, IconLock, IconEye, IconEyeOff, IconX, IconMessageCircle, IconSmartphone, IconUsers } from '../components/Icons';
 import SignupIntro from '../components/SignupIntro';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import RestoreBackupPrompt from '../components/RestoreBackupPrompt';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -48,7 +49,7 @@ export default function SignupPhone() {
   // so user goes straight from "this number isn't on Chatyy" to creating an
   // account with the same digits already typed (no double-entry friction).
   const params = useLocalSearchParams();
-  const { colors, isDark } = useTheme();
+  const { colors, isDark } = useAuthTheme();
   const { t } = useLanguage();
   const { loginWithToken } = useAuth();
   // Reactive window width for the responsive handle-step layout.
@@ -68,12 +69,33 @@ export default function SignupPhone() {
   //      a fallback path that didn't hit (1) — start at the phone input
   //      (skip the carousel, they already dismissed it on /login).
   //   3. otherwise → welcome carousel (first-time signup direct entry).
+  //   4. [2026-10-06 UX] the intro carousel was already dismissed on this
+  //      device (`chatyy_intro_seen`, written by /login's SignupIntro) →
+  //      start at the phone input. Before, tapping "Criar conta" on /login
+  //      replayed the whole 5-slide carousel the user had just skipped.
+  //      Web reads localStorage synchronously (no flash); native falls back
+  //      to the async check below.
+  const _introSeenSync = (() => {
+    try {
+      if (Platform.OS === 'web' && typeof localStorage !== 'undefined') return !!localStorage.getItem('chatyy_intro_seen');
+    } catch {}
+    return false;
+  })();
   const _initialStep = (params?.step === 'name' && params?.verify_token)
     ? 'name'
-    : (params?.fromLogin === '1' || params?.phone)
+    : (params?.fromLogin === '1' || params?.phone || _introSeenSync)
       ? 'phone'
       : 'welcome';
   const [step, setStep] = useState(_initialStep);
+  useEffect(() => {
+    if (_initialStep !== 'welcome' || Platform.OS === 'web') return;
+    let cancelled = false;
+    AsyncStorage.getItem('chatyy_intro_seen').then((seen) => {
+      if (!cancelled && seen) setStep((cur) => (cur === 'welcome' ? 'phone' : cur));
+    }).catch(() => {});
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // Safe-area insets to keep the header off the status bar / notch on
   // Android (Pixel center punch-hole, Samsung notch, etc) and the
   // Dynamic Island on iOS. Replaces the static 56/24 paddingTop values
@@ -749,7 +771,11 @@ export default function SignupPhone() {
   // (no KeyboardAvoiding/back-bar) so the 5 slides take the full screen,
   // mimicking the telegram-clean mockup. CTA "Começar" advances to phone step.
   if (step === 'welcome') {
-    return <SignupIntro onFinish={() => goStep('phone')} />;
+    return <SignupIntro onFinish={() => {
+      // Persist like /login does so the carousel never replays on this device.
+      try { AsyncStorage.setItem('chatyy_intro_seen', '1').catch(() => {}); } catch {}
+      goStep('phone');
+    }} />;
   }
 
   return (
@@ -877,9 +903,9 @@ export default function SignupPhone() {
                         icons since they read well at this size. */}
                     {step === 'phone'  && (
                       <Svg viewBox="0 0 24 24" width={44} height={44} fill="none">
-                        <Rect x="7" y="2.5" width="10" height="19" rx="2.5" stroke="#fff" strokeWidth={2} fill="none" />
-                        <Line x1="10.5" y1="5.5" x2="13.5" y2="5.5" stroke="#fff" strokeWidth={1.5} strokeLinecap="round" />
-                        <SvgCircle cx="12" cy="18.5" r="0.9" fill="#fff" />
+                        <Rect x="7" y="2.5" width="10" height="19" rx="2.5" stroke={colors.onPrimary} strokeWidth={2} fill="none" />
+                        <Line x1="10.5" y1="5.5" x2="13.5" y2="5.5" stroke={colors.onPrimary} strokeWidth={1.5} strokeLinecap="round" />
+                        <SvgCircle cx="12" cy="18.5" r="0.9" fill={colors.onPrimary} />
                       </Svg>
                     )}
                     {/* OTP step: swap generic shield for the new Chatyy brand
@@ -894,8 +920,8 @@ export default function SignupPhone() {
                         resizeMode="cover"
                       />
                     )}
-                    {step === 'name'   && <IconUser size={42} color="#fff" />}
-                    {step === 'handle' && <IconAtSign size={42} color="#fff" />}
+                    {step === 'name'   && <IconUser size={42} color={colors.onPrimary} />}
+                    {step === 'handle' && <IconAtSign size={42} color={colors.onPrimary} />}
                   </Animated.View>
                 </View>
               </Animated.View>
@@ -1668,8 +1694,8 @@ export default function SignupPhone() {
                       activeOpacity={0.85}
                       style={[styles.cta, { alignSelf: 'stretch', marginTop: 24, backgroundColor: colors.primary }]}
                     >
-                      <Text style={styles.ctaText}>{t('onb.doneStart')}</Text>
-                      <IconArrowRight size={18} color="#fff" style={{ marginLeft: 8 }} />
+                      <Text style={[styles.ctaText, { color: colors.onPrimary }]}>{t('onb.doneStart')}</Text>
+                      <IconArrowRight size={18} color={colors.onPrimary} style={{ marginLeft: 8 }} />
                     </TouchableOpacity>
                   )}
                 </View>
@@ -1750,8 +1776,8 @@ export default function SignupPhone() {
           >
             {busy ? (
               <>
-                <ActivityIndicator color="#fff" />
-                <Text style={[styles.ctaText, { marginLeft: 10 }]}>
+                <ActivityIndicator color={colors.onPrimary} />
+                <Text style={[styles.ctaText, { marginLeft: 10, color: colors.onPrimary }]}>
                   {/* Per-step loading copy — "Enviando..." for the OTP send,
                       "Verificando..." for code check, "Criando conta..." for
                       final signup. Tells the user the spinner means *what*,
@@ -1764,11 +1790,11 @@ export default function SignupPhone() {
               </>
             ) : (
               <>
-                <Text style={styles.ctaText}>
+                <Text style={[styles.ctaText, { color: colors.onPrimary }]}>
                   {step === 'handle' ? (t('signupPhone.finish') || 'Criar conta')
                   : (t('onb.continue') || 'Continuar')}
                 </Text>
-                {step !== 'handle' && <IconArrowRight size={18} color="#fff" style={{ marginLeft: 8 }} />}
+                {step !== 'handle' && <IconArrowRight size={18} color={colors.onPrimary} style={{ marginLeft: 8 }} />}
               </>
             )}
           </TouchableOpacity>

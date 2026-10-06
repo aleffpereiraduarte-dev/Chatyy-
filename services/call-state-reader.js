@@ -127,6 +127,8 @@ export function useCurrentCall() {
   // Track whether the component is still mounted so we don't call
   // setState after unmount (React 18 strict mode logs a warning).
   const mountedRef = useRef(true);
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -134,6 +136,7 @@ export function useCurrentCall() {
     const read = () => {
       if (!mountedRef.current) return;
       const next = getCurrentCallSnapshotSync();
+      snapshotRef.current = next;
       // Shallow-equality skip — avoids re-renders when nothing material
       // changed between polls (the common case: same call, same mute/
       // speaker, durationSec ticked up by 1).
@@ -161,8 +164,20 @@ export function useCurrentCall() {
     // race where the call started between useState and useEffect).
     read();
 
-    // 1s poll for the duration counter.
-    const interval = setInterval(read, 1000);
+    // [perf 2026-10-06] 1s poll ONLY while a call exists (duration counter);
+    // idle → 3s. Each tick is a synchronous native bridge call, and CallStatusBar
+    // mounts this at the root for the whole session — 99% of ticks were no-ops.
+    // Transitions still land instantly via onCallAnswered/onCallEnded below.
+    let interval = null;
+    let intervalMs = 0;
+    const arm = () => {
+      const want = snapshotRef.current ? 1000 : 3000;
+      if (want === intervalMs && interval) return;
+      if (interval) clearInterval(interval);
+      intervalMs = want;
+      interval = setInterval(() => { read(); arm(); }, want);
+    };
+    arm();
 
     // Event-driven refresh — bypass the 1s lag on transitions.
     let unsubAnswered = null;
@@ -185,7 +200,7 @@ export function useCurrentCall() {
 
     return () => {
       mountedRef.current = false;
-      clearInterval(interval);
+      if (interval) clearInterval(interval);
       try { unsubAnswered && unsubAnswered.remove?.(); } catch {}
       try { unsubEnded && unsubEnded.remove?.(); } catch {}
     };

@@ -8,7 +8,7 @@ import {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth, isChildAccount } from '../context/AuthContext';
-import { useTheme } from '../context/ThemeContext';
+import { useAuthTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import {
   IconSun, IconMoon, IconAlertTriangle,
@@ -59,7 +59,7 @@ export default function LoginScreen() {
   const [forcePwChange, setForcePwChange] = useState(false);
   const pendingGoRef = useRef(null);
   const { login, completeLoginAfterChallenge, loginWithToken } = useAuth();
-  const { colors, isDark, toggle } = useTheme();
+  const { colors, isDark, toggle } = useAuthTheme();
   const insets = useSafeAreaInsets();
   const { t, language, changeLanguage } = useLanguage();
   const [showLangModal, setShowLangModal] = useState(false);
@@ -1689,7 +1689,7 @@ export default function LoginScreen() {
             </View>
           </View>
         </TouchableOpacity>
-        <TouchableOpacity onPress={toggle} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={isDark ? 'Switch to light mode' : 'Switch to dark mode'}>
+        <TouchableOpacity onPress={toggle} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={isDark ? t('a11y.switchToLight') : t('a11y.switchToDark')}>
           <View style={[s.topBtn, { backgroundColor: 'transparent' }]}>
             {isDark ? <IconSun size={16} color={colors.warning} /> : <IconMoon size={16} color={colors.textSecondary} />}
           </View>
@@ -2183,7 +2183,8 @@ export default function LoginScreen() {
                               <TouchableOpacity
                                 onPress={() => { safeHaptic(() => Haptics.selectionAsync()); router.push('/signup-phone'); }}
                                 activeOpacity={0.6}
-                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}
+                                style={{ minHeight: 44, justifyContent: 'center' }}
                                 accessibilityRole="button"
                               >
                                 <Text style={{ fontSize: 14, fontWeight: '700', color: colors.primary }}>{t('login.createAccount')}</Text>
@@ -2364,10 +2365,10 @@ export default function LoginScreen() {
                             {phoneVerifying ? (
                               <View style={s.loadingBtnContent}>
                                 <DotLoader />
-                                <Text style={[s.primaryBtnText, { marginLeft: 10 }]}>{t('login.phoneVerify')}</Text>
+                                <Text style={[s.primaryBtnText, { marginLeft: 10, color: colors.onPrimary }]}>{t('login.phoneVerify')}</Text>
                               </View>
                             ) : (
-                              <Text style={s.primaryBtnText}>{phoneRequiresLock ? (t('login.phoneLockPinSubmit') || 'Confirmar PIN') : t('login.phoneVerify')}</Text>
+                              <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{phoneRequiresLock ? (t('login.phoneLockPinSubmit') || 'Confirmar PIN') : t('login.phoneVerify')}</Text>
                             )}
                           </TouchableOpacity>
 
@@ -2624,7 +2625,7 @@ export default function LoginScreen() {
                         style={s.forgotLink}
                         activeOpacity={0.6}
                         onPress={() => setShowHelp(true)}
-                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}
                       >
                         <Text style={[s.linkText, { color: colors.primary }]}>{t('login.forgotEmail')}</Text>
                       </TouchableOpacity>
@@ -2649,7 +2650,7 @@ export default function LoginScreen() {
                           onPressOut={onCtaPressOut}
                           accessibilityRole="button"
                         >
-                          <Text style={s.igPrimaryBtnText}>{t('login.next')}</Text>
+                          <Text style={[s.igPrimaryBtnText, { color: colors.onPrimary }]}>{t('login.next')}</Text>
                         </Pressable>
                       </Animated.View>
                       <TouchableOpacity
@@ -2802,7 +2803,7 @@ export default function LoginScreen() {
                           onPress={() => setShowPassword(!showPassword)}
                           style={s.igEyeBtn}
                           activeOpacity={0.6}
-                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                          hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}
                           accessibilityRole="button"
                           accessibilityLabel={showPassword ? t('login.hidePassword') : t('login.showPassword')}
                         >
@@ -2816,7 +2817,7 @@ export default function LoginScreen() {
                         <Text style={{ color: colors.error, fontSize: 13, marginTop: 6 }}>{error}</Text>
                       )}
 
-                      <TouchableOpacity style={s.forgotLink} activeOpacity={0.6} onPress={() => router.push('/forgot')} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                      <TouchableOpacity style={s.forgotLink} activeOpacity={0.6} onPress={() => router.push('/forgot')} hitSlop={{ top: 14, bottom: 14, left: 12, right: 12 }}>
                         <Text style={[s.linkText, { color: colors.primary }]}>{t('login.forgotPassword')}</Text>
                       </TouchableOpacity>
 
@@ -2842,10 +2843,10 @@ export default function LoginScreen() {
                           {loading ? (
                             <View style={s.loadingBtnContent}>
                               <DotLoader />
-                              <Text style={[s.igPrimaryBtnText, { marginLeft: 10 }]}>{t('login.enter')}</Text>
+                              <Text style={[s.igPrimaryBtnText, { marginLeft: 10, color: colors.onPrimary }]}>{t('login.enter')}</Text>
                             </View>
                           ) : (
-                            <Text style={s.igPrimaryBtnText}>{t('login.enter')}</Text>
+                            <Text style={[s.igPrimaryBtnText, { color: colors.onPrimary }]}>{t('login.enter')}</Text>
                           )}
                         </Pressable>
                       </Animated.View>
@@ -2909,15 +2910,15 @@ export default function LoginScreen() {
               {isDesktop && <View style={s.footer}>
                 {/* (intentionally no Scan QR Code on initial login) */}
                 <View style={s.footerLinks}>
-                  <TouchableOpacity activeOpacity={0.6} onPress={() => setShowHelp(true)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
+                  <TouchableOpacity activeOpacity={0.6} onPress={() => setShowHelp(true)} hitSlop={{ top: 14, bottom: 14, left: 8, right: 8 }}>
                     <Text style={[s.footerItem, { color: colors.textSecondary }]}>{t('login.help')}</Text>
                   </TouchableOpacity>
                   <Text style={[s.footerDot, { color: colors.authInputBorder }]}> {'\u00B7'} </Text>
-                  <TouchableOpacity activeOpacity={0.6} onPress={() => setShowPrivacy(true)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
+                  <TouchableOpacity activeOpacity={0.6} onPress={() => setShowPrivacy(true)} hitSlop={{ top: 14, bottom: 14, left: 8, right: 8 }}>
                     <Text style={[s.footerItem, { color: colors.textSecondary }]}>{t('login.privacy')}</Text>
                   </TouchableOpacity>
                   <Text style={[s.footerDot, { color: colors.authInputBorder }]}> {'\u00B7'} </Text>
-                  <TouchableOpacity activeOpacity={0.6} onPress={() => setShowTerms(true)} hitSlop={{ top: 10, bottom: 10, left: 6, right: 6 }}>
+                  <TouchableOpacity activeOpacity={0.6} onPress={() => setShowTerms(true)} hitSlop={{ top: 14, bottom: 14, left: 8, right: 8 }}>
                     <Text style={[s.footerItem, { color: colors.textSecondary }]}>{t('login.terms')}</Text>
                   </TouchableOpacity>
                 </View>
@@ -3170,7 +3171,7 @@ export default function LoginScreen() {
                   {qrScanLoading ? (
                     <ActivityIndicator color={colors.onPrimary} size="small" />
                   ) : (
-                    <Text style={s.primaryBtnText}>{t('login.qrScanConfirm')}</Text>
+                    <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('login.qrScanConfirm')}</Text>
                   )}
                 </TouchableOpacity>
               </View>
@@ -3260,13 +3261,14 @@ const s = StyleSheet.create({
     position: 'absolute', top: Platform.OS === 'ios' ? 54 : 16, right: 16, zIndex: 10,
     flexDirection: 'row', alignItems: 'center', gap: 4,
   },
+  // [2026-10-06 UX] 44pt minimum tap target (Apple HIG / WCAG 2.5.8) — were 36.
   topBtn: {
-    width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center',
+    width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
   langBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 4,
-    height: 36, borderRadius: 18, paddingHorizontal: 10,
+    height: 44, borderRadius: 22, paddingHorizontal: 12,
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
   langBtnText: { fontSize: 12, fontWeight: '600' },
@@ -3405,7 +3407,7 @@ const s = StyleSheet.create({
   checkmark: { color: '#fff', fontSize: 11, fontWeight: '700', marginTop: -1 },
 
   /* Links */
-  forgotLink: { alignSelf: 'flex-start', marginTop: 12, marginBottom: 28 },
+  forgotLink: { alignSelf: 'flex-start', marginTop: 12, marginBottom: 28, minHeight: 44, justifyContent: 'center' },
   linkText: { fontSize: 14, fontWeight: '600' },
 
   /* Buttons — Google style */
@@ -3465,7 +3467,7 @@ const s = StyleSheet.create({
   /* Ghost text-link below the primary CTA. */
   igGhostBtn: {
     width: '100%', alignItems: 'center', justifyContent: 'center',
-    marginTop: 12, paddingVertical: 6,
+    marginTop: 12, paddingVertical: 6, minHeight: 44,
     ...Platform.select({ web: { cursor: 'pointer' }, default: {} }),
   },
   igGhostBtnLabel: { fontSize: 13, fontWeight: '600' },

@@ -256,17 +256,35 @@ function initGlobalErrorHandlers() {
   // Global crash reporter — catches fatal errors before app closes
   if (typeof ErrorUtils !== 'undefined') {
     const _prev = ErrorUtils.getGlobalHandler();
+    // [2026-10-06] Dedupe: a render loop re-throwing the same error used to
+    // POST once per frame. Same (message + top frame) → one line per 60s.
+    const _recentSig = Object.create(null);
     ErrorUtils.setGlobalHandler((error, isFatal) => {
       try {
         const msg = error?.message || String(error);
         const stack = error?.stack || '';
+        const sig = `${String(msg).slice(0, 80)}|${String(stack).split('\n').slice(1, 2).join('').slice(0, 60)}`;
+        const now = Date.now();
+        if (_recentSig[sig] && now - _recentSig[sig] < 60000) {
+          if (_prev) _prev(error, isFatal);
+          return;
+        }
+        _recentSig[sig] = now;
+        // Context (app version, OTA id, OS, device, heap, breadcrumbs) comes
+        // from the crash reporter so both sinks (crashes/*.log here and
+        // push_diag per-device) describe the same build.
+        let ctx = {};
+        try { ctx = require('../services/crashReporter').getCrashContext?.() || {}; } catch {}
         // Send crash report to server (telemetry only)
         fetch(`${BASE_URL}/api/email.php?action=crash_report`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            message: msg,
+            message: `${msg}`.slice(0, 400),
             stack: stack.substring(0, 2000),
+            // `component` is the third column in crashes/*.log — carry the
+            // context there so a grep on the log shows ver/ota/os per crash.
+            component: `ctx: ${Object.keys(ctx).map(k => `${k}=${ctx[k]}`).join(' ')}`,
             fatal: isFatal,
             platform: Platform.OS,
             timestamp: new Date().toISOString(),
@@ -298,7 +316,7 @@ import { useReducedMotion } from '../components/reducedMotion'; // [2026-10-04] 
 import ChildRestrictionGuard from '../components/ChildRestrictionGuard';
 import { MailProvider } from '../context/MailContext';
 import { ThemeProvider } from '../context/ThemeContext';
-import { LanguageProvider } from '../context/LanguageContext';
+import { LanguageProvider, useLanguage } from '../context/LanguageContext';
 import { CurrencyProvider } from '../context/CurrencyContext';
 import { BiometricProvider } from '../context/BiometricContext';
 import { PhotosProvider } from '../context/PhotosContext';
@@ -1414,6 +1432,26 @@ function WhatsNewGate() {
 // a payload to the main app (including while the app is already running in
 // the background). WhatsApp parity — without this hook, only the first-launch
 // share works and subsequent shares land on the empty /share-receive screen.
+// [2026-10-06 UX] Web: keep <html lang> in sync with the app locale. The
+// static shell ships `lang="en"` while the UI renders pt-BR → screen readers
+// pick the wrong voice, browsers offer to "translate" a page already in the
+// user's language and hyphenation/quotes follow English rules. Must live
+// INSIDE LanguageProvider (reads useLanguage); renders nothing.
+function HtmlLangSync() {
+  const { language } = useLanguage();
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    try {
+      const code = String(language || 'pt-BR');
+      document.documentElement.setAttribute('lang', code);
+      // RTL locales flip the document direction; everything else is LTR.
+      const rtl = /^(ar|he|fa|ur)(-|$)/i.test(code);
+      document.documentElement.setAttribute('dir', rtl ? 'rtl' : 'ltr');
+    } catch {}
+  }, [language]);
+  return null;
+}
+
 function ShareIntentWatcher() {
   const router = useRouter();
   try {
@@ -1577,6 +1615,7 @@ export default function RootLayout() {
                 <ConfirmProvider>
                 <AppInit onNotification={handleNotification} setOtaToast={setOtaToast} />
                 <ShareIntentWatcher />
+                <HtmlLangSync />
                 <OfflineNotice />
                 {otaToast ? (() => {
                   const _Pressable = require('react-native').Pressable;

@@ -772,18 +772,20 @@ class MailWebSocket {
       // Diagnostic beacon so we can figure out WHY the socket keeps dropping
       // (iOS backgrounding, carrier flap, server-initiated close, etc.) without
       // having to reproduce under a debugger. Fire-and-forget, never blocks.
+      // [2026-10-06] Was POSTing {kind,code,reason} to crash_report, whose
+      // server handler only reads message/stack/component → 142 EMPTY lines
+      // in crashes/*.log over 7 days (the single biggest "signature"). Route
+      // through the per-device diag channel instead: it lands under the
+      // device's anon id (correlates with boot/crash beacons), is rate-limited
+      // client+server side, and keeps crashes/*.log for real crashes.
       if (wasAuthenticated) {
         try {
-          const { getAuthToken, apiCall } = require('./api');
+          const { getAuthToken } = require('./api');
           if (getAuthToken?.()) {
-            apiCall('crash_report', {
-              kind: 'ws_close',
-              code: closeCode,
-              reason: closeReason,
-              was_auth: true,
-              reconnect_count: this._reconnectCount,
-              ts: Date.now(),
-            }, 'POST').catch(() => {});
+            require('./crashReporter').reportStep?.(
+              'ws_close',
+              `code=${closeCode} reason=${String(closeReason || '').slice(0, 60)} reconnects=${this._reconnectCount}`,
+            );
           }
         } catch {}
       }

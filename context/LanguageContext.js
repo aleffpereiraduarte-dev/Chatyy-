@@ -92,7 +92,14 @@ function detectLanguage() {
 }
 
 export function LanguageProvider({ children }) {
-  const [language, setLanguage] = useState(DEFAULT_LANGUAGE);
+  // [perf 2026-10-06] Seed with the synchronously detected device locale
+  // (detectLanguage() is sync) instead of DEFAULT_LANGUAGE → the first render
+  // is already in the user's language and the post-AsyncStorage setLanguage
+  // is a no-op for the ~99% without a manual override (saves one full-tree
+  // re-render at boot). Manual choice still wins once read below.
+  const [language, setLanguage] = useState(() => {
+    try { return detectLanguage() || DEFAULT_LANGUAGE; } catch { return DEFAULT_LANGUAGE; }
+  });
   // Bumped quando um idioma lazy termina de carregar → força o t() a recomputar
   // (e os consumidores a re-renderizarem) com as traduções recém-injetadas.
   const [loadedTick, setLoadedTick] = useState(0);

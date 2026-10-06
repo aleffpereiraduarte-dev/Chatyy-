@@ -387,3 +387,30 @@ export function useTheme() {
   if (!ctx) throw new Error('useTheme must be inside ThemeProvider');
   return ctx;
 }
+
+// [2026-10-06 UX] Auth screens (login / forgot / signup-*) sit on `authBg`
+// (#000 in dark). The brand accent `primary` is near-black ink (#111111 in BOTH
+// modes — see ACCENT_PRESETS), so every `colors.primary` text/link/CTA on those
+// screens was black-on-black on web dark mode (wordmark "Chatyy", "Criar
+// conta", "Esqueceu a senha?", "Próximo"...). This hook returns the same theme
+// context but, in dark mode with a near-black accent, remaps the accent family
+// to the `authAccent` tokens (white ink) so the ~170 existing `colors.primary`
+// usages in those files light up without touching the rest of the app.
+const _NEAR_BLACK = /^#(0[0-9a-f]|1[0-9a-f]|2[0-9a-f])(0[0-9a-f]|1[0-9a-f]|2[0-9a-f])(0[0-9a-f]|1[0-9a-f]|2[0-9a-f])$/i;
+export function useAuthTheme() {
+  const ctx = useTheme();
+  const { colors, isDark } = ctx;
+  const authColors = useMemo(() => {
+    if (!isDark || !_NEAR_BLACK.test(String(colors.primary || ''))) return colors;
+    const accent = colors.authAccent || '#ffffff';
+    return {
+      ...colors,
+      primary: accent,
+      primaryDark: colors.authBtnGradientEnd || accent,
+      brandSecondary: accent,
+      onPrimary: colors.authOnAccent || '#111111',
+      textOnPrimary: colors.authOnAccent || '#111111',
+    };
+  }, [colors, isDark]);
+  return useMemo(() => ({ ...ctx, colors: authColors }), [ctx, authColors]);
+}

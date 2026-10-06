@@ -1359,11 +1359,29 @@ export async function flushPendingTokens() {
   const { apiCall } = require('./api');
   const kept = [];
   let flushed = 0;
+  // [2026-10-06] Per-entry backoff. nginx (7d) showed single devices hitting
+  // register_push_token 500 ("Storage unavailable") 54-72×/day: every
+  // foreground + every WS auth_ack re-sent the same doomed entry. Each
+  // failure now stamps the entry; it is skipped until its backoff elapses
+  // (1m → 2m → … capped at 6h) and dropped after FLUSH_MAX_ATTEMPTS. A
+  // fresh token rotation re-enqueues with attempts=0 (see _enqueuePendingTokenSend).
+  const FLUSH_MAX_ATTEMPTS = 40;
+  const FLUSH_BACKOFF_CAP_MS = 6 * 60 * 60 * 1000;
+  const now = Date.now();
   for (const entry of list) {
     const dedupKey = entry.token + '|' + (entry.email || '') + '|' + (entry.token_type || '');
     if (_flushedTokensInSession.has(dedupKey)) {
       flushed++;
       continue;
+    }
+    const attempts = Number(entry.attempts) || 0;
+    if (attempts >= FLUSH_MAX_ATTEMPTS) {
+      _diagPush('flush_pending_drop', `attempts=${attempts} type=${entry.token_type || 'expo'}`);
+      continue;
+    }
+    if (attempts > 0 && entry.lastTry) {
+      const wait = Math.min(FLUSH_BACKOFF_CAP_MS, 60 * 1000 * Math.pow(2, attempts - 1));
+      if (now - Number(entry.lastTry) < wait) { kept.push(entry); continue; }
     }
     try {
       const payload = { token: entry.token, platform: entry.platform || Platform.OS };
@@ -1381,11 +1399,11 @@ export async function flushPendingTokens() {
         // than to silently lose registration forever.
         const msg = String(r?.error || r?.message || '').toLowerCase();
         const isHard = /invalid.?token|malformed|account.?(deleted|not.?found)|forbidden/.test(msg);
-        if (!isHard) kept.push(entry);
+        if (!isHard) kept.push({ ...entry, attempts: attempts + 1, lastTry: now });
       }
     } catch (err) {
       _diagPush('flush_pending_err', err?.message || String(err));
-      kept.push(entry);
+      kept.push({ ...entry, attempts: attempts + 1, lastTry: now });
     }
   }
   _writePendingTokenSends(kept);

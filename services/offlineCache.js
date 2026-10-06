@@ -56,16 +56,29 @@ function _msgHasBody(m) {
 // Purga única — roda no load do módulo. Limpa TODAS as entradas msg_* (inclui
 // msg_index) quando a versão do cache muda, eliminando o envenenamento legado.
 (function _purgePoisonedMsgCacheOnce() {
+  const run = () => {
+    try {
+      const VER_KEY = CACHE_PREFIX + 'msgcache_ver';
+      const CUR = '3'; // bump aqui sempre que precisar forçar nova limpeza
+      if (getString(VER_KEY) === CUR) return;
+      const keys = getAllKeys() || [];
+      for (const k of keys) {
+        if (typeof k === 'string' && k.indexOf(CACHE_PREFIX + 'msg_') === 0) remove(k);
+      }
+      setString(VER_KEY, CUR);
+    } catch {}
+  };
+  // [perf/bug 2026-10-06] On native the mmkv map hydrates asynchronously; running
+  // at import saw an empty map, purged nothing and still stamped the version →
+  // the purge never actually happened. Wait for the cache (no-op on web).
   try {
-    const VER_KEY = CACHE_PREFIX + 'msgcache_ver';
-    const CUR = '3'; // bump aqui sempre que precisar forçar nova limpeza
-    if (getString(VER_KEY) === CUR) return;
-    const keys = getAllKeys() || [];
-    for (const k of keys) {
-      if (typeof k === 'string' && k.indexOf(CACHE_PREFIX + 'msg_') === 0) remove(k);
+    const _mm = require('./mmkv');
+    if (typeof _mm.waitForCacheReady === 'function' && !(typeof _mm.isCacheReady === 'function' && _mm.isCacheReady())) {
+      _mm.waitForCacheReady().then(run).catch(() => {});
+      return;
     }
-    setString(VER_KEY, CUR);
   } catch {}
+  run();
 })();
 
 // ─── Account namespacing ───

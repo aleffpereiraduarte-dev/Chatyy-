@@ -530,6 +530,10 @@ async function clearAllPerAccountCaches() {
       // e2e_*            → e2e_banner_dismissed_*
       // mail_* (non-kept)→ mail_token, mail_active_account, etc.
       // media_*, feed_*, presence_*, typing_*, outbox_*  → various
+      // [2026-10-06 UX] `chatyy_intro_seen` is a DEVICE preference (intro
+      // carousel already shown here), not account data — keep it, otherwise
+      // every logout replays the 5-slide intro on the next "Criar conta".
+      if (k === 'chatyy_intro_seen') return false;
       return (
         k.startsWith('chat_') ||
         k.startsWith('chatyy:') ||
@@ -553,6 +557,7 @@ async function clearAllPerAccountCaches() {
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
         if (!k) continue;
+        if (k === 'chatyy_intro_seen') continue; // device pref — survives logout
         if (
           k.startsWith('chat_') || k.startsWith('chatyy_') || k.startsWith('e2e_') ||
           k.startsWith('media_') || k.startsWith('feed_') || k.startsWith('outbox_')
@@ -739,21 +744,18 @@ export function AuthProvider({ children }) {
       };
 
       try {
-        // Offline fast-path: if NetInfo already knows we're offline (typical
-        // when user opens the app on a plane or in the subway), skip the
-        // 15s checkAuth timeout entirely and hydrate from cache. Without
-        // this the user sat on a blank splash until the fetch aborted.
+        // [perf 2026-10-06] Native: the cache-first hydrate below runs
+        // unconditionally (online OR offline), so awaiting NetInfo.fetch()
+        // first (up to 300ms) only delayed the first paint — index.js gates
+        // routing on `loading`. Hydrate straight away; NetInfo is no longer
+        // on the critical path. Web keeps the navigator.onLine fast-path.
+        if (Platform.OS !== 'web') {
+          if (await hydrateOffline()) return;
+        }
+        // Offline fast-path (web): if the browser already knows we're
+        // offline, skip the 15s checkAuth timeout and hydrate from cache.
         try {
-          if (Platform.OS !== 'web') {
-            const NetInfo = require('@react-native-community/netinfo').default;
-            const netState = await Promise.race([
-              NetInfo.fetch(),
-              new Promise(r => setTimeout(() => r({ isConnected: null }), 300)),
-            ]);
-            if (netState && netState.isConnected === false) {
-              if (await hydrateOffline()) return;
-            }
-          } else if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          if (Platform.OS === 'web' && typeof navigator !== 'undefined' && navigator.onLine === false) {
             if (await hydrateOffline()) return;
           }
         } catch {}
@@ -769,9 +771,7 @@ export function AuthProvider({ children }) {
         // protection is unchanged. Returns false when there's no cached user
         // (fresh install / after logout) → we fall through to the normal
         // blocking checkAuth below, which routes to /login as before.
-        if (Platform.OS !== 'web') {
-          if (await hydrateOffline()) return;
-        }
+        // (native cache-first hydrate already attempted above)
 
         // First try: check if server session is still alive
         const r = await api.checkAuth();

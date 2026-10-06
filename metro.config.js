@@ -42,7 +42,18 @@ const WEB_STUBS = new Set([
   '@shopify/react-native-skia',
 ]);
 
+// [perf 2026-10-06] `expo-symbols` reaches the bundle ONLY through expo-router's
+// NativeTabs (withLayoutContext → NativeTabTrigger → materialIconConverter), which
+// this app never renders. On Android it statically requires the 7 Material
+// Symbols weights from @expo-google-fonts/material-symbols (~6.5MB of TTF assets
+// in every APK / first OTA) plus the expo-symbols JS. Stub it on native; web is
+// untouched. If NativeTabs are ever adopted, delete this block.
+const NATIVE_STUBS = new Set(['expo-symbols']);
+
 config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if ((platform === 'android' || platform === 'ios') && NATIVE_STUBS.has(moduleName)) {
+    return { filePath: require.resolve('./web-stubs/empty-module.js'), type: 'sourceFile' };
+  }
   if (platform === 'web') {
     if (moduleName === 'react-native-gesture-handler') {
       return {

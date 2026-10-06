@@ -1,3 +1,4 @@
+import { InteractionManager } from 'react-native';
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback, useMemo } from 'react';
 
 const PhotosContext = createContext(null);
@@ -25,7 +26,18 @@ export function PhotosProvider({ children }) {
   }, []);
 
   // Load cached values on mount (instant) - photos render from cache immediately
+  // [perf 2026-10-06] Deferred ~2.5s past the first interaction: 3-4 serial
+  // getCached()+JSON.parse (cloud photo list can be large) ran during the
+  // chat cold start, before AuthContext even set the per-user cache prefix.
   useEffect(() => {
+    let cancelled = false;
+    let timer = null;
+    const task = InteractionManager.runAfterInteractions(() => {
+      timer = setTimeout(() => { if (!cancelled) _hydrateFromCache(); }, 2500);
+    });
+    return () => { cancelled = true; if (timer) clearTimeout(timer); try { task?.cancel?.(); } catch {} };
+  }, []);
+  function _hydrateFromCache() {
     import('../services/cache').then(async (c) => {
       const cachedStorage = await c.getCached('drive_storage_info');
       if (cachedStorage) _setStorageInfo(cachedStorage);
@@ -53,7 +65,7 @@ export function PhotosProvider({ children }) {
         setCloudPhotos(prev => (prev.length === 0 ? cachedPhotos : prev));
       }
     }).catch(() => {});
-  }, []);
+  }
   const [backupStatus, setBackupStatus] = useState('idle');
   const [backupEnabled, setBackupEnabled] = useState(false);
   const [lastBackupDate, setLastBackupDate] = useState(null);

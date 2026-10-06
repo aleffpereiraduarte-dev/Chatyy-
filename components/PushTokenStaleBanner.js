@@ -17,7 +17,7 @@ import { Platform, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, 
 import { IconX } from './Icons';
 import { useLanguage } from '../context/LanguageContext';
 
-const POLL_MS = 1000;
+const POLL_MS = 5000; // [perf 2026-10-06] was 1000 — the flag flips rarely; a 5s pickup is invisible to the user
 
 export default function PushTokenStaleBanner() {
   const { t } = useLanguage();

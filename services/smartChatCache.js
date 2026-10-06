@@ -86,6 +86,9 @@ function _doHydrate() {
     }
     for (const idStr of Object.keys(_index.lru)) {
       const convId = Number(idStr) || idStr;
+      // [perf 2026-10-06] Check BEFORE parsing — the async retry pass used to
+      // JSON.parse every conversation blob again just to discard it.
+      if (_msgs.has(convId)) continue;
       const raw = getString(_msgKey(idStr));
       if (!raw) continue;
       try {
@@ -96,7 +99,12 @@ function _doHydrate() {
   } catch {}
 }
 (function hydrate() {
-  _doHydrate();
+  // [perf 2026-10-06] On a native cold start the mmkv map is still empty here
+  // (async AsyncStorage hydrate) — the sync pass can only find nothing. Skip it
+  // and let the waitForCacheReady pass below do the single real hydrate.
+  let _mmReady = true;
+  try { const _mm = require('./mmkv'); if (Platform.OS !== 'web' && typeof _mm.isCacheReady === 'function') _mmReady = _mm.isCacheReady(); } catch {}
+  if (_mmReady) _doHydrate();
   _runMigrationOnce();
   // Async retry once the MMKV async layer has loaded. Covers the cold-start
   // case where the first pass ran before AsyncStorage→_mem hydration.

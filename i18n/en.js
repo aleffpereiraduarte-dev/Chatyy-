@@ -7744,6 +7744,16 @@ export default {
   'chatConv.sendFailed': 'Failed to send',
   'chatConv.tapToResend': 'Tap to resend',
   // Auto-added missing keys — 2026-05-17 i18n cleanup wave
+  // [2026-10-06 UX] a11y labels that were hardcoded in English + web <html lang>
+  'a11y.camera': 'Camera',
+  'a11y.search': 'Search',
+  'a11y.newChat': 'New chat',
+  'a11y.newCall': 'New call',
+  'a11y.profile': 'Profile',
+  'a11y.switchToDark': 'Switch to dark mode',
+  'a11y.switchToLight': 'Switch to light mode',
+  'a11y.toggleTheme': 'Toggle theme',
+  'a11y.back': 'Back',
   'a11y.addStar': 'Add star',
   'a11y.deselect': 'Deselect',
   'a11y.removeStar': 'Remove star',

@@ -778,7 +778,8 @@ export class BackupEngine {
           if (isNetErr(err)) batchNetFails++;
           // 1 quick retry — but skip retry on network error (network is dead, don't waste time)
           // e em quota cheia (507 grace_expired — retry só repete o 507)
-          if (!isNetErr(err) && !err?.quotaFull) {
+          // e em 4xx definitivo (403 namespace / 413 plano — ver _classifyRegisterError)
+          if (!isNetErr(err) && !err?.quotaFull && !err?.nonRetryable) {
             try {
               await new Promise(r => setTimeout(r, 800));
               await withDeadline(
@@ -982,7 +983,11 @@ export class BackupEngine {
       } catch (err) {
         // [quota 2026-07-23] Drive cheio: retry é inútil (cada tentativa custa
         // 2-3 requests 507). _uploadItem já setou _aborted; o finally limpa.
-        if (err?.quotaFull) {
+        // [2026-10-06] Idem para 4xx definitivos: nginx mostrou 244×403
+        // "key outside user namespace" em UM minuto de UM device (conta
+        // trocada no meio do backup → toda foto falha igual, e cada uma
+        // ainda ganhava quick-retry + 4 retries exponenciais).
+        if (err?.quotaFull || err?.nonRetryable) {
           item.status = 'failed';
           this.failed.push(item);
           this.stats.failedFiles++;
@@ -1033,6 +1038,33 @@ export class BackupEngine {
         this.onProgress(this.getProgress());
       }
     }
+  }
+
+  // [2026-10-06] Turn a drive_register_uploaded failure into an Error that
+  // the worker loops can classify. Definitive 4xx answers must NOT be
+  // retried — retrying only repeats the same status:
+  //   403 "key outside user namespace" / "Access denied" — the R2 key was
+  //       presigned under ANOTHER account (user switched accounts mid-run):
+  //       every remaining item fails the same way → abort the whole run
+  //       (same mechanism as quota-full) so the next run rebuilds the queue
+  //       under the current account.
+  //   413 "acima do limite do seu plano" — this file is over the plan cap:
+  //       fail THIS item only, no retries.
+  _classifyRegisterError(message, status) {
+    const err = new Error(message);
+    const m = String(message || '').toLowerCase();
+    const st = Number(status) || 0;
+    const namespace = st === 403 || /outside user namespace|access denied|does not match object_key/.test(m);
+    const tooBig = st === 413 || /acima do limite|limite do seu plano|payload too large/.test(m);
+    if (namespace) {
+      err.nonRetryable = true;
+      err.accountMismatch = true;
+      this._aborted = true;
+      try { api.apiCall('drive_backup_debug', { msg: 'register_forbidden_abort', data: String(message).slice(0, 160) }, 'POST').catch(() => {}); } catch {}
+    } else if (tooBig) {
+      err.nonRetryable = true;
+    }
+    return err;
   }
 
   // ─── Upload a single item ──────────────────────────────
@@ -1245,10 +1277,10 @@ export class BackupEngine {
               asset_id: item.id || item.asset?.id || '',
             }, 'POST');
           } catch (regErr) {
-            throw new Error(`register_failed|${regErr?.message || 'unknown'}`);
+            throw this._classifyRegisterError(`register_failed|${regErr?.message || 'unknown'}`, regErr?.status);
           }
           if (!regRes?.success) {
-            throw new Error(`register_failed|${regRes?.error || 'no_success'}`);
+            throw this._classifyRegisterError(`register_failed|${regRes?.error || 'no_success'}`, regRes?.status);
           }
           try {
             const fileId = regRes?.data?.id || regRes?.data?.file_id;

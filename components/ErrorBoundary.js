@@ -37,6 +37,32 @@ export default class ErrorBoundary extends React.Component {
     this.setState({ componentStack: errorInfo?.componentStack || '' });
     // Report to Sentry
     try { Sentry.captureException(error); } catch {}
+    // [2026-10-06] Web: a lazy chunk that 404s after a deploy (old index.html
+    // still open → "Loading module …/ComposeModal-<hash>.js failed",
+    // AsyncRequireError) is not a code bug — the file was replaced. One
+    // reload (guarded per session) fixes it instead of showing "Algo deu
+    // errado" until the user refreshes by hand.
+    try {
+      const m = String(error?.message || '');
+      const isChunkFail = /Loading module .* failed|AsyncRequireError|ChunkLoadError|Importing a module script failed|Failed to fetch dynamically imported module/i.test(m)
+        || String(error?.name || '') === 'AsyncRequireError';
+      if (isChunkFail && typeof window !== 'undefined' && typeof sessionStorage !== 'undefined' && typeof window.location?.reload === 'function') {
+        const KEY = '@chatyy/chunk_reload_once';
+        if (!sessionStorage.getItem(KEY)) {
+          sessionStorage.setItem(KEY, String(Date.now()));
+          setTimeout(() => { try { window.location.reload(); } catch {} }, 150);
+        }
+      }
+    } catch {}
+    // Per-device diagnostics (push_diag): message + normalized stack + ctx
+    // + breadcrumbs, deduped by signature. Never throws.
+    let ctxStr = '';
+    try {
+      const cr = require('../services/crashReporter');
+      cr.reportError?.(error, { fatal: false, source: 'boundary', extra: String(errorInfo?.componentStack || '').trim().split('\n')[0]?.trim().slice(0, 60) });
+      const ctx = cr.getCrashContext?.() || {};
+      ctxStr = Object.keys(ctx).map(k => `${k}=${ctx[k]}`).join(' ');
+    } catch {}
     // Send crash report to server (multiple attempts with different URLs so
     // at least one lands even if a regional API host is down).
     // Defensive: capture even if message/stack/componentStack are all empty —
@@ -45,8 +71,11 @@ export default class ErrorBoundary extends React.Component {
     // reports with timing during the #1204 Apps→Email iOS crash hunt.
     const payload = {
       message: error?.message || (error ? String(error).substring(0, 200) : 'Erro desconhecido (sem mensagem)'),
-      stack: (error?.stack || '').substring(0, 3000),
-      component: (errorInfo?.componentStack || '').substring(0, 2000),
+      stack: (error?.stack || '').substring(0, 2000),
+      // ctx first (ver/ota/os/dev/heap), then the top of the component stack.
+      // 2000 → 1200 chars: the first ~8 components are what identify the
+      // screen; the rest is Stack/Route/Provider boilerplate.
+      component: `ctx: ${ctxStr} | ${(errorInfo?.componentStack || '').substring(0, 1200)}`,
       fatal: true,
     };
     // Single canonical beacon endpoint. The api-us/api-eu/api-asia subdomains

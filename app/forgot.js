@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { useTheme } from '../context/ThemeContext';
+import { useAuthTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { forgotPasswordOptions, forgotPasswordInitiate, forgotPasswordVerify, resetPassword, BASE_URL } from '../services/api';
 import OtpInput from '../components/signup/OtpInput';
@@ -18,7 +18,7 @@ import {
 } from '../components/Icons';
 
 export default function ForgotPassword() {
-  const { colors, isDark, toggle } = useTheme();
+  const { colors, isDark, toggle } = useAuthTheme();
   const { t } = useLanguage();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -294,7 +294,7 @@ export default function ForgotPassword() {
           >
             {loading ? <ActivityIndicator color="#fff" size="small" /> : (
               <>
-                <Text style={s.primaryBtnText}>{t('forgot.continue')}</Text>
+                <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('forgot.continue')}</Text>
                 <IconArrowRight size={15} color="#fff" style={{ marginLeft: 6 }} />
               </>
             )}
@@ -379,7 +379,7 @@ export default function ForgotPassword() {
             activeOpacity={0.85}
           >
             {loading ? <ActivityIndicator color="#fff" size="small" /> : (
-              <Text style={s.primaryBtnText}>Buscar conta</Text>
+              <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>Buscar conta</Text>
             )}
           </TouchableOpacity>
           <TouchableOpacity style={s.backBtn} onPress={() => { setStep(1); setFindQuery(''); setFoundEmails([]); }} activeOpacity={0.6}>
@@ -414,7 +414,7 @@ export default function ForgotPassword() {
               activeOpacity={0.85}
             >
               <IconMail size={16} color="#fff" style={{ marginRight: 8 }} />
-              <Text style={s.primaryBtnText}>{t('forgot.contactSupportBtn')}</Text>
+              <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('forgot.contactSupportBtn')}</Text>
             </TouchableOpacity>
           </View>
         ) : (
@@ -561,7 +561,7 @@ export default function ForgotPassword() {
           {loading ? <ActivityIndicator color="#fff" size="small" /> : (
             <>
               <IconCheckCircle size={16} color="#fff" style={{ marginRight: 8 }} />
-              <Text style={s.primaryBtnText}>{t('forgot.verifyCode')}</Text>
+              <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('forgot.verifyCode')}</Text>
             </>
           )}
         </TouchableOpacity>
@@ -647,7 +647,7 @@ export default function ForgotPassword() {
             {loading ? <ActivityIndicator color="#fff" size="small" /> : (
               <>
                 <IconLock size={16} color="#fff" style={{ marginRight: 8 }} />
-                <Text style={s.primaryBtnText}>{t('forgot.changePassword')}</Text>
+                <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('forgot.changePassword')}</Text>
               </>
             )}
           </TouchableOpacity>
@@ -670,7 +670,7 @@ export default function ForgotPassword() {
             onPress={() => router.replace('/login')}
             activeOpacity={0.85}
           >
-            <Text style={s.primaryBtnText}>{t('forgot.goToLogin')}</Text>
+            <Text style={[s.primaryBtnText, { color: colors.onPrimary }]}>{t('forgot.goToLogin')}</Text>
           </TouchableOpacity>
         </Animated.View>
       );
@@ -699,7 +699,7 @@ export default function ForgotPassword() {
       </View>
 
       {/* Theme toggle */}
-      <TouchableOpacity onPress={toggle} style={[s.themeToggle, { top: insets.top + 16 }]} activeOpacity={0.7}>
+      <TouchableOpacity onPress={toggle} style={[s.themeToggle, { top: insets.top + 16 }]} activeOpacity={0.7} accessibilityRole="button" accessibilityLabel={isDark ? t('a11y.switchToLight') : t('a11y.switchToDark')}>
         <View style={[s.themeBtn, {
           backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : colors.surface,
           borderColor: colors.authInputBorder,
@@ -805,7 +805,7 @@ const s = StyleSheet.create({
   /* Theme toggle */
   themeToggle: { position: 'absolute', top: 16, right: 16, zIndex: 10 },
   themeBtn: {
-    width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center',
+    width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center',
     borderWidth: 1,
     ...Platform.select({ web: { cursor: 'pointer', transition: 'all 0.2s ease' }, default: {} }),
   },
@@ -843,7 +843,7 @@ const s = StyleSheet.create({
 
   label: { fontSize: 11, fontWeight: '500', marginBottom: 4, marginTop: 12, textTransform: 'uppercase', letterSpacing: 0.5 },
   inputBox: {
-    flexDirection: 'row', alignItems: 'center',
+    flexDirection: 'row', alignItems: 'center', minHeight: 44,
     borderWidth: 1, borderRadius: 8,
     ...Platform.select({ web: { transition: 'all 0.2s ease' }, default: {} }),
   },

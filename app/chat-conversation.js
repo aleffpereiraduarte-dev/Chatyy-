@@ -17,7 +17,8 @@ import { NativeModules } from 'react-native';
 // maxToRenderPerBatch, updateCellsBatchingPeriod, removeClippedSubviews,
 // initialNumToRender, onScrollToIndexFailed) o FlashList ignora sem quebrar.
 // Se o scroll invertido regredir → trocar `<FlashList` de volta por `<FlatList`.
-const { FlashList: _MsgFlashList } = require('@shopify/flash-list');
+// [perf 2026-10-06] `_MsgFlashList` require removed — it was never referenced
+// (the list below is a FlatList); the eager require just loaded the module.
 // Native chat view (iOS Swift UICollectionView) — handles all message
 // rendering on iOS for 60fps scroll + WhatsApp-grade polish. Includes
 // inline interactive MKMapView for location, real cells for poll/meetup/
@@ -341,9 +342,24 @@ function _setAppLocale(lang) { _appLocale = lang || undefined; }
 let _appT;
 function _setAppT(t) { _appT = t; }
 function _mt(key, fallback) { try { return (_appT && _appT(key)) || fallback; } catch (e) { return fallback; } }
+// [perf 2026-10-06] toLocaleTimeString(locale, opts) constructs a fresh
+// Intl.DateTimeFormat on EVERY call (≈8 call sites per bubble render). Cache
+// one formatter per locale; falls back to the original call if Intl is absent.
+const _timeFmtCache = new Map();
+function _timeFormatter(loc) {
+  const k = loc || '';
+  let f = _timeFmtCache.get(k);
+  if (f === undefined) {
+    try { f = new Intl.DateTimeFormat(loc || undefined, { hour: '2-digit', minute: '2-digit' }); } catch { f = null; }
+    _timeFmtCache.set(k, f);
+  }
+  return f;
+}
 function formatTime(dateStr) {
   const d = new Date(_normalizeIso(dateStr));
   if (isNaN(d.getTime())) return '';
+  const f = _timeFormatter(_appLocale);
+  if (f) { try { return f.format(d); } catch {} }
   return d.toLocaleTimeString(_appLocale || undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -7952,8 +7968,17 @@ function ChatConversationInner() {
         if (newId) {
           setResolvedConvId(parseInt(newId, 10) || 0);
           try { router.setParams?.({ id: String(newId) }); } catch {}
+        } else {
+          // [2026-10-06 UX] No id back → the main load effect never runs
+          // (gated on conversationId) and the skeleton stayed forever.
+          setLoading(false);
+          setLoadError(r?.message || t('chatConv.loadError') || 'Não foi possível carregar as mensagens.');
         }
-      } catch {}
+      } catch (e) {
+        if (cancelled) return;
+        setLoading(false);
+        setLoadError(e?.message || t('chatConv.loadError') || 'Não foi possível carregar as mensagens.');
+      }
     })();
     return () => { cancelled = true; };
   }, [conversationId, params.email, router]);
@@ -8103,7 +8128,7 @@ function ChatConversationInner() {
   const [conversationAvatar, setConversationAvatar] = useState('');
   const [conversationName, setConversationName] = useState(() => {
     if (String(params.saved || '') === '1' || (params.type || 'direct') === 'saved') {
-      return params.name ? decodeURIComponent(String(params.name)) : 'Mensagens Salvas';
+      return params.name ? decodeURIComponent(String(params.name)) : (t('chat.savedMessages') || 'Mensagens Salvas');
     }
     // Apply per-user nickname for direct chats so the header shows the
     // name the user actually uses for this contact (WhatsApp parity).
@@ -9341,8 +9366,8 @@ function ChatConversationInner() {
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(mediaShimmerAnim, { toValue: 1, duration: 950, useNativeDriver: true }),
-        Animated.timing(mediaShimmerAnim, { toValue: 0, duration: 950, useNativeDriver: true }),
+        Animated.timing(mediaShimmerAnim, { toValue: 1, duration: 950, useNativeDriver: true, isInteraction: false }),
+        Animated.timing(mediaShimmerAnim, { toValue: 0, duration: 950, useNativeDriver: true, isInteraction: false }),
       ])
     );
     loop.start();
@@ -11641,6 +11666,11 @@ function ChatConversationInner() {
   }, [conversationId]);
 
   useEffect(() => {
+    // [2026-10-06 UX] Re-arm: the unmount cleanup flips this to false and
+    // nothing set it back, so a second effect run (StrictMode / Fast Refresh
+    // on web) made loadMessages' `finally` bail before setLoading(false) →
+    // skeleton stuck.
+    mountedRef.current = true;
     // Single sequential flow so the cache→sync branching doesn't race with
     // a parallel loadMessages. iOS already has messages in state from the
     // sync _initialCached path; Android/Web need an async cache read first.
@@ -12798,6 +12828,12 @@ function ChatConversationInner() {
 
           // Mark as read since user is viewing the conversation (debounced)
           // Store pending msgId so flush-on-unmount can fire it if timer hasn't run yet
+          // [2026-10-06 UX] The "new messages" pill counter must bump even
+          // with read receipts OFF — it used to live inside the receipts
+          // gate, so the scroll-down FAB showed without a number.
+          if (msg.sender_email !== currentEmail && msg.id && chatyySettings.read_receipts === false && isScrolledUpRef.current) {
+            setNewMsgCount(c => c + 1);
+          }
           if (msg.sender_email !== currentEmail && msg.id && chatyySettings.read_receipts !== false) {
             if (isScrolledUpRef.current) {
               // Scrolled up = the new bubble is NOT on screen. WhatsApp only
@@ -13407,6 +13443,23 @@ function ChatConversationInner() {
           const email = (data.email || '').toLowerCase();
           const name = data.name || email?.split('@')[0];
           setTypingUsers(prev => {
+            // [perf 2026-10-06] Same typer pinging again with the same name /
+            // recording flag (the common case — a ping every ~2s while typing)
+            // → only re-arm its 5s expiry and return `prev`, so the screen
+            // doesn't re-render on every keystroke of the peer.
+            const existingSame = prev.get(email);
+            if (existingSame && existingSame.name === name && existingSame.recording === !!data.recording) {
+              if (existingSame.timer) clearTimeout(existingSame.timer);
+              existingSame.timer = setTimeout(() => {
+                setTypingUsers(p => {
+                  if (!p.has(email)) return p;
+                  const n = new Map(p);
+                  n.delete(email);
+                  return n;
+                });
+              }, 5000);
+              return prev;
+            }
             const next = new Map(prev);
             // Clear existing timer for this user
             const existing = next.get(email);
@@ -13465,10 +13518,13 @@ function ChatConversationInner() {
           const partnerEmail = (params.email || '').toLowerCase();
           if ((data.email || '').toLowerCase() === partnerEmail) {
             presenceUpdatedAtRef.current = Date.now();
-            setPresence(prev => ({
-              status: data.status || prev?.status,
-              last_seen: data.last_seen || prev?.last_seen,
-            }));
+            setPresence(prev => {
+              const status = data.status || prev?.status;
+              const last_seen = data.last_seen || prev?.last_seen;
+              // [perf 2026-10-06] Unchanged presence → keep identity (no re-render).
+              if (prev && prev.status === status && prev.last_seen === last_seen) return prev;
+              return { status, last_seen };
+            });
           }
         }
       });
@@ -14401,7 +14457,24 @@ function ChatConversationInner() {
     // Wait until the drag/scroll animation finishes before doing ANY work.
     // InteractionManager is the iOS-reliable way to yield to the gesture thread;
     // setTimeout(0) still runs on the JS thread and can block the scroll.
-    InteractionManager.runAfterInteractions(() => { run(); });
+    //
+    // [2026-10-06 UX — spinner preso no desktop] On react-native-web
+    // `useNativeDriver` is a no-op, so every JS-driven Animated.timing counts
+    // as an *interaction* and the always-on loops in this screen (media
+    // shimmer, online ring, typing dots) keep InteractionManager busy
+    // forever → this callback NEVER fired → `loadingMore` stayed true and the
+    // footer ActivityIndicator spun at the top of the thread indefinitely
+    // (tall desktop viewports hit onEndReached right on open). Web yields via
+    // setTimeout(0) instead; native keeps the gesture-friendly path. A 15s
+    // watchdog also releases the flag if `run()` ever hangs.
+    if (Platform.OS === 'web') {
+      setTimeout(() => { run(); }, 0);
+    } else {
+      InteractionManager.runAfterInteractions(() => { run(); });
+    }
+    setTimeout(() => {
+      if (loadingMoreRef.current) { loadingMoreRef.current = false; setLoadingMore(false); }
+    }, 15000);
   }, [hasMore, messages, loadMessages, conversationId]);
 
   // ============================================================
@@ -21832,7 +21905,11 @@ function ChatConversationInner() {
                     const loaded = e?.nativeEvent?.loaded || e?.loaded || 0;
                     const total = e?.nativeEvent?.total || e?.total || 0;
                     if (total > 0) {
-                      setDownloadProgress(prev => ({ ...prev, [msg.id]: Math.round((loaded / total) * 100) }));
+                      // [perf 2026-10-06] expo-image fires onProgress many times
+                      // per second per image; every call re-rendered the whole
+                      // screen. Quantize to 5% steps and bail when unchanged.
+                      const pct = Math.min(100, Math.round((loaded / total) * 20) * 5);
+                      setDownloadProgress(prev => (prev[msg.id] === pct ? prev : { ...prev, [msg.id]: pct }));
                     }
                   }}
                   onLoadEnd={() => {

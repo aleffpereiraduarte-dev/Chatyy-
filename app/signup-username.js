@@ -20,7 +20,7 @@ import {
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useTheme } from '../context/ThemeContext';
+import { useAuthTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
@@ -33,7 +33,7 @@ import {
 
 export default function SignupUsername() {
   const router = useRouter();
-  const { colors, isDark } = useTheme();
+  const { colors, isDark } = useAuthTheme();
   const { t } = useLanguage();
   const { loginWithToken } = useAuth();
   const insets = useSafeAreaInsets();
@@ -546,13 +546,13 @@ export default function SignupUsername() {
             activeOpacity={0.85}
           >
             {busy ? (
-              <ActivityIndicator color="#fff" />
+              <ActivityIndicator color={colors.onPrimary} />
             ) : (
               <>
-                <Text style={styles.ctaText}>
+                <Text style={[styles.ctaText, { color: colors.onPrimary }]}>
                   {step === 'name' ? (t('signupPhone.finish') || 'Criar conta') : (t('common.next') || 'Próximo')}
                 </Text>
-                {step !== 'name' && <IconArrowRight size={18} color="#fff" style={{ marginLeft: 8 }} />}
+                {step !== 'name' && <IconArrowRight size={18} color={colors.onPrimary} style={{ marginLeft: 8 }} />}
               </>
             )}
           </TouchableOpacity>

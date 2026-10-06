@@ -77,7 +77,10 @@ export default function PWAPrompts({ colors, isDark, t }) {
     window.addEventListener('appinstalled', onInstalled);
 
     // ── Update flow ──
-    if ('serviceWorker' in navigator) {
+    // `serviceWorker` exists but `getRegistration` is missing in some
+    // embedded/insecure contexts (crash log 2026-10-05: "getRegistration is
+    // not a function") — guard the method, not just the property.
+    if ('serviceWorker' in navigator && navigator.serviceWorker && typeof navigator.serviceWorker.getRegistration === 'function') {
       navigator.serviceWorker.getRegistration().then((reg) => {
         if (!reg) return;
         updateRegRef.current = reg;

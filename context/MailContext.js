@@ -218,6 +218,8 @@ export function MailProvider({ children }) {
   }, [onEmailScreen, emailEverActive]);
   const emailPollingEnabled = onEmailScreen || emailEverActive;
   const emailPollingWasEnabledRef = useRef(false);
+  const emailPollingEnabledRef = useRef(emailPollingEnabled);
+  emailPollingEnabledRef.current = emailPollingEnabled;
 
   // Use the native SQLite cache as the initial state so the inbox is rendered
   // with real emails on the very first frame (no empty list flash).
@@ -786,7 +788,12 @@ export function MailProvider({ children }) {
       pendingActionRef.current = null;
       if (undoTimerRef._visCleanup) { undoTimerRef._visCleanup(); undoTimerRef._visCleanup = null; }
       setUndoAction(null);
-      loadEmails('INBOX', 1, '');
+      // [perf 2026-10-06] Chat-first boot: this effect also fires on the FIRST
+      // auth hydrate (prevUserRef starts undefined), which used to issue an
+      // api.getInbox on every cold start even though the user lands on /chat.
+      // Only reload here when email is live (or this is a real account switch
+      // while email is live); inbox.js loads INBOX itself on mount.
+      if (emailPollingEnabledRef.current) loadEmails('INBOX', 1, '');
     }
   }, [user?.email]);
 
@@ -1407,6 +1414,9 @@ export function MailProvider({ children }) {
     if (!user?.email || !mailWs) return;
     const iv = setInterval(() => {
       try {
+        // [perf 2026-10-06] Skip while backgrounded — the socket is parked
+        // there on purpose; resurrecting it would just churn reconnects.
+        try { const { AppState } = require('react-native'); if (AppState.currentState && AppState.currentState !== 'active') return; } catch {}
         if (typeof mailWs.isZombie === 'function' && mailWs.isZombie()) {
           mailWs.resurrect?.('mailcontext_watchdog_10s');
         }

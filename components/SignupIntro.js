@@ -387,6 +387,6 @@ const styles = StyleSheet.create({
   ctaWrap: { paddingHorizontal: 32, paddingBottom: 32 },
   cta: { paddingVertical: 17, borderRadius: 28, alignItems: 'center' },
   ctaLabel: { color: '#fff', fontSize: 17, fontWeight: '700', letterSpacing: 0.2 },
-  skipBtn: { position: 'absolute', right: 18, zIndex: 10, paddingHorizontal: 8, paddingVertical: 6 },
+  skipBtn: { position: 'absolute', right: 18, zIndex: 10, paddingHorizontal: 12, paddingVertical: 6, minHeight: 44, minWidth: 44, justifyContent: 'center', alignItems: 'center' },
   skipLabel: { fontSize: 15, fontWeight: '600', letterSpacing: 0.1 },
 });

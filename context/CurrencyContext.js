@@ -53,7 +53,11 @@ export function CurrencyProvider({ children }) {
   // Start with BRL synchronously so renders during first-paint don't
   // flicker between "no currency" and "USD". useEffect upgrades to the
   // manually-chosen / auto-detected value on mount.
-  const [currency, setCurrencyState] = useState('BRL');
+  // [perf 2026-10-06] Seed with the sync-detected currency so the boot
+  // setCurrencyState is a no-op for auto-detected users (no extra re-render).
+  const [currency, setCurrencyState] = useState(() => {
+    try { const d = detectCurrency(); return SUPPORTED_CURRENCIES.includes(d) ? d : 'BRL'; } catch { return 'BRL'; }
+  });
   const [autoDetected, setAutoDetected] = useState(true);
 
   // Mirror the chosen currency into the service singleton so that

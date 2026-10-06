@@ -178,7 +178,7 @@ export default function HomeGreeting({
           onPress={handleSearch}
           hitSlop={10}
           accessibilityRole="button"
-          accessibilityLabel="Search"
+          accessibilityLabel={t('a11y.search')}
           style={({ pressed }) => [
             styles.actionBtn,
             {
@@ -194,7 +194,7 @@ export default function HomeGreeting({
           onPress={handleCamera}
           hitSlop={10}
           accessibilityRole="button"
-          accessibilityLabel="Camera"
+          accessibilityLabel={t('a11y.camera')}
           style={({ pressed }) => [
             styles.actionBtn,
             {

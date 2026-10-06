@@ -824,17 +824,17 @@ function ChatHub() {
       return (
         <>
           <TouchableOpacity onPress={() => { try { router.push('/photos?camera=1'); } catch (e) { console.warn("[chat] router.push failed:", e); } }} activeOpacity={0.6}
-            hitSlop={6} style={btnStyle} accessibilityLabel="Camera">
+            hitSlop={6} style={btnStyle} accessibilityLabel={t('a11y.camera')}>
             <IconCamera size={19} color={headerIconColor} />
           </TouchableOpacity>
           <TouchableOpacity onPress={toggleSearch} activeOpacity={0.6}
-            hitSlop={6} style={btnStyle} accessibilityLabel="Search">
+            hitSlop={6} style={btnStyle} accessibilityLabel={t('a11y.search')}>
             <IconSearch size={18} color={headerIconColor} />
           </TouchableOpacity>
           {/* WhatsApp-parity: "new chat" is a filled GREEN circle (the one
               pop of color in the otherwise clean header). */}
           <TouchableOpacity onPress={() => router.push('/chat-new')} activeOpacity={0.75}
-            hitSlop={6} style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]} accessibilityLabel="New chat">
+            hitSlop={6} style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]} accessibilityLabel={t('a11y.newChat')}>
             {/* [2026-10-06 founder] "+" do topo era VERDE (#25D366 + ícone branco) e
                 chamava atenção demais; WhatsApp usa ícones neutros no header.
                 Agora igual aos outros botões do topo: fundo cinza + ícone na cor
@@ -847,7 +847,7 @@ function ChatHub() {
     if (activeTab === 'calls') {
       return (
         <TouchableOpacity onPress={() => router.push('/chat-new')} activeOpacity={0.6}
-          style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]}>
+          style={[styles.headerIconBtn, { backgroundColor: headerBtnBg }]} accessibilityRole="button" accessibilityLabel={t('a11y.newCall')}>
           <IconPhone size={17} color={headerIconColor} />
         </TouchableOpacity>
       );
@@ -1073,7 +1073,7 @@ function ChatHub() {
             onPress={() => user?.email && router.push(`/u/${encodeURIComponent(user.email)}`)}
             activeOpacity={0.7}
             style={{ marginRight: 10 }}
-            accessibilityLabel="Profile"
+            accessibilityLabel={t('a11y.profile')}
           >
             <AvatarCircle name={user?.name || user?.email} email={user?.email} size={32} />
           </TouchableOpacity>
@@ -1792,7 +1792,12 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
 function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark, badge, dot }) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
-  const color = active ? '#111111' : 'rgba(255,255,255,0.6)';
+  // [2026-10-06 UX] Rail background is near-black on BOTH themes (see
+  // desktopRail below), so the active item must be light-on-dark. It used to
+  // be '#111111' (brand ink) → icon, label and left border were literally
+  // black-on-black: the active "Chats" item rendered as an empty dark square
+  // under "Ligações".
+  const color = active ? '#ffffff' : 'rgba(255,255,255,0.6)';
   const isWeb = Platform.OS === 'web';
 
   return (
@@ -1803,11 +1808,11 @@ function DesktopTabItem({ tabKey, icon: IconComp, label, active, onPress, isDark
       onMouseLeave={() => setHovered(false)}
       style={[styles.desktopTabItem, {
         backgroundColor: active
-          ? (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)')
+          ? 'rgba(255,255,255,0.12)'
           : hovered
-            ? (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.025)')
+            ? 'rgba(255,255,255,0.06)'
             : 'transparent',
-        borderLeftColor: active ? '#111111' : 'transparent',
+        borderLeftColor: active ? '#ffffff' : 'transparent',
         cursor: 'pointer',
         ...(isWeb ? { transition: 'all 0.2s cubic-bezier(0.4,0,0.2,1)' } : {}),
       }]}

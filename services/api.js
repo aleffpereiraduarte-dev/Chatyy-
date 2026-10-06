@@ -144,7 +144,7 @@ function _restoreCachedServer() {
     if (cached) {
       const parsed = JSON.parse(cached);
       // Invalidate cache if edge list changed (v11 = us/br/eu regional edges).
-      if (parsed.v !== EDGE_CACHE_VERSION) { mmkv.delete('edge_best_server'); return; }
+      if (parsed.v !== EDGE_CACHE_VERSION) { try { (mmkv.remove || mmkv.delete)?.('edge_best_server'); } catch {} return; }
       const match = EDGE_SERVERS.find(s => s.region === parsed.region);
       if (match) {
         _bestServer = { ...match, latency: parsed.latency };
@@ -155,6 +155,17 @@ function _restoreCachedServer() {
   } catch {}
 }
 _restoreCachedServer();
+// [perf 2026-10-06] On native, services/mmkv.js fills its in-memory map from
+// AsyncStorage ASYNCHRONOUSLY, so the sync restore above always saw null on a
+// cold start and every boot request went to the US fallback until the /health
+// probes settled (up to 2.5s; +150ms RTT per request for BR/EU users). Retry
+// once the cache is hydrated — skipped if detection already picked a server.
+try {
+  const _mm = require('./mmkv');
+  if (typeof _mm.waitForCacheReady === 'function' && !(typeof _mm.isCacheReady === 'function' && _mm.isCacheReady())) {
+    _mm.waitForCacheReady().then(() => { if (!_bestServer) _restoreCachedServer(); }).catch(() => {});
+  }
+} catch {}
 
 async function detectFastestServer() {
   if (_detecting) return;

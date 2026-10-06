@@ -119,21 +119,39 @@ function normalizeISO(s) {
   if (!/Z$/.test(t) && !/[+-]\d{2}:?\d{2}$/.test(t)) t = t + 'Z';
   return t;
 }
+// [perf 2026-10-06] toLocale*String(locale, opts) builds a new Intl.DateTimeFormat
+// per call — this runs for every visible row on every list re-render (typing /
+// presence ticks). Cache one formatter per (locale, kind); safe fallback.
+const _chatTimeFmtCache = new Map();
+function _fmtCached(loc, kind, opts, date) {
+  const k = (loc || '') + '|' + kind;
+  let f = _chatTimeFmtCache.get(k);
+  if (f === undefined) {
+    try { f = new Intl.DateTimeFormat(loc || undefined, opts); } catch { f = null; }
+    _chatTimeFmtCache.set(k, f);
+  }
+  if (f) { try { return f.format(date); } catch {} }
+  return kind === 'time' ? date.toLocaleTimeString(loc, opts) : date.toLocaleDateString(loc, opts);
+}
 function formatChatTime(dateStr, t, locale) {
   if (!dateStr) return '';
   const now = new Date();
   const date = new Date(normalizeISO(dateStr));
   if (isNaN(date.getTime())) return '';
-  const diffMs = now - date;
-  const diffMin = Math.floor(diffMs / 60000);
-  const diffDays = Math.floor(diffMs / 86400000);
   const loc = locale || undefined;
-  if (diffMin < 1) return t?.('time.now') || 'agora';
-  if (diffMin < 60) return `${diffMin}m`;
-  if (diffDays === 0) return date.toLocaleTimeString(loc, { hour: '2-digit', minute: '2-digit' });
+  // [2026-10-06 UX — WhatsApp parity] Calendar days, not 24h windows: a
+  // message from yesterday 23:00 seen at 08:00 used to show "23:00" instead
+  // of "Ontem"; <60 min showed "5m"/"agora" where WhatsApp always shows HH:mm;
+  // the weekday was abbreviated ("seg.") where WhatsApp spells it out.
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(now) - startOfDay(date)) / 86400000);
+  if (diffDays <= 0) return _fmtCached(loc, 'time', { hour: '2-digit', minute: '2-digit' }, date);
   if (diffDays === 1) return t?.('time.yesterday') || 'Ontem';
-  if (diffDays < 7) return date.toLocaleDateString(loc, { weekday: 'short' });
-  return date.toLocaleDateString(loc, { day: '2-digit', month: '2-digit', year: '2-digit' });
+  if (diffDays < 7) {
+    const wd = _fmtCached(loc, 'wd', { weekday: 'long' }, date);
+    return wd ? wd.charAt(0).toUpperCase() + wd.slice(1) : wd;
+  }
+  return _fmtCached(loc, 'date', { day: '2-digit', month: '2-digit', year: '2-digit' }, date);
 }
 
 // Pin icon
@@ -533,8 +551,15 @@ const ConversationRow = React.memo(function ConversationRow({
   if (_peerEmail) {
     try { _nickname = require('../services/nicknames').getNickname(_peerEmail); } catch {}
   }
-  const displayName = _nickname
-    || emailToDisplayName(conversation.display_name || conversation.name || t('chat.unknown'));
+  // [2026-10-06 UX] Self-chat row is named by the SERVER ("Saved Messages",
+  // English) — localize it client-side like the header/drawer already do.
+  const _isSavedRow = conversation.type === 'saved' || (
+    _peerEmail && currentEmail && String(_peerEmail).toLowerCase() === String(currentEmail).toLowerCase()
+  );
+  const displayName = _isSavedRow
+    ? (t('chat.savedMessages') || 'Mensagens Salvas')
+    : (_nickname
+    || emailToDisplayName(conversation.display_name || conversation.name || t('chat.unknown')));
   const unread = conversation.unread_count > 0;
   const lastMsg = conversation.last_message;
   const isArchived = conversation.archived;
@@ -780,9 +805,26 @@ const ConversationRow = React.memo(function ConversationRow({
     return { preview, previewSender, statusType };
   }, [lastMsg, isGroup, isChannel, _me, t]);
 
+  // ── [perf 2026-10-06] FlashList v2 RECYCLES this component instance for a
+  // different conversation. The "previous value" refs below (muted / mentions /
+  // unread / typing) would then compare the OLD conversation's values against
+  // the new one and fire spurious pop/fade springs while scrolling, and an open
+  // swipe offset could carry over. Detect the id swap at render time and let
+  // each effect reset silently instead of animating.
+  const _rowIdRef = useRef(conversation.id);
+  const _recycled = _rowIdRef.current !== conversation.id;
+  if (_recycled) _rowIdRef.current = conversation.id;
+
   // ── Swipe with refs for fresh props ──
   const translateX = useRef(new Animated.Value(0)).current;
   const swipeOpen = useRef(false);
+  const _swipeInitRef = useRef(false);
+  useEffect(() => {
+    if (!_swipeInitRef.current) { _swipeInitRef.current = true; return; }
+    // Recycled for another conversation → close any swipe-open state.
+    try { translateX.stopAnimation?.(); translateX.setValue(0); } catch {}
+    swipeOpen.current = false;
+  }, [conversation.id]);
   const propsRef = useRef({ onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail });
   propsRef.current = { onDelete, onArchive, onMute, onPin, onMarkUnread, onEmail };
 
@@ -794,6 +836,12 @@ const ConversationRow = React.memo(function ConversationRow({
   const prevMutedRef = useRef(isMuted);
   const [muteVisible, setMuteVisible] = useState(isMuted);
   useEffect(() => {
+    if (_recycled) {
+      prevMutedRef.current = isMuted;
+      setMuteVisible(isMuted);
+      try { muteOpacity.setValue(isMuted ? 1 : 0); } catch {}
+      return;
+    }
     if (prevMutedRef.current !== isMuted) {
       if (isMuted) {
         setMuteVisible(true);
@@ -811,6 +859,7 @@ const ConversationRow = React.memo(function ConversationRow({
   const prevMentionsRef = useRef(conversation.unread_mentions || 0);
   useEffect(() => {
     const cur = conversation.unread_mentions || 0;
+    if (_recycled) { prevMentionsRef.current = cur; return; }
     const prev = prevMentionsRef.current;
     if (cur > prev) {
       mentionScale.setValue(0.8);
@@ -832,6 +881,7 @@ const ConversationRow = React.memo(function ConversationRow({
   const prevUnreadRef = useRef(conversation.unread_count || 0);
   useEffect(() => {
     const cur = conversation.unread_count || 0;
+    if (_recycled) { prevUnreadRef.current = cur; return; }
     const prev = prevUnreadRef.current;
     if (cur > prev) {
       unreadScale.setValue(0.8);
@@ -853,6 +903,7 @@ const ConversationRow = React.memo(function ConversationRow({
   const subtitleFade = useRef(new Animated.Value(1)).current;
   const prevTypingRef = useRef(isTypingActive);
   useEffect(() => {
+    if (_recycled) { prevTypingRef.current = isTypingActive; try { subtitleFade.setValue(1); } catch {} return; }
     if (prevTypingRef.current !== isTypingActive) {
       subtitleFade.setValue(0);
       Animated.timing(subtitleFade, { toValue: 1, duration: 150, useNativeDriver: true }).start();
@@ -1138,7 +1189,8 @@ const ConversationRow = React.memo(function ConversationRow({
                   </View>
                 )}
                 {isLocked && <IconLock size={12} color={isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.3)'} />}
-                <Text style={[s.rowTime, unread ? {
+                <Text style={[s.rowTime, (unread && !isMuted) ? {
+                  // [2026-10-06 UX] muted chats keep the time grey (WhatsApp)
                   color: WA_GREEN_TIME, fontWeight: '700',
                 } : {
                   color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(0,0,0,0.35)',
