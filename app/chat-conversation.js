@@ -8390,6 +8390,21 @@ function ChatConversationInner() {
   // down. Stays under ErrorBoundary — we want to catch *before* the RN unwind.
   const _debugBundleId = 'ota-8f8a6379-sanitize';
   const _reportChatDebug = (tag, data) => {
+    // [2026-10-06 latency] Each beacon is a real HTTP POST to the US origin
+    // (NOT the edge). The text send path fired SEVEN of them per message
+    // (handleSend-start, ws-relay-attempt, optimistic-save-pre/ok,
+    // postack-save-pre/ok, send-ack-timing), all racing the actual chat_send
+    // for the radio / TLS connection. Drop the pure happy-path breadcrumbs and
+    // push the timing sample 2.5s out of the critical window. Error / crash /
+    // mount tags are untouched.
+    try {
+      const DROP = ['handleSend-start', 'ws-relay-attempt', 'optimistic-save-pre', 'optimistic-save-ok', 'postack-save-pre', 'postack-save-ok'];
+      if (DROP.indexOf(tag) !== -1) return;
+      if (tag === 'send-ack-timing' && !(data && data._deferred)) {
+        setTimeout(() => { try { _reportChatDebug(tag, { ...(data || {}), _deferred: true }); } catch {} }, 2500);
+        return;
+      }
+    } catch {}
     try {
       const payload = {
         message: `[CHAT_DEBUG] ${tag}`,
@@ -9187,6 +9202,13 @@ function ChatConversationInner() {
       try { clearTimeout(draftTimerRef.current); } catch {}
       draftTimerRef.current = null;
     }
+    // [2026-10-06 latency] If no draft was ever persisted for this composer
+    // (draftSavedRef is '' — the 800ms autosave never fired, the common case
+    // for a quick reply), the server clear is almost certainly a no-op. Keep
+    // it (covers the remote-draft edge case) but push it 1.5s out so it
+    // doesn't race the chat_send POST. A known persisted draft still clears
+    // immediately — that's the "draft renasce" fix below.
+    const _hadPersistedDraft = !!draftSavedRef.current;
     try {
       const AsyncStorage = require('@react-native-async-storage/async-storage').default;
       const { DeviceEventEmitter } = require('react-native');
@@ -9195,10 +9217,14 @@ function ChatConversationInner() {
       try { DeviceEventEmitter.emit('chatyy:draft', { conversationId: String(conversationId), text: '' }); } catch {}
     } catch {}
     // Server-side clear — fire-and-forget, não deixar bloquear o send
-    try {
-      const { chatDraftSet } = require('../services/api');
-      chatDraftSet(conversationId, '').catch(() => {});
-    } catch {}
+    const _fireServerClear = () => {
+      try {
+        const { chatDraftSet } = require('../services/api');
+        chatDraftSet(conversationId, '').catch(() => {});
+      } catch {}
+    };
+    if (_hadPersistedDraft) _fireServerClear();
+    else setTimeout(_fireServerClear, 1500); // [2026-10-06 latency]
   }, [conversationId]);
 
   // WhatsApp features state
@@ -9332,6 +9358,46 @@ function ChatConversationInner() {
   // down the component body) because useCallback captures the closure at
   // render time — if this callback were declared before the `currentEmail`
   // const, the deps array would TDZ on first render. Inline avoids that.
+  // [2026-10-06 latency] HTTP read-receipt coalescer. markReadUpTo fires once
+  // PER incoming message (readDebounce is 0ms) and each api.chatRead() costs 2
+  // serialized SQLite writes + 1 POST (chat_mark_read) — a burst of N messages
+  // was N POSTs. The in-band WS `message_read` (what flips the peer's blue tick
+  // in <50ms) still fires per message below; only the HTTP persistence is
+  // coalesced into ONE trailing POST per 250ms carrying the highest id (the
+  // server treats message_id as a watermark). Pending state carries its own
+  // conversation id so a late timer never acks the wrong thread; flushed on
+  // unmount + app background.
+  const readHttpPendingRef = useRef(null); // { convId, id } | null
+  const readHttpTimerRef = useRef(null);
+  const _flushReadHttp = useCallback(() => {
+    if (readHttpTimerRef.current) { clearTimeout(readHttpTimerRef.current); readHttpTimerRef.current = null; }
+    const pending = readHttpPendingRef.current;
+    readHttpPendingRef.current = null;
+    if (!pending || !pending.convId || !pending.id) return;
+    api.chatRead(pending.convId, pending.id).catch(() => {
+      try {
+        const { queueOfflineAction } = require('../services/offlineCache');
+        // [read-id fix] Carry message_id so the replay advances the server's
+        // last_read_message_id to THIS exact row (chatRead vs the watermark-
+        // losing chatReadAck). Without it the peer's blue ticks could regress.
+        queueOfflineAction({ type: 'chat_read', conversation_id: pending.convId, message_id: pending.id }).catch(() => {});
+      } catch {}
+    });
+  }, []);
+  const readHttpFlushRef = useRef(_flushReadHttp);
+  readHttpFlushRef.current = _flushReadHttp;
+  const _scheduleReadHttp = useCallback((convId, msgId) => {
+    const cur = readHttpPendingRef.current;
+    if (cur && String(cur.convId) !== String(convId)) {
+      // Thread switched with an ack still pending — flush the old one now.
+      _flushReadHttp();
+    }
+    const prevId = readHttpPendingRef.current?.id || 0;
+    readHttpPendingRef.current = { convId, id: Math.max(prevId, msgId) };
+    if (!readHttpTimerRef.current) {
+      readHttpTimerRef.current = setTimeout(() => { readHttpTimerRef.current = null; _flushReadHttp(); }, 250);
+    }
+  }, [_flushReadHttp]);
   const markReadUpTo = useCallback((msgId) => {
     if (!msgId || typeof msgId !== 'number' || msgId <= (lastReadAckRef.current || 0)) return;
     // [VISTO AZUL FALSO causa-raiz 2026-10-06] Ponto ÚNICO de gate: se o app
@@ -9351,15 +9417,9 @@ function ChatConversationInner() {
     // `chat_read` offline action so the offlineCache replay drains it on
     // the next reconnect — same action type other call sites use
     // (api.js chatRead, pushNotifications quick-reply).
-    api.chatRead(conversationId, msgId).catch(() => {
-      try {
-        const { queueOfflineAction } = require('../services/offlineCache');
-        // [read-id fix] Carry message_id so the replay advances the server's
-        // last_read_message_id to THIS exact row (chatRead vs the watermark-
-        // losing chatReadAck). Without it the peer's blue ticks could regress.
-        queueOfflineAction({ type: 'chat_read', conversation_id: conversationId, message_id: msgId }).catch(() => {});
-      } catch {}
-    });
+    // [2026-10-06 latency] HTTP persistence coalesced (see _scheduleReadHttp);
+    // the WS fast path right below is unchanged and still per-message.
+    _scheduleReadHttp(conversationId, msgId);
     try {
       const mailWs = require('../services/websocket').default;
       const emailInline = user?.email || '';
@@ -9376,7 +9436,7 @@ function ChatConversationInner() {
         _local: true,
       });
     } catch {}
-  }, [conversationId, user]);
+  }, [conversationId, user, _scheduleReadHttp]);
 
   // [VISTO AZUL FALSO causa-raiz 2026-10-06] Flush dos recibos DEFERIDOS: roda
   // quando a tela volta a ser visível de verdade (app ativo + tela focada +
@@ -14096,6 +14156,9 @@ function ChatConversationInner() {
         }
         readDebounceRef.current = null;
       }
+      // [2026-10-06 latency] Flush the coalesced HTTP read ack (250ms window)
+      // so leaving the thread never drops the server-side watermark write.
+      try { readHttpFlushRef.current?.(); } catch {}
       // Unsubscribe from chat channel (WS for presence, TCP for messages)
       try {
         const mailWs = require('../services/websocket').default;
@@ -14240,6 +14303,8 @@ function ChatConversationInner() {
       // the 250ms batch window doesn't eat unconfirmed acks when phone sleeps.
       if (state === 'background' || state === 'inactive') {
         try { api.chatDeliveryAckFlush?.(); } catch {}
+        // [2026-10-06 latency] Same for the coalesced read-ack POST.
+        try { readHttpFlushRef.current?.(); } catch {}
         return;
       }
       if (state !== 'active') return;
@@ -14656,37 +14721,55 @@ function ChatConversationInner() {
     // machine there feeds SendStatusText.js + sendWorker.js. Legacy MMKV
     // path retained for emergency rollback only — under V2 it never fires.
     const pendingData = { temp_id: tempId, client_message_id: msgId, conversation_id: conversationId, content: text, type: 'text', reply_to_id: replyId, mentions: currentMentions, created_at: optimisticMsg.created_at, sender_email: currentEmail };
+    // [2026-10-06 latency] The outbox write used to be TWO awaited SQLite
+    // transactions (enqueue + markSending) sitting BEFORE the WS relay and the
+    // HTTP chat_send — 15-40ms idle, up to busy_timeout (5s) when db.js's
+    // serialized _runTx (dbSaveMessages / incoming-message cache writes) held
+    // the write lock on the shared chatyy.db. Now: ONE transaction that inserts
+    // the row already claimed as 'sending' (same claim semantics as before →
+    // sendWorker.poke() still can't dequeue it), started here but NOT awaited.
+    // Every later outbox transition for this row (markSent / markFailed /
+    // remove) chains on `_outboxReady` so ordering is preserved even when the
+    // HTTP ack beats the SQLite write. Web path (savePendingMessage) unchanged.
+    let _outboxReady = Promise.resolve();
     if (OUTBOX_V2_ONLY) {
-      try {
-        await messageOutbox.enqueue({
-          client_message_id: msgId,
-          conversation_id: conversationId,
-          temp_id: tempId,
-          content: text,
-          type: 'text',
-          reply_to_id: replyId,
-          mentions: currentMentions,
-          sender_email: currentEmail,
-          created_at: optimisticMsg.created_at,
-          // sendWorker replays this row via api.chatSend(..., p.opts). Retries
-          // reuse temp_id, so they MUST skip the Rust fast-path (Rust 500s on a
-          // used temp_id and then disables itself session-wide). The foreground
-          // first attempt below still uses Rust.
-          opts: { skipRust: true },
-        });
-        // [double-send race fix 2026-05-25] The foreground OWNS the HTTP
-        // send for this row (api.chatSend fires below). CLAIM the row
-        // immediately so a concurrent sendWorker.poke() — fired on
-        // WS-auth / AppState-active / NetInfo events while our HTTP is
-        // still in flight — can't dequeueNext() this still-'queued' row
-        // and send it a SECOND time. dequeueNext filters out 'sending'
-        // rows, so marking it 'sending' here is the claim. On success we
-        // markSent below; on failure we leave it for the worker to retry.
-        await messageOutbox.markSending(msgId);
-      } catch {}
+      _outboxReady = (async () => {
+        try {
+          const _row = await messageOutbox.enqueue({
+            client_message_id: msgId,
+            conversation_id: conversationId,
+            temp_id: tempId,
+            content: text,
+            type: 'text',
+            reply_to_id: replyId,
+            mentions: currentMentions,
+            sender_email: currentEmail,
+            created_at: optimisticMsg.created_at,
+            // sendWorker replays this row via api.chatSend(..., p.opts). Retries
+            // reuse temp_id, so they MUST skip the Rust fast-path (Rust 500s on a
+            // used temp_id and then disables itself session-wide). The foreground
+            // first attempt below still uses Rust.
+            opts: { skipRust: true },
+          }, { initialState: 'sending' });
+          // [double-send race fix 2026-05-25] The foreground OWNS the HTTP
+          // send for this row (api.chatSend fires below). The row is inserted
+          // already CLAIMED ('sending') so a concurrent sendWorker.poke() —
+          // fired on WS-auth / AppState-active / NetInfo events while our HTTP
+          // is still in flight — can't dequeueNext() it and send it a SECOND
+          // time. If the row pre-existed (replayed CMI), claim it the old way.
+          if (_row && _row.existed) await messageOutbox.markSending(msgId);
+        } catch {}
+      })();
     } else {
       try { await savePendingMessage(conversationId, pendingData); } catch {}
     }
+    const _outboxThen = (fn) => {
+      try {
+        _outboxReady.then(() => {
+          try { const p = fn(); if (p && typeof p.catch === 'function') p.catch(() => {}); } catch {}
+        }).catch(() => {});
+      } catch {}
+    };
 
     // TELEGRAM-STYLE FAST DELIVERY: fire the WS relay BEFORE awaiting the
     // HTTP chat_send. Peer sees the bubble in ~30ms instead of ~300ms.
@@ -14749,7 +14832,7 @@ function ChatConversationInner() {
         if (OUTBOX_V2_ONLY) {
           // Encryption is a hard fail — burn the row from the outbox so the
           // worker doesn't keep retrying a payload that will never encrypt.
-          try { messageOutbox.remove(msgId).catch(() => {}); } catch {}
+          _outboxThen(() => messageOutbox.remove(msgId));
         }
         setSending(false);
         try {
@@ -14945,7 +15028,7 @@ function ChatConversationInner() {
               }));
               removePendingMessage(conversationId, tempId).catch(() => {});
               if (OUTBOX_V2_ONLY) {
-                try { messageOutbox.markSent(msgId, serverMsg.id || null).catch(() => {}); } catch {}
+                _outboxThen(() => messageOutbox.markSent(msgId, serverMsg.id || null));
               }
               try {
                 const { removeChatSendFromQueueByClientMsgId } = require('../services/offlineCache');
@@ -15000,7 +15083,7 @@ function ChatConversationInner() {
         if (OUTBOX_V2_ONLY) {
           // Single source of truth: tell the SQLite outbox the server has
           // it so SendStatusText flips "Enviando..." → "✓" via subscribe.
-          try { messageOutbox.markSent(msgId, serverMsg.id || null).catch(() => {}); } catch {}
+          _outboxThen(() => messageOutbox.markSent(msgId, serverMsg.id || null));
         }
         // [send-latency 2026-06-03] Tap→ack wall-clock. Lets us see if the
         // user's "5s" is HTTP round-trip (network) vs client-side stalls.
@@ -15105,7 +15188,7 @@ function ChatConversationInner() {
                   }));
                   removePendingMessage(conversationId, tempId).catch(() => {});
                   if (OUTBOX_V2_ONLY) {
-                    try { messageOutbox.markSent(msgId, serverMsg.id || null).catch(() => {}); } catch {}
+                    _outboxThen(() => messageOutbox.markSent(msgId, serverMsg.id || null));
                   }
                   try { cacheSingleMessage(conversationId, serverMsg); } catch {}
                   try { SmartCache.cacheSingleMessage(conversationId, serverMsg); } catch {}
@@ -15134,7 +15217,7 @@ function ChatConversationInner() {
             // 'sending' forever — mirror the server-error/network branches and
             // bump it back to 'queued' on the backoff ladder so sendWorker
             // re-drains it after the next successful (re)login.
-            try { messageOutbox.markFailed(msgId, 'unauthorized').catch(() => {}); } catch {}
+            _outboxThen(() => messageOutbox.markFailed(msgId, 'unauthorized'));
           }
         }
       } else {
@@ -15154,7 +15237,7 @@ function ChatConversationInner() {
         if (OUTBOX_V2_ONLY) {
           // Bump attempt counter in SQLite — sendWorker's periodic drain
           // will pick up retries via the BACKOFF_SCHEDULE_MS ladder.
-          try { messageOutbox.markFailed(msgId, r?.message || r?.error || 'server_error').catch(() => {}); } catch {}
+          _outboxThen(() => messageOutbox.markFailed(msgId, r?.message || r?.error || 'server_error'));
         }
         // [stuck-sending fix] Drop the synthetic negId native row — the
         // outbox/offline queue now owns the retry under msgId/tempId, so the
@@ -15186,7 +15269,7 @@ function ChatConversationInner() {
           // Network error → bump attempt + schedule next retry on the
           // SQLite ladder. sendWorker.poke() on next reconnect/foreground
           // will drain this row in addition to the offlineCache retry.
-          try { messageOutbox.markFailed(msgId, e?.message || 'network').catch(() => {}); } catch {}
+          _outboxThen(() => messageOutbox.markFailed(msgId, e?.message || 'network'));
         }
         // [stuck-sending fix] Drop the synthetic negId native row on
         // timeout/network failure too (mirrors the success swap) so it can't

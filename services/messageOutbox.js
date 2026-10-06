@@ -257,8 +257,13 @@ async function _db_or_null() {
  * Everything is JSON-serialized into the existing `payload` TEXT column —
  * no schema migration needed.
  */
-export async function enqueue(payload) {
+export async function enqueue(payload, opts = null) {
   if (Platform.OS === 'web') return null;
+  // [2026-10-06 latency] `opts.initialState = 'sending'` lets the foreground
+  // send claim the row in the SAME transaction as the insert (one SQLite tx
+  // instead of enqueue + markSending), so the HTTP/WS send no longer waits on
+  // two serialized writes. Default stays 'queued' for every other caller.
+  const initialState = (opts && opts.initialState === 'sending') ? 'sending' : 'queued';
   if (!payload || !payload.client_message_id || !payload.conversation_id) return null;
   const db = await _db_or_null();
   if (!db) return null;
@@ -297,8 +302,8 @@ export async function enqueue(payload) {
           `INSERT OR IGNORE INTO outbox
             (client_message_id, conversation_id, payload, state, attempts,
              next_retry_at, seq, created_at, updated_at)
-           VALUES (?, ?, ?, 'queued', 0, 0, ?, ?, ?)`,
-          cmi, conv, payloadJson, seq, now, now,
+           VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+          cmi, conv, payloadJson, initialState, seq, now, now,
         );
         if ((res?.changes ?? 0) === 0) {
           // A concurrent transaction won the race — re-read the winner's row.
@@ -311,7 +316,7 @@ export async function enqueue(payload) {
             : null;
           return;
         }
-        result = { id: res?.lastInsertRowId || null, seq, state: 'queued', _inserted: true };
+        result = { id: res?.lastInsertRowId || null, seq, state: initialState, _inserted: true };
       });
     } else {
       // Fallback for SQLite shims without withTransactionAsync: atomic
@@ -326,8 +331,8 @@ export async function enqueue(payload) {
         `INSERT OR IGNORE INTO outbox
           (client_message_id, conversation_id, payload, state, attempts,
            next_retry_at, seq, created_at, updated_at)
-         VALUES (?, ?, ?, 'queued', 0, 0, ?, ?, ?)`,
-        cmi, conv, payloadJson, seq, now, now,
+         VALUES (?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+        cmi, conv, payloadJson, initialState, seq, now, now,
       );
       if ((res?.changes ?? 0) === 0) {
         const existing = await db.getFirstAsync(
@@ -338,7 +343,7 @@ export async function enqueue(payload) {
           ? { id: existing.id, seq: existing.seq, state: existing.state, existed: true }
           : null;
       } else {
-        result = { id: res?.lastInsertRowId || null, seq, state: 'queued', _inserted: true };
+        result = { id: res?.lastInsertRowId || null, seq, state: initialState, _inserted: true };
       }
     }
     if (!result) return null;
@@ -346,8 +351,8 @@ export async function enqueue(payload) {
       _notify(cmi, await getStatus(cmi));
       return { id: result.id, seq: result.seq, state: result.state, existed: true };
     }
-    _notify(cmi, { client_message_id: cmi, state: 'queued', attempts: 0, conversation_id: conv, seq: result.seq });
-    return { id: result.id, seq: result.seq, state: 'queued' };
+    _notify(cmi, { client_message_id: cmi, state: initialState, attempts: 0, conversation_id: conv, seq: result.seq });
+    return { id: result.id, seq: result.seq, state: initialState };
   } catch (e) {
     try { console.warn('[messageOutbox] enqueue:', e?.message); } catch {}
     return null;

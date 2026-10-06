@@ -4195,38 +4195,48 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
   // non-blocking above. Await it here so the temp row provably exists before
   // we swap temp→server id (the HTTP we just awaited is slower than the
   // SQLite write, so this almost always resolves instantly).
-  try { await _localWritePromise; } catch {}
-  if (result && (result.success || result.message_id || result.data?.message_id)) {
-    if (result.envelope_mode) {
-      // Stage 5 envelope mode — there is no server message_id, but the
-      // ciphertext was accepted. Flip the optimistic row to 'sent' so
-      // the bubble loses the spinner. Receiver acks will drive the
-      // double-check delivered indicator via chat_message_receipts.
-      try { await _localUpdateMessage(localTempId, { pending_state: 'sent' }); } catch {}
-    } else {
-      // apiCall returns the response BODY {success,data,message} at top level,
-      // and chat_send puts the message ROW at result.data with key `id` (not
-      // message_id, not data.message). The old shape-guesses all missed → the
-      // optimistic SQLite row never finalized (kept tmp id + 'pending' forever,
-      // risking a dup on next pull). Prefer the real row shape first.
-      const serverRow = (result.data && result.data.id) ? result.data : (
-        result.message || result.data?.message || (
-        (result.message_id || result.data?.message_id) ? {
-          id: result.message_id || result.data?.message_id,
-          conversation_id: conversationId,
-          content,
-          type: type || 'text',
-          file_url: fileUrl || null,
-          reply_to_id: replyToId || null,
-          client_message_id: stableCMI,
-          created_at: result.created_at || new Date().toISOString(),
-        } : null
-      ));
-      if (serverRow) await _localFinalizeSend(localTempId, serverRow);
+  //
+  // [2026-10-06 latency] The finalize used to be AWAITED before `return result`,
+  // so the caller's ✓ swap / markSent / relay waited on 2 serialized SQLite
+  // transactions (localDb._tx → BEGIN IMMEDIATE on the shared chatyy.db — up to
+  // busy_timeout under contention with dbSaveMessages / outbox writes). The
+  // return value never depended on it. Keep the exact same ordering inside a
+  // background chain (write → finalize) and hand the server row to the UI now.
+  const _finalizeLocal = async () => {
+    try { await _localWritePromise; } catch {}
+    if (result && (result.success || result.message_id || result.data?.message_id)) {
+      if (result.envelope_mode) {
+        // Stage 5 envelope mode — there is no server message_id, but the
+        // ciphertext was accepted. Flip the optimistic row to 'sent' so
+        // the bubble loses the spinner. Receiver acks will drive the
+        // double-check delivered indicator via chat_message_receipts.
+        try { await _localUpdateMessage(localTempId, { pending_state: 'sent' }); } catch {}
+      } else {
+        // apiCall returns the response BODY {success,data,message} at top level,
+        // and chat_send puts the message ROW at result.data with key `id` (not
+        // message_id, not data.message). The old shape-guesses all missed → the
+        // optimistic SQLite row never finalized (kept tmp id + 'pending' forever,
+        // risking a dup on next pull). Prefer the real row shape first.
+        const serverRow = (result.data && result.data.id) ? result.data : (
+          result.message || result.data?.message || (
+          (result.message_id || result.data?.message_id) ? {
+            id: result.message_id || result.data?.message_id,
+            conversation_id: conversationId,
+            content,
+            type: type || 'text',
+            file_url: fileUrl || null,
+            reply_to_id: replyToId || null,
+            client_message_id: stableCMI,
+            created_at: result.created_at || new Date().toISOString(),
+          } : null
+        ));
+        if (serverRow) await _localFinalizeSend(localTempId, serverRow);
+      }
+    } else if (result && result.success === false) {
+      await _localMarkFailed(localTempId, result.message);
     }
-  } else if (result && result.success === false) {
-    await _localMarkFailed(localTempId, result.message);
-  }
+  };
+  _finalizeLocal().catch(() => {});
   return result;
 }
 
