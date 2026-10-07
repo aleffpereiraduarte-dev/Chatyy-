@@ -179,7 +179,7 @@ function getAttachIconComponent(filename) {
 }
 
 export default function EmailReader({ email, onReply, onReplyAll, onForward, onForwardAsAttachment, onDelete, onClose, onStar, onAddLabel, onRemoveLabel, folder, onReportSpam, onReportHam, onScrollProgress, onMarkUnread, onAddAsTask }) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
   const { user } = useAuth();
   const router = useRouter();
@@ -672,9 +672,54 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
       // very first frame instead of waiting ~200ms for WebView init.
       if (Platform.OS === 'ios') {
         try {
-          const HtmlView = require('../modules/expo-native-toolkit').HtmlView;
+          const toolkit = require('../modules/expo-native-toolkit');
+          const HtmlView = toolkit.HtmlView;
           if (HtmlView) {
-            const css = `body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:#111;word-break:break-word;background:#ffffff;overflow-x:hidden}img{max-width:100%;height:auto}a{color:${colors.primary}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}`;
+            const css = `html,body{-webkit-text-size-adjust:100%;overscroll-behavior:none}*{-webkit-tap-highlight-color:transparent}body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:#111;word-break:break-word;background:#ffffff;overflow-x:hidden}img{max-width:100%;height:auto}a{color:${colors.primary}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}`;
+            // [2026-10-07 native-docs-mail] New binaries: links come back as
+            // onLinkPress (WKWebView cancels the navigation) and open in the
+            // in-app browser sheet (SFSafariViewController) instead of kicking
+            // the user out to Safari; height is reported continuously (images,
+            // fonts, layout) via a WKScriptMessageHandler. Old binaries lack the
+            // event → keep the legacy openLinksExternally + didFinish height.
+            let nativeLinks = false;
+            try { nativeLinks = !!toolkit.nativeViewHas?.('ExpoNativeHtmlView', { events: ['onLinkPress'] }); } catch {}
+            if (nativeLinks) {
+              // Dark mode only when the email itself declares dark support
+              // (<meta name="color-scheme" content="light dark"> / supported-
+              // color-schemes) — Apple Mail semantics. Otherwise it renders as
+              // authored on the white card: emails whose @media(prefers-color-
+              // scheme:dark) rules assume the client paints a dark body would
+              // otherwise end up white-on-white.
+              const raw = String(email.body_html || '');
+              const emailSupportsDark = isDark && /<meta[^>]+(?:color-scheme|supported-color-schemes)[^>]+dark/i.test(raw);
+              const darkCss = `body{background:${colors.surface || colors.background || '#121212'};color:${colors.text || '#eeeeee'}}a{color:${colors.primary}}`;
+              return (
+                <HtmlView
+                  style={{ width: '100%', height: webViewHeight, backgroundColor: 'transparent' }}
+                  html={safeBody}
+                  injectedCss={css}
+                  interceptLinks
+                  scrollEnabled={false}
+                  darkMode={emailSupportsDark}
+                  darkCss={darkCss}
+                  onLinkPress={(e) => {
+                    const url = e?.nativeEvent?.url;
+                    if (!url) return;
+                    if (/^(mailto|tel|sms):/i.test(url)) {
+                      import('expo-linking').then(L => L.openURL(url)).catch(() => {});
+                    } else {
+                      require('../utils/inAppBrowser').openInApp(url, { colors, isDark });
+                    }
+                  }}
+                  onRendered={(e) => {
+                    const h = e?.nativeEvent?.contentHeight || 0;
+                    // Measured from the body box (margins included) → no fudge.
+                    if (h > 0) setWebViewHeight(Math.max(60, Math.ceil(h) + 2));
+                  }}
+                />
+              );
+            }
             return (
               <HtmlView
                 style={{ width: '100%', height: webViewHeight, backgroundColor: 'transparent' }}
@@ -721,7 +766,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
       // stays readable in the app's dark theme. The email's own CSS (incl. its
       // @media dark rules) still overrides this base. The 12px body margin shows the
       // app background around it, giving a clean white "card" look.
-      const htmlDoc = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1"><style>body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:#111;word-break:break-word;background:#ffffff;overflow-x:hidden}img{max-width:100%;height:auto}a{color:${colors.primary}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}</style></head><body>${safeBody}</body></html>`;
+      const htmlDoc = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><style>html,body{-webkit-text-size-adjust:100%;text-size-adjust:100%;overscroll-behavior:none}*{-webkit-tap-highlight-color:transparent}a,img{-webkit-touch-callout:default}body{margin:12px;font-family:-apple-system,system-ui,sans-serif;font-size:15px;line-height:1.7;color:#111;word-break:break-word;background:#ffffff;overflow-x:hidden}img{max-width:100%;height:auto}a{color:${colors.primary}}pre{white-space:pre-wrap;overflow-x:auto;max-width:100%}table{max-width:100%;overflow-x:auto;display:block;border-collapse:collapse}td,th{max-width:80vw;word-break:break-word}*{box-sizing:border-box}</style></head><body>${safeBody}</body></html>`;
       return (
         <WebView
           originWhitelist={['*']}
@@ -729,6 +774,17 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
           style={{ height: webViewHeight, backgroundColor: 'transparent' }}
           scalesPageToFit={false}
           scrollEnabled={false}
+          // [2026-10-07 app-feel-webview] native feel: no zoom bounce / Android
+          // overscroll glow / system font-scale reflow; the body is auto-height
+          // inside the native ScrollView so the WebView never scrolls itself.
+          bounces={false}
+          overScrollMode="never"
+          textZoom={100}
+          showsVerticalScrollIndicator={false}
+          showsHorizontalScrollIndicator={false}
+          decelerationRate="normal"
+          setBuiltInZoomControls={false}
+          setDisplayZoomControls={false}
           setSupportMultipleWindows={false}
           javaScriptCanOpenWindowsAutomatically={false}
           injectedJavaScript={heightScript}
@@ -742,9 +798,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
                 if (url.startsWith('mailto:')) {
                   import('expo-linking').then(L => L.openURL(url)).catch(() => {});
                 } else {
-                  import('expo-web-browser').then(B => B.openBrowserAsync(url)).catch(() => {
-                    import('expo-linking').then(L => L.openURL(url)).catch(() => {});
-                  });
+                  require('../utils/inAppBrowser').openInApp(url, { colors });
                 }
               }
             } catch {}
@@ -757,9 +811,7 @@ export default function EmailReader({ email, onReply, onReplyAll, onForward, onF
               import('expo-linking').then(L => L.openURL(request.url)).catch(() => {});
               return false;
             }
-            import('expo-web-browser').then(B => B.openBrowserAsync(request.url)).catch(() => {
-              import('expo-linking').then(L => L.openURL(request.url)).catch(() => {});
-            });
+            require('../utils/inAppBrowser').openInApp(request.url, { colors });
             return false;
           }}
         />

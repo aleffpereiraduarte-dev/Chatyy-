@@ -9,8 +9,18 @@ export interface HtmlViewProps extends ViewProps {
   injectedCss?: string;
   /** Open links in Safari instead of inside the view. */
   openLinksExternally?: boolean;
-  /** Called when the view finishes rendering (height in points). */
+  /** Called when the view finishes rendering and (new binaries) on every content-height change (points). */
   onRendered?: (e: { nativeEvent: { contentHeight: number } }) => void;
+  // [2026-10-07 native-docs-mail] Binaries from 2026-10-07 on. Feature-detect
+  // with nativeViewHas('ExpoNativeHtmlView', { events: ['onLinkPress'] }).
+  /** Cancel every user-activated navigation and emit onLinkPress instead. */
+  interceptLinks?: boolean;
+  onLinkPress?: (e: { nativeEvent: { url: string } }) => void;
+  /** Force dark/light UI style (drives prefers-color-scheme) and append darkCss when dark. */
+  darkMode?: boolean;
+  darkCss?: string;
+  /** Inner WKWebView scrolling (disable when auto-sized inside a ScrollView). */
+  scrollEnabled?: boolean;
 }
 
 // iOS-only (WKWebView). `requireNativeView` THROWS if the view isn't registered

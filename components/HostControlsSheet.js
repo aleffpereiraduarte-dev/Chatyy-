@@ -19,6 +19,7 @@
 //   - Mute all, lock, share link → host + cohost
 //   - Recording → host ONLY (legal liability sits with the host)
 
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useRef, useEffect, useCallback, useState } from 'react';
 import {
   Modal,
@@ -270,7 +271,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 22,
     paddingTop: 8,
     paddingHorizontal: 12,
-    paddingBottom: Platform.OS === 'ios' ? 30 : 18,
+    paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(18),
   },
   handle: {
     width: 40,

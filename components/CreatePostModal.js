@@ -1,3 +1,4 @@
+import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Modal, TextInput,
@@ -1963,17 +1964,15 @@ function renderSingleMedia(item, isWeb, activeFilter, colors, t) {
               </>
             );
           }
-          try {
-            const { Video } = require('expo-av');
-            return <Video source={{ uri: item.uri }} style={StyleSheet.absoluteFill} resizeMode="contain" useNativeControls shouldPlay={false} positionMillis={1} />;
-          } catch {
-            return (
-              <>
-                <CachedImage source={{ uri: item.uri }} style={StyleSheet.absoluteFill} resizeMode="contain" />
-                <View style={gs.previewVideoBadge}><Text style={gs.previewVideoBadgeText}>VIDEO</Text></View>
-              </>
-            );
-          }
+          // [2026-10-07 android-native] was require('expo-av').Video — the package is gone
+          // (metro stub → Video undefined → "Element type is invalid" crash when
+          // a video had no thumbnail). Use the static fallback directly.
+          return (
+            <>
+              <CachedImage source={{ uri: item.uri }} style={StyleSheet.absoluteFill} resizeMode="contain" />
+              <View style={gs.previewVideoBadge}><Text style={gs.previewVideoBadgeText}>VIDEO</Text></View>
+            </>
+          );
         })()}
       </View>
     );
@@ -2017,17 +2016,14 @@ function renderMediaItem(item, isWeb, activeFilter, colors, t, idx) {
         />
       );
     }
-    try {
-      const { Video } = require('expo-av');
-      return <Video source={{ uri: item.uri }} style={StyleSheet.absoluteFill} resizeMode="contain" useNativeControls shouldPlay={false} positionMillis={1} />;
-    } catch {
-      return (
-        <>
-          <CachedImage source={{ uri: item.thumbnail || item.uri }} style={[StyleSheet.absoluteFill, getNativeFilterStyle(activeFilter)]} resizeMode="contain" />
-          <View style={gs.previewVideoBadge}><Text style={gs.previewVideoBadgeText}>VIDEO</Text></View>
-        </>
-      );
-    }
+    // [2026-10-07 android-native] expo-av <Video> removed (package gone → undefined component
+    // → render crash on every native video in the post composer).
+    return (
+      <>
+        <CachedImage source={{ uri: item.thumbnail || item.uri }} style={[StyleSheet.absoluteFill, getNativeFilterStyle(activeFilter)]} resizeMode="contain" />
+        <View style={gs.previewVideoBadge}><Text style={gs.previewVideoBadgeText}>VIDEO</Text></View>
+      </>
+    );
   }
   if (isWeb) {
     return (
@@ -2273,7 +2269,7 @@ const gs = StyleSheet.create({
 
   // Bottom share button (full-width 56pt purple pill)
   bottomShareWrap: {
-    paddingHorizontal: 16, paddingTop: 12, paddingBottom: Platform.OS === 'ios' ? 32 : 16,
+    paddingHorizontal: 16, paddingTop: 12, paddingBottom: Platform.OS === 'ios' ? 32 : androidBottomInset(16),
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   bottomShareBtn: {
@@ -2325,7 +2321,7 @@ const gs = StyleSheet.create({
   audienceDesc: { fontSize: 13, marginTop: 2 },
 
   // Tag people modal
-  tagModal: { flex: 1, paddingTop: Platform.OS === 'ios' ? 56 : 16 },
+  tagModal: { flex: 1, paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(16) },
   tagHeader: {
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth, gap: 12,

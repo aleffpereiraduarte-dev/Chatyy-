@@ -9,6 +9,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AvatarCircle from './AvatarCircle';
 import { IconX, IconSend, IconTrash, IconHeart, IconHeartOutline, IconMic, IconPlay, IconPause, IconMessageCircle, IconImage, IconVideo } from './Icons';
 import ModalHeader from './ModalHeader';
+import NativeVideoModal, { nativeVideoAvailable } from './NativeVideoModal';
+import { openInApp } from '../utils/inAppBrowser';
 import * as api from '../services/api';
 
 const ACCENT = '#111111';
@@ -71,6 +73,7 @@ const CommentItem = memo(function CommentItem({
   const isWeb = Platform.OS === 'web';
 
   const [deleteVisible, setDeleteVisible] = useState(false);
+  const [videoOpen, setVideoOpen] = useState(false); // [2026-10-07 app-feel-webview]
   const fadeAnim = useRef(new Animated.Value(1)).current;
   // Local optimistic state — heart should react instantly even though the
   // PG round-trip lags by a couple hundred ms.
@@ -210,17 +213,18 @@ const CommentItem = memo(function CommentItem({
                 ) : (
                   <Pressable
                     onPress={() => {
-                      // Best-effort fullscreen open via WebBrowser. If
-                      // expo-web-browser isn't available we fall back to
-                      // Linking.openURL.
-                      try { require('expo-web-browser').openBrowserAsync(mediaUrl); }
-                      catch { try { require('react-native').Linking.openURL(mediaUrl); } catch {} }
+                      // [2026-10-07 app-feel-webview] native expo-video player
+                      // (was: .mp4 in the in-app browser = web page feel).
+                      // Old binaries without expo-video keep the browser path.
+                      if (nativeVideoAvailable()) { setVideoOpen(true); return; }
+                      openInApp(mediaUrl, { colors, isDark });
                     }}
                     style={{ width: 160, height: 160, borderRadius: 10, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }}
                     accessibilityRole="button"
                     accessibilityLabel={t?.('feed.playVideo') || 'Play video'}
                   >
                     <IconPlay size={32} color="#fff" />
+                    {videoOpen && <NativeVideoModal url={mediaUrl} onClose={() => setVideoOpen(false)} />}
                   </Pressable>
                 )}
               </View>

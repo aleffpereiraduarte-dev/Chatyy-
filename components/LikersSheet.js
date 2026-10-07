@@ -7,6 +7,7 @@
  *   visible, postId, colors, isDark, t, onClose, router
  *   totalCount (optional) — shown in the header while loading, saves a flash
  */
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   View, Text, Modal, Pressable, TouchableOpacity, FlatList, ActivityIndicator,
@@ -139,7 +140,7 @@ export default function LikersSheet({
             backgroundColor: colors?.background || '#fff',
             borderTopLeftRadius: 18, borderTopRightRadius: 18,
             maxHeight: '80%', minHeight: 220,
-            paddingBottom: Platform.OS === 'ios' ? 24 : 10,
+            paddingBottom: Platform.OS === 'ios' ? 24 : androidBottomInset(10),
           }}
         >
           {/* Drag handle */}

@@ -1,3 +1,4 @@
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, TextInput, ScrollView,
@@ -6788,7 +6789,7 @@ const s = StyleSheet.create({
   },
   memViewerFooter: {
     position: 'absolute',
-    bottom: Platform.OS === 'ios' ? 36 : 22,
+    bottom: Platform.OS === 'ios' ? 36 : androidBottomInset(22),
     left: 0, right: 0,
     alignItems: 'center',
   },

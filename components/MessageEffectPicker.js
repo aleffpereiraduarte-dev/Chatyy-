@@ -11,6 +11,7 @@
 // staged. This way "Send with Effect" is a one-shot decoration that doesn't
 // touch the regular send path's correctness guarantees.
 
+import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useEffect, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, Animated, Easing,
@@ -170,7 +171,7 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
 
           {/* Top bar: back to grid + effect name */}
           <View style={{
-            position: 'absolute', top: Platform.OS === 'ios' ? 54 : 28, left: 0, right: 0,
+            position: 'absolute', top: Platform.OS === 'ios' ? 54 : androidTopInset(28), left: 0, right: 0,
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
             paddingHorizontal: 18,
           }}>
@@ -210,7 +211,7 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
           <View style={{
             position: 'absolute', left: 0, right: 0, bottom: 0,
             paddingHorizontal: 18, paddingTop: 12,
-            paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+            paddingBottom: Platform.OS === 'ios' ? 40 : androidBottomInset(24),
             flexDirection: 'row', alignItems: 'center', gap: 12,
           }}>
             <TouchableOpacity
@@ -242,7 +243,7 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
         <View style={[StyleSheet.absoluteFillObject, { backgroundColor: isDark ? '#0b0b0d' : '#0b1020' }]}>
           {/* Top bar: back to grid + effect name */}
           <View style={{
-            position: 'absolute', top: Platform.OS === 'ios' ? 54 : 28, left: 0, right: 0,
+            position: 'absolute', top: Platform.OS === 'ios' ? 54 : androidTopInset(28), left: 0, right: 0,
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
             paddingHorizontal: 18,
           }}>
@@ -285,7 +286,7 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
           <View style={{
             position: 'absolute', left: 0, right: 0, bottom: 0,
             paddingHorizontal: 18, paddingTop: 12,
-            paddingBottom: Platform.OS === 'ios' ? 40 : 24,
+            paddingBottom: Platform.OS === 'ios' ? 40 : androidBottomInset(24),
             flexDirection: 'row', alignItems: 'center', gap: 12,
           }}>
             <TouchableOpacity
@@ -316,7 +317,7 @@ export default function MessageEffectPicker({ visible, onClose, onPick, t, isDar
           position: 'absolute', left: 0, right: 0, bottom: 0,
           backgroundColor: sheetBg,
           borderTopLeftRadius: 18, borderTopRightRadius: 18,
-          paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 32 : 20,
+          paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 32 : androidBottomInset(20),
           maxHeight: '80%',
           transform: [{ translateY: slideY }],
         }}

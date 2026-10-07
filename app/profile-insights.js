@@ -5,6 +5,7 @@
 // Backend: profile_insights endpoint. Best-effort — if a metric isn't
 // available yet (e.g. profile_views table not yet wired) the backend
 // returns zero, and this screen still renders without errors.
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, ScrollView, TouchableOpacity, ActivityIndicator, Platform, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -149,7 +150,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingTop: Platform.OS === 'ios' ? 50 : 16,
+    paddingTop: Platform.OS === 'ios' ? 50 : androidTopInset(16),
     paddingBottom: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
   },

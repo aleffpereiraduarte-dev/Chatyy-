@@ -24,6 +24,7 @@
 // photos reuse expo-image-picker + the chat_upload silent pipeline, and the
 // "Criar com IA" row calls the existing api.aiGenerateImage() helper.
 
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useMemo, useCallback } from 'react';
 import {
   View, Text, ScrollView, TouchableOpacity, Modal, Image, Platform,
@@ -423,7 +424,7 @@ export default function WallpaperPicker({
           </ScrollView>
 
           {/* Done bar */}
-          <View style={{ padding: 16, paddingBottom: Platform.OS === 'ios' ? 30 : 16, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rowBorder, backgroundColor: C.background || (isDark ? '#0B141A' : '#F7F7F7') }}>
+          <View style={{ padding: 16, paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(16), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: rowBorder, backgroundColor: C.background || (isDark ? '#0B141A' : '#F7F7F7') }}>
             <TouchableOpacity onPress={onClose} activeOpacity={0.85} style={{ backgroundColor: '#25D366', borderRadius: 13, paddingVertical: 14, alignItems: 'center' }}>
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{t?.('common.done') || 'Concluído'}</Text>
             </TouchableOpacity>

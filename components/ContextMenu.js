@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Modal, Animated } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import PressableRow from './PressableRow'; // [2026-10-07 app-feel-ui]
+import { BlurBackdrop } from './NativeBlur'; // [2026-10-07 native-ui-build]
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import {
@@ -13,8 +16,9 @@ import {
 const SEPARATOR = { _separator: true };
 
 export default function ContextMenu({ visible, position, email, onClose, actions, mutedUids }) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(0.96)).current;
 
@@ -108,28 +112,45 @@ export default function ContextMenu({ visible, position, email, onClose, actions
   }
 
   // Mobile: bottom sheet modal
+  // [2026-10-07 app-feel-ui] Native sheet feel: backdrop FADES (Modal "slide"
+  // dragged the dim layer up with the sheet — a web-modal tell), the sheet
+  // springs up from below, rows get native cell feedback (iOS highlight /
+  // Android ripple) and the bottom inset follows the device safe area.
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose} statusBarTranslucent>
       <TouchableOpacity style={s.modalBackdrop} onPress={onClose} activeOpacity={1}>
-        <View style={[s.bottomSheet, { backgroundColor: colors.surface }]}>
+        {/* [2026-10-07 native-ui-build] iOS: lista de e-mails borrada atrás
+            do sheet (material nativo); Android/web: dim sólido 0.4 de antes. */}
+        <BlurBackdrop isDark={isDark} dim={0.4} pointerEvents="none" />
+        <Animated.View
+          onStartShouldSetResponder={() => true}
+          style={[s.bottomSheet, {
+            backgroundColor: colors.surface,
+            paddingBottom: Math.max(16, (insets?.bottom || 0) + 8),
+            transform: [{ translateY: fadeAnim.interpolate({ inputRange: [0, 1], outputRange: [48, 0] }) }],
+          }]}
+        >
           <View style={[s.sheetHandle, { backgroundColor: colors.divider }]} />
           <View style={s.sheetContent}>
             {items.map((item, i) => {
               if (item._separator) return <View key={`sep-${i}`} style={[s.separator, { borderTopColor: colors.borderLight }]} />;
               const Icon = item.icon;
               return (
-                <TouchableOpacity
+                <PressableRow
                   key={item.key}
                   style={s.sheetItem}
+                  highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                   onPress={() => handleAction(item)}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.label}
                 >
                   <Icon size={20} color={item.color || colors.textSecondary} />
                   <Text style={[s.sheetItemText, { color: item.color || colors.text }]}>{item.label}</Text>
-                </TouchableOpacity>
+                </PressableRow>
               );
             })}
           </View>
-        </View>
+        </Animated.View>
       </TouchableOpacity>
     </Modal>
   );
@@ -157,10 +178,10 @@ const s = StyleSheet.create({
   separator: { borderTopWidth: 1, marginVertical: 4 },
   // Mobile bottom sheet
   modalBackdrop: {
-    flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.4)',
+    flex: 1, justifyContent: 'flex-end', // dim/blur = <BlurBackdrop/> [2026-10-07 native-ui-build]
   },
   bottomSheet: {
-    borderTopLeftRadius: 16, borderTopRightRadius: 16, paddingBottom: 34,
+    borderTopLeftRadius: 16, borderTopRightRadius: 16,
   },
   sheetHandle: {
     width: 36, height: 4, borderRadius: 2, alignSelf: 'center', marginTop: 10, marginBottom: 10,
@@ -168,6 +189,7 @@ const s = StyleSheet.create({
   sheetContent: { paddingHorizontal: Spacing.md },
   sheetItem: {
     flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: Spacing.md, gap: 14,
+    borderRadius: 10,
   },
   sheetItemText: { fontSize: FontSize.lg },
 });

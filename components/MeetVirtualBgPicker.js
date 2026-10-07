@@ -1,3 +1,4 @@
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, Pressable, ScrollView } from 'react-native';
 import { useLanguage } from '../context/LanguageContext';
@@ -92,7 +93,7 @@ const s = StyleSheet.create({
   container: {
     backgroundColor: '#1e293b',
     borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+    paddingBottom: Platform.OS === 'ios' ? 34 : androidBottomInset(20),
     paddingTop: 12,
     paddingHorizontal: 16,
     maxHeight: '55%',

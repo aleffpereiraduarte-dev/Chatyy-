@@ -5,6 +5,7 @@
 // denied → "Abrir ajustes"). WhatsApp/Google-Messages feel: one tap to
 // confirm when the parse was right, one more to adjust when it wasn't.
 // ============================================================
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, Modal, Pressable, ActivityIndicator, Linking, Platform, StyleSheet } from 'react-native';
 import { Shadow } from '../constants/theme';
@@ -160,7 +161,7 @@ function ReminderSheetInner({ onClose, text, initialWhen, colors, t, onConfirm }
 
 const st = StyleSheet.create({
   overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.45)' },
-  sheet: { borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 18, paddingTop: 16, paddingBottom: Platform.OS === 'ios' ? 34 : 20, maxWidth: 560, width: '100%', alignSelf: 'center' },
+  sheet: { borderTopLeftRadius: 22, borderTopRightRadius: 22, paddingHorizontal: 18, paddingTop: 16, paddingBottom: Platform.OS === 'ios' ? 34 : androidBottomInset(20), maxWidth: 560, width: '100%', alignSelf: 'center' },
   headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   title: { fontSize: 17, fontWeight: '700' },
   quote: { borderLeftWidth: 3, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, marginBottom: 14 },

@@ -1,3 +1,4 @@
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
@@ -3258,7 +3259,7 @@ const s = StyleSheet.create({
 
   /* Top-right row (lang + theme) */
   topRightRow: {
-    position: 'absolute', top: Platform.OS === 'ios' ? 54 : 16, right: 16, zIndex: 10,
+    position: 'absolute', top: Platform.OS === 'ios' ? 54 : androidTopInset(16), right: 16, zIndex: 10,
     flexDirection: 'row', alignItems: 'center', gap: 4,
   },
   // [2026-10-06 UX] 44pt minimum tap target (Apple HIG / WCAG 2.5.8) — were 36.

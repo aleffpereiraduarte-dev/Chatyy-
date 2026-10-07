@@ -6,6 +6,7 @@ import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
 import { IconPaperclip, IconX, IconFileText, IconImage, IconMusic, IconFilm, IconAlertTriangle, IconFolder, IconCheckCircle } from './Icons';
 import { formatBytes } from '../services/format';
 import { fileListAll, BASE_URL } from '../services/api';
+import LocalAttachmentPreview from './LocalAttachmentPreview';
 
 const DEFAULT_MAX_FILES = 10;
 const DEFAULT_MAX_SIZE = 55 * 1024 * 1024; // 55 MB
@@ -45,6 +46,8 @@ export default function AttachmentPicker({
   const [driveError, setDriveError] = useState(null);
   const [driveFiles, setDriveFiles] = useState([]);
   const [driveSelection, setDriveSelection] = useState({});
+  // [2026-10-07 compose-attach-preview] tap a picked file to check it before sending (Gmail-style).
+  const [previewIndex, setPreviewIndex] = useState(-1);
 
   // Revoke all created object URLs on unmount to prevent memory leaks
   useEffect(() => {
@@ -281,22 +284,30 @@ export default function AttachmentPicker({
                   index < attachments.length - 1 && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.borderLight },
                 ]}
               >
-                {file.type?.startsWith('image/') && file.uri ? (
-                  <Image source={{ uri: file.uri }} style={s.fileThumb} resizeMode="cover" />
-                ) : (
-                  <View style={[s.fileIcon, { backgroundColor: colors.primaryLight }]}>
-                    {iconForType(file.type, 16, colors.primary)}
-                  </View>
-                )}
+                <TouchableOpacity
+                  style={{ flex: 1, flexDirection: 'row', alignItems: 'center' }}
+                  onPress={() => setPreviewIndex(index)}
+                  activeOpacity={0.6}
+                  accessibilityRole="button"
+                  accessibilityLabel={(t('attachment.preview') || 'Ver anexo') + ': ' + (file.name || '')}
+                >
+                  {file.type?.startsWith('image/') && file.uri ? (
+                    <Image source={{ uri: file.uri }} style={s.fileThumb} resizeMode="cover" />
+                  ) : (
+                    <View style={[s.fileIcon, { backgroundColor: colors.primaryLight }]}>
+                      {iconForType(file.type, 16, colors.primary)}
+                    </View>
+                  )}
 
-                <View style={s.fileMeta}>
-                  <Text style={[s.fileName, { color: colors.text }]} numberOfLines={1}>
-                    {file.name}
-                  </Text>
-                  <Text style={[s.fileSize, { color: colors.textTertiary }]}>
-                    {formatBytes(file.size)}
-                  </Text>
-                </View>
+                  <View style={s.fileMeta}>
+                    <Text style={[s.fileName, { color: colors.text }]} numberOfLines={1}>
+                      {file.name}
+                    </Text>
+                    <Text style={[s.fileSize, { color: colors.textTertiary }]}>
+                      {formatBytes(file.size)} · {t('attachment.tapToPreview') || 'Toque para ver'}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
 
                 {/* Upload progress (future use) */}
                 {progress != null && progress < 100 && (
@@ -347,6 +358,13 @@ export default function AttachmentPicker({
           </View>
         </View>
       )}
+
+      <LocalAttachmentPreview
+        visible={previewIndex >= 0 && !!attachments[previewIndex]}
+        file={attachments[previewIndex]}
+        onClose={() => setPreviewIndex(-1)}
+        onRemove={onRemove && !disabled ? () => { const i = previewIndex; setPreviewIndex(-1); onRemove(i); } : undefined}
+      />
 
       {/* Drive picker modal — slide-up sheet listing the user's Drive files. */}
       <Modal visible={showDrive} animationType="slide" transparent onRequestClose={() => setShowDrive(false)}>

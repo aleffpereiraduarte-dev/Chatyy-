@@ -2,6 +2,7 @@
  * StatusCamera — Instagram-level camera for status creation
  * Real photo filters with live preview, video recording, gallery picker
  */
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Animated, Dimensions,
@@ -1936,7 +1937,7 @@ const s = StyleSheet.create({
 
   // Top-left close (Feature 5)
   closeBtn: {
-    position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, left: 16,
+    position: 'absolute', top: Platform.OS === 'ios' ? 60 : androidTopInset(40), left: 16,
     width: 40, height: 40, borderRadius: 20,
     backgroundColor: 'rgba(0,0,0,0.5)',
     alignItems: 'center', justifyContent: 'center', zIndex: 30,
@@ -1946,7 +1947,7 @@ const s = StyleSheet.create({
 
   // Music tile (Feature 6)
   musicPill: {
-    position: 'absolute', top: Platform.OS === 'ios' ? 64 : 44,
+    position: 'absolute', top: Platform.OS === 'ios' ? 64 : androidTopInset(44),
     alignSelf: 'center',
     flexDirection: 'row', alignItems: 'center',
     backgroundColor: 'rgba(0,0,0,0.5)',
@@ -1959,7 +1960,7 @@ const s = StyleSheet.create({
 
   // Right-side action stack (Feature 3)
   rightStack: {
-    position: 'absolute', right: 12, top: Platform.OS === 'ios' ? 130 : 110,
+    position: 'absolute', right: 12, top: Platform.OS === 'ios' ? 130 : androidTopInset(110),
     alignItems: 'center', gap: 18, zIndex: 15,
   },
   stackBtn: {
@@ -2216,7 +2217,7 @@ const s = StyleSheet.create({
 
   // Record badge
   recBadge: {
-    position: 'absolute', top: Platform.OS === 'ios' ? 105 : 85,
+    position: 'absolute', top: Platform.OS === 'ios' ? 105 : androidTopInset(85),
     alignSelf: 'center',
     flexDirection: 'row', alignItems: 'center', gap: 6,
     backgroundColor: 'rgba(255,0,0,0.85)', borderRadius: 14,

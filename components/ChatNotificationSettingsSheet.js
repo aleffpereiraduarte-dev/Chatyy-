@@ -19,6 +19,8 @@
  * strings with PT-BR fallbacks.
  */
 
+import NativeSwitch from './NativeSwitch'; // [2026-10-07 app-feel-ui] themed native toggle
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, Modal, Pressable, TouchableOpacity, ScrollView, Switch,
@@ -272,7 +274,7 @@ export default function ChatNotificationSettingsSheet({
             backgroundColor: colors?.background || (isDark ? '#0f0f12' : '#fff'),
             borderTopLeftRadius: 18, borderTopRightRadius: 18,
             maxHeight: '88%', minHeight: 360,
-            paddingBottom: Platform.OS === 'ios' ? 24 : 12,
+            paddingBottom: Platform.OS === 'ios' ? 24 : androidBottomInset(12),
           }}
         >
           {/* Drag handle */}
@@ -660,7 +662,7 @@ function ToggleRow({ label, value, onChange, colors }) {
       borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors?.border,
     }}>
       <Text style={{ flex: 1, fontSize: 15, color: colors?.text }}>{label}</Text>
-      <Switch
+      <NativeSwitch
         value={value}
         onValueChange={onChange}
         trackColor={{ false: '#888', true: ACCENT }}

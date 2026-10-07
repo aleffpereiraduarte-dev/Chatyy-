@@ -6,6 +6,7 @@ export { default as Image } from './src/Image';
 export { default as PdfView } from './src/PdfView';
 export { default as HtmlView } from './src/HtmlView';
 export { default as Intents } from './src/Intents';
+export { nativeViewCaps, nativeViewHas } from './src/viewCaps';
 
 // View modules added in #234/#236 — exported as React components.
 //

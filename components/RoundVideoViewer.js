@@ -51,11 +51,7 @@ function enablePlaybackAudioSession() {
     if (r?.catch) r.catch(() => {});
     if (fn) return;
   } catch {}
-  try {
-    const { Audio } = require('expo-av');
-    const r = Audio?.setAudioModeAsync?.({ playsInSilentModeIOS: true });
-    if (r?.catch) r.catch(() => {});
-  } catch {}
+  // [2026-10-07 android-native] expo-av fallback removed (package gone; metro stub).
 }
 
 // ── Inner player (extracted so hooks stay unconditional) ──────────────────

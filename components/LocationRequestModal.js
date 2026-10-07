@@ -30,6 +30,7 @@
  * threading any React context.
  */
 
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, Modal, TouchableOpacity, StyleSheet, Platform, Animated, Pressable,
@@ -213,7 +214,7 @@ const lrm = StyleSheet.create({
   },
   sheet: {
     padding: 22,
-    paddingBottom: Platform.OS === 'ios' ? 36 : 24,
+    paddingBottom: Platform.OS === 'ios' ? 36 : androidBottomInset(24),
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
   },

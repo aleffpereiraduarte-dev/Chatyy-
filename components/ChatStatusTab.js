@@ -1,3 +1,4 @@
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
@@ -64,50 +65,6 @@ function resolveStatusMedia(u) {
 
 // Stable component for native audio playback via hidden WebView
 // Using a proper component (not IIFE) prevents remounting on every parent render
-// Real native audio via expo-av Audio.Sound. Honors setAudioModeAsync
-// ({playsInSilentModeIOS:true}) so status music plays even with the iOS
-// silent switch ON, and uses the proper AVAudioSession. (The old hidden
-// <audio autoplay> WebView was muted by the WKWebView audio session on iOS
-// silent mode → song NAME showed but no sound played.)
-function ExpoAvStatusAudio({ url, Audio }) {
-  const soundRef = useRef(null);
-  useEffect(() => {
-    let cancelled = false;
-    let unregister = () => {};
-    (async () => {
-      try {
-        try {
-          await Audio.setAudioModeAsync?.({
-            playsInSilentModeIOS: true,
-            allowsRecordingIOS: false,
-            staysActiveInBackground: false,
-            shouldDuckAndroid: true,
-            playThroughEarpieceAndroid: false,
-          });
-        } catch {}
-        const { sound } = await Audio.Sound.createAsync(
-          { uri: url },
-          { shouldPlay: true, isLooping: true, volume: 0.85 }
-        );
-        if (cancelled) { try { await sound.unloadAsync(); } catch {} return; }
-        soundRef.current = sound;
-        // Stop on incoming call (call_invite WS → stopAllAudio()).
-        try {
-          const { registerMediaPlayer } = require('../services/audioManager');
-          unregister = registerMediaPlayer(() => { try { sound.pauseAsync(); } catch {} });
-        } catch {}
-      } catch {}
-    })();
-    return () => {
-      cancelled = true;
-      try { unregister(); } catch {}
-      const s = soundRef.current; soundRef.current = null;
-      if (s) { (async () => { try { await s.stopAsync(); } catch {} try { await s.unloadAsync(); } catch {} })(); }
-    };
-  }, [url]);
-  return null;
-}
-
 // [2026-05-30] SDK 55 player. Expo SDK 55 DROPPED expo-av in favor of
 // expo-audio (imperative createAudioPlayer API). The old code required
 // expo-av (throws on SDK 55) → fell back to the WebView <audio> which iOS
@@ -157,9 +114,7 @@ function NativeAudioPlayer({ url }) {
   let expoAudio = null;
   try { expoAudio = require('expo-audio'); } catch {}
   if (expoAudio && expoAudio.createAudioPlayer) return <ExpoAudioStatusPlayer url={url} />;
-  let Audio = null;
-  try { Audio = require('expo-av').Audio; } catch {}
-  if (Audio && Audio.Sound) return <ExpoAvStatusAudio url={url} Audio={Audio} />;
+  // [2026-10-07 android-native] expo-av fallback removed (package gone since SDK 54; metro stub).
   // Fallback for older binaries where neither is linked: hidden WebView.
   const WebView = require('react-native-webview').WebView;
   const html = `<!DOCTYPE html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><audio id="a" src="${url}" autoplay loop playsinline webkit-playsinline></audio><script>var a=document.getElementById('a');a.play().catch(function(){});document.addEventListener('visibilitychange',function(){if(!document.hidden)a.play().catch(function(){});});</script></body></html>`;
@@ -274,41 +229,13 @@ function StatusVideoPlayer({ url, posterUrl, paused, onDuration, onLoaded, onErr
       );
     }
   } catch {}
-  // Fallback: expo-av (older binaries).
-  try {
-    const { Video } = require('expo-av');
-    return (
-      <View style={{ flex: 1, backgroundColor: '#000' }}>
-        {posterUrl ? (
-          <Image
-            source={{ uri: posterUrl }}
-            style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-            resizeMode="contain"
-          />
-        ) : null}
-        <Video
-          source={{ uri: url }}
-          style={{ flex: 1, backgroundColor: 'transparent' }}
-          resizeMode="contain"
-          shouldPlay={!paused}
-          isLooping
-          useNativeControls={false}
-          onLoad={(s) => {
-            try {
-              const ms = Number(s?.durationMillis) || 0;
-              if (ms > 0 && typeof onDuration === 'function') onDuration(ms);
-              if (typeof onLoaded === 'function') onLoaded();
-            } catch {}
-          }}
-          onError={() => { try { onError?.(); } catch {} }}
-        />
-      </View>
-    );
-  } catch (e) {
-    console.warn('[StatusVideoPlayer] no video module', e?.message);
-    if (typeof onError === 'function') onError();
-    return null;
-  }
+  // [2026-10-07 android-native] expo-av <Video> fallback removed: the package is gone (metro
+  // stub → Video === undefined → rendering it crashed with "Element type is
+  // invalid" instead of failing gracefully). Report the error → caller shows
+  // its fail card / poster.
+  console.warn('[StatusVideoPlayer] expo-video unavailable');
+  if (typeof onError === 'function') onError();
+  return null;
 }
 
 const STATUS_DURATION = 5000;
@@ -1792,20 +1719,9 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
     }
     // Configure audio session so video status PLAYS through the speaker even
     // when the iOS silent switch is on (Instagram/Stories pattern). Without
-    // this, half of opens land in muted city. expo-av's setAudioModeAsync
-    // also benefits expo-video on the same session.
-    if (Platform.OS !== 'web') {
-      try {
-        const { Audio } = require('expo-av');
-        Audio?.setAudioModeAsync?.({
-          playsInSilentModeIOS: true,
-          allowsRecordingIOS: false,
-          staysActiveInBackground: false,
-          shouldDuckAndroid: true,
-          playThroughEarpieceAndroid: false,
-        });
-      } catch {}
-    }
+    // this, half of opens land in muted city. ([2026-10-07 android-native]: the old call went
+    // through expo-av, which is stubbed to {} on SDK 55 → it was a no-op;
+    // ExpoAudioStatusPlayer / expo-video set the session themselves.)
     // Build list of all groups for horizontal swiping
     const myGroup = myStatuses.length > 0
       ? { ownerEmail: currentEmail, ownerName: currentName, items: myStatuses }
@@ -4342,7 +4258,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
           <Pressable style={{
             backgroundColor: isDark ? '#111' : '#fff',
             borderTopLeftRadius: 22, borderTopRightRadius: 22,
-            paddingTop: 18, paddingBottom: Platform.OS === 'ios' ? 36 : 22,
+            paddingTop: 18, paddingBottom: Platform.OS === 'ios' ? 36 : androidBottomInset(22),
             paddingHorizontal: 20,
           }} onPress={(e) => e.stopPropagation?.()}>
             <Text style={{ fontSize: 17, fontWeight: '700', color: isDark ? '#fff' : '#111', marginBottom: 14 }}>
@@ -4414,7 +4330,7 @@ function ChatStatusTab({ colors, isDark, t, user, router, autoNewStatus, openSta
           <Pressable style={{
             backgroundColor: isDark ? '#111' : '#fff',
             borderTopLeftRadius: 24, borderTopRightRadius: 24,
-            maxHeight: '75%', paddingBottom: Platform.OS === 'ios' ? 34 : 18,
+            maxHeight: '75%', paddingBottom: Platform.OS === 'ios' ? 34 : androidBottomInset(18),
             ...(Platform.OS === 'web' ? { boxShadow: '0 -8px 32px rgba(0,0,0,0.35)' } : {}),
           }}>
             {/* Drag handle */}
@@ -6397,7 +6313,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 14,
     paddingVertical: 12,
-    paddingBottom: Platform.OS === 'ios' ? 36 : 16,
+    paddingBottom: Platform.OS === 'ios' ? 36 : androidBottomInset(16),
   },
   replyInputWrap: {
     flex: 1,
@@ -6430,7 +6346,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 18,
     paddingVertical: 14,
-    paddingBottom: Platform.OS === 'ios' ? 36 : 18,
+    paddingBottom: Platform.OS === 'ios' ? 36 : androidBottomInset(18),
     gap: 8,
   },
   viewersText: {
@@ -6592,7 +6508,7 @@ const styles = StyleSheet.create({
   },
   creatorFooter: {
     paddingHorizontal: 20,
-    paddingBottom: Platform.OS === 'ios' ? 40 : 28,
+    paddingBottom: Platform.OS === 'ios' ? 40 : androidBottomInset(28),
     alignItems: 'center',
     zIndex: 2,
   },

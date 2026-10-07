@@ -1,3 +1,4 @@
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Image, Dimensions, Platform } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -100,7 +101,7 @@ export default function HashtagScreen() {
 
   return (
     <View style={[s.container, { backgroundColor: colors.background }]}>
-      <View style={[s.header, { borderBottomColor: colors.borderLight, paddingTop: Platform.OS === 'ios' ? 50 : 20 }]}>
+      <View style={[s.header, { borderBottomColor: colors.borderLight, paddingTop: Platform.OS === 'ios' ? 50 : androidTopInset(20) }]}>
         <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={{ padding: 6 }}>
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>

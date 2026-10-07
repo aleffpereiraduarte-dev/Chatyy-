@@ -12,6 +12,7 @@
 // phone_signup. The new account is flagged `phone_required: false` so the
 // user can add a phone later in settings without being nagged.
 
+import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
@@ -564,7 +565,7 @@ export default function SignupUsername() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 56 : 24, paddingBottom: 12 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(24), paddingBottom: 12 },
   backBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   brand: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
   scroll: { paddingHorizontal: 22, paddingBottom: 24 },
@@ -577,7 +578,7 @@ const styles = StyleSheet.create({
   // floats just above the keyboard naturally.
   footer: {
     paddingHorizontal: 22, paddingTop: 12,
-    paddingBottom: Platform.OS === 'ios' ? 30 : 16,
+    paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(16),
     borderTopWidth: StyleSheet.hairlineWidth,
     backgroundColor: 'transparent',
   },

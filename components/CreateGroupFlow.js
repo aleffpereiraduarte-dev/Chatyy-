@@ -1,3 +1,4 @@
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, TextInput,
@@ -558,7 +559,7 @@ const sty = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: 12,
     paddingVertical: 12,
-    paddingTop: Platform.OS === 'ios' ? 54 : 12,
+    paddingTop: Platform.OS === 'ios' ? 54 : androidTopInset(12),
     gap: 8,
   },
   headerBtn: { padding: 8, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)' },

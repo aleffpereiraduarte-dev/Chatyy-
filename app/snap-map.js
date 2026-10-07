@@ -61,6 +61,10 @@ import * as api from '../services/api';
 import AvatarCircle from '../components/AvatarCircle';
 import { getAvatarUrlForEmail } from '../services/api';
 import { coverageStyleFor, boraStyleUrl, boraMapHtml } from '../components/BoraMap';
+// [2026-10-07 native-maps] native map (iOS MapKit / Android MapLibre Native).
+// Binaries without ChatyyMapView (and web) keep the MapLibre-GL-JS WebView below.
+import { ChatyyMap, isNativeMapAvailable, nativeMapStyleUrl } from '../components/NativeMap';
+import { MapSearchBar, MapFab } from '../components/MapControls';
 import {
   IconArrowLeft, IconMapPin, IconUser, IconMessageSquare, IconX, IconNavigation,
   IconPhone, IconEyeOff, IconClock, IconRefresh, IconFilter,
@@ -1568,7 +1572,28 @@ export default function SnapMapScreen() {
   const pendingPinsRef = useRef(null);
   const pendingMeRef = useRef(null);
 
+  // [2026-10-07 native-maps] Native path: pins/me flow as the `markers` prop
+  // (no bridge needed); 'pan' becomes a camera update.
+  const nativeMap = useMemo(() => isNativeMapAvailable(), []);
+  const [nativeCamera, setNativeCamera] = useState(null);
+  const [nativeKey, setNativeKey] = useState(0);
+  const [selectedSearch, setSelectedSearch] = useState(null);
+  const camSeqRef = useRef(0);
+  const nativeZoomRef = useRef(DEFAULT_ZOOM);
+  const nativeFittedRef = useRef(false);
+  const nativeCameraTo = useCallback((cam) => {
+    camSeqRef.current += 1;
+    setNativeCamera({ ...cam, seq: camSeqRef.current });
+  }, []);
+
   const pushToMap = useCallback((msg) => {
+    if (nativeMap) {
+      if (msg?.type === 'pan' && Number.isFinite(msg.lat) && Number.isFinite(msg.lng)) {
+        const z = nativeZoomRef.current;
+        nativeCameraTo({ latitude: msg.lat, longitude: msg.lng, zoom: z < 14 ? 15.5 : z, animated: true });
+      }
+      return;
+    }
     const raw = JSON.stringify(msg);
     if (Platform.OS === 'web') {
       try { iframeRef.current?.contentWindow?.postMessage({ raw }, '*'); } catch {}
@@ -1577,7 +1602,68 @@ export default function SnapMapScreen() {
       const js = `try{window.RNbridge(${JSON.stringify(raw)});}catch(e){};true;`;
       try { webRef.current?.injectJavaScript(js); } catch {}
     }
-  }, []);
+  }, [nativeMap, nativeCameraTo]);
+
+  // [2026-10-07 native-maps] Native markers = same data the WebView pins get.
+  const nativeMarkers = useMemo(() => {
+    if (!nativeMap) return [];
+    const list = pinsPayload.map((p) => {
+      const nm = String(p.name || (p.email ? p.email.split('@')[0] : '?'));
+      return {
+        id: p.email,
+        latitude: p.lat,
+        longitude: p.lng,
+        kind: 'avatar',
+        label: nm.split(' ')[0],
+        sublabel: [p.ago_label, p.dist_label].filter(Boolean).join(' · '),
+        imageUrl: p.avatar_url || undefined,
+        initials: nm.trim().charAt(0).toUpperCase(),
+        stale: !!p.is_stale,
+        color: p.is_unlimited ? '#111111' : '#22C55E',
+        highlight: !!(selected && selected.email && selected.email === p.email),
+      };
+    });
+    if (mePayload && Number.isFinite(mePayload.lat) && Number.isFinite(mePayload.lng)) {
+      list.push({ id: '__me', latitude: mePayload.lat, longitude: mePayload.lng, kind: 'me', color: '#2563EB', imageUrl: mePayload.avatar_url || undefined });
+    }
+    if (selectedSearch) {
+      list.push({ id: '__search', latitude: selectedSearch.latitude, longitude: selectedSearch.longitude, kind: 'search', color: '#F43F5E', label: selectedSearch.title });
+    }
+    return list;
+  }, [nativeMap, pinsPayload, mePayload, selected, selectedSearch]);
+
+  // Fit every friend (+ me) — native counterpart of the WebView's __fitAll.
+  const nativeFitAll = useCallback((animated) => {
+    const pts = nativeMarkers.filter((m) => m.id !== '__search');
+    if (!pts.length) return false;
+    if (pts.length === 1) {
+      nativeCameraTo({ latitude: pts[0].latitude, longitude: pts[0].longitude, zoom: 15, animated });
+      return true;
+    }
+    let minLat = 90, minLng = 180, maxLat = -90, maxLng = -180;
+    pts.forEach((m) => {
+      minLat = Math.min(minLat, m.latitude); maxLat = Math.max(maxLat, m.latitude);
+      minLng = Math.min(minLng, m.longitude); maxLng = Math.max(maxLng, m.longitude);
+    });
+    nativeCameraTo({
+      latitude: (minLat + maxLat) / 2, longitude: (minLng + maxLng) / 2, zoom: 15, animated,
+      minLatitude: minLat, minLongitude: minLng, maxLatitude: maxLat, maxLongitude: maxLng,
+      padding: 70, maxZoom: 15,
+    });
+    return true;
+  }, [nativeMarkers, nativeCameraTo]);
+
+  // First paint (native): fit everyone once markers exist; else initial center.
+  useEffect(() => {
+    if (!nativeMap) return;
+    if (!nativeCamera) {
+      nativeCameraTo({ latitude: initialCenter.lat, longitude: initialCenter.lng, zoom: DEFAULT_ZOOM });
+    }
+    if (!nativeFittedRef.current && nativeMarkers.some((m) => m.kind === 'avatar')) {
+      nativeFittedRef.current = true;
+      nativeFitAll(false);
+    }
+  }, [nativeMap, nativeMarkers, initialCenter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!mapReadyRef.current) { pendingPinsRef.current = pinsPayload; return; }
@@ -1839,6 +1925,25 @@ export default function SnapMapScreen() {
             allow="geolocation"
             title="snap-map"
           />
+        ) : nativeMap ? (
+          <ChatyyMap
+            key={`native-map-${nativeKey}`}
+            style={{ flex: 1 }}
+            dark={isDark}
+            rotateEnabled
+            styleUrl={nativeMapStyleUrl(initialCenter.lat, initialCenter.lng, isDark)}
+            camera={nativeCamera}
+            markers={nativeMarkers}
+            onMapReady={() => onWebMessage({ type: 'map_ready' })}
+            onMapError={(e) => onWebMessage({ type: 'map_error', stage: 'native', message: String(e?.message || '') })}
+            onMarkerPress={(e) => {
+              const id = e?.id;
+              if (!id || id === '__me') return;
+              if (id === '__search') { setSelectedSearch(null); return; }
+              onWebMessage({ type: 'pin_tap', email: id });
+            }}
+            onRegionDidChange={(r) => { if (Number.isFinite(r?.zoom)) nativeZoomRef.current = r.zoom; }}
+          />
         ) : (
           <WebView
             ref={webRef}
@@ -1853,9 +1958,37 @@ export default function SnapMapScreen() {
           />
         )}
 
+        {/* [2026-10-07 native-maps] Native-only overlays: the WebView map draws
+            its own search + fit-all inside the page; the native map gets them
+            as RN controls (same Nominatim search, same fit-all behaviour). */}
+        {nativeMap && (
+          <MapSearchBar
+            style={{ position: 'absolute', top: 12, left: 12, right: 12, zIndex: 20, elevation: 20 }}
+            isDark={isDark}
+            colors={colors}
+            t={t}
+            onSelect={(p) => {
+              setSelectedSearch(p);
+              nativeCameraTo({ latitude: p.latitude, longitude: p.longitude, zoom: 16, animated: true });
+            }}
+            onClear={() => setSelectedSearch(null)}
+          />
+        )}
+        {nativeMap && (
+          <MapFab
+            isDark={isDark}
+            size={46}
+            onPress={() => { nativeFitAll(true); }}
+            accessibilityLabel={t?.('maps.fitAll') || 'Ver todos'}
+            style={{ position: 'absolute', right: 20, bottom: (shares.length > 0 ? 146 : 26) + 66 }}
+          >
+            <IconUser size={20} color={isDark ? '#fff' : '#111'} />
+          </MapFab>
+        )}
+
         {/* Loading badge */}
         {loading && (
-          <View style={{ position: 'absolute', top: 14, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={{ position: 'absolute', top: nativeMap ? 66 : 14, alignSelf: 'center', backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <ActivityIndicator size="small" color="#fff" />
             <Text style={{ color: '#fff', fontSize: 13 }}>{t?.('common.loading') || 'Carregando…'}</Text>
           </View>
@@ -1872,7 +2005,7 @@ export default function SnapMapScreen() {
                 Verifique sua internet — o mapa recarrega sozinho quando você voltar online.
               </Text>
               <TouchableOpacity
-                onPress={() => { setMapErr(null); mapReadyRef.current = false; try { webRef.current?.reload?.(); } catch(_){} }}
+                onPress={() => { setMapErr(null); mapReadyRef.current = false; if (nativeMap) { setNativeKey((k) => k + 1); return; } try { webRef.current?.reload?.(); } catch(_){} }}
                 style={{ marginTop: 8, alignSelf: 'flex-start', backgroundColor: '#111111', paddingHorizontal: 14, paddingVertical: 6, borderRadius: 12 }}
               >
                 <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{t?.('snapmap.retry') || 'Tentar de novo'}</Text>
@@ -1890,7 +2023,7 @@ export default function SnapMapScreen() {
             settings on a denied state; on the fallback state it asks the
             OS for permission. */}
         {!myLocation && (permissionDenied || usingIpFallback) && (
-          <View pointerEvents="box-none" style={{ position: 'absolute', top: 14, left: 12, right: 12, alignItems: 'center' }}>
+          <View pointerEvents="box-none" style={{ position: 'absolute', top: nativeMap ? 66 : 14, left: 12, right: 12, alignItems: 'center' }}>
             <View style={{
               flexDirection: 'row', alignItems: 'center', gap: 10,
               backgroundColor: 'rgba(0,0,0,0.82)',

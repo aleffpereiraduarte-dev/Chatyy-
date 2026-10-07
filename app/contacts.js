@@ -1,13 +1,15 @@
 import ErrorBoundary from "../components/ErrorBoundary";
+import PressableRow from '../components/PressableRow'; // [2026-10-07 app-feel-ui] native cell feedback
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import React from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, TextInput, StyleSheet, ScrollView,
   ActivityIndicator, Platform, Modal, Alert, SectionList, Animated, Easing,
-  KeyboardAvoidingView,
+  KeyboardAvoidingView, RefreshControl,
 } from 'react-native';
 // FlashList reverted to FlatList
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-07 app-feel-nav]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -137,7 +139,7 @@ const DeviceContactRow = React.memo(({ dc, colors, saved, onAdd, t, isRegistered
   // Registered Chatyy users get the same tap = profile / long-press = quick
   // actions affordance the saved-contacts list has. Non-registered rows stay
   // passive (only the Add button does anything) — there's no profile to open.
-  const Wrapper = isRegistered && (onOpenProfile || onQuickActions) ? TouchableOpacity : View;
+  const Wrapper = isRegistered && (onOpenProfile || onQuickActions) ? PressableRow : View; // [2026-10-07 app-feel-ui] native cell feedback
   const wrapperProps = isRegistered && (onOpenProfile || onQuickActions)
     ? {
         onPress: () => onOpenProfile?.({ email, name, phone }),
@@ -186,7 +188,7 @@ const FamilyUserRow = React.memo(({ user, colors, saved, onAdd, t, onOpenProfile
   const fallbackInitial = (safeDisplay || safeEmail || '?')[0] || '?';
   const displayName = safeDisplay || (safeEmail.includes('@') ? safeEmail.split('@')[0] : safeEmail) || '—';
   return (
-    <TouchableOpacity
+    <PressableRow
       style={[s.contactRow, { borderBottomColor: colors.borderLight }]}
       onPress={() => onOpenProfile?.(user)}
       onLongPress={() => onQuickActions?.(user)}
@@ -216,7 +218,7 @@ const FamilyUserRow = React.memo(({ user, colors, saved, onAdd, t, onOpenProfile
           <IconPlus size={14} color={colors.primary} />
         </TouchableOpacity>
       )}
-    </TouchableOpacity>
+    </PressableRow>
   );
 });
 
@@ -232,7 +234,7 @@ const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav, onO
       }
       style={{ backgroundColor: colors.error }}
     >
-    <TouchableOpacity
+    <PressableRow
       style={[s.contactRow, { borderBottomColor: colors.borderLight, backgroundColor: colors.background }]}
       onPress={() => onOpenProfile ? onOpenProfile(c) : onEdit(c)}
       onLongPress={() => onQuickActions?.(c)}
@@ -263,7 +265,7 @@ const MyContactRow = React.memo(({ c, colors, onEdit, onDelete, onToggleFav, onO
       <TouchableOpacity onPress={() => onDelete(c.email)} style={s.deleteBtn}>
         <IconTrash size={16} color={colors.textTertiary} />
       </TouchableOpacity>
-    </TouchableOpacity>
+    </PressableRow>
     </SwipeAction>
   );
 });
@@ -353,6 +355,8 @@ function ContactsScreenInner() {
 
   // Sync
   const [syncing, setSyncing] = useState(false);
+  // [2026-10-07 app-feel-nav] pull-to-refresh nativo (RefreshControl) na lista.
+  const [ptrRefreshing, setPtrRefreshing] = useState(false);
   const [discovering, setDiscovering] = useState(false);
 
   // Server-side search results for Chatyy users
@@ -1332,8 +1336,30 @@ function ContactsScreenInner() {
   }, [loadingMoreDevice, colors, t]);
 
   return (
-    <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header */}
+    <View style={[s.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {/* [2026-10-07 app-feel-nav] Nativo: header do sistema + barra de busca
+          NATIVA (UISearchController no iOS / SearchView Material no Android)
+          no lugar do <View> com TextInput. Web mantém o header/busca antigos. */}
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          title: `${t('contacts.title')}${contacts.length > 0 ? ` (${contacts.length})` : ''}`,
+          headerRight: () => (
+            <HeaderIconButton
+              onPress={() => { setForm({ name: '', email: '', phone: '', group: '', notes: '', favorite: false }); setEditContact(null); setShowAdd(true); }}
+              accessibilityLabel={t('contacts.addContact') || 'Add contact'}
+            >
+              <IconPlus size={24} color={colors.text} />
+            </HeaderIconButton>
+          ),
+          search: {
+            placeholder: activeTab === 'device' ? t('contacts.searchDevice') : activeTab === 'family' ? t('contacts.searchFamily') : t('contacts.searchMy'),
+            onChangeText: (e) => setSearch(e?.nativeEvent?.text ?? ''),
+            onCancelButtonPress: () => setSearch(''),
+            onClose: () => setSearch(''),
+          },
+        })} />
+      ) : (
       <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/contacts" }, "*"); } catch {} } else { router.back(); } }} style={s.backBtn}>
           <IconArrowLeft size={24} color={colors.textSecondary} />
@@ -1353,6 +1379,7 @@ function ContactsScreenInner() {
           </PressableScale>
         </View>
       </View>
+      )}
 
       {/* Tabs */}
       <View style={[s.tabBar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
@@ -1369,7 +1396,8 @@ function ContactsScreenInner() {
         ))}
       </View>
 
-      {/* Search */}
+      {/* Search (web — no nativo a busca está no header) */}
+      {!USE_NATIVE_HEADER && (
       <View style={[s.searchRow, { backgroundColor: colors.surface, borderBottomColor: colors.borderLight }]}>
         <IconSearch size={16} color={colors.textTertiary} />
         <TextInput
@@ -1378,8 +1406,10 @@ function ContactsScreenInner() {
           onChangeText={setSearch}
           placeholder={activeTab === 'device' ? t('contacts.searchDevice') : activeTab === 'family' ? t('contacts.searchFamily') : t('contacts.searchMy')}
           placeholderTextColor={colors.textTertiary}
+          returnKeyType="search" clearButtonMode="while-editing" autoCorrect={false} autoCapitalize="none" enablesReturnKeyAutomatically
         />
       </View>
+      )}
 
       {/* Group filter for My Contacts tab */}
       {activeTab === 'my' && groups.length > 0 && (
@@ -1500,6 +1530,16 @@ function ContactsScreenInner() {
         <ListSkeleton count={8} />
       ) : activeTab === 'my' ? (
         <SectionList
+          keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag"
+          refreshControl={Platform.OS !== 'web' ? (
+            <RefreshControl
+              refreshing={ptrRefreshing}
+              onRefresh={async () => { setPtrRefreshing(true); try { await loadContacts(); } finally { setPtrRefreshing(false); } }}
+              tintColor={colors.textSecondary}
+              colors={[colors.text]}
+              progressBackgroundColor={colors.surface}
+            />
+          ) : undefined}
           sections={alphabeticalSections}
           keyExtractor={myKeyExtractor}
           renderItem={renderMyContactItem}
@@ -1542,6 +1582,7 @@ function ContactsScreenInner() {
       ) : activeTab === 'device' ? (
         deviceSections.length > 0 ? (
           <SectionList
+            keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag"
             sections={deviceSections}
             keyExtractor={deviceKeyExtractor}
             renderItem={renderDeviceItem}
@@ -1570,6 +1611,7 @@ function ContactsScreenInner() {
           />
         ) : (
           <FlatList
+            keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag"
             data={filteredItems}
             keyExtractor={deviceKeyExtractor}
             renderItem={renderDeviceItem}
@@ -1584,6 +1626,7 @@ function ContactsScreenInner() {
         )
       ) : (
         <FlatList
+          keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag"
           data={filteredItems}
           keyExtractor={familyKeyExtractor}
           renderItem={renderFamilyItem}
@@ -1622,6 +1665,7 @@ function ContactsScreenInner() {
                 <TextInput style={[s.formInput, { color: colors.text, borderColor: colors.border }]}
                   value={form.name} onChangeText={v => setForm(p => ({ ...p, name: v }))}
                   placeholder={t('contacts.namePlaceholder')} placeholderTextColor={colors.textTertiary}
+                  textContentType="name" autoComplete="name" autoCapitalize="words" returnKeyType="next" clearButtonMode="while-editing"
                   accessibilityLabel={t('contacts.nameLabel')} />
               </View>
               <Text style={[s.formFieldLabel, { color: colors.textSecondary }]}>
@@ -1633,6 +1677,7 @@ function ContactsScreenInner() {
                   value={form.email} onChangeText={v => { setForm(p => ({ ...p, email: v })); if (emailError) setEmailError(''); }}
                   placeholder={t('contacts.emailPlaceholder')} placeholderTextColor={colors.textTertiary}
                   keyboardType="email-address" autoCapitalize="none"
+                  textContentType="emailAddress" autoComplete="email" autoCorrect={false} returnKeyType="next" clearButtonMode="while-editing"
                   accessibilityLabel={t('contacts.emailLabel')} />
               </View>
               {emailError ? (
@@ -1647,6 +1692,7 @@ function ContactsScreenInner() {
                   value={form.phone} onChangeText={v => setForm(p => ({ ...p, phone: v }))}
                   placeholder={t('contacts.phonePlaceholder')} placeholderTextColor={colors.textTertiary}
                   keyboardType="phone-pad"
+                  textContentType="telephoneNumber" autoComplete="tel" clearButtonMode="while-editing"
                   accessibilityLabel={t('contacts.phoneLabel')} />
               </View>
               <View style={s.formRow}>
@@ -1709,6 +1755,7 @@ function ContactsScreenInner() {
                   placeholder={t('contacts.websitePlaceholder') || 'Site / URL'}
                   placeholderTextColor={colors.textTertiary}
                   keyboardType="url" autoCapitalize="none"
+                  textContentType="URL" autoComplete="url" autoCorrect={false} clearButtonMode="while-editing"
                   accessibilityLabel={t('contacts.websiteLabel') || t('contacts.websitePlaceholder')} />
               </View>
 
@@ -1799,7 +1846,7 @@ function ContactsScreenInner() {
                   const cName = cv.name || cv.display_name || cv.other_email || '';
                   const busy = shareSendingId === cv.id;
                   return (
-                    <TouchableOpacity
+                    <PressableRow
                       style={[s.contactRow, { borderBottomColor: colors.borderLight, opacity: busy ? 0.5 : 1 }]}
                       onPress={() => handleSendContactToConv(cv)}
                       disabled={!!shareSendingId}
@@ -1812,7 +1859,7 @@ function ContactsScreenInner() {
                       {busy
                         ? <ActivityIndicator size="small" color={colors.primary} />
                         : <IconSend size={18} color={colors.primary} />}
-                    </TouchableOpacity>
+                    </PressableRow>
                   );
                 }}
               />
@@ -2047,10 +2094,15 @@ const s = StyleSheet.create({
   formFieldLabel: {
     fontSize: 12, fontWeight: '600', marginBottom: 4, marginLeft: 28,
   },
-  formInput: {
+  // [2026-10-07 app-feel-ui] Native: iOS-Contacts-style field (hairline
+  // underline, no boxed 1.5px web-form border). Web keeps the boxed input.
+  formInput: Platform.OS === 'web' ? {
     flex: 1, fontSize: FontSize.lg, borderWidth: 1.5, borderRadius: 14,
-    paddingHorizontal: Spacing.md + 2, paddingVertical: Platform.OS === 'web' ? 12 : 10,
-    ...Platform.select({ web: { outlineStyle: 'none', transition: 'border-color 0.2s ease' }, default: {} }),
+    paddingHorizontal: Spacing.md + 2, paddingVertical: 12,
+    outlineStyle: 'none', transition: 'border-color 0.2s ease',
+  } : {
+    flex: 1, fontSize: FontSize.lg, borderWidth: 0, borderBottomWidth: StyleSheet.hairlineWidth * 2, borderRadius: 0,
+    paddingHorizontal: 0, paddingVertical: 10,
   },
   formInputMultiline: {
     minHeight: 64, textAlignVertical: 'top',

@@ -1,3 +1,4 @@
+import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, Platform, ScrollView,
@@ -4368,7 +4369,7 @@ const s = StyleSheet.create({
     width: Platform.OS === 'web' && SCREEN_WIDTH > 600 ? 320 : Math.min(300, SCREEN_WIDTH * 0.82),
     height: '100%',
     borderRightWidth: 1,
-    paddingTop: Platform.OS === 'ios' ? 60 : 18,
+    paddingTop: Platform.OS === 'ios' ? 60 : androidTopInset(18),
     paddingHorizontal: 14,
     paddingBottom: 18,
   },
@@ -4399,7 +4400,7 @@ const s = StyleSheet.create({
   formatBar: {
     position: 'absolute',
     left: 16, right: 16,
-    bottom: Platform.OS === 'ios' ? 90 : 70,
+    bottom: Platform.OS === 'ios' ? 90 : androidBottomInset(70),
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     gap: 2,
     paddingHorizontal: 6, paddingVertical: 6,
@@ -4417,7 +4418,7 @@ const s = StyleSheet.create({
 
   editorBottomBar: {
     paddingHorizontal: 16, paddingVertical: 10,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 10,
+    paddingBottom: Platform.OS === 'ios' ? 34 : androidBottomInset(10),
     borderTopWidth: StyleSheet.hairlineWidth,
   },
   bottomBarContent: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },

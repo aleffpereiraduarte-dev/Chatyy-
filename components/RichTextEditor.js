@@ -599,8 +599,10 @@ function MobileEditor({ value, onChange, placeholder, minHeight, colors, isDark,
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     html, body {
+      overscroll-behavior: none;
+      caret-color: ${primaryColor};
       background: ${bgColor};
       color: ${textColor};
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -821,8 +823,17 @@ function MobileEditor({ value, onChange, placeholder, minHeight, colors, isDark,
         javaScriptEnabled
         domStorageEnabled
         keyboardDisplayRequiresUserAction={false}
-        hideKeyboardAccessoryView={false}
+        // [2026-10-07 app-feel-webview] hide iOS's web-form accessory bar
+        // (‹ › Concluído) — the giveaway that the compose body is a web page.
+        // Formatting lives in our native toolbar above.
+        hideKeyboardAccessoryView
         scrollEnabled={false}
+        bounces={false}
+        overScrollMode="never"
+        textZoom={100}
+        setSupportMultipleWindows={false}
+        allowsLinkPreview={false}
+        dataDetectorTypes="none"
         style={{ height: webViewHeight, backgroundColor: 'transparent' }}
         containerStyle={{ flex: 0 }}
       />

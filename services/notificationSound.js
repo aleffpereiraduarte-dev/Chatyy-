@@ -256,17 +256,34 @@ function _webChatReceive() {
   } catch {}
 }
 
-// Lazy load native chat module for iOS system sound playback
-let _NativeChat = null;
+// [2026-10-07 android-native] iOS system sound playback WITHOUT importing
+// modules/expo-native-chat-view (dead native module; its JS index also pulled
+// requireNativeView() at import time, which is a Metro-fatal if the native
+// side is ever missing — see android_logout_crash_native_module_fatal).
+// Order: ExpoNativeToolkit.playSystemSound (new binaries) → legacy
+// ExpoNativeChatView.playSend/ReceiveSound (binaries ≤ runtime 2.6.0 that
+// still ship it) → nothing (haptics below still fire). Both lookups are
+// requireOptionalNativeModule → never throws.
+let _sysSound = null;
 function getNativeChat() {
   if (Platform.OS !== 'ios') return null;
-  if (_NativeChat === null) {
+  if (_sysSound === null) {
+    _sysSound = false;
     try {
-      // index.ts exports playSendSound / playReceiveSound as named exports
-      _NativeChat = require('../modules/expo-native-chat-view');
-    } catch { _NativeChat = false; }
+      const { requireOptionalNativeModule } = require('expo');
+      const tk = requireOptionalNativeModule('ExpoNativeToolkit');
+      if (tk && typeof tk.playSystemSound === 'function') {
+        _sysSound = {
+          playSendSound: () => tk.playSystemSound(1004),
+          playReceiveSound: () => tk.playSystemSound(1003),
+        };
+      } else {
+        const legacy = requireOptionalNativeModule('ExpoNativeChatView');
+        if (legacy && typeof legacy.playSendSound === 'function') _sysSound = legacy;
+      }
+    } catch { _sysSound = false; }
   }
-  return _NativeChat || null;
+  return _sysSound || null;
 }
 
 /** Play short sound when user sends a message (in-app, while chat is open) */

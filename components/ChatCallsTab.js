@@ -1,3 +1,5 @@
+import NativeSwitch from './NativeSwitch'; // [2026-10-07 app-feel-ui] themed native toggle
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useEffect, useCallback, useMemo, useRef, memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform, Animated, Alert, ActivityIndicator, Dimensions, Modal, FlatList, TextInput, Switch, AppState, Share } from 'react-native';
 import Svg, { Path, Polyline, Circle as SvgCircle, Line, Rect } from 'react-native-svg';
@@ -737,7 +739,7 @@ function SilenceToggle({ isDark }) {
     })();
   }, []);
   return (
-    <Switch
+    <NativeSwitch
       value={on}
       onValueChange={async (v) => {
         setOn(v);
@@ -1356,7 +1358,7 @@ function ActiveCallScreen({
 
         {/* Top bar: minimize button (left) + quality indicator (right) */}
         <View style={{
-          position: 'absolute', top: Platform.OS === 'ios' ? 50 : 20, left: 0, right: 0,
+          position: 'absolute', top: Platform.OS === 'ios' ? 50 : androidTopInset(20), left: 0, right: 0,
           flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
           paddingHorizontal: 18, zIndex: 10,
         }}>

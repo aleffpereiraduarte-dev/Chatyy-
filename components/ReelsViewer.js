@@ -1,3 +1,4 @@
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useEffect, useCallback, useRef, memo, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, Dimensions,
@@ -3036,7 +3037,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingTop: Platform.OS === 'ios' ? 54 : 16,
+    paddingTop: Platform.OS === 'ios' ? 54 : androidTopInset(16),
     paddingBottom: 12,
     zIndex: 10,
   },
@@ -3439,7 +3440,7 @@ const styles = StyleSheet.create({
   // ── Reel tab bar (Following / For You) ──
   reelTabBar: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 54 : 16,
+    top: Platform.OS === 'ios' ? 54 : androidTopInset(16),
     left: 0,
     right: 0,
     flexDirection: 'row',
@@ -3477,7 +3478,7 @@ const styles = StyleSheet.create({
   // pill with a single "2×" label — minimal, TikTok-style.
   boostToast: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 100 : 70,
+    top: Platform.OS === 'ios' ? 100 : androidTopInset(70),
     left: 0,
     right: 0,
     alignItems: 'center',

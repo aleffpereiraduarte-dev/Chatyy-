@@ -1,3 +1,4 @@
+import NativeSwitch from './NativeSwitch'; // [2026-10-07 app-feel-ui] themed native toggle
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Platform,
@@ -1088,7 +1089,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.readReceipts') || 'Confirmação de leitura'}</Text>
                 <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.readReceiptsDesc') || 'Mostrar quando você leu mensagens'}</Text>
               </View>
-              <Switch
+              <NativeSwitch
                 value={settings.read_receipts}
                 onValueChange={(v) => saveSettings({ read_receipts: v })}
                 trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
@@ -1103,7 +1104,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.smartPin') || 'Fixar conversas mais ativas'}</Text>
                 <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.smartPinDesc') || 'Top 3 conversas dos últimos 30 dias aparecem fixadas automaticamente'}</Text>
               </View>
-              <Switch
+              <NativeSwitch
                 value={!!settings.smart_pin_enabled}
                 onValueChange={(v) => saveSettings({ smart_pin_enabled: v })}
                 trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17,17,17,0.45)' }}
@@ -1118,7 +1119,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.hdMediaQuality') || 'Qualidade HD de mídia'}</Text>
                 <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.hdMediaQualityDesc') || 'Enviar fotos e vídeos em qualidade HD (usa mais dados)'}</Text>
               </View>
-              <Switch
+              <NativeSwitch
                 value={!!settings.hd_media_quality}
                 onValueChange={(v) => saveSettings({ hd_media_quality: v })}
                 trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
@@ -1135,7 +1136,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.appLock') || 'Bloqueio do app'}</Text>
                     <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.appLockDesc') || 'Usar biometria para desbloquear'}</Text>
                   </View>
-                  <Switch
+                  <NativeSwitch
                     value={biometricEnabled}
                     onValueChange={toggleBiometric}
                     trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
@@ -1255,7 +1256,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifMessages') || 'Notificacoes de mensagens'}</Text>
                 <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifMessagesDesc') || 'Receber notificacoes de novas mensagens'}</Text>
               </View>
-              <Switch
+              <NativeSwitch
                 value={settings.notifications}
                 onValueChange={(v) => saveSettings({ notifications: v })}
                 trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
@@ -1271,7 +1272,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                     <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifSound') || 'Sons'}</Text>
                     <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifSoundDesc') || 'Tocar som ao receber mensagem'}</Text>
                   </View>
-                  <Switch
+                  <NativeSwitch
                     value={settings.notification_sound}
                     onValueChange={(v) => saveSettings({ notification_sound: v })}
                     trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
@@ -1286,7 +1287,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                         <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifVibration') || 'Vibracao'}</Text>
                         <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifVibrationDesc') || 'Vibrar ao receber mensagem'}</Text>
                       </View>
-                      <Switch
+                      <NativeSwitch
                         value={settings.notification_vibration}
                         onValueChange={(v) => saveSettings({ notification_vibration: v })}
                         trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
@@ -1305,7 +1306,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifGroups') || 'Notificacoes de grupos'}</Text>
                 <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifGroupsDesc') || 'Receber notificacoes de mensagens em grupos'}</Text>
               </View>
-              <Switch
+              <NativeSwitch
                 value={settings.notification_groups}
                 onValueChange={(v) => saveSettings({ notification_groups: v })}
                 trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
@@ -1320,7 +1321,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.notifCalls') || 'Notificacoes de chamadas'}</Text>
                 <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.notifCallsDesc') || 'Receber notificacoes de chamadas de voz e video'}</Text>
               </View>
-              <Switch
+              <NativeSwitch
                 value={settings.notification_calls}
                 onValueChange={(v) => saveSettings({ notification_calls: v })}
                 trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
@@ -1426,7 +1427,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
                 <Text style={[styles.switchLabel, { color: colors.text }]}>{t?.('config.darkMode') || 'Modo escuro'}</Text>
                 <Text style={[styles.switchDesc, { color: isDark ? '#6b7280' : '#9ca3af' }]}>{t?.('config.darkModeDesc') || 'Alternar tema claro/escuro'}</Text>
               </View>
-              <Switch
+              <NativeSwitch
                 value={isDark}
                 onValueChange={toggleTheme}
                 trackColor={{ false: isDark ? '#374151' : '#d1d5db', true: 'rgba(17, 17, 17,0.4)' }}
@@ -1841,7 +1842,7 @@ export default function ChatProfileTab({ colors, isDark, t, user, router }) {
 
             <TouchableOpacity
               style={styles.helpRowModern}
-              onPress={() => Linking.openURL('https://chatyy.com.br/termos')}
+              onPress={() => require('expo-router').router.push({ pathname: '/legal', params: { doc: 'terms' } })}
               activeOpacity={0.7}
             >
               <View style={[styles.iconCircle, { backgroundColor: isDark ? 'rgba(107,114,128,0.1)' : '#f3f4f6' }]}>

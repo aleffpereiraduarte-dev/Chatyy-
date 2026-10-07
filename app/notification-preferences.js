@@ -12,6 +12,7 @@
 //
 // 2026-05-17 — gap_notifications P0+P1 steps 3, 4, 7, 8, 9, 10.
 
+import NativeSwitch from '../components/NativeSwitch'; // [2026-10-07 app-feel-ui] themed native toggle
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   View,
@@ -259,7 +260,7 @@ export default function NotificationPreferences() {
                 {t('notifPref.mentionOnlyDesc')}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={prefs.mention_only}
               onValueChange={(v) => savePref({ mention_only: v })}
               disabled={loading}
@@ -318,7 +319,7 @@ export default function NotificationPreferences() {
                 {t('notifPref.respectSystemDndDesc')}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={prefs.respect_system_dnd}
               onValueChange={(v) => savePref({ respect_system_dnd: v })}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -337,7 +338,7 @@ export default function NotificationPreferences() {
                 {t('notifPref.dndEnableDesc')}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={prefs.dnd_enabled}
               onValueChange={(v) => savePref({ dnd_enabled: v })}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}

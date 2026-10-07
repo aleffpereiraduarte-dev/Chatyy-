@@ -21,6 +21,7 @@
 //   - "Adicionar (N)" footer rings the selected emails (capped 16 client-side)
 //     via onAdd(emails); spinner while loading.
 
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import {
   Modal,
@@ -358,7 +359,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 22,
     maxHeight: '82%',
     paddingTop: 8,
-    paddingBottom: Platform.OS === 'ios' ? 28 : 16,
+    paddingBottom: Platform.OS === 'ios' ? 28 : androidBottomInset(16),
   },
   handle: {
     width: 40,

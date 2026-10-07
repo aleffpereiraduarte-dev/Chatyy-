@@ -32,8 +32,66 @@ public class ExpoNativeAudioModule: Module {
         }
     }
 
+    /// [2026-10-07 voice-native] Voice-note player (AVPlayer + proximity →
+    /// earpiece). Created lazily on the main queue by the first voice* call.
+    private var voicePlayer: VoiceNotePlayer?
+    private func voice() -> VoiceNotePlayer {
+        if let v = voicePlayer { return v }
+        let v = VoiceNotePlayer(emit: { [weak self] name, body in
+            self?.sendEvent(name, body)
+        })
+        voicePlayer = v
+        return v
+    }
+
     public func definition() -> ModuleDefinition {
         Name("ExpoNativeAudio")
+
+        // [2026-10-07 voice-native] voice-note player events.
+        Events("onVoiceStatus", "onVoiceProximity")
+
+        OnDestroy {
+            DispatchQueue.main.async { [weak self] in
+                self?.voicePlayer?.release()
+                self?.voicePlayer = nil
+            }
+        }
+
+        // ── [2026-10-07 voice-native] Voice-note playback ───────────────
+        // JS: services/voiceNotePlayer.js (feature-detects `voicePlay`; older
+        // binaries fall back to expo-audio). All on main: AVPlayer + UIDevice
+        // proximity + AVAudioSession notifications are main-thread APIs.
+        AsyncFunction("voicePlay") { (uri: String, startMs: Double, rate: Double, token: Int) throws -> Void in
+            try self.voice().play(uri: uri, startMs: startMs, rate: rate, token: token)
+        }.runOnQueue(.main)
+
+        AsyncFunction("voicePause") { () -> Void in
+            self.voicePlayer?.pause()
+        }.runOnQueue(.main)
+
+        AsyncFunction("voiceResume") { () -> Void in
+            self.voicePlayer?.resume()
+        }.runOnQueue(.main)
+
+        AsyncFunction("voiceSeek") { (ms: Double) -> Void in
+            self.voicePlayer?.seek(ms: ms)
+        }.runOnQueue(.main)
+
+        AsyncFunction("voiceSetRate") { (rate: Double) -> Void in
+            self.voicePlayer?.setRate(rate)
+        }.runOnQueue(.main)
+
+        AsyncFunction("voiceStop") { () -> Void in
+            self.voicePlayer?.stop()
+        }.runOnQueue(.main)
+
+        AsyncFunction("voiceSetProximityEnabled") { (enabled: Bool) -> Void in
+            self.voice().setProximityEnabled(enabled)
+        }.runOnQueue(.main)
+
+        AsyncFunction("voiceGetStatus") { () -> [String: Any] in
+            return self.voicePlayer?.status() ?? ["playing": false, "positionMs": 0, "durationMs": 0, "token": 0, "earpiece": false]
+        }.runOnQueue(.main)
 
         AsyncFunction("startRecording") { () -> String in
             // Prevent concurrent recordings (atomic check-and-set)

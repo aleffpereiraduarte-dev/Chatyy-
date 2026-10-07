@@ -9,8 +9,7 @@ import { BorderRadius, FontSize, Spacing } from '../constants/theme';
 import CachedImage from './CachedImage';
 import { IconX, IconDownload, IconFileText, IconImage, IconFilm, IconMusic, IconPackage, IconChevronLeft, IconChevronRight, IconUpload } from './Icons';
 
-let WebView = null;
-try { WebView = require('react-native-webview').default; } catch {}
+import NativeDocPreview, { absoluteFileUrl, docPreviewSource } from './NativeDocPreview';
 
 let FileSystemModule = null;
 try { FileSystemModule = require('expo-file-system/legacy'); } catch { try { FileSystemModule = require('expo-file-system'); } catch {} }
@@ -114,53 +113,24 @@ function buildPreviewUrl(fileUrl, fileName, type) {
 
 // --- PDF Preview (via preview.html) ---
 function PdfPreview({ url, colors, fileName }) {
-  const previewUrl = buildPreviewUrl(url, fileName, 'pdf');
   if (Platform.OS === 'web') {
     const screenH = Dimensions.get('window').height;
-    return <iframe src={previewUrl} style={{ width: '100%', height: screenH - 80, minHeight: 400, border: 'none', borderRadius: 8 }} title={fileName || 'PDF Preview'} />;
+    // preview.html is not deployed (SPA fallback) → browsers render PDFs natively.
+    return <iframe src={absoluteFileUrl(url)} style={{ width: '100%', height: screenH - 80, minHeight: 400, border: 'none', borderRadius: 8 }} title={fileName || 'PDF Preview'} />;
   }
-  if (!WebView) {
-    return <FallbackView label="PDF não disponível" colors={colors} url={url} />;
-  }
-  const BASE = 'https://chatyy.com.br';
-  return (
-    <View style={{ flex: 1 }}>
-      <WebView
-        source={{ uri: BASE + previewUrl }}
-        style={{ flex: 1, backgroundColor: 'transparent' }}
-        startInLoadingState
-        renderLoading={() => <ActivityIndicator size="large" color="#fff" style={{ flex: 1 }} />}
-        javaScriptEnabled
-        domStorageEnabled
-        scalesPageToFit
-      />
-    </View>
-  );
+  // [2026-10-07 app-feel-webview] native: was BASE+'/preview.html' which is
+  // NOT deployed → the SPA (whole web app) rendered inside this viewer.
+  return <NativeDocPreview url={url} filename={fileName} kind="pdf" />;
 }
 
 // --- DOCX Preview (via preview.html) ---
 function DocxPreview({ url, colors, fileName }) {
-  const previewUrl = buildPreviewUrl(url, fileName, 'docx');
   if (Platform.OS === 'web') {
     const screenH = Dimensions.get('window').height;
-    return <iframe src={previewUrl} style={{ width: '100%', height: screenH - 80, minHeight: 400, border: 'none', borderRadius: 8 }} title={fileName || 'DOCX Preview'} />;
+    return <iframe src={docPreviewSource(url, fileName, 'doc').uri} style={{ width: '100%', height: screenH - 80, minHeight: 400, border: 'none', borderRadius: 8 }} title={fileName || 'DOCX Preview'} />;
   }
-  if (!WebView) {
-    return <FallbackView label="Visualização não disponível" colors={colors} url={url} />;
-  }
-  const BASE = 'https://chatyy.com.br';
-  return (
-    <View style={{ flex: 1 }}>
-      <WebView
-        source={{ uri: BASE + previewUrl }}
-        style={{ flex: 1, backgroundColor: 'transparent' }}
-        startInLoadingState
-        renderLoading={() => <ActivityIndicator size="large" color="#fff" style={{ flex: 1 }} />}
-        javaScriptEnabled
-        domStorageEnabled
-      />
-    </View>
-  );
+  // [2026-10-07 app-feel-webview] see PdfPreview.
+  return <NativeDocPreview url={url} filename={fileName} kind="doc" />;
 }
 
 // --- Native video preview via expo-video (hooks-safe sub-component so
@@ -219,33 +189,33 @@ function AudioPreview({ url, colors, fileName }) {
       </View>
     );
   }
-  if (!WebView) {
+  // [2026-10-07 app-feel-webview] native: was a WebView with HTML <audio>
+  // (emoji icon, web controls, muted by the iOS silent switch). Now native
+  // AVPlayer/ExoPlayer controls via expo-video (already in the binary).
+  return <NativeAudioPreview url={url} colors={colors} fileName={fileName} />;
+}
+
+function NativeAudioPreview({ url, colors, fileName }) {
+  const ev = loadFvExpoVideo();
+  const useVideoPlayer = ev && ev.useVideoPlayer;
+  const VideoView = ev && ev.VideoView;
+  // Module presence is constant for the app's lifetime → stable early return.
+  if (!useVideoPlayer || !VideoView) {
     return <FallbackView label="Reprodutor não disponível" colors={colors} url={url} />;
   }
-  const html = `
-    <!DOCTYPE html>
-    <html><head>
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <style>
-      body { margin:0; background:#111; display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; font-family:system-ui; color:#fff; }
-      .icon { font-size:48px; margin-bottom:16px; }
-      .name { font-size:16px; font-weight:600; margin-bottom:24px; text-align:center; padding:0 20px; }
-      audio { width:90%; max-width:400px; }
-    </style>
-    </head><body>
-    <div class="icon">&#127925;</div>
-    <div class="name">${(fileName || '').replace(/[<>"']/g, '')}</div>
-    <audio src="${url}" controls autoplay></audio>
-    </body></html>
-  `;
+  const player = useVideoPlayer(url, (p) => {
+    try { p.loop = false; p.muted = false; const r = p.play?.(); if (r?.catch) r.catch(() => {}); } catch {}
+  });
   return (
-    <WebView
-      source={{ html }}
-      style={{ flex: 1, backgroundColor: '#111' }}
-      allowsInlineMediaPlayback
-      mediaPlaybackRequiresUserAction={false}
-      javaScriptEnabled
-    />
+    <View style={[s.mediaWrap, { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 24 }]}>
+      <View style={{ width: 96, height: 96, borderRadius: 48, backgroundColor: 'rgba(255,255,255,0.08)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+        <IconMusic size={44} color="#cbd5e1" />
+      </View>
+      <Text style={{ color: '#fff', fontSize: 16, fontWeight: '600', textAlign: 'center', marginBottom: 20 }} numberOfLines={2}>{fileName}</Text>
+      <View style={{ width: '100%', maxWidth: 420, height: 110, borderRadius: 14, overflow: 'hidden', backgroundColor: '#000' }}>
+        <VideoView player={player} style={{ flex: 1 }} contentFit="contain" nativeControls allowsFullscreen={false} allowsPictureInPicture={false} />
+      </View>
+    </View>
   );
 }
 

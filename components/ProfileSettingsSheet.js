@@ -14,6 +14,7 @@
  * on the parent if wanted (our parent does exactly that).
  */
 
+import NativeSwitch from './NativeSwitch'; // [2026-10-07 app-feel-ui] themed native toggle
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, Pressable, ScrollView,
@@ -199,7 +200,7 @@ function ToggleRow({ icon: Icon, label, value, onChange, colors, description }) 
           <Text style={{ fontSize: 12.5, color: colors?.textSecondary, marginTop: 2, lineHeight: 17 }}>{description}</Text>
         )}
       </View>
-      <Switch
+      <NativeSwitch
         value={!!value}
         onValueChange={onChange}
         trackColor={{ false: isDarkColors(colors) ? '#3a3a3a' : '#ddd', true: colors?.primary || ACCENT }}
@@ -1588,7 +1589,7 @@ function InviteScreen({ colors, t }) {
 }
 
 // ─── Screen: About ───────────────────────────────────────────────────
-function AboutScreen({ colors, t }) {
+function AboutScreen({ colors, t, closeAndRun }) {
   // Pull version from app.json via expo-constants so we never drift from
   // the canonical version source. Fallback to the last-known string only
   // if Constants is unavailable (e.g. during a partial test environment).
@@ -1612,9 +1613,9 @@ function AboutScreen({ colors, t }) {
       </View>
 
       <Section title={t?.('about.legal') || 'Legal'} colors={colors}>
-        <Row label={t?.('plans.termsOfUse') || 'Termos de Uso (EULA)'} onPress={() => Linking.openURL('https://chatyy.com.br/terms.html')} colors={colors} />
-        <Row label={t?.('plans.privacyPolicy') || 'Política de Privacidade'} onPress={() => Linking.openURL('https://chatyy.com.br/privacy')} colors={colors} />
-        <Row label={t?.('settings.support') || 'Suporte'} onPress={() => Linking.openURL('https://chatyy.com.br/support')} colors={colors} />
+        <Row label={t?.('plans.termsOfUse') || 'Termos de Uso (EULA)'} onPress={() => { const go = () => require('expo-router').router.push({ pathname: '/legal', params: { doc: 'terms' } }); closeAndRun ? closeAndRun(go) : go(); }} colors={colors} />
+        <Row label={t?.('plans.privacyPolicy') || 'Política de Privacidade'} onPress={() => { const go = () => require('expo-router').router.push({ pathname: '/legal', params: { doc: 'privacy' } }); closeAndRun ? closeAndRun(go) : go(); }} colors={colors} />
+        <Row label={t?.('settings.support') || 'Suporte'} onPress={() => require('../utils/inAppBrowser').openInApp('https://chatyy.com.br/suporte/')} colors={colors} />
       </Section>
 
       <View style={{ paddingHorizontal: 20, paddingVertical: 20, alignItems: 'center' }}>
@@ -1645,7 +1646,7 @@ function SupportScreen({ colors, t, router, onClose }) {
           value="suporte@chatyy.com.br"
         />
         <Row icon={IconGlobe} label={t?.('support.website') || 'Central de ajuda'}
-          onPress={() => Linking.openURL('https://chatyy.com.br/suporte')}
+          onPress={() => require('../utils/inAppBrowser').openInApp('https://chatyy.com.br/suporte/')}
           colors={colors}
         />
       </Section>
@@ -2986,7 +2987,7 @@ export default function ProfileSettingsSheet({
       case 'email':         return <EmailComposeScreen colors={colors} t={t} push={push} />;
       case 'ai':            return <AIFeaturesScreen colors={colors} t={t} />;
       case 'invite':        return <InviteScreen colors={colors} t={t} />;
-      case 'about':         return <AboutScreen colors={colors} t={t} />;
+      case 'about':         return <AboutScreen colors={colors} t={t} closeAndRun={closeAndRun} />;
       case 'support':       return <SupportScreen colors={colors} t={t} router={router} onClose={onClose} />;
       case 'delete':        return <DeleteAccountScreen colors={colors} t={t} onClose={onClose} onLogout={handleLogout} />;
       case 'export':        return <ExportDataScreen colors={colors} t={t} />;

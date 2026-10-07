@@ -9,6 +9,7 @@
  * by the backend (notifications_feed). Pull-to-refresh + empty state.
  */
 
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, Modal, Pressable, Image,
@@ -634,7 +635,7 @@ export default function NotificationsHub({
         <Pressable
           style={{
             position: 'absolute',
-            top: Platform.OS === 'ios' ? 60 : 30,
+            top: Platform.OS === 'ios' ? 60 : androidTopInset(30),
             right: 12,
             left: Platform.OS === 'web' ? undefined : 12,
             width: Platform.OS === 'web' ? 440 : undefined,

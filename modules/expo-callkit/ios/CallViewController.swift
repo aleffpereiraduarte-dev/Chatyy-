@@ -1039,6 +1039,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
 
                 if newStatus == "Conectado" && self.callConnectedAt == nil {
                     self.callConnectedAt = Date()
+                    // [2026-10-07 ios-native] Live Activity / Dynamic Island
+                    // ("Em ligação com Fulano · 03:12"). No-op unless the build
+                    // has the ChatyyCallActivity extension (CHATYY_LIVE_ACTIVITY=1).
+                    CallLiveActivity.shared.callConnected(
+                        callId: self.callId,
+                        peerName: self.callerName.isEmpty ? self.callerEmail : self.callerName,
+                        isVideo: self.hasVideo,
+                        connectedAt: self.callConnectedAt ?? Date()
+                    )
                     self.dotsTimer?.invalidate()
                     self.dotsTimer = nil
 
@@ -2928,23 +2937,16 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             return
         }
 
-        // Display layer: native frame; we feed CMSampleBuffer in pipRenderer.
-        let displayLayer = AVSampleBufferDisplayLayer()
-        displayLayer.videoGravity = .resizeAspect
-        displayLayer.backgroundColor = UIColor.black.cgColor
-
-        // Container VC wraps the display layer in a UIView so the PiP system
-        // can render it. The frame is set once we get a window scene.
+        // [2026-10-07 ios-native] The display layer now lives in a
+        // PiPSampleBufferView (PiPSampleBufferView.swift) that keeps it sized
+        // to the PiP window and rotated by the remote frame's CVO rotation.
         let pipVC = AVPictureInPictureVideoCallViewController()
-        pipVC.preferredContentSize = CGSize(width: 320, height: 480)
-        let container = UIView(frame: pipVC.view.bounds)
+        pipVC.preferredContentSize = CGSize(width: 1080, height: 1920) // aspect only; updated per remote frame
+        let container = PiPSampleBufferView(frame: pipVC.view.bounds)
         container.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        container.backgroundColor = .black
-        displayLayer.frame = container.bounds
-        container.layer.addSublayer(displayLayer)
         pipVC.view.addSubview(container)
-        // Keep the display layer sized when the system rotates the PiP VC.
         pipVC.view.autoresizesSubviews = true
+        let displayLayer = container.displayLayer
 
         // Content source ties the PiP window to "this part of our screen" so
         // the dismissal animation knows where to morph back to. We pass our
@@ -2960,7 +2962,15 @@ final class CallViewController: UIViewController, @unchecked Sendable {
         self.pipDisplayLayer = displayLayer
         self.pipVideoCallVC = pipVC
         self.pipController = controller
-        self.pipRenderer = PiPVideoRenderer(displayLayer: displayLayer)
+        let renderer = PiPVideoRenderer(displayLayer: displayLayer)
+        // PiP window aspect + layer rotation follow the remote video.
+        renderer.onFormatChange = { [weak container, weak pipVC] rotation, size in
+            container?.setRotation(rotation)
+            if size.width > 0, size.height > 0 {
+                pipVC?.preferredContentSize = size
+            }
+        }
+        self.pipRenderer = renderer
         print("[CallVC] PiP controller built — waiting for remote video track")
     }
 
@@ -2969,6 +2979,13 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     /// — we de-dupe via `pipAttachedTrack`.
     @available(iOS 15.0, *)
     private func attachPiPRenderer(to track: VideoTrack) {
+        // [2026-10-07 ios-native] Audio call upgraded to video (or the PiP
+        // controller wasn't built at start): build it lazily so the remote
+        // camera can still float in PiP.
+        if pipRenderer == nil {
+            setupPiPController()
+            if pipResignObserver == nil { installBackgroundObserverForPiP() }
+        }
         guard let renderer = pipRenderer else { return }
         if pipAttachedTrack === track { return }
         if let prev = pipAttachedTrack {
@@ -2985,7 +3002,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            guard let self = self, self.hasVideo else { return }
+            // [2026-10-07 ios-native] also for audio→video upgrades (remote
+            // video attached even though the call started as audio).
+            guard let self = self, (self.hasVideo || self.pipAttachedTrack != nil) else { return }
             if #available(iOS 15.0, *), let pip = self.pipController,
                pip.isPictureInPicturePossible, !pip.isPictureInPictureActive {
                 print("[CallVC] willResignActive — startPictureInPicture()")
@@ -3225,6 +3244,9 @@ final class CallViewController: UIViewController, @unchecked Sendable {
     // MARK: - Deinit
 
     deinit {
+        // [2026-10-07 ios-native] Safety net — the Live Activity also ends on
+        // ExpoCallKitNativeCallEnded (CallLiveActivity observes it).
+        CallLiveActivity.shared.callEnded(callId: callId)
         // [2026-10-06 screen-share iOS] Darwin observer holds an unretained
         // pointer to the token — drop it before the VC goes away.
         if let tok = broadcastStopToken {
@@ -5083,6 +5105,8 @@ extension CallViewController: RoomDelegate {
 extension CallViewController: AVPictureInPictureControllerDelegate {
     func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
         print("[CallVC] PiP will start")
+        // [2026-10-07 ios-native] full-rate I420 conversion while visible.
+        pipRenderer?.isPiPActive = true
         // [Bridge #3 2026-05-19] Notify JS so the chat header / OngoingCallBar
         // can shrink while the call docks. Mirrors the Android path
         // CallActivity.onPictureInPictureModeChanged → emitPipChanged. The
@@ -5105,9 +5129,11 @@ extension CallViewController: AVPictureInPictureControllerDelegate {
     func pictureInPictureController(_ controller: AVPictureInPictureController,
                                     failedToStartPictureInPictureWithError error: Error) {
         print("[CallVC] PiP failed to start: \(error)")
+        pipRenderer?.isPiPActive = false
     }
     func pictureInPictureControllerWillStopPictureInPicture(_ controller: AVPictureInPictureController) {
         print("[CallVC] PiP will stop")
+        pipRenderer?.isPiPActive = false
         // [Bridge #3 2026-05-19] Symmetric exit event.
         NotificationCenter.default.post(
             name: Notification.Name("ExpoCallKitPipChanged"),
@@ -5170,99 +5196,6 @@ extension CallViewController: UIGestureRecognizerDelegate {
 }
 
 // MARK: - PiP video renderer
-
-/// VideoRenderer that wraps LiveKit's `.cvPixelBuffer` frames into
-/// CMSampleBuffer and enqueues them onto a display layer. Frames with other
-/// buffer kinds (`.native`, `.i420Buffer`) are dropped — Stage #993 ships
-/// with the safe subset; broader codec coverage waits on LiveKit exposing
-/// raw RTC buffer types publicly.
-final class PiPVideoRenderer: NSObject, VideoRenderer {
-    weak var displayLayer: AVSampleBufferDisplayLayer?
-    private var timebase: CMTimebase?
-
-    var isAdaptiveStreamEnabled: Bool { false }
-    var adaptiveStreamSize: CGSize { .zero }
-
-    init(displayLayer: AVSampleBufferDisplayLayer) {
-        self.displayLayer = displayLayer
-        super.init()
-        // Set up a control timebase so the display layer schedules frames
-        // against host time. Without this, layers can stall on the first
-        // enqueue.
-        var tb: CMTimebase?
-        CMTimebaseCreateWithSourceClock(allocator: kCFAllocatorDefault,
-                                        sourceClock: CMClockGetHostTimeClock(),
-                                        timebaseOut: &tb)
-        if let tb {
-            CMTimebaseSetTime(tb, time: .zero)
-            CMTimebaseSetRate(tb, rate: 1.0)
-            displayLayer.controlTimebase = tb
-            self.timebase = tb
-        }
-    }
-
-    func set(size: CGSize) {
-        // No-op — display layer auto-sizes via videoGravity.
-    }
-
-    func render(frame: VideoFrame) {
-        guard let displayLayer = displayLayer else { return }
-        // LiveKit Swift SDK: VideoFrame.buffer is `any VideoBuffer` (protocol),
-        // not an enum. The concrete type carrying a CVPixelBuffer is
-        // CVPixelVideoBuffer. Other buffer kinds (I420, etc.) aren't safely
-        // convertible without WebRTC umbrella access — PiP stalls until the
-        // next CVPixelBuffer-backed frame; CallKit handles the fallback UX.
-        guard let pixelBufferWrapper = frame.buffer as? CVPixelVideoBuffer else {
-            return
-        }
-        let pixelBuffer = pixelBufferWrapper.pixelBuffer
-        var formatDescription: CMVideoFormatDescription?
-        let fmtErr = CMVideoFormatDescriptionCreateForImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: pixelBuffer,
-            formatDescriptionOut: &formatDescription
-        )
-        guard fmtErr == noErr, let formatDesc = formatDescription else { return }
-
-        // Use host time for presentation; LiveKit doesn't surface a strict
-        // monotonic timestamp on the frame, so host time keeps the display
-        // layer happy and avoids artificial freezes from out-of-order frames.
-        let hostTime = CMClockGetTime(CMClockGetHostTimeClock())
-        var timing = CMSampleTimingInfo(
-            duration: CMTime(value: 1, timescale: 30),
-            presentationTimeStamp: hostTime,
-            decodeTimeStamp: .invalid
-        )
-        var sampleBuffer: CMSampleBuffer?
-        let sbErr = CMSampleBufferCreateReadyWithImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: pixelBuffer,
-            formatDescription: formatDesc,
-            sampleTiming: &timing,
-            sampleBufferOut: &sampleBuffer
-        )
-        guard sbErr == noErr, let sample = sampleBuffer else { return }
-
-        // Set the kCMSampleAttachmentKey_DisplayImmediately attachment so the
-        // layer doesn't queue frames behind the host clock — PiP wants tight
-        // latency, not smooth playback.
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: true) {
-            let cnt = CFArrayGetCount(attachments)
-            if cnt > 0 {
-                let dict = unsafeBitCast(CFArrayGetValueAtIndex(attachments, 0), to: CFMutableDictionary.self)
-                CFDictionarySetValue(
-                    dict,
-                    Unmanaged.passUnretained(kCMSampleAttachmentKey_DisplayImmediately).toOpaque(),
-                    Unmanaged.passUnretained(kCFBooleanTrue).toOpaque()
-                )
-            }
-        }
-
-        DispatchQueue.main.async {
-            if displayLayer.status == .failed {
-                displayLayer.flush()
-            }
-            displayLayer.enqueue(sample)
-        }
-    }
-}
+//
+// [2026-10-07 ios-native] PiPVideoRenderer + PiPSampleBufferView moved to
+// PiPSampleBufferView.swift (I420 support, rotation, layer sizing).

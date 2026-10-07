@@ -1,3 +1,4 @@
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Platform, FlatList, Alert, ActivityIndicator, TextInput, ScrollView, Image, Animated, Easing, KeyboardAvoidingView, Modal, Vibration, Dimensions, RefreshControl, Linking, Share } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -2132,13 +2133,13 @@ const s = StyleSheet.create({
   container: { flex: 1 },
 
   // Dashboard header
-  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingTop: Platform.OS === 'ios' ? 56 : 20, paddingBottom: 16, gap: 14 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 18, paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(20), paddingBottom: 16, gap: 14 },
   backBtn: { padding: 6, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   headerTitle: { fontSize: 22, fontWeight: '800' },
   headerSub: { fontSize: 13, marginTop: 2 },
 
   // Wizard header
-  wizardHeaderBar: { paddingTop: Platform.OS === 'ios' ? 44 : 12, paddingBottom: 10, paddingHorizontal: 16 },
+  wizardHeaderBar: { paddingTop: Platform.OS === 'ios' ? 44 : androidTopInset(12), paddingBottom: 10, paddingHorizontal: 16 },
   wizardHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 10 },
   wizardHeaderTitle: { fontSize: 17, fontWeight: '800', color: '#fff' },
   wizardStepCount: { fontSize: 13, fontWeight: '700', color: 'rgba(255,255,255,0.85)' },

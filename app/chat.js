@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo, Suspense } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable, KeyboardAvoidingView, AppState } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Animated, Dimensions, TextInput, Modal, Pressable, KeyboardAvoidingView, AppState, PanResponder } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
@@ -37,6 +37,7 @@ import SyncBar from '../components/SyncBar';
 import { isSyncComplete, runInitialSync } from '../services/initialSync';
 import PlusOnboardingTour, { checkShouldShowPlusOnboarding } from '../components/PlusOnboardingTour';
 import GlobalSearch from '../components/GlobalSearch';
+import { BarMaterial, canNativeBlur } from '../components/NativeBlur'; // [2026-10-07 native-ui-build]
 
 // ─── Custom SVG Icons for Tab Bar ───
 
@@ -329,6 +330,29 @@ function ChatHub() {
 
   const closeAppsDrawer = useCallback(() => setShowAppsDrawer(false), []);
 
+  // [2026-10-07 native-ui-build] Large title "Conversas" que colapsa com o
+  // scroll (padrão UINavigationBar / M3 large top app bar). O título grande
+  // mora DENTRO da lista (ChatListTab → rola 1:1, sem relayout); quando ele
+  // passa por baixo do header o ChatListTab avisa e aqui o título COMPACTO +
+  // a hairline fazem fade-in (Animated nativo, zero re-render do chat.js).
+  // Header/searchBar NATIVOS (headerLargeTitle/headerSearchBarOptions) exigem
+  // o /chat virar tela com header do RNS + abas internas viradas rotas — refactor
+  // grande; isto é o equivalente fiel sem tocar na estrutura.
+  const LIST_LARGE_TITLE = Platform.OS !== 'web';
+  const chatTitleAnim = useRef(new Animated.Value(0)).current;
+  const onChatTitleCollapse = useCallback((collapsed) => {
+    Animated.timing(chatTitleAnim, { toValue: collapsed ? 1 : 0, duration: 160, useNativeDriver: true }).start();
+  }, [chatTitleAnim]);
+  // Tab bar de VIDRO no iOS (UIVisualEffectView via expo-blur): fica absoluta
+  // sobre o conteúdo e a lista de conversas rola por baixo (bottomInset).
+  // Android/web/binário sem expo-blur: barra sólida no fluxo, como antes.
+  const GLASS_TAB_BAR = Platform.OS === 'ios' && canNativeBlur();
+  const [tabBarH, setTabBarH] = useState(0);
+  const onTabBarLayout = useCallback((e) => {
+    const h = Math.round(e?.nativeEvent?.layout?.height || 0);
+    setTabBarH(prev => (prev === h ? prev : h));
+  }, []);
+
   // Compute missed-call count from cached call history.
   // We gate by a persisted "calls last seen" timestamp — counting only missed
   // calls that arrived AFTER the user last opened the Calls tab. This is
@@ -566,7 +590,9 @@ function ChatHub() {
     if (tab === 'reels') { handleTabPress('feed'); return; }
     if (tab === activeTab) return;
     // [beauty 2026-10-01] Tactile tap on a real tab switch (web-safe no-op).
-    try { haptic.select(); } catch {}
+    // [2026-10-07 app-feel-nav] No nativo o haptic sai do próprio TabBarItem
+    // (cobre Email/Apps também) — aqui só no desktop/web p/ não vibrar 2x.
+    if (Platform.OS === 'web') { try { haptic.select(); } catch {} }
     const idx = TAB_KEYS.indexOf(tab);
 
     // Tabs in the bottom bar slide the indicator. Off-bar tabs (Feed/Status
@@ -1070,7 +1096,23 @@ function ChatHub() {
       <View style={[styles.header, {
         ...glassHeader,
         paddingLeft: 14,
+        // [2026-10-07 native-ui-build] large title: sem hairline fixa — ela
+        // aparece (fade) só quando a lista rola por baixo do header.
+        ...(LIST_LARGE_TITLE && activeTab === 'chats' ? { borderBottomWidth: 0 } : {}),
       }]}>
+        {LIST_LARGE_TITLE && activeTab === 'chats' && (
+          <>
+            <Animated.View pointerEvents="none" style={[styles.compactTitleWrap, { opacity: chatTitleAnim }]}>
+              <Text numberOfLines={1} accessibilityElementsHidden importantForAccessibility="no" style={[styles.compactTitle, { color: colors.text }]}>
+                {titles.chats}
+              </Text>
+            </Animated.View>
+            <Animated.View
+              pointerEvents="none"
+              style={[styles.headerHairline, { backgroundColor: isDark ? '#1a2730' : 'rgba(0,0,0,0.12)', opacity: chatTitleAnim }]}
+            />
+          </>
+        )}
         {/* Profile avatar — opens the unified profile (/u/{me}).
             Was routing to the deprecated "config" tab (ChatProfileTab),
             which duplicated the profile UI inside the chat shell. */}
@@ -1088,9 +1130,13 @@ function ChatHub() {
           {activeTab === 'chats' ? (
             // WhatsApp iOS "pegada": big bold left-aligned title instead of the
             // Chatyy wordmark. Uses the i18n label already defined in `titles`.
+            // [2026-10-07 native-ui-build] Nativo: o título grande foi p/ dentro
+            // da lista (large title que colapsa); aqui fica vazio.
+            LIST_LARGE_TITLE ? null : (
             <Text style={[styles.bigTitle, { color: colors.text }]} numberOfLines={1}>
               {titles.chats}
             </Text>
+            )
           ) : (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
               <TouchableOpacity onPress={() => handleTabPress('chats')} hitSlop={10}>
@@ -1135,9 +1181,18 @@ function ChatHub() {
       <SyncBar />
 
       {/* Tab content with fade - lazy mount: only mount tab once visited */}
-      <Animated.View style={{ flex: 1, opacity: contentOpacity, transform: [{ translateX: contentTranslateX }] }}>
+      {/* [2026-10-07 native-ui-build] Tab bar de vidro (iOS) é absoluta: as
+          outras abas ganham paddingBottom = altura da barra (layout igual ao
+          de antes); a de Conversas rola POR BAIXO (bottomInset na lista). */}
+      <Animated.View style={{ flex: 1, opacity: contentOpacity, transform: [{ translateX: contentTranslateX }], ...(GLASS_TAB_BAR && activeTab !== 'chats' ? { paddingBottom: tabBarH } : {}) }}>
         <View style={{ display: activeTab === 'chats' ? 'flex' : 'none', flex: activeTab === 'chats' ? 1 : undefined }}>
-          <ChatErrorBoundary><ChatListTab key={'cl_' + (user?.email || 'anon')} {...tabProps} /></ChatErrorBoundary>
+          <ChatErrorBoundary><ChatListTab
+            key={'cl_' + (user?.email || 'anon')}
+            {...tabProps}
+            largeTitle={LIST_LARGE_TITLE ? titles.chats : undefined}
+            onLargeTitleCollapsedChange={LIST_LARGE_TITLE ? onChatTitleCollapse : undefined}
+            bottomInset={GLASS_TAB_BAR ? tabBarH : 0}
+          /></ChatErrorBoundary>
         </View>
         {mountedTabs.has('calls') && <View style={{ display: activeTab === 'calls' ? 'flex' : 'none', flex: activeTab === 'calls' ? 1 : undefined }}>
           <ChatErrorBoundary><ChatCallsTab {...tabProps} /></ChatErrorBoundary>
@@ -1160,21 +1215,21 @@ function ChatHub() {
         </View>}
       </Animated.View>
 
-      {/* Bottom tab bar — floating premium (rounded top + soft elevation) */}
-      <View style={[styles.tabBar, {
-        backgroundColor: isDark ? '#111b21' : '#ffffff',
-        borderTopColor: 'transparent',
-        paddingBottom: insets.bottom || 10,
-        borderTopLeftRadius: 22,
-        borderTopRightRadius: 22,
-        ...(Platform.OS === 'ios' ? {
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: -4 },
-          shadowOpacity: isDark ? 0.4 : 0.08,
-          shadowRadius: 14,
-        } : Platform.OS === 'android' ? {
-          elevation: 16,
+      {/* Bottom tab bar. [2026-10-07 app-feel-nav] Nativo: barra RETA colada
+          na borda com hairline no topo (UITabBar / Material NavigationBar) —
+          antes era um "card flutuante" (cantos 22 + sombra -4/elevation 16),
+          padrão de site. Altura = 49pt iOS / 64-80dp Android + home indicator. */}
+      <View accessibilityRole="tabbar" onLayout={GLASS_TAB_BAR ? onTabBarLayout : undefined} style={[styles.tabBar, {
+        backgroundColor: GLASS_TAB_BAR ? 'transparent' : (isDark ? '#111b21' : '#ffffff'),
+        ...(GLASS_TAB_BAR ? { position: 'absolute', left: 0, right: 0, bottom: 0 } : {}),
+        paddingBottom: Platform.OS === 'web' ? (insets.bottom || 10) : Math.max(insets.bottom, Platform.OS === 'android' ? 12 : 8),
+        ...(Platform.OS !== 'web' ? {
+          borderTopWidth: StyleSheet.hairlineWidth,
+          borderTopColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.12)',
         } : {
+          borderTopColor: 'transparent',
+          borderTopLeftRadius: 22,
+          borderTopRightRadius: 22,
           backdropFilter: 'blur(24px) saturate(200%)',
           WebkitBackdropFilter: 'blur(24px) saturate(200%)',
           backgroundColor: isDark ? 'rgba(17, 27, 33, 0.92)' : 'rgba(255, 255, 255, 0.92)',
@@ -1187,7 +1242,12 @@ function ChatHub() {
             spring driving indicatorAnim already ran on every tab switch but no
             view consumed it — now a 3px accent bar rides under the active tab.
             Gated to the full/desktop bar (kids bar has its own 3-item layout). */}
-        {!isKids && (
+        {/* [2026-10-07 app-feel-nav] iOS UITabBar não tem barra indicadora —
+            só a cor do ícone/label. Mantida no Android/web. */}
+        {/* [2026-10-07 native-ui-build] iOS: material translúcido do sistema
+            (systemChromeMaterial, igual UITabBar) atrás dos itens. */}
+        {GLASS_TAB_BAR && <BarMaterial isDark={isDark} solidColor={isDark ? '#111b21' : '#ffffff'} />}
+        {!isKids && Platform.OS !== 'ios' && (
           <Animated.View
             pointerEvents="none"
             style={[styles.tabIndicator, {
@@ -1647,17 +1707,77 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
     (recentKeys || []).map(k => itemByKey.get(k)).filter(Boolean).slice(0, 4)
   ), [recentKeys, itemByKey]);
 
-  if (!visible) return null;
+  // [2026-10-07 native-ui-build] Sheet nativo: o Modal "slide" arrastava o
+  // backdrop JUNTO com o sheet (tell de modal web). Agora: backdrop FADE,
+  // sheet sobe com SPRING, arrastar o grabber/cabeçalho p/ baixo fecha
+  // (UISheetPresentationController / M3 bottom sheet). Mantém o mount até a
+  // animação de saída terminar.
+  const _winH = Dimensions.get('window').height || 800;
+  const [mounted, setMounted] = useState(!!visible);
+  const [openTick, setOpenTick] = useState(0);
+  const backdropA = useRef(new Animated.Value(0)).current;
+  const sheetY = useRef(new Animated.Value(_winH)).current;
+  const dragY = useRef(new Animated.Value(0)).current;
+  const sheetHRef = useRef(_winH);
+  const closingByDragRef = useRef(false);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  React.useEffect(() => {
+    if (visible) { closingByDragRef.current = false; setMounted(true); setOpenTick(n => n + 1); return; }
+    if (!mounted) return;
+    if (closingByDragRef.current) { sheetY.setValue(sheetHRef.current); dragY.setValue(0); setMounted(false); return; }
+    Animated.parallel([
+      Animated.timing(backdropA, { toValue: 0, duration: 180, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.timing(sheetY, { toValue: sheetHRef.current, duration: 220, useNativeDriver: Platform.OS !== 'web' }),
+    ]).start(({ finished }) => { if (finished) setMounted(false); }); // reaberto no meio → não desmonta
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+  // Abre DEPOIS do commit do Modal (valores já ligados à view nativa).
+  React.useEffect(() => {
+    if (!mounted || !visible) return;
+    dragY.setValue(0);
+    // sheetY/backdropA já estão em "fechado" (init ou fim da saída); se foi
+    // reaberto NO MEIO da saída, parte de onde está (sem salto).
+    Animated.parallel([
+      Animated.timing(backdropA, { toValue: 1, duration: 220, useNativeDriver: Platform.OS !== 'web' }),
+      Animated.spring(sheetY, { toValue: 0, tension: 70, friction: 12, useNativeDriver: Platform.OS !== 'web' }),
+    ]).start();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted, openTick]);
+  const dragResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_e, g) => g.dy > 6 && Math.abs(g.dy) > Math.abs(g.dx) * 1.2,
+    onPanResponderMove: (_e, g) => { dragY.setValue(Math.max(0, g.dy)); },
+    onPanResponderRelease: (_e, g) => {
+      if (g.dy > 110 || g.vy > 0.9) {
+        closingByDragRef.current = true;
+        try { haptic.light?.(); } catch {}
+        Animated.parallel([
+          Animated.timing(dragY, { toValue: sheetHRef.current, duration: 200, useNativeDriver: Platform.OS !== 'web' }),
+          Animated.timing(backdropA, { toValue: 0, duration: 200, useNativeDriver: Platform.OS !== 'web' }),
+        ]).start(() => { try { onCloseRef.current?.(); } catch {} });
+      } else {
+        Animated.spring(dragY, { toValue: 0, tension: 120, friction: 14, useNativeDriver: Platform.OS !== 'web' }).start();
+      }
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(dragY, { toValue: 0, tension: 120, friction: 14, useNativeDriver: Platform.OS !== 'web' }).start();
+    },
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), []);
+  const backdropOpacity = Animated.multiply(backdropA, dragY.interpolate({ inputRange: [0, 400], outputRange: [1, 0.35], extrapolate: 'clamp' }));
+
+  if (!mounted) return null;
 
   const sheetBg = isDark ? '#111b21' : '#ffffff';
   const fieldBg = isDark ? 'rgba(255,255,255,0.07)' : '#f0f2f5';
   const muted = colors.textSecondary || '#667781';
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+    <Modal visible={mounted} transparent animationType="none" statusBarTranslucent onRequestClose={onClose}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-        {/* Backdrop — tap to close. Web gets a light CSS blur. */}
+        {/* Backdrop — tap to close. Web gets a light CSS blur. [2026-10-07 native-ui-build] FADE próprio (não sobe com o sheet). */}
+        <Animated.View pointerEvents="box-none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: backdropOpacity }}>
         <Pressable
           onPress={onClose}
           accessibilityRole="button"
@@ -1668,8 +1788,11 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
             ...(Platform.OS === 'web' ? { backdropFilter: 'blur(6px) saturate(120%)', WebkitBackdropFilter: 'blur(6px) saturate(120%)', cursor: 'default' } : {}),
           }}
         />
-        <View
+        </Animated.View>
+        <Animated.View
+          onLayout={(e) => { const h = e?.nativeEvent?.layout?.height; if (h > 0) sheetHRef.current = h + 40; }}
           style={{
+            transform: [{ translateY: Animated.add(sheetY, dragY) }],
             backgroundColor: sheetBg,
             borderTopLeftRadius: 28,
             borderTopRightRadius: 28,
@@ -1680,8 +1803,11 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
           }}
           accessibilityViewIsModal
         >
+          {/* [2026-10-07 native-ui-build] Grabber + cabeçalho = alça de arrasto
+              (a ScrollView dos apps fica livre p/ rolar). */}
+          <View {...dragResponder.panHandlers}>
           {/* Grabber */}
-          <View style={{ alignItems: 'center', marginBottom: 8 }}>
+          <View style={{ alignItems: 'center', marginBottom: 8, paddingTop: 2, paddingBottom: 2 }}>
             <View style={{ width: 38, height: 5, borderRadius: 3, backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.12)' }} />
           </View>
           {/* Header */}
@@ -1704,6 +1830,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
             >
               <IconClose size={18} color={isDark ? '#c7cdd2' : '#54656f'} />
             </PressableScale>
+          </View>
           </View>
           {/* Search */}
           <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: fieldBg, borderRadius: 14, paddingHorizontal: 12, height: 42, marginBottom: 14 }}>
@@ -1800,7 +1927,7 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
               />
             ))}
           </ScrollView>
-        </View>
+        </Animated.View>
       </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -1867,6 +1994,14 @@ function PulseBadge({ badge, isDark }) {
   const isWeb = Platform.OS === 'web';
 
   useEffect(() => {
+    // [2026-10-07 app-feel-nav] Badge de aba nativo é ESTÁTICO (UITabBarItem /
+    // Material Badge). Pulso infinito 1.2x = cara de site + gasta frame.
+    // Agora: um "pop" curto só quando o número muda.
+    if (Platform.OS !== 'web' && badge > 0) {
+      pulseAnim.setValue(0.85);
+      Animated.spring(pulseAnim, { toValue: 1, useNativeDriver: true, tension: 300, friction: 12 }).start();
+      return;
+    }
     if (badge > 0) {
       const pulse = Animated.loop(
         Animated.sequence([
@@ -1915,8 +2050,25 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
     Animated.spring(scaleAnim, { toValue: 1, useNativeDriver: true, tension: 260, friction: 14 }).start();
   };
 
+  // [2026-10-07 app-feel-nav] Pressable nativo: ripple Material no Android,
+  // role=tab + selected (VoiceOver/TalkBack anunciam "aba, selecionada"),
+  // haptic leve em TODO toque (antes só na troca real de aba; Email/Apps mudos).
+  const handlePress = () => {
+    if (!active && Platform.OS !== 'web') { try { haptic.select(); } catch {} }
+    onPress && onPress();
+  };
   return (
-    <TouchableOpacity style={styles.tabItem} onPress={onPress} onPressIn={handlePressIn} onPressOut={handlePressOut} activeOpacity={1}>
+    <Pressable
+      style={styles.tabItem}
+      onPress={handlePress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      accessibilityRole="tab"
+      accessibilityState={{ selected: !!active }}
+      accessibilityLabel={typeof label === 'string' ? (badge > 0 ? `${label}, ${badge}` : label) : undefined}
+      android_ripple={Platform.OS === 'android' ? { borderless: true, radius: 34, color: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.08)' } : undefined}
+      hitSlop={4}
+    >
       <Animated.View style={[styles.tabIconWrap, {
         transform: [{ scale: scaleAnim }, { translateY: bounceAnim }],
         backgroundColor: 'transparent',
@@ -1932,14 +2084,14 @@ function TabBarItem({ icon, label, active, onPress, isDark, badge, dot }) {
           }} />
         )}
       </Animated.View>
-      <Text style={[styles.tabLabel, {
+      <Text selectable={false} numberOfLines={1} maxFontSizeMultiplier={1.3} style={[styles.tabLabel, {
         color: active ? ACCENT : (isDark ? '#6b7280' : '#9ca3af'),
         fontWeight: active ? '700' : '500',
         ...(isWeb ? { transition: 'color 0.18s ease' } : {}),
       }]}>
         {label}
       </Text>
-    </TouchableOpacity>
+    </Pressable>
   );
 }
 
@@ -1955,14 +2107,9 @@ const styles = StyleSheet.create({
     paddingBottom: 11,
     minHeight: 54,
     zIndex: 10,
-    ...(Platform.OS === 'ios' ? {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 1 },
-      shadowOpacity: 0.06,
-      shadowRadius: 2,
-    } : Platform.OS === 'android' ? {
-      elevation: 2,
-    } : {}),
+    // [2026-10-07 app-feel-nav] Sem sombra/elevation: UINavigationBar e o
+    // Material 3 top app bar são CHAPADOS com só a hairline (já vem do
+    // glassHeader). Sombra embaixo do header = visual de site/card.
   },
   backBtn: {
     width: 36,
@@ -2018,6 +2165,18 @@ const styles = StyleSheet.create({
       default: {},
     }),
   },
+  // [2026-10-07 native-ui-build] título compacto (aparece quando o large
+  // title rola por baixo do header) — 17pt semibold centrado, UINavigationBar.
+  compactTitleWrap: {
+    position: 'absolute', left: 96, right: 96, top: 0, bottom: 0,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  compactTitle: {
+    fontSize: 17, fontWeight: '600', letterSpacing: -0.3, textAlign: 'center',
+  },
+  headerHairline: {
+    position: 'absolute', left: 0, right: 0, bottom: 0, height: StyleSheet.hairlineWidth,
+  },
   // WhatsApp iOS large title ("Conversas") — big, bold, left-aligned.
   bigTitle: {
     fontSize: 32,
@@ -2060,7 +2219,8 @@ const styles = StyleSheet.create({
   // Tab bar (mobile bottom) — 2026 premium frosted glass
   tabBar: {
     flexDirection: 'row',
-    paddingTop: 10,
+    // [2026-10-07 app-feel-nav] iOS: 49pt de conteúdo (UITabBar); era ~66.
+    paddingTop: Platform.OS === 'ios' ? 5 : 10,
     position: 'relative',
   },
   tabIndicator: {

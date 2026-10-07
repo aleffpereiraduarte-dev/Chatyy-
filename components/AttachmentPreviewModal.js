@@ -4,6 +4,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius } from '../constants/theme';
 import { IconX, IconChevronLeft, IconChevronRight, IconDownload } from './Icons';
+import NativeDocPreview from './NativeDocPreview';
 
 // SVG não é renderizado de forma confiável por <Image> remoto em iOS/Android,
 // então não inclui aqui — caímos em "outro arquivo" que abre via download.
@@ -98,42 +99,12 @@ export default function AttachmentPreviewModal({ visible, attachments, initialIn
             // engine. Without this branch the user just saw "cannot preview"
             // and had to download — reported 2026-05-08 ("PDF deveria abrir,
             // não só baixar").
-            (() => {
-              try {
-                const { WebView } = require('react-native-webview');
-                const src = Platform.OS === 'ios'
-                  ? { uri: url }
-                  : { uri: `https://docs.google.com/gview?embedded=true&url=${encodeURIComponent(url)}` };
-                return (
-                  <View style={{ flex: 1, width: '100%', backgroundColor: '#fff', borderRadius: 8, overflow: 'hidden' }}>
-                    <WebView
-                      source={src}
-                      style={{ flex: 1 }}
-                      startInLoadingState
-                      originWhitelist={['*']}
-                      javaScriptEnabled
-                      domStorageEnabled
-                      allowsInlineMediaPlayback
-                      mediaPlaybackRequiresUserAction={false}
-                      // iOS: enable native PDF preview, allow tap zoom, etc
-                      automaticallyAdjustContentInsets={false}
-                      // Android: needed by Google Docs viewer iframe
-                      mixedContentMode="always"
-                    />
-                  </View>
-                );
-              } catch {
-                return (
-                  <View style={s.noPreview}>
-                    <Text style={s.noPreviewText}>{t('attachment.cannotPreview')}</Text>
-                    <TouchableOpacity onPress={handleDownload} style={[s.downloadBtn, { backgroundColor: colors.primary }]}>
-                      <IconDownload size={16} color="#fff" />
-                      <Text style={s.downloadBtnText}>{t('attachment.download')}</Text>
-                    </TouchableOpacity>
-                  </View>
-                );
-              }
-            })()
+            // [2026-10-07 app-feel-webview] shared native preview: iOS =
+            // WKWebView PDFKit root render; Android = Docs viewer; native
+            // spinner + error state instead of WebView's blank page.
+            <View style={{ flex: 1, width: '100%', borderRadius: 8, overflow: 'hidden' }}>
+              <NativeDocPreview url={url} filename={current?.filename} kind="pdf" openLabel={t('attachment.download') || 'Abrir'} errorLabel={t('attachment.cannotPreview') || 'Não foi possível abrir a pré-visualização'} />
+            </View>
           ) : (
             <View style={s.noPreview}>
               <Text style={s.noPreviewText}>{t('attachment.cannotPreview')}</Text>

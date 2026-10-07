@@ -1,3 +1,4 @@
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Modal, Animated, Dimensions, FlatList, Platform } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
@@ -151,7 +152,7 @@ const styles = StyleSheet.create({
   },
   sheet: {
     borderTopLeftRadius: 20, borderTopRightRadius: 20,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 16,
+    paddingBottom: Platform.OS === 'ios' ? 34 : androidBottomInset(16),
     maxHeight: 400,
   },
   handleRow: { alignItems: 'center', paddingVertical: 8 },

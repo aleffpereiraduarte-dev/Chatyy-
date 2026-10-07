@@ -1722,6 +1722,10 @@ class MailWebSocket {
         this._orphanHealTried = false;
         this.userId = msg.user_id || msg.account_id;
         this.email = msg.email;
+        // [2026-10-07 native-send] Capabilities anunciadas pelo hub p/ ESTA conta
+        // (ex.: 'native_send' = chat_send de texto direto no hub Go). Recalculado
+        // a cada auth — hub antigo / conta fora do canário → [] → HTTP de sempre.
+        this.serverCaps = Array.isArray(msg.caps) ? msg.caps.slice(0, 32) : [];
         // [2026-10-06 rt-client] Hidrata o espelho de privacidade de typing da conta.
         try { this._hydrateTypingPrivacy(msg.email); } catch {}
         // Seed lastPongTime so the ping-timeout watchdog has a valid baseline.
@@ -2418,6 +2422,16 @@ class MailWebSocket {
   // Relay a chat message with delivery guarantee
   // Returns a promise that resolves when server ACKs, or rejects after max retries
   relayChatMessage(conversationId, message, tempId, memberEmails) {
+    // [2026-10-07 native-send] Mensagem enviada pelo hub (chat_send nativo): o
+    // próprio hub já fez o fan-out canônico (chat_message/chat_summary +
+    // ws_event_log). Re-relayar só duplicaria frames/linhas de log nos pares.
+    try {
+      const nid = message && message.id;
+      if (nid != null && globalThis.__chatyy_nativeSentIds && globalThis.__chatyy_nativeSentIds.has(nid)) {
+        this._trackMsgId(nid);
+        return Promise.resolve({ viaNative: true, msg_id: nid });
+      }
+    } catch {}
     // ─── Phoenix parallel transport (flag-gated, ADDITIVE) ───
     // When USE_PHOENIX_HUB is ON, route the optimistic real-time relay over the
     // Phoenix hub instead of the Go WS. Durable delivery is unchanged (HTTP

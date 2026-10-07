@@ -32,8 +32,21 @@ declare class AudioClass {
   setPlaybackRate(rate: number): Promise<void>;
   /** True if currently playing audio. */
   isPlayingSync(): boolean;
-  /** Subscribe to events (Android emits onLevel/onComplete/onError). */
-  addListener?(eventName: 'onLevel' | 'onComplete' | 'onError', listener: (e: any) => void): { remove: () => void };
+  // ── [2026-10-07 voice-native] Voice-note player (binaries built after
+  // 2026-10-07; JS feature-detects `voicePlay` — see services/voiceNotePlayer.js).
+  /** Play a voice note (file://, content:// or https). `token` is echoed in events. */
+  voicePlay?(uri: string, startMs: number, rate: number, token: number): Promise<void>;
+  voicePause?(): Promise<void>;
+  voiceResume?(): Promise<void>;
+  voiceSeek?(ms: number): Promise<void>;
+  voiceSetRate?(rate: number): Promise<void>;
+  /** Stop + release session/route/proximity. */
+  voiceStop?(): Promise<void>;
+  /** Raise-to-ear: proximity → earpiece + screen off while playing. */
+  voiceSetProximityEnabled?(enabled: boolean): Promise<void>;
+  voiceGetStatus?(): Promise<{ token: number; positionMs: number; durationMs: number; playing: boolean; earpiece: boolean }>;
+  /** Subscribe to events (Android emits onLevel/onComplete/onError; both emit onVoiceStatus/onVoiceProximity). */
+  addListener?(eventName: 'onLevel' | 'onComplete' | 'onError' | 'onVoiceStatus' | 'onVoiceProximity', listener: (e: any) => void): { remove: () => void };
 }
 
 // The native module is shipped on both iOS and Android. requireNativeModule

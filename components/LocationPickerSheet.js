@@ -52,6 +52,10 @@ import Svg, { Defs, RadialGradient, LinearGradient, Stop, Rect, Circle, Path, El
 import { IconMapPin, IconX } from './Icons';
 import * as api from '../services/api';
 import { boraStyleUrl } from './BoraMap';
+// [2026-10-07 native-maps] native map (iOS MapKit / Android MapLibre Native) when
+// the binary ships ChatyyMapView; otherwise the WebView preview below is used.
+import { ChatyyMap, isNativeMapAvailable, nativeMapStyleUrl } from './NativeMap';
+import { MapFab, MapSearchBar, IconLocate } from './MapControls';
 
 // WhatsApp-style action green used as this sheet's accent (header badge, CTA,
 // chips, pin). The app's structural `colors.primary` is neutral black; the
@@ -180,6 +184,9 @@ function CenterPin({ pulse }) {
 // placeholder fallback + centered styled pin + optional accuracy chip.
 function MapPreviewCard({ lat, lng, accuracy, height, radius = 18, colors, isDark, t }) {
   const [failed, setFailed] = useState(false);
+  // [2026-10-07 native-maps] lite native snapshot (no WebView) when available.
+  const nativeMap = isNativeMapAvailable();
+  const liteCamera = React.useMemo(() => ({ latitude: lat, longitude: lng, zoom: 16, seq: 1 }), [lat, lng]);
   const onMsg = (ev) => {
     try {
       const d = JSON.parse(ev?.nativeEvent?.data || '{}');
@@ -198,8 +205,21 @@ function MapPreviewCard({ lat, lng, accuracy, height, radius = 18, colors, isDar
         <MapCanvasBackdrop isDark={isDark} />
       </View>
 
+      {/* [2026-10-07 native-maps] native lite snapshot */}
+      {nativeMap && !failed && (
+        <ChatyyMap
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+          lite
+          interactive={false}
+          dark={isDark}
+          styleUrl={nativeMapStyleUrl(lat, lng, isDark)}
+          camera={liteCamera}
+          onMapError={() => setFailed(true)}
+        />
+      )}
+
       {/* real map — fades itself in once tiles paint; stays hidden on failure */}
-      {!failed && (
+      {!nativeMap && !failed && (
         <WebView
           key={`${lat.toFixed(5)},${lng.toFixed(5)},${isDark ? 'd' : 'l'}`}
           source={{ html: mapPreviewHtml({ lat, lng, isDark }), baseUrl: 'https://boraum.com.br/' }}
@@ -253,6 +273,102 @@ function MapPreviewCard({ lat, lng, accuracy, height, radius = 18, colors, isDar
   );
 }
 
+// [2026-10-07 native-maps] Interactive picker map (native binaries only):
+// pan the map under a fixed center pin (lifts while dragging), "my location"
+// FAB, and an OSM place search whose result gets its own labeled pin. Reports
+// the map center through onPick({ latitude, longitude, isGps }).
+function NativePickerMap({ gps, height, colors, isDark, t, onPick }) {
+  const [camera, setCamera] = useState(() => ({ latitude: gps.latitude, longitude: gps.longitude, zoom: 16, seq: 1 }));
+  const [dragging, setDragging] = useState(false);
+  const [searchPin, setSearchPin] = useState(null);
+  const seqRef = useRef(1);
+  const userMovedRef = useRef(false);
+  const lastGpsRef = useRef(gps);
+
+  // A refined GPS fix re-centers only while the user hasn't moved the map.
+  useEffect(() => {
+    const prev = lastGpsRef.current;
+    lastGpsRef.current = gps;
+    if (userMovedRef.current) return;
+    if (prev && prev.latitude === gps.latitude && prev.longitude === gps.longitude) return;
+    seqRef.current += 1;
+    setCamera({ latitude: gps.latitude, longitude: gps.longitude, zoom: 16, animated: true, seq: seqRef.current });
+  }, [gps.latitude, gps.longitude]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const goTo = (lat, lng, zoom = 16) => {
+    seqRef.current += 1;
+    setCamera({ latitude: lat, longitude: lng, zoom, animated: true, seq: seqRef.current });
+  };
+
+  const markers = React.useMemo(() => {
+    const list = [{ id: 'me', latitude: gps.latitude, longitude: gps.longitude, kind: 'dot', color: '#3B82F6' }];
+    if (searchPin) list.push({ id: 'search', latitude: searchPin.latitude, longitude: searchPin.longitude, kind: 'search', color: '#7C3AED', label: searchPin.title });
+    return list;
+  }, [gps.latitude, gps.longitude, searchPin]);
+
+  const onRegionDidChange = React.useCallback((r) => {
+    setDragging(false);
+    const la = Number(r?.latitude);
+    const lo = Number(r?.longitude);
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return;
+    if (r?.gesture) userMovedRef.current = true;
+    const g = lastGpsRef.current;
+    // ~8m tolerance → still "my current location"
+    const isGps = !!g && Math.abs(la - g.latitude) < 0.00008 && Math.abs(lo - g.longitude) < 0.00008;
+    onPick?.({ latitude: la, longitude: lo, isGps });
+  }, [onPick]);
+
+  return (
+    <View style={{
+      height, borderRadius: 18, overflow: 'hidden', marginBottom: 14,
+      borderWidth: 1, borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(17,27,33,0.06)',
+      backgroundColor: isDark ? '#101c24' : '#eef6f0',
+    }}>
+      <ChatyyMap
+        style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
+        dark={isDark}
+        styleUrl={nativeMapStyleUrl(gps.latitude, gps.longitude, isDark)}
+        camera={camera}
+        markers={markers}
+        onRegionWillChange={(e) => { if (e?.gesture) setDragging(true); }}
+        onRegionDidChange={onRegionDidChange}
+        onMarkerPress={(e) => { if (e?.id === 'search' && searchPin) goTo(searchPin.latitude, searchPin.longitude, 17); }}
+      />
+
+      {/* fixed center pin — tip on the exact map center; lifts while dragging */}
+      <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center' }} pointerEvents="none">
+        <View style={{ marginTop: -22, transform: [{ translateY: dragging ? -10 : 0 }] }}>
+          <CenterPin pulse={dragging} />
+        </View>
+      </View>
+
+      <MapSearchBar
+        style={{ position: 'absolute', top: 10, left: 10, right: 10 }}
+        isDark={isDark}
+        colors={colors}
+        t={t}
+        onSelect={(p) => {
+          setSearchPin(p);
+          userMovedRef.current = true;
+          goTo(p.latitude, p.longitude, 17);
+        }}
+        onClear={() => setSearchPin(null)}
+      />
+
+      <View pointerEvents="box-none" style={{ position: 'absolute', right: 10, bottom: 10 }}>
+        <MapFab
+          isDark={isDark}
+          size={42}
+          onPress={() => { userMovedRef.current = false; goTo(lastGpsRef.current.latitude, lastGpsRef.current.longitude, 16); }}
+          accessibilityLabel={t?.('maps.myLocation') || 'Minha localização'}
+        >
+          <IconLocate size={19} color={isDark ? '#fff' : '#111'} />
+        </MapFab>
+      </View>
+    </View>
+  );
+}
+
 const LIVE_DURATIONS = [
   { key: '15m', label: '15 min', seconds: 15 * 60 },
   { key: '1h',  label: '1 hora', seconds: 60 * 60 },
@@ -302,6 +418,14 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
   const [liveConfirm, setLiveConfirm] = useState(null); // { seconds, label }
   const [liveCaption, setLiveCaption] = useState('');
   const cancelRef = useRef(false);
+  // [2026-10-07 native-maps] Point chosen by panning / search on the native
+  // picker map. null = "my current location" (GPS coords). Live sharing always
+  // uses GPS — only the one-shot "send" honours a picked point.
+  const [picked, setPicked] = useState(null); // { latitude, longitude }
+  const [pickedAddress, setPickedAddress] = useState('');
+  const geoSeqRef = useRef(0);
+  const geoTimerRef = useRef(null);
+  const nativeMap = isNativeMapAvailable();
   // 1s tick to repaint the dup-session guard's countdown. We only spin the
   // interval while the sheet is visible AND a live session is active —
   // otherwise it's a wasted setInterval keeping the JS thread busy.
@@ -319,8 +443,37 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
       setLiveConfirm(null);
       setLiveCaption('');
       setSending(false);
+      setPicked(null);
+      setPickedAddress('');
+      geoSeqRef.current++;
+      if (geoTimerRef.current) { clearTimeout(geoTimerRef.current); geoTimerRef.current = null; }
     }
   }, [visible]);
+
+  // Reverse-geocode the picked point (debounced, last-wins).
+  const handlePick = React.useCallback(({ latitude, longitude, isGps }) => {
+    if (isGps) {
+      geoSeqRef.current++;
+      setPicked(null);
+      setPickedAddress('');
+      return;
+    }
+    setPicked({ latitude, longitude });
+    setPickedAddress('');
+    const seq = ++geoSeqRef.current;
+    if (geoTimerRef.current) clearTimeout(geoTimerRef.current);
+    geoTimerRef.current = setTimeout(async () => {
+      try {
+        const Location = require('expo-location');
+        const places = await Location.reverseGeocodeAsync({ latitude, longitude });
+        if (seq !== geoSeqRef.current || !places?.[0]) return;
+        const p = places[0];
+        const line = [p.street, p.streetNumber].filter(Boolean).join(', ') || p.name || '';
+        const sub = [p.district || p.subregion, p.city, p.region].filter(Boolean).join(' · ');
+        setPickedAddress([line, sub].filter(Boolean).join(' — '));
+      } catch {}
+    }, 450);
+  }, []);
 
   useEffect(() => {
     if (!visible) return;
@@ -435,6 +588,14 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
   const handleSend = () => {
     if (!coords || sending) return;
     setSending(true);
+    if (picked) {
+      onSend?.({
+        latitude: picked.latitude,
+        longitude: picked.longitude,
+        address: pickedAddress || '',
+      });
+      return;
+    }
     onSend?.({
       latitude: coords.latitude,
       longitude: coords.longitude,
@@ -587,30 +748,45 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
 
           {coords && !liveConfirm && (
             <>
-              {/* Map preview */}
-              <MapPreviewCard
-                lat={coords.latitude}
-                lng={coords.longitude}
-                accuracy={coords.accuracy}
-                height={190}
-                colors={colors}
-                isDark={isDark}
-                t={t}
-              />
+              {/* Map — [2026-10-07 native-maps] interactive native picker when
+                  available (pan + center pin + search + my-location), else the
+                  WebView preview. */}
+              {nativeMap ? (
+                <NativePickerMap
+                  gps={coords}
+                  height={280}
+                  colors={colors}
+                  isDark={isDark}
+                  t={t}
+                  onPick={handlePick}
+                />
+              ) : (
+                <MapPreviewCard
+                  lat={coords.latitude}
+                  lng={coords.longitude}
+                  accuracy={coords.accuracy}
+                  height={190}
+                  colors={colors}
+                  isDark={isDark}
+                  t={t}
+                />
+              )}
 
               {/* Address line */}
               <Text style={{ fontSize: 15.5, color: colors.text, marginBottom: 4, fontWeight: '700', letterSpacing: -0.2 }} numberOfLines={2}>
-                {address || (t?.('chatConv.locationCurrent') || 'Sua localização atual')}
+                {picked
+                  ? (pickedAddress || (t?.('maps.selectedPlace') || 'Local selecionado'))
+                  : (address || (t?.('chatConv.locationCurrent') || 'Sua localização atual'))}
               </Text>
-              <Text style={{ fontSize: 12.5, color: colors.textSecondary, marginBottom: approxOnly ? 6 : 20 }}>
-                {coords.latitude.toFixed(5)}, {coords.longitude.toFixed(5)}
-                {coords.accuracy ? ` · ±${Math.round(coords.accuracy)}m` : ''}
-                {loading ? ` · ${t?.('chatConv.locationRefining') || 'refinando…'}` : ''}
+              <Text style={{ fontSize: 12.5, color: colors.textSecondary, marginBottom: approxOnly && !picked ? 6 : 20 }}>
+                {(picked || coords).latitude.toFixed(5)}, {(picked || coords).longitude.toFixed(5)}
+                {!picked && coords.accuracy ? ` · ±${Math.round(coords.accuracy)}m` : ''}
+                {!picked && loading ? ` · ${t?.('chatConv.locationRefining') || 'refinando…'}` : ''}
               </Text>
               {/* Subtle approximate-location hint: shown when the only fix
                   we have is an aged cache (>30s) and a fresh GPS read hasn't
                   returned yet. Sending is still allowed. */}
-              {approxOnly && (
+              {approxOnly && !picked && (
                 <Text style={{ fontSize: 11.5, color: '#D97706', marginBottom: 20, fontWeight: '700' }} numberOfLines={1}>
                   {t?.('chatConv.locationApprox') || 'Localização aproximada'}
                 </Text>
@@ -636,7 +812,9 @@ export default function LocationPickerSheet({ visible, onClose, onSend, onLiveSt
                 <Text style={{ color: '#fff', fontSize: 16, fontWeight: '800', letterSpacing: 0.1 }}>
                   {sending
                     ? (t?.('common.sending') || 'Enviando…')
-                    : (t?.('chatConv.locationSend') || 'Enviar localização atual')}
+                    : picked
+                      ? (t?.('maps.sendThisLocation') || 'Enviar esta localização')
+                      : (t?.('chatConv.locationSend') || 'Enviar localização atual')}
                 </Text>
               </TouchableOpacity>
 

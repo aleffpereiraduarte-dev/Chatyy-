@@ -162,3 +162,57 @@ export const PASSKEYS_ENABLED = false;
 // uploadAndSendFile() document path (with caption support) exactly like a
 // picked PDF. Requires a native build (not OTA) to land the dep.
 export const SCAN_DOCUMENT_ENABLED = false;
+
+// ────────────────────────────────────────────────────────────────────────
+// [2026-10-07 native-core] NATIVE_CORE_ENABLED — phase 1 of the native
+// messaging core (WhatsApp/Signal model: native socket + native store, the UI
+// renders the store). Phase 1 = SHADOW: a native WebSocket (ChatyyChatCore
+// module in modules/expo-callkit — OkHttp on Android, URLSessionWebSocketTask
+// on iOS) runs IN PARALLEL with the JS socket while the app is in the
+// foreground, journals chat frames into the existing bg journal and logs
+// native-vs-JS parity to push_diag (step `native_core_parity`). The JS socket
+// is untouched. **DEFAULT false** → services/nativeCore.js init() returns on
+// its first line (no listener, no native call, no require of the module).
+// Needs a binary with ChatCoreModule (capability-detected; older binaries =
+// no-op even when ON).
+//
+// Per-device test without turning it on for everyone: put the test ACCOUNT
+// e-mail(s) in NATIVE_CORE_TEST_ACCOUNTS (lowercase) and publish an OTA — only
+// those accounts start the shadow socket. Dev console: globalThis.
+// __chatyy_native_core = true then require('services/nativeCore').init().
+export const NATIVE_CORE_ENABLED = false;
+export const NATIVE_CORE_TEST_ACCOUNTS = [];
+
+// ────────────────────────────────────────────────────────────────────────
+// [2026-10-07 native-group-call] NATIVE_GROUP_CALL — /group-call renders the
+// LiveKit room NATIVELY (livekit-client Room + @livekit/react-native VideoView,
+// hooks/useLiveKitRoom.js + components/groupcall/*) instead of loading
+// /livekit-room.html inside a WebView. Same token endpoint
+// (chat_livekit_token), same overlays (participants sheet, host controls,
+// reactions, raise-hand banner, recording banner). Reactions / raise-hand go
+// over LiveKit data messages (topic GROUP_CALL_DATA_TOPIC, JSON payload =
+// the same { type:'reaction'|'raise_hand'|'lower_hand', ... } shape the
+// WebView used to postMessage) AND over the existing WS events.
+//
+// **DEFAULT false** for everyone → the WebView stays the path. Accounts listed
+// in NATIVE_GROUP_CALL_TEST_ACCOUNTS (lowercase) get the native screen. Dev
+// override at runtime: globalThis.__chatyy_native_group_call = true | false
+// (wins over both). Needs a binary that links @livekit/react-native (all
+// current binaries do); if the native module is missing the screen falls back
+// to the WebView automatically. Decided ONCE per screen mount (never switches
+// mid-call).
+export const NATIVE_GROUP_CALL = false;
+export const NATIVE_GROUP_CALL_TEST_ACCOUNTS = [
+  'apitest@onemundo.com.br',
+  'duarte@chatyy.com.br',
+];
+export const GROUP_CALL_DATA_TOPIC = 'chatyy.call';
+export function isNativeGroupCallEnabled(email) {
+  try {
+    const o = typeof globalThis !== 'undefined' ? globalThis.__chatyy_native_group_call : undefined;
+    if (o === true || o === false) return o;
+  } catch {}
+  if (NATIVE_GROUP_CALL === true) return true;
+  const e = String(email || '').trim().toLowerCase();
+  return !!e && NATIVE_GROUP_CALL_TEST_ACCOUNTS.includes(e);
+}

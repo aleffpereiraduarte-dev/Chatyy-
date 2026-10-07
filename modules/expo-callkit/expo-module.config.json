@@ -5,7 +5,8 @@
   ],
   "apple": {
     "modules": [
-      "ExpoCallKitModule"
+      "ExpoCallKitModule",
+      "ChatCoreModule"
     ],
     "appDelegateSubscribers": [
       "VoipPushAppDelegateSubscriber",
@@ -15,7 +16,8 @@
   },
   "android": {
     "modules": [
-      "expo.modules.callkit.ExpoCallKitModule"
+      "expo.modules.callkit.ExpoCallKitModule",
+      "expo.modules.callkit.ChatCoreModule"
     ]
   }
 }

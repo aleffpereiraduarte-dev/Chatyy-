@@ -1,3 +1,4 @@
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, RefreshControl,
@@ -2079,7 +2080,7 @@ const styles = StyleSheet.create({
   // Back to posts pill (reels mode)
   backToPostsPill: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 56 : 18,
+    top: Platform.OS === 'ios' ? 56 : androidTopInset(18),
     left: 14,
     backgroundColor: 'rgba(0,0,0,0.4)',
     paddingHorizontal: 14,

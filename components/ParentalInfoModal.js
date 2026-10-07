@@ -1,3 +1,4 @@
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
@@ -347,7 +348,7 @@ const styles = StyleSheet.create({
   },
   skipButton: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 56 : 16,
+    top: Platform.OS === 'ios' ? 56 : androidTopInset(16),
     right: 16,
     zIndex: 10,
     padding: 8,
@@ -367,7 +368,7 @@ const styles = StyleSheet.create({
   },
   pageContent: {
     paddingHorizontal: 24,
-    paddingTop: Platform.OS === 'ios' ? 72 : 48,
+    paddingTop: Platform.OS === 'ios' ? 72 : androidTopInset(48),
     paddingBottom: 24,
   },
   centerContent: {

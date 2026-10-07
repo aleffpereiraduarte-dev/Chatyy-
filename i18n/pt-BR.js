@@ -1,4 +1,5 @@
 export default {
+  'legal.fullPolicy': 'Ver política completa', // [2026-10-07 native-ui-build] app/legal.js
   'calendar.quickAdd': 'Adicionar',
   'chatConv.loadingImage': 'Carregando imagem...',
   // ── QA audit: keys referenced via t() but previously missing ─────────
@@ -3802,6 +3803,11 @@ export default {
   'chatConv.audio': 'Audio',
   'chatConv.camera': 'Câmera',
   'chatConv.playbackSpeed': 'Velocidade de reprodução',
+  // [2026-10-07 voice-native] mini player
+  'voiceNote.miniTitle': 'Mensagem de voz',
+  'voiceNote.openChat': 'Abrir conversa',
+  'voiceNote.close': 'Fechar player',
+  'voiceNote.earpiece': 'Fone',
   'chatConv.location': 'Localização',
   'chatConv.openInMaps': 'Abrir no Maps',
   'chatConv.locationDenied': 'Habilite o acesso à localização nas configurações do navegador.',
@@ -8357,6 +8363,15 @@ export default {
   'snapmap.empty': 'Nenhum amigo dividindo localização',
   'snapmap.mapOffline': 'Sem conexão com o mapa',
   'snapmap.retry': 'Tentar de novo',
+  // [2026-10-07 native-maps]
+  'maps.searchPlaceholder': "Buscar endereço ou lugar",
+  'maps.noResults': "Nenhum resultado",
+  'maps.recenter': "Centralizar",
+  'maps.myLocation': "Minha localização",
+  'maps.directions': "Como chegar",
+  'maps.selectedPlace': "Local selecionado",
+  'maps.sendThisLocation': "Enviar esta localização",
+  'maps.fitAll': "Ver todos",
   'snapmap.oneFriendLive': '1 amigo ao vivo',
   'snapmap.friendsLive': '{n} amigos ao vivo',
   'snapmap.tapToCollapse': 'Recolher',

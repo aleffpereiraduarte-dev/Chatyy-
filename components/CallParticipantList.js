@@ -24,6 +24,7 @@
 // row height, 40px avatar). Sheet height caps at 75% of screen so the
 // active call surface remains visible behind.
 
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import {
   Modal,
@@ -403,7 +404,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 22,
     maxHeight: '78%',
     paddingTop: 8,
-    paddingBottom: Platform.OS === 'ios' ? 28 : 16,
+    paddingBottom: Platform.OS === 'ios' ? 28 : androidBottomInset(16),
   },
   handle: {
     width: 40,

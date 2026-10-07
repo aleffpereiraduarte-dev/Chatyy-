@@ -7,6 +7,7 @@
  *   visible, email (target user), initialTab ('followers' | 'following'),
  *   colors, isDark, t, onClose, router
  */
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, Modal, Pressable, TouchableOpacity, FlatList, ActivityIndicator,
@@ -173,7 +174,7 @@ export default function FollowersSheet({
             backgroundColor: colors?.background || '#fff',
             borderTopLeftRadius: 18, borderTopRightRadius: 18,
             maxHeight: '85%', minHeight: 320,
-            paddingBottom: Platform.OS === 'ios' ? 24 : 10,
+            paddingBottom: Platform.OS === 'ios' ? 24 : androidBottomInset(10),
           }}
         >
           {/* Drag handle */}

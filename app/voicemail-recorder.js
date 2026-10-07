@@ -16,6 +16,7 @@
 //
 // The caller arrives here via `router.replace('/voicemail-recorder?...')`
 // from call.js's call_missed / call_declined WS handler.
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ActivityIndicator, Animated, Easing, Platform, StatusBar, Vibration,
@@ -345,10 +346,15 @@ export default function VoicemailRecorder() {
         // physically feels the cap approaching even if they're not staring
         // at the timer. No-ops on web (Vibration is a no-op there).
         if (next > MAX_DURATION_SEC - 10 && !vibrateIntervalRef.current) {
-          try { Vibration.vibrate(50); } catch {}
-          vibrateIntervalRef.current = setInterval(() => {
-            try { Vibration.vibrate(50); } catch {}
-          }, 1000);
+          // [2026-10-07 ios-native] iOS ignores Vibration durations (each
+          // call is a full ~400 ms system buzz) → crisp rigid tick via
+          // services/haptics instead; Android keeps the short 50 ms pulse.
+          const _tick = () => {
+            if (Platform.OS === 'ios') { try { require('../services/haptics').haptics.recordLimitTick(); } catch {} }
+            else { try { Vibration.vibrate(50); } catch {} }
+          };
+          _tick();
+          vibrateIntervalRef.current = setInterval(_tick, 1000);
         }
         return next;
       });
@@ -715,7 +721,7 @@ export default function VoicemailRecorder() {
 
 function makeStyles(colors) {
   return StyleSheet.create({
-    root: { flex: 1, backgroundColor: colors.background || '#0b0b12', paddingTop: Platform.OS === 'ios' ? 60 : 40 },
+    root: { flex: 1, backgroundColor: colors.background || '#0b0b12', paddingTop: Platform.OS === 'ios' ? 60 : androidTopInset(40) },
     header: { paddingHorizontal: 24, alignItems: 'center' },
     headerTitle: { color: colors.text || '#fff', fontSize: 20, fontWeight: '700', textAlign: 'center' },
     headerSubtitle: { color: colors.textSecondary || 'rgba(255,255,255,0.7)', fontSize: 15, marginTop: 6, textAlign: 'center' },

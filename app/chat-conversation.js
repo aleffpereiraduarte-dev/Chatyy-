@@ -126,6 +126,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import ReactionBurst from '../components/ReactionBurst';
 import { useTheme } from '../context/ThemeContext';
 import { useConfirm } from '../components/ConfirmModal';
+import MessageTypeIcon, { stripLeadingGlyph, hasLeadingGlyph } from '../components/MessageTypeIcon'; // [2026-10-07 app-feel-ui]
+import PressableRow from '../components/PressableRow'; // [2026-10-07 app-feel-ui] native cell feedback in the message menu
+import { BlurBackdrop, canNativeBlur } from '../components/NativeBlur'; // [2026-10-07 native-ui-build]
+import NativeSwitch from '../components/NativeSwitch'; // [2026-10-07 native-ui-build] group info toggles
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
 import { BorderRadius, FontSize, Spacing, Shadow, ChatBubble, LetterSpacing, RECONNECT_BANNER_GRACE_MS } from '../constants/theme';
@@ -163,6 +167,11 @@ import WallpaperPicker, { WallpaperBackground } from '../components/WallpaperPic
 import OngoingCallChip from '../components/OngoingCallChip';
 import { registerAudioPlayer, stopAllAudio, stopOtherAudio } from '../services/audioManager';
 import { getCachedAudioUri } from '../services/audioCache';
+// [2026-10-07 voice-native] global voice-note player + UI-thread waveform/meter
+import * as VoiceNote from '../services/voiceNotePlayer';
+import VoiceWaveform from '../components/chat/VoiceWaveform';
+import VoiceLiveMeter from '../components/chat/VoiceLiveMeter';
+import { resampleVoiceLevels } from '../components/chat/VoiceBars';
 import Profile from '../components/Profile';
 import { MentionAutocomplete, isMentioning, insertMention, isUserMentioned } from '../components/MentionInput';
 import { ScheduleToast, CustomScheduleModal, ScheduledMessagesModal } from '../components/ScheduleModals';
@@ -178,6 +187,9 @@ import ExportConversationModal from '../components/ExportConversationModal';
 import FormatToolbar from '../components/FormatToolbar';
 import RichTextOverlay from '../components/RichTextOverlay';
 import LocationPickerSheet from '../components/LocationPickerSheet';
+// [2026-10-07 native-maps] native map (MapKit / MapLibre Native) w/ WebView fallback
+import LocationMapPreview from '../components/LocationMapPreview';
+import LocationViewerModal from '../components/LocationViewerModal';
 import ChatNotificationSettingsSheet from '../components/ChatNotificationSettingsSheet';
 import SafetyNumberSheet from '../components/SafetyNumberSheet';
 import SendStatusText from '../components/SendStatusText';
@@ -233,6 +245,11 @@ import { coverageStyleFor, boraStyleUrl, boraMapHtml, boraStaticMapUrl } from '.
 let VideoNoteRecorder = null; try { VideoNoteRecorder = require('../components/chat/VideoNoteRecorder').default; } catch {}
 // Circular video-note viewer modal (WhatsApp-style — stays round on tap).
 let RoundVideoViewer = null; try { RoundVideoViewer = require('../components/RoundVideoViewer').default; } catch {}
+// [2026-10-07 ios-native] In-app chat camera. ChatCamera.js only touches
+// vision-camera lazily (inside isChatCameraAvailable / on mount), so this
+// require can't throw on a binary without the native module.
+let ChatCamera = null; let isChatCameraAvailable = null;
+try { const _cc = require('../components/chat/ChatCamera'); ChatCamera = _cc.default; isChatCameraAvailable = _cc.isChatCameraAvailable; } catch {}
 // WhatsApp-style mic trigger — bigger circle, ambient pulse, haptic.
 // Extracted so we can tune the visuals without touching the chat surface.
 let VoiceMicButton = null; try { VoiceMicButton = require('../components/chat/VoiceMicButton').default; } catch {}
@@ -2238,7 +2255,7 @@ function TextWithLinks({ text, style, linkColor, colors, mentionColor, router: r
       {urlParts.map((part, i) =>
         /^https?:\/\//.test(part) ? (
           <Text key={i} style={{ color: linkColor, textDecorationLine: 'underline' }}
-            onPress={() => { try { if (/chatyy\.com\.br\/docs\//.test(part) && routerProp) { routerProp.push({ pathname: '/documentos', params: { url: part } }); } else { Linking.openURL(part); } } catch {} }}>
+            onPress={() => { try { if (/chatyy\.com\.br\/docs\//.test(part) && routerProp) { routerProp.push({ pathname: '/documentos-viewer', params: { url: part } }); /* [2026-10-07 native-ui-build] abre O doc (viewer), não a LISTA /documentos */ } else { Linking.openURL(part); } } catch {} }}>
             {part}
           </Text>
         ) : (
@@ -3270,123 +3287,46 @@ function ReplyThumb({ uri }) {
   );
 }
 
-// Persistent set of audio message IDs that have been played at least once
-// on this device. WhatsApp-style "played" indicator: shows a small filled
-// dot next to the duration so the user can tell which voice notes they
-// already heard. Stored in MMKV so it survives app restart.
-const _playedAudioIds = (() => {
-  if (Platform.OS === 'web') {
-    try {
-      const raw = (typeof localStorage !== 'undefined') ? localStorage.getItem('chatyy_played_audio_v1') : null;
-      return new Set(raw ? JSON.parse(raw) : []);
-    } catch { return new Set(); }
-  }
-  try {
-    const { getString } = require('../services/mmkv');
-    const raw = getString?.('chatyy_played_audio_v1');
-    return new Set(raw ? JSON.parse(raw) : []);
-  } catch { return new Set(); }
-})();
-function _markAudioPlayed(id) {
-  if (id == null) return;
-  const key = String(id);
-  if (_playedAudioIds.has(key)) return;
-  _playedAudioIds.add(key);
-  // Cap at 5000 entries — beyond that, evict the oldest (FIFO via array).
-  // Stops the persisted set from growing unbounded for power users.
-  if (_playedAudioIds.size > 5000) {
-    const it = _playedAudioIds.values();
-    for (let i = 0; i < 500; i++) _playedAudioIds.delete(it.next().value);
-  }
-  try {
-    const arr = Array.from(_playedAudioIds);
-    if (Platform.OS === 'web') {
-      if (typeof localStorage !== 'undefined') localStorage.setItem('chatyy_played_audio_v1', JSON.stringify(arr));
-    } else {
-      const { setString } = require('../services/mmkv');
-      setString?.('chatyy_played_audio_v1', JSON.stringify(arr));
-    }
-  } catch {}
-}
+// [2026-10-07 voice-native] The locally-played set ("I listened" dot) and the
+// persisted speed moved to services/voiceNotePlayer — ONE source shared by
+// every bubble, the global engine and the mini player (two in-memory copies
+// of the same MMKV key would overwrite each other).
 
-const _VOICE_RATE_KEY = 'voice_playback_rate';
-const _VOICE_RATE_ALLOWED = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
-function _readVoiceRate() {
-  try {
-    let raw;
-    if (Platform.OS === 'web') {
-      raw = (typeof localStorage !== 'undefined') ? localStorage.getItem(_VOICE_RATE_KEY) : null;
-    } else {
-      const { getString } = require('../services/mmkv');
-      raw = getString?.(_VOICE_RATE_KEY);
-    }
-    const n = Number(raw);
-    if (_VOICE_RATE_ALLOWED.includes(n)) return n;
-  } catch {}
-  return 1;
-}
-function _persistVoiceRate(rate) {
-  try {
-    if (Platform.OS === 'web') {
-      if (typeof localStorage !== 'undefined') localStorage.setItem(_VOICE_RATE_KEY, String(rate));
-    } else {
-      const { setString } = require('../services/mmkv');
-      setString?.(_VOICE_RATE_KEY, String(rate));
-    }
-  } catch {}
-}
-
-function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, playedByPeer }) {
+// [2026-10-07 voice-native] Voice bubble — WhatsApp-level, native:
+//   • playback lives in the GLOBAL player (services/voiceNotePlayer): keeps
+//     playing after leaving the chat (mini bar), auto-advances to the next
+//     consecutive note from the same sender, raise-to-ear → earpiece + screen
+//     off (native engine), speed 1×/1.5×/2× persisted, blue-mic receipt only
+//     after ≥ min(2 s, 40 %) actually heard;
+//   • progress + scrubbing on the UI thread (components/chat/VoiceWaveform):
+//     the bars render once, the engine position (~4 Hz) is interpolated with
+//     withTiming → no React render per tick (only the mm:ss label, ≤ 1×/s).
+function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, playedByPeer, conversationId }) {
   const { t } = useLanguage();
   const isDarkMode = colors.background === '#0B141A' || colors.background === '#000' || colors.background === '#000000' || (colors.background && colors.background.startsWith('#0'));
   const ownMetaColor = isDarkMode ? 'rgba(233,237,239,0.7)' : 'rgba(17,27,33,0.55)';
-  const ownTextColor = isDarkMode ? '#E9EDEF' : '#111B21';
-  const [playing, setPlaying] = useState(false);
-  // Tracks "I've already listened to this incoming voice note" — shows a
-  // 6px filled dot next to the duration once played. Local-only state so
-  // no server roundtrip needed. Persisted in MMKV across app restarts.
-  const [played, setPlayed] = useState(() => messageId != null && _playedAudioIds.has(String(messageId)));
-  const [progress, setProgress] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [speed, setSpeed] = useState(() => _readVoiceRate());
+  const vs = VoiceNote.useVoiceBubbleState(messageId);
+  const playing = vs.playing;
+  const speed = vs.rate;
+  // Local "I listened" marker (incoming notes) — flips when the global player
+  // reports the played threshold, not on tap.
+  const [played, setPlayed] = useState(() => VoiceNote.isLocallyPlayed(messageId));
+  const [curSec, setCurSec] = useState(() => Math.floor(VoiceNote.getPendingStartMs(messageId) / 1000));
+  const curSecRef = useRef(-1);
   const [caching, setCaching] = useState(false);
   const [cacheProgress, setCacheProgress] = useState(0);
-  const soundRef = useRef(null);
-  const intervalRef = useRef(null);
   const cachedUriRef = useRef(null);
   const cachingRef = useRef(false);
-  // Mutex + mounted guards. Without these, two rapid taps can race the
-  // async resolvePlayUri / createAudioPlayer setup and end up with two
-  // players, two intervals, and a soundRef that points to the wrong one
-  // — random "stuck on play" / "won't pause" behavior.
+  const lastPlayUriRef = useRef(null);
   const playLockRef = useRef(false);
-  const blobRetryRef = useRef(false); // one-shot: web blob died → retried direct URL
   const isMountedRef = useIsMounted();
+  const waveRef = useRef(null);
+  // Best-known duration in ms: engine-reported wins over the message field.
+  const durMsRef = useRef(Math.max(0, (Number(duration) || 0) * 1000));
+  if (!(durMsRef.current > 0) && Number(duration) > 0) durMsRef.current = Number(duration) * 1000;
 
-  // Dancing waveform: while audio is playing, a gentle scaleY pulse runs
-  // on the playhead bar (and softer on its 2 neighbors) so the wave looks
-  // ALIVE — like the bar is reacting to sound. Stops when paused/ended.
-  // Why: a static "filled bar" is dead. WhatsApp/Telegram both animate the
-  // current bar; gives audio messages a "I'm being heard" presence.
-  const playPulseAnim = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    let loop;
-    if (playing) {
-      loop = Animated.loop(
-        Animated.sequence([
-          Animated.timing(playPulseAnim, { toValue: 1.45, duration: 220, easing: Easing.out(Easing.sin), useNativeDriver: true }),
-          Animated.timing(playPulseAnim, { toValue: 1, duration: 320, easing: Easing.in(Easing.sin), useNativeDriver: true }),
-        ])
-      );
-      loop.start();
-    } else {
-      playPulseAnim.setValue(1);
-    }
-    return () => { try { loop?.stop?.(); } catch {} };
-  }, [playing]);
   // Real server-extracted peaks (40-bar JSON via ffmpeg astats) when available;
-  // falls back to deterministic hash-based fake waveform for older messages
-  // that pre-date the .peaks.json pipeline.
+  // falls back to deterministic hash-based bars for older messages.
   const waveformBars = useMemo(() => {
     if (Array.isArray(waveform) && waveform.length >= 8) {
       return waveform.map(v => {
@@ -3397,200 +3337,15 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
     return generateWaveformBars(url);
   }, [waveform, url]);
 
-  const cycleSpeed = useCallback(() => {
-    // Monotonic ascending speed wheel — WhatsApp/Telegram parity. The prior
-    // array jumped 3x → 0.5x → 0.75x mid-cycle, which read as a bug ("why did
-    // it suddenly go slow-mo?"). Wrapping a strictly-ascending list is the
-    // predictable mental model users expect from the 1x/1.5x/2x toggle.
-    const SPEEDS = [1, 1.5, 2];
-    const idx = SPEEDS.indexOf(speed);
-    const next = SPEEDS[(idx + 1) % SPEEDS.length] ?? 1;
-    // Light selection tick on each speed change so the toggle feels tactile
-    // (iMessage/WhatsApp parity). Gated off web where Haptics is a no-op.
-    try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
-    setSpeed(next);
-    _persistVoiceRate(next);
-    if (soundRef.current) {
-      if (Platform.OS === 'web') {
-        soundRef.current.playbackRate = next;
-      } else {
-        // expo-audio AudioPlayer: `rate` is not a property; use setPlaybackRate
-        // or the playbackRate setter. Fall back safely so rate-change errors
-        // never break audio playback entirely.
-        try {
-          if (typeof soundRef.current.setPlaybackRate === 'function') {
-            soundRef.current.setPlaybackRate(next, 'high');
-          } else {
-            soundRef.current.playbackRate = next;
-          }
-        } catch {}
-      }
-    }
-  }, [speed]);
+  // Tell the global player this note has a bubble on screen (mini bar hides).
+  useEffect(() => VoiceNote.mountVoiceSurface(messageId), [messageId]);
 
-  const stopPlayback = useCallback(() => {
-    if (Platform.OS === 'web') {
-      try { soundRef.current?.pause(); } catch {}
-    } else {
-      try { soundRef.current?.pause?.(); } catch {}
-    }
-    setPlaying(false);
-    if (intervalRef.current) clearInterval(intervalRef.current);
+  const _setSec = useCallback((s) => {
+    if (s !== curSecRef.current) { curSecRef.current = s; setCurSec(s); }
   }, []);
 
-  // Skip ±15s — podcast-style. WhatsApp added this in 2024 for voice notes,
-  // useful for retrying a missed sentence in a long voice message. Uses the
-  // same plumbing as the waveform onSeek above: HTMLAudioElement.currentTime
-  // on web, AudioPlayer.seekTo on native. Clamps to [0, duration] so we
-  // never seek past the file. Updates progress+currentTime so the waveform
-  // bars repaint immediately even when paused.
-  const skipBy = useCallback(async (deltaSec) => {
-    // [#1226 2026-05-21] Skip-15 buttons (the "setinhas" the user calls them)
-    // were dead because: (a) on native we read `duration`/`currentTime` from
-    // React STATE — which is empty until the listener has fired at least
-    // once. The listener only emits while `status.playing` (line 2972), so
-    // tapping skip BEFORE pressing play, or right after pressing play but
-    // before the first 200ms tick, found dur=0 and bailed. (b) the React
-    // state is also captured in the useCallback closure — pinned at mount.
-    // Fix: always read live position/duration from the player object itself
-    // (snd.currentTime / snd.duration are exposed live by expo-audio and by
-    // HTMLAudioElement). Fall back to React state only as a last resort.
-    const snd = soundRef.current;
-    if (!snd) {
-      if (__DEV__) console.warn('[AudioPlayer/skipBy] no player yet — tap play first');
-      return;
-    }
-    try {
-      // Live values from the player itself — bypasses stale React state.
-      let liveDur = (typeof snd.duration === 'number' && isFinite(snd.duration) && snd.duration > 0)
-        ? snd.duration
-        : (duration || 0);
-      let liveCur = (typeof snd.currentTime === 'number' && isFinite(snd.currentTime))
-        ? snd.currentTime
-        : (currentTime || 0);
-      if (liveDur <= 0) {
-        if (__DEV__) console.warn('[AudioPlayer/skipBy] duration not ready', { liveDur, liveCur });
-        return;
-      }
-      const next = Math.max(0, Math.min(liveDur, liveCur + deltaSec));
-      if (Platform.OS === 'web') {
-        snd.currentTime = next;
-      } else {
-        if (typeof snd.seekTo === 'function') {
-          await snd.seekTo(next);
-        } else if ('currentTime' in snd) {
-          snd.currentTime = next;
-        }
-      }
-      setCurrentTime(next);
-      setProgress(next / liveDur);
-    } catch (e) {
-      if (__DEV__) console.warn('[AudioPlayer/skipBy] failed', deltaSec, e?.message);
-    }
-  }, [duration, currentTime]);
-
-  // Pre-cache audio on mount
-  useEffect(() => {
-    const unregister = registerAudioPlayer(stopPlayback);
-    let cancelled = false;
-
-    if (url) {
-      // Start caching in background. CRITICAL: we ONLY commit cachedUriRef
-      // when getCachedAudioUri returns a real local URI (file://). When the
-      // device is offline + the file hasn't been pre-fetched yet,
-      // getCachedAudioUri falls back to the remote https URL — caching that
-      // into cachedUriRef would make every subsequent tap reuse the dead
-      // remote URL, and the user would see silent failure offline. By only
-      // storing file:// URIs here, an offline tap re-enters resolvePlayUri,
-      // which surfaces the proper offline error instead of opening a
-      // doomed network stream. WhatsApp-grade: cached audio plays even
-      // with no network, uncached audio fails LOUDLY (not silently).
-      getCachedAudioUri(url, messageId, (p) => {
-        if (!cancelled) setCacheProgress(p);
-      }).then(localUri => {
-        if (cancelled || !localUri) return;
-        const isLocal = typeof localUri === 'string' && (localUri.startsWith('file://') || localUri.startsWith('blob:') || localUri.startsWith('content://'));
-        if (!isLocal) return; // remote fallback — don't pin it
-        cachedUriRef.current = localUri;
-        // On web: preload the cached/blob URL into an Audio element
-        if (Platform.OS === 'web') {
-          try {
-            const audio = new window.Audio();
-            audio.preload = 'auto';
-            audio.src = localUri;
-            audio.onended = () => { setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); try { require('../services/voicePlaybackBus').emitAudioFinished(messageId); } catch {} };
-            audio.onerror = () => { soundRef.current = null; };
-            soundRef.current = audio;
-          } catch {}
-        }
-      }).catch(() => {});
-    }
-
-    return () => {
-      cancelled = true;
-      unregister();
-      if (Platform.OS === 'web') {
-        try { soundRef.current?.pause(); } catch {}
-        // Revoke blob URLs to prevent memory leaks
-        if (cachedUriRef.current && cachedUriRef.current.startsWith('blob:')) {
-          try { URL.revokeObjectURL(cachedUriRef.current); } catch {}
-        }
-      } else {
-        try { soundRef.current?._subscription?.remove?.(); } catch {}
-        soundRef.current?.remove?.();
-        soundRef.current = null;
-        // Hand the audio session back to the OS so Spotify/YouTube
-        // can resume after the voice note finishes. Flipping the mode
-        // to `mixWithOthers` releases the AVAudioSession exclusivity
-        // we grabbed in setAudioModeAsync({ interruptionMode: 'doNotMix' })
-        // above. Without this, the user's music stays paused until
-        // they tap a different app — that's the classic WhatsApp bug
-        // we're avoiding here.
-        try {
-          const { setAudioModeAsync } = require('expo-audio');
-          setAudioModeAsync?.({
-            interruptionMode: 'mixWithOthers',
-            interruptionModeAndroid: 'mixWithOthers',
-          }).catch(() => {});
-        } catch {}
-      }
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [stopPlayback, url, messageId]);
-
-  // Resolve the best URI to play (cached local or original remote)
-  const resolvePlayUri = useCallback(async () => {
-    // If we already have a cached LOCAL URI from the pre-cache, use it.
-    // We never pin a remote URL into cachedUriRef (see mount useEffect),
-    // so anything here is guaranteed to be file://, blob:, or content://.
-    if (cachedUriRef.current) return cachedUriRef.current;
-
-    // Otherwise try to cache now (with progress indicator)
-    if (cachingRef.current) return url; // Already caching, use remote for now
-    cachingRef.current = true;
-    setCaching(true);
-    try {
-      const localUri = await getCachedAudioUri(url, messageId, (p) => { if (isMountedRef.current) setCacheProgress(p); });
-      // Only persist into cachedUriRef when it's a real local URI. Remote
-      // fallbacks (no cache + offline, or a transient FS hiccup) MUST NOT
-      // poison the ref — otherwise every subsequent tap reuses the dead
-      // remote URL and the user sees silent failure forever.
-      const isLocal = typeof localUri === 'string' && (localUri.startsWith('file://') || localUri.startsWith('blob:') || localUri.startsWith('content://'));
-      if (isLocal) cachedUriRef.current = localUri;
-      return localUri || url;
-    } catch {
-      return url;
-    } finally {
-      if (isMountedRef.current) setCaching(false);
-      cachingRef.current = false;
-    }
-  }, [url, messageId]);
-
-  // Detect "offline + uncached" surface error. Shared by web + native
-  // play paths so the user always knows WHY the bubble didn't play instead
-  // of staring at a frozen play button. WhatsApp-parity: cached audio plays
-  // offline, uncached audio shows a tiny toast. Idempotent — fires once
-  // per tap (gated on playLockRef inside togglePlay).
+  // Detect "offline + uncached" surface error (WhatsApp-parity: cached audio
+  // plays offline, uncached audio shows a toast instead of a frozen button).
   const _surfaceOfflineMiss = useCallback(() => {
     try {
       let online = true;
@@ -3609,124 +3364,136 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
     } catch {}
   }, [t]);
 
+  // Engine position → UI-thread waveform (no React render per tick).
+  useEffect(() => {
+    if (messageId == null) return undefined;
+    const st0 = VoiceNote.getVoiceState();
+    if (st0.item && String(st0.item.messageId) === String(messageId)) {
+      const { positionMs, durationMs } = VoiceNote.getVoicePosition();
+      if (durationMs > 0) durMsRef.current = durationMs;
+      const d0 = durMsRef.current;
+      if (d0 > 0) waveRef.current?.set(positionMs / d0);
+      _setSec(Math.floor(positionMs / 1000));
+    }
+    return VoiceNote.subscribeVoicePosition(messageId, (e) => {
+      if (e.durationMs > 0) durMsRef.current = e.durationMs;
+      if (e.playedThreshold) { setPlayed(true); return; }
+      if (e.error) {
+        // Codec vs offline: a local file that fails is a format problem; a
+        // remote one is (almost always) connectivity.
+        const u = lastPlayUriRef.current;
+        const wasLocal = typeof u === 'string' && (u.startsWith('file://') || u.startsWith('content://'));
+        if (wasLocal && Platform.OS !== 'web') {
+          const codecMsg = t?.('media.codecError') || t?.('chatConv.audioLoadFailed') || 'Não foi possível tocar este áudio (formato não suportado).';
+          try { Alert.alert(t?.('common.error') || 'Erro', codecMsg); } catch {}
+        } else if (e.error !== 'autoplay_blocked') {
+          _surfaceOfflineMiss();
+        }
+        return;
+      }
+      const d = durMsRef.current;
+      const pos = e.positionMs || 0;
+      const w = waveRef.current;
+      if (w && d > 0 && !w.isScrubbing()) {
+        if (e.playing && !e.seeked && !e.ended) {
+          w.animateTo(Math.min(1, (pos + VoiceNote.VOICE_TICK_MS * (e.rate || 1)) / d), VoiceNote.VOICE_TICK_MS);
+        } else {
+          w.set(pos / d);
+        }
+      }
+      _setSec(Math.floor(pos / 1000));
+    });
+  }, [messageId, _setSec, _surfaceOfflineMiss, t]);
+
+  const cycleSpeed = useCallback(() => {
+    // Monotonic 1x → 1.5x → 2x wheel (WhatsApp). Global + persisted.
+    try { if (Platform.OS !== 'web') Haptics.selectionAsync(); } catch {}
+    VoiceNote.cycleVoiceRate();
+  }, []);
+
+  // Skip ±15s — reads the live engine position (never stale React state).
+  const skipBy = useCallback((deltaSec) => {
+    const d = durMsRef.current;
+    if (!(d > 0)) return;
+    const st = VoiceNote.getVoiceState();
+    const active = !!(st.item && String(st.item.messageId) === String(messageId));
+    const cur = active ? VoiceNote.getVoicePosition().positionMs : VoiceNote.getPendingStartMs(messageId);
+    const next = Math.max(0, Math.min(d, cur + deltaSec * 1000));
+    VoiceNote.seekVoiceNote(messageId, next);
+    if (!active) { waveRef.current?.set(next / d); _setSec(Math.floor(next / 1000)); }
+  }, [messageId, _setSec]);
+
+  // Waveform scrub (UI thread) → one real seek on release.
+  const onWaveSeek = useCallback((ratio) => {
+    const d = durMsRef.current;
+    if (!(d > 0)) return;
+    const ms = ratio * d;
+    VoiceNote.seekVoiceNote(messageId, ms);
+    _setSec(Math.floor(ms / 1000));
+  }, [messageId, _setSec]);
+  const onScrubTime = useCallback((ratio) => {
+    const d = durMsRef.current;
+    if (d > 0) _setSec(Math.floor((ratio * d) / 1000));
+  }, [_setSec]);
+
+  // Pre-cache on mount. CRITICAL: only commit cachedUriRef for a real LOCAL
+  // URI (file://, blob:, content://) — pinning a remote fallback would make
+  // every later tap reuse a dead URL offline (silent failure).
+  useEffect(() => {
+    let cancelled = false;
+    if (url) {
+      getCachedAudioUri(url, messageId, (p) => {
+        if (!cancelled) setCacheProgress(p);
+      }).then(localUri => {
+        if (cancelled || !localUri) return;
+        const isLocal = typeof localUri === 'string' && (localUri.startsWith('file://') || localUri.startsWith('blob:') || localUri.startsWith('content://'));
+        if (isLocal) cachedUriRef.current = localUri;
+      }).catch(() => {});
+    }
+    return () => {
+      cancelled = true;
+      // Web: revoke our blob only when this note is NOT the one playing in the
+      // global player (it keeps playing after the bubble unmounts).
+      if (Platform.OS === 'web' && cachedUriRef.current && cachedUriRef.current.startsWith('blob:')) {
+        const st = VoiceNote.getVoiceState();
+        const live = st.item && String(st.item.messageId) === String(messageId);
+        if (!live) { try { URL.revokeObjectURL(cachedUriRef.current); } catch {} }
+      }
+    };
+  }, [url, messageId]);
+
+  // Resolve the best URI to play (cached local or original remote)
+  const resolvePlayUri = useCallback(async () => {
+    if (cachedUriRef.current) return cachedUriRef.current;
+    if (cachingRef.current) return url;
+    cachingRef.current = true;
+    setCaching(true);
+    try {
+      const localUri = await getCachedAudioUri(url, messageId, (p) => { if (isMountedRef.current) setCacheProgress(p); });
+      const isLocal = typeof localUri === 'string' && (localUri.startsWith('file://') || localUri.startsWith('blob:') || localUri.startsWith('content://'));
+      if (isLocal) cachedUriRef.current = localUri;
+      return localUri || url;
+    } catch {
+      return url;
+    } finally {
+      if (isMountedRef.current) setCaching(false);
+      cachingRef.current = false;
+    }
+  }, [url, messageId]);
+
   const togglePlay = async () => {
-    if (playLockRef.current) return; // ignore re-entrant taps
+    // Already the active note → plain pause / resume in the global player.
+    if (vs.active) { VoiceNote.toggleVoiceNote({ messageId }); return; }
+    if (playLockRef.current) return; // ignore re-entrant taps while resolving
     playLockRef.current = true;
     try {
+      const playUri = await resolvePlayUri();
+      if (!isMountedRef.current) return;
+      if (!playUri) { console.warn('[AudioPlayer] Audio URL empty — url=', url); return; }
       if (Platform.OS === 'web') {
-        // Web: use preloaded HTML5 Audio
-        if (playing && soundRef.current) {
-          soundRef.current.pause();
-          setPlaying(false);
-          if (intervalRef.current) clearInterval(intervalRef.current);
-          return;
-        }
-        // Single-audio rule: pause any other voice note before this one
-        // starts (own stopPlayback excepted — it's the registered fn).
-        stopOtherAudio(stopPlayback);
-        if (!soundRef.current) {
-          const playUri = await resolvePlayUri();
-          if (!isMountedRef.current) return;
-          if (!playUri) { console.warn('Audio URL is empty'); return; }
-          // Offline gate: web Audio() with an https URI requires fetch. If
-          // we never got a blob: URL from the Cache API and the network is
-          // down, skip the doomed play() and tell the user. WhatsApp-grade.
-          const isLocalWeb = typeof playUri === 'string' && (playUri.startsWith('blob:') || playUri.startsWith('data:') || playUri.startsWith('file://'));
-          if (!isLocalWeb && typeof navigator !== 'undefined' && navigator.onLine === false) {
-            _surfaceOfflineMiss();
-            return;
-          }
-          const audio = new window.Audio(playUri);
-          audio.preload = 'auto';
-          audio.onended = () => { if (!isMountedRef.current) return; setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current); try { require('../services/voicePlaybackBus').emitAudioFinished(messageId); } catch {} };
-          audio.onerror = () => {
-            if (!isMountedRef.current) return;
-            setPlaying(false);
-            soundRef.current = null;
-            // Self-heal: if we were playing a blob: that died (revoked out from
-            // under us by a concurrent re-cache — ERR_FILE_NOT_FOUND), purge the
-            // poisoned blob + the cached ref and retry ONCE with the direct
-            // remote URL, which the browser streams natively. Without this, the
-            // stale blob is reused on every subsequent tap → silent fail forever.
-            const wasBlob = typeof playUri === 'string' && playUri.startsWith('blob:');
-            if (wasBlob && !blobRetryRef.current) {
-              blobRetryRef.current = true;
-              try { require('../services/audioCache').invalidateWebAudio(url); } catch {}
-              cachedUriRef.current = null;
-              try {
-                const fresh = new window.Audio(url);
-                fresh.preload = 'auto';
-                fresh.onended = audio.onended;
-                fresh.playbackRate = speed;
-                soundRef.current = fresh;
-                fresh.play().then(() => { if (isMountedRef.current) setPlaying(true); }).catch(() => {});
-              } catch {}
-            }
-          };
-          soundRef.current = audio;
-        }
-        // Resume from current position instead of restarting (only reset if finished)
-        if (soundRef.current.ended || soundRef.current.currentTime >= (soundRef.current.duration || Infinity)) {
-          soundRef.current.currentTime = 0;
-        }
-        soundRef.current.playbackRate = speed;
-        await soundRef.current.play();
-        if (!isMountedRef.current) { try { soundRef.current?.pause(); } catch {} return; }
-        setPlaying(true);
-        // Mark as played the first time playback actually starts. Used by
-        // the dot indicator next to duration so the user can spot voice
-        // notes they've already heard.
-        if (!played) {
-          setPlayed(true);
-          _markAudioPlayed(messageId);
-          // Also tell the server at playback START (not end) so the sender's
-          // bubble flips to the blue "played" mic right away. Only for
-          // received notes; idempotent + batched server-side. End-of-play
-          // ack stays in place — this just makes it fire sooner.
-          if (!isOwn && messageId != null) { try { api.chatVoicePlayed(messageId); } catch {} }
-        }
-        // Clear any prior interval before starting a new one — without this,
-        // rapid pause/play can leave two setInterval handles updating progress
-        // concurrently (visible double-speed ticks).
-        if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
-        intervalRef.current = setInterval(() => {
-          if (!isMountedRef.current) { clearInterval(intervalRef.current); return; }
-          const a = soundRef.current;
-          if (a && a.duration > 0) {
-            setProgress(a.currentTime / a.duration);
-            setCurrentTime(a.currentTime);
-          }
-        }, 50);
-        return;
-      }
-      // Native: use expo-audio
-      let createAudioPlayer, setAudioModeAsync;
-      try {
-        const mod = require('expo-audio');
-        createAudioPlayer = mod.createAudioPlayer;
-        setAudioModeAsync = mod.setAudioModeAsync;
-      } catch (err) {
-        console.warn('[AudioPlayer] expo-audio not available:', err?.message);
-        return;
-      }
-      if (playing && soundRef.current) {
-        try { soundRef.current.pause(); } catch (e) { console.warn('[AudioPlayer/pause]', e?.message); }
-        setPlaying(false);
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        return;
-      }
-      // Single-audio rule (native): pause any other voice note first.
-      stopOtherAudio(stopPlayback);
-      if (!soundRef.current) {
-        const playUri = await resolvePlayUri();
-        if (!isMountedRef.current) return;
-        if (!playUri) { console.warn('[AudioPlayer] Audio URL empty — url=', url); return; }
-        // Offline-grade gate: if resolvePlayUri returned a remote https URL
-        // (cache miss), confirm the device is online before calling
-        // createAudioPlayer. expo-audio streams over HTTP and silently
-        // fails when there's no network — user sees a frozen play button.
-        // WhatsApp parity: cached audio plays offline; uncached audio
-        // shows "no internet, media not yet downloaded" toast.
+        const isLocalWeb = typeof playUri === 'string' && (playUri.startsWith('blob:') || playUri.startsWith('data:') || playUri.startsWith('file://'));
+        if (!isLocalWeb && typeof navigator !== 'undefined' && navigator.onLine === false) { _surfaceOfflineMiss(); return; }
+      } else {
         const isLocalNative = typeof playUri === 'string' && (playUri.startsWith('file://') || playUri.startsWith('content://'));
         if (!isLocalNative) {
           let online = true;
@@ -3734,28 +3501,15 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
             const oc = require('../services/offlineCache');
             if (typeof oc.isOnline === 'function') online = !!oc.isOnline();
           } catch {}
-          if (!online) {
-            _surfaceOfflineMiss();
-            return;
-          }
+          if (!online) { _surfaceOfflineMiss(); return; }
         } else {
-          // Defensive: stale syncIndex / wiped disk. If the file we're
-          // about to hand to expo-audio doesn't exist, fall back to remote
-          // (which then re-enters the offline check above) instead of
-          // letting the player choke on a missing file.
+          // Stale syncIndex / wiped disk: never hand a missing file to the
+          // player — clear the poisoned ref, re-download, tell the user.
           try {
             let fs; try { fs = require('expo-file-system/legacy'); } catch { fs = require('expo-file-system'); }
             const info = await fs.getInfoAsync(playUri);
             if (!info?.exists || (info.size != null && info.size <= 0)) {
-              // Clear the poisoned cache ref so the next tap re-resolves.
               cachedUriRef.current = null;
-              let online = true;
-              try {
-                const oc = require('../services/offlineCache');
-                if (typeof oc.isOnline === 'function') online = !!oc.isOnline();
-              } catch {}
-              if (!online) { _surfaceOfflineMiss(); return; }
-              // Trigger a background re-download; user can tap again.
               try {
                 const { prefetchAudioMessage } = require('../services/mediaCache');
                 prefetchAudioMessage?.(url);
@@ -3765,119 +3519,17 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
             }
           } catch {}
         }
-        // iOS silent-switch safety: enable playback even if the ringer is off.
-        // `allowsRecording: false` prevents the session from fighting with the
-        // recorder used for sending voice messages. `shouldPlayInBackground`
-        // keeps audio going when the screen locks mid-playback.
-        try {
-          // Pause any audio playing in other apps (Spotify, YouTube,
-          // podcasts) before our voice bubble starts — WhatsApp/iMessage
-          // parity. Without this the recipient hears the voice note
-          // *over* their music, which is unusable. `doNotMix` triggers
-          // iOS AVAudioSession's "interruptSpotifyAndOthers" behavior
-          // and Android's AudioManager.requestAudioFocus(AUDIOFOCUS_GAIN).
-          // Other apps automatically resume when our player releases
-          // the session (handled when soundRef.current is unloaded).
-          // Previously this was `mixWithOthers`, so Spotify kept
-          // playing alongside the bubble — user complained 2026-05-12.
-          await setAudioModeAsync({
-            playsInSilentMode: true,
-            allowsRecording: false,
-            shouldPlayInBackground: true,
-            interruptionMode: 'doNotMix',
-            interruptionModeAndroid: 'doNotMix',
-            shouldDuckAndroid: false,
-          });
-        } catch (e) { console.warn('[AudioPlayer/setAudioMode]', e?.message); }
-        if (!isMountedRef.current) return;
-        let player;
-        try {
-          // On iOS the AudioPlayer is happier with a plain string URI than
-          // a `{ uri }` object + lets expo-audio's resolveSource handle the
-          // https → Asset conversion identically across platforms.
-          const src = typeof playUri === 'string' ? playUri : { uri: String(playUri) };
-          player = createAudioPlayer(src, { updateInterval: 200, downloadFirst: false });
-        } catch (e) {
-          console.warn('[AudioPlayer/create] failed for', playUri, e?.message);
-          return;
-        }
-        const subscription = player.addListener('playbackStatusUpdate', (status) => {
-          if (!isMountedRef.current) return;
-          if (status.error) {
-            console.warn('[AudioPlayer] playback error:', status.error);
-            setPlaying(false);
-            // [#1218 2026-05-20] Surface the error to the user instead of
-            // silently leaving a frozen button. If the URI was local (file://)
-            // the file IS on disk — the issue is codec (Android <10 + .opus
-            // is the classic offender). If the URI was remote, fall through
-            // to the offline gate which already has the right "sem internet"
-            // copy. Either way the user knows WHY playback didn't start.
-            try {
-              const wasLocal = typeof playUri === 'string' && (playUri.startsWith('file://') || playUri.startsWith('content://'));
-              if (wasLocal) {
-                const codecMsg = t?.('media.codecError') || t?.('chatConv.audioLoadFailed') || 'Não foi possível tocar este áudio (formato não suportado).';
-                if (Platform.OS === 'web') { try { window.alert?.(codecMsg); } catch {} }
-                else { try { Alert.alert(t?.('common.error') || 'Erro', codecMsg); } catch {} }
-              } else {
-                _surfaceOfflineMiss();
-              }
-            } catch {}
-            return;
-          }
-          if (status.playing && status.duration > 0) {
-            setProgress(status.currentTime / status.duration);
-            setCurrentTime(status.currentTime);
-          }
-          if (!status.playing && status.currentTime >= status.duration && status.duration > 0) {
-            setPlaying(false); setProgress(0); setCurrentTime(0); if (intervalRef.current) clearInterval(intervalRef.current);
-            // Voice note finished playing on its own — flip the audio
-            // session back to mixWithOthers so Spotify/YouTube can
-            // resume automatically (iMessage parity). The cleanup
-            // useEffect only fires on unmount, which leaves music
-            // paused for minutes after the bubble finishes.
-            try {
-              const { setAudioModeAsync } = require('expo-audio');
-              setAudioModeAsync?.({
-                interruptionMode: 'mixWithOthers',
-                interruptionModeAndroid: 'mixWithOthers',
-              }).catch(() => {});
-            } catch {}
-          }
-        });
-        soundRef.current = player;
-        soundRef.current._subscription = subscription;
-        // Apply the currently selected speed before starting so WhatsApp-style
-        // 2x playback kicks in from the very first frame.
-        try {
-          if (typeof player.setPlaybackRate === 'function') player.setPlaybackRate(speed, 'high');
-          else player.playbackRate = speed;
-        } catch {}
-        try {
-          player.play();
-          setPlaying(true);
-          if (!played) { setPlayed(true); _markAudioPlayed(messageId); if (!isOwn && messageId != null) { try { api.chatVoicePlayed(messageId); } catch {} } }
-        }
-        catch (e) {
-          console.warn('[AudioPlayer/play] failed:', e?.message);
-          // Null out so the next tap re-creates the player (stale handle
-          // recovery) instead of re-entering the "already have soundRef"
-          // branch forever.
-          try { subscription?.remove?.(); } catch {}
-          soundRef.current = null;
-        }
-      } else {
-        try {
-          if (typeof soundRef.current.setPlaybackRate === 'function') soundRef.current.setPlaybackRate(speed, 'high');
-          else soundRef.current.playbackRate = speed;
-        } catch {}
-        // Resume from current position; only reset if playback finished
-        try {
-          soundRef.current.play();
-          setPlaying(true);
-          if (!played) { setPlayed(true); _markAudioPlayed(messageId); if (!isOwn && messageId != null) { try { api.chatVoicePlayed(messageId); } catch {} } }
-        }
-        catch (e) { console.warn('[AudioPlayer/resume]', e?.message); }
       }
+      if (!isMountedRef.current) return;
+      lastPlayUriRef.current = playUri;
+      VoiceNote.playVoiceNote({
+        messageId,
+        url,
+        uri: playUri,
+        conversationId: conversationId != null ? conversationId : VoiceNote.getActiveVoiceConversationId(),
+        durationMs: durMsRef.current,
+        isOwn: !!isOwn,
+      }).catch(() => {});
     } catch (e) {
       console.warn('Audio play error:', e);
     } finally {
@@ -3885,16 +3537,11 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
     }
   };
 
-  // Net-recover hook: if this bubble's audio isn't cached (the mount
-  // pre-cache left cachedUriRef null because the device was offline),
-  // listen for the network coming back and silently fire the download.
-  // By the time the user taps Play, the file is already on disk and
-  // playback is instant — matches WhatsApp's "you came back online,
-  // your messages are ready" behavior. Fire-and-forget; idempotent
-  // (prefetchAudioMessage dedupes by URL).
+  // Net-recover hook: uncached bubble + network comes back → silently fetch
+  // so the next tap is instant (WhatsApp "your messages are ready").
   useEffect(() => {
     if (Platform.OS === 'web' || !url) return;
-    if (cachedUriRef.current) return; // already cached, nothing to do
+    if (cachedUriRef.current) return;
     let unsub = null;
     try {
       const ni = require('../services/networkInfo');
@@ -3916,40 +3563,23 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
     return () => { try { unsub?.(); } catch {} };
   }, [url]);
 
-  // Auto-advance: when the chat-conversation orchestrator emits
-  // requestPlay(this.messageId) after a sibling voice ended, kick our own
-  // togglePlay to start playback. Idempotent — bails if already playing.
-  useEffect(() => {
-    if (messageId == null) return;
-    let unsub = () => {};
-    try {
-      const { onRequestPlay } = require('../services/voicePlaybackBus');
-      unsub = onRequestPlay((requestedId) => {
-        if (String(requestedId) !== String(messageId)) return;
-        if (playing) return;
-        // Defer 60ms so the previous player's onended state has settled.
-        setTimeout(() => { try { togglePlay(); } catch {} }, 60);
-      });
-    } catch {}
-    return () => { try { unsub(); } catch {} };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messageId, playing]);
-
   // On LIGHT theme the own bubble is light lavender, so white controls
-  // vanish. Use dark purple for own controls on light theme; keep white on
-  // dark. Received bubble colors unchanged.
+  // vanish. Use dark controls for own on light theme; white on dark.
   const ownCtrl = isDarkMode ? '#fff' : '#111111';
   const ownCtrlSoft = isDarkMode ? 'rgba(255,255,255,0.85)' : 'rgba(17, 17, 17,0.85)';
   const tintColor = isOwn ? ownCtrl : '#111111';
   const tintDim = isOwn ? (isDarkMode ? 'rgba(255,255,255,0.35)' : 'rgba(17, 17, 17,0.30)') : 'rgba(17, 17, 17,0.25)';
-  const playedBarIdx = Math.floor(progress * waveformBars.length);
-  const displayTime = playing ? currentTime : (duration || 0);
-
-  // Skip controls only render once playback has started — otherwise the
-  // skip buttons would compete with the play button visually and add
-  // clutter to short voice notes that the user can just listen straight
-  // through. Once `played` is true (or playing now), they fade in.
-  const showSkipBtns = playing || played;
+  // Idle → total length; active / scrubbed → current position (WhatsApp).
+  const showCur = vs.active || curSec > 0;
+  const displayTime = showCur ? curSec : (duration || 0);
+  const busy = caching || (vs.loading && vs.active);
+  const showSkipBtns = playing || (vs.active && curSec > 0);
+  const initialRatio = (() => {
+    const d = durMsRef.current;
+    if (!(d > 0)) return 0;
+    if (vs.active) return Math.min(1, VoiceNote.getVoicePosition().positionMs / d);
+    return Math.min(1, VoiceNote.getPendingStartMs(messageId) / d);
+  })();
 
   return (
     <View style={audioStyles.container}>
@@ -3965,8 +3595,8 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
         </TouchableOpacity>
       )}
       <View style={{ position: 'relative' }}>
-        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.25)' : '#111111') : '#111111' }]} accessibilityLabel={caching ? (t('common.downloading') || 'Baixando') : playing ? (t('common.pause') || 'Pausar') : (t('common.play') || 'Reproduzir')} accessibilityRole="button">
-          {caching ? (
+        <TouchableOpacity onPress={togglePlay} style={[audioStyles.playBtn, { backgroundColor: isOwn ? (isDarkMode ? 'rgba(255,255,255,0.25)' : '#111111') : '#111111' }]} accessibilityLabel={busy ? (t('common.downloading') || 'Baixando') : playing ? (t('common.pause') || 'Pausar') : (t('common.play') || 'Reproduzir')} accessibilityRole="button">
+          {busy ? (
             <ActivityIndicator size={18} color="#fff" />
           ) : playing ? (
             <IconPause size={20} color="#fff" />
@@ -3992,126 +3622,30 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
         </TouchableOpacity>
       )}
       <View style={audioStyles.trackWrap}>
-        {(() => {
-          // Seek handler — map touch X within the waveform to a playback
-          // position. Works on web (HTMLAudioElement.currentTime) and native
-          // (expo-audio AudioPlayer.seekTo).
-          const _ratioFrom = (evt, layoutWidth) => {
-            const x = evt?.nativeEvent?.locationX ?? 0;
-            if (!layoutWidth || layoutWidth <= 0) return null;
-            return Math.max(0, Math.min(1, x / layoutWidth));
-          };
-          // While dragging we ONLY repaint the bars + time label (cheap, local
-          // state) and never touch the player — calling seekTo on every move
-          // event flooded expo-audio with seeks and made scrubbing stutter.
-          const onScrubMove = (evt, layoutWidth) => {
-            const ratio = _ratioFrom(evt, layoutWidth);
-            if (ratio == null) return;
-            setProgress(ratio);
-            setCurrentTime((duration || 0) * ratio);
-          };
-          // The real seek happens ONCE, on release, at the final position.
-          const onScrubRelease = async (evt, layoutWidth) => {
-            const ratio = _ratioFrom(evt, layoutWidth);
-            if (ratio == null) return;
-            const snd = soundRef.current;
-            setProgress(ratio);
-            if (!snd) { return; }
-            try {
-              if (Platform.OS === 'web') {
-                const dur = snd.duration;
-                if (dur && isFinite(dur)) snd.currentTime = dur * ratio;
-                setCurrentTime((dur || 0) * ratio);
-              } else {
-                const dur = (duration || 0);
-                if (typeof snd.seekTo === 'function') await snd.seekTo(dur * ratio);
-                else if ('currentTime' in snd) snd.currentTime = dur * ratio;
-                setCurrentTime(dur * ratio);
-              }
-            } catch {}
-          };
-          let wfWidth = 0;
-          return (
-            <View
-              style={audioStyles.waveformRow}
-              onLayout={(e) => { wfWidth = e.nativeEvent.layout.width; }}
-              onStartShouldSetResponder={() => true}
-              onResponderGrant={(e) => onScrubMove(e, wfWidth)}
-              onResponderMove={(e) => onScrubMove(e, wfWidth)}
-              onResponderRelease={(e) => onScrubRelease(e, wfWidth)}
-            >
-              {/* Scrubber thumb — small dot tracking the playhead so the user
-                  has a clear grab handle while dragging (WhatsApp parity). */}
-              <View
-                pointerEvents="none"
-                style={{
-                  position: 'absolute',
-                  top: '50%', marginTop: -4,
-                  left: `${Math.max(0, Math.min(1, progress)) * 100}%`,
-                  marginLeft: -4,
-                  width: 8, height: 8, borderRadius: 4,
-                  backgroundColor: tintColor,
-                  ...Platform.select({
-                    ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.25, shadowRadius: 2 },
-                    web: { boxShadow: '0 1px 3px rgba(0,0,0,0.25)' },
-                    default: { elevation: 2 },
-                  }),
-                  zIndex: 2,
-                }}
-              />
-              {waveformBars.map((height, i) => {
-                const played = i < playedBarIdx;
-                // Distance to playhead — bar at the playhead pulses fully,
-                // ±1 neighbors get a softer pulse (50% intensity), all others
-                // stay static. Why: makes the wave look like it's reacting to
-                // sound at the playhead position without animating 40 bars.
-                const dist = Math.abs(i - playedBarIdx);
-                const isLive = playing && dist <= 1;
-                // Clamp baseHeight so the playhead pulse (scaleY up to 1.45)
-                // can't overflow the row's 36px clip. Max bar = 22 → max
-                // visual height during pulse ≈ 22 * 1.45 ≈ 32 < 36. Without
-                // this clamp the previous max (28) hit 40px at peak pulse
-                // and the row's overflow:hidden cropped the dancing tip —
-                // user reported the wave "saindo de dentro do balão".
-                const baseHeight = Math.max(3, Math.min(22, height * 22));
-                const Bar = isLive ? Animated.View : View;
-                const liveStyle = isLive ? {
-                  transform: [{
-                    scaleY: dist === 0
-                      ? playPulseAnim
-                      : playPulseAnim.interpolate({ inputRange: [1, 1.45], outputRange: [1, 1.18] }),
-                  }],
-                } : null;
-                return (
-                  <Bar
-                    key={i}
-                    style={[{
-                      width: 3,
-                      height: baseHeight,
-                      borderRadius: 1.5,
-                      backgroundColor: played ? tintColor : tintDim,
-                      opacity: played ? 1 : 0.5,
-                      ...(Platform.OS === 'web' ? { transition: 'background-color 0.15s ease, opacity 0.15s ease, height 0.1s ease' } : {}),
-                    }, liveStyle]}
-                    pointerEvents="none"
-                  />
-                );
-              })}
-            </View>
-          );
-        })()}
+        <VoiceWaveform
+          ref={waveRef}
+          bars={waveformBars}
+          playedColor={tintColor}
+          dimColor={tintDim}
+          thumbColor={tintColor}
+          durationMs={durMsRef.current}
+          onSeek={onWaveSeek}
+          onScrubTime={onScrubTime}
+          initialRatio={initialRatio}
+        />
         <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <Text style={[audioStyles.duration, { color: isOwn ? ownMetaColor : colors.textTertiary }]}>
               {formatDuration(displayTime)}
             </Text>
-            {/* Played indicator (WhatsApp blue mic dot): for INCOMING notes
-                it's a local "I listened" marker; for OWN outgoing notes it's
-                the real "heard by recipient" receipt — driven by playedByPeer
-                (server played_at, delivered via the `voice_played` WS event +
-                chat_messages cold-load). WA uses blue #53BDEB. */}
+            {/* Played indicator (WhatsApp blue mic dot): INCOMING = local "I
+                listened" (after the played threshold); OWN = real "heard by
+                recipient" receipt (server played_at via `voice_played` WS). */}
             {(isOwn ? playedByPeer : played) ? (
               <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: '#53BDEB' }} />
+            ) : null}
+            {vs.earpiece ? (
+              <IconPhone size={11} color={isOwn ? ownMetaColor : (colors.textTertiary || '#9ca3af')} />
             ) : null}
           </View>
           <TouchableOpacity
@@ -4129,13 +3663,8 @@ function AudioPlayer({ url, duration, isOwn, colors, messageId, waveform, played
 }
 
 const audioStyles = StyleSheet.create({
-  // overflow:'hidden' clips the dancing scaleY pulse on the playhead bar so
-  // it never escapes the bubble's rounded corners. Without this the bar at
-  // scaleY 1.45 visibly punched through the top/bottom of the bubble — user
-  // reported "as ondas saindo de dentro do balão". maxWidth caps the
-  // intrinsic minWidth:230 to bubble interior (bubble paddingH=14 each side,
-  // FlatList parent maxWidth 85%) so the row never pushes past the right
-  // border on narrow devices.
+  // overflow:'hidden' keeps the scrub thumb inside the bubble's rounded
+  // corners; maxWidth caps the intrinsic minWidth:230 to the bubble interior.
   container: { flexDirection: 'row', alignItems: 'center', minWidth: 230, maxWidth: '100%', paddingVertical: 4, overflow: 'hidden' },
   playBtn: {
     width: 42, height: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center',
@@ -4154,12 +3683,6 @@ const audioStyles = StyleSheet.create({
   },
   skipLabel: { fontSize: 8, fontWeight: '800', marginTop: -2, letterSpacing: 0.2 },
   trackWrap: { flex: 1, marginLeft: 10, minWidth: 0, overflow: 'hidden' },
-  // overflow:'hidden' clips bars that scale beyond the row's 36px height
-  // during the dancing-playhead animation. flexShrink + minWidth:0 lets the
-  // row contract correctly inside flex parents so bars never visually leak
-  // past the bubble edge on narrow widths (replies + long URLs squeeze the
-  // row); without these constraints the bars cascaded off the right side.
-  waveformRow: { flexDirection: 'row', alignItems: 'center', gap: 1.5, height: 36, flex: 1, flexShrink: 1, minWidth: 0, overflow: 'hidden' },
   duration: { fontSize: 10, marginTop: 4, fontWeight: '600', letterSpacing: 0.3 },
 });
 
@@ -5775,6 +5298,7 @@ function VideoPreviewNativeInner({ uri, Video, useVideoPlayer }) {
 
 function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMode, onToggleHD }) {
   const { t } = useLanguage();
+  const _previewInsets = useSafeAreaInsets(); // [2026-10-07 native-ui-build] bottomBar = safe-area real
   const [caption, setCaption] = useState('');
   const [viewOnce, setViewOnce] = useState(false);
   // All files in this batch — MediaPreview owns the list locally so the user
@@ -6081,7 +5605,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
             but `previewStyles.sendBtn` was never defined in the stylesheet,
             so it rendered with no width/bg and looked "no lugar errado"
             (reported 2026-05-12). Inlining matches WhatsApp/Telegram. */}
-        <View style={previewStyles.bottomBar}>
+        <View style={[previewStyles.bottomBar, { paddingBottom: Math.max(_previewInsets.bottom || 0, 16) }]}>
           <View style={previewStyles.captionRow}>
             <TextInput
               style={previewStyles.captionInput}
@@ -6203,6 +5727,7 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
 // photo/video path uses (uploadAndSendFile's `caption` arg → chat_send content).
 function FileCaptionPreview({ visible, kind, file, gifUri, colors, t, onClose, onSend }) {
   const [caption, setCaption] = useState('');
+  const _previewInsets = useSafeAreaInsets(); // [2026-10-07 native-ui-build] bottomBar = safe-area real
   useEffect(() => { if (visible) setCaption(''); }, [visible]);
   if (!visible) return null;
   const _t = (k, d) => (typeof t === 'function' ? (t(k) || d) : d);
@@ -6239,7 +5764,7 @@ function FileCaptionPreview({ visible, kind, file, gifUri, colors, t, onClose, o
           )}
         </View>
 
-        <View style={previewStyles.bottomBar}>
+        <View style={[previewStyles.bottomBar, { paddingBottom: Math.max(_previewInsets.bottom || 0, 16) }]}>
           <View style={previewStyles.captionRow}>
             <TextInput
               style={previewStyles.captionInput}
@@ -6289,7 +5814,10 @@ const previewStyles = StyleSheet.create({
     // Same reason as header — Android edge-to-edge needs real safe-area
     // bottom inset, not a hardcoded 16px that fails on phones with
     // 48px gesture indicators.
-    paddingBottom: Platform.OS === 'ios' ? 34 : 24,
+    // [2026-10-07 native-ui-build] fallback só; o valor real vem do
+    // safe-area inset no componente (iPhone SE=0 → 16, home bar=34, Android
+    // gesture/3-botões = altura real da nav bar).
+    paddingBottom: 16,
     paddingTop: 10,
     // [MEDIA-POLISH 2026-09-30] Subtle dark scrim behind the caption row so
     // the white caption pill, "1" view-once chip and SEND button stay legible
@@ -6427,6 +5955,21 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
   const [holdTrashing, setHoldTrashing] = useState(false);
   const trashAnim = useRef(new Animated.Value(0)).current;
   useEffect(() => { recordingRef.current = recording; }, [recording]);
+  // [2026-10-07 voice-native] Live input level (0..1) for the UI-thread meter:
+  // native recorder → sync JSI read of its 30 Hz meter; expo-audio fallback →
+  // status.metering (dBFS, -50..0 → 0..1, same curve as the native modules).
+  const getLiveLevel = useCallback(() => {
+    const r = recordingRef.current;
+    if (!r || r === 'web') return 0;
+    if (r.__native) {
+      try { return Number(r.NativeAudio?.currentLevelSync?.()) || 0; } catch { return 0; }
+    }
+    try {
+      const db = Number(r.getStatus?.()?.metering);
+      if (isFinite(db)) return Math.max(0, Math.min(1, (db + 50) / 50));
+    } catch {}
+    return 0;
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -6594,6 +6137,8 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
   };
 
   const startRecording = async () => {
+    // [2026-10-07 voice-native] recording always pauses a playing voice note.
+    try { VoiceNote.pauseVoiceNote(); } catch {}
     try {
       if (Platform.OS === 'web') {
         // Check browser support
@@ -6807,6 +6352,8 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
             sampleRate: 24000,
             numberOfChannels: 1,
             bitRate: 32000,
+            // [2026-10-07 voice-native] live level for the UI-thread meter
+            isMeteringEnabled: true,
             android: { ...(_base.android || {}) },
             ios: { ...(_base.ios || {}) },
             web: { ...(_base.web || {}), bitsPerSecond: 32000, mimeType: (_base.web && _base.web.mimeType) || 'audio/webm' },
@@ -6970,7 +6517,10 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
           const rawPath = result?.path || recording.path || '';
           // Ensure file:// prefix for React Native FormData upload
           uri = rawPath.startsWith('file://') ? rawPath : `file://${rawPath}`;
-          nativeWaveform = result?.samples || [];
+          // [2026-10-07 voice-native] 30 Hz meter samples → 40 peak bars for the
+          // whole note (send path slices to 64 — raw samples meant the bubble
+          // only showed the first ~2 s of the recording).
+          nativeWaveform = resampleVoiceLevels(result?.samples || [], 40);
         } else {
           await recording.stop();
           uri = recording.uri;
@@ -7033,6 +6583,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
 
   // DELETE preview and exit
   const handleDeletePreview = () => {
+    try { if (Platform.OS !== 'web') require('../services/haptics').warning(); } catch {}
     // Fully tear down the native/web preview player + restore mixWithOthers
     // so the deleted recording stops holding the audio session.
     teardownPreviewPlayer();
@@ -7370,6 +6921,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
         // throws a fatal "native animated node" error the instant the record
         // pill mounts — i.e. the moment recording starts. Keeping it JS-driven
         // lets one value safely power both transform and opacity.
+        try { if (Platform.OS !== 'web') require('../services/haptics').warning(); } catch {}
         Animated.timing(slideX, { toValue: -200, duration: 160, useNativeDriver: false }).start(() => {
           cancelledRef.current = true;
           handleCancel();
@@ -7393,7 +6945,7 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
     >
       {/* Left: cancel (X) — discards the recording. Always available so the
           user has a clear way out regardless of the slide-to-cancel gesture. */}
-      <TouchableOpacity onPress={handleCancel} style={recStyles.iconBtn} accessibilityLabel={t('chatConv.cancelRecording') || 'Cancelar gravação'}>
+      <TouchableOpacity onPress={() => { try { if (Platform.OS !== 'web') require('../services/haptics').warning(); } catch {} handleCancel(); }} style={recStyles.iconBtn} accessibilityLabel={t('chatConv.cancelRecording') || 'Cancelar gravação'}>
         <View style={recStyles.trashWrap}>
           <IconX size={20} color={colors.error || '#ef4444'} />
         </View>
@@ -7415,35 +6967,42 @@ function AudioRecorder({ onSend, onCancel, colors, t, conversationId, holdMode =
             color: duration >= 120 ? '#ef4444' : duration >= 60 ? '#f59e0b' : colors.text,
           }]}>{formatDuration(duration)}</Text>
 
-          {/* Live waveform — bars breathe in sync with the recording-dot pulse,
-              giving the whole control a single coherent heartbeat. */}
-          <View style={recStyles.waveform}>
-            {waveformLevels.length === 0
-              ? Array.from({ length: 28 }).map((_, i) => (
-                  <Animated.View key={i} style={[recStyles.waveBar, {
-                    height: 4,
-                    backgroundColor: waveColor,
-                    opacity: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0.22, 0.42] }),
-                  }]} />
-                ))
-              : waveformLevels.slice(-28).map((level, i) => (
-                  <Animated.View
-                    key={i}
-                    style={[
-                      recStyles.waveBar,
-                      {
-                        height: Math.max(4, level * 34),
-                        backgroundColor: waveColor,
-                        opacity: pulseAnim.interpolate({
-                          inputRange: [1, 1.6],
-                          outputRange: [Math.max(0.4, 0.45 + level * 0.4), Math.min(1, 0.7 + level * 0.3)],
-                        }),
-                      },
-                    ]}
-                  />
-                ))
-            }
-          </View>
+          {/* [2026-10-07 voice-native] Native: live input level on the UI thread
+              (VoiceLiveMeter — Reanimated shared value, no React render per
+              sample). Web keeps the AnalyserNode bars below. */}
+          {Platform.OS !== 'web' ? (
+            <VoiceLiveMeter getLevel={getLiveLevel} active={!!recording} color={waveColor} />
+          ) : (
+            // Web live waveform — bars breathe in sync with the recording-dot
+            // pulse, giving the whole control a single coherent heartbeat.
+            <View style={recStyles.waveform}>
+              {waveformLevels.length === 0
+                ? Array.from({ length: 28 }).map((_, i) => (
+                    <Animated.View key={i} style={[recStyles.waveBar, {
+                      height: 4,
+                      backgroundColor: waveColor,
+                      opacity: pulseAnim.interpolate({ inputRange: [1, 1.6], outputRange: [0.22, 0.42] }),
+                    }]} />
+                  ))
+                : waveformLevels.slice(-28).map((level, i) => (
+                    <Animated.View
+                      key={i}
+                      style={[
+                        recStyles.waveBar,
+                        {
+                          height: Math.max(4, level * 34),
+                          backgroundColor: waveColor,
+                          opacity: pulseAnim.interpolate({
+                            inputRange: [1, 1.6],
+                            outputRange: [Math.max(0.4, 0.45 + level * 0.4), Math.min(1, 0.7 + level * 0.3)],
+                          }),
+                        },
+                      ]}
+                    />
+                  ))
+              }
+            </View>
+          )}
         </View>
 
         {/* Slide hint — two states:
@@ -7875,22 +7434,14 @@ function GroupDivider({ colors, inset = GI_ROW_INSET }) {
   return <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.border, marginLeft: inset }} />;
 }
 
-// Modern pill switch — green when ON, knob carries a soft shadow. Purely
-// visual: the parent row's onPress still owns the toggle logic.
-function GroupToggle({ value, isDark }) {
+// [2026-10-07 native-ui-build] Switch NATIVO (UISwitch / Material) no lugar
+// da pílula desenhada em View. Continua só VISUAL: a linha (GroupRow) é dona
+// do toggle — pointerEvents="none" faz o toque no switch cair na linha, então
+// não há disparo duplo e o switch anima quando o estado muda.
+function GroupToggle({ value }) {
   return (
-    <View style={{
-      width: 46, height: 28, borderRadius: 14, padding: 2,
-      backgroundColor: value ? GI_ACCENT : (isDark ? '#39393D' : '#E4E6EA'),
-      justifyContent: 'center',
-    }}>
-      <View style={{
-        width: 24, height: 24, borderRadius: 12, backgroundColor: '#fff',
-        alignSelf: value ? 'flex-end' : 'flex-start',
-        ...(Platform.OS === 'web'
-          ? { boxShadow: '0 1px 2px rgba(0,0,0,0.25)' }
-          : { shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 2, shadowOffset: { width: 0, height: 1 }, elevation: 2 }),
-      }} />
+    <View pointerEvents="none" importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+      <NativeSwitch value={!!value} onValueChange={() => {}} />
     </View>
   );
 }
@@ -7899,10 +7450,12 @@ function GroupToggle({ value, isDark }) {
 // `right` may be 'chevron', a React node, or omitted. When `onPress` is given
 // the whole row is tappable; otherwise it renders as a static View.
 function GroupRow({ Icon, tint, title, subtitle, onPress, right, colors, disabled, titleColor, accessibilityLabel, accessibilityRole, accessibilityState }) {
-  const Comp = onPress ? TouchableOpacity : View;
+  // [2026-10-07 native-ui-build] PressableRow = célula nativa (highlight
+  // cinza iOS / ripple Android) em vez do fade de TouchableOpacity.
+  const Comp = onPress ? PressableRow : View;
   return (
     <Comp
-      {...(onPress ? { activeOpacity: 0.6, onPress, disabled } : {})}
+      {...(onPress ? { onPress, disabled } : {})}
       accessibilityLabel={accessibilityLabel}
       accessibilityRole={accessibilityRole}
       accessibilityState={accessibilityState}
@@ -9821,6 +9374,9 @@ function ChatConversationInner() {
   // Desktop-web webcam capture overlay (getUserMedia photo + video)
   const [showWebcam, setShowWebcam] = useState(false);
   const WebcamCapture = require('../components/WebcamCapture').default;
+  // [2026-10-07 ios-native] In-app WhatsApp-style camera (vision-camera, no
+  // frame processor). Falls back to the system camera when unavailable.
+  const [showChatCamera, setShowChatCamera] = useState(false);
   const [showPollCreator, setShowPollCreator] = useState(false);
   const [showMeetupCreator, setShowMeetupCreator] = useState(false);
   const [showPlaylistCreator, setShowPlaylistCreator] = useState(false);
@@ -12876,46 +12432,57 @@ function ChatConversationInner() {
     return () => { cancelled = true; };
   }, [conversationId, messages.length]);
 
-  // Voice auto-advance orchestrator (WhatsApp parity). When ANY AudioPlayer
-  // emits `audioFinished(msgId)` we walk forward in messages to find the
-  // NEXT voice/audio bubble — must be from the same sender + arrived within
-  // ±60s of the one that just ended (so a voice from yesterday doesn't
-  // auto-play after today's). Intervening non-audio bubbles (a quick text,
-  // a reaction) are SKIPPED, not treated as a break, so a sender that types
-  // "ouve aí 👇" + voice + voice still gets chained. A different sender or
-  // a gap > 60s stops the chain. Then we emit `requestPlay(nextId)` and the
-  // matching AudioPlayer's listener kicks its own togglePlay.
+  // [2026-10-07 voice-native] Voice auto-advance (WhatsApp parity) now runs
+  // inside the GLOBAL player (services/voiceNotePlayer): this screen only
+  // registers a resolver. When a note ends, the player asks for the NEXT
+  // voice/audio message from the SAME sender within 60 s (intervening
+  // non-audio bubbles are skipped, a different sender / gap > 60 s breaks the
+  // chain) and plays it itself — so the chain works even when the next bubble
+  // isn't mounted (virtualised list) and keeps going after leaving the chat
+  // (the registration is kept "detached" until the chain ends; mini bar).
+  const voiceTitleRef = useRef('');
   useEffect(() => {
-    let unsub = () => {};
-    try {
-      const { onAudioFinished, emitRequestPlay } = require('../services/voicePlaybackBus');
-      unsub = onAudioFinished((finishedId) => {
-        const list = messagesRef.current || messages || [];
-        const idx = list.findIndex(m => String(m.id) === String(finishedId));
-        if (idx < 0 || idx >= list.length - 1) return;
-        const finished = list[idx];
-        const finishedTs = +new Date(finished.created_at || 0);
-        const finishedIsOwn = finished.sender_email === currentEmail;
-        for (let i = idx + 1; i < list.length; i++) {
-          const m = list[i];
-          // Time-window gate: anything beyond 60s breaks the chain regardless
-          // of type — the user has moved on by then.
-          const ts = +new Date(m.created_at || 0);
-          if (ts && finishedTs && (ts - finishedTs) > 60_000) break;
-          if (m.type !== 'audio' && m.type !== 'voice') continue;
-          // Same-sender rule: a voice from someone else (or, for received
-          // voices, a voice you yourself sent) interrupts the chain — that's
-          // a NEW conversational turn, not a continuation.
-          if (m.sender_email !== finished.sender_email) break;
-          if (!finishedIsOwn && (m.sender_email === currentEmail)) break;
-          // Found next voice from same sender within 60s — chain it.
-          emitRequestPlay(m.id);
-          break;
-        }
-      });
-    } catch {}
-    return () => { try { unsub(); } catch {} };
-  }, [messages, currentEmail]);
+    if (!conversationId) return undefined;
+    const resolveNext = (finishedId) => {
+      const list = messagesRef.current || [];
+      const idx = list.findIndex(m => String(m.id) === String(finishedId));
+      if (idx < 0 || idx >= list.length - 1) return null;
+      const finished = list[idx];
+      const finishedTs = +new Date(finished.created_at || 0);
+      const finishedIsOwn = finished.sender_email === currentEmail;
+      for (let i = idx + 1; i < list.length; i++) {
+        const m = list[i];
+        const ts = +new Date(m.created_at || 0);
+        if (ts && finishedTs && (ts - finishedTs) > 60_000) break;
+        if (m.type !== 'audio' && m.type !== 'voice') continue;
+        if (m.sender_email !== finished.sender_email) break;
+        if (!finishedIsOwn && (m.sender_email === currentEmail)) break;
+        if (m.is_view_once || m._uploading || m._pending) break;
+        const localPath = (typeof m.local_path === 'string' && m.local_path)
+          ? (m.local_path.startsWith('file://') ? m.local_path : `file://${m.local_path}`)
+          : null;
+        let remote = null;
+        try { remote = m.file_url ? resolveMediaUri(m.file_url) : null; } catch { remote = null; }
+        const u = m._localUri || localPath || remote;
+        if (!u) return null;
+        return {
+          messageId: m.id,
+          url: u,
+          conversationId,
+          durationMs: (Number(m.duration) || 0) * 1000,
+          isOwn: m.sender_email === currentEmail,
+          title: voiceTitleRef.current,
+        };
+      }
+      return null;
+    };
+    return VoiceNote.registerVoiceConversation(conversationId, { title: voiceTitleRef.current, resolveNext });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, currentEmail]);
+  useEffect(() => {
+    voiceTitleRef.current = conversationName || '';
+    if (conversationId) VoiceNote.updateVoiceConversationTitle(conversationId, conversationName || '');
+  }, [conversationId, conversationName]);
 
   // Subscribe to "send permanently failing" events so we flip the bubble
   // to red ❗ after ~5 retry attempts in offlineCache.replayOfflineQueue.
@@ -16607,6 +16174,13 @@ function ChatConversationInner() {
         if (!picked || (Array.isArray(picked) && picked.length === 0)) return;
         const list = Array.isArray(picked) ? picked : [picked];
         setMediaPreview({ visible: true, files: list });
+        return;
+      }
+      // [2026-10-07 ios-native] WhatsApp-style in-app camera (tap = photo,
+      // hold = video, flash/flip/recent strip). Kill switch:
+      // globalThis.__chatyy_inapp_camera = false → system camera below.
+      if (ChatCamera && isChatCameraAvailable?.()) {
+        setShowChatCamera(true);
         return;
       }
       const ImagePicker = require('expo-image-picker');
@@ -23749,6 +23323,7 @@ function ChatConversationInner() {
                 messageId={msg.id}
                 waveform={msg.waveform}
                 playedByPeer={!!(msg.played_at || msg._voice_played)}
+                conversationId={conversationId}
               />
               {/* [WAVE 43D] Multi-select sticky — overlay intercepts taps on
                   the AudioPlayer (play/seek) while in selection mode and
@@ -24006,15 +23581,25 @@ function ChatConversationInner() {
                       MapLibre VECTOR map as a non-interactive WebView instead
                       (react-native-webview already bundled; location bubbles are
                       rare so no list-jank concern). It draws its own red marker. */}
-                  <WebView
-                    source={_locMapSource(lat, lng) /* [2026-10-06 thread-tech] stable, memoized per coord */}
-                    style={{ width: '100%', height: '100%', backgroundColor: isDark ? '#0B141A' : '#E5E7EB' }}
-                    originWhitelist={['*']}
-                    scrollEnabled={false}
-                    pointerEvents="none"
-                    androidLayerType="hardware"
-                    javaScriptEnabled
-                    domStorageEnabled
+                  {/* [2026-10-07 native-maps] native lite snapshot when the binary has
+                      ChatyyMapView; old binaries/web keep this exact WebView. */}
+                  <LocationMapPreview
+                    lat={lat}
+                    lng={lng}
+                    isDark={isDark}
+                    showPin={!isLiveActive}
+                    fallback={(
+                      <WebView
+                        source={_locMapSource(lat, lng) /* [2026-10-06 thread-tech] stable, memoized per coord */}
+                        style={{ width: '100%', height: '100%', backgroundColor: isDark ? '#0B141A' : '#E5E7EB' }}
+                        originWhitelist={['*']}
+                        scrollEnabled={false}
+                        pointerEvents="none"
+                        androidLayerType="hardware"
+                        javaScriptEnabled
+                        domStorageEnabled
+                      />
+                    )}
                   />
                   {/* LIVE pulsing dot at center of map */}
                   {isLiveActive && (
@@ -25072,6 +24657,7 @@ function ChatConversationInner() {
                   messageId={msg.id}
                   waveform={msg.waveform}
                   playedByPeer={!!(msg.played_at || msg._voice_played)}
+                  conversationId={conversationId}
                 />
                 {!!audioCap && (
                   <View style={{ maxWidth: 260, marginTop: 4 }}>
@@ -27350,8 +26936,11 @@ function ChatConversationInner() {
             }
           : {}),
       }]}>
-        <TouchableOpacity onPress={goBack} style={[styles.headerBtn, { marginRight: 2 }]} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
-          <IconArrowLeft size={22} color={colors.text} />
+        <TouchableOpacity onPress={goBack} hitSlop={8} style={[styles.headerBtn, { marginRight: 2 }, Platform.OS === 'ios' && { marginLeft: -6 }]} accessibilityLabel={t('common.back') || 'Back'} accessibilityRole="button">
+          {/* [2026-10-07 app-feel-nav] iOS = chevron do sistema (WhatsApp/iMessage); Android/web = seta Material */}
+          {Platform.OS === 'ios'
+            ? <IconChevronLeft size={28} color={colors.text} />
+            : <IconArrowLeft size={22} color={colors.text} />}
         </TouchableOpacity>
         <TouchableOpacity style={[styles.headerInfo, { flexDirection: 'row', alignItems: 'center', gap: 8 }]} onPress={() => {
           if (conversationType === 'group') {
@@ -30471,9 +30060,12 @@ function ChatConversationInner() {
         }}
       >
         <Pressable
-          style={styles.ctxOverlay}
+          style={[styles.ctxOverlay, canNativeBlur() ? { backgroundColor: 'transparent' } : null]}
           onPress={() => setSelectedMsg(null)}
         >
+          {/* [2026-10-07 native-ui-build] iOS: conversa BORRADA atrás do menu
+              (UIVisualEffectView, padrão iMessage). Android/web: dim 0.5 sólido. */}
+          {canNativeBlur() && <BlurBackdrop isDark={isDark} dim={0.5} pointerEvents="none" />}
           <Animated.View style={[
             styles.ctxContainer,
             {
@@ -30490,8 +30082,8 @@ function ChatConversationInner() {
                   <Text style={[styles.ctxPreviewSender, { color: colors.primary }]} numberOfLines={1}>
                     {selectedMsg.sender_email === currentEmail ? (t('chatConv.you') || 'You') : (selectedMsg.sender_name || emailToDisplayName(selectedMsg.sender_email))}
                   </Text>
-                  <Text style={[styles.ctxPreviewText, { color: colors.textSecondary }]} numberOfLines={2}>
-                    {(() => {
+                  {/* [2026-10-07 app-feel-ui] SVG type glyph instead of emoji prefix (founder rule). */}
+                  {(() => { const _ctxRaw = (() => {
                       const t_ = selectedMsg.type;
                       if (t_ === 'gif')      return '🎞 ' + (t('chatConv.gif')     || 'GIF');
                       if (t_ === 'sticker')  return '🏷️ ' + (t('chatConv.sticker') || 'Sticker');
@@ -30554,8 +30146,17 @@ function ChatConversationInner() {
                         } catch {}
                       }
                       return c;
-                    })()}
-                  </Text>
+                    })();
+                    const _ctxHas = hasLeadingGlyph(_ctxRaw);
+                    return (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                        {_ctxHas ? <MessageTypeIcon type={selectedMsg.type} size={14} color={colors.textSecondary} /> : null}
+                        <Text style={[styles.ctxPreviewText, { color: colors.textSecondary, flexShrink: 1 }]} numberOfLines={2}>
+                          {_ctxHas ? stripLeadingGlyph(_ctxRaw) : _ctxRaw}
+                        </Text>
+                      </View>
+                    );
+                  })()}
                 </View>
                 <Text style={[styles.ctxPreviewTime, { color: colors.textSecondary }]}>{formatTime(selectedMsg.created_at)}</Text>
               </View>
@@ -30619,7 +30220,7 @@ function ChatConversationInner() {
                   wraps on narrow screens). User-reported regression: reply
                   kept "disappearing" when extra actions pushed it to the
                   second row out of view. */}
-              <TouchableOpacity
+              <PressableScale haptic={false}
                 style={styles.ctxIconBtn}
                 onPress={() => handleReply(selectedMsg)}
                 activeOpacity={0.6}
@@ -30628,14 +30229,14 @@ function ChatConversationInner() {
                   <IconReply size={20} color={colors.primary} />
                 </View>
                 <Text style={[styles.ctxIconLabel, { color: colors.primary }]}>{t('chatConv.reply') || 'Responder'}</Text>
-              </TouchableOpacity>
+              </PressableScale>
 
               {/* Quote a portion of the text — Telegram-style partial reply.
                   Only meaningful when the source bubble actually has text
                   longer than ~12 chars; for shorter messages the regular
                   "Reply" already quotes the whole thing. */}
               {!selectedMsg?.deleted_at && typeof selectedMsg?.content === 'string' && selectedMsg.content.trim().length > 12 && (
-                <TouchableOpacity
+                <PressableScale haptic={false}
                   style={styles.ctxIconBtn}
                   onPress={() => { setQuoteSelectModal({ msg: selectedMsg, draft: '' }); setSelectedMsg(null); }}
                   activeOpacity={0.6}
@@ -30644,12 +30245,12 @@ function ChatConversationInner() {
                     <IconReply size={20} color={colors.text} />
                   </View>
                   <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.quote') || 'Citar'}</Text>
-                </TouchableOpacity>
+                </PressableScale>
               )}
 
               {/* Copy */}
               {!selectedMsg?.deleted_at && selectedMsg?.content && (
-                <TouchableOpacity
+                <PressableScale haptic={false}
                   style={styles.ctxIconBtn}
                   onPress={() => handleCopyMessage(selectedMsg)}
                   activeOpacity={0.6}
@@ -30658,12 +30259,12 @@ function ChatConversationInner() {
                     <IconCopy size={20} color={colors.text} />
                   </View>
                   <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.copy') || 'Copy'}</Text>
-                </TouchableOpacity>
+                </PressableScale>
               )}
 
               {/* Save media (sticker/gif/image/video) — WhatsApp-style */}
               {!selectedMsg?.deleted_at && ['sticker', 'gif', 'image', 'video'].includes(selectedMsg?.type) && (
-                <TouchableOpacity
+                <PressableScale haptic={false}
                   style={styles.ctxIconBtn}
                   onPress={() => handleSaveMedia(selectedMsg)}
                   activeOpacity={0.6}
@@ -30672,7 +30273,7 @@ function ChatConversationInner() {
                     <IconDownload size={20} color={colors.text} />
                   </View>
                   <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.saveToGallery') || 'Galeria'}</Text>
-                </TouchableOpacity>
+                </PressableScale>
               )}
 
               {/* Forward — hidden for non-admin members of a group that
@@ -30682,7 +30283,7 @@ function ChatConversationInner() {
                   the same rule in chat_forward — UI just keeps the
                   option out of view to avoid a confusing 403 toast. */}
               {!selectedMsg?.deleted_at && !(forwardingDisabled && !isGroupAdmin) && (
-                <TouchableOpacity
+                <PressableScale haptic={false}
                   style={styles.ctxIconBtn}
                   onPress={() => handleForward(selectedMsg)}
                   activeOpacity={0.6}
@@ -30691,7 +30292,7 @@ function ChatConversationInner() {
                     <IconForward size={20} color={colors.text} />
                   </View>
                   <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.forward')}</Text>
-                </TouchableOpacity>
+                </PressableScale>
               )}
 
               {/* Reply privately — WhatsApp/Telegram parity for group chats.
@@ -30703,7 +30304,7 @@ function ChatConversationInner() {
               {!selectedMsg?.deleted_at && conversationType === 'group'
                 && selectedMsg?.sender_email
                 && selectedMsg.sender_email !== currentEmail && (
-                <TouchableOpacity
+                <PressableScale haptic={false}
                   style={styles.ctxIconBtn}
                   onPress={async () => {
                     const srcMsg = selectedMsg;
@@ -30769,7 +30370,7 @@ function ChatConversationInner() {
                   <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>
                     {t('chatConv.replyPrivately') || 'Responder em privado'}
                   </Text>
-                </TouchableOpacity>
+                </PressableScale>
               )}
 
               {/* Send email — when the message content is an email address */}
@@ -30779,7 +30380,7 @@ function ChatConversationInner() {
                 if (!emailMatch || selectedMsg?.deleted_at) return null;
                 const detectedEmail = emailMatch[0];
                 return (
-                  <TouchableOpacity
+                  <PressableScale haptic={false}
                     style={styles.ctxIconBtn}
                     onPress={() => {
                       setSelectedMsg(null);
@@ -30793,13 +30394,13 @@ function ChatConversationInner() {
                       <IconMail size={20} color="#3B82F6" />
                     </View>
                     <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>{t('chatConv.sendEmail') || 'Enviar e-mail'}</Text>
-                  </TouchableOpacity>
+                  </PressableScale>
                 );
               })()}
 
               {/* Star */}
               {!selectedMsg?.deleted_at && (
-                <TouchableOpacity
+                <PressableScale haptic={false}
                   style={styles.ctxIconBtn}
                   onPress={() => handleStarMessage(selectedMsg)}
                   activeOpacity={0.6}
@@ -30810,7 +30411,7 @@ function ChatConversationInner() {
                       : <IconStar size={20} color={colors.text} />}
                   </View>
                   <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{selectedMsg?.starred ? t('chat.unstar') : t('chat.star')}</Text>
-                </TouchableOpacity>
+                </PressableScale>
               )}
 
               {/* [2026-05-30] In-bubble "Salvar" (clone to the Saved Messages
@@ -30824,7 +30425,7 @@ function ChatConversationInner() {
                   to the primary bar because users kept missing it buried in
                   the secondary list and asked for "WhatsApp-like" selection. */}
               {!selectedMsg?.deleted_at && (
-                <TouchableOpacity
+                <PressableScale haptic={false}
                   style={styles.ctxIconBtn}
                   onPress={() => {
                     const msgId = selectedMsg?.id;
@@ -30839,7 +30440,7 @@ function ChatConversationInner() {
                     <IconCheck size={20} color={colors.text} />
                   </View>
                   <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.select') || 'Selecionar'}</Text>
-                </TouchableOpacity>
+                </PressableScale>
               )}
 
               {/* Delete — available on BOTH sent and received messages. Own
@@ -30848,7 +30449,7 @@ function ChatConversationInner() {
                   so the user can clear clutter/spam from their own view
                   without affecting the sender. Matches WhatsApp behaviour. */}
               {!selectedMsg?.deleted_at && (
-                <TouchableOpacity
+                <PressableScale haptic={false}
                   style={styles.ctxIconBtn}
                   onPress={() => handleDelete(selectedMsg?.id)}
                   activeOpacity={0.6}
@@ -30857,7 +30458,7 @@ function ChatConversationInner() {
                     <IconTrash size={20} color={colors.error || '#EF4444'} />
                   </View>
                   <Text style={[styles.ctxIconLabel, { color: colors.error || '#EF4444' }]}>{t('chatConv.delete')}</Text>
-                </TouchableOpacity>
+                </PressableScale>
               )}
             </View>
 
@@ -30892,7 +30493,7 @@ function ChatConversationInner() {
                 const ttl = m > 0 ? `${m}m ${s}s` : `${s}s`;
                 if (within) {
                   return (
-                    <TouchableOpacity
+                    <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                       style={styles.ctxSecondaryItem}
                       onPress={() => handleDelete(selectedMsg?.id)}
                       activeOpacity={0.6}
@@ -30906,7 +30507,7 @@ function ChatConversationInner() {
                           {`Disponível por ${ttl} mais`}
                         </Text>
                       </View>
-                    </TouchableOpacity>
+                    </PressableRow>
                   );
                 }
                 return (
@@ -30923,7 +30524,7 @@ function ChatConversationInner() {
               })()}
               {/* Pin/Unpin */}
               {!selectedMsg?.deleted_at && (
-                <TouchableOpacity
+                <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                   style={styles.ctxSecondaryItem}
                   onPress={() => handlePinMessage(selectedMsg)}
                   activeOpacity={0.6}
@@ -30932,7 +30533,7 @@ function ChatConversationInner() {
                   <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>
                     {pinnedIdSet.has(String(selectedMsg?.id)) ? (t('chatConv.unpinMessage') || 'Unpin') : (t('chatConv.pinMessage') || 'Pin')}
                   </Text>
-                </TouchableOpacity>
+                </PressableRow>
               )}
 
               {/* Translate — text, image-with-caption, OR voice/audio
@@ -30941,7 +30542,7 @@ function ChatConversationInner() {
                 (selectedMsg?.content && (selectedMsg?.type === 'text' || (selectedMsg?.type === 'image' && selectedMsg?.content !== selectedMsg?.file_name)))
                 || ((selectedMsg?.type === 'voice' || selectedMsg?.type === 'audio') && selectedMsg?.file_url)
               ) && (
-                <TouchableOpacity
+                <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                   style={styles.ctxSecondaryItem}
                   onPress={() => handleTranslate(selectedMsg)}
                   activeOpacity={0.6}
@@ -30950,12 +30551,12 @@ function ChatConversationInner() {
                   <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>
                     {translatedMessages[selectedMsg?.id]?.text ? t('chatConv.hideTranslation') : t('chatConv.translate')}
                   </Text>
-                </TouchableOpacity>
+                </PressableRow>
               )}
 
               {/* AI: Transcribe + Summarize voice / audio */}
               {!selectedMsg?.deleted_at && (selectedMsg?.type === 'voice' || selectedMsg?.type === 'audio') && selectedMsg?.file_url && (
-                <TouchableOpacity
+                <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                   style={styles.ctxSecondaryItem}
                   onPress={async () => {
                     // Premium gate: free users get 2 transcriptions/day
@@ -31018,19 +30619,19 @@ function ChatConversationInner() {
                 >
                   <View style={{ marginLeft: 0, marginRight: 4 }}><IconSparkles size={18} color={colors.text} /></View>
                   <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>Transcrever + resumir</Text>
-                </TouchableOpacity>
+                </PressableRow>
               )}
 
               {/* Message Info (own messages only) */}
               {selectedMsg?.sender_email === currentEmail && !selectedMsg?.deleted_at && typeof selectedMsg?.id === 'number' && (
-                <TouchableOpacity
+                <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                   style={styles.ctxSecondaryItem}
                   onPress={() => handleMessageInfo(selectedMsg)}
                   activeOpacity={0.6}
                 >
                   <IconInfo size={18} color={colors.text} />
                   <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.messageInfo')}</Text>
-                </TouchableOpacity>
+                </PressableRow>
               )}
 
               {/* Edit (own text messages, within 15 min) */}
@@ -31039,20 +30640,20 @@ function ChatConversationInner() {
                   const createdAt = selectedMsg?.created_at;
                   const canEdit = createdAt ? (Date.now() - new Date(createdAt.endsWith('Z') ? createdAt : createdAt + 'Z').getTime()) < 15 * 60 * 1000 : true;
                   return canEdit ? (
-                    <TouchableOpacity
+                    <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                       style={styles.ctxSecondaryItem}
                       onPress={() => handleEdit(selectedMsg)}
                       activeOpacity={0.6}
                     >
                       <IconEdit size={18} color={colors.text} />
                       <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.edit')}</Text>
-                    </TouchableOpacity>
+                    </PressableRow>
                   ) : null;
                 })()
               )}
 
               {/* Select (enters multi-select mode — WhatsApp puts this here) */}
-              <TouchableOpacity
+              <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                 style={styles.ctxSecondaryItem}
                 onPress={() => {
                   const msgId = selectedMsg?.id;
@@ -31064,7 +30665,7 @@ function ChatConversationInner() {
               >
                 <IconCheck size={18} color={colors.text} />
                 <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.select') || 'Selecionar'}</Text>
-              </TouchableOpacity>
+              </PressableRow>
 
               {/* Per-message "mark as unread" REMOVED 2026-05-25 (dev/owner
                   feedback: confusing — it rolled the whole thread's last_read
@@ -31076,7 +30677,7 @@ function ChatConversationInner() {
 
               {/* Keep message (in disappearing chats) */}
               {disappearingTimer > 0 && selectedMsg?.id && typeof selectedMsg.id === 'number' && (
-                <TouchableOpacity
+                <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                   style={styles.ctxSecondaryItem}
                   onPress={async () => {
                     const msgId = selectedMsg.id;
@@ -31093,19 +30694,19 @@ function ChatConversationInner() {
                   <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>
                     {selectedMsg?.kept ? (t('chatConv.unkeep') || 'Remover marcação') : (t('chatConv.keep') || 'Manter na conversa')}
                   </Text>
-                </TouchableOpacity>
+                </PressableRow>
               )}
 
               {/* Report (other people's messages) */}
               {selectedMsg?.sender_email && selectedMsg.sender_email !== currentEmail && (
-                <TouchableOpacity
+                <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
                   style={styles.ctxSecondaryItem}
                   onPress={() => { const email = selectedMsg.sender_email; const msgId = selectedMsg.id; setSelectedMsg(null); handleReportUser(email, msgId); }}
                   activeOpacity={0.6}
                 >
                   <IconAlertTriangle size={18} color={colors.error || '#EF4444'} />
                   <Text style={[styles.ctxSecondaryText, { color: colors.error || '#EF4444' }]}>{t('chat.reportUser')}</Text>
-                </TouchableOpacity>
+                </PressableRow>
               )}
             </View>
           </Animated.View>
@@ -31655,6 +31256,28 @@ function ChatConversationInner() {
           onClose={() => setRoundVideoViewer({ visible: false, uri: null })}
         />
       )}
+
+      {/* [2026-10-07 ios-native] In-app chat camera (native only). Captures go
+          to MediaPreview (caption/edit/HD/view-once) → uploadAndSendFile →
+          mediaSendQueue.enqueueMedia (durable outbox), same as the gallery. */}
+      {ChatCamera && Platform.OS !== 'web' ? (
+        <ChatCamera
+          visible={showChatCamera}
+          t={t}
+          onClose={() => setShowChatCamera(false)}
+          onCapture={(files) => {
+            setShowChatCamera(false);
+            if (!Array.isArray(files) || files.length === 0) return;
+            // Let the camera modal finish dismissing before presenting the
+            // preview modal (iOS drops modal-over-modal presentations).
+            setTimeout(() => setMediaPreview({ visible: true, files }), Platform.OS === 'ios' ? 380 : 0);
+          }}
+          onOpenGallery={() => {
+            setShowChatCamera(false);
+            setTimeout(() => { try { handleGallery(); } catch {} }, Platform.OS === 'ios' ? 380 : 0);
+          }}
+        />
+      ) : null}
 
 {/* Desktop-web webcam capture modal */}
       <WebcamCapture
@@ -32985,9 +32608,8 @@ function ChatConversationInner() {
             <GroupDivider colors={colors} />
 
             {/* Notification Sound */}
-            <TouchableOpacity
-              onPress={() => groupInfoGo(() => setShowNotifSoundPicker(true), true)} // [2026-10-07 group-admin]
-              activeOpacity={0.6}
+            <PressableRow
+              onPress={() => groupInfoGo(() => setShowNotifSoundPicker(true), true)} // [2026-10-07 group-admin] · PressableRow [2026-10-07 native-ui-build]
               style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 11, minHeight: 56, gap: 12 }}
             >
               <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: '#AF52DE22', alignItems: 'center', justifyContent: 'center' }}>
@@ -33005,7 +32627,7 @@ function ChatConversationInner() {
                 </Text>
               </View>
               <IconChevronRight size={18} color={colors.textTertiary} />
-            </TouchableOpacity>
+            </PressableRow>
 
             {/* Topics (group, admin can create; everyone can filter) */}
             {conversationType === 'group' && (
@@ -33906,7 +33528,9 @@ function ChatConversationInner() {
       </Modal>
 
       {/* Wallpaper Picker Modal */}
-      <MapModal
+      {/* [2026-10-07 native-maps] native viewer; falls back to MapModal (WebView) on old binaries/web */}
+      <LocationViewerModal
+        Fallback={MapModal}
         visible={!!mapModalData}
         onClose={() => setMapModalData(null)}
         lat={mapModalData?.lat}
@@ -34593,10 +34217,11 @@ const styles = StyleSheet.create({
     zIndex: 10,
     // Flatter chrome — a single, barely-there lift (the dark bar already reads
     // as a distinct layer against the message field).
+    // [2026-10-07 app-feel-nav] Nativo = barra chapada só com hairline
+    // (UINavigationBar / M3 top app bar). Sombra/elevation saíram no iOS/Android.
     ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.04, shadowRadius: 4 },
-      android: { elevation: 2 },
       web: { boxShadow: '0 1px 3px rgba(0,0,0,0.05)' },
+      default: {},
     }),
   },
   headerBtn: {

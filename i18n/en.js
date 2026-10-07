@@ -1,4 +1,5 @@
 export default {
+  'legal.fullPolicy': 'View full policy', // [2026-10-07 native-ui-build] app/legal.js
   'calendar.quickAdd': 'Add',
   'chatConv.loadingImage': 'Loading image...',
   // ── QA audit: keys referenced via t() but previously missing ─────────
@@ -3659,6 +3660,11 @@ export default {
   'compose.recipientPlaceholder': 'recipient@email.com',
   'compose.ai': 'AI',
   'chatConv.playbackSpeed': 'Playback speed',
+  // [2026-10-07 voice-native] mini player
+  'voiceNote.miniTitle': 'Voice message',
+  'voiceNote.openChat': 'Open chat',
+  'voiceNote.close': 'Close player',
+  'voiceNote.earpiece': 'Earpiece',
   'compose.meet': 'Meet',
   'compose.addCc': 'Add Cc',
   'compose.addBcc': 'Add Bcc',
@@ -8264,6 +8270,15 @@ export default {
   'snapmap.empty': 'No friends sharing location',
   'snapmap.mapOffline': 'No connection to the map',
   'snapmap.retry': 'Try again',
+  // [2026-10-07 native-maps]
+  'maps.searchPlaceholder': "Search address or place",
+  'maps.noResults': "No results",
+  'maps.recenter': "Recenter",
+  'maps.myLocation': "My location",
+  'maps.directions': "Directions",
+  'maps.selectedPlace': "Selected place",
+  'maps.sendThisLocation': "Send this location",
+  'maps.fitAll': "Show all",
   'snapmap.oneFriendLive': '1 friend live',
   'snapmap.friendsLive': '{n} friends live',
   'snapmap.tapToCollapse': 'Collapse',

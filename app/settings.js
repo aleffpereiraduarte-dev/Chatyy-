@@ -1,3 +1,4 @@
+import NativeSwitch from '../components/NativeSwitch'; // [2026-10-07 app-feel-ui] themed native toggle
 import ErrorBoundary from "../components/ErrorBoundary";
 import { memo, useState, useEffect, useRef, useCallback } from 'react';
 import {
@@ -11,7 +12,9 @@ import AvatarCircle from '../components/AvatarCircle';
 import AccountSwitcherSheet from '../components/AccountSwitcherSheet';
 import FadeSlideIn from '../components/FadeSlideIn';
 import PressableScale from '../components/PressableScale';
-import { useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import PressableRow from '../components/PressableRow'; // [2026-10-07 app-feel-ui] native cell feedback
+import { useRouter, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton, useBlurHeaderInset } from '../components/nativeHeader'; // [2026-10-07 app-feel-nav] · blur [2026-10-07 native-ui-build]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useResponsive } from '../utils/responsive';
 import { useTheme } from '../context/ThemeContext';
@@ -219,7 +222,7 @@ const HistoryDownloadRow = memo(function HistoryDownloadRow() {
         )}
       </View>
 
-      <TouchableOpacity
+      <PressableRow
         onPress={onDownloadAll}
         disabled={busyHistory}
         style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, marginTop: Spacing.sm, opacity: busyHistory ? 0.5 : 1 }]}
@@ -240,12 +243,12 @@ const HistoryDownloadRow = memo(function HistoryDownloadRow() {
             </Text>
           </View>
         </View>
-      </TouchableOpacity>
+      </PressableRow>
 
       {/* [#1247] "Sincronizar agora" — manual nudge for users who want it
           forced past any cellular gate (e.g. about to leave wifi). Always
           enabled so they can re-verify even when allSynced. */}
-      <TouchableOpacity
+      <PressableRow
         onPress={onDownloadMissing}
         disabled={busyMedia}
         style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, paddingTop: 0, opacity: busyMedia ? 0.5 : 1 }]}
@@ -266,7 +269,7 @@ const HistoryDownloadRow = memo(function HistoryDownloadRow() {
             </Text>
           </View>
         </View>
-      </TouchableOpacity>
+      </PressableRow>
     </View>
   );
 });
@@ -330,6 +333,8 @@ function SettingsScreenInner() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const insets = useSafeAreaInsets();
+  // [2026-10-07 native-ui-build] iOS: header de vidro (transparente+blur) → conteúdo começa abaixo dele via padding.
+  const blurTop = useBlurHeaderInset(USE_NATIVE_HEADER);
   // Responsividade: em tablet/desktop/web centraliza a coluna de settings numa
   // largura confortável (contentMaxWidth) em vez de esticar de ponta a ponta.
   const { contentMaxWidth } = useResponsive();
@@ -341,6 +346,7 @@ function SettingsScreenInner() {
   // so we get an absolute offset. Runs once the node is mounted *and* the
   // requested section matches.
   const scrollRef = useRef(null);
+  const blurTopRef = useRef(0); blurTopRef.current = blurTop; // [2026-10-07 native-ui-build] anchor scroll desconta o header de vidro
   const sectionRefs = useRef({});
   const requestedSection = typeof params?.section === 'string' ? params.section : null;
   const registerSectionRef = useCallback((key) => (node) => {
@@ -357,7 +363,7 @@ function SettingsScreenInner() {
           if (!scrollNode || !node.measureLayout) return;
           node.measureLayout(
             scrollNode,
-            (_x, y) => { scrollRef.current?.scrollTo?.({ y: Math.max(0, y - 12), animated: true }); },
+            (_x, y) => { scrollRef.current?.scrollTo?.({ y: Math.max(0, y - 12 - blurTopRef.current), animated: true }); },
             () => {}
           );
         } catch {}
@@ -1330,8 +1336,24 @@ function SettingsScreenInner() {
   const activeCategoryTitle = (categoryList.find(c => c.key === activeCategory) || {}).title || t('settings.title');
 
   return (
-    <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header */}
+    <View style={[s.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {/* [2026-10-07 app-feel-nav] Nativo: UINavigationBar/Toolbar do
+          react-native-screens (título anima com o push, chevron do sistema).
+          Dentro de uma categoria o back volta p/ a LISTA (headerLeft custom) e
+          o swipe-back fica desligado p/ não sair da tela inteira sem querer
+          (Android: BackHandler acima já faz o mesmo). Web: header antigo. */}
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          blur: true, // [2026-10-07 native-ui-build] iOS: vidro do sistema; Android sólido
+          title: activeCategory !== null ? activeCategoryTitle : (t('settings.title') || 'Configurações'),
+          gestureEnabled: activeCategory === null,
+          ...(activeCategory !== null ? {
+            headerLeft: () => <HeaderBackButton onPress={handleBack} color={colors.text} accessibilityLabel={t('common.back') || 'Voltar'} />,
+          } : {}),
+        })} />
+      ) : (
       <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity onPress={handleBack} style={s.backBtn} accessibilityLabel={t('common.back') || 'Voltar'} accessibilityRole="button">
           <IconArrowLeft size={24} color={colors.textSecondary} />
@@ -1341,12 +1363,13 @@ function SettingsScreenInner() {
             auto-save effect). Spacer keeps the title centered. */}
         <View style={s.backBtn} />
       </View>
+      )}
 
       {loading ? (
-        <SettingsSkeleton sections={4} rows={3} />
+        <View style={{ flex: 1, paddingTop: blurTop }}><SettingsSkeleton sections={4} rows={3} /></View>
       ) : (
       <FadeSlideIn>
-      <ScrollView ref={scrollRef} contentContainerStyle={[s.scroll, { paddingBottom: 80 + insets.bottom, maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }]}>
+      <ScrollView ref={scrollRef} keyboardShouldPersistTaps="handled" keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'} scrollIndicatorInsets={blurTop ? { top: blurTop } : undefined} contentContainerStyle={[s.scroll, { paddingBottom: 80 + insets.bottom, maxWidth: contentMaxWidth, width: '100%', alignSelf: 'center' }, blurTop ? { paddingTop: blurTop + Spacing.md } : null]}>
         {/* Search bar — filtra sections em tempo real por título/label.
             Empty query mostra tudo; clear (✕) reseta. Sticky-ish topo da
             scroll, não é absolute pra não brigar com keyboard. */}
@@ -1678,7 +1701,7 @@ function SettingsScreenInner() {
                 {t('settings.notificationsDesc')}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={settings.notifications}
               onValueChange={(v) => setSettings(prev => ({ ...prev, notifications: v }))}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -1690,7 +1713,7 @@ function SettingsScreenInner() {
             <>
               {/* [notif-p0p1] Link to dedicated notifications fine-tuning screen
                   with global mention_only toggle + per-keyword highlights. */}
-              <TouchableOpacity
+              <PressableRow
                 style={[s.settingRow, { borderBottomColor: colors.borderLight, paddingLeft: Spacing.xl }]}
                 onPress={() => router.push('/notification-preferences')}
                 accessibilityRole="button"
@@ -1703,7 +1726,7 @@ function SettingsScreenInner() {
                   </Text>
                 </View>
                 <IconChevronRight size={18} color={colors.textTertiary} />
-              </TouchableOpacity>
+              </PressableRow>
 
               <View style={[s.settingRow, { borderBottomColor: colors.borderLight, paddingLeft: Spacing.xl }]}>
                 <View style={s.settingInfo}>
@@ -1712,7 +1735,7 @@ function SettingsScreenInner() {
                     {t('settings.notifSoundDesc')}
                   </Text>
                 </View>
-                <Switch
+                <NativeSwitch
                   value={settings.notification_sound}
                   onValueChange={(v) => setSettings(prev => ({ ...prev, notification_sound: v }))}
                   trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -1727,7 +1750,7 @@ function SettingsScreenInner() {
                     {t('settings.notifVibrationDesc')}
                   </Text>
                 </View>
-                <Switch
+                <NativeSwitch
                   value={settings.notification_vibration}
                   onValueChange={(v) => setSettings(prev => ({ ...prev, notification_vibration: v }))}
                   trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -1750,7 +1773,7 @@ function SettingsScreenInner() {
                     {t('settings.dndDesc') || 'Silencia notificações de chat dentro do horário definido.'}
                   </Text>
                 </View>
-                <Switch
+                <NativeSwitch
                   value={dnd.enabled}
                   onValueChange={(v) => saveDnd({ enabled: v })}
                   trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -1828,7 +1851,7 @@ function SettingsScreenInner() {
                 {t('settings.morningEnabledDesc') || 'Receba um resumo do dia com emails, eventos e clima às 8h'}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={settings.morning_briefing !== false}
               onValueChange={(v) => { setSettings(prev => ({ ...prev, morning_briefing: v })); saveNotifPref({ morning_briefing: v }); }}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -1921,7 +1944,7 @@ function SettingsScreenInner() {
           <Text style={[s.sectionTitle, { color: colors.text }]}>
             {t('settings.emailToolsTitle') || 'Ferramentas de email'}
           </Text>
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={() => router.push('/email-import')}
             accessibilityRole="button"
@@ -1935,9 +1958,9 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
 
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={() => router.push('/pgp-keys')}
             accessibilityRole="button"
@@ -1951,9 +1974,9 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
 
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={() => router.push('/tasks')}
             accessibilityRole="button"
@@ -1967,10 +1990,10 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
 
           {/* [2026-09-24] Bia — assistente de IA (memória/personalização) */}
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={() => router.push('/bia-settings')}
             accessibilityRole="button"
@@ -1984,7 +2007,7 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={18} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
         </View>
         )}
 
@@ -2011,7 +2034,7 @@ function SettingsScreenInner() {
                 {t('settings.language.autoDetectDesc') || 'Detecta o idioma a partir do seu aparelho.'}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={languageAuto}
               onValueChange={(v) => {
                 setLanguageAuto(v);
@@ -2150,7 +2173,7 @@ function SettingsScreenInner() {
             <View style={s.settingInfo}>
               <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.autoReplyEnable')}</Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={vacation.enabled}
               onValueChange={(v) => saveVacation({ enabled: v })}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -2194,7 +2217,7 @@ function SettingsScreenInner() {
           <Text style={[s.settingDesc, { color: colors.textTertiary, marginBottom: Spacing.md }]}>
             {t('settings.filtersDesc')}
           </Text>
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={() => setShowFilters(true)}
           >
@@ -2208,7 +2231,7 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
         </View>
         )}
 
@@ -2287,7 +2310,7 @@ function SettingsScreenInner() {
                 {t('settings.enterSends.subtitle') || 'Pressione Enter pra enviar. Shift+Enter quebra linha.'}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={enterSends}
               onValueChange={(v) => { setEnterSends(v); setStorage('enter_sends', String(v)); }}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -2303,7 +2326,7 @@ function SettingsScreenInner() {
                 {t('settings.autocorrect.subtitle') || 'Corrige palavras automaticamente enquanto você digita.'}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={autocorrectOn}
               onValueChange={(v) => { setAutocorrectOn(v); setStorage('autocorrect_enabled', String(v)); }}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -2388,7 +2411,7 @@ function SettingsScreenInner() {
                 {t('settings.dataSaver.subtitle') || 'Comprime mídia e reduz pré-carregamento de vídeos.'}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={dataSaver}
               onValueChange={(v) => { setDataSaver(v); setStorage('data_saver', String(v)); }}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -2404,7 +2427,7 @@ function SettingsScreenInner() {
                 {t('settings.beta.subtitle') || 'Ative pra testar funcionalidades em desenvolvimento. Podem ter bugs.'}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={betaFeatures}
               onValueChange={(v) => { setBetaFeatures(v); setStorage('beta_features', String(v)); }}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -2674,7 +2697,7 @@ function SettingsScreenInner() {
           </View>
           {/* /ajuda loads the SPA 404 — repointed to the working support
               mailto (same target as the row below). */}
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}
             onPress={() => { Linking.openURL('mailto:support@chatyy.com.br').catch(() => {}); }}
           >
@@ -2683,8 +2706,8 @@ function SettingsScreenInner() {
               <Text style={[s.settingDesc, { color: colors.textTertiary }]}>support@chatyy.com.br</Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
-          <TouchableOpacity
+          </PressableRow>
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0 }]}
             onPress={() => { Linking.openURL('mailto:support@chatyy.com.br').catch(() => {}); }}
           >
@@ -2693,7 +2716,7 @@ function SettingsScreenInner() {
               <Text style={[s.settingDesc, { color: colors.textTertiary }]}>support@chatyy.com.br</Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
         </View>
         )}
 
@@ -2704,7 +2727,7 @@ function SettingsScreenInner() {
             <IconFileText size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.about.title') || 'Sobre'}</Text>
           </View>
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, marginTop: Spacing.md }]}
             onPress={() => setAboutOpen(true)}
           >
@@ -2722,10 +2745,10 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
           {/* [WAVE 104F] Call diagnostics — visible in __DEV__ or developer_mode */}
           {(__DEV__ || settings?.developer_mode) && (
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0 }]}
             onPress={() => router.push('/call-diagnose')}
           >
@@ -2734,7 +2757,7 @@ function SettingsScreenInner() {
               <Text style={[s.settingDesc, { color: colors.textTertiary }]}>Ring buffer dos últimos 100 eventos de call lifecycle</Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
           )}
         </View>
         )}
@@ -2757,7 +2780,7 @@ function SettingsScreenInner() {
               <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.oneEnabled')}</Text>
               <Text style={[s.settingDesc, { color: colors.textTertiary }]}>{t('settings.oneEnabledDesc')}</Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={oneEnabled}
               onValueChange={(v) => {
                 setOneEnabled(v);
@@ -2853,7 +2876,7 @@ function SettingsScreenInner() {
         {(searching || activeCategory === 'privacy') && Platform.OS === 'web' && sectionMatches(t('settings.security'), 'segurança', 'senha', 'password', t('settings.changePassword')) && (
           <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
             <Text style={[s.sectionTitle, { color: colors.text }]}>{t('settings.security') || 'Segurança'}</Text>
-            <TouchableOpacity
+            <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0 }]}
               onPress={() => setChangePasswordOpen(true)}
               activeOpacity={0.65}
@@ -2867,7 +2890,7 @@ function SettingsScreenInner() {
                 </Text>
               </View>
               <IconChevronRight size={18} color={colors.textTertiary} />
-            </TouchableOpacity>
+            </PressableRow>
           </View>
         )}
 
@@ -2875,7 +2898,7 @@ function SettingsScreenInner() {
         {(searching || activeCategory === 'privacy') && Platform.OS !== 'web' && sectionMatches(t('settings.security'), 'biometric', 'face id', 'parental', 'família', 'family', 'segurança', 'senha', 'password', t('settings.changePassword'), '2fa', t('settings.twoFactor'), 'pin', 'backup', t('settings.e2eBackup'), t('settings.backupKey.rotate'), t('settings.activityLog'), 'byok', t('settings.advancedKey')) && (
           <View ref={registerSectionRef('security')} style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
             {/* Família — Apple Family Sharing-style hub */}
-            <TouchableOpacity
+            <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight, marginBottom: Spacing.sm, backgroundColor: colors.primaryLight, borderRadius: 14, padding: 14 }]}
               onPress={() => router.push('/family')}
             >
@@ -2887,10 +2910,10 @@ function SettingsScreenInner() {
                 <Text style={[s.settingDesc, { color: colors.textTertiary }]}>Compartilhe plano, álbum, calendário e mais com a família</Text>
               </View>
               <IconChevronRight size={18} color={colors.textSecondary} />
-            </TouchableOpacity>
+            </PressableRow>
 
             {/* Parental Controls */}
-            <TouchableOpacity
+            <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight, marginBottom: Spacing.lg, backgroundColor: colors.successBg, borderRadius: 14, padding: 14 }]}
               onPress={() => router.push('/parental')}
             >
@@ -2902,7 +2925,7 @@ function SettingsScreenInner() {
                 <Text style={[s.settingDesc, { color: colors.textTertiary }]}>Crie contas monitoradas para seus filhos</Text>
               </View>
               <IconChevronRight size={18} color={colors.textSecondary} />
-            </TouchableOpacity>
+            </PressableRow>
 
             <View style={s.sectionTitleRow}>
               <IconShield size={18} color={colors.primary} style={{ marginRight: 8 }} />
@@ -2916,7 +2939,7 @@ function SettingsScreenInner() {
                     {t('settings.biometricDesc')}
                   </Text>
                 </View>
-                <Switch
+                <NativeSwitch
                   value={biometricEnabled}
                   onValueChange={toggleBiometric}
                   trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -2932,7 +2955,7 @@ function SettingsScreenInner() {
                 entirely; the lock still triggers when the user manually
                 taps the chat-lock or restarts the app. */}
             {biometricAvailable && biometricEnabled && (
-              <TouchableOpacity
+              <PressableRow
                 style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
                 onPress={() => setAutoLockOpen(true)}
                 activeOpacity={0.65}
@@ -2955,11 +2978,11 @@ function SettingsScreenInner() {
                   </Text>
                 </View>
                 <IconChevronRight size={18} color={colors.textTertiary} />
-              </TouchableOpacity>
+              </PressableRow>
             )}
 
             {/* Alterar senha — abre modal com senha atual + nova senha + confirmar */}
-            <TouchableOpacity
+            <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
               onPress={() => setChangePasswordOpen(true)}
               activeOpacity={0.65}
@@ -2973,14 +2996,14 @@ function SettingsScreenInner() {
                 </Text>
               </View>
               <IconChevronRight size={18} color={colors.textTertiary} />
-            </TouchableOpacity>
+            </PressableRow>
 
             {/* End-to-end encrypted backup — opens the escrow flow. The
                 user picks a passphrase, the app encrypts every locally
                 stored chat key + identity key with it, and uploads only
                 the ciphertext. Restore on a new device asks for the
                 passphrase. Server never sees the plaintext. */}
-            <TouchableOpacity
+            <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
               onPress={() => setE2eBackupOpen(true)}
               activeOpacity={0.65}
@@ -2994,12 +3017,12 @@ function SettingsScreenInner() {
                 </Text>
               </View>
               <IconChevronRight size={18} color={colors.textTertiary} />
-            </TouchableOpacity>
+            </PressableRow>
 
             {/* Redefinir senha do backup — merged here from the old standalone
                 "Senha do backup" section (dedupe). Opens the rotate modal,
                 which versions the new escrow blob and revokes prior ones. */}
-            <TouchableOpacity
+            <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
               onPress={() => { setBackupKeyPass(''); setBackupKeyPass2(''); setBackupKeyMsg(''); setBackupKeyOpen(true); }}
               activeOpacity={0.65}
@@ -3013,10 +3036,10 @@ function SettingsScreenInner() {
                 </Text>
               </View>
               <IconChevronRight size={18} color={colors.textTertiary} />
-            </TouchableOpacity>
+            </PressableRow>
 
             {/* 2FA PIN — opens 4-digit entry modal */}
-            <TouchableOpacity
+            <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
               onPress={() => {
                 setTwoFADigits(['', '', '', '']);
@@ -3039,14 +3062,14 @@ function SettingsScreenInner() {
                 </View>
               </View>
               <IconChevronRight size={18} color={colors.textTertiary} />
-            </TouchableOpacity>
+            </PressableRow>
 
             {/* Registration Lock (anti-SIM-swap) — separate concept from 2FA.
                 A short PIN that adds a second factor to phone-OTP login,
                 defeating SIM-swap attacks where the attacker steals the
                 number, gets the OTP, and takes over the account. Same
                 4-digit PIN UI as 2FA but writes to a different backend key. */}
-            <TouchableOpacity
+            <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
               onPress={() => {
                 setRegLockDigits(['', '', '', '']);
@@ -3069,13 +3092,13 @@ function SettingsScreenInner() {
                 </View>
               </View>
               <IconChevronRight size={18} color={colors.textTertiary} />
-            </TouchableOpacity>
+            </PressableRow>
 
             {/* Alterar número de telefone (SIM swap recovery, WhatsApp pattern).
                 Migrates the account to a NEW phone while keeping all chats /
                 contacts / handle. Routes to /change-phone for the multi-step
                 flow (confirm old → pick new → OTP → success). */}
-            <TouchableOpacity
+            <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
               onPress={() => safeNav('/change-phone')}
               activeOpacity={0.65}
@@ -3092,13 +3115,13 @@ function SettingsScreenInner() {
                 </View>
               </View>
               <IconChevronRight size={18} color={colors.textTertiary} />
-            </TouchableOpacity>
+            </PressableRow>
 
             {/* Histórico de atividades — unified audit log surface. The list
                 screen reads user_activity_log_list and renders security-
                 relevant events (login, password change, 2FA, device link,
                 BYOK set, chat delete, message delete-for-all, etc.). */}
-            <TouchableOpacity
+            <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
               onPress={() => safeNav('/activity-log')}
               activeOpacity={0.65}
@@ -3115,13 +3138,13 @@ function SettingsScreenInner() {
                 </View>
               </View>
               <IconChevronRight size={18} color={colors.textTertiary} />
-            </TouchableOpacity>
+            </PressableRow>
 
             {/* Chave avançada (BYOK) — opt-in per-user master key, generated
                 client-side. Server stores only the fingerprint. Power-user
                 feature surfaced here so it's a "Segurança" decision, not a
                 privacy preference. */}
-            <TouchableOpacity
+            <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
               onPress={() => safeNav('/advanced-key')}
               activeOpacity={0.65}
@@ -3138,7 +3161,7 @@ function SettingsScreenInner() {
                 </View>
               </View>
               <IconChevronRight size={18} color={colors.textTertiary} />
-            </TouchableOpacity>
+            </PressableRow>
 
             {/* Alertas de login — notify when a NEW device signs into this
                 account. Tap opens the history modal (last 30d of sign-ins),
@@ -3169,7 +3192,7 @@ function SettingsScreenInner() {
                   </Text>
                 </View>
               </TouchableOpacity>
-              <Switch
+              <NativeSwitch
                 value={loginAlertsEnabled}
                 onValueChange={(v) => {
                   setLoginAlertsEnabled(v);
@@ -3186,7 +3209,7 @@ function SettingsScreenInner() {
             {/* Privacidade avançada — proxy/Tor, screen-capture block,
                 discoverable opt-out, VPN suggestion. Grouped behind one
                 row so the main Security section stays scannable. */}
-            <TouchableOpacity
+            <PressableRow
               style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
               onPress={() => safeNav('/advanced-privacy')}
               activeOpacity={0.65}
@@ -3203,7 +3226,7 @@ function SettingsScreenInner() {
                 </View>
               </View>
               <IconChevronRight size={18} color={colors.textTertiary} />
-            </TouchableOpacity>
+            </PressableRow>
           </View>
         )}
 
@@ -3221,7 +3244,7 @@ function SettingsScreenInner() {
             <View style={s.settingInfo}>
               <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.forwardingEnable')}</Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={settings.forwarding_enabled}
               onValueChange={(v) => setSettings(prev => ({ ...prev, forwarding_enabled: v }))}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -3296,7 +3319,7 @@ function SettingsScreenInner() {
           </View>
 
           {/* Last seen */}
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}
             onPress={() => setPrivacyPickerOpen('last_seen')}
             activeOpacity={0.7}
@@ -3310,10 +3333,10 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
 
           {/* Profile photo */}
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={() => setPrivacyPickerOpen('profile_photo')}
             activeOpacity={0.7}
@@ -3327,7 +3350,7 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
 
           {/* Read receipts — boolean Switch (chat-side, distinct from the
               email-side settings.read_receipts above). */}
@@ -3338,7 +3361,7 @@ function SettingsScreenInner() {
                 {t('settings.privacyReadReceiptsDesc')}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={!!chatPrivacy.read_receipts}
               onValueChange={(v) => saveChatPrivacy({ read_receipts: !!v })}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -3349,7 +3372,7 @@ function SettingsScreenInner() {
           {/* Online / last-seen visibility — backend column `online`. The
               'nobody' option = invisible mode (appear offline). Distinct from
               `last_seen` above so the two can diverge. */}
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={() => setPrivacyPickerOpen('online')}
             activeOpacity={0.7}
@@ -3363,12 +3386,12 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
 
           {/* Status — backend column is `story_privacy`. Now also supports
               'close_friends' (link to manage list below) and 'except' (the
               "hide from…" picker below). */}
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={() => setPrivacyPickerOpen('story_privacy')}
             activeOpacity={0.7}
@@ -3384,13 +3407,13 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
 
           {/* Manage close-friends list — reuses the canonical close-friends
               screen (app/close-friends.js, chat_close_friends table). Only
               relevant when story_privacy is 'close_friends', but always shown
               so the user can curate the list ahead of time. */}
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={() => { try { router.push('/close-friends'); } catch {} }}
             activeOpacity={0.7}
@@ -3402,12 +3425,12 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
 
           {/* Hide status from… — global status_except list (array of emails),
               persisted via chat_privacy_set { status_except }. Opens the
               contact-picker screen which reuses the close-friends layout. */}
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={() => { try { router.push('/status-except'); } catch {} }}
             activeOpacity={0.7}
@@ -3421,7 +3444,7 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
 
           {/* Keep archived chats archived — WhatsApp parity. ON (default) =
               archived chats stay archived even when a new message arrives.
@@ -3433,7 +3456,7 @@ function SettingsScreenInner() {
                 {t('settings.privacyKeepArchivedDesc')}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={chatPrivacy.keep_archived !== false}
               onValueChange={(v) => saveChatPrivacy({ keep_archived: !!v })}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -3443,7 +3466,7 @@ function SettingsScreenInner() {
 
           {/* Groups — backend column is `group_add` (who can add this user
               to a group). */}
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={() => setPrivacyPickerOpen('group_add')}
             activeOpacity={0.7}
@@ -3457,7 +3480,7 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
 
           {/* Hide reactions in notifications — boolean Switch. When ON the
               server skips push for chat_reaction events (the in-app badge
@@ -3469,7 +3492,7 @@ function SettingsScreenInner() {
                 {t('settings.privacyHideReactionsDesc')}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={!!chatPrivacy.hide_reactions_in_notifs}
               onValueChange={(v) => {
                 // Keep local UI state in sync, and route the persisted value
@@ -3497,7 +3520,7 @@ function SettingsScreenInner() {
                 Silencia o toque e a vibração de chamadas recebidas. A tela continua aparecendo.
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={!!chatPrivacy.mute_call_ringtone}
               onValueChange={(v) => saveChatPrivacy({ mute_call_ringtone: !!v })}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
@@ -3514,7 +3537,7 @@ function SettingsScreenInner() {
             <IconFileText size={18} color={colors.primary} style={{ marginRight: 8 }} />
             <Text style={[s.sectionTitle, { color: colors.text, marginBottom: 0 }]}>{t('settings.legal')}</Text>
           </View>
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight, marginTop: Spacing.md }]}
             onPress={() => setShowPrivacy(true)}
           >
@@ -3522,8 +3545,8 @@ function SettingsScreenInner() {
               <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.privacyPolicy')}</Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
-          <TouchableOpacity
+          </PressableRow>
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={() => setShowTerms(true)}
           >
@@ -3531,7 +3554,7 @@ function SettingsScreenInner() {
               <Text style={[s.settingLabel, { color: colors.text }]}>{t('settings.termsOfService')}</Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
         </View>
         )}
 
@@ -3699,7 +3722,7 @@ function SettingsScreenInner() {
                 {t('settings.roaming.desc') || 'Permite baixar mídia quando estiver em roaming. Desligue pra economizar dados internacionais.'}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={mediaRoaming}
               onValueChange={(v) => {
                 setMediaRoaming(v);
@@ -3740,7 +3763,7 @@ function SettingsScreenInner() {
                 {t('settings.autoSaveGalleryDesc') || 'Fotos e vídeos recebidos vão para o app Fotos automaticamente.'}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={autoSaveGallery}
               onValueChange={(v) => {
                 setAutoSaveGallery(v);
@@ -3781,7 +3804,7 @@ function SettingsScreenInner() {
                 {t('settings.lowDataCalls.desc') || 'Limita o vídeo a 360p / 15 fps. Útil em redes lentas ou móveis. Ativa automaticamente em roaming.'}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={lowDataCalls}
               onValueChange={(v) => {
                 setLowDataCalls(v);
@@ -3819,7 +3842,7 @@ function SettingsScreenInner() {
                 {t('settings.hdCalls.desc') || 'Usa mais dados; só em Wi-Fi/rede boa'}
               </Text>
             </View>
-            <Switch
+            <NativeSwitch
               value={hdCalls}
               onValueChange={(v) => {
                 setHdCalls(v);
@@ -3946,7 +3969,7 @@ function SettingsScreenInner() {
                     (no native Alert), native uses the useConfirm() modal with
                     destructive styling. Refreshes stats after clearing so the
                     card flips to the empty state without a re-mount. */}
-                <TouchableOpacity
+                <PressableRow
                   style={[s.settingRow, { borderBottomColor: colors.borderLight, borderBottomWidth: 0, marginTop: Spacing.sm, opacity: storageBusy ? 0.5 : 1 }]}
                   disabled={storageBusy}
                   onPress={async () => {
@@ -3980,7 +4003,7 @@ function SettingsScreenInner() {
                       </Text>
                     </View>
                   </View>
-                </TouchableOpacity>
+                </PressableRow>
               </>
             );
           })()}
@@ -4244,7 +4267,7 @@ function SettingsScreenInner() {
         {(searching || activeCategory === 'account') && sectionMatches(t('settings.dangerZone'), t('settings.emptyTrash'), t('settings.deleteAccount')) && (
         <View style={[s.section, { backgroundColor: colors.surface, borderColor: colors.borderLight, borderWidth: 1 }]}>
           <Text style={[s.sectionTitle, { color: colors.error }]}>{t('settings.dangerZone')}</Text>
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={async () => {
               const doEmpty = async () => {
@@ -4272,10 +4295,10 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
 
           {/* Account Deletion — Apple Requirement */}
-          <TouchableOpacity
+          <PressableRow
             style={[s.settingRow, { borderBottomColor: colors.borderLight }]}
             onPress={async () => {
               const openSheet = () => {
@@ -4305,7 +4328,7 @@ function SettingsScreenInner() {
               </Text>
             </View>
             <IconChevronRight size={20} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableRow>
 
           {deleteConfirm && (() => {
             const confirmWord = t('settings.deleteAccountTypeWord') || 'DELETE';

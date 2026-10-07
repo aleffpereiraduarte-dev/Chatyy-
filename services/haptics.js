@@ -117,3 +117,27 @@ export const haptics = {
   warning,
   success,
 };
+
+// [2026-10-07 ios-native] Semantic moments — one place that decides which
+// UIKit generator each interaction gets, so iOS feels like WhatsApp/Apple
+// apps instead of a mix of Light/Medium/Vibration buzzes picked per screen:
+//   selection  (UISelectionFeedbackGenerator) → pickers, toggles, flips, ticks
+//   light/soft impact                         → small confirmations, stop
+//   medium impact                             → long-press menus, hold-to-record
+//   rigid impact                              → camera shutter, snap points
+//   notification success/warning/error        → outcomes (sent, blocked, failed)
+// Android maps the same names through expo-haptics → performHapticFeedback.
+Object.assign(haptics, {
+  selection,
+  longPress: () => tap('medium'),
+  contextMenu: () => tap('medium'),
+  swipeReplyThreshold: () => tap('light'),
+  shutter: () => tap('rigid'),
+  recordStart: () => tap('medium'),
+  recordStop: () => tap('soft'),
+  recordLimitTick: () => tap('rigid'),
+  pipEnter: () => tap('soft'),
+  reaction: () => tap('light'),
+  pullToRefresh: () => tap('soft'),
+  callIncoming: () => warning(),
+});

@@ -45,6 +45,12 @@ import messageOutbox, {
 // path). With the flag FALSE the behaviour is byte-for-byte identical to
 // today: every outbox-drained text send goes straight to HTTP.
 //
+// [2026-10-07 native-send] O envio WS REAL agora mora em api.chatSend
+// (_tryNativeWsSend: frame `chat_send` → `chat_send_ack`/`chat_send_fallback`,
+// gated pela capability `native_send` do auth_success, timeout 4s → HTTP com o
+// mesmo cmi). Este worker chama api.chatSend no _httpSend, então as linhas do
+// outbox JÁ usam o caminho nativo quando disponível. Mantenha este flag FALSE:
+// _tryWsSend espera `message_ack` (relay), não o ack de persistência do hub.
 // DO NOT flip this to true until the C++ hub ships its `chat_send` handler
 // AND chat.php's chat_send accepts the X-WS-Internal internal POST. See the
 // QA checklist — flipping it before the server side is live just burns one

@@ -1,10 +1,12 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
+import PressableRow from '../components/PressableRow'; // [2026-10-07 app-feel-ui] native cell feedback
 import {
   View, Text, TouchableOpacity, StyleSheet, TextInput, Image,
   FlatList, ActivityIndicator, Alert, Platform, SectionList, Share, Linking,
   ScrollView, Modal, ActionSheetIOS, Animated,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-07 app-feel-nav]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth, isChildAccount } from '../context/AuthContext';
@@ -225,7 +227,7 @@ const ContactRow = React.memo(function ContactRow({
   // "Message yourself" pinned row — WhatsApp parity (print 7175 top entry).
   if (item._isMessageYourself) {
     return (
-      <TouchableOpacity
+      <PressableRow
         style={[sty.contactRow, { borderBottomColor: colors.border }]}
         onPress={onMessageYourself}
         activeOpacity={0.7}
@@ -248,7 +250,7 @@ const ContactRow = React.memo(function ContactRow({
             {t('chat.messageYourself') || 'Message yourself'}
           </Text>
         </View>
-      </TouchableOpacity>
+      </PressableRow>
     );
   }
 
@@ -343,7 +345,7 @@ const ContactRow = React.memo(function ContactRow({
 
   // Registered Chatyy user
   return (
-    <TouchableOpacity
+    <PressableRow
       style={[sty.contactRow, { borderBottomColor: colors.border }]}
       onPress={() => onSelect(item)}
       activeOpacity={0.7}
@@ -408,7 +410,7 @@ const ContactRow = React.memo(function ContactRow({
           {selected && <IconCheck size={14} color="#fff" />}
         </View>
       )}
-    </TouchableOpacity>
+    </PressableRow>
   );
 });
 
@@ -1704,10 +1706,33 @@ export default function ChatNewScreen() {
   const headerBtnBg = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)';
 
   return (
-    <View style={[sty.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header — WHITE / clean (WhatsApp 2026 redesign): surface bg, dark
+    <View style={[sty.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {/* [2026-10-07 app-feel-nav] Nativo: header do sistema (título anima com
+          o push, back chevron nativo + swipe-back), ações QR/atualizar como
+          bar buttons. Web mantém o header custom abaixo. */}
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          title: t('chat.newConversation'),
+          headerRight: () => (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: Platform.OS === 'ios' ? 4 : 8 }}>
+              <HeaderIconButton onPress={handleQrPress} accessibilityLabel={t('chat.qrCode')}>
+                <IconQrCode size={22} color={colors.text} />
+              </HeaderIconButton>
+              <HeaderIconButton onPress={doContactSync} disabled={syncingContacts} accessibilityLabel={t('chat.refreshContacts')}>
+                {syncingContacts ? (
+                  <ActivityIndicator size="small" color={colors.textTertiary} />
+                ) : (
+                  <IconRefresh size={20} color={colors.text} />
+                )}
+              </HeaderIconButton>
+            </View>
+          ),
+        })} />
+      ) : (
+      /* Header — WHITE / clean (WhatsApp 2026 redesign): surface bg, dark
           text + icons, hairline bottom border. Was a solid black bar that got
-          missed in the white-header pass across the rest of the app. */}
+          missed in the white-header pass across the rest of the app. */
       <View style={[sty.header, {
         backgroundColor: colors.headerBgSolid,
         borderBottomColor: colors.headerBorder,
@@ -1745,6 +1770,7 @@ export default function ChatNewScreen() {
           )}
         </View>
       </View>
+      )}
 
       {/* Mode Toggle */}
       <View style={[sty.toggleRow, { backgroundColor: isDark ? '#1e1e1e' : '#f2f2f7' }]}>
@@ -1837,12 +1863,15 @@ export default function ChatNewScreen() {
             borderWidth: 1.5,
             borderColor: searchBorderAnim.interpolate({
               inputRange: [0, 1],
-              outputRange: ['transparent', '#111111'],
+              // [2026-10-07 app-feel-ui] native search fields (UISearchBar /
+              // Material search) have NO focus ring — the black outline read as
+              // a web form. Web keeps the brand focus border.
+              outputRange: ['transparent', Platform.OS === 'web' ? '#111111' : 'transparent'],
             }),
           },
         ]}
       >
-        <IconSearch size={18} color={searchFocused ? '#111111' : colors.textTertiary} />
+        <IconSearch size={18} color={searchFocused && Platform.OS === 'web' ? '#111111' : colors.textTertiary} />
         <TextInput
           style={[sty.searchInput, { color: colors.text }]}
           placeholder={t('chat.searchOrType')}

@@ -19,6 +19,8 @@
  *   setPeekProfile({ email })                            // peek
  */
 
+import NativeSwitch from './NativeSwitch'; // [2026-10-07 app-feel-ui] themed native toggle
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView, Image, FlatList,
@@ -3319,7 +3321,7 @@ export default function Profile({
           style={{
             backgroundColor: colors?.background || (isDark ? '#1a1a1a' : '#fff'),
             borderTopLeftRadius: 18, borderTopRightRadius: 18,
-            paddingBottom: Platform.OS === 'ios' ? 30 : 14, paddingTop: 8,
+            paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(14), paddingTop: 8,
           }}
         >
           <View style={{ alignItems: 'center', paddingBottom: 8 }}>
@@ -3427,7 +3429,7 @@ export default function Profile({
           style={{
             backgroundColor: colors?.background || '#fff',
             borderTopLeftRadius: 18, borderTopRightRadius: 18,
-            paddingBottom: Platform.OS === 'ios' ? 30 : 14,
+            paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(14),
           }}
         >
           <View style={{ alignItems: 'center', paddingTop: 10, paddingBottom: 4 }}>
@@ -3523,7 +3525,7 @@ export default function Profile({
                   </Text>
                 </View>
               </View>
-              <Switch
+              <NativeSwitch
                 value={hideStatusFromContact}
                 onValueChange={handleToggleHideStatus}
                 disabled={hideStatusSaving}
@@ -3769,7 +3771,7 @@ export default function Profile({
           style={{
             backgroundColor: colors?.background || '#fff',
             borderTopLeftRadius: 18, borderTopRightRadius: 18,
-            paddingBottom: Platform.OS === 'ios' ? 30 : 14,
+            paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(14),
             paddingTop: 8,
           }}
         >

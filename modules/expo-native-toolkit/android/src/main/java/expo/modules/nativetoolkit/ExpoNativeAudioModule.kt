@@ -8,6 +8,7 @@ import android.os.Build
 import android.util.Log
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.functions.Queues
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -82,13 +83,25 @@ class ExpoNativeAudioModule : Module() {
 
   private val ctx: Context get() = appContext.reactContext!!
 
+  // [2026-10-07 voice-native] Voice-note player (MediaPlayer + proximity →
+  // earpiece + PROXIMITY_SCREEN_OFF_WAKE_LOCK). Lazily created on the main
+  // looper by the first voice* call; every voice* function runs on MAIN.
+  private var voicePlayer: VoiceNotePlayer? = null
+  private fun voice(): VoiceNotePlayer {
+    val existing = voicePlayer
+    if (existing != null) return existing
+    val created = VoiceNotePlayer(ctx.applicationContext) { name, body -> sendEventSafe(name, body) }
+    voicePlayer = created
+    return created
+  }
+
   override fun definition() = ModuleDefinition {
     Name("ExpoNativeAudio")
 
     // Events surfaced to JS. iOS doesn't ship these (uses sync polling) but
     // emitting them on Android removes the JS-side setInterval reading
     // currentLevelSync — saves one bridge hop per sample.
-    Events("onLevel", "onComplete", "onError")
+    Events("onLevel", "onComplete", "onError", "onVoiceStatus", "onVoiceProximity")
 
     OnCreate {
       Log.d(TAG, "OnCreate")
@@ -97,7 +110,61 @@ class ExpoNativeAudioModule : Module() {
     OnDestroy {
       // Activity is going away — clean up so the mic / file handles don't leak.
       releaseAll()
+      val vp = voicePlayer
+      voicePlayer = null
+      if (vp != null) {
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+          try {
+            vp.release()
+          } catch (_: Throwable) {
+          }
+        }
+      }
     }
+
+    // ── [2026-10-07 voice-native] Voice-note playback ─────────────────
+    // JS: services/voiceNotePlayer.js feature-detects `voicePlay` (older
+    // binaries fall back to expo-audio). MAIN queue: MediaPlayer callbacks,
+    // SensorManager and AudioManager routing all live on the main looper.
+    AsyncFunction("voicePlay") { uri: String, startMs: Double, rate: Double, token: Int ->
+      voice().play(uri, startMs.toInt(), rate, token)
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("voicePause") {
+      voicePlayer?.pause()
+      Unit
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("voiceResume") {
+      voicePlayer?.resume()
+      Unit
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("voiceSeek") { ms: Double ->
+      voicePlayer?.seek(ms.toInt())
+      Unit
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("voiceSetRate") { rate: Double ->
+      voicePlayer?.setRate(rate)
+      Unit
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("voiceStop") {
+      voicePlayer?.stop()
+      Unit
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("voiceSetProximityEnabled") { enabled: Boolean ->
+      voice().setProximityEnabled(enabled)
+      Unit
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("voiceGetStatus") {
+      voicePlayer?.status() ?: mapOf(
+        "playing" to false, "positionMs" to 0.0, "durationMs" to 0.0, "token" to 0, "earpiece" to false
+      )
+    }.runOnQueue(Queues.MAIN)
 
     // ── Recording ─────────────────────────────────────────────────────
 

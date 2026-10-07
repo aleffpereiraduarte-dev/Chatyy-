@@ -57,6 +57,9 @@ jobs:
       MAIN_BUNDLE_ID: com.onemundo.mail
       SHAREEXT_BUNDLE_ID: com.onemundo.mail.share-extension
       BROADCAST_BUNDLE_ID: com.onemundo.mail.broadcast
+      # [2026-10-07 ios-native] Live Activity widget extension (optional —
+      # secret IOS_PROFILE_LIVEACT_BASE64, scripts/asc-create-liveactivity-profile.js).
+      LIVEACT_BUNDLE_ID: com.onemundo.mail.CallActivity
       APP_NAME: Chatyy
 
     steps:
@@ -139,6 +142,7 @@ jobs:
           SHAREEXT_B64: ${{ secrets.IOS_PROFILE_SHAREEXT_BASE64 }}
           NSE_B64: ${{ secrets.IOS_PROFILE_NSE_BASE64 }}
           BROADCAST_B64: ${{ secrets.IOS_PROFILE_BROADCAST_BASE64 }}
+          LIVEACT_B64: ${{ secrets.IOS_PROFILE_LIVEACT_BASE64 }}
         run: |
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "$MAIN_B64" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/$MAIN_PROFILE_UUID.mobileprovision
@@ -165,6 +169,26 @@ jobs:
             echo "::notice::IOS_PROFILE_BROADCAST_BASE64 not set — broadcast extension disabled"
             echo "broadcast_uuid=" >> $GITHUB_OUTPUT
           fi
+          # [2026-10-07 ios-native] Live Activity profile — OPTIONAL. Present →
+          # prebuild runs plugins/with-live-activity.js (CHATYY_LIVE_ACTIVITY=1)
+          # and the plugin signs the ChatyyCallActivity target with it.
+          if [ -n "$LIVEACT_B64" ]; then
+            TMP_LIVEACT=$(mktemp)
+            echo "$LIVEACT_B64" | base64 -d > "$TMP_LIVEACT"
+            LIVEACT_UUID=$(security cms -D -i "$TMP_LIVEACT" 2>/dev/null | plutil -extract UUID raw - || echo "")
+            if [ -n "$LIVEACT_UUID" ]; then
+              cp "$TMP_LIVEACT" ~/Library/MobileDevice/Provisioning\ Profiles/$LIVEACT_UUID.mobileprovision
+              echo "liveact_uuid=$LIVEACT_UUID" >> $GITHUB_OUTPUT
+              echo "Installed Live Activity profile UUID: $LIVEACT_UUID"
+            else
+              echo "::warning::IOS_PROFILE_LIVEACT_BASE64 present but UUID extraction failed — skipping"
+              echo "liveact_uuid=" >> $GITHUB_OUTPUT
+            fi
+            rm -f "$TMP_LIVEACT"
+          else
+            echo "::notice::IOS_PROFILE_LIVEACT_BASE64 not set — Live Activity extension disabled"
+            echo "liveact_uuid=" >> $GITHUB_OUTPUT
+          fi
           ls -la ~/Library/MobileDevice/Provisioning\ Profiles/
 
       - name: Bump build number
@@ -188,6 +212,9 @@ jobs:
           # only add the ChatyyBroadcastExtension target when a provisioning
           # profile for com.onemundo.mail.broadcast was installed above.
           CHATYY_BROADCAST_EXT: ${{ steps.profiles.outputs.broadcast_uuid != '' && '1' || '0' }}
+          # [2026-10-07 ios-native] plugins/with-live-activity.js gate + profile.
+          CHATYY_LIVE_ACTIVITY: ${{ steps.profiles.outputs.liveact_uuid != '' && '1' || '0' }}
+          LIVEACT_UUID: ${{ steps.profiles.outputs.liveact_uuid }}
         run: |
           npx expo prebuild --platform ios --no-install --clean
           ls -la ios/
@@ -254,6 +281,7 @@ jobs:
       - name: Export IPA
         env:
           BROADCAST_UUID: ${{ steps.profiles.outputs.broadcast_uuid }}
+          LIVEACT_UUID: ${{ steps.profiles.outputs.liveact_uuid }}
         run: |
           set -x
           # Conditionally include the broadcast bundle id in ExportOptions
@@ -263,6 +291,11 @@ jobs:
             BROADCAST_PROFILE_ENTRY="<key>$BROADCAST_BUNDLE_ID</key><string>$BROADCAST_UUID</string>"
           else
             BROADCAST_PROFILE_ENTRY=""
+          fi
+          if [ -n "$LIVEACT_UUID" ]; then
+            LIVEACT_PROFILE_ENTRY="<key>$LIVEACT_BUNDLE_ID</key><string>$LIVEACT_UUID</string>"
+          else
+            LIVEACT_PROFILE_ENTRY=""
           fi
           cat > /tmp/ExportOptions.plist <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -279,6 +312,7 @@ jobs:
               <key>$SHAREEXT_BUNDLE_ID</key><string>$SHAREEXT_PROFILE_UUID</string>
               <key>$NSE_BUNDLE_ID</key><string>$NSE_PROFILE_UUID</string>
               ${BROADCAST_PROFILE_ENTRY}
+              ${LIVEACT_PROFILE_ENTRY}
             </dict>
             <key>uploadBitcode</key><false/>
             <key>uploadSymbols</key><true/>

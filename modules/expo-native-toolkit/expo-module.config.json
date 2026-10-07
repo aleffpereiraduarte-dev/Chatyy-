@@ -20,14 +20,17 @@
       "ExpoNativeWallpaperModule",
       "ExpoNativeClipboardHandoffModule",
       "ExpoChatyyIntentsModule",
-      "ExpoFaceLandmarkerModule"
+      "ExpoFaceLandmarkerModule",
+      "ChatyyMapViewModule"
     ]
   },
   "android": {
     "modules": [
       "expo.modules.nativetoolkit.ExpoNativeAudioModule",
       "expo.modules.nativetoolkit.ExpoNativeImageModule",
-      "expo.modules.nativetoolkit.ExpoFaceLandmarkerModule"
+      "expo.modules.nativetoolkit.ExpoFaceLandmarkerModule",
+      "expo.modules.nativetoolkit.ExpoNativePdfViewModule",
+      "expo.modules.nativetoolkit.ChatyyMapViewModule"
     ]
   }
 }

@@ -4,6 +4,7 @@
  * Debounced 250ms to avoid hammering the backend on every keystroke.
  */
 
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, Modal, Pressable,
@@ -359,7 +360,7 @@ export default function GlobalSearch({
       <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)' }} onPress={close}>
         <Pressable
           style={{
-            marginTop: Platform.OS === 'ios' ? 60 : 30,
+            marginTop: Platform.OS === 'ios' ? 60 : androidTopInset(30),
             marginHorizontal: 12,
             borderRadius: 16,
             backgroundColor: colors?.background || '#fff',

@@ -11,6 +11,7 @@
  *   - VPN suggestion banner (auto-hidden when on VPN)
  */
 
+import NativeSwitch from '../components/NativeSwitch'; // [2026-10-07 app-feel-ui] themed native toggle
 import { useEffect, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView,
@@ -232,7 +233,7 @@ function Row({ colors, icon: Icon, label, desc, value, onChange, disabled }) {
         <Text style={[styles.rowLabel, { color: colors.text }]}>{label}</Text>
         {desc ? <Text style={[styles.rowDesc, { color: colors.textTertiary }]}>{desc}</Text> : null}
       </View>
-      <Switch value={!!value} onValueChange={onChange} disabled={disabled}
+      <NativeSwitch value={!!value} onValueChange={onChange} disabled={disabled}
               trackColor={{ false: colors.divider, true: colors.primaryLight }}
               thumbColor={value ? colors.primary : '#fff'} />
     </View>

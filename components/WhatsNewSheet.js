@@ -15,6 +15,7 @@
  * IMPORTANT: no new i18n keys — every string falls back via `t() || '…'`.
  */
 
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View, Text, Modal, Pressable, ScrollView, Animated, Platform,
@@ -611,7 +612,7 @@ export default function WhatsNewSheet({ visible, onClose, onTileCta }) {
           {!isFinalPage ? (
             <View style={{
               flexDirection: 'row', alignItems: 'center',
-              paddingHorizontal: 18, paddingTop: 4, paddingBottom: Platform.OS === 'ios' ? 28 : 18,
+              paddingHorizontal: 18, paddingTop: 4, paddingBottom: Platform.OS === 'ios' ? 28 : androidBottomInset(18),
               gap: 10,
               borderTopWidth: StyleSheet.hairlineWidth,
               borderTopColor: colors?.border || 'rgba(0,0,0,0.06)',

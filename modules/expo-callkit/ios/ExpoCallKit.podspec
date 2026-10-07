@@ -55,4 +55,7 @@ Pod::Spec.new do |s|
 
   # [2026-10-07 bgsync] BackgroundTasks → ChatBgSyncAppDelegateSubscriber (BGAppRefreshTask).
   s.frameworks = 'CallKit', 'PushKit', 'AVFoundation', 'CoreImage', 'CoreVideo', 'Intents', 'BackgroundTasks'
+  # [2026-10-07 ios-native] CallLiveActivity.swift — ActivityKit is iOS 16.1+;
+  # app deployment target is 16.0, so weak-link it (all uses are #available-gated).
+  s.weak_frameworks = 'ActivityKit'
 end

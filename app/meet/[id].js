@@ -34,6 +34,19 @@ function layoutLabel(count, t) {
   return `${cols}x${rows}`;
 }
 
+// [2026-10-07 app-feel-webview] lock zoom + kill tap highlight / callout /
+// text selection on chrome (inputs stay selectable) in the meet room page.
+const MEET_NATIVE_FEEL_JS = `(function(){try{
+  function apply(){
+    var m=document.querySelector('meta[name=viewport]');
+    if(!m){m=document.createElement('meta');m.name='viewport';(document.head||document.documentElement).appendChild(m);}
+    m.setAttribute('content','width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover');
+    if(!document.getElementById('__chatyy_nf')){var s=document.createElement('style');s.id='__chatyy_nf';
+      s.textContent='*{-webkit-tap-highlight-color:transparent}html,body{-webkit-text-size-adjust:100%;overscroll-behavior:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}input,textarea,[contenteditable]{-webkit-user-select:text;user-select:text}';
+      (document.head||document.documentElement).appendChild(s);}
+  }
+  apply();document.addEventListener('DOMContentLoaded',apply);
+}catch(e){}})();true;`;
 let WebView = null;
 if (Platform.OS !== 'web') {
   try { WebView = require('react-native-webview').default; } catch {}
@@ -1192,6 +1205,19 @@ export default function MeetScreen() {
         javaScriptEnabled={true}
         domStorageEnabled={true}
         originWhitelist={['*']}
+        // [2026-10-07 app-feel-webview] native feel for the meeting room.
+        bounces={false}
+        overScrollMode="never"
+        textZoom={100}
+        decelerationRate="normal"
+        setSupportMultipleWindows={false}
+        javaScriptCanOpenWindowsAutomatically={false}
+        allowsLinkPreview={false}
+        allowsBackForwardNavigationGestures={false}
+        automaticallyAdjustContentInsets={false}
+        contentInsetAdjustmentBehavior="never"
+        hideKeyboardAccessoryView
+        injectedJavaScriptBeforeContentLoaded={MEET_NATIVE_FEEL_JS}
         style={{ flex: 1, backgroundColor: colors.meetBg }}
       />
       {panels}

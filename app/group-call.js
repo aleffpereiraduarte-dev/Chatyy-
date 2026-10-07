@@ -26,6 +26,7 @@
 //   7. Pin specific participant — long-press routed into the WebView so
 //      it owns the focus tile selection. We just track the pinned email
 //      locally for the participant-list sheet's "Pinned" chip.
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { View, ActivityIndicator, Text, Platform, StyleSheet, TouchableOpacity, ScrollView, Animated, Easing, Pressable, Alert, Share, Dimensions } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -40,6 +41,11 @@ import HostControlsSheet from '../components/HostControlsSheet';
 import AddToCallSheet from '../components/AddToCallSheet';
 import { useAuth } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
+// [2026-10-07 native-group-call] Native (no WebView) room behind NATIVE_GROUP_CALL.
+import { isNativeGroupCallEnabled, GROUP_CALL_DATA_TOPIC } from '../constants/featureFlags';
+import useLiveKitRoom, { isNativeLiveKitAvailable } from '../hooks/useLiveKitRoom';
+import GroupCallGrid from '../components/groupcall/GroupCallGrid';
+import GroupCallControls, { GROUP_CONTROLS_HEIGHT } from '../components/groupcall/GroupCallControls';
 
 let WebView = null;
 if (Platform.OS !== 'web') {
@@ -133,6 +139,46 @@ export default function GroupCallScreen() {
   // Refs we read inside callbacks without re-binding.
   const webViewRef = useRef(null);
 
+  // ─── [2026-10-07 native-group-call] Native LiveKit room ───
+  // Decided ONCE per mount (flag + QA account list + native module present).
+  // If the native connect fails before ever connecting we flip to the WebView
+  // (same token) — the WebView stays the fallback.
+  const [nativeMode, setNativeMode] = useState(() => (
+    Platform.OS !== 'web' && isNativeGroupCallEnabled(user?.email) && isNativeLiveKitAvailable()
+  ));
+  const nativeModeRef = useRef(nativeMode);
+  nativeModeRef.current = nativeMode;
+  const [iceServers, setIceServers] = useState(null);
+  // Late-bound handlers (declared further down) used by the hook callbacks.
+  const handleRoomMessageRef = useRef(null);
+  const nativeDisconnectRef = useRef(null);
+  const lk = useLiveKitRoom({
+    enabled: nativeMode && !!token,
+    url: livekitUrl,
+    token,
+    startVideo: video === '1',
+    iceServers,
+    dataTopic: GROUP_CALL_DATA_TOPIC,
+    onData: (msg, fromIdentity) => {
+      try { handleRoomMessageRef.current?.(msg, { remote: true, fromIdentity }); } catch {}
+    },
+    onDisconnected: (info) => {
+      try { nativeDisconnectRef.current?.(info); } catch {}
+    },
+  });
+  const lkRef = useRef(lk);
+  lkRef.current = lk;
+  // Reactions can arrive twice (LiveKit data + WS relay) — drop repeats of the
+  // same sender+emoji inside 1.5s.
+  const _recentReactionsRef = useRef({});
+  const _isDupReaction = useCallback((fromEmail, emoji) => {
+    const k = `${String(fromEmail || '').toLowerCase()}|${emoji}`;
+    const now = Date.now();
+    const last = _recentReactionsRef.current[k] || 0;
+    _recentReactionsRef.current[k] = now;
+    return now - last < 1500;
+  }, []);
+
   // [gap E3 2026-05-20] Local per-participant volume / silence-for-me map.
   // Keyed by lowercase email → number in [0..1]. Persisted only for the
   // duration of the call; reset on leave. NOT mirrored to other clients
@@ -209,6 +255,8 @@ export default function GroupCallScreen() {
           setToken(r.data.token);
           setLivekitUrl(r.data.url || 'wss://livekit.chatyy.com.br');
           setRoomName(r.data.room ?? room ?? '');
+          const _ice = r.data.iceServers || r.data.ice_servers;
+          if (Array.isArray(_ice) && _ice.length) setIceServers(_ice);
           // Best-effort prime of the participant skeleton from the same
           // payload — backend sometimes returns `members` or `participants`.
           // This is purely cosmetic; the live source-of-truth is LiveKit
@@ -262,6 +310,7 @@ export default function GroupCallScreen() {
     unsubs.push(mailWs.on?.('call_reaction', (data) => {
       if (!data || data.call_id !== (roomName || room)) return;
       if (typeof data.emoji !== 'string') return;
+      if (_isDupReaction(data.from_email || data.email || '', data.emoji)) return;
       _addReactionBurst(data.emoji, data.from_email || '');
     }) || (() => {}));
 
@@ -394,15 +443,50 @@ export default function GroupCallScreen() {
 
   // ─── Helpers ───
 
+  // [2026-10-07 native-group-call] Same command vocabulary, executed on the
+  // native Room. reaction → LiveKit data message on GROUP_CALL_DATA_TOPIC with
+  // the same JSON shape the WebView posts back ({ type:'reaction', emoji, ... }).
+  const _nativeCommand = useCallback((msg) => {
+    const l = lkRef.current;
+    if (!l || !msg) return;
+    switch (msg.type) {
+      case 'force_mute':
+      case 'mute': l.setMic(false); break;
+      case 'unmute': l.setMic(true); break;
+      case 'video_on': l.setCam(true); break;
+      case 'video_off': l.setCam(false); break;
+      case 'set_remote_volume': l.setRemoteVolume(msg.email, msg.volume); break;
+      case 'leave': l.leave(); break;
+      case 'reaction': {
+        const me = String(user?.email || '').toLowerCase();
+        l.sendData({
+          type: 'reaction',
+          emoji: msg.emoji,
+          from_email: me,
+          name: user?.name || user?.display_name || me.split('@')[0],
+          call_id: roomName || room || '',
+          ts: Date.now(),
+        });
+        break;
+      }
+      // pin / unpin are local-only in native mode (grid reads pinnedEmail).
+      default: break;
+    }
+  }, [user, roomName, room]);
+
   const _postToWebView = useCallback((msg) => {
+    if (nativeModeRef.current) { _nativeCommand(msg); return; }
     // postMessage shape mirrors /livekit-room.html's onmessage handler.
+    // [2026-10-07 native-group-call] livekit-room.html only understands
+    // 'mute' (not 'force_mute') — translate so host mute works in the WebView.
+    if (msg && msg.type === 'force_mute') msg = { ...msg, type: 'mute' };
     try {
       const json = JSON.stringify(msg);
       if (webViewRef.current && webViewRef.current.injectJavaScript) {
         webViewRef.current.injectJavaScript(`window.postMessage(${JSON.stringify(json)}, '*'); true;`);
       }
     } catch {}
-  }, []);
+  }, [_nativeCommand]);
 
   const _wsSend = useCallback((payload) => {
     try {
@@ -617,6 +701,158 @@ export default function GroupCallScreen() {
       setAddingMembers(false);
     }
   }, [roomName, room, conversation_id, video, t]);
+
+  // ─── Room → shell messages ───
+  // Single handler for BOTH transports:
+  //   - WebView postMessage from /livekit-room.html (remote:false)
+  //   - [2026-10-07 native-group-call] LiveKit data messages on
+  //     GROUP_CALL_DATA_TOPIC from other native participants (remote:true).
+  //     Same JSON vocabulary: { type:'reaction', emoji, from_email, name } and
+  //     { type:'raise_hand'|'lower_hand', email, name, call_id }.
+  const handleRoomMessage = useCallback((msg, { remote = false } = {}) => {
+    if (!msg || typeof msg !== 'object') return;
+    // livekit-room.html posts 'left' (its own leave button / retry overlay);
+    // older shells only matched 'leave' and stayed on a dead black screen.
+    if (!remote && (msg.type === 'leave' || msg.type === 'left')) { router.back(); return; }
+    if (!remote) {
+      // Active-speaker mirror — LiveKit room HTML can post the
+      // currently-speaking participant; we use it for the ring.
+      if (msg.type === 'active_speaker' && typeof msg.email === 'string') {
+        setActiveSpeakerEmail(msg.email.toLowerCase());
+      }
+      if (msg.type === 'participants' && Array.isArray(msg.list)) {
+        setParticipants(msg.list.map(m => ({
+          email: (m.email || m.identity || '').toLowerCase(),
+          name: m.name || (m.email || '').split('@')[0],
+          role: Number(m.role || 0),
+          isSpeaking: !!m.isSpeaking || !!m.is_speaking,
+          muted: !!m.muted,
+          videoOn: !!m.videoOn || !!m.video_on,
+          handRaised: !!m.handRaised || !!m.hand_raised,
+        })).filter(p => p.email));
+      }
+      // Room state mirror — locked / recording changes coming from the LK
+      // room metadata (WebView surfaces them).
+      if (msg.type === 'room_state') {
+        if (typeof msg.locked === 'boolean') setLocked(msg.locked);
+        if (typeof msg.recording === 'boolean') setRecording(msg.recording);
+      }
+    }
+    // Reactions — paint native burst (GPU-smooth). Dedupe vs the WS relay.
+    if (msg.type === 'reaction' && typeof msg.emoji === 'string') {
+      if (_isDupReaction(msg.from_email || '', msg.emoji)) return;
+      _addReactionBurst(msg.emoji, msg.from_email || '');
+    }
+    // Raise / lower hand. From the WebView we also fan out via WS (peers on
+    // the mesh side); data messages from remote native peers are already
+    // fanned out by their sender, so only mirror locally.
+    if (msg.type === 'raise_hand' || msg.type === 'lower_hand') {
+      const email = (msg.email || (remote ? '' : myEmail) || '').toLowerCase();
+      if (!email) return;
+      const raised = msg.type === 'raise_hand';
+      setRaisedHands(prev => {
+        const filtered = prev.filter(h => h.email !== email);
+        if (raised) return [...filtered, { email, name: msg.name || email.split('@')[0], ts: Date.now() }];
+        return filtered;
+      });
+      if (!remote) {
+        _wsSend({
+          type: 'call_hand_raise',
+          call_id: msg.call_id || roomName || room,
+          conversation_id: conversation_id,
+          raised,
+          name: msg.name,
+          email,
+        });
+      }
+    }
+  }, [router, myEmail, _isDupReaction, _addReactionBurst, _wsSend, roomName, room, conversation_id]);
+  handleRoomMessageRef.current = handleRoomMessage;
+
+  // ─── [2026-10-07 native-group-call] native-mode wiring ───
+  const myHandRaised = raisedHands.some(h => h.email === myEmail);
+  const toggleMyHand = useCallback(() => {
+    const raised = !raisedHands.some(h => h.email === myEmail);
+    const name = user?.name || user?.display_name || myEmail.split('@')[0];
+    const callId = roomName || room || '';
+    setRaisedHands(prev => {
+      const filtered = prev.filter(h => h.email !== myEmail);
+      return raised ? [...filtered, { email: myEmail, name, ts: Date.now() }] : filtered;
+    });
+    lkRef.current?.sendData({ type: raised ? 'raise_hand' : 'lower_hand', email: myEmail, name, call_id: callId });
+    lkRef.current?.setHandAttribute(raised);
+    _wsSend({ type: 'call_hand_raise', call_id: callId, conversation_id, raised, name, email: myEmail });
+  }, [raisedHands, myEmail, user, roomName, room, conversation_id, _wsSend]);
+
+  const _seededHandsRef = useRef({});
+  // Mirror the native room into the overlay state (participants sheet, header
+  // count, host role, add-sheet "already in call" list, speaker ring).
+  useEffect(() => {
+    if (!nativeMode || !lk.participants.length) return;
+    const handSet = new Set(raisedHands.map(h => h.email));
+    setParticipants(lk.participants.map(p => ({
+      email: p.email,
+      name: p.name,
+      role: p.role,
+      isSpeaking: lk.activeSpeakers.includes(p.email),
+      muted: p.muted,
+      videoOn: p.videoOn,
+      handRaised: handSet.has(p.email) || p.handRaised,
+    })));
+    // Late joiners: hands persisted as participant attributes (when the token
+    // allows setAttributes) seed the banner.
+    const attrHands = lk.participants.filter(p => p.handRaised && !handSet.has(p.email) && !_seededHandsRef.current[p.email]);
+    attrHands.forEach(p => { _seededHandsRef.current[p.email] = 1; });
+    if (attrHands.length) {
+      setRaisedHands(prev => [...prev, ...attrHands.map(p => ({ email: p.email, name: p.name, ts: Date.now() }))]);
+    }
+  }, [nativeMode, lk.participants, lk.activeSpeakers, raisedHands]);
+  useEffect(() => {
+    if (nativeMode && lk.primarySpeaker) setActiveSpeakerEmail(lk.primarySpeaker);
+  }, [nativeMode, lk.primarySpeaker]);
+
+  // Fallback: native connect failed before ever connecting → WebView.
+  const nativeEverConnectedRef = useRef(false);
+  useEffect(() => {
+    if (!nativeMode) return;
+    if (lk.state === 'connected') nativeEverConnectedRef.current = true;
+    if (lk.state === 'error' && !nativeEverConnectedRef.current) {
+      console.warn('[GroupCall] native room failed, falling back to WebView:', lk.error);
+      setNativeMode(false);
+    }
+  }, [nativeMode, lk.state, lk.error]);
+
+  // Server-side / network disconnect of the native room.
+  nativeDisconnectRef.current = (info) => {
+    const name = String(info?.reasonName || '');
+    if (/PARTICIPANT_REMOVED/i.test(name)) {
+      Alert.alert(
+        t('call.group.removed') || 'Participante removido',
+        t('call.group.removedByHost') || 'O host removeu você da chamada.',
+        [{ text: 'OK', onPress: () => router.back() }]
+      );
+      return;
+    }
+    if (/ROOM_DELETED/i.test(name)) { router.back(); return; }
+    setErr(t('call.connectError') || 'Conexão encerrada. Tente novamente.');
+  };
+
+  // Keep the screen awake for the native room (the WebView path never had it).
+  useEffect(() => {
+    if (!nativeMode || Platform.OS === 'web') return undefined;
+    let deactivate = null;
+    try {
+      const ka = require('expo-keep-awake');
+      ka.activateKeepAwakeAsync?.('group-call')?.catch?.(() => {});
+      deactivate = () => { try { ka.deactivateKeepAwake?.('group-call'); } catch {} };
+    } catch {}
+    return () => { if (deactivate) deactivate(); };
+  }, [nativeMode]);
+
+  const nativeLeave = useCallback(async () => {
+    try { await lkRef.current?.leave(); } catch {}
+    router.back();
+  }, [router]);
 
   // ─── Render bits ───
 
@@ -1022,6 +1258,68 @@ export default function GroupCallScreen() {
     );
   }
 
+  // [2026-10-07 native-group-call] Native stage: RN grid + controls, same
+  // overlays/sheets as the WebView path.
+  if (nativeMode) {
+    const controlsH = GROUP_CONTROLS_HEIGHT + (insets.bottom || 0);
+    const connecting = lk.state === 'idle' || lk.state === 'connecting';
+    return (
+      <View style={{ flex: 1, backgroundColor: '#000' }}>
+        <GroupCallGrid
+          participants={lk.participants}
+          activeSpeakers={lk.activeSpeakers}
+          promotedEmail={displayedSpeaker}
+          pinnedEmail={pinnedEmail}
+          silencedEmails={silencedEmails}
+          raisedHandEmails={raisedHands.reduce((acc, h) => { acc[h.email] = 1; return acc; }, {})}
+          mirrorLocal={lk.facingFront}
+          youLabel={t('call.group.you') || 'Você'}
+          topInset={(insets.top || 0) + 52}
+          bottomInset={controlsH}
+          onTileLongPress={(vm) => setParticipantMenu({ email: vm.email, name: vm.name })}
+          onVisibleChange={lk.setVisibleTiles}
+        />
+        {connecting ? (
+          <View pointerEvents="none" style={styles.connectingHud}>
+            <ActivityIndicator color="#fff" />
+            <Text style={{ color: '#999', marginTop: 10, fontSize: 13, fontWeight: '500' }}>Conectando ao grupo...</Text>
+          </View>
+        ) : null}
+        {lk.state === 'reconnecting' ? (
+          <View pointerEvents="none" style={[styles.nativeReconnecting, { top: (insets.top || 0) + 56 }]}>
+            <ActivityIndicator size="small" color="#fbbf24" />
+            <Text style={styles.nativeReconnectingText}>{t('call.reconnecting') || 'Reconectando...'}</Text>
+          </View>
+        ) : null}
+        {RecordingBanner}
+        {Header}
+        {HandsBanner}
+        <View pointerEvents="none" style={[StyleSheet.absoluteFill, { bottom: controlsH }]}>
+          {ReactionsLayer}
+        </View>
+        <View pointerEvents="box-none" style={[StyleSheet.absoluteFill, { bottom: controlsH - 74 }]}>
+          {ReactionBar}
+        </View>
+        <GroupCallControls
+          bottomInset={insets.bottom || 0}
+          micOn={lk.micOn}
+          camOn={lk.camOn}
+          speakerOn={lk.speakerOn}
+          handRaised={myHandRaised}
+          disabled={lk.state !== 'connected' && lk.state !== 'reconnecting'}
+          onToggleMic={lk.toggleMic}
+          onToggleCam={lk.toggleCam}
+          onFlip={lk.flipCamera}
+          onToggleSpeaker={lk.toggleSpeaker}
+          onToggleHand={toggleMyHand}
+          onLeave={nativeLeave}
+          t={t}
+        />
+        {Sheets}
+      </View>
+    );
+  }
+
   if (Platform.OS === 'web') {
     // Full-screen iframe — LiveKit JS runs directly. Add-member pill
     // overlays the iframe corner so it's always reachable.
@@ -1063,60 +1361,24 @@ export default function GroupCallScreen() {
         allowsInlineMediaPlayback
         startInLoadingState
         mixedContentMode="always"
+        // [2026-10-07 app-feel-webview] call room must not feel like a page:
+        // no rubber-band, no Android glow, no font-scale reflow, no long-press
+        // link previews / popups, no swipe-back inside the web history.
+        bounces={false}
+        overScrollMode="never"
+        textZoom={100}
+        decelerationRate="normal"
+        setSupportMultipleWindows={false}
+        javaScriptCanOpenWindowsAutomatically={false}
+        allowsLinkPreview={false}
+        allowsBackForwardNavigationGestures={false}
+        automaticallyAdjustContentInsets={false}
+        contentInsetAdjustmentBehavior="never"
+        hideKeyboardAccessoryView
         onMessage={(evt) => {
           try {
             const msg = JSON.parse(evt.nativeEvent.data);
-            if (msg.type === 'leave') router.back();
-            // Active-speaker mirror — LiveKit room HTML can post the
-            // currently-speaking participant; we use it for the yellow
-            // ring (and would for any native overlays). Optional.
-            if (msg.type === 'active_speaker' && typeof msg.email === 'string') {
-              setActiveSpeakerEmail(msg.email.toLowerCase());
-            }
-            if (msg.type === 'participants' && Array.isArray(msg.list)) {
-              setParticipants(msg.list.map(m => ({
-                email: (m.email || m.identity || '').toLowerCase(),
-                name: m.name || (m.email || '').split('@')[0],
-                role: Number(m.role || 0),
-                isSpeaking: !!m.isSpeaking || !!m.is_speaking,
-                muted: !!m.muted,
-                videoOn: !!m.videoOn || !!m.video_on,
-                handRaised: !!m.handRaised || !!m.hand_raised,
-              })).filter(p => p.email));
-            }
-            // Reactions received over the LK DataChannel — paint native
-            // burst so the animation is GPU-smooth (vs the WebView SVG path).
-            if (msg.type === 'reaction' && typeof msg.emoji === 'string') {
-              _addReactionBurst(msg.emoji, msg.from_email || '');
-            }
-            // 'raise_hand' / 'lower_hand' from the LiveKit room HTML are
-            // forwarded through the WS so peers on the mesh side (older
-            // builds, audio-only etc.) see the same indicator. We also
-            // mirror locally into raisedHands so our own banner shows it.
-            if (msg.type === 'raise_hand' || msg.type === 'lower_hand') {
-              const email = (msg.email || myEmail || '').toLowerCase();
-              const raised = msg.type === 'raise_hand';
-              setRaisedHands(prev => {
-                const filtered = prev.filter(h => h.email !== email);
-                if (raised) return [...filtered, { email, name: msg.name || email.split('@')[0], ts: Date.now() }];
-                return filtered;
-              });
-              _wsSend({
-                type: 'call_hand_raise',
-                call_id: msg.call_id || roomName || room,
-                conversation_id: conversation_id,
-                raised,
-                name: msg.name,
-                email,
-              });
-            }
-            // Room state mirror — locked / recording changes coming from
-            // the LK room metadata (set by the host's chatCallSetLocked /
-            // chatCallSetRecording → LK metadata update → WebView surfaces).
-            if (msg.type === 'room_state') {
-              if (typeof msg.locked === 'boolean') setLocked(msg.locked);
-              if (typeof msg.recording === 'boolean') setRecording(msg.recording);
-            }
+            handleRoomMessage(msg, { remote: false });
           } catch {}
         }}
       />
@@ -1278,7 +1540,7 @@ const styles = StyleSheet.create({
   // Header — top bar with participant count + host gear.
   headerWrap: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 52 : 32,
+    top: Platform.OS === 'ios' ? 52 : androidTopInset(32),
     left: 0,
     right: 0,
     zIndex: 60,
@@ -1329,7 +1591,7 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    paddingTop: Platform.OS === 'ios' ? 50 : 20,
+    paddingTop: Platform.OS === 'ios' ? 50 : androidTopInset(20),
     paddingBottom: 6,
     backgroundColor: 'rgba(220,38,38,0.18)',
     flexDirection: 'row',
@@ -1358,7 +1620,7 @@ const styles = StyleSheet.create({
   // Raised-hand banner — small chip below the header.
   handsBanner: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 100 : 80,
+    top: Platform.OS === 'ios' ? 100 : androidTopInset(80),
     alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
@@ -1449,4 +1711,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: -0.2,
   },
+
+  // [2026-10-07 native-group-call] reconnecting chip over the native grid.
+  nativeReconnecting: {
+    position: 'absolute',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    zIndex: 58,
+  },
+  nativeReconnectingText: { color: '#fbbf24', fontSize: 12, fontWeight: '600' },
 });

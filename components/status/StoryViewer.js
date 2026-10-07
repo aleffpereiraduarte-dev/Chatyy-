@@ -15,6 +15,7 @@
 //
 // All extras gated by props so callers don't pay for what they don't use.
 
+import { androidBottomInset } from '../../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, Pressable, Image,
@@ -642,31 +643,8 @@ const StoryMedia = React.memo(function StoryMedia({
           );
         }
       } catch {}
-      try {
-        const V = require('expo-av').Video;
-        return (
-          <V
-            ref={boomerangRef}
-            source={{ uri: mediaUrl }}
-            resizeMode="contain"
-            shouldPlay={!paused}
-            isLooping={isBoomerang}
-            onLoad={isBoomerang ? (() => scheduleBoomerangAdvance?.(boomerangLoopDurationMs)) : undefined}
-            onPlaybackStatusUpdate={(s) => {
-              if (!isBoomerang) { if (s?.didJustFinish) advanceNatural(); return; }
-              try {
-                if (s?.didJustFinish && boomerangRef?.current?.setPositionAsync) {
-                  boomerangStateRef.current.reversing = !boomerangStateRef.current.reversing;
-                  if (boomerangStateRef.current.reversing && s?.durationMillis) {
-                    boomerangRef.current.setPositionAsync(Math.max(0, s.durationMillis - 50));
-                  }
-                }
-              } catch {}
-            }}
-            style={{ width: '100%', height: '100%', backgroundColor: '#000' }}
-          />
-        );
-      } catch {}
+      // [2026-10-07 android-native] expo-av <V> fallback removed (stubbed → undefined component
+      // → render crash). Poster image is the graceful fallback.
       return <Image source={{ uri: mediaUrl }} style={{ width: '100%', height: '100%' }} resizeMode="contain" />;
     }
     // Poster fallback for IMAGE status — backend (#557) ships thumbnail_url
@@ -2695,7 +2673,7 @@ export default function StoryViewer({
             pointerEvents="none"
             style={{
               position: 'absolute',
-              bottom: Platform.OS === 'ios' ? 36 : 22,
+              bottom: Platform.OS === 'ios' ? 36 : androidBottomInset(22),
               left: 0, right: 0,
               alignItems: 'center',
               zIndex: 6,

@@ -10,6 +10,7 @@
 // No password screen. Server generates the dovecot password and stores an
 // encrypted recovery blob (see /var/www/mail/api/phone-auth.php).
 
+import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator,
@@ -1734,11 +1735,11 @@ export default function SignupPhone() {
           {step !== 'done' && (
             <Text style={{ fontSize: 11, color: colors.textTertiary, textAlign: 'center', marginBottom: 10, lineHeight: 16, paddingHorizontal: 8 }}>
               {t('signupPhone.tosLine') || 'Ao continuar você concorda com os '}
-              <Text style={{ color: colors.primary, fontWeight: '600' }} onPress={() => { try { require('expo-web-browser').openBrowserAsync('https://chatyy.com.br/terms.html'); } catch {} }}>
+              <Text style={{ color: colors.primary, fontWeight: '600' }} onPress={() => { try { router.push({ pathname: '/legal', params: { doc: 'terms' } }); } catch {} }}>
                 {t('signupPhone.tosLink') || 'Termos'}
               </Text>
               {' '}{t('common.and') || 'e'}{' '}
-              <Text style={{ color: colors.primary, fontWeight: '600' }} onPress={() => { try { require('expo-web-browser').openBrowserAsync('https://chatyy.com.br/privacy.html'); } catch {} }}>
+              <Text style={{ color: colors.primary, fontWeight: '600' }} onPress={() => { try { router.push({ pathname: '/legal', params: { doc: 'privacy' } }); } catch {} }}>
                 {t('signupPhone.privacyLink') || 'Privacidade'}
               </Text>
               .
@@ -1818,7 +1819,7 @@ export default function SignupPhone() {
           <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{
             backgroundColor: colors.background,
             borderTopLeftRadius: 22, borderTopRightRadius: 22,
-            paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 30 : 16,
+            paddingTop: 8, paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(16),
             paddingHorizontal: 8,
           }}>
             <View style={{ alignSelf: 'center', width: 40, height: 4, borderRadius: 2, backgroundColor: isDark ? 'rgba(255,255,255,0.18)' : 'rgba(0,0,0,0.13)', marginBottom: 8 }} />
@@ -1858,7 +1859,7 @@ export default function SignupPhone() {
         <View style={{ flex: 1, backgroundColor: colors.background }}>
           <View style={{
             flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-            paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 56 : 24, paddingBottom: 12,
+            paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(24), paddingBottom: 12,
             borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border,
           }}>
             <TouchableOpacity onPress={() => setShowCountryPicker(false)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
@@ -1971,7 +1972,7 @@ export default function SignupPhone() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 56 : 24, paddingBottom: 12 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(24), paddingBottom: 12 },
   backBtn: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   brand: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
   dotsRow: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginBottom: 20 },
@@ -1986,7 +1987,7 @@ const styles = StyleSheet.create({
   footer: {
     position: 'absolute', left: 0, right: 0, bottom: 0,
     paddingHorizontal: 22, paddingTop: 12,
-    paddingBottom: Platform.OS === 'ios' ? 30 : 16,
+    paddingBottom: Platform.OS === 'ios' ? 30 : androidBottomInset(16),
     borderTopWidth: StyleSheet.hairlineWidth,
     backgroundColor: 'transparent',
   },

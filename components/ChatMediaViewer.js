@@ -645,7 +645,7 @@ if (Platform.OS === 'ios') {
   try { _NativeVideoPlayerView = require('../modules/expo-native-toolkit').VideoPlayer; } catch {}
 }
 
-function NativeVideoPlayer({ url, isActive = true }) {
+function NativeVideoPlayer({ url, isActive = true, allowPip = true }) {
   // Prefer expo-video — has native AVPlayerViewController controls,
   // PiP, fullscreen, scrubbing, captions. Custom AVPlayerLayer view
   // exists for perf-sensitive inline playback but has no UI chrome
@@ -699,7 +699,12 @@ function NativeVideoPlayer({ url, isActive = true }) {
         player={player}
         style={s.fullVideo}
         allowsFullscreen
-        allowsPictureInPicture
+        allowsPictureInPicture={allowPip}
+        // [2026-10-07 ios-native] WhatsApp-style PiP: a playing video floats
+        // when the user leaves the app (home / app switch) and keeps playing;
+        // only the ACTIVE slide opts in (neighbors are preloaded + paused).
+        // View-once media never PiPs (it would outlive the "seen once" view).
+        startsPictureInPictureAutomatically={allowPip && isActive}
         nativeControls
         contentFit="contain"
       />
@@ -1086,7 +1091,7 @@ const ctlBtn = {
 };
 
 // ============================================================
-function VideoPlayer({ url, isActive = true }) {
+function VideoPlayer({ url, isActive = true, allowPip = true }) {
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(true);
   const [progress, setProgress] = useState(0);
@@ -1113,13 +1118,13 @@ function VideoPlayer({ url, isActive = true }) {
 
   // Native: try expo-video first (best MOV support)
   if (useVideoPlayer && ExpoVideo) {
-    return <NativeVideoPlayer url={url} isActive={isActive} />;
+    return <NativeVideoPlayer url={url} isActive={isActive} allowPip={allowPip} />;
   }
 
   // No expo-video module on this build — fall back to the native AVPlayer
   // view (iOS) via NativeVideoPlayer. No more per-video WebView (that was the
   // jank the video players were migrated off of).
-  return <NativeVideoPlayer url={url} isActive={isActive} />;
+  return <NativeVideoPlayer url={url} isActive={isActive} allowPip={allowPip} />;
 }
 
 // ============================================================
@@ -1145,13 +1150,12 @@ function PreviewViewer({ url, filename, messageId, fileSize, t }) {
   const ext = getExt(filename);
   const isPdf = ext === 'pdf';
   const fullFileUrl = getFullUrl(url);
-  const previewUrl = buildPreviewUrl(url, filename);
 
   if (Platform.OS === 'web') {
     return (
       <View style={[s.mediaContainer, { alignItems: 'stretch', justifyContent: 'flex-start', width: '100%' }]}>
         <iframe
-          src={previewUrl}
+          src={isPdf ? fullFileUrl : 'https://docs.google.com/viewer?embedded=true&url=' + encodeURIComponent(fullFileUrl)}
           style={{ width: '100%', height: SCREEN_H - 100, minHeight: 400, border: 'none', borderRadius: 8 }}
           title={filename}
         />
@@ -1164,9 +1168,12 @@ function PreviewViewer({ url, filename, messageId, fileSize, t }) {
     const { WebView } = require('react-native-webview');
     // iOS: load the PDF URL directly so WKWebView uses its built-in PDF reader.
     // Any other platform/ext: use preview.html wrapper (gives us the Baixar header).
+    // [2026-10-07 app-feel-webview] preview.html is NOT deployed in prod
+    // (nginx SPA fallback → the whole web app rendered here). Go straight to
+    // the Docs embedded viewer it used to iframe.
     const source = isPdf && Platform.OS === 'ios'
       ? { uri: fullFileUrl }
-      : { uri: getFullUrl(previewUrl) };
+      : { uri: 'https://docs.google.com/viewer?embedded=true&url=' + encodeURIComponent(fullFileUrl) };
     return <WebViewWithErrorFallback source={source} url={url} filename={filename} messageId={messageId} fileSize={fileSize} t={t} />;
   } catch {
     // Fallback if WebView not available
@@ -1277,6 +1284,12 @@ function WebViewWithErrorFallback({ source, url, filename, messageId, fileSize, 
         startInLoadingState
         allowsInlineMediaPlayback
         bounces={false}
+        // [2026-10-07 app-feel-webview] native scroll feel, no popups/glow.
+        decelerationRate="normal"
+        overScrollMode="never"
+        textZoom={100}
+        setSupportMultipleWindows={false}
+        allowsLinkPreview={false}
         originWhitelist={['*']}
         renderLoading={() => <ActivityIndicator size="large" color="#fff" style={s.loader} />}
         onHttpError={(e) => {
@@ -2090,7 +2103,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               return (
                 <View style={{ width: SCREEN_W, flex: 1 }}>
                   {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} onDismissMove={_onDismissMove} onDismissEnd={_onDismissEnd} /> :
-                   isVid ? <VideoPlayer url={u} isActive={index === _currentIdx} /> :
+                   isVid ? <VideoPlayer url={u} isActive={index === _currentIdx} allowPip={!viewOnce} /> :
                    isPrv ? <PreviewViewer url={u} filename={item?.fileName} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} t={t} /> :
                    <GenericFileViewer url={u} filename={item?.fileName} fileSize={item?.fileSize} messageId={item?.messageId || item?.id || 0} t={t} />}
                 </View>
@@ -2140,7 +2153,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
                 </Text>
               </View>
             ) : (
-              <VideoPlayer url={url} />
+              <VideoPlayer url={url} allowPip={!viewOnce} />
             )
           ) : isPreviewable ? (
             <PreviewViewer

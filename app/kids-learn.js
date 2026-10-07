@@ -1,3 +1,4 @@
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, ActivityIndicator, Platform, Linking, Animated, Dimensions } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -256,7 +257,7 @@ const s = StyleSheet.create({
   container: { flex: 1 },
   header: {
     flexDirection: 'row', alignItems: 'center', padding: 18,
-    paddingTop: Platform.OS === 'ios' ? 56 : 18, gap: 10,
+    paddingTop: Platform.OS === 'ios' ? 56 : androidTopInset(18), gap: 10,
   },
   backBtn: { padding: 8, minWidth: 48, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   headerEmoji: { fontSize: 24 },

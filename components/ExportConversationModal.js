@@ -15,6 +15,7 @@
 // Self-contained: owns its own loading / success / error state machine so the
 // host screen only has to toggle `visible` and pass conversation context.
 
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Modal, View, Text, Pressable, TouchableOpacity, Animated,
@@ -35,8 +36,8 @@ function resolveOrigin() {
     if (typeof window !== 'undefined' && window.location?.origin) return window.location.origin;
   } catch {}
   try {
-    const base = require('../services/api').API_BASE_URL || '';
-    return base.replace(/\/api\/?$/, '');
+    const base = require('../services/api').BASE_URL || '';
+    if (base) return base.replace(/\/api\/?$/, '');
   } catch {}
   return 'https://chatyy.com.br';
 }
@@ -275,7 +276,7 @@ export default function ExportConversationModal({
                 backgroundColor: sheetBg,
                 borderTopLeftRadius: 24, borderTopRightRadius: 24,
                 paddingTop: 10, paddingHorizontal: 18,
-                paddingBottom: Platform.OS === 'ios' ? 34 : 20,
+                paddingBottom: Platform.OS === 'ios' ? 34 : androidBottomInset(20),
                 maxHeight: '88%',
               }}
             >

@@ -1,3 +1,4 @@
+import { androidBottomInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, Animated,
@@ -4839,7 +4840,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 22,
     paddingTop: 10,
     paddingHorizontal: 20,
-    paddingBottom: Platform.OS === 'ios' ? 36 : 20,
+    paddingBottom: Platform.OS === 'ios' ? 36 : androidBottomInset(20),
   },
   giftSheetHandle: {
     alignSelf: 'center',

@@ -3,6 +3,7 @@
 // react-native-view-shot (native) or canvas (web) and returns a new URI.
 //
 // Keep it small and focused: pen with 7 colors × 3 widths, undo, and done.
+import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useRef, useState, useCallback, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, Image, StyleSheet, Platform, Dimensions,
@@ -280,7 +281,7 @@ export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {
   return (
     <View style={styles.wrap}>
       {/* Top bar */}
-      <View style={[styles.top, { top: Platform.OS === 'ios' ? 48 : 18 }]}>
+      <View style={[styles.top, { top: Platform.OS === 'ios' ? 48 : androidTopInset(18) }]}>
         <TouchableOpacity onPress={onCancel} style={styles.topBtn}>
           <IconX size={20} color="#fff" />
         </TouchableOpacity>
@@ -360,7 +361,7 @@ export default function DrawOverlay({ visible, imageUri, onCancel, onDone }) {
       </View>
 
       {/* Done */}
-      <View style={[styles.bottom, { bottom: Platform.OS === 'ios' ? 34 : 18 }]}>
+      <View style={[styles.bottom, { bottom: Platform.OS === 'ios' ? 34 : androidBottomInset(18) }]}>
         <TouchableOpacity onPress={save} disabled={saving}
           style={{ paddingHorizontal: 22, height: 50, borderRadius: 25, backgroundColor: '#0A84FF', alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 }}>
           {saving ? <ActivityIndicator color="#fff" /> : (<>

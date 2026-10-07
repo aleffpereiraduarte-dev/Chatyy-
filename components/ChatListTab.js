@@ -1,3 +1,4 @@
+import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, ScrollView, Modal,
@@ -13,6 +14,9 @@ import {
 // o FlashList ignora sem quebrar. Se travar/regredir → voltar `= FlatList`.
 const { FlashList } = require('@shopify/flash-list');
 const ListComponent = FlashList;
+// [2026-10-07 native-ui-build] offset (px) em que o large title "Conversas" já passou
+// por baixo do header → chat.js mostra o título compacto + hairline.
+const LARGE_TITLE_COLLAPSE_Y = 34;
 import { useRouter, useFocusEffect } from 'expo-router';
 import * as api from '../services/api';
 import { useConfirm } from './ConfirmModal';
@@ -51,6 +55,8 @@ import ScreenEmptyState from './ScreenEmptyState';
 import { ChatListSkeleton } from './SkeletonLoader';
 import { SkeletonRow as SkeletonRowPrimitive } from './Skeleton';
 import PressableScale from './PressableScale';
+import PressableRow from './PressableRow';
+import { BlurBackdrop } from './NativeBlur'; // [2026-10-07 native-ui-build]
 import FadeSlideIn from './FadeSlideIn';
 import { haptic } from '../constants/theme';
 
@@ -1101,8 +1107,10 @@ const ConversationRow = React.memo(function ConversationRow({
   // handleConversationPress, so the primitive's default press-in tick would
   // double it. All other props (onPress/onPressIn/onLongPress/web mouse +
   // context handlers/delays/activeOpacity) pass straight through unchanged.
+  // [2026-10-07 app-feel-ui] PressableRow: native cell feedback (iOS gray
+  // highlight / Android ripple, NO shrink+fade). Web keeps PressableScale.
   const rowContent = (
-        <PressableScale
+        <PressableRow
           haptic={false}
           style={[
             s.row,
@@ -1383,7 +1391,7 @@ const ConversationRow = React.memo(function ConversationRow({
               </View>
             </View>
           </View>
-        </PressableScale>
+        </PressableRow>
   );
 
   // Use native Swipeable on iOS/Android, PanResponder on web. Hooks declared above —
@@ -2726,16 +2734,15 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
                       };
                       return <StatusEditorVideo uri={statusEditor.uri} />;
                     } catch {}
-                    try {
-                      const { Video } = require('expo-av');
-                      return <Video source={{ uri: statusEditor.uri }} style={{ width:'100%', height:'100%' }} resizeMode="contain" shouldPlay isLooping isMuted />;
-                    } catch { return null; }
+                    // [2026-10-07 android-native] expo-av fallback removed
+                    // (package gone; stubbed Video was undefined → crash).
+                    return null;
                   })()
             )}
           </View>
 
           {/* Close button */}
-          <View style={{ position:'absolute', top: Platform.OS === 'ios' ? 54 : 40, left:12, right:12, flexDirection:'row', justifyContent:'space-between', alignItems:'center', zIndex: 10 }}>
+          <View style={{ position:'absolute', top: Platform.OS === 'ios' ? 54 : androidTopInset(40), left:12, right:12, flexDirection:'row', justifyContent:'space-between', alignItems:'center', zIndex: 10 }}>
             <TouchableOpacity onPress={() => { setStatusEditor(null); setStatusCaption(''); setEditorFilterIdx(0); }} style={{ width:40, height:40, borderRadius:20, backgroundColor:'rgba(0,0,0,0.55)', alignItems:'center', justifyContent:'center' }}>
               <IconX size={20} color="#fff" />
             </TouchableOpacity>
@@ -2924,7 +2931,7 @@ function StatusStoriesRow({ colors, isDark, user, router, t, setActiveTab, reque
   );
 }
 
-function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setActiveTab, requestOpenStatus, requestNewStatus }) {
+function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setActiveTab, requestOpenStatus, requestNewStatus, largeTitle, onLargeTitleCollapsedChange, bottomInset = 0 }) {
   const confirm = useConfirm();
   const { language } = useLanguage();
   // Try MMKV preload first; fall back to the native SQLite cache (iOS).
@@ -6804,7 +6811,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
         <Animated.View
           pointerEvents="box-none"
           style={{
-            position: 'absolute', top: Platform.OS === 'ios' ? 50 : 20, left: 12, right: 12,
+            position: 'absolute', top: Platform.OS === 'ios' ? 50 : androidTopInset(20), left: 12, right: 12,
             zIndex: 100,
             transform: [{ translateY: reactionToastY }],
           }}
@@ -7167,55 +7174,11 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
     <View style={[s.separator, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)', marginLeft: 84, marginRight: 0 }]} />
   ), [isDark]);
 
-  return (
-    <View style={[{ flex: 1 }, isWeb && isDark && {
-      backgroundColor: '#0D0D10',
-    }]}>
-      {/* Selection toolbar */}
-      {selectionMode && (
-        <View style={{
-          flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-          paddingHorizontal: 16, paddingVertical: 10,
-          backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17, 17, 17,0.08)',
-          borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-        }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-            <TouchableOpacity onPress={exitSelectionMode} style={{ padding: 4 }}>
-              <IconX size={22} color={colors.text} />
-            </TouchableOpacity>
-            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
-              {(t('chat.selected') || '{count} selected').replace('{count}', String(selectedIds.size))}
-            </Text>
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
-            <TouchableOpacity
-              onPress={handleBulkToggleUnread}
-              style={{ padding: 6 }}
-              accessibilityLabel={t('chat.markUnread') || 'Mark unread'}
-              accessibilityRole="button"
-            >
-              <IconMail size={20} color={colors.text} />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={handleBulkPin} style={{ padding: 6 }}>
-              <IconPin size={20} color={colors.text} />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={handleBulkMute} style={{ padding: 6 }}>
-              <IconVolume2 size={20} color={colors.text} />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={handleBulkArchive} style={{ padding: 6 }}>
-              <IconArchive size={20} color={colors.text} />
-            </TouchableOpacity>
-            <TouchableOpacity onPress={handleBulkDelete} style={{ padding: 6 }}>
-              <IconTrash size={20} color={colors.error || '#EF4444'} />
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      {/* Search is rendered by the parent (chat.js) as a WhatsApp-style
-          toggleable bar in the header. The `searchQuery` prop is piped in
-          and drives `filteredConversations` below. No duplicate input here. */}
-      {!selectionMode && <>
+  // [2026-10-07 native-ui-build] Topo da lista (notas + filtros) extraído p/
+  // poder morar fixo (web/desktop) OU dentro do header da FlashList (nativo
+  // c/ large title). Memo p/ a FlashList não receber header novo a cada render.
+  const _topChromeEl = useMemo(() => (
+    <>
       {/* Instagram Notes strip — only shown when there are notes to display,
           otherwise the status/stories row already surfaces the "Seu status"
           CTA and we'd have two duplicate affordances. */}
@@ -7291,7 +7254,95 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
         ))}
         <FilterChip label={t('chat.filterArchived') || 'Arquivadas'} value="archived" count={archivedCount} />
       </ScrollView>
-      </>}
+    </>
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ), [notes, myNote, isDark, colors, t, FilterChip, unreadCount, favoritesCount, groupCount, channelCount, archivedCount, chatFolders]);
+
+  // Large title "Conversas" (iOS UINavigationBar large title / M3 large top
+  // app bar): rola 1:1 com a lista; o chat.js faz o título compacto aparecer
+  // quando ele passa por baixo do header (onLargeTitleCollapsedChange).
+  const _largeTitleEl = useMemo(() => (largeTitle ? (
+    <Text accessibilityRole="header" numberOfLines={1} style={[s.largeTitle, { color: colors.text }]}>{largeTitle}</Text>
+  ) : null), [largeTitle, colors.text]);
+  const _listHeaderEl = useMemo(() => (largeTitle ? (
+    <>
+      {_largeTitleEl}
+      {!selectionMode && _topChromeEl}
+      {ListHeaderComponent}
+    </>
+  ) : ListHeaderComponent), [largeTitle, _largeTitleEl, selectionMode, _topChromeEl, ListHeaderComponent]);
+  const _ltCollapsedRef = useRef(false);
+  const _ltCbRef = useRef(onLargeTitleCollapsedChange);
+  _ltCbRef.current = onLargeTitleCollapsedChange;
+  const _onListScroll = useCallback((e) => {
+    const y = e?.nativeEvent?.contentOffset?.y || 0;
+    const c = y > LARGE_TITLE_COLLAPSE_Y;
+    if (c !== _ltCollapsedRef.current) {
+      _ltCollapsedRef.current = c;
+      try { _ltCbRef.current?.(c); } catch {}
+    }
+  }, []);
+  // Lista remontou (skeleton→lista, troca de conta) → título volta expandido.
+  useEffect(() => {
+    if (!largeTitle) return;
+    if (loading && _ltCollapsedRef.current) { _ltCollapsedRef.current = false; try { _ltCbRef.current?.(false); } catch {} }
+  }, [loading, largeTitle]);
+
+  return (
+    <View style={[{ flex: 1 }, isWeb && isDark && {
+      backgroundColor: '#0D0D10',
+    }]}>
+      {/* Selection toolbar */}
+      {selectionMode && (
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+          paddingHorizontal: 16, paddingVertical: 10,
+          backgroundColor: isDark ? 'rgba(17, 17, 17,0.12)' : 'rgba(17, 17, 17,0.08)',
+          borderBottomWidth: 1, borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+        }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+            <TouchableOpacity onPress={exitSelectionMode} style={{ padding: 4 }}>
+              <IconX size={22} color={colors.text} />
+            </TouchableOpacity>
+            <Text style={{ fontSize: 17, fontWeight: '700', color: colors.text }}>
+              {(t('chat.selected') || '{count} selected').replace('{count}', String(selectedIds.size))}
+            </Text>
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 16 }}>
+            <TouchableOpacity
+              onPress={handleBulkToggleUnread}
+              style={{ padding: 6 }}
+              accessibilityLabel={t('chat.markUnread') || 'Mark unread'}
+              accessibilityRole="button"
+            >
+              <IconMail size={20} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleBulkPin} style={{ padding: 6 }}>
+              <IconPin size={20} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleBulkMute} style={{ padding: 6 }}>
+              <IconVolume2 size={20} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleBulkArchive} style={{ padding: 6 }}>
+              <IconArchive size={20} color={colors.text} />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleBulkDelete} style={{ padding: 6 }}>
+              <IconTrash size={20} color={colors.error || '#EF4444'} />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Search is rendered by the parent (chat.js) as a WhatsApp-style
+          toggleable bar in the header. The `searchQuery` prop is piped in
+          and drives `filteredConversations` below. No duplicate input here. */}
+      {/* [2026-10-07 native-ui-build] Com large title (nativo mobile) notas +
+          filtros moram DENTRO da lista (rolam junto, padrão WhatsApp iOS) —
+          ver _listHeaderEl. Sem large title (web/desktop): fixos aqui. */}
+      {!selectionMode && !largeTitle && _topChromeEl}
+      {!!largeTitle && loading && !refreshing && (
+        <>{_largeTitleEl}{!selectionMode && _topChromeEl}</>
+      )}
 
       {/* List */}
       {loading && !refreshing ? (
@@ -7327,11 +7378,15 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
           data={visibleConversations}
           keyExtractor={keyExtractor}
           estimatedItemSize={64}
-          ListHeaderComponent={ListHeaderComponent}
+          ListHeaderComponent={_listHeaderEl}
           ListFooterComponent={ListFooterComponent}
           renderItem={renderItem}
           ListEmptyComponent={ListEmptyComponent}
-          contentContainerStyle={listContentContainerStyle}
+          contentContainerStyle={bottomInset ? [listContentContainerStyle, { paddingBottom: bottomInset }] : listContentContainerStyle}
+          // [2026-10-07 native-ui-build] large title (scroll → título compacto
+          // no header) + tab bar translúcida iOS (conteúdo rola por baixo).
+          {...(largeTitle ? { onScroll: _onListScroll, scrollEventThrottle: 32 } : {})}
+          {...(bottomInset ? { scrollIndicatorInsets: { bottom: bottomInset } } : {})}
           ItemSeparatorComponent={ItemSeparatorComponent}
           // [2026-10-06 android-audit] With the search keyboard up, Android's
           // default ('never') eats the first tap on a conversation just to
@@ -7365,7 +7420,7 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
         >
           {/* Menu items */}
           <Animated.View style={[s.fabMenuWrap, {
-            bottom: 148,
+            bottom: 148 + (bottomInset || 0), // [2026-10-07 native-ui-build] tab bar de vidro iOS sobrepõe a lista
             opacity: fabMenuAnim,
             transform: [{ translateY: fabMenuAnim.interpolate({ inputRange: [0, 1], outputRange: [30, 0] }) }],
           }]}>
@@ -7889,13 +7944,17 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
       <View style={StyleSheet.absoluteFillObject}>
         {/* Backdrop — slightly lighter (0.40) per Telegram spec; tap fades out
             both backdrop and peek before unmount instead of hard popping. */}
-        <Animated.View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(0,0,0,0.40)', opacity: backdrop }]}>
+        {/* [2026-10-07 native-ui-build] iOS: material BORRADO atrás do menu
+            (UIVisualEffectView) — o chat list some no vidro como no iMessage.
+            Android/web: o mesmo rgba sólido 0.40 de antes. */}
+        <Animated.View style={[StyleSheet.absoluteFillObject, { opacity: backdrop }]}>
+          <BlurBackdrop isDark={isDark} dim={0.40} />
           <Pressable style={StyleSheet.absoluteFillObject} onPress={handleBackdropTap} />
         </Animated.View>
         <Animated.View
           {...dragResponder.panHandlers}
           style={{
-            position: 'absolute', left: 12, right: 12, bottom: Platform.OS === 'ios' ? 30 : 16,
+            position: 'absolute', left: 12, right: 12, bottom: Platform.OS === 'ios' ? 30 : androidBottomInset(16),
             opacity: backdrop,
             transform: [{ translateY: Animated.add(slideY, panY) }, { scale }],
           }}
@@ -7945,10 +8004,10 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
                 ? (isDark ? 'rgba(239,68,68,0.16)' : '#fee2e2')
                 : (isDark ? 'rgba(255,255,255,0.08)' : '#f3f4f6');
               return (
-                <TouchableOpacity
+                <PressableRow
                   key={i}
                   onPress={() => handleTap(it.onPress)}
-                  activeOpacity={0.6}
+                  highlightColor={isDark ? '#2b3644' : '#f1f2f4'}
                   style={{
                     flexDirection: 'row', alignItems: 'center', gap: 14,
                     paddingHorizontal: 14, paddingVertical: 10,
@@ -7968,7 +8027,7 @@ function ChatLongPressSheet({ conv, onClose, actions, colors, isDark, t, current
                   <Text style={{ flex: 1, fontSize: 16, color: it.color, fontWeight: '500', letterSpacing: -0.2 }}>
                     {it.label}
                   </Text>
-                </TouchableOpacity>
+                </PressableRow>
               );
             })}
           </View>
@@ -8871,6 +8930,11 @@ const s = StyleSheet.create({
     letterSpacing: 0.1,
   },
   listEmpty: { flexGrow: 1 },
+  // [2026-10-07 native-ui-build] large title nativo (34pt bold, iOS HIG).
+  largeTitle: {
+    fontSize: 32, fontWeight: '800', letterSpacing: -0.9,
+    paddingHorizontal: 16, paddingTop: 2, paddingBottom: 6,
+  },
   fab: {
     position: 'absolute',
     right: 20,

@@ -20,7 +20,7 @@
 //   _layout.js). Multiple sequential calls queue automatically.
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import { Modal, View, Text, Pressable, Animated, Platform } from 'react-native';
+import { Modal, View, Text, Pressable, Animated, Platform, Alert } from 'react-native';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 
@@ -156,10 +156,31 @@ export function ConfirmProvider({ children }) {
     setState({ visible: true, opts: next.opts });
   }, []);
 
+  const { t } = useLanguage() || {};
   const confirm = useCallback((opts) => new Promise((resolve) => {
+    // [2026-10-07 app-feel-ui] Native platforms: the OS dialog (UIAlertController
+    // on iOS, Material AlertDialog on Android) — the custom centered card read
+    // as a web modal. Destructive → red button on iOS. Web keeps the card.
+    if (Platform.OS !== 'web') {
+      const o = opts || {};
+      let settled = false;
+      const done = (v) => { if (settled) return; settled = true; resolve(v); };
+      try {
+        Alert.alert(
+          o.title || '',
+          o.message || undefined,
+          [
+            { text: o.cancelLabel || t?.('common.cancel') || 'Cancelar', style: 'cancel', onPress: () => done(false) },
+            { text: o.confirmLabel || t?.('common.confirm') || 'Confirmar', style: o.destructive ? 'destructive' : 'default', onPress: () => done(true) },
+          ],
+          { cancelable: true, onDismiss: () => done(false) },
+        );
+        return;
+      } catch { /* fall through to the custom card */ }
+    }
     queueRef.current.push({ opts: opts || {}, resolver: resolve });
     if (!resolverRef.current) showNext();
-  }), [showNext]);
+  }), [showNext, t]);
 
   const finish = useCallback((result) => {
     const r = resolverRef.current;

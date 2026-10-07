@@ -80,6 +80,7 @@ try {
 // iOS (Fabric + LayoutAnimation segfault, EXC_BAD_ACCESS at 0x18). Imported
 // before React/components so the monkey-patch is installed before any screen
 // mounts and schedules a LayoutAnimation. Android is left untouched.
+import { androidTopInset } from '../utils/systemInsets'; // [2026-10-07 android-native] edge-to-edge
 import '../services/disableLayoutAnimationIOS';
 // [2026-10-07 coldstart] Boot trace + native-splash owner + after-first-paint
 // scheduler. Imported this early so its T0 is as close to bundle start as
@@ -344,6 +345,8 @@ import OfflineNotice from '../components/OfflineNotice';
 import NotificationToast from '../components/NotificationToast';
 import { CallProvider } from '../context/CallContext';
 import CallStatusBar from '../components/CallStatusBar';
+// [2026-10-07 voice-native] global voice-note mini player (leaves the chat → keeps playing)
+import VoiceMiniPlayer from '../components/chat/VoiceMiniPlayer';
 
 // Lazy-load call components to break circular dependency
 const IncomingCallListener = React.lazy(() => import('../components/IncomingCallListener'));
@@ -434,6 +437,10 @@ if (Platform.OS !== 'web' && typeof setTimeout === 'function') {
       bj.exportSyncConfig();
     } catch {}
   }, 2500);
+  // [2026-10-07 native-core] Phase 1 shadow native socket. init() returns on
+  // its first line while NATIVE_CORE_ENABLED is false and the test allowlist
+  // is empty (default) — nothing else runs.
+  afterFirstPaint(() => { try { require('../services/nativeCore').init(); } catch {} }, 4000);
 }
 
 // Handles deep links: mailto:, chat, email, and other app URLs
@@ -1613,6 +1620,28 @@ export default function RootLayout() {
   // (Apple HIG: replace slide transitions with a dissolve under Reduce Motion).
   const _reduceMotion = useReducedMotion();
   const _navAnim = (anim) => (_reduceMotion ? 'fade' : anim);
+  // [2026-10-07 app-feel-nav] Transições NATIVAS de verdade. Antes: default
+  // 'fade' 150ms em tudo + 'slide_from_right' 120-150ms (curva JS-like, rápida
+  // demais = "cara de site"). Agora:
+  //  - _PUSH: 'ios_from_right' → iOS resolve p/ o push NATIVO do
+  //    UINavigationController (parallax + sombra + swipe-back full-screen);
+  //    Android → slide com parallax (WhatsApp/Telegram). Sem animationDuration
+  //    (deixa a curva/duração do sistema). Web mantém slide_from_right.
+  //  - _FULL_MODAL: iOS fullScreenModal (cobre status bar → useSafeAreaInsets
+  //    correto; pageSheet devolve o inset da RAIZ = faixa vazia no topo) —
+  //    p/ telas que usam insets.top/KeyboardAvoiding (compose, photo-new...).
+  //  - pageSheet ('modal') SÓ p/ tela que não empurra card nem usa insets.top
+  //    (iOS renderiza card empurrado de dentro de modal ATRÁS dele).
+  const _PUSH = _navAnim(Platform.OS === 'web' ? 'slide_from_right' : 'ios_from_right');
+  const _FULL_MODAL = Platform.OS === 'ios' ? { presentation: 'fullScreenModal' } : { presentation: 'modal', animation: _navAnim('slide_from_bottom') };
+  // Telas com header NATIVO (settings/contacts/chat-new → components/nativeHeader.js):
+  // headerShown já no 1º frame (senão o header "entra" depois do push e o
+  // conteúdo pula). Título/cores finais vêm do setOptions da própria tela.
+  const _NATIVE_HDR = Platform.OS === 'web' ? {} : {
+    headerShown: true, title: '', headerBackButtonDisplayMode: 'minimal', headerShadowVisible: true,
+    headerStyle: { backgroundColor: _navIsDark ? '#111b21' : '#ffffff' },
+    headerTintColor: _navIsDark ? '#e9edef' : '#111b21',
+  };
   // Cache-ready gate: services/mmkv.js hydrates the in-memory cache from
   // AsyncStorage asynchronously at module load. Before that finishes,
   // SmartCache.getCachedMessagesSync / getCachedConversationsSync return
@@ -1695,7 +1724,7 @@ export default function RootLayout() {
                             : 'rgba(30,30,30,0.95)';
                   const _wrap = {
                     position: 'absolute',
-                    top: Platform.OS === 'ios' ? 54 : 24,
+                    top: Platform.OS === 'ios' ? 54 : androidTopInset(24),
                     left: 16, right: 16,
                     backgroundColor: _bg,
                     borderRadius: 12, paddingVertical: 11, paddingHorizontal: 16,
@@ -1733,8 +1762,7 @@ export default function RootLayout() {
                 <ChildRestrictionGuard>
                 <Stack screenOptions={{
                   headerShown: false,
-                  animation: 'fade',
-                  animationDuration: 150,
+                  animation: _PUSH,
                   // [2026-09-24] Pinta o fundo do container de cada tela com a cor
                   // do tema → elimina o flash branco durante a transição.
                   contentStyle: { backgroundColor: _navBg },
@@ -1745,127 +1773,128 @@ export default function RootLayout() {
                 }}>
                   <Stack.Screen name="index" options={{ animation: 'none' }} />
                   <Stack.Screen name="login" options={{ animation: 'fade', animationDuration: 150 }} />
-                  <Stack.Screen name="signup-phone" options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="signup-username" options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="change-phone" options={{ headerShown: false, presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
-                  <Stack.Screen name="linked-phones" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="signup-phone" options={{ headerShown: false, animation: _PUSH }} />
+                  <Stack.Screen name="signup-username" options={{ headerShown: false, animation: _PUSH }} />
+                  <Stack.Screen name="change-phone" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="linked-phones" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="verify-phone-required" options={{ animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
                   <Stack.Screen name="inbox" options={{ animation: 'fade', animationDuration: 100 }} />
-                  <Stack.Screen name="compose" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
-                  <Stack.Screen name="read" options={{ presentation: 'modal', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="profile" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
-                  <Stack.Screen name="settings" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
-                  <Stack.Screen name="bia-settings" options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="compose" options={{ ..._FULL_MODAL }} />
+                  <Stack.Screen name="read" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="profile" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="settings" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />
+                  <Stack.Screen name="bia-settings" options={{ headerShown: false, animation: _PUSH }} />
                   <Stack.Screen name="meet/[id]" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
-                  <Stack.Screen name="feed/[id]" options={{ headerShown: false, animation: 'fade', animationDuration: 120 }} />
-                  <Stack.Screen name="search" options={{ headerShown: false, animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="feed/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="search" options={{ headerShown: false, animation: _PUSH }} />
                   <Stack.Screen name="call" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false, freezeOnBlur: false }} />
                   <Stack.Screen name="call/[id]" options={{ headerShown: false, presentation: 'card', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="voicemail-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, gestureEnabled: false }} />
-                  <Stack.Screen name="meetings" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="meeting-create" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 150 }} />
-                  <Stack.Screen name="meeting-detail" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="meeting-recap" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="call-recap" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="files" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="calendar" options={{ presentation: 'card', animation: 'fade', animationDuration: 150, gestureEnabled: false }} />
-                  <Stack.Screen name="event-detail" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="meetings" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="meeting-create" options={{ ..._FULL_MODAL }} />
+                  <Stack.Screen name="meeting-detail" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="meeting-recap" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="call-recap" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="files" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="calendar" options={{ presentation: 'card', animation: _PUSH, gestureEnabled: false }} />
+                  <Stack.Screen name="event-detail" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="chat" options={{ presentation: 'card', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="chat-conversation" options={{
                     presentation: 'card',
-                    animation: _navAnim(Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right'),
-                    animationDuration: _reduceMotion ? 120 : 150,
+                    animation: _PUSH,
                     gestureEnabled: true,
                     ...(Platform.OS !== 'web' ? { fullScreenGestureEnabled: true } : {}),
                   }} />
-                  <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 150 }} />
-                  <Stack.Screen name="locked-chats" options={{ headerShown: false, presentation: 'card', animation: _navAnim(Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right'), animationDuration: 150 }} />
-                  <Stack.Screen name="saved-messages" options={{ headerShown: false, animation: 'fade', animationDuration: 100 }} />
-                  <Stack.Screen name="call-schedule" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="close-friends" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="status-except" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="profile-insights" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="profile-creator-dashboard" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="starred-messages" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="linked-devices" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="companion-qr" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  {/* iOS QA 2026-05-28: these 4 are opened from /settings (modal).
-                      iOS drops 'card' pushes from inside a modal — new screen renders BEHIND
-                      the modal so the user sees no change. Switching to 'modal' presentation
-                      makes them overlay /settings correctly. */}
-                  <Stack.Screen name="activity-log" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
-                  <Stack.Screen name="advanced-key" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
-                  <Stack.Screen name="advanced-privacy" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 150 }} />
-                  <Stack.Screen name="profile-qr" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="email-signatures" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="email-import" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="pgp-keys" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="tasks" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="notification-preferences" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="spotlight" options={{ presentation: 'card', animation: 'slide_from_bottom', animationDuration: 180 }} />
-                  <Stack.Screen name="bots" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 120 }} />
-                  <Stack.Screen name="documentos" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="one" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="drive" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="photos" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="photo-new" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 200 }} />
+                  <Stack.Screen name="chat-new" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />
+                  <Stack.Screen name="locked-chats" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="saved-messages" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="call-schedule" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="close-friends" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="status-except" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="profile-insights" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="profile-creator-dashboard" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="starred-messages" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="linked-devices" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="companion-qr" options={{ presentation: 'card', animation: _PUSH }} />
+                  {/* iOS QA 2026-05-28: iOS drops 'card' pushes from inside a modal (render
+                      BEHIND it). [2026-10-07 app-feel-nav] /settings agora é push (card), então
+                      estes e TODO o resto aberto de /settings (notification-preferences,
+                      family, pgp-keys, ...) empilham normal com swipe-back nativo. */}
+                  <Stack.Screen name="activity-log" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="advanced-key" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="advanced-privacy" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="profile-qr" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="email-signatures" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="email-import" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="pgp-keys" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="tasks" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="notification-preferences" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="spotlight" options={{ presentation: 'card', animation: _navAnim('slide_from_bottom') }} />
+                  <Stack.Screen name="bots" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="documentos" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="legal" options={{ presentation: 'card', animation: _PUSH }} />{/* [2026-10-07 native-ui-build] /legal?doc=terms|privacy — push nativo (antes caía no default) */}
+                  <Stack.Screen name="one" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="drive" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="photos" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="photo-new" options={{ ..._FULL_MODAL }} />
                   <Stack.Screen name="live-broadcast" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
                   <Stack.Screen name="live-viewer" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
-                  <Stack.Screen name="lives-saved" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="lives-saved" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="live-replay" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120 }} />
-                  <Stack.Screen name="live-discover" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="notes" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150, gestureEnabled: false }} />
-                  <Stack.Screen name="plans" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="wallet" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="diamond-shop" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="storage" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="wallet-cashout" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="creator-earnings" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="backup" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="chat-backup" options={{ presentation: 'card', animation: Platform.OS !== 'web' ? 'ios_from_right' : 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="u/[username]" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="contacts" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="notifications" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="notifications-feed" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="live-discover" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="notes" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="notebook-editor" options={{ presentation: 'card', animation: _PUSH, gestureEnabled: false }} />
+                  <Stack.Screen name="plans" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="wallet" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="diamond-shop" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="storage" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="wallet-cashout" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="creator-earnings" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="backup" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="chat-backup" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="u/[username]" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="contacts" options={{ presentation: 'card', animation: _PUSH, ..._NATIVE_HDR }} />
+                  <Stack.Screen name="notifications" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="notifications-feed" options={{ presentation: 'card', animation: _PUSH }} />
                   <Stack.Screen name="group-call" options={{ presentation: 'fullScreenModal', animation: 'fade', animationDuration: 120, headerShown: false }} />
-                  <Stack.Screen name="one-memory" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="share-receive" options={{ presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />
-                  <Stack.Screen name="parental" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="parental-monitor" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="parental-child-chat" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="family" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="kids-learn" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="hashtag" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="hashtag/[tag]" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="one-memory" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="share-receive" options={{ ..._FULL_MODAL }} />
+                  <Stack.Screen name="parental" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="parental-monitor" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="parental-child-chat" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="family" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="kids-learn" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="hashtag" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="hashtag/[tag]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   {/* Channel follow deep-link: /ch/<handle> → chat_channel_join */}
-                  <Stack.Screen name="ch/[handle]" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="ch/[handle]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   {/* Snap-Map / Friends-on-a-Map (Find My Friends style). */}
-                  <Stack.Screen name="snap-map" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="snap-map" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
                   {/* Reels P0 — "Use this sound" deep link + Duet/Stitch composer. */}
                   <Stack.Screen name="reels-sound" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'fade', animationDuration: 150 }} />
                   {/* Reels recorder — dedicated full-screen camera (TikTok/Instagram-style). */}
-                  <Stack.Screen name="reels-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'slide_from_bottom', animationDuration: 180 }} />
+                  <Stack.Screen name="reels-recorder" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom') }} />
                   {/* Reels drafts — grid of persisted drafts; tap to resume. */}
-                  <Stack.Screen name="reels-drafts" options={{ headerShown: false, presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />
-                  <Stack.Screen name="post-create" options={{ headerShown: false, presentation: 'fullScreenModal', animation: 'slide_from_bottom', animationDuration: 150 }} />
-                  <Stack.Screen name="community/[id]" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="community/create" options={{ headerShown: false, presentation: 'modal', animation: 'slide_from_bottom', animationDuration: 180 }} />
-                  <Stack.Screen name="community/discover" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="forgot" options={{ animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="marketplace" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="business" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="stickers/store" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="stickers/my" options={{ headerShown: false, presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="share-diagnose" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="live-diagnose" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
-                  <Stack.Screen name="call-diagnose" options={{ presentation: 'card', animation: 'slide_from_right', animationDuration: 150 }} />
+                  <Stack.Screen name="reels-drafts" options={{ headerShown: false, ..._FULL_MODAL }} />
+                  <Stack.Screen name="post-create" options={{ headerShown: false, presentation: 'fullScreenModal', animation: _navAnim('slide_from_bottom') }} />
+                  <Stack.Screen name="community/[id]" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="community/create" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="community/discover" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="forgot" options={{ animation: _PUSH }} />
+                  <Stack.Screen name="marketplace" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="business" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="stickers/store" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="stickers/my" options={{ headerShown: false, presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="share-diagnose" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="live-diagnose" options={{ presentation: 'card', animation: _PUSH }} />
+                  <Stack.Screen name="call-diagnose" options={{ presentation: 'card', animation: _PUSH }} />
                 </Stack>
                 </ChildRestrictionGuard>
                 <Suspense fallback={null}>
                   <ActiveCallBar />
                 </Suspense>
                 <CallStatusBar />
+                <VoiceMiniPlayer />
                 <Suspense fallback={null}>
                   <IncomingCallListener />
                 </Suspense>

@@ -3962,6 +3962,85 @@ try {
 } catch {}
 try { loadEnvelopeMode().catch(() => {}); } catch {}
 
+// ─── [2026-10-07 native-send] Envio nativo pelo hub Go (fase 1: texto) ─────
+// Quando o socket está autenticado e o hub anunciou `caps:['native_send']` no
+// auth_success (só contas do canário — flag HUB_NATIVE_SEND + allowlist no
+// servidor), o texto vai num frame WS `chat_send` e o hub responde no MESMO
+// socket com `chat_send_ack` (linha do servidor, mesmo shape do HTTP) ou
+// `chat_send_fallback` (forma/gate que o hub não porta → HTTP). Sem resposta
+// em NATIVE_SEND_ACK_TIMEOUT_MS → HTTP com o MESMO client_message_id (o PHP
+// faz dedup por (remetente, cmi) e devolve a linha já gravada, se gravou).
+// Devolve o resultado no formato do HTTP ({success,data,message}) ou null.
+const NATIVE_SEND_ACK_TIMEOUT_MS = 4000;
+function _nativeSendSocket() {
+  try {
+    if (globalThis.__chatyy_native_send_off === true) return null; // kill-switch local (debug)
+    const { isPhoenixHubEnabled } = require('./flags');
+    if (isPhoenixHubEnabled?.()) return null;
+  } catch {}
+  let ws = null;
+  try { ws = require('./websocket').default; } catch { return null; }
+  if (!ws || !ws.isConnected || !Array.isArray(ws.serverCaps) || !ws.serverCaps.includes('native_send')) return null;
+  if (!ws.ws || ws.ws.readyState !== 1) return null;
+  return ws;
+}
+function _rememberNativeSent(id) {
+  try {
+    if (id == null) return;
+    const g = globalThis;
+    if (!g.__chatyy_nativeSentIds) g.__chatyy_nativeSentIds = new Set();
+    g.__chatyy_nativeSentIds.add(id);
+    if (g.__chatyy_nativeSentIds.size > 500) {
+      const first = g.__chatyy_nativeSentIds.values().next().value;
+      g.__chatyy_nativeSentIds.delete(first);
+    }
+  } catch {}
+}
+async function _tryNativeWsSend(payload) {
+  const ws = _nativeSendSocket();
+  if (!ws) return null;
+  const cmi = payload.client_message_id;
+  if (!cmi) return null;
+  const frame = {
+    type: 'chat_send',
+    conversation_id: payload.conversation_id,
+    client_message_id: cmi,
+    msg_type: 'text',
+    content: payload.content,
+  };
+  for (const k of ['reply_to_id', 'reply_quote_text', 'mentions', 'effect', 'silent', 'sealed']) {
+    if (payload[k] != null && payload[k] !== '') frame[k] = payload[k];
+  }
+  return await new Promise((resolve) => {
+    let done = false;
+    let offAck = null; let offFb = null; let timer = null;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      try { offAck?.(); } catch {}
+      try { offFb?.(); } catch {}
+      if (timer) clearTimeout(timer);
+      resolve(v);
+    };
+    offAck = ws.on('chat_send_ack', (m) => {
+      if (!m || m.client_message_id !== cmi) return;
+      const row = m.message;
+      if (!row || row.id == null) { finish(null); return; }
+      _rememberNativeSent(row.id);
+      finish({ success: true, data: row, message: m.status || 'Message sent', _native_send: true, _dedup: !!m.dedup });
+    });
+    offFb = ws.on('chat_send_fallback', (m) => {
+      if (!m || m.client_message_id !== cmi) return;
+      finish(null);
+    });
+    timer = setTimeout(() => finish(null), NATIVE_SEND_ACK_TIMEOUT_MS);
+    try {
+      if (ws.ws && ws.ws.readyState === 1) ws.ws.send(ws._encodeOutbound(frame));
+      else finish(null);
+    } catch { finish(null); }
+  });
+}
+
 export async function chatSend(conversationId, content, type = 'text', replyToId = null, mentions = null, fileUrl = null, tempId = null, clientMessageId = null, topicId = null, opts = null) {
   // Guard: server raises an unhelpful 400 when conversation_id is empty/0,
   // and the client bubble sticks as "pending" because the error message
@@ -4208,7 +4287,17 @@ export async function chatSend(conversationId, content, type = 'text', replyToId
       // opts.meta also forces PHP — the Rust signal-server INSERT path
       // doesn't know about the meta JSONB column yet and would silently
       // drop the structured payload (same problem as effect / sealed).
-      if (!topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed && !opts?.meta) {
+      // [2026-10-07 native-send] Texto puro → hub Go (ack no próprio socket).
+      // Qualquer coisa fora disso (mídia, tópico, meta, sem conteúdo) segue
+      // direto pro HTTP. null = hub sem a capability / fallback / timeout 4s.
+      if (type === 'text' && !fileUrl && !topicId && !opts?.meta
+          && typeof content === 'string' && content.trim() !== '') {
+        try {
+          const nat = await _tryNativeWsSend(payload);
+          if (nat?.success) result = nat;
+        } catch {}
+      }
+      if (!result && !topicId && !opts?.skipRust && !opts?.effect && !opts?.sealed && !opts?.meta) {
         const rust = await _rustChatPost('send', payload);
         if (rust?.success) { result = rust; }
       }

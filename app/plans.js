@@ -15,6 +15,7 @@ import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
 import * as api from '../services/api';
 import * as IAP from '../services/iap';
 import AvatarCircle from '../components/AvatarCircle';
+import { openInApp } from '../utils/inAppBrowser'; // [2026-10-07 app-feel-webview]
 import {
   IconArrowLeft, IconStar, IconStarFilled, IconCheck, IconChevronDown, IconChevronUp,
   IconX, IconSparkles, IconUsers, IconShield, IconPlus, IconTrash,
@@ -2902,7 +2903,7 @@ export default function PlansScreen() {
             </Text>
             <View style={{ flexDirection: 'row', justifyContent: 'center', gap: 12, marginTop: 10, flexWrap: 'wrap' }}>
               <TouchableOpacity
-                onPress={() => Linking.openURL('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/')}
+                onPress={() => openInApp('https://www.apple.com/legal/internet-services/itunes/dev/stdeula/', { colors, isDark })}
                 activeOpacity={0.7}
                 accessibilityRole="link"
               >
@@ -2912,7 +2913,7 @@ export default function PlansScreen() {
               </TouchableOpacity>
               <Text style={{ color: colors.textTertiary, fontSize: 12 }}>·</Text>
               <TouchableOpacity
-                onPress={() => Linking.openURL('https://chatyy.com.br/privacy')}
+                onPress={() => openInApp('https://chatyy.com.br/privacy.html', { colors, isDark })}
                 activeOpacity={0.7}
                 accessibilityRole="link"
               >
@@ -2922,7 +2923,7 @@ export default function PlansScreen() {
               </TouchableOpacity>
               <Text style={{ color: colors.textTertiary, fontSize: 12 }}>·</Text>
               <TouchableOpacity
-                onPress={() => Linking.openURL('https://chatyy.com.br/support')}
+                onPress={() => openInApp('https://chatyy.com.br/suporte/', { colors, isDark })}
                 activeOpacity={0.7}
                 accessibilityRole="link"
               >

@@ -3,6 +3,7 @@ import Foundation
 import Network
 import CoreHaptics
 import UIKit
+import AudioToolbox
 import Speech
 import os
 
@@ -81,6 +82,15 @@ public class ExpoNativeToolkitModule: Module {
         AsyncFunction("stopReachability") { () -> Void in
             self.monitor.cancel()
             self.monitorStarted = false
+        }
+
+        // ─── iOS system sounds ───────────────────────────────────────
+        // [2026-10-07 android-native] Moved here from the dead
+        // expo-native-chat-view module (only its playSend/ReceiveSound were
+        // still used). 1004 = SMS sent "whoosh" (chat send), 1003 = mail-sent
+        // pop (chat receive). No bundled asset, doesn't touch AVAudioSession.
+        Function("playSystemSound") { (soundId: Int) -> Void in
+            AudioServicesPlaySystemSound(SystemSoundID(soundId))
         }
 
         // ─── Core Haptics ────────────────────────────────────────────
