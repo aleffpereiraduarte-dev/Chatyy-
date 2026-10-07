@@ -122,16 +122,17 @@ object ChatNotifStore {
      * not FOREGROUND, so it does not count.)
      */
     fun isAppVisibleToUser(ctx: Context): Boolean {
-        return try {
+        try {
             val info = ActivityManager.RunningAppProcessInfo()
             ActivityManager.getMyMemoryState(info)
             if (info.importance != ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND) return false
             val pm = ctx.getSystemService(Context.POWER_SERVICE) as? PowerManager
             if (pm != null && !pm.isInteractive) return false
             val km = ctx.getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
-            !(km?.isKeyguardLocked ?: false)
+            val locked = km?.isKeyguardLocked ?: false
+            return !locked
         } catch (_: Throwable) {
-            false
+            return false
         }
     }
 }
