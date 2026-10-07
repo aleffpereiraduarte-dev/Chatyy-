@@ -26,6 +26,11 @@ import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import useStatuses from '../hooks/useStatuses';
 import StoryRingAvatar from './status/StoryRingAvatar';
+// [2026-10-08 apps-native] Canonical empty-state + press primitives + haptics.
+import ScreenEmptyState from './ScreenEmptyState';
+import PressableScale from './PressableScale';
+import PressableRow from './PressableRow';
+import { haptic } from '../constants/theme';
 let mailWs = null;
 try { mailWs = require('../services/websocket').default; } catch {}
 
@@ -294,33 +299,47 @@ const StoriesStrip = React.memo(function StoriesStrip({ user, colors, isDark, t,
       borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
       backgroundColor: isDark ? colors.background : FEED_CANVAS,
     }}>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 14, gap: 16 }}>
-        {/* Your status — always first */}
-        <TouchableOpacity onPress={openOwn} activeOpacity={0.75} style={{ alignItems: 'center', width: 72 }}>
-          <StoryRingAvatar
-            name={myDisplay}
-            email={user?.email}
-            size={58}
-            /* [beauty 2026-10-01] Segmented ring (IG/WhatsApp parity) so the own
-               tile shows how many items + which are seen, not a flat solid ring.
-               pulse off keeps the top of the feed calm/clean. */
-            ringStyle={myEntry ? 'segmented' : 'none'}
-            segments={(myEntry?.items || []).length || 1}
-            itemsViewed={(myEntry?.items || []).map(it => !!it.viewed)}
-            pulse={false}
-            badge="plus"
-            isDark={isDark}
-            colors={colors}
-          />
-          <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '600', letterSpacing: -0.1 }} numberOfLines={1}>
-            {myEntry ? myDisplay : (t?.('status.yourStory') || 'Seu status')}
-          </Text>
-        </TouchableOpacity>
-        {/* Others */}
-        {others.map((g) => {
+      {/* [2026-10-08 apps-native] Horizontal FlatList (virtualized) instead of
+          ScrollView+map — a big contact list with active statuses mounted every
+          StoryRingAvatar (SVG ring + avatar) up front. Own tile = list header. */}
+      <FlatList
+        horizontal
+        data={others}
+        keyExtractor={(g) => `fs-${g.email}`}
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={{ paddingHorizontal: 14, gap: 16 }}
+        initialNumToRender={6}
+        maxToRenderPerBatch={6}
+        windowSize={5}
+        ListHeaderComponent={
+          <View>
+            {/* Your status — always first */}
+            <TouchableOpacity onPress={openOwn} activeOpacity={0.75} style={{ alignItems: 'center', width: 72 }}>
+              <StoryRingAvatar
+                name={myDisplay}
+                email={user?.email}
+                size={58}
+                /* [beauty 2026-10-01] Segmented ring (IG/WhatsApp parity) so the own
+                   tile shows how many items + which are seen, not a flat solid ring.
+                   pulse off keeps the top of the feed calm/clean. */
+                ringStyle={myEntry ? 'segmented' : 'none'}
+                segments={(myEntry?.items || []).length || 1}
+                itemsViewed={(myEntry?.items || []).map(it => !!it.viewed)}
+                pulse={false}
+                badge="plus"
+                isDark={isDark}
+                colors={colors}
+              />
+              <Text style={{ fontSize: 11.5, color: colors.text, marginTop: 6, fontWeight: '600', letterSpacing: -0.1 }} numberOfLines={1}>
+                {myEntry ? myDisplay : (t?.('status.yourStory') || 'Seu status')}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        }
+        renderItem={({ item: g }) => {
           const allViewed = (g.items || []).every(it => it.viewed);
           return (
-            <TouchableOpacity key={`fs-${g.email}`} onPress={() => openGroup(g.email)} activeOpacity={0.75} style={{ alignItems: 'center', width: 72 }}>
+            <TouchableOpacity onPress={() => openGroup(g.email)} activeOpacity={0.75} style={{ alignItems: 'center', width: 72 }}>
               <StoryRingAvatar
                 name={g.name || g.email}
                 email={g.email}
@@ -338,8 +357,8 @@ const StoriesStrip = React.memo(function StoriesStrip({ user, colors, isDark, t,
               </Text>
             </TouchableOpacity>
           );
-        })}
-      </ScrollView>
+        }}
+      />
     </View>
   );
 });
@@ -426,6 +445,8 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
   // issue was a 5xx / network drop.
   const [feedError, setFeedError] = useState(false);
   const [createVisible, setCreateVisible] = useState(false);
+  // [2026-10-08 apps-native] câmera do Reels → volta p/ posts e abre o composer (estável p/ não invalidar renderItem).
+  const openCreateFromReels = useCallback(() => { setFeedMode('posts'); setCreateVisible(true); }, []);
   // [Bug-hunt P2 2026-05-30] Repost wiring. FeedPost.handleRepost calls
   // onPostUpdated(post, { repostOf, originalPost }) expecting the container to
   // open the composer preloaded. ChatFeedTab was passing a NO-OP, so Repostar
@@ -759,11 +780,14 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
       if (livePollRef.current) { clearInterval(livePollRef.current); livePollRef.current = null; }
     };
-    if (!mailWs.isConnected || !mailWs.authenticated) startPolling();
-    const unsubConn = mailWs.on('connection', (data) => {
+    // [2026-10-08 apps-native] mailWs can be null (guarded require at the top)
+    // → `mailWs.isConnected` threw and killed the whole Feed tab. No socket =
+    // fall back to polling.
+    if (!mailWs || !mailWs.isConnected || !mailWs.authenticated) startPolling();
+    const unsubConn = mailWs?.on ? mailWs.on('connection', (data) => {
       if (data?.status === 'authenticated') stopPolling();
       else if (data?.status === 'disconnected') startPolling();
-    });
+    }) : null;
 
     return () => {
       stopPolling();
@@ -773,6 +797,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
   }, [loadPosts, loadLives]);
 
   const handleRefresh = useCallback(() => {
+    try { haptic.light(); } catch {} // [2026-10-08 apps-native] native pull-to-refresh tick
     setRefreshing(true);
     setPage(1);
     // Reset hasMore so pagination re-arms — previously stuck at false after
@@ -853,10 +878,13 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
 
   const handleCommentCountChange = useCallback((newCount) => {
     if (!commentsPost) return;
+    // [2026-10-08 apps-native] FeedPost/FeedPostRow read `comments_count`
+    // FIRST (backend shape) — patching only `comment_count` left the counter
+    // and "Ver todos os N comentários" stale after commenting. Patch all aliases.
     setPosts(prev => prev.map(p =>
-      p.id === commentsPost.id ? { ...p, comment_count: newCount } : p
+      p.id === commentsPost.id ? { ...p, comment_count: newCount, comments_count: newCount, comments: newCount } : p
     ));
-    setCommentsPost(prev => prev ? { ...prev, comment_count: newCount } : null);
+    setCommentsPost(prev => prev ? { ...prev, comment_count: newCount, comments_count: newCount, comments: newCount } : null);
   }, [commentsPost]);
 
   const isWeb = Platform.OS === 'web';
@@ -1076,8 +1104,10 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
   );
 
   // ── Search results list ──
+  // [2026-10-08 apps-native] Row = PressableRow (iOS cell highlight / Android
+  // ripple) instead of a fading TouchableOpacity card.
   const renderUserCard = useCallback(({ item: usr }) => (
-    <TouchableOpacity
+    <PressableRow
       style={[styles.userCard, {
         backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff',
         ...(isWeb ? {
@@ -1097,7 +1127,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       <AvatarCircle name={usr.name} email={usr.email} size={50} />
       <View style={styles.userCardInfo}>
         <Text style={[styles.userCardName, { color: colors.text }]} numberOfLines={1}>
-          {usr.name || usr.email.split('@')[0]}
+          {usr.name || String(usr.email || '').split('@')[0]}
         </Text>
         <Text style={[styles.userCardEmail, { color: colors.textSecondary }]} numberOfLines={1}>
           {usr.email}
@@ -1113,7 +1143,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       >
         <Text style={styles.followButtonText}>{t('profile.follow')}</Text>
       </TouchableOpacity>
-    </TouchableOpacity>
+    </PressableRow>
   ), [isDark, colors, isWeb, t, handlePressUser, clearSearch]);
 
   const renderSearchContent = () => {
@@ -1125,12 +1155,14 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       );
     }
     if (searchQuery.trim().length >= 2 && searchResults.length === 0) {
+      // [2026-10-08 apps-native] canonical empty state (was a bare text line).
       return (
-        <View style={styles.searchStatusContainer}>
-          <Text style={[styles.searchStatusText, { color: colors.textSecondary }]}>
-            {t('feed.noResults')}
-          </Text>
-        </View>
+        <ScreenEmptyState
+          kind="search"
+          compact
+          title={t('feed.noResults')}
+          subtitle={t('feed.searchHint')}
+        />
       );
     }
     if (searchQuery.trim().length < 2 && isSearchActive) {
@@ -1161,6 +1193,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         contentContainerStyle={styles.searchResultsList}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
       />
     );
   };
@@ -1216,6 +1249,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
               <TouchableOpacity
                 style={styles.suggestionFollowBtn}
                 onPress={async () => {
+                  try { haptic.light(); } catch {} // [2026-10-08 apps-native]
                   try { await api.followUser(u.email); } catch {}
                   setSuggestions(prev => prev.filter(s => s.email !== u.email));
                 }}
@@ -1311,40 +1345,29 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
     // [silent-fail-w3] If the feed fetch failed with nothing cached, show a
     // distinct error state with a tap-to-retry pill instead of the misleading
     // "Seu feed está vazio" copy. Previously the catch only logged to console.
+    // [2026-10-08 apps-native] Canonical ScreenEmptyState (premium, B&W) for
+    // both the error and the empty feed. Error CTA was a red pill (off-palette);
+    // empty feed had no action at all → now "Criar publicação" + discover tips.
     if (feedError) {
       return (
-        <View style={styles.emptyContainer}>
-          <EmptyFeedIllustration isDark={isDark} />
-          <Text style={[styles.emptyText, { color: colors.text }]}>
-            {t('feed.loadError') || 'Erro ao carregar feed.'}
-          </Text>
-          <TouchableOpacity
-            accessibilityRole="button"
-            onPress={() => { setFeedError(false); setLoading(true); loadPosts(1, true); }}
-            activeOpacity={0.75}
-            style={{
-              marginTop: 12, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 999,
-              backgroundColor: isDark ? 'rgba(220,38,38,0.15)' : 'rgba(220,38,38,0.10)',
-            }}>
-            <Text style={{ color: '#dc2626', fontWeight: '700', fontSize: 13 }}>
-              {t('chat.retry') || 'Tentar novamente'}
-            </Text>
-          </TouchableOpacity>
-        </View>
+        <ScreenEmptyState
+          kind="feed"
+          title={t('feed.loadError') || 'Erro ao carregar feed.'}
+          subtitle={t('feed.loadErrorSub') || 'Verifique sua conexão e tente de novo.'}
+          cta={{ label: t('chat.retry') || 'Tentar novamente', onPress: () => { try { haptic.light(); } catch {} setFeedError(false); setLoading(true); loadPosts(1, true); } }}
+        />
       );
     }
     return (
-      <View style={styles.emptyContainer}>
-        <EmptyFeedIllustration isDark={isDark} />
-        <Text style={[styles.emptyText, { color: colors.text }]}>
-          {t('feed.empty')}
-        </Text>
-        <Text style={[styles.emptySubtext, { color: colors.textSecondary }]}>
-          {t('feed.emptySubtext')}
-        </Text>
-      </View>
+      <ScreenEmptyState
+        kind="feed"
+        title={t('feed.empty')}
+        subtitle={t('feed.emptySubtext')}
+        cta={{ label: t('feed.createPost') || 'Criar publicação', onPress: () => { try { haptic.light(); } catch {} setCreateVisible(true); } }}
+        secondary={algorithm === 'following' ? { label: t('feed.forYou') || 'Para você', onPress: () => setAlgorithm('fyp') } : { label: t('feed.unifiedSearch') || 'Pesquisa', onPress: () => { try { router?.push('/search'); } catch {} } }}
+      />
     );
-  }, [loading, feedError, isDark, colors, t, loadPosts]);
+  }, [loading, feedError, t, loadPosts, algorithm, router]);
 
   // ── Tab toggle bar — sliding pill (premium messenger style) ──
   const tabSlide = useRef(new Animated.Value(feedMode === 'reels' ? 1 : 0)).current;
@@ -1379,19 +1402,19 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         position: 'absolute',
         top: 4, bottom: 4, left: algoPillLeft,
         width: '48%',
-        backgroundColor: isDark ? 'rgba(17, 17, 17,0.20)' : 'rgba(17, 17, 17,0.10)',
+        backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17, 17, 17,0.10)', // [2026-10-08 apps-native] dark pill was black-on-black
         borderRadius: 10,
       }} />
       <TouchableOpacity
         style={styles.tabItem}
-        onPress={() => setAlgorithm('fyp')}
+        onPress={() => { if (algorithm !== 'fyp') { try { haptic.select(); } catch {} } setAlgorithm('fyp'); }}
         activeOpacity={0.7}
         accessibilityLabel={t('feed.forYou') || 'Para você'}
         accessibilityRole="tab"
       >
         <Text style={[
           styles.tabItemText,
-          { color: algorithm === 'fyp' ? ACCENT : (isDark ? '#aaa' : '#666') },
+          { color: algorithm === 'fyp' ? (isDark ? '#fff' : ACCENT) : (isDark ? '#aaa' : '#666') },
           algorithm === 'fyp' && styles.tabItemTextActive,
         ]}>
           {t('feed.forYou') || 'Para você'}
@@ -1399,14 +1422,14 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       </TouchableOpacity>
       <TouchableOpacity
         style={styles.tabItem}
-        onPress={() => setAlgorithm('following')}
+        onPress={() => { if (algorithm !== 'following') { try { haptic.select(); } catch {} } setAlgorithm('following'); }}
         activeOpacity={0.7}
         accessibilityLabel={t('feed.following') || 'Seguindo'}
         accessibilityRole="tab"
       >
         <Text style={[
           styles.tabItemText,
-          { color: algorithm === 'following' ? ACCENT : (isDark ? '#aaa' : '#666') },
+          { color: algorithm === 'following' ? (isDark ? '#fff' : ACCENT) : (isDark ? '#aaa' : '#666') },
           algorithm === 'following' && styles.tabItemTextActive,
         ]}>
           {t('feed.following') || 'Seguindo'}
@@ -1424,19 +1447,19 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
         position: 'absolute',
         top: 6, bottom: 6, left: pillLeft,
         width: '48%',
-        backgroundColor: isDark ? 'rgba(17, 17, 17,0.20)' : 'rgba(17, 17, 17,0.10)',
+        backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17, 17, 17,0.10)', // [2026-10-08 apps-native] dark pill was black-on-black
         borderRadius: 10,
       }} />
       <TouchableOpacity
         style={styles.tabItem}
-        onPress={() => setFeedMode('posts')}
+        onPress={() => { if (feedMode !== 'posts') { try { haptic.select(); } catch {} } setFeedMode('posts'); }}
         activeOpacity={0.7}
         accessibilityLabel={t('feed.posts') || 'Posts'}
         accessibilityRole="tab"
       >
         <Text style={[
           styles.tabItemText,
-          { color: feedMode === 'posts' ? ACCENT : (isDark ? '#aaa' : '#666') },
+          { color: feedMode === 'posts' ? (isDark ? '#fff' : ACCENT) : (isDark ? '#aaa' : '#666') },
           feedMode === 'posts' && styles.tabItemTextActive,
         ]}>
           {t('feed.posts') || 'Posts'}
@@ -1444,14 +1467,14 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
       </TouchableOpacity>
       <TouchableOpacity
         style={styles.tabItem}
-        onPress={() => setFeedMode('reels')}
+        onPress={() => { if (feedMode !== 'reels') { try { haptic.select(); } catch {} } setFeedMode('reels'); }}
         activeOpacity={0.7}
         accessibilityLabel={t('feed.reels') || 'Reels'}
         accessibilityRole="tab"
       >
         <Text style={[
           styles.tabItemText,
-          { color: feedMode === 'reels' ? ACCENT : (isDark ? '#aaa' : '#666') },
+          { color: feedMode === 'reels' ? (isDark ? '#fff' : ACCENT) : (isDark ? '#aaa' : '#666') },
           feedMode === 'reels' && styles.tabItemTextActive,
         ]}>
           {t('feed.reels') || 'Reels'}
@@ -1528,7 +1551,10 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
   if (feedMode === 'reels') {
     return (
       <View style={[styles.container, { backgroundColor: '#000' }]}>
-        <ReelsViewer colors={colors} isDark={isDark} t={t} user={user} router={router} parentActive={parentActive} />
+        {/* [2026-10-08 apps-native] onCreate liga o botão câmera do reel (antes morto).
+            CreatePostModal só monta no modo posts → volta pra posts e abre o composer. */}
+        <ReelsViewer colors={colors} isDark={isDark} t={t} user={user} router={router} parentActive={parentActive}
+          onCreate={openCreateFromReels} />
         {/* Small back-to-posts pill at top-left */}
         <TouchableOpacity
           style={[styles.backToPostsPill, { top: safeTopPill }]}
@@ -1611,7 +1637,8 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
 
       {/* Scroll-to-top FAB */}
       {showScrollTop && (
-        <TouchableOpacity
+        <PressableScale
+          haptic="light"
           style={[styles.fabScrollTop, {
             backgroundColor: isDark ? 'rgba(30,30,30,0.95)' : 'rgba(255,255,255,0.95)',
             ...(isWeb ? { boxShadow: '0 4px 14px rgba(0,0,0,0.15)' } : {}),
@@ -1622,7 +1649,7 @@ function ChatFeedTab({ colors, isDark, t, user, router, initialFeedMode, onFeedM
           accessibilityRole="button"
         >
           <IconChevronUp size={22} color={isDark ? '#fff' : '#111'} />
-        </TouchableOpacity>
+        </PressableScale>
       )}
 
       {/* Go Live FAB — pulse ring + scroll-top glass blur for a more

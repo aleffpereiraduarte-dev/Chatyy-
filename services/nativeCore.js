@@ -26,15 +26,38 @@
 // When everything is off, init() returns on its first statement.
 // Capability-detected: requireOptionalNativeModule → null on binaries without
 // the module → no-op. Never throws.
+//
+// [2026-10-08 native-core-2] PHASE 2 groundwork — flag NATIVE_CORE_PRIMARY
+// (default OFF; dev override globalThis.__chatyy_native_core_primary). Only
+// for accounts where the shadow runs, and only on binaries whose module
+// reports version() >= 2. When active:
+//   - native.setPrimary(true): the native socket forwards RAW every frame that
+//     carries a per-user `event_id` ("onChatCoreRaw"); we inject it into
+//     services/websocket.js `_handleMessage` → the SAME listeners as today.
+//     A shared event_id dedup (mailWs._evDedup) makes the first socket win;
+//     the JS socket stays connected as the fallback for everything (calls,
+//     presence, typing, acks, frames without event_id, sends when the native
+//     socket is down).
+//   - text sends (services/api.js _tryNativeWsSend) go through the native
+//     outbox: sendTextNative() → native.sendText (persisted, re-sent with the
+//     same cmi on reconnect) → "onChatCoreAck" → resolves with the HTTP-shaped
+//     result. Timeout → native.cancelSend + null → HTTP with the same cmi.
 
 import { Platform } from 'react-native';
-import { NATIVE_CORE_ENABLED, NATIVE_CORE_TEST_ACCOUNTS } from '../constants/featureFlags';
+import { NATIVE_CORE_ENABLED, NATIVE_CORE_TEST_ACCOUNTS, NATIVE_CORE_PRIMARY } from '../constants/featureFlags';
 
 const PARITY_SETTLE_MS = 30 * 1000;      // a frame is judged once both sides had 30s to see it
 const PARITY_TICK_MS = 60 * 1000;
 const PARITY_REPORT_EVERY_MS = 10 * 60 * 1000;
 const MERGE_DEBOUNCE_MS = 2500;
 const MAX_TRACKED = 2000;
+const EV_DEDUP_MAX = 4096;
+// Frames the native side must never inject (it already filters; belt+braces).
+const CONTROL_TYPES = new Set([
+  'auth_success', 'auth_error', 'welcome', 'pong', 'resume_result', 'resume_complete',
+  'resume_full_sync', 'session_replaced', 'superseded', 'server_shutdown',
+  'chat_send_ack', 'chat_send_fallback', 'subscribed', 'msgpack_upgraded',
+]);
 
 function _canon(e) {
   return String(e || '').trim().toLowerCase().replace(/@onemundo\.com\.br$/, '@chatyy.com.br');
@@ -46,6 +69,21 @@ function _globalOn() {
 
 function _testList() {
   return Array.isArray(NATIVE_CORE_TEST_ACCOUNTS) ? NATIVE_CORE_TEST_ACCOUNTS : [];
+}
+
+function _primaryOverride() {
+  try {
+    const o = globalThis.__chatyy_native_core_primary;
+    return o === true || o === false ? o : undefined;
+  } catch { return undefined; }
+}
+
+/** [phase 2] Is NATIVE_CORE_PRIMARY on for this account? (flag level only) */
+export function isPrimaryEnabledFor(acct) {
+  if (!isEnabledFor(acct)) return false;
+  const o = _primaryOverride();
+  if (o !== undefined) return o;
+  return NATIVE_CORE_PRIMARY === true;
 }
 
 /** Could the flag be on for SOME account on this bundle? (cheap, sync) */
@@ -101,6 +139,15 @@ let _appStateSub = null;
 let _tick = null;
 let _mergeTimer = null;
 let _lastReportAt = 0;
+// [phase 2]
+let _primary = false;          // primary active (flag + native v2 + running)
+let _nativeAuthed = false;
+let _nativeCaps = [];
+const _evSeen = new Set();
+const _evOrder = [];
+const _pendingSends = new Map(); // cmi → { finish }
+let _p2 = _freshP2();
+function _freshP2() { return { inj: 0, inj_dup: 0, inj_stale: 0, js_dup: 0, tx: 0, ack: 0, fb: 0, to: 0, rej: 0 }; }
 
 const _nativeSeen = new Map(); // "cid:mid" → ms
 const _jsSeen = new Map();     // "cid:mid" → ms
@@ -169,12 +216,146 @@ function _onNativeState(e) {
     const s = String(e?.state || '');
     _nativeState = s;
     _agg.states[s] = (_agg.states[s] || 0) + 1;
-    if (s === 'authenticated') _nativeAuthedAt = Date.now();
+    if (s === 'authenticated') {
+      _nativeAuthedAt = Date.now();
+      _nativeAuthed = true;
+      _nativeCaps = Array.isArray(e?.caps) ? e.caps.slice(0, 32) : [];
+    } else if (s === 'closed' || s === 'fatal' || s === 'acct_mismatch' || s === 'replaced' || s === 'no_bearer' || s === 'connecting' || s === 'auth_error') {
+      _nativeAuthed = false;
+    }
     if (s === 'fatal' || s === 'acct_mismatch' || s === 'replaced' || s === 'no_bearer') {
       _running = s === 'no_bearer' ? _running : false;
       require('./crashReporter').reportStep?.('native_core_state', `state=${s} reason=${String(e?.reason || e?.email || '').slice(0, 60)}`);
     }
   } catch {}
+}
+
+// ─── [phase 2] Primary frames + native outbox ────────────────────────────────
+function _evRemember(ev) {
+  _evSeen.add(ev);
+  _evOrder.push(ev);
+  if (_evOrder.length > EV_DEDUP_MAX) _evSeen.delete(_evOrder.shift());
+}
+
+// Installed as mailWs._evDedup while primary. Called by websocket.js for every
+// frame with a numeric event_id (both the JS socket's and the injected ones).
+// true → drop (duplicate).
+function _evDedup(msg) {
+  const ev = msg.event_id;
+  if (msg.__nc === true) return false; // injected by us — already remembered
+  if (_evSeen.has(ev)) { _p2.js_dup++; return true; }
+  _evRemember(ev);
+  return false;
+}
+
+function _onNativeRaw(e) {
+  try {
+    if (!_primary || !e || typeof e.raw !== 'string') return;
+    let msg;
+    try { msg = JSON.parse(e.raw); } catch { return; }
+    if (!msg || typeof msg !== 'object' || typeof msg.event_id !== 'number' || !msg.type) return;
+    if (CONTROL_TYPES.has(msg.type)) return;
+    const ws = _mailWs();
+    if (!ws || typeof ws._handleMessage !== 'function') return;
+    if (_evSeen.has(msg.event_id)) { _p2.inj_dup++; return; }
+    // Resume replays the JS socket already advanced past → it processed them.
+    if (msg.resumed === true && msg.event_id <= (Number(ws._lastEventId) || 0)) { _p2.inj_stale++; return; }
+    _evRemember(msg.event_id);
+    delete msg.ack_id; // acks belong to the socket that received the frame
+    msg.__nc = true;
+    _p2.inj++;
+    ws._handleMessage(msg);
+  } catch {}
+}
+
+function _onNativeAck(e) {
+  try {
+    const cmi = e && e.cmi;
+    if (!cmi) return;
+    const p = _pendingSends.get(cmi);
+    if (!p) return;
+    if (e.ok === true && typeof e.raw === 'string') {
+      let m = null;
+      try { m = JSON.parse(e.raw); } catch {}
+      const row = m && m.message;
+      if (row && row.id != null) {
+        _p2.ack++;
+        p.finish({ success: true, data: row, message: m.status || 'Message sent', _native_send: true, _native_core: true, _dedup: !!m.dedup });
+        return;
+      }
+    }
+    _p2.fb++;
+    p.finish(null);
+  } catch {}
+}
+
+function _nativeVersion() {
+  try { return Number(_native()?.version?.()) || 0; } catch { return 0; }
+}
+
+function _applyPrimary(acct) {
+  const m = _native();
+  const want = !!m && isPrimaryEnabledFor(acct) && _nativeVersion() >= 2 &&
+    typeof m.setPrimary === 'function' && typeof m.sendText === 'function';
+  const ws = _mailWs();
+  if (want) {
+    try { m.setPrimary(true); } catch {}
+    if (ws) ws._evDedup = _evDedup;
+    _primary = true;
+  } else {
+    if (_primary || (ws && ws._evDedup === _evDedup)) {
+      try { m?.setPrimary?.(false); } catch {}
+      if (ws && ws._evDedup === _evDedup) ws._evDedup = null;
+    }
+    _primary = false;
+  }
+}
+
+/**
+ * [phase 2] Can services/api.js route a text send through the native outbox
+ * right now? (primary active + native socket authenticated + hub cap).
+ */
+export function canSendNative() {
+  if (!_primary || !_running || !_nativeAuthed) return false;
+  if (!_nativeCaps.includes('native_send')) return false;
+  const m = _native();
+  return !!m && typeof m.sendText === 'function';
+}
+
+/**
+ * [phase 2] Send a hub `chat_send` frame through the native outbox.
+ * Resolves: HTTP-shaped result on ack; null on fallback/timeout (caller → HTTP
+ * with the same cmi); undefined when the native side refused it locally
+ * (caller → JS socket path).
+ */
+export function sendTextNative(frame, timeoutMs = 4000) {
+  return new Promise((resolve) => {
+    const m = _native();
+    const cmi = frame && frame.client_message_id;
+    if (!m || !cmi || !_acct) { resolve(undefined); return; }
+    let done = false;
+    let timer = null;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      if (timer) clearTimeout(timer);
+      _pendingSends.delete(cmi);
+      resolve(v);
+    };
+    _pendingSends.set(cmi, { finish });
+    timer = setTimeout(() => {
+      _p2.to++;
+      try { m.cancelSend?.(cmi); } catch {}
+      finish(null);
+    }, timeoutMs);
+    let json;
+    try { json = JSON.stringify(frame); } catch { finish(undefined); return; }
+    _p2.tx++;
+    Promise.resolve()
+      .then(() => m.sendText(_acct, cmi, json))
+      .then((ok) => { if (ok !== true) { _p2.rej++; finish(undefined); } })
+      .catch(() => { _p2.rej++; finish(undefined); });
+  });
 }
 
 function _scheduleMerge() {
@@ -223,7 +404,7 @@ function _report(reason, force) {
     if (!force && now - _lastReportAt < PARITY_REPORT_EVERY_MS) return;
     const a = _agg;
     const total = a.both + a.native_only + a.js_only + a.js_only_native_down;
-    if (total === 0 && a.native_rcpt === 0 && a.js_rcpt === 0) return;
+    if (total === 0 && a.native_rcpt === 0 && a.js_rcpt === 0 && !(_primary && (_p2.inj || _p2.tx))) return;
     _lastReportAt = now;
     let nat = null;
     try { nat = _native()?.getState?.() || null; } catch {}
@@ -237,7 +418,9 @@ function _report(reason, force) {
       st: a.states,
       ns: { c: st.connect || 0, a: st.auth_ok || 0, d: st.disconnect || 0, pt: st.pong_timeout || 0, rr: st.resume_replayed || 0, fs: st.resume_full_sync || 0, js: st.journal_skip || 0 },
     };
+    if (_primary) info.p2 = _p2;
     _agg = _freshAgg();
+    _p2 = _freshP2();
     require('./crashReporter').reportStep?.('native_core_parity', JSON.stringify(info).slice(0, 460));
   } catch {}
 }
@@ -288,6 +471,11 @@ function _start(why) {
       const b = _addNativeListener('onChatCoreState', _onNativeState);
       if (a) _subs.push(a);
       if (b) _subs.push(b);
+      // [phase 2] cheap when primary is off (native never emits them).
+      const c = _addNativeListener('onChatCoreRaw', _onNativeRaw);
+      const d = _addNativeListener('onChatCoreAck', _onNativeAck);
+      if (c) _subs.push(c);
+      if (d) _subs.push(d);
     }
     _attachJsListeners();
     let lastEv = 0;
@@ -295,8 +483,10 @@ function _start(why) {
     let dev = '';
     try { dev = require('./crashReporter').getAnonIdSync?.() || ''; } catch {}
     if (acct !== _acct) { _nativeSeen.clear(); _jsSeen.clear(); }
+    if (acct !== _acct) { _nativeAuthed = false; _nativeCaps = []; }
     _acct = acct;
     _running = true;
+    _applyPrimary(acct);
     m.start(acct, lastEv, dev)?.catch?.(() => {});
     if (!_tick) _tick = setInterval(() => _report('tick', false), PARITY_TICK_MS);
   } catch {}
@@ -305,9 +495,22 @@ function _start(why) {
 function _stop(why) {
   try {
     const m = _native();
+    if (_primary) {
+      try { m?.setPrimary?.(false); } catch {}
+      const ws = _mailWs();
+      if (ws && ws._evDedup === _evDedup) ws._evDedup = null;
+      _primary = false;
+    }
     if (m) m.stop(String(why || 'stop'))?.catch?.(() => {});
   } catch {}
   _running = false;
+  _nativeAuthed = false;
+  // In-flight native sends → HTTP (same cmi); native keeps them persisted and
+  // re-sends on the next connect (dedup), unless cancelled here.
+  for (const [cmi, p] of _pendingSends) {
+    try { _native()?.cancelSend?.(cmi); } catch {}
+    try { p.finish(null); } catch {}
+  }
   if (_tick) { clearInterval(_tick); _tick = null; }
   _report(why || 'stop', true);
   _detachJsListeners();
@@ -349,7 +552,12 @@ export function getDiagnostics() {
   return {
     flag: isFlagPossiblyOn(), running: _running, acct: _acct, state: _nativeState,
     available: !!_native(), native: nat, pending: { native: _nativeSeen.size, js: _jsSeen.size },
+    primary: _primary, nativeAuthed: _nativeAuthed, caps: _nativeCaps, version: _nativeVersion(),
+    p2: { ..._p2 }, sendsInFlight: _pendingSends.size,
   };
 }
 
-export default { init, shutdown, getDiagnostics, isEnabledFor, isFlagPossiblyOn };
+export default {
+  init, shutdown, getDiagnostics, isEnabledFor, isFlagPossiblyOn,
+  isPrimaryEnabledFor, canSendNative, sendTextNative,
+};

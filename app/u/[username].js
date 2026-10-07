@@ -4,7 +4,7 @@
  * ("duarte@chatyy.com.br"); the Profile component resolves either.
  */
 import React, { useCallback } from 'react';
-import { View, StyleSheet, TouchableOpacity, Platform, StatusBar } from 'react-native';
+import { View, StyleSheet, Platform, StatusBar, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../../context/ThemeContext';
@@ -12,6 +12,7 @@ import { useLanguage } from '../../context/LanguageContext';
 import { useAuth } from '../../context/AuthContext';
 import Profile from '../../components/Profile';
 import { IconArrowLeft } from '../../components/Icons';
+import PressableScale from '../../components/PressableScale'; // [2026-10-08 apps-native]
 
 export default function UserProfileScreen() {
   const { username, openStatus, openSettings } = useLocalSearchParams();
@@ -30,11 +31,25 @@ export default function UserProfileScreen() {
     router.push(`/chat-conversation?name=${encodeURIComponent(email.split('@')[0])}&email=${encodeURIComponent(email)}`);
   }, [router]);
 
+  // [2026-10-08 apps-native] Ligar/vídeo do perfil caíam no chat sem ligar:
+  // chat-conversation NUNCA leu o param `startCall`. Agora usa o MESMO
+  // caminho do redial da aba Ligações (voipNative.startOutgoingCall →
+  // UI nativa no mobile; /call no web).
   const handleCall = useCallback((email, isVideo) => {
     if (!email) return;
-    // Existing call entrypoint is through the chat conversation; open there.
-    router.push(`/chat-conversation?email=${encodeURIComponent(email)}&startCall=${isVideo ? 'video' : 'audio'}`);
-  }, [router]);
+    const name = String(email).split('@')[0];
+    const jsRoute = (cid) => router.push(`/call?${cid ? `callId=${cid}&` : ''}contactName=${encodeURIComponent(name)}&contactEmail=${encodeURIComponent(email)}&isVideo=${isVideo ? '1' : '0'}&isCaller=1`);
+    if (Platform.OS === 'web') { jsRoute(null); return; }
+    (async () => {
+      try {
+        const voipNative = require('../../services/voipNative');
+        await voipNative.startOutgoingCall({ calleeEmail: email, calleeName: name, isVideo: !!isVideo, conversationId: '', onWebFallback: jsRoute });
+      } catch (e) {
+        console.warn('[u/profile] startOutgoingCall failed:', e?.message || e);
+        try { Alert.alert(t?.('common.error') || 'Erro', t?.('chat.callError') || 'Não foi possível iniciar a chamada'); } catch {}
+      }
+    })();
+  }, [router, t]);
 
   const handleEmail = useCallback((email) => {
     if (!email) return;
@@ -55,14 +70,15 @@ export default function UserProfileScreen() {
     <View style={[styles.container, { backgroundColor: colors.background, paddingTop: topPad }]}>
       <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
       {/* Minimal back button — no clutter header */}
-      <TouchableOpacity
-        onPress={() => router.back()}
+      <PressableScale
+        onPress={() => { if (router.canGoBack?.()) router.back(); else router.replace('/chat'); }}
+        hitSlop={8}
         style={[styles.backBtn, { top: topPad + 2, backgroundColor: isDark ? 'rgba(0,0,0,0.5)' : 'rgba(255,255,255,0.8)' }]}
         accessibilityLabel={t?.('common.back') || 'Back'}
         accessibilityRole="button"
       >
         <IconArrowLeft size={22} color={colors.text} />
-      </TouchableOpacity>
+      </PressableScale>
 
       <Profile
         mode="full"

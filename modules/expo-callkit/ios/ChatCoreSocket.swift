@@ -17,6 +17,18 @@ import UIKit
 ///     the real work. Own "nc-…" instance_id → the hub never supersedes the
 ///     JS socket because of us.
 /// Nothing here runs unless JS calls start() (NATIVE_CORE_ENABLED flag).
+///
+/// [2026-10-08 native-core-2] Phase 2 groundwork (JS flag NATIVE_CORE_PRIMARY,
+/// default OFF — inert unless JS calls setPrimary(true) / sendText()):
+///   - primary: frames carrying a per-user `event_id` are forwarded RAW to JS
+///     ("onChatCoreRaw"); JS injects them into services/websocket.js with a
+///     shared event_id dedup. Control frames are never forwarded.
+///   - native outbox (text): sendText() queues a hub `chat_send` frame
+///     (native_send cap), persisted in the app-group UserDefaults (per account,
+///     cap 50, TTL 24h), re-sent with the same client_message_id after every
+///     reconnect; chat_send_ack / chat_send_fallback → "onChatCoreAck".
+///   - hub treats client "native-core" as non-presence (no initial_data,
+///     offline-queue flush, call/live/presence/typing; own 4-socket cap).
 final class ChatCoreSocket {
     static let shared = ChatCoreSocket()
 
@@ -29,6 +41,29 @@ final class ChatCoreSocket {
     private let authWatchdog: TimeInterval = 6
     private let backoff: [TimeInterval] = [1, 2, 4, 8, 16, 30]
     private let seenMax = 1024
+    private let outboxKey = "chat_core_outbox_v1"
+    private let outboxMax = 50
+    private let outboxTTL: TimeInterval = 24 * 60 * 60
+    private static let controlTypes: Set<String> = [
+        "auth_success", "auth_error", "welcome", "pong", "resume_result", "resume_complete",
+        "resume_full_sync", "session_replaced", "superseded", "server_shutdown",
+        "chat_send_ack", "chat_send_fallback", "subscribed", "msgpack_upgraded",
+    ]
+
+    /// [phase 2] one queued text send (hub `chat_send` frame, JSON string).
+    private final class OutItem {
+        let cmi: String
+        let acct: String
+        let frame: String
+        let createdAt: Date
+        var sent = false
+        init(cmi: String, acct: String, frame: String, createdAt: Date) {
+            self.cmi = cmi
+            self.acct = acct
+            self.frame = frame
+            self.createdAt = createdAt
+        }
+    }
 
     /// (eventName, body) → ChatCoreModule.sendEvent. Set in OnCreate.
     var emitter: ((String, [String: Any?]) -> Void)?
@@ -56,6 +91,11 @@ final class ChatCoreSocket {
     private var stats: [String: Int64] = [:]
     private var seenOrder: [String] = []
     private var seenSet = Set<String>()
+    // [phase 2] (all on q)
+    private var primary = false
+    private var caps = Set<String>()
+    private var outbox: [OutItem] = []
+    private var outboxLoaded = false
 
     private init() {}
 
@@ -64,6 +104,7 @@ final class ChatCoreSocket {
     func start(acct: String, jsLastEventId: Int64, deviceId devId: String) {
         q.async {
             self.installObserversLocked()
+            self.loadOutboxLocked()
             let a = Self.normEmail(acct)
             if a != self.expectedAcct {
                 self.closeLocked(reason: "acct_switch")
@@ -85,7 +126,10 @@ final class ChatCoreSocket {
             self.inForeground = true
             let wasEnabled = self.enabled
             self.enabled = true
-            if wasEnabled && (self.authed || self.connecting) { return }
+            if wasEnabled && (self.authed || self.connecting) {
+                self.flushOutboxLocked()
+                return
+            }
             self.attempts = 0
             self.stats = [:]
             self.startPingLocked()
@@ -99,6 +143,52 @@ final class ChatCoreSocket {
 
     func isRunning() -> Bool { return q.sync { () -> Bool in enabled } }
 
+    // MARK: - [phase 2] Primary + outbox API
+
+    func setPrimary(_ on: Bool) {
+        q.async {
+            self.primary = on
+            self.bump(on ? "primary_on" : "primary_off")
+        }
+    }
+
+    /// Queue a text send. `frameJson` must be a hub `chat_send` frame whose
+    /// client_message_id == cmi. false = rejected locally → JS uses its own path.
+    func sendText(acct: String, cmi: String, frameJson: String) -> Bool {
+        let a = Self.normEmail(acct)
+        if a.isEmpty || cmi.isEmpty || cmi.count > 128 || frameJson.utf8.count > 64 * 1024 { return false }
+        guard let d = frameJson.data(using: .utf8),
+              let o = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any],
+              (o["type"] as? String) == "chat_send",
+              (o["client_message_id"] as? String) == cmi else { return false }
+        return q.sync { () -> Bool in
+            self.loadOutboxLocked()
+            if !self.outbox.contains(where: { $0.cmi == cmi }) {
+                if self.outbox.count >= self.outboxMax {
+                    self.bump("outbox_full")
+                    return false
+                }
+                self.outbox.append(OutItem(cmi: cmi, acct: a, frame: frameJson, createdAt: Date()))
+            }
+            self.bump("outbox_add")
+            self.persistOutboxLocked()
+            self.q.async { self.flushOutboxLocked() }
+            return true
+        }
+    }
+
+    /// JS gave up on the native path (timeout → HTTP with the same cmi).
+    func cancelSend(cmi: String) {
+        q.async {
+            let before = self.outbox.count
+            self.outbox.removeAll(where: { $0.cmi == cmi })
+            if self.outbox.count != before {
+                self.bump("outbox_cancel")
+                self.persistOutboxLocked()
+            }
+        }
+    }
+
     func snapshot() -> [String: Any] {
         return q.sync { () -> [String: Any] in
             var s: [String: Any] = [:]
@@ -107,6 +197,7 @@ final class ChatCoreSocket {
                 "enabled": enabled, "connecting": connecting, "authenticated": authed,
                 "acct": authedAcct, "lastEventId": NSNumber(value: lastEventId),
                 "instanceId": instanceId, "stats": s,
+                "primary": primary, "caps": Array(caps), "outbox": NSNumber(value: outbox.count),
             ]
         }
     }
@@ -156,6 +247,11 @@ final class ChatCoreSocket {
         DispatchQueue.main.async { e?("onChatCoreFrame", body) }
     }
 
+    private func emitNamed(_ name: String, _ body: [String: Any?]) {
+        let e = emitter
+        DispatchQueue.main.async { e?(name, body) }
+    }
+
     private func stopLocked(reason: String) {
         enabled = false
         reconnectItem?.cancel(); reconnectItem = nil
@@ -166,6 +262,7 @@ final class ChatCoreSocket {
 
     private func closeLocked(reason: String) {
         watchdogItem?.cancel(); watchdogItem = nil
+        markOutboxUnsentLocked()
         authed = false
         connecting = false
         guard let t = task else { return }
@@ -265,6 +362,7 @@ final class ChatCoreSocket {
         bump("disconnect")
         emitState("closed", ["reason": why])
         persistLocked(force: true)
+        markOutboxUnsentLocked()
         scheduleReconnectLocked()
     }
 
@@ -326,6 +424,14 @@ final class ChatCoreSocket {
             eventsSinceFlush += 1
             persistLocked(force: false)
         }
+        // [phase 2] raw forward of per-user frames while primary.
+        if primary && ev > 0 && !type.isEmpty && !Self.controlTypes.contains(type) {
+            bump("raw_fwd")
+            emitNamed("onChatCoreRaw", [
+                "raw": text, "type": type, "eventId": Double(ev),
+                "at": Date().timeIntervalSince1970 * 1000,
+            ])
+        }
         switch type {
         case "auth_success":
             let email = Self.normEmail(msg["email"] as? String)
@@ -342,8 +448,18 @@ final class ChatCoreSocket {
             watchdogItem?.cancel(); watchdogItem = nil
             lastPongAt = Date()
             bump("auth_ok")
-            emitState("authenticated", ["email": authedAcct])
+            var cs = Set<String>()
+            if let arr = msg["caps"] as? [Any] {
+                for c in arr.prefix(32) {
+                    if let str = c as? String { cs.insert(str) }
+                }
+            }
+            caps = cs
+            emitState("authenticated", ["email": authedAcct, "caps": Array(cs)])
             sendLocked(t, ["type": "resume", "last_event_id": NSNumber(value: lastEventId)])
+            flushOutboxLocked()
+        case "chat_send_ack", "chat_send_fallback":
+            onSendResultLocked(type, msg, text)
         case "auth_error":
             bump("auth_error")
             let reason = (msg["reason"] as? String) ?? ""
@@ -435,6 +551,108 @@ final class ChatCoreSocket {
             "journaled": journaled,
             "at": Date().timeIntervalSince1970 * 1000,
         ])
+    }
+
+    // MARK: - [phase 2] Outbox internals (all on q)
+
+    private func emitAck(_ cmi: String, ok: Bool, reason: String, raw: String?) {
+        var body: [String: Any?] = [
+            "cmi": cmi, "ok": ok, "reason": reason,
+            "at": Date().timeIntervalSince1970 * 1000,
+        ]
+        if let r = raw { body["raw"] = r }
+        emitNamed("onChatCoreAck", body)
+    }
+
+    private func onSendResultLocked(_ type: String, _ msg: [String: Any], _ text: String) {
+        guard let cmi = msg["client_message_id"] as? String, !cmi.isEmpty else { return }
+        let before = outbox.count
+        outbox.removeAll(where: { $0.cmi == cmi })
+        if outbox.count != before { persistOutboxLocked() }
+        var ok = false
+        if type == "chat_send_ack" {
+            ok = (msg["success"] as? Bool) ?? true
+        }
+        bump(ok ? "send_ack" : "send_fallback")
+        var reason = ""
+        if !ok { reason = (msg["reason"] as? String) ?? "fallback" }
+        emitAck(cmi, ok: ok, reason: reason, raw: text)
+    }
+
+    private func markOutboxUnsentLocked() {
+        for o in outbox { o.sent = false }
+    }
+
+    private func flushOutboxLocked() {
+        guard authed, let t = task, !authedAcct.isEmpty else { return }
+        let now = Date()
+        let canSend = caps.contains("native_send")
+        var failed: [(String, String)] = []
+        var keep: [OutItem] = []
+        var toSend: [OutItem] = []
+        for o in outbox {
+            if now.timeIntervalSince(o.createdAt) > outboxTTL {
+                failed.append((o.cmi, "expired"))
+                continue
+            }
+            if o.acct != authedAcct {
+                keep.append(o) // other account's bearer — wait for it
+                continue
+            }
+            if !canSend {
+                failed.append((o.cmi, "no_caps"))
+                continue
+            }
+            keep.append(o)
+            if !o.sent {
+                o.sent = true
+                toSend.append(o)
+            }
+        }
+        if !failed.isEmpty {
+            outbox = keep
+            persistOutboxLocked()
+        }
+        for f in failed {
+            bump("send_local_fail")
+            emitAck(f.0, ok: false, reason: f.1, raw: nil)
+        }
+        for o in toSend {
+            bump("send_tx")
+            t.send(.string(o.frame)) { [weak self] err in
+                guard let self = self, err != nil else { return }
+                self.q.async {
+                    o.sent = false
+                    self.disconnectLocked(from: t, why: "send_failed")
+                }
+            }
+        }
+    }
+
+    private func loadOutboxLocked() {
+        if outboxLoaded { return }
+        outboxLoaded = true
+        guard let ud = UserDefaults(suiteName: groupId),
+              let arr = ud.array(forKey: outboxKey) as? [[String: Any]] else { return }
+        let now = Date()
+        for e in arr.prefix(outboxMax) {
+            guard let cmi = e["cmi"] as? String, !cmi.isEmpty,
+                  let frame = e["frame"] as? String,
+                  let at = e["at"] as? Double else { continue }
+            let created = Date(timeIntervalSince1970: at)
+            if now.timeIntervalSince(created) > outboxTTL { continue }
+            let acct = (e["acct"] as? String) ?? ""
+            outbox.append(OutItem(cmi: cmi, acct: acct, frame: frame, createdAt: created))
+        }
+    }
+
+    private func persistOutboxLocked() {
+        guard let ud = UserDefaults(suiteName: groupId) else { return }
+        var arr: [[String: Any]] = []
+        for o in outbox {
+            arr.append(["cmi": o.cmi, "acct": o.acct, "frame": o.frame, "at": o.createdAt.timeIntervalSince1970])
+        }
+        ud.set(arr, forKey: outboxKey)
     }
 
     private static func normEmail(_ e: String?) -> String {

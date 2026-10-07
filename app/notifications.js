@@ -3,13 +3,17 @@ import { canNavigateNow } from '../services/navGuard';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, StyleSheet,
-  Platform, RefreshControl, Animated, Easing,
+  Platform, RefreshControl, Animated, Easing, Image,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { FontSize, Spacing, BorderRadius } from '../constants/theme';
+import { FontSize, Spacing, BorderRadius, haptic } from '../constants/theme';
+import PressableRow from '../components/PressableRow'; // [2026-10-08 apps-native]
+import PressableScale from '../components/PressableScale';
+import { USE_NATIVE_HEADER, nativeHeaderOptions } from '../components/nativeHeader';
+import { ListSkeleton } from '../components/SkeletonLoader';
 import AvatarCircle from '../components/AvatarCircle';
 import {
   IconChevronLeft, IconCheck, IconBell, IconAtSign, IconHeart,
@@ -46,6 +50,19 @@ function _writeLive(items) {
   } catch {}
 }
 
+// [2026-10-08 apps-native] t() returns the RAW KEY when missing (never
+// falsy), so `t(k) || 'fallback'` never fell back — missing keys (e.g.
+// notifications.emptyTip*) rendered as "notifications.emptyTipLikes".
+// tl(): real key first, then a per-language inline fallback.
+let _lang = 'pt';
+function tl(t, key, fb, params) {
+  const v = t(key, params);
+  if (typeof v === 'string' && v && v !== key) return v;
+  let out = (typeof fb === 'string' ? fb : (fb[_lang] || fb.en || fb.pt)) || '';
+  if (params) Object.keys(params).forEach((k) => { out = out.split(`{${k}}`).join(String(params[k])); });
+  return out;
+}
+
 // ─── Tab filter config ─ Instagram Activity 4-segment layout ──────────────────
 // "Todas" / "Pra você" / "Seguindo" / "Você"
 //   - Todas:    everything
@@ -60,7 +77,7 @@ const TABS = [
 ];
 
 // ─── Per-type icon & colour ───────────────────────────────────────────────────
-function TypeBadge({ type, size = 18 }) {
+function TypeBadge({ type, size = 18, ringColor = '#fff' }) {
   const map = {
     email:   { Icon: IconMail,          bg: BRAND,    color: '#fff' },
     chat:    { Icon: IconMessageSquare, bg: BRAND,    color: '#fff' },
@@ -72,7 +89,7 @@ function TypeBadge({ type, size = 18 }) {
   };
   const cfg = map[type] || { Icon: IconBell, bg: '#6b7280', color: '#fff' };
   return (
-    <View style={[badge.wrap, { backgroundColor: cfg.bg }]}>
+    <View style={[badge.wrap, { backgroundColor: cfg.bg, borderColor: ringColor }]}>
       <cfg.Icon size={size - 4} color={cfg.color} />
     </View>
   );
@@ -87,7 +104,7 @@ const badge = StyleSheet.create({
 });
 
 // ─── Avatar stack (for grouped likes) ─────────────────────────────────────────
-function AvatarStack({ emails = [], size = 28 }) {
+function AvatarStack({ emails = [], size = 28, ringColor = '#fff' }) {
   const list = emails.slice(0, 3);
   return (
     <View style={{ flexDirection: 'row', alignItems: 'center', height: size }}>
@@ -98,7 +115,7 @@ function AvatarStack({ emails = [], size = 28 }) {
             marginLeft: idx === 0 ? 0 : -10,
             borderRadius: size / 2,
             borderWidth: 2,
-            borderColor: '#fff',
+            borderColor: ringColor,
             zIndex: list.length - idx,
           }}
         >
@@ -160,12 +177,13 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
     const first = names[0] || '';
     const second = names[1] || '';
     const rest = names.length - 2;
+    // [2026-10-08 apps-native] era PT hardcoded p/ todos os idiomas.
     if (rest > 0) {
-      title = `${first}, ${second} e mais ${rest} curtiram seu post`;
+      title = tl(t, 'notifications.likedMany', { pt: '{a}, {b} e mais {n} curtiram seu post', en: '{a}, {b} and {n} others liked your post', es: 'A {a}, {b} y {n} más les gustó tu publicación' }, { a: first, b: second, n: rest });
     } else if (second) {
-      title = `${first} e ${second} curtiram seu post`;
+      title = tl(t, 'notifications.likedTwo', { pt: '{a} e {b} curtiram seu post', en: '{a} and {b} liked your post', es: 'A {a} y {b} les gustó tu publicación' }, { a: first, b: second });
     } else {
-      title = `${first} curtiu seu post`;
+      title = tl(t, 'notifications.likedOne', { pt: '{a} curtiu seu post', en: '{a} liked your post', es: 'A {a} le gustó tu publicación' }, { a: first });
     }
     body = '';
   }
@@ -173,7 +191,7 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
   // Inline body verb for follow type — Instagram says "X seguiu você"
   if (item.type === 'follow' && !grouped) {
     const name = item.author_name || item.author_email || '';
-    title = name ? `${name} começou a seguir você` : title;
+    title = name ? tl(t, 'notifications.startedFollowing', { pt: '{name} começou a seguir você', en: '{name} started following you', es: '{name} comenzó a seguirte' }, { name }) : title;
   }
 
   const unreadBg = isDark ? 'rgba(17, 17, 17,0.10)' : 'rgba(17, 17, 17,0.05)';
@@ -186,10 +204,9 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
   const showActions = item.type === 'follow' && !item.action_taken;
 
   return (
-    <TouchableOpacity
+    <PressableRow
       style={[styles.row, !item.read && { backgroundColor: unreadBg }]}
       onPress={() => onPress(item)}
-      activeOpacity={0.7}
       accessibilityRole="button"
       accessibilityLabel={title}
     >
@@ -203,15 +220,15 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
       {/* Avatar (44) — stack for like-groups, single for others */}
       <View style={styles.avatarWrap}>
         {isLikeGroup ? (
-          <AvatarStack emails={item.actor_emails || []} size={36} />
+          <AvatarStack emails={item.actor_emails || []} size={36} ringColor={colors.background} />
         ) : item.author_email ? (
           <>
             <AvatarCircle email={item.author_email} size={44} />
-            <TypeBadge type={item.type} size={20} />
+            <TypeBadge type={item.type} size={20} ringColor={colors.background} />
           </>
         ) : (
           <View style={[styles.typeCircle, { backgroundColor: colors.primaryLight || colors.border }]}>
-            <TypeBadge type={item.type} size={26} />
+            <TypeBadge type={item.type} size={26} ringColor={colors.background} />
           </View>
         )}
       </View>
@@ -234,28 +251,27 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
 
         {showActions && (
           <View style={styles.actionRow}>
-            <TouchableOpacity
+            <PressableScale
               onPress={(e) => { e?.stopPropagation?.(); onAction?.(item, 'follow_back'); }}
               style={[styles.pillPrimary, { backgroundColor: BRAND }]}
-              activeOpacity={0.85}
+              haptic="medium"
               accessibilityRole="button"
-              accessibilityLabel={t('notifications.followBack') || 'Seguir de volta'}
+              accessibilityLabel={t('notifications.followBack')}
             >
               <Text style={styles.pillPrimaryText}>
-                {t('notifications.followBack') || 'Seguir de volta'}
+                {t('notifications.followBack')}
               </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </PressableScale>
+            <PressableScale
               onPress={(e) => { e?.stopPropagation?.(); onAction?.(item, 'message'); }}
               style={[styles.pillSecondary, { borderColor: colors.border }]}
-              activeOpacity={0.85}
               accessibilityRole="button"
-              accessibilityLabel={t('notifications.message') || 'Mensagem'}
+              accessibilityLabel={t('notifications.message')}
             >
               <Text style={[styles.pillSecondaryText, { color: colors.text }]}>
-                {t('notifications.message') || 'Mensagem'}
+                {t('notifications.message')}
               </Text>
-            </TouchableOpacity>
+            </PressableScale>
           </View>
         )}
       </View>
@@ -271,18 +287,11 @@ function NotifRow({ item, colors, isDark, onPress, onAction, t }) {
               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
             />
           ) : (
-            // RN-side: minimal Image without an extra import — we rely on a runtime require
-            // to avoid touching imports. If unsupported, the placeholder bg shows through.
-            (() => {
-              try {
-                const { Image } = require('react-native');
-                return <Image source={{ uri: thumbUri }} style={{ width: 44, height: 44 }} />;
-              } catch { return null; }
-            })()
+            <Image source={{ uri: thumbUri }} style={{ width: 44, height: 44 }} />
           )}
         </View>
       )}
-    </TouchableOpacity>
+    </PressableRow>
   );
 }
 
@@ -324,8 +333,10 @@ function TabBar({ activeTab, onChange, colors, t, unreadCounts = {} }) {
           <TouchableOpacity
             key={tab.key}
             style={styles.tab}
-            onPress={() => onChange(tab.key)}
+            onPress={() => { if (!isActive) haptic.select(); onChange(tab.key); }}
             activeOpacity={0.7}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: isActive }}
           >
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
               <Text style={[styles.tabText, {
@@ -367,16 +378,16 @@ function EmptyState({ colors, isDark, t, onOpenSettings }) {
   return (
     <ScreenEmptyState
       kind="notifications"
-      title={t('notifications.allCaughtUp') || 'Você está em dia'}
-      subtitle={t('notifications.allCaughtUpDesc') || 'Quando rolar algo novo, aparece aqui.'}
+      title={tl(t, 'notifications.allCaughtUp', { pt: 'Você está em dia', en: "You're all caught up", es: 'Estás al día' })}
+      subtitle={tl(t, 'notifications.allCaughtUpDesc', { pt: 'Quando rolar algo novo, aparece aqui.', en: 'New activity will show up here.', es: 'La actividad nueva aparecerá aquí.' })}
       secondary={onOpenSettings ? {
-        label: t('notifications.emptyManage') || 'Gerenciar notificações',
+        label: tl(t, 'notifications.emptyManage', { pt: 'Gerenciar notificações', en: 'Manage notifications', es: 'Gestionar notificaciones' }),
         onPress: onOpenSettings,
       } : undefined}
       tips={[
-        { icon: 'star', label: t('notifications.emptyTipLikes') || 'Curtidas e comentários nos seus posts' },
-        { icon: 'users', label: t('notifications.emptyTipFollows') || 'Quando alguém começa a seguir você' },
-        { icon: 'bell', label: t('notifications.emptyTipMentions') || 'Menções, respostas e lembretes' },
+        { icon: 'star', label: tl(t, 'notifications.emptyTipLikes', { pt: 'Curtidas e comentários nos seus posts', en: 'Likes and comments on your posts', es: 'Me gusta y comentarios en tus publicaciones' }) },
+        { icon: 'users', label: tl(t, 'notifications.emptyTipFollows', { pt: 'Quando alguém começa a seguir você', en: 'When someone starts following you', es: 'Cuando alguien empieza a seguirte' }) },
+        { icon: 'bell', label: tl(t, 'notifications.emptyTipMentions', { pt: 'Menções, respostas e lembretes', en: 'Mentions, replies and reminders', es: 'Menciones, respuestas y recordatorios' }) },
       ]}
     />
   );
@@ -385,7 +396,8 @@ function EmptyState({ colors, isDark, t, onOpenSettings }) {
 // ─── Main screen ──────────────────────────────────────────────────────────────
 function NotificationsScreenInner() {
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
+  _lang = String(language || 'pt').slice(0, 2);
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -504,6 +516,7 @@ function NotificationsScreenInner() {
     // disappeared. Use the real export.
     // Optimistic local update first so the UI is instant, then fire-and-forget
     // the network round-trip; on success the cache is already correct.
+    haptic.success(); // [2026-10-08 apps-native]
     Object.keys(cacheRef.current).forEach(key => {
       cacheRef.current[key] = (cacheRef.current[key] || []).map(n => ({ ...n, read: true }));
     });
@@ -689,10 +702,37 @@ function NotificationsScreenInner() {
   }, [colors, isDark, handleTap, handleAction, t]);
 
   const keyExtractor = useCallback((item, idx) => String(item.id || item.latest_at || `n-${idx}`), []);
+  // [2026-10-08 apps-native] stable separator (inline arrow = new component
+  // type every render → every separator remounted on each list update).
+  const Separator = useCallback(({ leadingItem }) => (
+    leadingItem?.__section ? null
+      : <View style={[styles.separator, { backgroundColor: colors.borderLight || colors.border }]} />
+  ), [colors]);
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header */}
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {/* [2026-10-08 apps-native] Header nativo (UINavigationBar / Toolbar);
+          "Marcar todas" vira botão de texto no headerRight. Web mantém o custom. */}
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          title: t('notifications.title'),
+          headerRight: hasUnread ? () => (
+            <PressableScale
+              onPress={markAllRead}
+              haptic={false}
+              hitSlop={10}
+              accessibilityRole="button"
+              accessibilityLabel={t('notifications.markAllShort')}
+              style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 6, paddingVertical: 6 }}
+            >
+              <IconCheck size={15} color={colors.text} />
+              <Text style={{ color: colors.text, fontSize: 14, fontWeight: '600' }}>{t('notifications.markAllShort')}</Text>
+            </PressableScale>
+          ) : () => null,
+        })} />
+      ) : (
       <View style={[styles.header, { borderBottomColor: colors.border, backgroundColor: colors.surface || colors.background }]}>
         <TouchableOpacity
           onPress={() => router.back()}
@@ -723,6 +763,7 @@ function NotificationsScreenInner() {
           <View style={{ width: 110 }} />
         )}
       </View>
+      )}
 
       {/* Tabs (animated underline) */}
       <TabBar
@@ -733,7 +774,8 @@ function NotificationsScreenInner() {
         unreadCounts={unreadCounts}
       />
 
-      {/* List */}
+      {/* List — [2026-10-08 apps-native] skeleton no 1º load (antes: tela em branco) */}
+      {loading && notifications.length === 0 ? <ListSkeleton count={8} /> : (
       <FlatList
         data={groupedData}
         renderItem={renderItem}
@@ -752,13 +794,14 @@ function NotificationsScreenInner() {
           ) : null
         }
         contentContainerStyle={notifications.length === 0 ? styles.listEmpty : styles.listContent}
-        ItemSeparatorComponent={({ leadingItem }) => (
-          leadingItem?.__section ? null
-            : <View style={[styles.separator, { backgroundColor: colors.borderLight || colors.border }]} />
-        )}
-        removeClippedSubviews={Platform.OS !== 'web'}
+        ItemSeparatorComponent={Separator}
+        contentInsetAdjustmentBehavior="automatic"
+        initialNumToRender={14}
+        maxToRenderPerBatch={10}
+        removeClippedSubviews={Platform.OS === 'android'}
         windowSize={10}
       />
+      )}
 
       {/* [follow-back-fix 2026-05-21] Floating inline toast confirms the
           follow back actually persisted (or surfaces an error). Lives

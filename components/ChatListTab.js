@@ -3157,6 +3157,12 @@ function ChatListTab({ colors, isDark, t, user, router, searchQuery = '', setAct
   const [showArchived, setShowArchived] = useState(false);
   const [lockedIds, setLockedIds] = useState(new Set());
   const [unlockedIds, setUnlockedIds] = useState(new Set());
+  // [2026-10-08 android-otp-shortcuts] App-icon long-press: top 4 recent
+  // conversations (debounced + signature-deduped inside the service).
+  React.useEffect(() => {
+    if (Platform.OS === 'web' || !user?.email) return;
+    try { require('../services/appShortcuts').scheduleRecentConversations(conversations, { me: user.email, lockedIds }); } catch {}
+  }, [conversations, lockedIds, user?.email]);
   // WhatsApp "Secret code" for locked chats. When set, the Locked Chats
   // collection is hidden from the list entirely and only revealed when the
   // exact code is typed into the chat search bar. Stored in the device

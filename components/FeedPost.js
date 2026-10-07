@@ -59,9 +59,10 @@ function MediaUnavailablePlaceholder({ colors, t, onRetry }) {
 import {
   View, Text, TouchableOpacity, StyleSheet, Image, ScrollView,
   Dimensions, Animated, Platform, Alert, Share, Pressable, Linking,
-  Modal, ActivityIndicator, TextInput,
+  Modal, ActivityIndicator, TextInput, ActionSheetIOS, FlatList,
 } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
+import { haptic } from '../constants/theme'; // [2026-10-08 apps-native]
 import AvatarCircle from './AvatarCircle';
 import {
   IconHeart, IconHeartOutline, IconMessageCircle, IconShare,
@@ -561,7 +562,8 @@ const AnimatedCarouselDot = memo(function AnimatedCarouselDot({ active }) {
 
 function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated, onDeletePost, onPressUser, profileMode, onHidePost, isActive = true }) {
   const [liked, setLiked] = useState(!!post.user_liked);
-  const [likeCount, setLikeCount] = useState(Number(post.like_count) || 0);
+  // [2026-10-08 apps-native] tolerate likes_count/likes (WS feed_new_post + older shapes) — was like_count only → 0.
+  const [likeCount, setLikeCount] = useState(Number(post.like_count ?? post.likes_count ?? post.likes) || 0);
   const [bookmarked, setBookmarked] = useState(!!post.user_bookmarked);
   const [pinned, setPinned] = useState(!!post.is_pinned);
   const [showMenu, setShowMenu] = useState(false);
@@ -754,10 +756,10 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   // Sync with prop changes
   useEffect(() => {
     setLiked(!!post.user_liked);
-    setLikeCount(Number(post.like_count) || 0);
+    setLikeCount(Number(post.like_count ?? post.likes_count ?? post.likes) || 0);
     setBookmarked(!!post.user_bookmarked);
     setPinned(!!post.is_pinned);
-  }, [post.user_liked, post.like_count, post.user_bookmarked, post.is_pinned]);
+  }, [post.user_liked, post.like_count, post.likes_count, post.likes, post.user_bookmarked, post.is_pinned]);
 
   const togglePin = useCallback(async () => {
     setShowMenu(false);
@@ -899,6 +901,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
     bookmarkInFlightRef.current = true;
     const was = bookmarked;
     setBookmarked(!was);
+    try { (was ? haptic.light : haptic.success)(); } catch {} // [2026-10-08 apps-native]
     bookmarkScale.setValue(0.7);
     Animated.spring(bookmarkScale, {
       toValue: 1,
@@ -999,6 +1002,42 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
   // jump-to-bottom scroll glitch RN's VirtualizedList does on data shrink.
   // NOTE: this conditional return MUST stay below every hook call above so
   // the hook order stays stable across renders (see hooks-order-fix comment).
+  // [2026-10-08 apps-native] Post "..." menus: iOS uses the SYSTEM action
+  // sheet (UIAlertController) instead of the web-style absolute dropdown that
+  // got clipped by the next FlashList cell. Android/web keep the dropdown.
+  // Plain closures (no hooks) → hook order unaffected.
+  const _useSystemSheet = Platform.OS === 'ios' && typeof ActionSheetIOS?.showActionSheetWithOptions === 'function';
+  const hideWithSignal = async (reason) => {
+    setShowViewerMenu(false);
+    setHidden(true);
+    try { await api.feedHidePost(post.id, reason); } catch {}
+    try { onHidePost?.(post.id); } catch {}
+  };
+  const openViewerMenu = () => {
+    if (!_useSystemSheet) { setShowViewerMenu(v => !v); return; }
+    try { haptic.light(); } catch {}
+    const options = [t('feed.notInterested') || 'Não tenho interesse', t('feed.seeLess') || 'Ver menos posts assim', t('common.cancel') || 'Cancelar'];
+    ActionSheetIOS.showActionSheetWithOptions(
+      { options, cancelButtonIndex: 2, userInterfaceStyle: isDark ? 'dark' : 'light' },
+      (i) => { if (i === 0) hideWithSignal('not_interested'); else if (i === 1) hideWithSignal('see_less'); }
+    );
+  };
+  const openOwnerMenu = () => {
+    if (!_useSystemSheet) { setShowMenu(v => !v); return; }
+    try { haptic.light(); } catch {}
+    const actions = [
+      { label: pinned ? (t('feed.unpinPost') || 'Desafixar do perfil') : (t('feed.pinPost') || 'Fixar no perfil'), run: togglePin },
+      { label: t('feed.analytics') || 'Análises', run: openAnalytics },
+    ];
+    if (MONETIZATION_ENABLED && !post.is_promoted) actions.push({ label: t('feed.promote') || 'Impulsionar', run: () => setShowPromoteModal(true) });
+    actions.push({ label: t('feed.deletePost') || t('feed.delete') || 'Excluir', run: handleDelete, destructive: true });
+    const options = [...actions.map(a => a.label), t('common.cancel') || 'Cancelar'];
+    ActionSheetIOS.showActionSheetWithOptions(
+      { options, cancelButtonIndex: options.length - 1, destructiveButtonIndex: actions.length - 1, userInterfaceStyle: isDark ? 'dark' : 'light' },
+      (i) => { const a = actions[i]; if (a) { try { a.run(); } catch {} } }
+    );
+  };
+
   if (hidden) {
     return (
       <View style={[styles.container, {
@@ -1019,7 +1058,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           accessibilityRole="button"
           accessibilityLabel={t?.('common.undo') || 'Desfazer'}
         >
-          <Text style={{ color: ACCENT, fontWeight: '700', fontSize: 13 }}>
+          <Text style={{ color: colors.text, fontWeight: '700', fontSize: 13 }}>
             {t?.('common.undo') || 'Desfazer'}
           </Text>
         </TouchableOpacity>
@@ -1051,9 +1090,9 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                   paddingHorizontal: 6,
                   paddingVertical: 1,
                   borderRadius: 4,
-                  backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.10)',
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.14)' : 'rgba(17, 17, 17,0.10)',
                 }}>
-                  <Text style={{ color: ACCENT, fontSize: 10, fontWeight: '700' }}>
+                  <Text style={{ color: isDark ? '#fff' : ACCENT, fontSize: 10, fontWeight: '700' }}>
                     {t?.('feed.sponsored') || 'Patrocinado'}
                   </Text>
                 </View>
@@ -1069,8 +1108,18 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                   e?.stopPropagation?.();
                   const lat = post.location_lat, lon = post.location_lon;
                   if (lat != null && lon != null) {
-                    const url = `https://www.google.com/maps/search/?api=1&query=${lat},${lon}`;
-                    try { Linking.openURL(url); } catch {}
+                    // [2026-10-08 apps-native] Native maps app (Apple Maps / geo:
+                    // intent) instead of a Google Maps web URL (de-google);
+                    // web falls back to OpenStreetMap.
+                    const label = encodeURIComponent(post.location_name || post.location || '');
+                    const url = Platform.OS === 'ios'
+                      ? `maps:?ll=${lat},${lon}&q=${label || `${lat},${lon}`}`
+                      : Platform.OS === 'android'
+                        ? `geo:${lat},${lon}?q=${lat},${lon}${label ? `(${label})` : ''}`
+                        : `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`;
+                    Promise.resolve(Linking.openURL(url)).catch(() => {
+                      try { Linking.openURL(`https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=16/${lat}/${lon}`); } catch {}
+                    });
                   }
                 }}
                 accessibilityRole="link"
@@ -1092,8 +1141,8 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           {!isOwner && (
             <View>
               <TouchableOpacity
-                onPress={() => setShowViewerMenu(!showViewerMenu)}
-                onLongPress={() => setShowViewerMenu(true)}
+                onPress={openViewerMenu}
+                onLongPress={openViewerMenu}
                 style={styles.menuBtn}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityLabel={t('common.more') || 'More options'}
@@ -1108,7 +1157,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     onPress={() => setShowViewerMenu(false)}
                   />
                   <View style={[styles.menuDropdown, {
-                    backgroundColor: isDark ? '#1e293b' : '#ffffff',
+                    backgroundColor: isDark ? (colors.surfaceElevated || '#1c1c1e') : '#ffffff', // [2026-10-08 apps-native] was slate-blue
                     borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
                     ...(isWeb ? { boxShadow: '0 8px 30px rgba(0,0,0,0.12)' } : {}),
                   }]}>
@@ -1173,7 +1222,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
           {isOwner && (
             <View>
               <TouchableOpacity
-                onPress={() => setShowMenu(!showMenu)}
+                onPress={openOwnerMenu}
                 style={styles.menuBtn}
                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                 accessibilityLabel={t('common.more') || 'More options'}
@@ -1188,7 +1237,7 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                     onPress={() => setShowMenu(false)}
                   />
                   <View style={[styles.menuDropdown, {
-                    backgroundColor: isDark ? '#1e293b' : '#ffffff',
+                    backgroundColor: isDark ? (colors.surfaceElevated || '#1c1c1e') : '#ffffff', // [2026-10-08 apps-native] was slate-blue
                     borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)',
                     ...(isWeb ? { boxShadow: '0 8px 30px rgba(0,0,0,0.12)' } : {}),
                   }]}>
@@ -1601,14 +1650,16 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                   return (
                     <Text
                       key={i}
-                      style={{ color: '#111111', fontWeight: '600' }}
+                      style={{ color: colors.text, fontWeight: '700' }}
                       onPress={() => {
                         try {
                           const { router } = require('expo-router');
                           if (isTag) {
                             router.push(`/hashtag?tag=${encodeURIComponent(handle)}`);
                           } else {
-                            router.push(`/profile?handle=${encodeURIComponent(handle)}`);
+                            // [2026-10-08 apps-native] /profile ignores `handle` (opened
+                            // MY profile); /u/[username] resolves handle or email.
+                            router.push(`/u/${encodeURIComponent(handle)}`);
                           }
                         } catch {}
                       }}
@@ -1687,11 +1738,11 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
               <TouchableOpacity
                 key={em}
                 onPress={() => onPressUser?.(em, handle)}
-                style={[styles.taggedChip, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.15)' : 'rgba(17, 17, 17,0.08)' }]}
+                style={[styles.taggedChip, { backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17, 17, 17,0.08)' }]}
                 accessibilityRole="link"
                 accessibilityLabel={'@' + handle}
               >
-                <Text style={{ color: ACCENT, fontSize: 12, fontWeight: '600' }}>@{handle}</Text>
+                <Text style={{ color: isDark ? '#fff' : ACCENT, fontSize: 12, fontWeight: '600' }}>@{handle}</Text>
               </TouchableOpacity>
             );
           })}
@@ -1751,13 +1802,23 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
             ) : likersList.length === 0 ? (
               <Text style={[styles.likersEmpty, { color: colors.textTertiary }]}>{t('feed.noLikesYet') || 'Ninguém curtiu ainda'}</Text>
             ) : (
-              <ScrollView style={styles.likersScroll} showsVerticalScrollIndicator={false}>
-                {likersList.map((u) => {
+              // [2026-10-08 apps-native] FlatList (virtualized) — a viral post's
+              // likers list mounted every row up front inside a ScrollView.
+              <FlatList
+                style={styles.likersScroll}
+                data={likersList}
+                extraData={likersBusy}
+                keyExtractor={(u, idx) => String(u?.email || idx)}
+                showsVerticalScrollIndicator={false}
+                initialNumToRender={12}
+                maxToRenderPerBatch={12}
+                windowSize={7}
+                keyboardShouldPersistTaps="handled"
+                renderItem={({ item: u }) => {
                   const display = u.display_name || u.name || (u.email ? u.email.split('@')[0] : '');
                   const isMe = user?.email && u.email && String(u.email).toLowerCase() === String(user.email).toLowerCase();
                   return (
                     <TouchableOpacity
-                      key={u.email}
                       activeOpacity={0.7}
                       style={styles.likersRow}
                       onPress={() => {
@@ -1789,8 +1850,8 @@ function FeedPost({ post, colors, isDark, t, user, onOpenComments, onPostUpdated
                       )}
                     </TouchableOpacity>
                   );
-                })}
-              </ScrollView>
+                }}
+              />
             )}
           </Pressable>
         </Pressable>

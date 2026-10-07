@@ -28,6 +28,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
 import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../services/firebasePhone';
+import { useSmsOtpAutofill } from '../services/smsOtp'; // [2026-10-08 android-otp-shortcuts]
 import useDebouncedCallback from '../hooks/useDebouncedCallback';
 import useIsMounted from '../hooks/useIsMounted';
 import { COUNTRIES, formatPhone, toE164, E164_RE, countryDisplayName } from '../constants/countries'; // [2026-10-06 UX2] countryDisplayName
@@ -643,6 +644,14 @@ export default function SignupPhone() {
       if (mountedRef.current) setBusy(false);
     }
   };
+  // [2026-10-08 android-otp-shortcuts] Android SMS User Consent → fill + auto-submit
+  // (latest checkOtp via ref; checkOtp itself is in-flight guarded).
+  const checkOtpRef = useRef(null);
+  checkOtpRef.current = checkOtp;
+  useSmsOtpAutofill(step === 'otp', (smsCode) => {
+    setCode(smsCode);
+    setTimeout(() => { try { checkOtpRef.current?.(smsCode); } catch {} }, 150);
+  }, resendCountdown > 0);
 
   const goName = () => {
     const fn = (firstName || '').trim();

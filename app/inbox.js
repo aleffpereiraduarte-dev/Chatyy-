@@ -14,6 +14,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { Shadow, BorderRadius, FontSize, Spacing, LetterSpacing, AnimTiming } from '../constants/theme';
 import EmailReader from '../components/EmailReader';
 import Sidebar from '../components/Sidebar';
+import EmailOutboxBanner from '../components/EmailOutboxBanner';
 import * as Haptics from 'expo-haptics';
 // Cold-start: these overlays (search, notifications hub, shortcut refs,
 // snooze/context/quick-settings panels) are never visible on the first paint
@@ -1858,6 +1859,8 @@ function InboxScreenInner() {
             </View>
           </View>
         )}
+        {/* [2026-10-08 email-outbox] pending/failed e-mails waiting on this device */}
+        <EmailOutboxBanner />
         <EmailList
           emails={filteredEmails}
           loading={loadingList}

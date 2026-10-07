@@ -13,7 +13,7 @@ import {
 // sync) — the FAB and "Hoje" stay. Toggle still works via swipe gesture.
 const _CAL_HEADER_COMPACT = Dimensions.get('window').width < 420;
 // FlashList reverted to FlatList
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -35,6 +35,8 @@ import {
   IconUpload, IconDownload, IconSmartphone, IconRefresh, IconBell, IconVideo,
 } from '../components/Icons';
 import EmptyStateCard from '../components/EmptyStateCard';
+import PressableScale from '../components/PressableScale'; // [2026-10-08 apps-native]
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
 
 // Try to import expo-calendar (native only)
 let ExpoCalendar = null;
@@ -2222,7 +2224,10 @@ function CalendarScreenInner() {
     loadCalendars();
   }, [loadEvents]);
 
+  // [2026-10-08 apps-native] haptic de seleção na navegação mês/semana/hoje
+  // (feedback tátil nativo, como o Calendário do iOS ao trocar de mês).
   const handlePrevMonth = () => {
+    haptic.select();
     if (currentMonth === 0) {
       setCurrentMonth(11);
       setCurrentYear(y => y - 1);
@@ -2232,6 +2237,7 @@ function CalendarScreenInner() {
   };
 
   const handleNextMonth = () => {
+    haptic.select();
     if (currentMonth === 11) {
       setCurrentMonth(0);
       setCurrentYear(y => y + 1);
@@ -2241,6 +2247,7 @@ function CalendarScreenInner() {
   };
 
   const handleToday = () => {
+    haptic.light();
     const today = new Date();
     setCurrentYear(today.getFullYear());
     setCurrentMonth(today.getMonth());
@@ -2249,6 +2256,7 @@ function CalendarScreenInner() {
   };
 
   const handlePrevWeek = () => {
+    haptic.select();
     setWeekStartDate(prev => {
       const d = new Date(prev);
       d.setDate(d.getDate() - 7);
@@ -2257,6 +2265,7 @@ function CalendarScreenInner() {
   };
 
   const handleNextWeek = () => {
+    haptic.select();
     setWeekStartDate(prev => {
       const d = new Date(prev);
       d.setDate(d.getDate() + 7);
@@ -2276,6 +2285,7 @@ function CalendarScreenInner() {
   const handleCreateEvent = async (data) => {
     const r = await api.calCreateEvent(data);
     if (r.success) {
+      haptic.success(); // [2026-10-08 apps-native]
       loadEvents(false);
       loadCalendars();
     } else {
@@ -2776,13 +2786,25 @@ function CalendarScreenInner() {
         {
           text: t('eventDetail.deleteButton'),
           style: 'destructive',
+          // [2026-10-08 apps-native] Otimista: some da lista na hora (antes
+          // ficava visível até o refetch e falha era engolida em silêncio).
+          // Falha → devolve o evento + alerta.
           onPress: async () => {
+            haptic.warning();
+            const prevEvents = events;
+            setEvents(list => list.filter(e => e.id !== event.id));
             try {
               const r = await api.calDeleteEvent(event.id);
-              if (r.success) {
+              if (r?.success) {
                 loadEvents(false);
+              } else {
+                throw new Error(r?.message || t('common.error') || 'Erro');
               }
-            } catch {}
+            } catch (e) {
+              setEvents(prevEvents);
+              haptic.error();
+              safeAlert(t('common.error') || 'Erro', String(e?.message || e));
+            }
           },
         },
       ]
@@ -2813,7 +2835,35 @@ function CalendarScreenInner() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {/* [2026-10-08 apps-native] Nativo: barra do sistema (UINavigationBar /
+          Toolbar Material) com título + busca/sync/novo; back do sistema c/
+          swipe-back. A faixa preta (mês, Hoje, Mês/Semana/Agenda, dias)
+          continua logo abaixo. Web mantém a linha 1 custom. */}
+      {USE_NATIVE_HEADER && (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          title: t('calendar.title'),
+          headerRight: () => (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <HeaderIconButton
+                onPress={() => { setSearchOpen(o => !o); if (searchOpen) setSearchQuery(''); }}
+                accessibilityLabel={t('calendar.searchEvents') || 'Buscar eventos'}
+              >
+                <IconSearch size={22} color={colors.text} />
+              </HeaderIconButton>
+              {!_CAL_HEADER_COMPACT && ExpoCalendar && (
+                <HeaderIconButton onPress={handleSyncDeviceCalendar} disabled={syncingDevice} accessibilityLabel={t('calendar.syncNow')}>
+                  {syncingDevice ? <ActivityIndicator size="small" color={colors.text} /> : <IconRefresh size={21} color={colors.text} />}
+                </HeaderIconButton>
+              )}
+              <HeaderIconButton onPress={() => setShowAddModal(true)} accessibilityLabel={t('calendar.newEvent')}>
+                <IconPlus size={24} color={colors.text} />
+              </HeaderIconButton>
+            </View>
+          ),
+        })} />
+      )}
       {/* Header — unified Chatyy purple→pink gradient (matches Inbox/Chat
           but with a richer fade). REDESIGN 2026-05-18: two-row stack:
           (1) top bar: back, title, search/sync/add actions
@@ -2831,7 +2881,8 @@ function CalendarScreenInner() {
             }
           : { backgroundColor: isDark ? '#161618' : '#111111' },
       ]}>
-        {/* Row 1 — top bar */}
+        {/* Row 1 — top bar (web; no nativo é o header do sistema acima) */}
+        {!USE_NATIVE_HEADER && (
         <View style={styles.headerTopRow}>
           <TouchableOpacity
             onPress={() => {
@@ -2872,6 +2923,7 @@ function CalendarScreenInner() {
             </TouchableOpacity>
           </View>
         </View>
+        )}
 
         {/* Animated search input — collapses out when closed */}
         <Animated.View
@@ -2906,13 +2958,15 @@ function CalendarScreenInner() {
 
         {/* Row 2 — Month nav band (chevrons + animated label + Hoje pill) */}
         <View style={styles.monthBand}>
-          <TouchableOpacity
+          <PressableScale
+            haptic={false}
+            scaleTo={0.9}
             onPress={calendarView === 'week' ? handlePrevWeek : handlePrevMonth}
             style={styles.monthBandChevron}
             accessibilityLabel={t('calendar.prevMonth') || 'Mês anterior'}
           >
             <IconChevronLeft size={22} color="#fff" />
-          </TouchableOpacity>
+          </PressableScale>
 
           <View style={styles.monthBandCenter}>
             <Animated.View
@@ -2939,19 +2993,21 @@ function CalendarScreenInner() {
               ]}
               pointerEvents={isViewingCurrentMonth ? 'none' : 'auto'}
             >
-              <TouchableOpacity onPress={handleToday} style={styles.todayPill} accessibilityLabel={t('calendar.today')}>
+              <PressableScale haptic={false} onPress={handleToday} style={styles.todayPill} accessibilityLabel={t('calendar.today')}>
                 <Text style={[styles.todayPillText, { color: colors.primary }]}>{t('calendar.today')}</Text>
-              </TouchableOpacity>
+              </PressableScale>
             </Animated.View>
           </View>
 
-          <TouchableOpacity
+          <PressableScale
+            haptic={false}
+            scaleTo={0.9}
             onPress={calendarView === 'week' ? handleNextWeek : handleNextMonth}
             style={styles.monthBandChevron}
             accessibilityLabel={t('calendar.nextMonth') || 'Próximo mês'}
           >
             <IconChevronRight size={22} color="#fff" />
-          </TouchableOpacity>
+          </PressableScale>
         </View>
 
         {/* Segmented view toggle — Mês / Semana / Agenda */}
@@ -2966,7 +3022,7 @@ function CalendarScreenInner() {
               return (
                 <TouchableOpacity
                   key={opt.key}
-                  onPress={() => setCalendarView(opt.key)}
+                  onPress={() => { if (!active) haptic.select(); setCalendarView(opt.key); }}
                   style={[styles.viewSegmentBtn, active && styles.viewSegmentBtnActive]}
                   accessibilityLabel={opt.label}
                   accessibilityState={{ selected: active }}
@@ -3081,7 +3137,7 @@ function CalendarScreenInner() {
               <View style={[styles.syncBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 {Platform.OS !== 'web' && ExpoCalendar && (
                   <>
-                    <TouchableOpacity
+                    <PressableScale
                       onPress={handleSyncDeviceCalendar}
                       disabled={syncingDevice}
                       style={[styles.syncBarBtn, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}
@@ -3090,8 +3146,8 @@ function CalendarScreenInner() {
                       <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>
                         {t('calendar.syncToApp', { device: Platform.OS === 'ios' ? 'iPhone' : 'Android' })}
                       </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
+                    </PressableScale>
+                    <PressableScale
                       onPress={handlePushToDevice}
                       disabled={syncingDevice}
                       style={[styles.syncBarBtn, { backgroundColor: colors.primary + '10', borderColor: colors.primary + '30' }]}
@@ -3100,41 +3156,41 @@ function CalendarScreenInner() {
                       <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>
                         {t('calendar.syncToDevice', { device: Platform.OS === 'ios' ? 'iPhone' : 'Android' })}
                       </Text>
-                    </TouchableOpacity>
+                    </PressableScale>
                   </>
                 )}
-                <TouchableOpacity
+                <PressableScale
                   onPress={handleImportICS}
                   disabled={importing}
                   style={[styles.syncBarBtn, { borderColor: colors.border }]}
                 >
                   {importing ? <ActivityIndicator size="small" color={colors.primary} /> : <IconUpload size={15} color={colors.primary} />}
                   <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>{t('calendar.importIcs')}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
+                </PressableScale>
+                <PressableScale
                   onPress={handleExportMonth}
                   style={[styles.syncBarBtn, { borderColor: colors.border }]}
                 >
                   <IconDownload size={15} color={colors.textSecondary} />
                   <Text style={[styles.syncBarBtnText, { color: colors.textSecondary }]}>{t('calendar.export')}</Text>
-                </TouchableOpacity>
+                </PressableScale>
                 {Platform.OS === 'web' && (
-                  <TouchableOpacity
+                  <PressableScale
                     onPress={handleSubscribeCalendar}
                     style={[styles.syncBarBtn, { borderColor: colors.border }]}
                   >
                     <IconSmartphone size={15} color={colors.primary} />
                     <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>{t('calendar.subscribe')}</Text>
-                  </TouchableOpacity>
+                  </PressableScale>
                 )}
-                <TouchableOpacity
+                <PressableScale
                   onPress={generateSmartReminders}
                   disabled={loadingReminders}
                   style={[styles.syncBarBtn, { borderColor: colors.border }]}
                 >
                   {loadingReminders ? <ActivityIndicator size="small" color={colors.primary} /> : <IconSparkles size={15} color={colors.primary} />}
                   <Text style={[styles.syncBarBtnText, { color: colors.primary }]}>AI</Text>
-                </TouchableOpacity>
+                </PressableScale>
               </View>
 
               {aiReminders.length > 0 && (

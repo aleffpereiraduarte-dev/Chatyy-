@@ -2,14 +2,16 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, FlatList, ScrollView,
   ActivityIndicator, Platform, Alert, useWindowDimensions, Modal, TextInput,
+  RefreshControl, Switch,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
-import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, Shadow, haptic } from '../constants/theme';
 import * as api from '../services/api';
 import { formatBytes } from '../services/format';
 import { safeAlert } from '../services/alerts';
@@ -27,6 +29,11 @@ import { MONETIZATION_ENABLED } from '../constants/featureFlags';
 // affects the very next photo the engine compresses (or skips, for original).
 let backupSvc = null;
 try { backupSvc = require('../services/backup'); } catch {}
+
+// [2026-10-08 apps-native] t() returns the raw key when missing — fall back.
+function tr(t, key, fb, params) {
+  try { const v = t(key, params); return (v && v !== key) ? v : fb; } catch { return fb; }
+}
 
 export default function BackupScreen() {
   const { colors, isDark } = useTheme();
@@ -264,6 +271,7 @@ export default function BackupScreen() {
   const [snapshot, setSnapshot] = useState({ schedule: 'off', last_at: null, size: 0, msg_count: 0, has_backup: false });
   const [snapshotBusy, setSnapshotBusy] = useState(false);
 
+  const [refreshing, setRefreshing] = useState(false);
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -281,6 +289,11 @@ export default function BackupScreen() {
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
+  // [2026-10-08 apps-native] Pull-to-refresh (was only a header button).
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try { await loadData(); } finally { setRefreshing(false); }
+  }, [loadData]);
 
   // Snapshot actions
   const handleSetSchedule = useCallback(async (sched) => {
@@ -304,6 +317,7 @@ export default function BackupScreen() {
           msg_count: r.data.msg_count,
           has_backup: true,
         }));
+        try { haptic.success(); } catch {}
         safeAlert(t('backup.snapshotDoneTitle') || 'Backup feito', t('backup.snapshotDoneMsg') || 'Substituiu o backup anterior.');
       } else {
         safeAlert(t('common.error') || 'Error', mapApiError(r, t, 'backup'));
@@ -323,7 +337,8 @@ export default function BackupScreen() {
             try {
               const r = await api.historySnapshotRestore();
               if (r?.data?.ok) {
-                safeAlert(t('backup.restoreDone') || 'Restaurado', `${r.data.restored || 0} mensagens recuperadas.`);
+                try { haptic.success(); } catch {}
+                safeAlert(t('backup.restoreDone') || 'Restaurado', tr(t, 'backup.restoredCount', `${r.data.restored || 0} mensagens recuperadas.`, { n: String(r.data.restored || 0) }));
               } else {
                 safeAlert(t('common.error') || 'Error', mapApiError(r, t, 'backup'));
               }
@@ -342,6 +357,7 @@ export default function BackupScreen() {
         { text: t('common.cancel') || 'Cancelar', style: 'cancel' },
         {
           text: t('backup.deleteYes') || 'Apagar', style: 'destructive', onPress: async () => {
+            try { haptic.warning(); } catch {}
             setSnapshotBusy(true);
             try {
               const r = await api.historySnapshotDelete();
@@ -365,17 +381,17 @@ export default function BackupScreen() {
         safeAlert(t('backup.restored'), null, [{ text: 'OK' }]);
         setBackupItems(prev => prev.filter(item => item.id !== backupId));
       } else {
-        safeAlert('Erro', mapApiError(res?.data || res, t, 'backup'));
+        safeAlert(t('common.error') || 'Erro', mapApiError(res?.data || res, t, 'backup'));
       }
     } catch (e) {
-      safeAlert('Erro', mapApiError(e, t, 'backup'));
+      safeAlert(t('common.error') || 'Erro', mapApiError(e, t, 'backup'));
     } finally { setRestoring(null); }
   };
 
   const handleDelete = (backupId) => {
     safeAlert(t('backup.permanentDelete'), '', [
       { text: t('compose.cancel'), style: 'cancel' },
-      { text: t('backup.permanentDelete'), onPress: async () => {
+      { text: t('backup.permanentDelete'), style: 'destructive', onPress: async () => {
         setDeleting(backupId);
         try {
           const res = await api.planBackupDelete(backupId);
@@ -413,7 +429,12 @@ export default function BackupScreen() {
   });
   const groupedKeys = Object.keys(grouped);
 
-  const ACCENT = isDark ? '#111111' : '#111111';
+  // [2026-10-08 apps-native] Was '#111111' in BOTH themes → black text/buttons
+  // on the dark surface (invisible "Alterar senha", "Restaurar", progress %).
+  // B&W: ink on paper — black in light, white in dark; ON_ACCENT is the label
+  // color for filled ACCENT buttons.
+  const ACCENT = isDark ? '#ffffff' : '#111111';
+  const ON_ACCENT = isDark ? '#111111' : '#ffffff';
 
   // Loading state handled inline - no full-screen spinner
 
@@ -466,23 +487,41 @@ export default function BackupScreen() {
   }
 
   return (
-    <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header */}
+    <View style={[s.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {/* [2026-10-08 apps-native] Header nativo (UINavigationBar / Toolbar
+          Material). Web mantém o header custom. */}
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          title: t('backup.title'),
+          headerRight: () => (
+            <HeaderIconButton onPress={loadData} accessibilityLabel={tr(t, 'common.refresh', 'Atualizar')}>
+              <IconRefresh size={20} color={colors.text} />
+            </HeaderIconButton>
+          ),
+        })} />
+      ) : (
       <View style={[s.headerRow, { borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityLabel="Back" accessibilityRole="button">
+        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityLabel={tr(t, 'common.back', 'Voltar')} accessibilityRole="button">
           <IconArrowLeft size={22} color={colors.text} />
         </TouchableOpacity>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <IconUpload size={20} color={ACCENT} />
           <Text style={[s.headerTitle, { color: colors.text }]}>{t('backup.title')}</Text>
         </View>
-        <TouchableOpacity onPress={loadData} style={s.backBtn} accessibilityLabel="Refresh" accessibilityRole="button">
+        <TouchableOpacity onPress={loadData} style={s.backBtn} accessibilityLabel={tr(t, 'common.refresh', 'Atualizar')} accessibilityRole="button">
           <IconRefresh size={20} color={colors.textSecondary} />
         </TouchableOpacity>
       </View>
+      )}
 
       <FadeSlideIn>
-      <ScrollView contentContainerStyle={[s.scrollContent, { alignItems: 'center' }]} showsVerticalScrollIndicator={false}>
+      <ScrollView
+        contentContainerStyle={[s.scrollContent, { alignItems: 'center', paddingBottom: 40 + insets.bottom }]}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} colors={[colors.text]} />}
+      >
         <View style={{ width: contentWidth, maxWidth: '100%', paddingHorizontal: Spacing.lg }}>
 
           {/* Status Card */}
@@ -521,7 +560,7 @@ export default function BackupScreen() {
               <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
                 <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm }}>{t('backup.plan')}</Text>
                 <Text style={{ color: colors.text, fontSize: FontSize.sm, fontWeight: '600' }}>
-                  {currentPlan === 'family' ? 'Família' : 'Chatyy One'}
+                  {currentPlan === 'family' ? tr(t, 'backup.planFamily', 'Família') : 'Chatyy One'}
                 </Text>
               </View>
               <View style={{ marginTop: 4 }}>
@@ -581,12 +620,12 @@ export default function BackupScreen() {
                   onPress={() => { setE2eMode('enable'); setE2ePass1(''); setE2ePass2(''); setE2eErr(''); setShowE2eModal(true); }}
                   accessibilityRole="button"
                 >
-                  <Text style={{ color: '#fff', fontWeight: '700' }}>{t('backup.e2eEnable') || 'Ativar criptografia'}</Text>
+                  <Text style={{ color: ON_ACCENT, fontWeight: '700' }}>{t('backup.e2eEnable') || 'Ativar criptografia'}</Text>
                 </TouchableOpacity>
               ) : (
                 <>
                   <TouchableOpacity
-                    style={{ flex: 1, height: 42, borderRadius: 10, backgroundColor: isDark ? 'rgba(96,165,250,0.15)' : 'rgba(37,99,235,0.1)', alignItems: 'center', justifyContent: 'center' }}
+                    style={{ flex: 1, height: 42, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.06)', alignItems: 'center', justifyContent: 'center' }}
                     onPress={() => { setE2eMode('change'); setE2ePass1(''); setE2ePass2(''); setE2eErr(''); setShowE2eModal(true); }}
                     accessibilityRole="button"
                   >
@@ -615,24 +654,16 @@ export default function BackupScreen() {
               <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '600', flex: 1 }}>
                 {t('backup.originalQuality') || 'Qualidade original'}
               </Text>
-              <TouchableOpacity
-                onPress={() => handleToggleOriginals(!originalsQuality)}
+              {/* [2026-10-08 apps-native] Switch nativo (UISwitch / Material). */}
+              <Switch
+                value={originalsQuality}
+                onValueChange={(v) => { try { haptic.select(); } catch {} handleToggleOriginals(v); }}
                 disabled={originalsSaving}
-                accessibilityRole="switch"
-                accessibilityState={{ checked: originalsQuality }}
-                style={{
-                  width: 46, height: 28, borderRadius: 14, padding: 3,
-                  backgroundColor: originalsQuality ? ACCENT : (isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.18)'),
-                  opacity: originalsSaving ? 0.6 : 1,
-                  justifyContent: 'center',
-                }}
-              >
-                <View style={{
-                  width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff',
-                  alignSelf: originalsQuality ? 'flex-end' : 'flex-start',
-                  ...(Platform.OS === 'web' ? { transition: 'all 160ms ease' } : {}),
-                }} />
-              </TouchableOpacity>
+                trackColor={{ false: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.18)', true: ACCENT }}
+                thumbColor={Platform.OS === 'android' ? (originalsQuality ? ON_ACCENT : '#f4f4f5') : (isDark && originalsQuality ? '#111111' : undefined)}
+                ios_backgroundColor={isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.18)'}
+                accessibilityLabel={t('backup.originalQuality') || 'Qualidade original'}
+              />
             </View>
             <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 19 }}>
               {originalsQuality
@@ -653,25 +684,15 @@ export default function BackupScreen() {
               <Text style={{ color: colors.text, fontSize: FontSize.lg, fontWeight: '600', flex: 1 }}>
                 {t('backup.notifTitle') || 'Notificações de backup'}
               </Text>
-              <TouchableOpacity
-                onPress={() => handleToggleNotif(!notifEnabled)}
+              <Switch
+                value={notifEnabled}
+                onValueChange={(v) => { try { haptic.select(); } catch {} handleToggleNotif(v); }}
                 disabled={notifSaving}
-                accessibilityRole="switch"
-                accessibilityState={{ checked: notifEnabled }}
+                trackColor={{ false: isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.18)', true: ACCENT }}
+                thumbColor={Platform.OS === 'android' ? (notifEnabled ? ON_ACCENT : '#f4f4f5') : (isDark && notifEnabled ? '#111111' : undefined)}
+                ios_backgroundColor={isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.18)'}
                 accessibilityLabel={t('backup.notifTitle') || 'Notificações de backup'}
-                style={{
-                  width: 46, height: 28, borderRadius: 14, padding: 3,
-                  backgroundColor: notifEnabled ? ACCENT : (isDark ? 'rgba(255,255,255,0.16)' : 'rgba(0,0,0,0.18)'),
-                  opacity: notifSaving ? 0.6 : 1,
-                  justifyContent: 'center',
-                }}
-              >
-                <View style={{
-                  width: 22, height: 22, borderRadius: 11, backgroundColor: '#fff',
-                  alignSelf: notifEnabled ? 'flex-end' : 'flex-start',
-                  ...(Platform.OS === 'web' ? { transition: 'all 160ms ease' } : {}),
-                }} />
-              </TouchableOpacity>
+              />
             </View>
             <Text style={{ color: colors.textSecondary, fontSize: FontSize.sm, lineHeight: 19 }}>
               {notifEnabled
@@ -728,7 +749,7 @@ export default function BackupScreen() {
               {snapshot.has_backup && (
                 <View style={{ paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, backgroundColor: 'rgba(34,197,94,0.15)' }}>
                   <Text style={{ color: '#16a34a', fontSize: FontSize.xs, fontWeight: '700' }}>
-                    {snapshot.msg_count} msgs
+                    {tr(t, 'backup.msgsShort', `${snapshot.msg_count} msgs`, { n: String(snapshot.msg_count) })}
                   </Text>
                 </View>
               )}
@@ -749,9 +770,9 @@ export default function BackupScreen() {
               ].map(opt => {
                 const active = snapshot.schedule === opt.v;
                 return (
-                  <TouchableOpacity
+                  <PressableScale
                     key={opt.v}
-                    onPress={() => handleSetSchedule(opt.v)}
+                    onPress={() => { try { haptic.select(); } catch {} handleSetSchedule(opt.v); }}
                     disabled={snapshotBusy}
                     style={{
                       paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20,
@@ -761,8 +782,8 @@ export default function BackupScreen() {
                     accessibilityRole="button"
                     accessibilityState={{ selected: active }}
                   >
-                    <Text style={{ color: active ? '#fff' : colors.text, fontSize: FontSize.sm, fontWeight: '600' }}>{opt.label}</Text>
-                  </TouchableOpacity>
+                    <Text style={{ color: active ? ON_ACCENT : colors.text, fontSize: FontSize.sm, fontWeight: '600' }}>{opt.label}</Text>
+                  </PressableScale>
                 );
               })}
             </View>
@@ -785,34 +806,39 @@ export default function BackupScreen() {
                 accessibilityRole="button"
               >
                 {snapshotBusy
-                  ? <ActivityIndicator color="#fff" />
-                  : <Text style={{ color: '#fff', fontWeight: '700' }}>{t('backup.snapshotNow') || 'Fazer backup agora'}</Text>}
+                  ? <ActivityIndicator color={ON_ACCENT} />
+                  : <Text style={{ color: ON_ACCENT, fontWeight: '700' }}>{t('backup.snapshotNow') || 'Fazer backup agora'}</Text>}
               </PressableScale>
               {snapshot.has_backup && (
                 <>
                   <PressableScale
                     onPress={handleSnapshotRestore}
                     disabled={snapshotBusy}
-                    style={{ minWidth: 110, height: 42, paddingHorizontal: 14, borderRadius: 10, backgroundColor: isDark ? 'rgba(96,165,250,0.15)' : 'rgba(37,99,235,0.1)', alignItems: 'center', justifyContent: 'center' }}
+                    style={{ minWidth: 110, height: 42, paddingHorizontal: 14, borderRadius: 10, backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17,17,17,0.06)', alignItems: 'center', justifyContent: 'center' }}
                     accessibilityRole="button"
                   >
                     <Text style={{ color: ACCENT, fontWeight: '700' }}>{t('backup.snapshotRestore') || 'Restaurar'}</Text>
                   </PressableScale>
-                  <TouchableOpacity
+                  <PressableScale
                     onPress={handleSnapshotDelete}
                     disabled={snapshotBusy}
                     style={{ minWidth: 90, height: 42, paddingHorizontal: 14, borderRadius: 10, backgroundColor: isDark ? 'rgba(248,113,113,0.12)' : 'rgba(220,38,38,0.08)', alignItems: 'center', justifyContent: 'center' }}
                     accessibilityRole="button"
                   >
                     <Text style={{ color: colors.error, fontWeight: '700' }}>{t('backup.snapshotDelete') || 'Apagar'}</Text>
-                  </TouchableOpacity>
+                  </PressableScale>
                 </>
               )}
             </View>
           </View>
 
           {/* Backup Items */}
-          {groupedKeys.length === 0 ? (
+          {groupedKeys.length === 0 && loading && !refreshing ? (
+            // [2026-10-08 apps-native] First load: spinner, not a false "nothing here".
+            <View style={{ alignItems: 'center', paddingVertical: 40 }}>
+              <ActivityIndicator color={colors.textSecondary} />
+            </View>
+          ) : groupedKeys.length === 0 ? (
             <View style={{ alignItems: 'center', paddingVertical: 40 }}>
               <IconShield size={48} color={colors.textTertiary} />
               <Text style={{ color: colors.textSecondary, fontSize: FontSize.base, marginTop: 12 }}>{t('backup.noItems')}</Text>
@@ -825,12 +851,12 @@ export default function BackupScreen() {
                   <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                     <Text style={{ color: colors.text, fontSize: FontSize.base, fontWeight: '600' }}>{group.name}</Text>
                     {group.items.length > 1 && (
-                      <TouchableOpacity
+                      <PressableScale
                         onPress={() => handleRestoreAll(key)}
-                        style={[s.restoreAllBtn, { backgroundColor: isDark ? 'rgba(17, 17, 17, 0.12)' : 'rgba(17, 17, 17, 0.08)' }]}
+                        style={[s.restoreAllBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17, 0.08)' }]}
                       >
                         <Text style={{ color: ACCENT, fontSize: FontSize.xs, fontWeight: '600' }}>{t('backup.restoreAll')}</Text>
-                      </TouchableOpacity>
+                      </PressableScale>
                     )}
                   </View>
 
@@ -858,24 +884,27 @@ export default function BackupScreen() {
                           </View>
                         </View>
                         <View style={{ flexDirection: 'row', gap: 8, marginLeft: 8 }}>
-                          <TouchableOpacity
+                          <PressableScale
                             onPress={() => handleRestore(item.id)}
                             disabled={restoring === item.id}
-                            style={[s.actionBtn, { backgroundColor: isDark ? 'rgba(17, 17, 17, 0.12)' : 'rgba(17, 17, 17, 0.08)' }]}
+                            style={[s.actionBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(17, 17, 17, 0.08)' }]}
+                            accessibilityRole="button"
                           >
                             {restoring === item.id ? <ActivityIndicator size="small" color={ACCENT} /> :
                               <Text style={{ color: ACCENT, fontSize: FontSize.xs, fontWeight: '600' }}>{t('backup.restore')}</Text>
                             }
-                          </TouchableOpacity>
-                          <TouchableOpacity
+                          </PressableScale>
+                          <PressableScale
                             onPress={() => handleDelete(item.id)}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('backup.permanentDelete')}
                             disabled={deleting === item.id}
                             style={[s.actionBtn, { backgroundColor: isDark ? 'rgba(248, 113, 113, 0.12)' : 'rgba(220, 38, 38, 0.06)' }]}
                           >
                             {deleting === item.id ? <ActivityIndicator size="small" color={colors.error} /> :
                               <IconTrash size={14} color={colors.error} />
                             }
-                          </TouchableOpacity>
+                          </PressableScale>
                         </View>
                       </View>
                     );
@@ -971,9 +1000,9 @@ export default function BackupScreen() {
                 }}
               >
                 {e2eSaving ? (
-                  <ActivityIndicator color="#fff" />
+                  <ActivityIndicator color={e2eMode === 'disable' ? '#fff' : ON_ACCENT} />
                 ) : (
-                  <Text style={{ color: '#fff', fontWeight: '700' }}>
+                  <Text style={{ color: e2eMode === 'disable' ? '#fff' : ON_ACCENT, fontWeight: '700' }}>
                     {e2eMode === 'disable' ? (t('backup.e2eConfirmDisable') || 'Desativar') : (t('backup.e2eConfirm') || 'Confirmar')}
                   </Text>
                 )}

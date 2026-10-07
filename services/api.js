@@ -2557,6 +2557,20 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
   // actually sending (it replies with a {send_id} the client can cancel via
   // cancelSend()). 0 = send immediately (legacy behavior). Clamped server-side.
   const undoDelay = Math.max(0, parseInt(opts.undoDelay, 10) || 0);
+  // [2026-10-08 email-outbox] client_send_id → server-side dedupe (the outbox
+  // retries with the same id after a network error; never sends twice).
+  const clientSendId = typeof opts.clientSendId === 'string' ? opts.clientSendId : '';
+  // Pre-uploaded attachments (email_att_upload) travel as att_ids only; the
+  // rest (Drive refs, files whose pre-upload failed) keep the multipart path.
+  const attIds = [];
+  if (Array.isArray(attachments) && attachments.length > 0) {
+    const rest = [];
+    for (const att of attachments) {
+      if (att && typeof att.server_id === 'string' && /^[a-f0-9]{32}$/.test(att.server_id)) attIds.push(att.server_id);
+      else if (att) rest.push(att);
+    }
+    attachments = rest;
+  }
   // If attachments provided, use FormData instead of JSON
   if (attachments && attachments.length > 0) {
     // Drive refs carry only an authenticated download URL — FormData cannot
@@ -2600,6 +2614,8 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
     formData.append('undo_delay', String(undoDelay));
     if (trackOpens) formData.append('track_opens', '1');
     if (fromAlias) formData.append('from_alias', fromAlias);
+    if (attIds.length) formData.append('att_ids', JSON.stringify(attIds));
+    if (clientSendId) formData.append('client_send_id', clientSendId);
     attachments.forEach((att, i) => {
       if (att._raw) {
         formData.append(`attachment_${i}`, att._raw, att.name);
@@ -2629,21 +2645,23 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
       clearTimeout(timeout);
       const text = await res.text();
       try {
-        return JSON.parse(text);
+        return _withHttpStatus(JSON.parse(text), res.status);
       } catch {
-        return { success: false, message: 'Servidor indisponivel' };
+        return _withHttpStatus({ success: false, message: 'Servidor indisponivel' }, res.status >= 400 ? res.status : 502);
       }
     } catch (err) {
       clearTimeout(timeout);
       if (err.name === 'AbortError') {
-        return { success: false, message: 'Tempo limite excedido' };
+        return _withHttpStatus({ success: false, message: 'Tempo limite excedido' }, 0);
       }
-      return { success: false, message: 'Connection error' };
+      return _withHttpStatus({ success: false, message: 'Connection error' }, 0);
     }
   }
 
   const sendBody = { to, subject, body, cc, bcc, reply_to_uid: replyToUid, folder, undo_delay: undoDelay, track_opens: trackOpens ? 1 : 0 };
   if (fromAlias) sendBody.from_alias = fromAlias;
+  if (attIds.length) sendBody.att_ids = attIds;
+  if (clientSendId) sendBody.client_send_id = clientSendId;
   return apiCall('send', sendBody, 'POST');
 }
 
@@ -2653,6 +2671,74 @@ export async function sendEmail(to, subject, body, cc = '', bcc = '', replyToUid
 // call after the window closed — server replies 404 (already sent).
 export async function cancelSend(sendId) {
   return apiCall('cancel_send', { send_id: sendId }, 'POST');
+}
+
+// [2026-10-08 email-outbox] Gmail-style attachment pre-upload. The composer
+// uploads each file as soon as it is picked (email_att_upload → server temp
+// area, TTL 72h) and `send` only references the returned att_id, so pressing
+// Send is instant even with big files. XHR for real byte progress on web AND
+// native (RN fetch has no upload progress). Resolves (never rejects) with the
+// parsed body + non-enumerable __httpStatus (0 = transport failure).
+export function uploadEmailAttachment(file, { onProgress, signal } = {}) {
+  return new Promise((resolve) => {
+    const done = (data, status) => resolve(_withHttpStatus(data, status));
+    try {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        done({ success: false, message: 'offline', offline: true }, 0);
+        return;
+      }
+      const formData = new FormData();
+      if (file && file._raw) {
+        formData.append('file', file._raw, file.name || 'file');
+      } else if (file && file.uri) {
+        formData.append('file', { uri: file.uri, name: file.name || 'file', type: file.type || 'application/octet-stream' });
+      } else {
+        done({ success: false, message: 'no file' }, 400);
+        return;
+      }
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', `${API_URL}?action=email_att_upload`);
+      if (authToken) xhr.setRequestHeader('Authorization', `Bearer ${authToken}`);
+      if (csrfToken) xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+      if (_userLanguage) xhr.setRequestHeader('X-User-Language', _userLanguage);
+      if (Platform.OS !== 'web' && sessionCookie) { try { xhr.setRequestHeader('Cookie', sessionCookie); } catch {} }
+      if (Platform.OS === 'web') xhr.withCredentials = true;
+      const mb = Math.ceil(((file && file.size) || 0) / (1024 * 1024));
+      xhr.timeout = Math.min(10 * 60 * 1000, Math.max(120000, 60000 + mb * 6000));
+      if (xhr.upload) {
+        xhr.upload.onprogress = (e) => {
+          if (e && e.lengthComputable && e.total > 0 && onProgress) {
+            try { onProgress(Math.min(0.99, e.loaded / e.total)); } catch {}
+          }
+        };
+      }
+      xhr.onload = () => {
+        let j = null;
+        try { j = JSON.parse(xhr.responseText); } catch {}
+        if (j && typeof j === 'object') done(j, xhr.status);
+        else done({ success: false, message: 'Servidor indisponivel' }, xhr.status >= 400 ? xhr.status : 502);
+      };
+      xhr.onerror = () => done({ success: false, message: 'Connection error' }, 0);
+      xhr.ontimeout = () => done({ success: false, message: 'Tempo limite excedido' }, 0);
+      xhr.onabort = () => done({ success: false, message: 'aborted', aborted: true }, 0);
+      if (signal) {
+        if (signal.aborted) { try { xhr.abort(); } catch {} return; }
+        signal.addEventListener?.('abort', () => { try { xhr.abort(); } catch {} }, { once: true });
+      }
+      xhr.send(formData);
+    } catch (e) {
+      done({ success: false, message: 'Connection error' }, 0);
+    }
+  });
+}
+
+export async function deleteEmailAttachment(attId) {
+  if (!attId) return { success: true };
+  try { return await apiCall('email_att_delete', { att_id: attId }, 'POST'); } catch { return { success: false }; }
+}
+
+export async function emailSendStatus(sendId) {
+  return apiCall('send_status', { send_id: sendId }, 'POST');
 }
 
 // Send-as aliases (Gmail multi-from). The user's login email is implicitly
@@ -3997,8 +4083,6 @@ function _rememberNativeSent(id) {
   } catch {}
 }
 async function _tryNativeWsSend(payload) {
-  const ws = _nativeSendSocket();
-  if (!ws) return null;
   const cmi = payload.client_message_id;
   if (!cmi) return null;
   const frame = {
@@ -4011,6 +4095,25 @@ async function _tryNativeWsSend(payload) {
   for (const k of ['reply_to_id', 'reply_quote_text', 'mentions', 'effect', 'silent', 'sealed']) {
     if (payload[k] != null && payload[k] !== '') frame[k] = payload[k];
   }
+  // [2026-10-08 native-core-2] NATIVE_CORE_PRIMARY (default OFF): the same
+  // hub `chat_send` frame goes through the NATIVE outbox (ChatCoreSocket,
+  // persisted + re-sent with the same cmi on reconnect). undefined = native
+  // path not available → JS socket path below; null = native fallback/timeout
+  // → HTTP with the SAME cmi (hub + PHP dedup by sender+cmi).
+  try {
+    if (globalThis.__chatyy_native_send_off !== true) {
+      const nc = require('./nativeCore');
+      if (nc && typeof nc.canSendNative === 'function' && nc.canSendNative()) {
+        const r = await nc.sendTextNative(frame, NATIVE_SEND_ACK_TIMEOUT_MS);
+        if (r !== undefined) {
+          if (r && r.data && r.data.id != null) _rememberNativeSent(r.data.id);
+          return r;
+        }
+      }
+    }
+  } catch {}
+  const ws = _nativeSendSocket();
+  if (!ws) return null;
   return await new Promise((resolve) => {
     let done = false;
     let offAck = null; let offFb = null; let timer = null;

@@ -1573,6 +1573,9 @@ export function AuthProvider({ children }) {
     // Stop child location tracking
     _childRestrictions = null;
     if (_locationInterval) { clearInterval(_locationInterval); _locationInterval = null; }
+    // [2026-10-08 android-otp-shortcuts] Drop recent-conversation icon shortcuts
+    // (names/avatars of the account that is leaving).
+    try { require('../services/appShortcuts').clearAppShortcuts(); } catch {}
 
     // CRITICAL: revoke the device's push token server-side BEFORE clearing
     // the bearer token. Previously this ran AFTER `api.clearAuthToken()` —

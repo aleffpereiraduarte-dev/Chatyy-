@@ -3,9 +3,11 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator, 
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { FontSize, Spacing, BorderRadius, Shadow } from '../constants/theme';
-import { IconPaperclip, IconX, IconFileText, IconImage, IconMusic, IconFilm, IconAlertTriangle, IconFolder, IconCheckCircle } from './Icons';
+import { IconPaperclip, IconX, IconFileText, IconImage, IconMusic, IconFilm, IconAlertTriangle, IconFolder, IconCheckCircle, IconRotateCw, IconWifiOff } from './Icons';
+import Svg, { Circle as SvgCircle } from 'react-native-svg';
 import { formatBytes } from '../services/format';
 import { fileListAll, BASE_URL } from '../services/api';
+import { subscribeAttachUploads, getAttachUpload, retryAttachUpload } from '../services/emailAttachUploads';
 import LocalAttachmentPreview from './LocalAttachmentPreview';
 
 const DEFAULT_MAX_FILES = 10;
@@ -19,6 +21,32 @@ function iconForType(type, size, color) {
   if (type.startsWith('audio/')) return <IconMusic size={size} color={color} />;
   if (type.startsWith('video/')) return <IconFilm size={size} color={color} />;
   return <IconFileText size={size} color={color} />;
+}
+
+// [2026-10-08 email-outbox] Gmail-style per-attachment upload ring. The
+// upload itself runs in services/emailAttachUploads (module-level, survives
+// the composer closing); this ring just mirrors its state for `file._akey`.
+function UploadRing({ progress, color, track, size = 26 }) {
+  const stroke = 2.5;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const p = Math.max(0.03, Math.min(1, progress || 0));
+  return (
+    <Svg width={size} height={size} style={{ transform: [{ rotate: '-90deg' }] }}>
+      <SvgCircle cx={size / 2} cy={size / 2} r={r} stroke={track} strokeWidth={stroke} fill="none" />
+      <SvgCircle cx={size / 2} cy={size / 2} r={r} stroke={color} strokeWidth={stroke} fill="none"
+        strokeDasharray={`${c} ${c}`} strokeDashoffset={c * (1 - p)} strokeLinecap="round" />
+    </Svg>
+  );
+}
+
+function useUploadStates(attachments) {
+  const [, setTick] = useState(0);
+  const keysRef = useRef(new Set());
+  keysRef.current = new Set(attachments.map((a) => a && a._akey).filter(Boolean));
+  useEffect(() => subscribeAttachUploads((key) => {
+    if (!key || keysRef.current.has(key)) setTick((n) => n + 1);
+  }), []);
 }
 
 // ── Component ────────────────────────────────────────────────────────────
@@ -48,6 +76,7 @@ export default function AttachmentPicker({
   const [driveSelection, setDriveSelection] = useState({});
   // [2026-10-07 compose-attach-preview] tap a picked file to check it before sending (Gmail-style).
   const [previewIndex, setPreviewIndex] = useState(-1);
+  useUploadStates(attachments);
 
   // Revoke all created object URLs on unmount to prevent memory leaks
   useEffect(() => {
@@ -276,6 +305,8 @@ export default function AttachmentPicker({
         <View style={[s.list, { borderColor: colors.borderLight }]}>
           {attachments.map((file, index) => {
             const progress = uploadProgress?.[index];
+            const up = file && file._akey ? getAttachUpload(file._akey) : null;
+            const upState = up ? up.state : null;
             return (
               <View
                 key={`${file.name}-${index}`}
@@ -303,8 +334,11 @@ export default function AttachmentPicker({
                     <Text style={[s.fileName, { color: colors.text }]} numberOfLines={1}>
                       {file.name}
                     </Text>
-                    <Text style={[s.fileSize, { color: colors.textTertiary }]}>
-                      {formatBytes(file.size)} · {t('attachment.tapToPreview') || 'Toque para ver'}
+                    <Text style={[s.fileSize, { color: upState === 'error' ? colors.error : colors.textTertiary }]} numberOfLines={1}>
+                      {formatBytes(file.size)} · {upState === 'uploading' ? `${t('emailOutbox.uploading')} ${Math.round((up.progress || 0) * 100)}%`
+                        : upState === 'waiting' ? t('emailOutbox.uploadWaiting')
+                        : upState === 'error' ? t('emailOutbox.uploadFailed')
+                        : t('attachment.tapToPreview')}
                     </Text>
                   </View>
                 </TouchableOpacity>
@@ -326,6 +360,26 @@ export default function AttachmentPicker({
                   </View>
                 )}
 
+                {upState === 'uploading' ? (
+                  <View style={s.ringWrap} accessibilityLabel={`${t('emailOutbox.uploading')} ${Math.round((up.progress || 0) * 100)}%`}>
+                    <UploadRing progress={up.progress} color={colors.primary} track={colors.borderLight} />
+                  </View>
+                ) : upState === 'waiting' ? (
+                  <View style={s.ringWrap}>
+                    <IconWifiOff size={16} color={colors.textTertiary} />
+                  </View>
+                ) : upState === 'error' ? (
+                  <TouchableOpacity
+                    onPress={() => retryAttachUpload(file._akey)}
+                    style={[s.removeBtn, { backgroundColor: colors.primaryLight }]}
+                    hitSlop={6}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('emailOutbox.retryUpload')}
+                  >
+                    <IconRotateCw size={14} color={colors.primary} />
+                  </TouchableOpacity>
+                ) : null}
+
                 {progress != null && progress < 100 ? (
                   <ActivityIndicator size="small" color={colors.primary} style={{ marginLeft: Spacing.sm }} />
                 ) : (
@@ -334,6 +388,8 @@ export default function AttachmentPicker({
                     style={[s.removeBtn, { backgroundColor: colors.errorBg }]}
                     hitSlop={6}
                     disabled={disabled}
+                    accessibilityRole="button"
+                    accessibilityLabel={upState === 'uploading' ? t('emailOutbox.cancelUpload') : (t('common.remove') || 'Remover')}
                   >
                     <IconX size={14} color={colors.error} />
                   </TouchableOpacity>
@@ -549,6 +605,13 @@ const s = StyleSheet.create({
     fontSize: FontSize.xs,
     width: 30,
     textAlign: 'right',
+  },
+
+  ringWrap: {
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   // Remove

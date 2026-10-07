@@ -2,9 +2,16 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View, FlatList, Text, TouchableOpacity, StyleSheet, RefreshControl,
   ActivityIndicator, Platform, Dimensions, TextInput, Modal, ScrollView, Alert,
+  Image, Linking, BackHandler, KeyboardAvoidingView,
 } from 'react-native';
 import AvatarCircle from './AvatarCircle';
-import { IconSearch, IconPlus, IconArrowLeft } from './Icons';
+import { IconSearch, IconPlus, IconArrowLeft, IconPlay } from './Icons';
+// [2026-10-08 apps-native] feedback nativo (célula iOS/ripple Android), empty
+// state canônico e haptics — antes tudo era TouchableOpacity (fade de site).
+import PressableRow from './PressableRow';
+import PressableScale from './PressableScale';
+import ScreenEmptyState from './ScreenEmptyState';
+import { haptic } from '../constants/theme';
 import Svg, { Path, Circle as SvgCircle, Defs, LinearGradient as SvgLinearGradient, Stop, Rect } from 'react-native-svg';
 import { useAuth } from '../context/AuthContext';
 import * as api from '../services/api';
@@ -129,39 +136,110 @@ function relativeTime(dateStr, t) {
   {const _d = new Date(dateStr); return isNaN(_d.getTime()) ? "" : _d.toLocaleDateString();}
 }
 
+// [2026-10-08 apps-native] O backend mapeia canais p/ conversas (chat.php
+// $qrAlias): channel_my_channels→chat_list, channel_feed→chat_messages,
+// chat_channel_info→chat_group_info. Os campos que a UI lia (latest_post,
+// follower_count, posts/items, r.cnt, my_reaction, info.is_admin/is_member)
+// NÃO existem nessas respostas → feed sempre "Sem posts", admin nunca via o
+// campo de postar, contadores 0. Normaliza aqui os dois formatos.
+function channelPreview(item) {
+  return item?.latest_post || item?.last_message?.content || item?.description || '';
+}
+function channelTime(item) {
+  return item?.latest_post_at || item?.last_message_at || item?.last_message?.created_at || item?.created_at;
+}
+function channelCount(item) {
+  return parseInt(item?.follower_count ?? item?.subscriber_count ?? item?.member_count, 10) || 0;
+}
+function normalizeReactions(post, myEmail) {
+  const me = String(myEmail || '').toLowerCase();
+  let mine = post?.my_reaction || null;
+  const list = (Array.isArray(post?.reactions) ? post.reactions : []).map((r) => {
+    const users = Array.isArray(r?.users) ? r.users : [];
+    if (!mine && me && users.some(u => String(u || '').toLowerCase() === me)) mine = r.emoji;
+    return { emoji: r?.emoji, cnt: parseInt(r?.cnt ?? r?.count, 10) || 0 };
+  }).filter(r => r.emoji && r.cnt > 0);
+  return { list, mine };
+}
+
 // ── Quick emoji reaction bar ──
 const QUICK_REACTIONS = ['\uD83D\uDC4D', '\u2764\uFE0F', '\uD83D\uDD25', '\uD83D\uDE02', '\uD83D\uDE2E', '\uD83D\uDE22'];
 
 // ── Following Tab: channels user follows ──
-function FollowingList({ colors, isDark, t, onOpenChannel }) {
+function FollowingList({ colors, isDark, t, onOpenChannel, onDiscover, onCreate }) {
   const [channels, setChannels] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [failed, setFailed] = useState(false); // [2026-10-08 apps-native] erro ≠ vazio
 
   const load = useCallback(async () => {
     try {
       const res = await api.channelMyChannels();
-      if (api.apiOk(res)) setChannels(api.apiList(res, 'channels', 'conversations'));
-    } catch {} finally { setLoading(false); setRefreshing(false); }
+      if (api.apiOk(res)) { setChannels(api.apiList(res, 'channels', 'conversations')); setFailed(false); }
+      else setFailed(true);
+    } catch { setFailed(true); } finally { setLoading(false); setRefreshing(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
 
   const onRefresh = useCallback(() => { setRefreshing(true); load(); }, [load]);
 
-  if (loading) return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator color={ACCENT} size="large" /></View>;
+  const renderItem = useCallback(({ item }) => (
+    <PressableRow
+      onPress={() => { haptic.light(); onOpenChannel(item); }}
+      style={[styles.channelRow, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}
+      accessibilityRole="button"
+      accessibilityLabel={item.name}
+    >
+      <View style={[styles.channelAvatar, { backgroundColor: isDark ? '#1a1a24' : '#f0f0f5' }]}>
+        {(item.photo_url || item.avatar) ? (
+          <AvatarCircle name={item.name} uri={item.photo_url || item.avatar} size={50} />
+        ) : (
+          <IconMegaphone size={24} color={colors.text} />
+        )}
+      </View>
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={{ color: colors.text, fontSize: 16, fontWeight: '600' }} numberOfLines={1}>{item.name}</Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 2 }} numberOfLines={1}>
+          {channelPreview(item)}
+        </Text>
+      </View>
+      <View style={{ alignItems: 'flex-end' }}>
+        <Text style={{ color: colors.textSecondary, fontSize: 11 }}>
+          {relativeTime(channelTime(item), t)}
+        </Text>
+        <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 4 }}>
+          {formatCount(channelCount(item))} {t('channel.followers') || 'followers'}
+        </Text>
+      </View>
+    </PressableRow>
+  ), [colors, isDark, t, onOpenChannel]);
+
+  if (loading) return <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator color={colors.text} size="large" /></View>;
 
   if (channels.length === 0) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 }}>
-        <IconMegaphone size={48} color={isDark ? '#444' : '#ccc'} />
-        <Text style={{ color: colors.textSecondary, fontSize: 15, marginTop: 16, textAlign: 'center' }}>
-          {t('channel.noFollowing') || 'You are not following any channels yet'}
-        </Text>
-        <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 8, textAlign: 'center' }}>
-          {t('channel.discoverDesc') || 'Discover channels to follow'}
-        </Text>
-      </View>
+      <ScrollView
+        contentContainerStyle={{ flexGrow: 1 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />}
+      >
+        {failed ? (
+          <ScreenEmptyState
+            kind="search"
+            title={t('common.error') || 'Erro'}
+            subtitle={t('common.tryAgain') || 'Tentar novamente'}
+            cta={{ label: t('common.retry') || 'Tentar novamente', onPress: () => { setLoading(true); load(); } }}
+          />
+        ) : (
+          <ScreenEmptyState
+            kind="notifications"
+            title={t('channel.noFollowing') || 'You are not following any channels yet'}
+            subtitle={t('channel.discoverDesc') || 'Discover channels to follow'}
+            cta={onDiscover ? { label: t('channel.discover') || 'Discover', onPress: onDiscover } : undefined}
+            secondary={onCreate ? { label: t('channel.create') || 'New Channel', onPress: onCreate } : undefined}
+          />
+        )}
+      </ScrollView>
     );
   }
 
@@ -169,36 +247,11 @@ function FollowingList({ colors, isDark, t, onOpenChannel }) {
     <FlatList
       data={channels}
       keyExtractor={(item) => String(item.id)}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
-      renderItem={({ item }) => (
-        <TouchableOpacity
-          activeOpacity={0.7}
-          onPress={() => onOpenChannel(item)}
-          style={[styles.channelRow, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}
-        >
-          <View style={[styles.channelAvatar, { backgroundColor: isDark ? '#1a1a24' : '#f0f0f5' }]}>
-            {item.photo_url ? (
-              <AvatarCircle name={item.name} email={item.created_by} size={50} />
-            ) : (
-              <IconMegaphone size={24} color={ACCENT} />
-            )}
-          </View>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={{ color: colors.text, fontSize: 16, fontWeight: '600' }} numberOfLines={1}>{item.name}</Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 13, marginTop: 2 }} numberOfLines={1}>
-              {item.latest_post || item.description || ''}
-            </Text>
-          </View>
-          <View style={{ alignItems: 'flex-end' }}>
-            <Text style={{ color: colors.textSecondary, fontSize: 11 }}>
-              {relativeTime(item.latest_post_at || item.created_at, t)}
-            </Text>
-            <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 4 }}>
-              {item.follower_count || 0} {t('channel.followers') || 'followers'}
-            </Text>
-          </View>
-        </TouchableOpacity>
-      )}
+      renderItem={renderItem}
+      initialNumToRender={12}
+      windowSize={7}
+      removeClippedSubviews={Platform.OS === 'android'}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />}
     />
   );
 }
@@ -233,17 +286,20 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
 
   const onRefresh = useCallback(() => { setRefreshing(true); load(category, search); }, [category, search, load]);
 
+  // [2026-10-08 apps-native] otimista + haptic (antes: espera rede + reload
+  // inteiro, e erro engolido sem reverter).
   const handleFollow = useCallback(async (ch) => {
+    const wasMember = !!ch.is_member;
+    haptic.select();
+    setChannels(prev => prev.map(c => (c.id === ch.id ? { ...c, is_member: !wasMember } : c)));
     try {
-      if (ch.is_member) {
-        await api.channelUnfollow(ch.id);
-      } else {
-        await api.channelFollow(ch.id);
-      }
-      // Refresh list
-      load(category, search);
-    } catch {}
-  }, [category, search, load]);
+      const res = wasMember ? await api.channelUnfollow(ch.id) : await api.channelFollow(ch.id);
+      if (!api.apiOk(res)) throw new Error(api.apiMsg(res) || 'follow failed');
+    } catch {
+      setChannels(prev => prev.map(c => (c.id === ch.id ? { ...c, is_member: wasMember } : c)));
+      haptic.error();
+    }
+  }, []);
 
   // Apply top-level filter (client-side; backend doesn't yet split by these keys)
   const displayed = React.useMemo(() => {
@@ -285,10 +341,12 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
         {FILTER_CHIPS.map((f) => {
           const active = filter === f.key;
           return (
-            <TouchableOpacity
+            <PressableScale
               key={f.key}
               onPress={() => setFilter(f.key)}
-              activeOpacity={0.85}
+              haptic="select"
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
               style={[
                 styles.filterChip,
                 active
@@ -304,7 +362,7 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
               }}>
                 {t(`channel.filter.${f.key}`) || f.label}
               </Text>
-            </TouchableOpacity>
+            </PressableScale>
           );
         })}
       </ScrollView>
@@ -312,47 +370,65 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
       {/* Category pills (secondary) */}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, marginBottom: 10 }} contentContainerStyle={{ paddingHorizontal: 12, gap: 8 }}>
         {CATEGORIES.map((cat) => (
-          <TouchableOpacity
+          <PressableScale
             key={cat.key}
             onPress={() => setCategory(cat.key)}
+            haptic="select"
+            accessibilityRole="button"
+            accessibilityState={{ selected: category === cat.key }}
             style={[styles.categoryPill, {
               backgroundColor: category === cat.key ? ACCENT : (isDark ? '#1a1a24' : '#f0f0f5'),
             }]}
           >
-            <Text style={{ fontSize: 14 }}>{cat.emoji}</Text>
+            {/* [2026-10-08 apps-native] emoji removido (regra: UI sem emoji) */}
             <Text style={{
-              fontSize: 12, fontWeight: '600', marginLeft: 4,
+              fontSize: 12, fontWeight: '600',
               color: category === cat.key ? '#fff' : colors.text,
             }}>
               {t(`channel.cat.${cat.key}`) || cat.key.charAt(0).toUpperCase() + cat.key.slice(1)}
             </Text>
-          </TouchableOpacity>
+          </PressableScale>
         ))}
       </ScrollView>
 
       {loading ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator color={ACCENT} size="large" /></View>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator color={colors.text} size="large" /></View>
       ) : displayed.length === 0 ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 }}>
-          <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('channel.noChannels') || 'Nenhum canal encontrado'}</Text>
-        </View>
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1 }}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />}
+        >
+          <ScreenEmptyState
+            kind="search"
+            compact
+            title={t('channel.noChannels') || 'Nenhum canal encontrado'}
+            subtitle={t('channel.discoverDesc') || 'Find public channels to follow'}
+          />
+        </ScrollView>
       ) : (
         <FlatList
           data={displayed}
           keyExtractor={(item) => String(item.id)}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
           contentContainerStyle={{ paddingHorizontal: 12, paddingBottom: 20, gap: 12 }}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          initialNumToRender={6}
+          windowSize={7}
           renderItem={({ item }) => {
-            const subCountNum = parseInt(item.subscriber_count) || 0;
-            const subText = formatCount(subCountNum) + (subCountNum === 1 ? ' membro' : ' membros');
+            const subCountNum = channelCount(item);
+            // [2026-10-08 apps-native] era ' membro'/' membros' fixo em PT
+            const subText = formatCount(subCountNum) + ' ' + (t('channel.subscribers') || 'subscribers');
             const catLabel = item.category && item.category !== 'general'
               ? (t(`channel.cat.${item.category}`) || item.category)
               : null;
             return (
-              <TouchableOpacity
-                activeOpacity={0.85}
+              <PressableScale
                 onPress={() => onOpenChannel(item)}
                 style={styles.coverCard}
+                accessibilityRole="button"
+                accessibilityLabel={item.name}
               >
                 {/* Cover background \u2014 placeholder gradient until cover_url wired */}
                 <CardCoverFallback seed={item.id || 0} />
@@ -374,9 +450,11 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
                     <Text style={styles.coverFooterMeta} numberOfLines={1}>
                       {subText}{catLabel ? `   ${catLabel}` : ''}
                     </Text>
-                    <TouchableOpacity
+                    <PressableScale
                       onPress={() => handleFollow(item)}
-                      activeOpacity={0.85}
+                      haptic={false}
+                      hitSlop={8}
+                      accessibilityRole="button"
                       style={[
                         styles.coverJoinBtn,
                         item.is_member
@@ -387,10 +465,10 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
                       <Text style={styles.coverJoinBtnText}>
                         {item.is_member ? (t('channel.joined') || 'Inscrito') : (t('channel.join') || 'Inscrever')}
                       </Text>
-                    </TouchableOpacity>
+                    </PressableScale>
                   </View>
                 </View>
-              </TouchableOpacity>
+              </PressableScale>
             );
           }}
         />
@@ -400,24 +478,51 @@ function DiscoverList({ colors, isDark, t, onOpenChannel }) {
 }
 
 // ── Channel View: scrollable feed of posts ──
+// [2026-10-08 apps-native] Reescrito sobre o formato REAL do backend
+// (chat_messages/chat_group_info): posts em `messages` (asc → invertido p/
+// mais novo no topo), reações {emoji,count,users}, admin = role do membro ou
+// criador, não-membro (preview de canal descoberto) = CTA Entrar. Mídia
+// (image/video) agora aparece; back do Android volta p/ lista; haptics.
 function ChannelView({ channel, colors, isDark, t, onBack }) {
   const { user } = useAuth();
+  const myEmail = String(user?.email || '').toLowerCase();
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [info, setInfo] = useState(null);
+  const [isMember, setIsMember] = useState(channel.is_member !== false);
+  const [joining, setJoining] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [newPost, setNewPost] = useState('');
   const [posting, setPosting] = useState(false);
   const [attaching, setAttaching] = useState(false);
 
+  // Android: botão voltar do sistema fecha o canal (antes saía da aba inteira).
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => { onBack?.(); return true; });
+    return () => sub.remove();
+  }, [onBack]);
+
   const loadPosts = useCallback(async () => {
     try {
+      // Independentes: não-membro recebe 403 no info/feed — um não derruba o outro.
       const [feedRes, infoRes] = await Promise.all([
-        api.channelFeed(channel.id),
-        api.channelInfo(channel.id),
+        api.channelFeed(channel.id).catch(e => ({ success: false, _err: e })),
+        api.channelInfo(channel.id).catch(e => ({ success: false, _err: e })),
       ]);
-      if (api.apiOk(feedRes)) setPosts(api.apiList(feedRes, 'posts', 'items'));
-      if (api.apiOk(infoRes)) setInfo(api.apiPayload(infoRes) || null);
+      if (api.apiOk(feedRes)) {
+        const rows = api.apiList(feedRes, 'messages', 'posts', 'items')
+          .filter(m => m && m.type !== 'system' && !m.deleted_at);
+        // chat_messages devolve ascendente; canal mostra o mais novo primeiro.
+        const asc = rows.length > 1 && new Date(rows[0].created_at) < new Date(rows[rows.length - 1].created_at);
+        setPosts(asc ? rows.slice().reverse() : rows);
+      }
+      if (api.apiOk(infoRes)) {
+        setInfo(api.apiPayload(infoRes) || null);
+        setIsMember(true); // chat_group_info exige membership → ok ⇒ membro
+      } else if (infoRes && (infoRes.status === 403 || infoRes._err?.status === 403 || /member/i.test(api.apiMsg(infoRes) || String(infoRes._err?.message || '')))) {
+        setIsMember(false);
+      }
     } catch {} finally { setLoading(false); setRefreshing(false); }
   }, [channel.id]);
 
@@ -425,17 +530,38 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
 
   const onRefresh = useCallback(() => { setRefreshing(true); loadPosts(); }, [loadPosts]);
 
+  const handleJoin = useCallback(async () => {
+    if (joining) return;
+    setJoining(true);
+    haptic.select();
+    try {
+      const res = await api.channelFollow(channel.id);
+      if (!api.apiOk(res)) throw new Error(api.apiMsg(res) || 'join failed');
+      setIsMember(true);
+      haptic.success();
+      loadPosts();
+    } catch {
+      haptic.error();
+      Alert.alert(t('common.error') || 'Erro', t('common.tryAgain') || 'Tentar novamente');
+    } finally { setJoining(false); }
+  }, [joining, channel.id, loadPosts, t]);
+
   const handlePost = useCallback(async () => {
     if (!newPost.trim() || posting) return;
     setPosting(true);
     try {
       const res = await api.channelPost(channel.id, newPost.trim());
       if (api.apiOk(res)) {
+        haptic.success();
         setNewPost('');
         loadPosts();
+      } else {
+        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('channel.postFailed') || 'Não foi possível publicar'));
       }
-    } catch {} finally { setPosting(false); }
-  }, [newPost, posting, channel.id, loadPosts]);
+    } catch {
+      Alert.alert(t('common.error') || 'Erro', t('channel.postFailed') || 'Não foi possível publicar');
+    } finally { setPosting(false); }
+  }, [newPost, posting, channel.id, loadPosts, t]);
 
   const handleAttach = useCallback(async () => {
     if (attaching || posting) return;
@@ -468,6 +594,7 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
       }
       const res = await api.channelPost(channel.id, newPost.trim(), postType, fileUrl);
       if (api.apiOk(res)) {
+        haptic.success();
         setNewPost('');
         loadPosts();
       } else {
@@ -480,45 +607,125 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
     }
   }, [attaching, posting, channel.id, newPost, user, loadPosts, t]);
 
+  // Otimista: aplica local na hora (toggle como o chat), servidor em seguida.
   const handleReact = useCallback(async (postId, emoji) => {
-    try {
-      await api.channelReact(postId, emoji);
-      // Optimistic: reload
-      loadPosts();
-    } catch {}
-  }, [loadPosts]);
+    haptic.light();
+    setPosts(prev => prev.map((p) => {
+      if (p.id !== postId) return p;
+      const { mine } = normalizeReactions(p, myEmail);
+      const base = (Array.isArray(p.reactions) ? p.reactions : []).map((r) => {
+        const users = (Array.isArray(r.users) ? r.users : []).filter(u => String(u || '').toLowerCase() !== myEmail);
+        return { ...r, users, count: users.length || Math.max(0, (parseInt(r.count ?? r.cnt, 10) || 0) - (r.emoji === mine ? 1 : 0)), cnt: undefined };
+      });
+      if (mine !== emoji) {
+        const i = base.findIndex(r => r.emoji === emoji);
+        if (i >= 0) base[i] = { ...base[i], users: [...base[i].users, myEmail], count: (base[i].count || 0) + 1 };
+        else base.push({ emoji, users: [myEmail], count: 1 });
+      }
+      return { ...p, reactions: base, my_reaction: mine === emoji ? null : emoji };
+    }));
+    try { await api.channelReact(postId, emoji); } catch { loadPosts(); }
+  }, [myEmail, loadPosts]);
 
-  const isAdmin = info?.is_admin || false;
+  const isAdmin = !!(info?.is_admin
+    || (Array.isArray(info?.members) && info.members.some(m => String(m?.email || '').toLowerCase() === myEmail && m?.role === 'admin'))
+    || (myEmail && String(info?.created_by || channel.created_by || '').toLowerCase() === myEmail));
+  const followerCount = channelCount(info) || channelCount(channel);
+
+  const renderPost = useCallback(({ item }) => {
+    const { list: reactions, mine } = normalizeReactions(item, myEmail);
+    const media = item.file_url || item.media_url || '';
+    const isImage = media && (item.type === 'image' || /\.(jpe?g|png|gif|webp|heic)(\?|$)/i.test(media));
+    const isVideo = media && !isImage && (item.type === 'video' || /\.(mp4|mov|m4v|webm)(\?|$)/i.test(media));
+    return (
+      <View style={[styles.postCard, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
+        {isImage ? (
+          <Image source={{ uri: media }} style={[styles.postMedia, { backgroundColor: isDark ? '#1a1a24' : '#f0f0f5' }]} resizeMode="cover" />
+        ) : isVideo ? (
+          <PressableScale
+            onPress={() => { Linking.openURL(media).catch(() => {}); }}
+            style={[styles.postMedia, { backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }]}
+            accessibilityRole="button"
+          >
+            <View style={styles.playBadge}><IconPlay size={22} color="#fff" /></View>
+          </PressableScale>
+        ) : null}
+        {item.content ? (
+          <Text style={{ color: colors.text, fontSize: 15, lineHeight: 22 }} selectable>{item.content}</Text>
+        ) : null}
+        <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 8 }}>
+          {relativeTime(item.created_at, t)}
+        </Text>
+
+        {reactions.length > 0 ? (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8, gap: 6 }}>
+            {reactions.map((r) => (
+              <PressableScale
+                key={r.emoji}
+                onPress={() => handleReact(item.id, r.emoji)}
+                haptic={false}
+                style={[styles.reactionChip, {
+                  backgroundColor: mine === r.emoji ? (isDark ? 'rgba(255,255,255,0.14)' : 'rgba(17,17,17,0.08)') : (isDark ? '#1a1a24' : '#f0f0f5'),
+                  borderColor: mine === r.emoji ? colors.text : 'transparent',
+                }]}
+              >
+                <Text style={{ fontSize: 14 }}>{r.emoji}</Text>
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginLeft: 4 }}>{r.cnt}</Text>
+              </PressableScale>
+            ))}
+          </View>
+        ) : null}
+
+        {/* Barra rápida de reação (emoji aqui é CONTEÚDO de reação, como no
+            WhatsApp Canais — não chrome de UI). */}
+        {isMember ? (
+          <View style={{ flexDirection: 'row', marginTop: 8, gap: 12 }}>
+            {QUICK_REACTIONS.map((emoji) => (
+              <PressableScale key={emoji} onPress={() => handleReact(item.id, emoji)} haptic={false} scaleTo={0.85} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+                <Text style={{ fontSize: 18, opacity: mine === emoji ? 1 : 0.5 }}>{emoji}</Text>
+              </PressableScale>
+            ))}
+          </View>
+        ) : null}
+      </View>
+    );
+  }, [colors, isDark, t, myEmail, isMember, handleReact]);
 
   return (
-    <View style={{ flex: 1 }}>
+    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       {/* Header */}
       <View style={[styles.channelHeader, {
         backgroundColor: isDark ? '#0a0a0f' : '#fff',
         borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
       }]}>
-        <TouchableOpacity onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <IconArrowLeft size={20} color={colors.text} />
-        </TouchableOpacity>
+        <PressableScale onPress={onBack} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }} accessibilityRole="button" accessibilityLabel={t('common.back') || 'Voltar'}>
+          <IconArrowLeft size={22} color={colors.text} />
+        </PressableScale>
         <View style={[styles.channelAvatar, { backgroundColor: isDark ? '#1a1a24' : '#f0f0f5', marginLeft: 12, width: 36, height: 36 }]}>
-          <IconMegaphone size={18} color={ACCENT} />
+          {(channel.photo_url || channel.avatar || info?.avatar) ? (
+            <AvatarCircle name={channel.name} uri={channel.photo_url || channel.avatar || info?.avatar} size={36} />
+          ) : (
+            <IconMegaphone size={18} color={colors.text} />
+          )}
         </View>
         <View style={{ flex: 1, marginLeft: 10 }}>
-          <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700' }} numberOfLines={1}>{channel.name}</Text>
+          <Text style={{ color: colors.text, fontSize: 16, fontWeight: '700' }} numberOfLines={1}>{info?.name || channel.name}</Text>
           <Text style={{ color: colors.textSecondary, fontSize: 12 }}>
-            {info?.subscriber_count || channel.follower_count || 0} {t('channel.followers') || 'followers'}
+            {formatCount(followerCount)} {t('channel.followers') || 'followers'}
           </Text>
         </View>
-        {info && !info.is_member ? (
-          <TouchableOpacity
-            onPress={async () => {
-              await api.channelFollow(channel.id);
-              loadPosts();
-            }}
+        {!isMember ? (
+          <PressableScale
+            onPress={handleJoin}
+            haptic={false}
+            disabled={joining}
             style={[styles.followBtn, { backgroundColor: ACCENT }]}
+            accessibilityRole="button"
           >
-            <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>{t('channel.join') || 'Join'}</Text>
-          </TouchableOpacity>
+            {joining ? <ActivityIndicator size="small" color="#fff" /> : (
+              <Text style={{ color: '#fff', fontSize: 13, fontWeight: '600' }}>{t('channel.join') || 'Join'}</Text>
+            )}
+          </PressableScale>
         ) : null}
       </View>
 
@@ -531,52 +738,26 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
 
       {/* Posts feed */}
       {loading ? (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator color={ACCENT} size="large" /></View>
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}><ActivityIndicator color={colors.text} size="large" /></View>
       ) : (
         <FlatList
           data={posts}
           keyExtractor={(item) => String(item.id)}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} />}
-          ListEmptyComponent={() => (
-            <View style={{ padding: 40, alignItems: 'center' }}>
-              <Text style={{ color: colors.textSecondary, fontSize: 14 }}>{t('channel.noPosts') || 'No posts yet'}</Text>
-            </View>
-          )}
-          renderItem={({ item }) => (
-            <View style={[styles.postCard, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-              {/* Post content */}
-              <Text style={{ color: colors.text, fontSize: 15, lineHeight: 22 }}>{item.content}</Text>
-              <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 8 }}>
-                {relativeTime(item.created_at, t)}
-              </Text>
-
-              {/* Reactions */}
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8, gap: 6 }}>
-                {(item.reactions || []).map((r) => (
-                  <TouchableOpacity
-                    key={r.emoji}
-                    onPress={() => handleReact(item.id, r.emoji)}
-                    style={[styles.reactionChip, {
-                      backgroundColor: item.my_reaction === r.emoji ? (isDark ? 'rgba(17, 17, 17,0.2)' : 'rgba(17, 17, 17,0.1)') : (isDark ? '#1a1a24' : '#f0f0f5'),
-                      borderColor: item.my_reaction === r.emoji ? ACCENT : 'transparent',
-                    }]}
-                  >
-                    <Text style={{ fontSize: 14 }}>{r.emoji}</Text>
-                    <Text style={{ fontSize: 12, color: colors.textSecondary, marginLeft: 4 }}>{r.cnt}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-
-              {/* Quick react bar */}
-              <View style={{ flexDirection: 'row', marginTop: 8, gap: 12 }}>
-                {QUICK_REACTIONS.map((emoji) => (
-                  <TouchableOpacity key={emoji} onPress={() => handleReact(item.id, emoji)} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
-                    <Text style={{ fontSize: 18, opacity: item.my_reaction === emoji ? 1 : 0.5 }}>{emoji}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          )}
+          renderItem={renderPost}
+          initialNumToRender={6}
+          windowSize={7}
+          contentContainerStyle={posts.length === 0 ? { flexGrow: 1 } : undefined}
+          keyboardDismissMode="on-drag"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} />}
+          ListEmptyComponent={
+            <ScreenEmptyState
+              kind="feed"
+              compact
+              title={t('channel.noPosts') || 'No posts yet'}
+              subtitle={isAdmin ? (t('channel.firstPost') || 'Write your first post below') : (!isMember ? (t('channel.discoverDesc') || '') : undefined)}
+              cta={!isMember ? { label: t('channel.join') || 'Join', onPress: handleJoin } : undefined}
+            />
+          }
         />
       )}
 
@@ -586,18 +767,19 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
           backgroundColor: isDark ? '#0a0a0f' : '#fff',
           borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
         }]}>
-          <TouchableOpacity
+          <PressableScale
             onPress={handleAttach}
             disabled={attaching || posting}
             style={[styles.attachBtn, { opacity: attaching || posting ? 0.4 : 1 }]}
             accessibilityLabel={t('channel.attach') || 'Anexar mídia'}
+            accessibilityRole="button"
           >
             {attaching ? (
-              <ActivityIndicator size="small" color={ACCENT} />
+              <ActivityIndicator size="small" color={colors.text} />
             ) : (
               <IconPaperclip size={22} color={isDark ? '#8b8b96' : '#6b7280'} />
             )}
-          </TouchableOpacity>
+          </PressableScale>
           <TextInput
             value={newPost}
             onChangeText={setNewPost}
@@ -607,18 +789,20 @@ function ChannelView({ channel, colors, isDark, t, onBack }) {
             multiline
             maxLength={5000}
           />
-          <TouchableOpacity
+          <PressableScale
             onPress={handlePost}
             disabled={!newPost.trim() || posting}
+            haptic={false}
             style={[styles.sendBtn, { opacity: newPost.trim() && !posting ? 1 : 0.4 }]}
+            accessibilityRole="button"
           >
             {posting ? <ActivityIndicator size="small" color="#fff" /> : (
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 14 }}>{t('channel.post') || 'Post'}</Text>
             )}
-          </TouchableOpacity>
+          </PressableScale>
         </View>
       )}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -641,13 +825,17 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
         setCategory('general');
         onClose();
       } else {
-        Alert.alert('Erro', api.apiMsg(res) || 'Não foi possível criar o canal');
+        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('channel.postFailed') || 'Não foi possível criar o canal'));
       }
-    } catch {} finally { setCreating(false); }
-  }, [name, description, category, creating, onClose, onCreated]);
+    } catch {
+      Alert.alert(t('common.error') || 'Erro', t('common.tryAgain') || 'Tentar novamente');
+    } finally { setCreating(false); }
+  }, [name, description, category, creating, onClose, onCreated, t]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      {/* [2026-10-08 apps-native] KeyboardAvoidingView: o teclado cobria o sheet */}
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <TouchableOpacity activeOpacity={1} onPress={onClose} style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
         <TouchableOpacity activeOpacity={1} onPress={() => {}} style={{
           backgroundColor: isDark ? '#0f0f14' : '#fff',
@@ -687,35 +875,38 @@ function CreateChannelModal({ visible, onClose, onCreated, colors, isDark, t }) 
           <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 8, marginTop: 14 }}>{t('channel.categoryLabel') || 'Category'}</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }} contentContainerStyle={{ gap: 8 }}>
             {CATEGORIES.filter(c => c.key !== 'all').map((cat) => (
-              <TouchableOpacity
+              <PressableScale
                 key={cat.key}
                 onPress={() => setCategory(cat.key)}
+                haptic="select"
                 style={[styles.categoryPill, {
                   backgroundColor: category === cat.key ? ACCENT : (isDark ? '#1a1a24' : '#f0f0f5'),
                 }]}
               >
-                <Text style={{ fontSize: 14 }}>{cat.emoji}</Text>
                 <Text style={{
-                  fontSize: 12, fontWeight: '600', marginLeft: 4,
+                  fontSize: 12, fontWeight: '600',
                   color: category === cat.key ? '#fff' : colors.text,
                 }}>
                   {t(`channel.cat.${cat.key}`) || cat.key.charAt(0).toUpperCase() + cat.key.slice(1)}
                 </Text>
-              </TouchableOpacity>
+              </PressableScale>
             ))}
           </ScrollView>
 
-          <TouchableOpacity
+          <PressableScale
             onPress={handleCreate}
             disabled={!name.trim() || creating}
+            haptic="medium"
             style={[styles.createBtn, { opacity: name.trim() && !creating ? 1 : 0.5 }]}
+            accessibilityRole="button"
           >
             {creating ? <ActivityIndicator color="#fff" /> : (
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 16 }}>{t('channel.createBtn') || 'Create'}</Text>
             )}
-          </TouchableOpacity>
+          </PressableScale>
         </TouchableOpacity>
       </TouchableOpacity>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
@@ -741,32 +932,52 @@ export default function ChannelsTab({ colors, isDark, t }) {
   return (
     <View style={{ flex: 1 }}>
       {/* Tab switcher */}
+      {/* [2026-10-08 apps-native] tabs/+ com haptic e cor do tema (ACCENT
+          fixo #111 sumia no dark mode). */}
       <View style={[styles.tabBar, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-        <TouchableOpacity
+        <PressableScale
           onPress={() => setTab('following')}
-          style={[styles.tab, tab === 'following' && styles.tabActive]}
+          haptic="select"
+          accessibilityRole="tab"
+          accessibilityState={{ selected: tab === 'following' }}
+          style={[styles.tab, tab === 'following' && [styles.tabActive, { borderBottomColor: colors.text }]]}
         >
-          <Text style={[styles.tabText, { color: tab === 'following' ? ACCENT : colors.textSecondary }]}>
+          <Text style={[styles.tabText, { color: tab === 'following' ? colors.text : colors.textSecondary }]}>
             {t('channel.following') || 'Following'}
           </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
+        </PressableScale>
+        <PressableScale
           onPress={() => setTab('discover')}
-          style={[styles.tab, tab === 'discover' && styles.tabActive]}
+          haptic="select"
+          accessibilityRole="tab"
+          accessibilityState={{ selected: tab === 'discover' }}
+          style={[styles.tab, tab === 'discover' && [styles.tabActive, { borderBottomColor: colors.text }]]}
         >
-          <Text style={[styles.tabText, { color: tab === 'discover' ? ACCENT : colors.textSecondary }]}>
+          <Text style={[styles.tabText, { color: tab === 'discover' ? colors.text : colors.textSecondary }]}>
             {t('channel.discover') || 'Discover'}
           </Text>
-        </TouchableOpacity>
+        </PressableScale>
         <View style={{ flex: 1 }} />
-        <TouchableOpacity onPress={() => setShowCreate(true)} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-          <IconPlus size={20} color={ACCENT} />
-        </TouchableOpacity>
+        <PressableScale
+          onPress={() => setShowCreate(true)}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          accessibilityRole="button"
+          accessibilityLabel={t('channel.create') || 'New Channel'}
+        >
+          <IconPlus size={22} color={colors.text} />
+        </PressableScale>
       </View>
 
       {/* Content */}
       {tab === 'following' ? (
-        <FollowingList colors={colors} isDark={isDark} t={t} onOpenChannel={setSelectedChannel} />
+        <FollowingList
+          colors={colors}
+          isDark={isDark}
+          t={t}
+          onOpenChannel={setSelectedChannel}
+          onDiscover={() => setTab('discover')}
+          onCreate={() => setShowCreate(true)}
+        />
       ) : (
         <DiscoverList colors={colors} isDark={isDark} t={t} onOpenChannel={setSelectedChannel} />
       )}
@@ -946,6 +1157,18 @@ const styles = StyleSheet.create({
   postCard: {
     padding: 16,
     borderBottomWidth: 1,
+  },
+  postMedia: {
+    width: '100%',
+    aspectRatio: 4 / 3,
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 10,
+  },
+  playBadge: {
+    width: 52, height: 52, borderRadius: 26,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    alignItems: 'center', justifyContent: 'center',
   },
   reactionChip: {
     flexDirection: 'row',

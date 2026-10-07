@@ -8,7 +8,8 @@ public class ChatCoreModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ChatyyChatCore")
 
-    Events("onChatCoreFrame", "onChatCoreState")
+    // [2026-10-08 native-core-2] + onChatCoreRaw (primary frames) / onChatCoreAck (outbox).
+    Events("onChatCoreFrame", "onChatCoreState", "onChatCoreRaw", "onChatCoreAck")
 
     OnCreate {
       ChatCoreSocket.shared.emitter = { [weak self] name, body in
@@ -18,13 +19,27 @@ public class ChatCoreModule: Module {
 
     OnDestroy {
       ChatCoreSocket.shared.emitter = nil
+      ChatCoreSocket.shared.setPrimary(false)
       if ChatCoreSocket.shared.isRunning() {
         ChatCoreSocket.shared.stop(reason: "module_destroy")
       }
     }
 
+    /// 1 = shadow (phase 1); 2 = + setPrimary / sendText / cancelSend (phase 2).
     Function("version") { () -> Int in
-      return 1
+      return 2
+    }
+
+    Function("setPrimary") { (on: Bool) -> Void in
+      ChatCoreSocket.shared.setPrimary(on)
+    }
+
+    AsyncFunction("sendText") { (acct: String, cmi: String, frameJson: String) -> Bool in
+      return ChatCoreSocket.shared.sendText(acct: acct, cmi: cmi, frameJson: frameJson)
+    }
+
+    Function("cancelSend") { (cmi: String) -> Void in
+      ChatCoreSocket.shared.cancelSend(cmi: cmi)
     }
 
     AsyncFunction("start") { (acct: String, lastEventId: Double, deviceId: String) -> Bool in

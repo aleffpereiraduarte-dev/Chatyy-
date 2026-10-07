@@ -9,6 +9,11 @@ import { useLanguage } from '../context/LanguageContext';
 import { IconPlus, IconUsers, IconX, IconMessageSquare } from './Icons';
 import AvatarCircle from './AvatarCircle';
 import BrandFab from './BrandFab';
+// [2026-10-08 apps-native] célula nativa, empty canônico, haptics
+import PressableRow from './PressableRow';
+import PressableScale from './PressableScale';
+import ScreenEmptyState from './ScreenEmptyState';
+import { haptic } from '../constants/theme';
 import Svg, { Path, Rect, Circle } from 'react-native-svg';
 import * as api from '../services/api';
 
@@ -48,6 +53,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
   const [communities, setCommunities] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [failed, setFailed] = useState(false); // [2026-10-08 apps-native] erro ≠ lista vazia
   const [expandedId, setExpandedId] = useState(null);
   const [expandedData, setExpandedData] = useState(null);
   const [loadingInfo, setLoadingInfo] = useState(false);
@@ -73,8 +79,11 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
       const res = await api.communityList();
       if (api.apiOk(res)) {
         setCommunities(api.apiList(res, 'communities'));
+        setFailed(false);
+      } else {
+        setFailed(true);
       }
-    } catch {} finally {
+    } catch { setFailed(true); } finally {
       setLoading(false);
       setRefreshing(false);
     }
@@ -88,14 +97,11 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
   }, [loadCommunities]);
 
   const expandSeqRef = useRef(0);
-  const toggleExpand = useCallback(async (id) => {
-    if (expandedId === id) {
-      setExpandedId(null);
-      setExpandedData(null);
-      return;
-    }
+  // [2026-10-08 apps-native] Recarrega os grupos do card aberto SEM colapsar.
+  // Antes add/remove grupo chamava toggleExpand(null)+setTimeout(toggleExpand(id))
+  // com closure velha → buscava communityInfo(null) e depois FECHAVA o card.
+  const fetchInfo = useCallback(async (id) => {
     const seq = ++expandSeqRef.current;
-    setExpandedId(id);
     setLoadingInfo(true);
     try {
       const res = await api.communityInfo(id);
@@ -107,7 +113,21 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
     } catch {} finally {
       if (seq === expandSeqRef.current) setLoadingInfo(false);
     }
-  }, [expandedId]);
+  }, []);
+
+  const toggleExpand = useCallback(async (id) => {
+    haptic.select();
+    if (expandedId === id) {
+      expandSeqRef.current++;
+      setExpandedId(null);
+      setExpandedData(null);
+      setLoadingInfo(false);
+      return;
+    }
+    setExpandedId(id);
+    setExpandedData(null);
+    fetchInfo(id);
+  }, [expandedId, fetchInfo]);
 
   const handleCreate = useCallback(async () => {
     if (!createName.trim()) return;
@@ -115,6 +135,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
     try {
       const res = await api.communityCreate(createName.trim(), createDesc.trim());
       if (api.apiOk(res)) {
+        haptic.success();
         setShowCreate(false);
         setCreateName('');
         setCreateDesc('');
@@ -135,6 +156,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
     try {
       const res = await api.communityAnnouncement(announceCommunity.id, announceText.trim());
       if (api.apiOk(res)) {
+        haptic.success();
         const count = api.apiPayload(res)?.sent_to || 0;
         Alert.alert(t('community.announcement'), (t('community.sentTo') || 'Sent to {count} groups').replace('{count}', count));
         setAnnounceCommunity(null);
@@ -153,12 +175,10 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
     try {
       const res = await api.communityAddGroup(communityId, conversationId);
       if (api.apiOk(res)) {
+        haptic.success();
         setAddGroupCommunity(null);
-        // Refresh expanded info
-        if (expandedId === communityId) {
-          toggleExpand(null);
-          setTimeout(() => toggleExpand(communityId), 100);
-        }
+        // Refresh expanded info (sem colapsar o card)
+        if (expandedId === communityId) fetchInfo(communityId);
         loadCommunities();
       } else {
         Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('common.failed') || 'Falhou'));
@@ -166,20 +186,21 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
     } catch {
       Alert.alert(t('common.error') || 'Erro', t('community.addGroupFailed') || 'Não foi possível adicionar o grupo');
     }
-  }, [expandedId, toggleExpand, loadCommunities, t]);
+  }, [expandedId, fetchInfo, loadCommunities, t]);
 
   const handleRemoveGroup = useCallback(async (communityId, conversationId) => {
     try {
       const res = await api.communityRemoveGroup(communityId, conversationId);
       if (api.apiOk(res)) {
-        if (expandedId === communityId) {
-          toggleExpand(null);
-          setTimeout(() => toggleExpand(communityId), 100);
-        }
+        if (expandedId === communityId) fetchInfo(communityId);
         loadCommunities();
+      } else {
+        Alert.alert(t('common.error') || 'Erro', api.apiMsg(res) || (t('common.failed') || 'Falhou'));
       }
-    } catch {}
-  }, [expandedId, toggleExpand, loadCommunities]);
+    } catch {
+      Alert.alert(t('common.error') || 'Erro', t('common.tryAgain') || 'Tentar novamente');
+    }
+  }, [expandedId, fetchInfo, loadCommunities, t]);
 
   const openAddGroup = useCallback(async (community) => {
     setAddGroupCommunity(community);
@@ -202,13 +223,20 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
     const initial = (item.name || '?')[0].toUpperCase();
 
     return (
-      <View style={[styles.communityCard, { backgroundColor: isDark ? '#1a1a2e' : '#fff', borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
-        <TouchableOpacity onPress={() => toggleExpand(item.id)} activeOpacity={0.7} style={styles.communityRow}>
-          <View style={[styles.communityIcon, { backgroundColor: ACCENT + '22' }]}>
-            {item.icon_url ? (
-              <AvatarCircle email="" imageUrl={item.icon_url} size={48} />
+      <View style={[styles.communityCard, { backgroundColor: colors.surface || (isDark ? '#161616' : '#fff'), borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
+        <PressableRow
+          onPress={() => toggleExpand(item.id)}
+          style={styles.communityRow}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: isExpanded }}
+          accessibilityLabel={item.name}
+        >
+          <View style={[styles.communityIcon, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }]}>
+            {/* [2026-10-08 apps-native] AvatarCircle lê `uri` (não `imageUrl`) → o ícone nunca aparecia */}
+            {(item.icon_url || item.photo_url) ? (
+              <AvatarCircle name={item.name} uri={item.icon_url || item.photo_url} size={48} />
             ) : (
-              <Text style={[styles.communityInitial, { color: ACCENT }]}>{initial}</Text>
+              <Text style={[styles.communityInitial, { color: colors.text }]}>{initial}</Text>
             )}
           </View>
           <View style={styles.communityInfo}>
@@ -223,7 +251,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
               <Path d="M6 9l6 6 6-6" />
             </Svg>
           </View>
-        </TouchableOpacity>
+        </PressableRow>
 
         {isExpanded && (
           <View style={[styles.expandedSection, { borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}>
@@ -237,13 +265,12 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
               <View style={styles.groupsList}>
                 <Text style={[styles.sectionLabel, { color: isDark ? '#8b8fa3' : '#6b7280' }]}>{t('community.groups') || 'Groups'}</Text>
                 {expandedData.groups.map(g => (
-                  <TouchableOpacity
+                  <PressableRow
                     key={g.conversation_id}
                     style={[styles.groupRow, { backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)' }]}
                     onPress={() => router.push({ pathname: '/chat-conversation', params: { id: g.conversation_id, name: g.name || '' } })}
-                    activeOpacity={0.7}
                   >
-                    <View style={[styles.groupDot, { backgroundColor: ACCENT }]} />
+                    <View style={[styles.groupDot, { backgroundColor: colors.text }]} />
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.groupName, { color: colors.text }]} numberOfLines={1}>{g.name || 'Group'}</Text>
                       <Text style={[styles.groupMembers, { color: isDark ? '#666' : '#999' }]}>{g.member_count} {t('community.members') || 'members'}</Text>
@@ -261,11 +288,14 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
                           );
                         }}
                         style={styles.removeBtn}
+                        hitSlop={8}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('community.removeGroup') || 'Remover grupo'}
                       >
                         <IconX size={14} color="#ef4444" />
                       </TouchableOpacity>
                     )}
-                  </TouchableOpacity>
+                  </PressableRow>
                 ))}
               </View>
             ) : (
@@ -275,22 +305,23 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
             {/* Action buttons */}
             {isAdmin && (
               <View style={styles.actions}>
-                <TouchableOpacity
-                  style={[styles.actionBtn, { backgroundColor: ACCENT + '18' }]}
+                {/* [2026-10-08 apps-native] preto&branco (era âmbar #f59e0b) */}
+                <PressableScale
+                  style={[styles.actionBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)' }]}
                   onPress={() => openAddGroup(item)}
-                  activeOpacity={0.7}
+                  accessibilityRole="button"
                 >
-                  <IconPlus size={16} color={ACCENT} />
-                  <Text style={[styles.actionText, { color: ACCENT }]}>{t('community.addGroup') || 'Adicionar grupo'}</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.actionBtn, { backgroundColor: '#f59e0b18' }]}
+                  <IconPlus size={16} color={colors.text} />
+                  <Text style={[styles.actionText, { color: colors.text }]}>{t('community.addGroup') || 'Adicionar grupo'}</Text>
+                </PressableScale>
+                <PressableScale
+                  style={[styles.actionBtn, { backgroundColor: isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)' }]}
                   onPress={() => { setAnnounceCommunity(item); setAnnounceText(''); }}
-                  activeOpacity={0.7}
+                  accessibilityRole="button"
                 >
-                  <IconMegaphone size={16} color="#f59e0b" />
-                  <Text style={[styles.actionText, { color: '#f59e0b' }]}>{t('community.announcement') || 'Announce'}</Text>
-                </TouchableOpacity>
+                  <IconMegaphone size={16} color={colors.text} />
+                  <Text style={[styles.actionText, { color: colors.text }]}>{t('community.announcement') || 'Announce'}</Text>
+                </PressableScale>
               </View>
             )}
           </View>
@@ -299,29 +330,42 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
     );
   }, [expandedId, expandedData, loadingInfo, isDark, colors, t, router, toggleExpand, handleRemoveGroup, openAddGroup]);
 
+  const openCreate = useCallback(() => { setShowCreate(true); setCreateName(''); setCreateDesc(''); }, []);
+
   if (loading) {
     return (
-      <View style={[styles.center, { flex: 1, backgroundColor: isDark ? '#0a0a0f' : '#f5f5f7' }]}>
-        <ActivityIndicator size="large" color={ACCENT} />
+      <View style={[styles.center, { flex: 1, backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.text} />
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { backgroundColor: isDark ? '#0a0a0f' : '#f5f5f7' }]}>
+    <View style={[styles.container, { backgroundColor: colors.background }]}>
       <FlatList
         data={communities}
         keyExtractor={item => String(item.id)}
         renderItem={renderCommunity}
-        contentContainerStyle={communities.length === 0 ? { flex: 1 } : { paddingBottom: 80 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={ACCENT} colors={[ACCENT]} />}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <IconCommunity size={64} color={isDark ? '#333' : '#ccc'} />
-            <Text style={[styles.emptyTitle, { color: colors.text }]}>{t('community.noCommunities') || 'No communities'}</Text>
-            <Text style={[styles.emptySubtitle, { color: isDark ? '#666' : '#999' }]}>{t('community.createFirst') || 'Create a community to organize your groups'}</Text>
-          </View>
-        }
+        extraData={expandedId}
+        initialNumToRender={10}
+        windowSize={7}
+        contentContainerStyle={communities.length === 0 ? { flexGrow: 1 } : { paddingBottom: 80 }}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.text} colors={[ACCENT]} />}
+        ListEmptyComponent={failed ? (
+          <ScreenEmptyState
+            kind="search"
+            title={t('common.error') || 'Erro'}
+            subtitle={t('common.tryAgain') || 'Tentar novamente'}
+            cta={{ label: t('common.retry') || 'Tentar novamente', onPress: () => { setLoading(true); loadCommunities(); } }}
+          />
+        ) : (
+          <ScreenEmptyState
+            kind="contacts"
+            title={t('community.noCommunities') || 'No communities'}
+            subtitle={t('community.createFirst') || 'Create a community to organize your groups'}
+            cta={{ label: t('community.create') || 'Create community', onPress: openCreate }}
+          />
+        )}
       />
 
       {/* FAB — Telegram-grade glass orb */}
@@ -329,8 +373,8 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
         style={{ position: 'absolute', bottom: 20, right: 20 }}
         size={56}
         color={ACCENT}
-        onPress={() => { setShowCreate(true); setCreateName(''); setCreateDesc(''); }}
-        accessibilityLabel="Create community"
+        onPress={openCreate}
+        accessibilityLabel={t('community.create') || 'Create community'}
       >
         <IconPlus size={24} color="#fff" />
       </BrandFab>
@@ -341,13 +385,13 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
             (bottom sheet) and the name input autoFocuses, so without this the keyboard
             covered the whole card and the user saw only the dimmed overlay. */}
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: isDark ? '#1a1a2e' : '#fff' }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface || (isDark ? '#161616' : '#fff') }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>{t('community.create') || 'Create community'}</Text>
               <TouchableOpacity onPress={() => setShowCreate(false)}><IconX size={22} color={isDark ? '#888' : '#666'} /></TouchableOpacity>
             </View>
             <TextInput
-              style={[styles.input, { color: colors.text, borderColor: isDark ? '#333' : '#ddd', backgroundColor: isDark ? '#0f0f1a' : '#f9f9f9' }]}
+              style={[styles.input, { color: colors.text, borderColor: isDark ? '#333' : '#ddd', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f9f9f9' }]}
               placeholder={t('community.name') || 'Community name'}
               placeholderTextColor={isDark ? '#555' : '#aaa'}
               value={createName}
@@ -356,7 +400,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
               autoFocus
             />
             <TextInput
-              style={[styles.input, styles.inputMulti, { color: colors.text, borderColor: isDark ? '#333' : '#ddd', backgroundColor: isDark ? '#0f0f1a' : '#f9f9f9' }]}
+              style={[styles.input, styles.inputMulti, { color: colors.text, borderColor: isDark ? '#333' : '#ddd', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f9f9f9' }]}
               placeholder={t('community.description') || 'Description (optional)'}
               placeholderTextColor={isDark ? '#555' : '#aaa'}
               value={createDesc}
@@ -365,16 +409,17 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
               multiline
               numberOfLines={3}
             />
-            <TouchableOpacity
+            <PressableScale
               style={[styles.createBtn, !createName.trim() && styles.createBtnDisabled]}
               onPress={handleCreate}
               disabled={creating || !createName.trim()}
-              activeOpacity={0.7}
+              haptic="medium"
+              accessibilityRole="button"
             >
               {creating ? <ActivityIndicator size="small" color="#fff" /> : (
                 <Text style={styles.createBtnText}>{t('community.create') || 'Create'}</Text>
               )}
-            </TouchableOpacity>
+            </PressableScale>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -383,7 +428,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
       <Modal visible={!!announceCommunity} transparent animationType="slide" onRequestClose={() => setAnnounceCommunity(null)}>
         {/* [fix 2026-07-05] KeyboardAvoidingView — same bottom-sheet + autoFocus keyboard trap. */}
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: isDark ? '#1a1a2e' : '#fff' }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface || (isDark ? '#161616' : '#fff') }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>{t('community.announcement') || 'Announcement'}</Text>
               <TouchableOpacity onPress={() => setAnnounceCommunity(null)}><IconX size={22} color={isDark ? '#888' : '#666'} /></TouchableOpacity>
@@ -394,7 +439,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
               </Text>
             )}
             <TextInput
-              style={[styles.input, styles.inputMulti, { color: colors.text, borderColor: isDark ? '#333' : '#ddd', backgroundColor: isDark ? '#0f0f1a' : '#f9f9f9' }]}
+              style={[styles.input, styles.inputMulti, { color: colors.text, borderColor: isDark ? '#333' : '#ddd', backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f9f9f9' }]}
               placeholder={t('community.announcementPlaceholder') || 'Write an announcement...'}
               placeholderTextColor={isDark ? '#555' : '#aaa'}
               value={announceText}
@@ -404,16 +449,17 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
               numberOfLines={4}
               autoFocus
             />
-            <TouchableOpacity
+            <PressableScale
               style={[styles.createBtn, !announceText.trim() && styles.createBtnDisabled]}
               onPress={handleAnnounce}
               disabled={announcing || !announceText.trim()}
-              activeOpacity={0.7}
+              haptic="medium"
+              accessibilityRole="button"
             >
               {announcing ? <ActivityIndicator size="small" color="#fff" /> : (
                 <Text style={styles.createBtnText}>{t('community.sendAnnouncement') || 'Enviar'}</Text>
               )}
-            </TouchableOpacity>
+            </PressableScale>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -421,7 +467,7 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
       {/* Add Group Modal */}
       <Modal visible={!!addGroupCommunity} transparent animationType="slide" onRequestClose={() => setAddGroupCommunity(null)}>
         <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: isDark ? '#1a1a2e' : '#fff', maxHeight: '70%' }]}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface || (isDark ? '#161616' : '#fff'), maxHeight: '70%' }]}>
             <View style={styles.modalHeader}>
               <Text style={[styles.modalTitle, { color: colors.text }]}>{t('community.selectGroups') || 'Select groups'}</Text>
               <TouchableOpacity onPress={() => setAddGroupCommunity(null)}><IconX size={22} color={isDark ? '#888' : '#666'} /></TouchableOpacity>
@@ -438,18 +484,17 @@ export default function CommunitiesTab({ colors: propColors, isDark: propIsDark 
                 keyExtractor={item => String(item.id)}
                 style={{ maxHeight: 400 }}
                 renderItem={({ item: group }) => (
-                  <TouchableOpacity
+                  <PressableRow
                     style={[styles.groupPickRow, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }]}
                     onPress={() => addGroupCommunity && handleAddGroup(addGroupCommunity.id, group.id)}
-                    activeOpacity={0.7}
                   >
-                    <View style={[styles.groupDot, { backgroundColor: ACCENT }]} />
+                    <View style={[styles.groupDot, { backgroundColor: colors.text }]} />
                     <View style={{ flex: 1 }}>
                       <Text style={[styles.groupName, { color: colors.text }]} numberOfLines={1}>{group.name || group.display_name || 'Group'}</Text>
                       <Text style={[styles.groupMembers, { color: isDark ? '#666' : '#999' }]}>{group.member_count || 0} {t('community.members') || 'members'}</Text>
                     </View>
-                    <IconPlus size={18} color={ACCENT} />
-                  </TouchableOpacity>
+                    <IconPlus size={18} color={colors.text} />
+                  </PressableRow>
                 )}
               />
             )}

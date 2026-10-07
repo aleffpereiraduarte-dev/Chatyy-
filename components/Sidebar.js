@@ -14,6 +14,7 @@ import AvatarCircle from './AvatarCircle';
 import { LABEL_COLORS, LABEL_NAMES } from './LabelPicker';
 import * as api from '../services/api';
 import { useConfirm } from './ConfirmModal';
+import EmailOutboxBanner from './EmailOutboxBanner';
 
 const FOLDER_ICONS = {
   INBOX: IconInbox,
@@ -544,6 +545,9 @@ function Sidebar({ folders, currentFolder, onFolderPress, onCompose, onFoldersCh
           </View>
         );
       })}
+
+      {/* [2026-10-08 email-outbox] Caixa de saída (only while non-empty) */}
+      <EmailOutboxBanner variant="sidebar" onPress={onNavigate ? (r) => onNavigate(r) : undefined} />
 
       {/* Custom folders */}
       {customFolders.length > 0 && (

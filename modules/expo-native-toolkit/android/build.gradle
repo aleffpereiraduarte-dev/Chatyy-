@@ -43,6 +43,12 @@ dependencies {
   // BoraUm tileserver). ZERO Google/Play Services. 13.0.2 = last line built against
   // kotlin-stdlib 2.0.x (13.1+ pulls stdlib 2.2.x; RN 0.83 compiles with Kotlin 2.1.20).
   implementation 'org.maplibre.gl:android-sdk:13.0.2'
+
+  // [2026-10-08 android-otp-shortcuts] SMS User Consent API (ExpoSmsOtpModule).
+  // Already in the app graph transitively (play-services-auth via
+  // expo-chat-backup / firebase auth); declared explicitly so this module
+  // compiles on its own. Pinned to the version already in the graph (no bump).
+  implementation 'com.google.android.gms:play-services-auth-api-phone:18.0.2'
 }
 
 def safeExtGet(prop, fallback) {

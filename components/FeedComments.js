@@ -179,17 +179,17 @@ const CommentItem = memo(function CommentItem({
                   style={{
                     flexDirection: 'row', alignItems: 'center', gap: 6,
                     paddingHorizontal: 10, paddingVertical: 6, borderRadius: 18,
-                    backgroundColor: 'rgba(17, 17, 17,0.12)',
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17, 17, 17,0.12)', // [2026-10-08 apps-native] dark parity
                   }}
                   accessibilityLabel={t?.('feed.voiceComment') || 'Voice comment'}
                   accessibilityRole="button"
                 >
                   {voicePlaying
-                    ? <IconPause size={14} color="#111111" />
-                    : <IconPlay size={14} color="#111111" />}
+                    ? <IconPause size={14} color={isDark ? '#fff' : '#111111'} />
+                    : <IconPlay size={14} color={isDark ? '#fff' : '#111111'} />}
                   <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 14 }}>
                     {[5,9,7,11,6,10,8,12,7,9,5].map((h, i) => (
-                      <View key={i} style={{ width: 2, height: h, borderRadius: 1, backgroundColor: '#111111', opacity: 0.6 }} />
+                      <View key={i} style={{ width: 2, height: h, borderRadius: 1, backgroundColor: isDark ? '#fff' : '#111111', opacity: 0.6 }} />
                     ))}
                   </View>
                 </Pressable>
@@ -319,7 +319,7 @@ const CommentItem = memo(function CommentItem({
 // While `recording` is true we layer a softly-pulsing red ring behind the
 // mic button so the user gets a clear "I'm recording" affordance without
 // needing extra screen real estate. The halo unmounts when recording ends.
-const MicRecordButton = memo(function MicRecordButton({ recording, sending, onPressIn, onPressOut, t }) {
+const MicRecordButton = memo(function MicRecordButton({ recording, sending, onPressIn, onPressOut, t, accent = ACCENT }) {
   const pulse = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (!recording) {
@@ -369,8 +369,8 @@ const MicRecordButton = memo(function MicRecordButton({ recording, sending, onPr
         accessibilityHint={t('feed.recordingTip') || 'Hold to record'}
       >
         {sending
-          ? <ActivityIndicator size="small" color={ACCENT} />
-          : <IconMic size={20} color={recording ? '#fff' : ACCENT} />}
+          ? <ActivityIndicator size="small" color={accent} />
+          : <IconMic size={20} color={recording ? '#fff' : accent} />}
       </Pressable>
     </View>
   );
@@ -935,6 +935,10 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
   const keyExtractor = useCallback((item) => String(item.id), []);
 
   const captionAuthor = post?.author_name || post?.author_email?.split('@')[0] || '?';
+  // [2026-10-08 apps-native] Dark mode: icons/spinners were ACCENT (#111) on a
+  // dark sheet → invisible send/mic/GIF/video buttons. B&W: white on dark.
+  const accent = isDark ? '#ffffff' : ACCENT;
+  const sheetBg = isDark ? (colors?.surface || '#111b21') : '#ffffff';
 
   return (
     <Modal
@@ -958,7 +962,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
 
         {/* Sheet */}
         <View style={[styles.sheet, {
-          backgroundColor: isDark ? '#0f172a' : '#ffffff',
+          backgroundColor: sheetBg, // [2026-10-08 apps-native] was slate-blue #0f172a
           maxHeight: SHEET_HEIGHT,
           ...(isWeb ? { boxShadow: '0 -4px 30px rgba(0,0,0,0.12)' } : {}),
         }]}>
@@ -972,7 +976,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
           {/* Comments list */}
           {loading ? (
             <View style={styles.loadingWrap}>
-              <ActivityIndicator size="large" color={ACCENT} />
+              <ActivityIndicator size="large" color={accent} />
             </View>
           ) : (
             <FlatList
@@ -1021,12 +1025,13 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
               ListFooterComponent={
                 loadingMore ? (
                   <View style={styles.loadingMore}>
-                    <ActivityIndicator size="small" color={ACCENT} />
+                    <ActivityIndicator size="small" color={accent} />
                   </View>
                 ) : null
               }
               ListEmptyComponent={
-                <View style={styles.emptyWrap}>
+                // [2026-10-08 apps-native] tap the empty state → focus the composer.
+                <Pressable style={styles.emptyWrap} onPress={() => { try { inputRef.current?.focus?.(); } catch {} }} accessibilityRole="button">
                   <View style={{ marginBottom: 12 }}>
                     <IconMessageCircle size={48} color={colors.textTertiary || '#999'} />
                   </View>
@@ -1036,7 +1041,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                   <Text style={[styles.emptySubtext, { color: colors.textTertiary }]}>
                     {t('feed.beFirst') || 'Be the first to comment'}
                   </Text>
-                </View>
+                </Pressable>
               }
             />
           )}
@@ -1047,7 +1052,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
               backgroundColor: isDark ? 'rgba(17, 17, 17,0.08)' : 'rgba(17, 17, 17,0.06)',
               borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
             }]}>
-              <View style={[styles.replyAccent, { backgroundColor: ACCENT }]} />
+              <View style={[styles.replyAccent, { backgroundColor: accent }]} />
               <Text style={[styles.replyText, { color: colors.textSecondary }]} numberOfLines={1}>
                 {(t('feed.replyingTo') || 'Replying to @{name}')
                   .replace('{name}', replyTo.author_name || replyTo.name || replyTo.author_email?.split('@')[0] || replyTo.email?.split('@')[0] || '?')}
@@ -1068,7 +1073,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
               comfortable gap on phones with no inset. */}
           <View style={[styles.inputRow, {
             borderTopColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
-            backgroundColor: isDark ? '#0f172a' : '#fafafa',
+            backgroundColor: isDark ? sheetBg : '#fafafa',
             paddingBottom: Math.max(10, insets.bottom),
           }]}>
             {/* Sticker / GIF reply — Reels P1. Opens GifPicker (Tenor-backed)
@@ -1081,7 +1086,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
               accessibilityRole="button"
               accessibilityLabel={t('feed.replyWithSticker') || 'Reply with GIF'}
             >
-              <IconImage size={20} color={ACCENT} />
+              <IconImage size={20} color={accent} />
             </TouchableOpacity>
             {/* Video reply — Reels P1. Records 15s clip and posts as a
                 comment with media_type=video. On web we fall back to the
@@ -1093,7 +1098,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
               accessibilityRole="button"
               accessibilityLabel={t('feed.replyWithVideo') || 'Reply with video'}
             >
-              <IconVideo size={20} color={ACCENT} />
+              <IconVideo size={20} color={accent} />
             </TouchableOpacity>
             <AvatarCircle email={user?.email} name={user?.name} size={32} />
             <View style={[styles.inputWrapper, {
@@ -1129,9 +1134,9 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                   accessibilityRole="button"
                 >
                   {sending ? (
-                    <ActivityIndicator size="small" color={ACCENT} />
+                    <ActivityIndicator size="small" color={accent} />
                   ) : (
-                    <IconSend size={20} color={ACCENT} />
+                    <IconSend size={20} color={accent} />
                   )}
                 </TouchableOpacity>
               ) : (
@@ -1146,6 +1151,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                   onPressIn={startRecording}
                   onPressOut={() => stopRecording(false)}
                   t={t}
+                  accent={accent}
                 />
               )}
             </View>
@@ -1181,7 +1187,7 @@ export default function FeedComments({ visible, post, colors, isDark, t, user, o
                 );
               } catch {
                 return (
-                  <View style={{ padding: 20, backgroundColor: isDark ? '#0f172a' : '#fff' }}>
+                  <View style={{ padding: 20, backgroundColor: isDark ? sheetBg : '#fff' }}>
                     <Text style={{ color: colors.text }}>{t('feed.stickerPickerUnavailable') || 'Sticker picker unavailable'}</Text>
                   </View>
                 );

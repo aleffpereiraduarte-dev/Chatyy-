@@ -49,6 +49,25 @@ import java.util.concurrent.atomic.AtomicReference
  * the JS socket's delivery.
  *
  * Nothing here runs unless JS calls start() (NATIVE_CORE_ENABLED flag).
+ *
+ * [2026-10-08 native-core-2] Phase 2 groundwork (JS flag NATIVE_CORE_PRIMARY,
+ * default OFF — nothing below runs unless JS calls setPrimary(true) /
+ * sendText()):
+ *   - PRIMARY frames: while primary, every frame carrying a per-user
+ *     `event_id` (ws_event_log → chat_message / chat_summary / receipts /
+ *     edits / deletes …) is forwarded RAW to JS ("onChatCoreRaw"); JS injects
+ *     it into services/websocket.js with a shared event_id dedup (first socket
+ *     wins). Control frames (auth/resume/pong/send acks) are never forwarded.
+ *   - NATIVE OUTBOX (text): sendText() queues a hub `chat_send` frame
+ *     (native_send.go, gated by the `native_send` cap of auth_success),
+ *     persisted in prefs (per account, cap 50, TTL 24h), sent when the socket
+ *     is authenticated, re-sent with the SAME client_message_id after every
+ *     reconnect (hub + PHP dedup by sender+cmi). chat_send_ack /
+ *     chat_send_fallback → entry removed + "onChatCoreAck" to JS. JS can
+ *     cancelSend(cmi) when it gives up and goes HTTP (same cmi).
+ *   - The hub treats this socket as client "native-core": no presence, no
+ *     initial_data, no offline-queue flush, no call/live/presence/typing
+ *     frames, own 4-socket cap (never evicts the JS socket).
  */
 object ChatCoreSocket {
     private const val TAG = "ChatCoreSocket"
@@ -62,12 +81,35 @@ object ChatCoreSocket {
     private const val INVISIBLE_GRACE_MS = 60_000L
     private val BACKOFF_MS = longArrayOf(1_000L, 2_000L, 4_000L, 8_000L, 16_000L, 30_000L)
     private const val SEEN_MAX = 1024
+    private const val KEY_OUTBOX = "outbox_v1"
+    private const val OUTBOX_MAX = 50
+    private const val OUTBOX_TTL_MS = 24L * 60L * 60L * 1000L
+    /** Frames never forwarded raw to JS (control / per-socket replies). */
+    private val CONTROL_TYPES = setOf(
+        "auth_success", "auth_error", "welcome", "pong", "resume_result", "resume_complete",
+        "resume_full_sync", "session_replaced", "superseded", "server_shutdown",
+        "chat_send_ack", "chat_send_fallback", "subscribed", "msgpack_upgraded",
+    )
 
     /** Native → module bridge (set by ChatCoreModule OnCreate, cleared OnDestroy). */
     interface Listener {
         fun onFrame(body: Map<String, Any?>)
         fun onState(body: Map<String, Any?>)
+        /** [phase 2] raw per-user frame (only while primary). */
+        fun onRaw(body: Map<String, Any?>) {}
+        /** [phase 2] outbox result (chat_send_ack / chat_send_fallback / local fail). */
+        fun onAck(body: Map<String, Any?>) {}
     }
+
+    /** [phase 2] one queued text send (hub `chat_send` frame, JSON string). */
+    private class OutItem(
+        val cmi: String,
+        val acct: String,
+        val frame: String,
+        val createdAt: Long,
+        var sentAt: Long = 0L,
+        var tries: Int = 0,
+    )
 
     @Volatile var listener: Listener? = null
 
@@ -91,6 +133,11 @@ object ChatCoreSocket {
     private var watchdogJob: Job? = null
     private var pingJob: Job? = null
     private var eventsSinceFlush = 0
+    // [phase 2]
+    @Volatile private var primary = false
+    private val caps = AtomicReference<Set<String>>(emptySet())
+    private val outbox = LinkedHashMap<String, OutItem>() // guarded by synchronized(outbox)
+    @Volatile private var outboxLoaded = false
 
     // Stats (parity / diagnostics). Reset on start().
     private val stats = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -129,7 +176,11 @@ object ChatCoreSocket {
         var stored = 0L
         if ((sp.getString(KEY_LAST_EVENT_ACCT, "") ?: "") == a) stored = sp.getLong(KEY_LAST_EVENT, 0L)
         lastEventId.set(maxOf(lastEventId.get(), stored, jsLastEventId))
-        if (enabled.getAndSet(true) && (authed.get() || connecting.get())) return
+        loadOutbox(ctx)
+        if (enabled.getAndSet(true) && (authed.get() || connecting.get())) {
+            scope.launch { flushOutbox() }
+            return
+        }
         attempts.set(0)
         stats.clear()
         startPingLoop()
@@ -147,6 +198,47 @@ object ChatCoreSocket {
 
     fun isRunning(): Boolean = enabled.get()
 
+    // ─── [phase 2] Primary + outbox API ───────────────────────────────────
+
+    /** JS (NATIVE_CORE_PRIMARY) — forward raw per-user frames while true. */
+    fun setPrimary(on: Boolean) {
+        primary = on
+        bump(if (on) "primary_on" else "primary_off")
+    }
+
+    /**
+     * Queue a text send. [frameJson] must be a hub `chat_send` frame with the
+     * same client_message_id as [cmi]. Returns false when rejected locally
+     * (bad frame / full) → JS uses its own path.
+     */
+    fun sendText(ctx: Context, acct: String, cmi: String, frameJson: String): Boolean {
+        appCtx = ctx.applicationContext
+        loadOutbox(ctx)
+        val a = ChatNotifStore.normEmail(acct)
+        if (a.isEmpty() || cmi.isEmpty() || cmi.length > 128 || frameJson.length > 64 * 1024) return false
+        val ok = try {
+            val o = JSONObject(frameJson)
+            o.optString("type") == "chat_send" && o.optString("client_message_id") == cmi
+        } catch (_: Throwable) { false }
+        if (!ok) { bump("outbox_reject"); return false }
+        synchronized(outbox) {
+            if (!outbox.containsKey(cmi)) {
+                if (outbox.size >= OUTBOX_MAX) { bump("outbox_full"); return false }
+                outbox[cmi] = OutItem(cmi, a, frameJson, System.currentTimeMillis())
+            }
+        }
+        bump("outbox_add")
+        persistOutbox()
+        scope.launch { flushOutbox() }
+        return true
+    }
+
+    /** JS gave up on the native path (timeout → HTTP with the same cmi). */
+    fun cancelSend(cmi: String) {
+        val removed = synchronized(outbox) { outbox.remove(cmi) != null }
+        if (removed) { bump("outbox_cancel"); persistOutbox() }
+    }
+
     fun snapshot(): Map<String, Any?> {
         val m = HashMap<String, Any?>()
         m["enabled"] = enabled.get()
@@ -155,6 +247,9 @@ object ChatCoreSocket {
         m["acct"] = authedAcct
         m["lastEventId"] = lastEventId.get().toDouble()
         m["instanceId"] = instanceId
+        m["primary"] = primary
+        m["caps"] = caps.get().toList()
+        m["outbox"] = synchronized(outbox) { outbox.size }.toDouble()
         val s = HashMap<String, Any?>()
         for ((k, v) in stats) s[k] = v.toDouble()
         m["stats"] = s
@@ -174,6 +269,7 @@ object ChatCoreSocket {
         watchdogJob?.cancel(); watchdogJob = null
         authed.set(false)
         connecting.set(false)
+        markOutboxUnsent()
         val ws = wsRef.getAndSet(null) ?: return
         try { ws.close(1000, reason.take(60)) } catch (_: Throwable) {}
         emitState("closed", mapOf("reason" to reason))
@@ -279,6 +375,7 @@ object ChatCoreSocket {
         bump("disconnect")
         emitState("closed", mapOf("reason" to why))
         persistLastEventId(true)
+        markOutboxUnsent()
         scheduleReconnect()
     }
 
@@ -364,6 +461,16 @@ object ChatCoreSocket {
                 persistLastEventId(false)
             }
         }
+        // [phase 2] raw forward of per-user frames while primary.
+        if (primary && ev > 0L && type.isNotEmpty() && type !in CONTROL_TYPES) {
+            bump("raw_fwd")
+            val body = HashMap<String, Any?>()
+            body["raw"] = text
+            body["type"] = type
+            body["eventId"] = ev.toDouble()
+            body["at"] = System.currentTimeMillis().toDouble()
+            try { listener?.onRaw(body) } catch (_: Throwable) {}
+        }
         when (type) {
             "auth_success" -> {
                 val email = ChatNotifStore.normEmail(msg.optString("email", ""))
@@ -383,9 +490,15 @@ object ChatCoreSocket {
                 watchdogJob?.cancel(); watchdogJob = null
                 lastPongAt.set(System.currentTimeMillis())
                 bump("auth_ok")
-                emitState("authenticated", mapOf("email" to authedAcct))
+                val capsArr = msg.optJSONArray("caps")
+                val cs = HashSet<String>()
+                if (capsArr != null) for (i in 0 until minOf(capsArr.length(), 32)) cs.add(capsArr.optString(i, ""))
+                caps.set(cs)
+                emitState("authenticated", mapOf("email" to authedAcct, "caps" to cs.toList()))
                 sendResume(ws)
+                scope.launch { flushOutbox() }
             }
+            "chat_send_ack", "chat_send_fallback" -> onSendResult(type, msg, text)
             "auth_error" -> {
                 bump("auth_error")
                 val fatal = msg.optBoolean("fatal", false) || msg.optString("reason") == "logged_out"
@@ -471,6 +584,92 @@ object ChatCoreSocket {
         body["journaled"] = journaled
         body["at"] = System.currentTimeMillis().toDouble()
         try { listener?.onFrame(body) } catch (_: Throwable) {}
+    }
+
+    // ─── [phase 2] Outbox internals ──────────────────────────────────────
+
+    private fun emitAck(cmi: String, ok: Boolean, reason: String, raw: String?) {
+        val body = HashMap<String, Any?>()
+        body["cmi"] = cmi
+        body["ok"] = ok
+        body["reason"] = reason
+        if (raw != null) body["raw"] = raw
+        body["at"] = System.currentTimeMillis().toDouble()
+        try { listener?.onAck(body) } catch (_: Throwable) {}
+    }
+
+    private fun onSendResult(type: String, msg: JSONObject, text: String) {
+        val cmi = msg.optString("client_message_id", "")
+        if (cmi.isEmpty()) return
+        val removed = synchronized(outbox) { outbox.remove(cmi) != null }
+        if (removed) persistOutbox()
+        val ok = type == "chat_send_ack" && msg.optBoolean("success", true)
+        bump(if (ok) "send_ack" else "send_fallback")
+        emitAck(cmi, ok, if (ok) "" else msg.optString("reason", "fallback"), text)
+    }
+
+    private fun markOutboxUnsent() {
+        synchronized(outbox) { for (it in outbox.values) it.sentAt = 0L }
+    }
+
+    private fun flushOutbox() {
+        val ws = wsRef.get() ?: return
+        if (!authed.get()) return
+        val acct = authedAcct
+        if (acct.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val canSend = caps.get().contains("native_send")
+        val toSend = ArrayList<OutItem>()
+        val failed = ArrayList<Pair<String, String>>()
+        synchronized(outbox) {
+            val it = outbox.values.iterator()
+            while (it.hasNext()) {
+                val o = it.next()
+                if (now - o.createdAt > OUTBOX_TTL_MS) { failed.add(o.cmi to "expired"); it.remove(); continue }
+                if (o.acct != acct) continue // other account's bearer — wait for it
+                if (!canSend) { failed.add(o.cmi to "no_caps"); it.remove(); continue }
+                if (o.sentAt == 0L) { o.sentAt = now; o.tries++; toSend.add(o) }
+            }
+        }
+        if (failed.isNotEmpty()) persistOutbox()
+        for ((cmi, why) in failed) { bump("send_local_fail"); emitAck(cmi, false, why, null) }
+        for (o in toSend) {
+            val sent = try { ws.send(o.frame) } catch (_: Throwable) { false }
+            if (sent) bump("send_tx") else synchronized(outbox) { o.sentAt = 0L }
+        }
+    }
+
+    private fun loadOutbox(ctx: Context) {
+        if (outboxLoaded) return
+        synchronized(outbox) {
+            if (outboxLoaded) return
+            outboxLoaded = true
+            try {
+                val raw = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_OUTBOX, null) ?: return
+                val arr = org.json.JSONArray(raw)
+                val now = System.currentTimeMillis()
+                for (i in 0 until minOf(arr.length(), OUTBOX_MAX)) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val cmi = o.optString("cmi", "")
+                    val created = o.optLong("at", 0L)
+                    if (cmi.isEmpty() || now - created > OUTBOX_TTL_MS) continue
+                    outbox[cmi] = OutItem(cmi, o.optString("acct", ""), o.optString("frame", ""), created)
+                }
+            } catch (_: Throwable) {}
+        }
+    }
+
+    private fun persistOutbox() {
+        val ctx = appCtx ?: return
+        try {
+            val arr = org.json.JSONArray()
+            synchronized(outbox) {
+                for (o in outbox.values) {
+                    arr.put(JSONObject().put("cmi", o.cmi).put("acct", o.acct).put("frame", o.frame).put("at", o.createdAt))
+                }
+            }
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_OUTBOX, arr.toString()).apply()
+        } catch (_: Throwable) {}
     }
 
     private fun onReceiptFrame(type: String, msg: JSONObject, ev: Long) {

@@ -5,6 +5,8 @@ import {
   ScrollView, Modal, Linking, ActivityIndicator, Image, Alert,
 } from 'react-native';
 // FlashList reverted to FlatList
+import PressableRow from '../components/PressableRow'; // [2026-10-08 apps-native]
+import { HeaderIconButton } from '../components/nativeHeader';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useAuth } from '../context/AuthContext';
@@ -1799,36 +1801,45 @@ function HistorySidebar({ visible, onClose, conversations, onSelect, currentId, 
               </TouchableOpacity>
             </View>
           </View>
-          <ScrollView style={st.sidebarList} showsVerticalScrollIndicator={false}>
-            {conversations.length === 0 && (
+          {/* [2026-10-08 apps-native] ScrollView+map → FlatList virtualizada
+              (histórico pode ter centenas de conversas) + PressableRow
+              (highlight de célula iOS / ripple Android em vez de fade web). */}
+          <FlatList
+            style={st.sidebarList}
+            data={conversations}
+            keyExtractor={(c) => String(c.id)}
+            showsVerticalScrollIndicator={false}
+            initialNumToRender={16}
+            maxToRenderPerBatch={16}
+            windowSize={7}
+            ListEmptyComponent={
               <Text style={[st.sidebarEmpty, { color: isDark ? '#666' : '#aaa' }]}>{t('one.noConversations')}</Text>
-            )}
-            {conversations.map((c) => {
+            }
+            renderItem={({ item: c }) => {
               const active = c.id === currentId;
               return (
-                <View key={c.id} style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <TouchableOpacity
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <PressableRow
                     style={[st.sidebarItem, { flex: 1 }, active && { backgroundColor: isDark ? '#2f2f2f' : '#f0f0f0' }]}
-                    onPress={() => { onSelect(c); onClose(); }}
-                    activeOpacity={0.7}
+                    onPress={() => { haptic('light'); onSelect(c); onClose(); }}
+                    accessibilityRole="button"
                   >
                     <Text style={[st.sidebarItemText, { color: active ? (isDark ? '#fff' : '#1a1a1a') : (isDark ? '#ccc' : '#555') }]} numberOfLines={1}>
                       {c.title || `#${c.id}`}
                     </Text>
-                  </TouchableOpacity>
+                  </PressableRow>
                   {/* Tap no lixinho → delete só essa conversa */}
-                  <TouchableOpacity
+                  <HeaderIconButton
                     onPress={() => onDelete?.(c)}
-                    hitSlop={10}
-                    style={{ paddingHorizontal: 12, paddingVertical: 10 }}
-                    accessibilityLabel={t('common.delete') || 'Deletar'}
+                    accessibilityLabel={t('common.delete')}
+                    style={{ marginHorizontal: 4 }}
                   >
                     <IconTrash size={16} color={isDark ? '#666' : '#999'} />
-                  </TouchableOpacity>
+                  </HeaderIconButton>
                 </View>
               );
-            })}
-          </ScrollView>
+            }}
+          />
         </View>
       </View>
     </Modal>
@@ -3568,26 +3579,29 @@ export default function OneScreen() {
     >
       {/* Clean header — no gradient, just title + side actions on a flat canvas. */}
       <View style={[st.headerClean, { paddingTop: insets.top + 4, backgroundColor: canvasBg }]}>
-        <TouchableOpacity onPress={() => router.back()} hitSlop={12} style={st.headerCleanBtn}>
+        {/* [2026-10-08 apps-native] HeaderIconButton = ripple borderless
+            Android / opacidade iOS + haptic (antes TouchableOpacity web-like).
+            Header segue custom: o KeyboardAvoidingView desta tela assume
+            offset 0 — header nativo exigiria recalibrar o teclado. */}
+        <HeaderIconButton onPress={() => router.back()} style={st.headerCleanBtn} accessibilityLabel={t('common.back')}>
           <IconArrowLeft size={22} color={isDark ? '#ECECEC' : '#0D0D0D'} />
-        </TouchableOpacity>
+        </HeaderIconButton>
 
         <View style={st.headerCleanCenter}>
           <Text style={[st.headerCleanTitle, { color: isDark ? '#ECECEC' : '#0D0D0D' }]}>Bia</Text>
         </View>
 
         <View style={{ flexDirection: 'row' }}>
-          <TouchableOpacity onPress={newChat} hitSlop={8} style={st.headerCleanBtn} accessibilityLabel={t('one.newChat') || 'New chat'}>
+          <HeaderIconButton onPress={newChat} style={st.headerCleanBtn} accessibilityLabel={t('one.newChat')}>
             <IconEdit size={20} color={isDark ? '#ECECEC' : '#0D0D0D'} />
-          </TouchableOpacity>
-          <TouchableOpacity
+          </HeaderIconButton>
+          <HeaderIconButton
             onPress={() => { loadConversations(false); setHistoryOpen(true); }}
-            hitSlop={8}
             style={st.headerCleanBtn}
-            accessibilityLabel={t('one.history') || 'History'}
+            accessibilityLabel={t('one.history')}
           >
             <IconMenu size={20} color={isDark ? '#ECECEC' : '#0D0D0D'} />
-          </TouchableOpacity>
+          </HeaderIconButton>
         </View>
       </View>
 
@@ -3829,7 +3843,12 @@ export default function OneScreen() {
               await api.oneHistoryDelete({ conversationId: c.id });
               setConversations(prev => prev.filter(x => x.id !== c.id));
               if (conversationId === c.id) { setMessages([]); setConversationId(null); }
-            } catch {}
+              haptic('success');
+            } catch {
+              // [2026-10-08 apps-native] falha era silenciosa (item ficava e nada avisava)
+              if (Platform.OS === 'web') { try { window.alert(t('common.networkError')); } catch {} }
+              else Alert.alert(t('common.error'), t('common.networkError'));
+            }
           };
           if (Platform.OS === 'web') { if (window.confirm(t('one.deleteConfirm') || 'Apagar essa conversa?')) doDel(); }
           else Alert.alert(t('one.deleteConv') || 'Apagar conversa', t('one.deleteConfirm') || 'Apagar essa conversa do histórico?', [
@@ -3844,7 +3863,11 @@ export default function OneScreen() {
               setConversations([]);
               setMessages([]); setConversationId(null);
               setHistoryOpen(false);
-            } catch {}
+              haptic('success');
+            } catch {
+              if (Platform.OS === 'web') { try { window.alert(t('common.networkError')); } catch {} }
+              else Alert.alert(t('common.error'), t('common.networkError'));
+            }
           };
           if (Platform.OS === 'web') { if (window.confirm(t('one.clearAllConfirm') || 'Apagar TODO o histórico da Bia?')) doAll(); }
           else Alert.alert(t('one.clearAll') || 'Limpar histórico', t('one.clearAllConfirm') || 'Apagar TODO o histórico da Bia? Isso não pode ser desfeito.', [

@@ -21,8 +21,10 @@
       "ExpoNativeClipboardHandoffModule",
       "ExpoChatyyIntentsModule",
       "ExpoFaceLandmarkerModule",
-      "ChatyyMapViewModule"
-    ]
+      "ChatyyMapViewModule",
+      "ExpoAppShortcutsModule"
+    ],
+    "appDelegateSubscribers": ["AppShortcutsAppDelegateSubscriber"]
   },
   "android": {
     "modules": [
@@ -30,7 +32,9 @@
       "expo.modules.nativetoolkit.ExpoNativeImageModule",
       "expo.modules.nativetoolkit.ExpoFaceLandmarkerModule",
       "expo.modules.nativetoolkit.ExpoNativePdfViewModule",
-      "expo.modules.nativetoolkit.ChatyyMapViewModule"
+      "expo.modules.nativetoolkit.ChatyyMapViewModule",
+      "expo.modules.nativetoolkit.ExpoSmsOtpModule",
+      "expo.modules.nativetoolkit.ExpoAppShortcutsModule"
     ]
   }
 }

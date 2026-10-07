@@ -4,14 +4,16 @@ import {
   ActivityIndicator, RefreshControl, Alert, Platform, Animated, Easing,
   ScrollView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 let Clipboard = null;
 try { Clipboard = require('expo-clipboard'); } catch {}
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
-import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, Shadow, haptic } from '../constants/theme';
+import PressableScale from '../components/PressableScale'; // [2026-10-08 apps-native]
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
 import * as api from '../services/api';
 import { getCached, getCachedSync, setCache } from '../services/cache';
 import { syncMeetingReminders } from '../services/meetingReminders';
@@ -32,6 +34,19 @@ const MEET_BASE = 'https://chatyy.com.br/meet/';
 const ACCENT = '#111111';
 const ACCENT_DARK = '#111111';
 const LIVE_RED = '#EF4444';
+
+// [2026-10-08 apps-native] Labels used to be `t('_locale').startsWith('pt')
+// ? ... : ...` — `_locale` is not an i18n key, t() returns the raw key, so
+// EVERY user saw the English fallback ("Happening now", "Today", "Create").
+// tl(): real i18n key first, then a per-language inline fallback.
+function tl(t, language, key, fb, params) {
+  const v = t(key, params);
+  if (typeof v === 'string' && v && v !== key) return v;
+  const l = String(language || '').slice(0, 2);
+  let out = fb[l] || fb.en || '';
+  if (params) Object.keys(params).forEach((k) => { out = out.replace(`{${k}}`, String(params[k])); });
+  return out;
+}
 
 const safeAlert = (title, message, buttons) => {
   if (Platform.OS === 'web') {
@@ -194,9 +209,11 @@ function AvatarStack({ meeting, colors }) {
 }
 
 function HeroLiveCard({ meeting, colors, isDark, onPress, onJoin, t }) {
+  const { language } = useLanguage();
   return (
-    <TouchableOpacity
-      activeOpacity={0.92}
+    <PressableScale
+      haptic="light"
+      scaleTo={0.98}
       onPress={onPress}
       style={[styles.heroCard, { shadowColor: colors.primary }]}
     >
@@ -210,7 +227,7 @@ function HeroLiveCard({ meeting, colors, isDark, onPress, onJoin, t }) {
             <Text style={styles.heroLiveBadgeText}>{t('meetings.live').toUpperCase()}</Text>
           </View>
           <Text style={styles.heroParticipants} numberOfLines={1}>
-            {meeting.participant_count > 0 ? `${meeting.participant_count} ${t('meetings.organizer').toLowerCase() === 'organizador' ? 'na sala' : 'in room'}` : ''}
+            {meeting.participant_count > 0 ? tl(t, language, 'meetings.inRoom', { pt: '{n} na sala', en: '{n} in room', es: '{n} en la sala' }, { n: meeting.participant_count }) : ''}
           </Text>
         </View>
         <Text style={styles.heroTitle} numberOfLines={2}>
@@ -219,16 +236,17 @@ function HeroLiveCard({ meeting, colors, isDark, onPress, onJoin, t }) {
         {meeting.host_name ? (
           <Text style={styles.heroHost} numberOfLines={1}>{t('meetings.organizer')}: {meeting.host_name}</Text>
         ) : null}
-        <TouchableOpacity
-          activeOpacity={0.85}
+        <PressableScale
+          haptic="medium"
           onPress={onJoin}
           style={styles.heroJoinBtn}
+          accessibilityRole="button"
         >
           <IconVideo size={18} color={colors.primary} />
           <Text style={[styles.heroJoinText, { color: colors.primary }]}>{t('meetings.join')}</Text>
-        </TouchableOpacity>
+        </PressableScale>
       </View>
-    </TouchableOpacity>
+    </PressableScale>
   );
 }
 
@@ -253,12 +271,14 @@ function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t, high
       : null;
 
   return (
-    <TouchableOpacity
+    <PressableScale
       style={[styles.card,
         { backgroundColor: colors.surface, shadowColor: isDark ? colors.shadow : '#94a3b8' },
         borderStyle]}
       onPress={onPress}
-      activeOpacity={0.7}
+      haptic="light"
+      scaleTo={0.98}
+      accessibilityRole="button"
     >
       <View style={styles.cardTop}>
         <AvatarStack meeting={meeting} colors={colors} />
@@ -274,10 +294,11 @@ function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t, high
               <Text style={[styles.timePillText, { color: highlightAmber ? colors.warning : colors.primary }]} numberOfLines={1} ellipsizeMode="tail">{timeLabel}</Text>
             </View>
           )}
-          <TouchableOpacity onPress={onCopy} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          <PressableScale onPress={onCopy} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} haptic={false} scaleTo={0.9}
+            accessibilityRole="button" accessibilityLabel={t('meetings.linkCopied')}
             style={[styles.copyBtn, { backgroundColor: colors.surfaceVariant }]}>
             <IconLink size={14} color={colors.textTertiary} />
-          </TouchableOpacity>
+          </PressableScale>
         </View>
       </View>
 
@@ -310,27 +331,28 @@ function MeetingCard({ meeting, colors, isDark, onPress, onJoin, onCopy, t, high
           </Text>
         ) : <View />}
         {live || joinable ? (
-          <TouchableOpacity
+          <PressableScale
             style={[styles.joinBtn, { backgroundColor: colors.primary, shadowColor: colors.primary }]}
             onPress={onJoin}
-            activeOpacity={0.8}
+            haptic="medium"
+            accessibilityRole="button"
           >
             <IconVideo size={15} color={colors.onPrimary || '#fff'} />
-            <Text style={styles.joinBtnText}>{t('meetings.join')}</Text>
-          </TouchableOpacity>
+            <Text style={[styles.joinBtnText, { color: colors.onPrimary || '#fff' }]}>{t('meetings.join')}</Text>
+          </PressableScale>
         ) : (
-          <TouchableOpacity
+          <PressableScale
             style={[styles.recapBtn, { backgroundColor: colors.surfaceVariant }]}
             onPress={onPress}
-            activeOpacity={0.7}
+            accessibilityRole="button"
           >
             <Text style={[styles.recapBtnText, { color: colors.textSecondary }]}>
-              {past ? t('meetings.recap') : (t('meetings.viewDetails') || (t?.('_locale')?.startsWith('pt') ? 'Ver detalhes' : 'View details'))}
+              {past ? t('meetings.recap') : t('meetings.viewDetails')}
             </Text>
-          </TouchableOpacity>
+          </PressableScale>
         )}
       </View>
-    </TouchableOpacity>
+    </PressableScale>
   );
 }
 
@@ -380,7 +402,7 @@ const TAB_KEYS = ['today', 'upcoming', 'past'];
 
 function MeetingsScreenInner() {
   const { colors, isDark } = useTheme();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { user } = useAuth();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -414,6 +436,9 @@ function MeetingsScreenInner() {
     return true;
   });
   const [refreshing, setRefreshing] = useState(false);
+  // [2026-10-08 apps-native] network failure with nothing cached used to fall
+  // through to the "no meetings" empty state (looked like data loss).
+  const [loadError, setLoadError] = useState(false);
   const [creating, setCreating] = useState(false);
   const [copiedId, setCopiedId] = useState(null);
   const copiedTimerRef = useRef(null);
@@ -443,11 +468,14 @@ function MeetingsScreenInner() {
       const r = await api.meetList(apiTab, 50, 0);
       if (requestId !== meetingsRequestIdRef.current) return;
       if (r.success) {
+        setLoadError(false);
         setMeetings(r.data?.meetings || []);
         setCache(cacheKey, r.data?.meetings || [], 7776000000).catch(() => {});
         if (apiTab === 'upcoming') syncMeetingReminders();
       }
-    } catch {} finally {
+    } catch {
+      if (requestId === meetingsRequestIdRef.current) setLoadError(true);
+    } finally {
       if (requestId === meetingsRequestIdRef.current) {
         setLoading(false);
         setRefreshing(false);
@@ -465,6 +493,7 @@ function MeetingsScreenInner() {
   const handleInstantMeeting = async () => {
     if (creating) return;
     setCreating(true);
+    haptic.medium();
     try {
       const r = await api.meetCreate(t('meetings.defaultTitle'), false);
       if (r.success && r.data?.room_id) {
@@ -496,6 +525,7 @@ function MeetingsScreenInner() {
         await navigator.clipboard.writeText(url);
       }
       setCopiedId(meeting.id);
+      haptic.success(); // [2026-10-08 apps-native]
       if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
       copiedTimerRef.current = setTimeout(() => setCopiedId(null), 2000);
     } catch {}
@@ -578,6 +608,17 @@ function MeetingsScreenInner() {
   const renderEmpty = () => {
     if (loading) return null;
     const isPast = tab === 'past';
+    if (loadError && meetings.length === 0) {
+      return (
+        <ScreenEmptyState
+          kind="meetings"
+          accent={colors.primary}
+          title={tl(t, language, 'meetings.loadError', { pt: 'Não foi possível carregar', en: "Couldn't load meetings", es: 'No se pudieron cargar' })}
+          subtitle={t('common.networkError')}
+          cta={{ label: t('common.retry'), onPress: () => { setLoadError(false); loadMeetings(true); } }}
+        />
+      );
+    }
     return (
       <ScreenEmptyState
         kind="meetings"
@@ -585,7 +626,7 @@ function MeetingsScreenInner() {
         title={t('meetings.empty')}
         subtitle={isPast ? t('meetings.emptyPast') : t('meetings.emptyUpcoming')}
         cta={isPast ? null : { label: t('meetings.scheduleCta'), icon: 'calendar', onPress: () => router.push('/meeting-create') }}
-        secondary={isPast ? null : { label: t('meetings.join'), onPress: () => router.push('/meeting-create') }}
+        secondary={isPast ? null : { label: t('meetings.newMeeting'), onPress: handleInstantMeeting }}
         tips={isPast ? null : [
           { icon: 'play', label: t('meetings.tipInstant') },
           { icon: 'calendar', label: t('meetings.tipSchedule') },
@@ -610,7 +651,7 @@ function MeetingsScreenInner() {
       {showHero && (
         <View>
           <SectionHeader
-            label={t?.('_locale')?.startsWith('pt') ? 'Acontecendo agora' : 'Happening now'}
+            label={tl(t, language, 'meetings.happeningNow', { pt: 'Acontecendo agora', en: 'Happening now', es: 'En curso' })}
             color={colors.error}
             count={liveMeetings.length}
           />
@@ -630,7 +671,7 @@ function MeetingsScreenInner() {
       {showSoon && (
         <View>
           <SectionHeader
-            label={t?.('_locale')?.startsWith('pt') ? 'Em 1h' : 'In 1 hour'}
+            label={tl(t, language, 'meetings.inOneHour', { pt: 'Em 1h', en: 'In 1 hour', es: 'En 1 h' })}
             color={colors.warning}
             count={soonMeetings.length}
           />
@@ -653,8 +694,8 @@ function MeetingsScreenInner() {
         <View style={{ borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingTop: 16, marginTop: 8 }}>
           <SectionHeader
             label={tab === 'past'
-              ? (t?.('_locale')?.startsWith('pt') ? 'Anteriores' : 'Past')
-              : (t?.('_locale')?.startsWith('pt') ? 'Mais reuniões' : 'More meetings')}
+              ? tl(t, language, 'meetings.pastSection', { pt: 'Anteriores', en: 'Past', es: 'Anteriores' })
+              : tl(t, language, 'meetings.moreMeetings', { pt: 'Mais reuniões', en: 'More meetings', es: 'Más reuniones' })}
             color={colors.primary}
           />
         </View>
@@ -663,7 +704,7 @@ function MeetingsScreenInner() {
   );
 
   const tabLabels = {
-    today: t?.('_locale')?.startsWith('pt') ? 'Hoje' : (t?.('_locale')?.startsWith('es') ? 'Hoy' : 'Today'),
+    today: tl(t, language, 'meetings.tab.today', { pt: 'Hoje', en: 'Today', es: 'Hoy' }),
     upcoming: t('meetings.tab.upcoming'),
     past: t('meetings.tab.past'),
   };
@@ -674,8 +715,22 @@ function MeetingsScreenInner() {
   };
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Gradient header */}
+    <View style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {/* [2026-10-08 apps-native] Nativo: UINavigationBar / Toolbar Material
+          (título anima com o push, swipe-back sincronizado). Web mantém o
+          header custom. */}
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          title: t('meetings.title'),
+          headerRight: () => (
+            <HeaderIconButton onPress={() => router.push('/meeting-create')} accessibilityLabel={t('meetings.scheduleCta')}>
+              <IconPlus size={24} color={colors.text} />
+            </HeaderIconButton>
+          ),
+        })} />
+      ) : (
       <View style={[styles.header, { backgroundColor: colors.primary }]}>
         <View style={[styles.headerGradientOverlay, { backgroundColor: colors.primaryDark }]} />
         <View style={styles.headerRow}>
@@ -700,11 +755,12 @@ function MeetingsScreenInner() {
           >
             <IconPlus size={14} color={colors.primary} />
             <Text style={[styles.headerCtaText, { color: colors.primary }]} numberOfLines={1}>
-              {t?.('_locale')?.startsWith('pt') ? 'Criar' : (t?.('_locale')?.startsWith('es') ? 'Crear' : 'Create')}
+              {tl(t, language, 'meetings.create', { pt: 'Criar', en: 'Create', es: 'Crear' })}
             </Text>
           </TouchableOpacity>
         </View>
       </View>
+      )}
 
       {/* Segmented tabs */}
       <View style={[styles.tabBar, { backgroundColor: colors.surfaceVariant }]}>
@@ -716,8 +772,10 @@ function MeetingsScreenInner() {
               key={key}
               style={[styles.tab,
                 active && { backgroundColor: colors.primary, shadowColor: colors.primary, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4, elevation: 3 }]}
-              onPress={() => setTab(key)}
+              onPress={() => { if (key !== tab) haptic.select(); setTab(key); }}
               activeOpacity={0.7}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
             >
               <Text style={[styles.tabText, { color: active ? '#fff' : colors.textSecondary }]} numberOfLines={1}>
                 {tabLabels[key]}
@@ -749,6 +807,11 @@ function MeetingsScreenInner() {
           ListHeaderComponent={ListHeader}
           ListEmptyComponent={otherMeetings.length === 0 && !showHero && !showSoon ? renderEmpty : null}
           contentContainerStyle={[styles.list, (otherMeetings.length === 0 && !showHero && !showSoon) && styles.listEmpty]}
+          contentInsetAdjustmentBehavior="automatic"
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
+          windowSize={7}
+          removeClippedSubviews={Platform.OS === 'android'}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} />
           }
@@ -757,29 +820,30 @@ function MeetingsScreenInner() {
 
       {/* FAB row */}
       <View style={[styles.fabRow, { paddingBottom: insets.bottom + Spacing.md }]}>
-        <TouchableOpacity
+        <PressableScale
           style={[styles.fab, styles.fabSecondary, { backgroundColor: colors.surface, borderColor: colors.border, shadowColor: isDark ? colors.shadow : '#94a3b8' }]}
           onPress={() => router.push('/meeting-create')}
-          activeOpacity={0.7}
+          accessibilityRole="button"
         >
           <IconCalendar size={20} color={colors.primary} />
           <Text style={[styles.fabText, { color: colors.primary }]}>{t('meetings.schedule')}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
+        </PressableScale>
+        <PressableScale
           style={[styles.fab, styles.fabPrimary, { backgroundColor: colors.primary, shadowColor: colors.primary }]}
           onPress={handleInstantMeeting}
           disabled={creating}
-          activeOpacity={0.8}
+          haptic={false}
+          accessibilityRole="button"
         >
           {creating ? (
-            <ActivityIndicator size="small" color="#fff" />
+            <ActivityIndicator size="small" color={colors.onPrimary || '#fff'} />
           ) : (
             <>
-              <IconPlus size={20} color="#fff" />
-              <Text style={[styles.fabText, { color: '#fff' }]}>{t('meetings.newMeeting')}</Text>
+              <IconPlus size={20} color={colors.onPrimary || '#fff'} />
+              <Text style={[styles.fabText, { color: colors.onPrimary || '#fff' }]}>{t('meetings.newMeeting')}</Text>
             </>
           )}
-        </TouchableOpacity>
+        </PressableScale>
       </View>
     </View>
   );

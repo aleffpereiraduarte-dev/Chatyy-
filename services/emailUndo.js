@@ -55,3 +55,24 @@ export function takeEmailUndoRestore() {
   _restore = null;
   return r;
 }
+
+// [2026-10-08 email-outbox] Non-undoable notices on the same global bar:
+//   'outbox' → "Na caixa de saída" (offline / waiting upload / network error)
+//   'sending'→ "Enviando…" while attachments finish uploading (no Undo yet;
+//              the outbox drain swaps in the real Undo bar once queued)
+//   'sent'   → "E-mail enviado" (an outbox entry went out later)
+export function showEmailNotice(kind) {
+  if (_state && _state.phase === 'pending') return; // never hide a live Undo
+  if (_timer) clearTimeout(_timer);
+  const phase = kind === 'outbox' ? 'outbox' : kind === 'sending' ? 'sending' : 'sent';
+  _state = { sid: null, until: Date.now(), restore: null, phase };
+  _emit();
+  const mine = _state;
+  _timer = setTimeout(() => { if (_state === mine) { _state = null; _emit(); } }, phase === 'sending' ? 60000 : phase === 'outbox' ? 5000 : 2500);
+}
+
+// Outbox "Editar": hand a restore payload to the composer opened with
+// ?restore_undo=1 (same channel the Undo uses).
+export function setEmailComposeRestore(r) {
+  _restore = r || null;
+}

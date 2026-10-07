@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { KEYBOARD_CONTROLLER_ACTIVE as _KC_ACTIVE } from '../utils/threadKeyboard'; // [2026-10-08 photo-editor] gate do zoom UI-thread
 import {
   View, Text, TouchableOpacity, TouchableWithoutFeedback, StyleSheet, Modal, Image, Platform,
   Dimensions, Animated, PanResponder, ActivityIndicator, Linking, StatusBar, Alert, FlatList, Share, ScrollView,
@@ -34,6 +35,284 @@ if (Platform.OS !== 'web') {
 }
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
+
+// ============================================================
+// [2026-10-08 photo-editor] UI-THREAD ZOOM (Reanimated 4 + RNGH Gesture API)
+// ============================================================
+// Pinça com ponto focal, duplo-toque no ponto tocado, arrasto com limites +
+// inércia (withDecay) quando ampliado, e arrastar-pra-baixo-pra-fechar com o
+// fundo esmaecendo — tudo na UI thread (JS ocupado não engasga o gesto).
+// Ampliado → o FlatList pai desliga a paginação (onZoomChange) para o arrasto
+// mexer na foto e não trocar de item. Sem ampliar, o arrasto horizontal falha
+// rápido (manualActivation) e a paginação nativa do FlatList assume.
+// OTA SAFETY: mesmo gate do SwipeReplyRow (Reanimated só quando o binário o
+// tem — runtime 2.6.0+); fora disso fica o caminho PanResponder legado.
+let _ZRea = null;
+let _ZGH = null;
+if (Platform.OS !== 'web' && _KC_ACTIVE) {
+  try {
+    // eslint-disable-next-line global-require
+    _ZRea = require('react-native-reanimated');
+    // eslint-disable-next-line global-require
+    _ZGH = require('react-native-gesture-handler');
+  } catch { _ZRea = null; _ZGH = null; }
+}
+const _UI_ZOOM = !!(
+  _ZRea && _ZRea.default && _ZRea.useSharedValue && _ZRea.useAnimatedStyle
+  && _ZRea.withSpring && _ZRea.withTiming && _ZRea.withDecay && _ZRea.runOnJS
+  && _ZGH && _ZGH.Gesture && _ZGH.GestureDetector && _ZGH.GestureHandlerRootView
+);
+const _zRunOnJS = _UI_ZOOM ? _ZRea.runOnJS : null;
+const _zWithSpring = _UI_ZOOM ? _ZRea.withSpring : null;
+const _zWithTiming = _UI_ZOOM ? _ZRea.withTiming : null;
+const _zWithDecay = _UI_ZOOM ? _ZRea.withDecay : null;
+// Hook que existe sempre (regra dos hooks) — null fora do caminho UI-thread.
+const _useMaybeSharedValue = _UI_ZOOM ? _ZRea.useSharedValue : () => null;
+const _Z_MAX = 5;
+const _Z_DOUBLE = 2.5;
+const _Z_SPRING = { damping: 24, stiffness: 260, mass: 0.8 };
+
+function _zClamp(v, lo, hi) {
+  'worklet';
+  return v < lo ? lo : (v > hi ? hi : v);
+}
+// Meia-folga máxima de translação para a escala s (imagem 'contain' no box).
+function _zBoundX(s, cw, ch, nw, nh) {
+  'worklet';
+  let dw = cw;
+  if (nw > 0 && nh > 0) dw = nw * Math.min(cw / nw, ch / nh);
+  return Math.max(0, (dw * s - cw) / 2);
+}
+function _zBoundY(s, cw, ch, nw, nh) {
+  'worklet';
+  let dh = ch;
+  if (nw > 0 && nh > 0) dh = nh * Math.min(cw / nw, ch / nh);
+  return Math.max(0, (dh * s - ch) / 2);
+}
+
+// Fundo preto do viewer controlado pelo progresso do arrasto (UI thread).
+function _DismissBackdrop({ sv }) {
+  const st = _ZRea.useAnimatedStyle(() => ({ opacity: 1 - (sv ? sv.get() : 0) * 0.92 }));
+  const RA = _ZRea.default;
+  return <RA.View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: '#000' }, st]} />;
+}
+
+function UIZoomSurface({ children, natW, natH, dismissSV, onDismissStart, onDismissEnd, onZoomChange }) {
+  const RA = _ZRea.default;
+  const sc = _ZRea.useSharedValue(1);
+  const tx = _ZRea.useSharedValue(0);
+  const ty = _ZRea.useSharedValue(0);
+  const cw = _ZRea.useSharedValue(SCREEN_W);
+  const ch = _ZRea.useSharedValue(SCREEN_H);
+  const s0 = _ZRea.useSharedValue(1);
+  const tx0 = _ZRea.useSharedValue(0);
+  const ty0 = _ZRea.useSharedValue(0);
+  const fx0 = _ZRea.useSharedValue(0);
+  const fy0 = _ZRea.useSharedValue(0);
+  const sx = _ZRea.useSharedValue(0);
+  const sy = _ZRea.useSharedValue(0);
+  const mode = _ZRea.useSharedValue(0); // 0 nada, 1 pan ampliado, 2 dispensar
+  const zoomed = _ZRea.useSharedValue(0);
+
+  const cbRef = useRef({});
+  cbRef.current = { onDismissStart, onDismissEnd, onZoomChange };
+  const jsDismissStart = useCallback(() => { try { cbRef.current.onDismissStart && cbRef.current.onDismissStart(); } catch {} }, []);
+  const jsDismissEnd = useCallback((d) => { try { cbRef.current.onDismissEnd && cbRef.current.onDismissEnd(!!d); } catch {} }, []);
+  const jsZoom = useCallback((z) => { try { cbRef.current.onZoomChange && cbRef.current.onZoomChange(!!z); } catch {} }, []);
+
+  // Ao desmontar ampliado (troca de mídia / fechar) devolve a paginação.
+  useEffect(() => () => { if (zoomed.get() === 1) jsZoom(false); }, [zoomed, jsZoom]);
+
+  const nw = natW || 0;
+  const nh = natH || 0;
+
+  const gesture = useMemo(() => {
+    const G = _ZGH.Gesture;
+    const setZoomFlag = (z) => {
+      'worklet';
+      if (z !== zoomed.get()) {
+        zoomed.set(z);
+        _zRunOnJS(jsZoom)(z === 1);
+      }
+    };
+    const settle = () => {
+      'worklet';
+      let s = _zClamp(sc.get(), 1, _Z_MAX);
+      const reset = s <= 1.02;
+      if (reset) s = 1;
+      const mx = _zBoundX(s, cw.get(), ch.get(), nw, nh);
+      const my = _zBoundY(s, cw.get(), ch.get(), nw, nh);
+      // Escala volta ao teto → recentra proporcionalmente.
+      const ratio = sc.get() > 0 ? s / sc.get() : 1;
+      sc.set(_zWithSpring(s, _Z_SPRING));
+      tx.set(_zWithSpring(reset ? 0 : _zClamp(tx.get() * ratio, -mx, mx), _Z_SPRING));
+      ty.set(_zWithSpring(reset ? 0 : _zClamp(ty.get() * ratio, -my, my), _Z_SPRING));
+      setZoomFlag(reset ? 0 : 1);
+    };
+
+    const pinch = G.Pinch()
+      .onStart((e) => {
+        'worklet';
+        s0.set(sc.get());
+        tx0.set(tx.get());
+        ty0.set(ty.get());
+        fx0.set(e.focalX - cw.get() / 2);
+        fy0.set(e.focalY - ch.get() / 2);
+      })
+      .onUpdate((e) => {
+        'worklet';
+        let ns = s0.get() * e.scale;
+        if (ns < 1) ns = 1 - (1 - ns) * 0.45;            // elástico abaixo de 1
+        if (ns > _Z_MAX) ns = _Z_MAX + (ns - _Z_MAX) * 0.3; // elástico acima do teto
+        const s00 = s0.get() || 1;
+        const cx = (fx0.get() - tx0.get()) / s00;          // ponto do conteúdo sob o foco
+        const cy = (fy0.get() - ty0.get()) / s00;
+        const fx = e.focalX - cw.get() / 2;
+        const fy = e.focalY - ch.get() / 2;
+        sc.set(ns);
+        tx.set(fx - ns * cx);
+        ty.set(fy - ns * cy);
+      })
+      .onEnd(() => { 'worklet'; settle(); });
+
+    const pan = G.Pan()
+      .manualActivation(true)
+      .averageTouches(true)
+      .onTouchesDown((e) => {
+        'worklet';
+        if (e.allTouches && e.allTouches.length === 1) {
+          sx.set(e.allTouches[0].absoluteX);
+          sy.set(e.allTouches[0].absoluteY);
+        }
+      })
+      .onTouchesMove((e, mgr) => {
+        'worklet';
+        const n = e.numberOfTouches;
+        const isZoomed = sc.get() > 1.02;
+        if (n !== 1) { if (!isZoomed) mgr.fail(); return; }
+        const t0 = e.allTouches[0];
+        if (!t0) return;
+        const dx = t0.absoluteX - sx.get();
+        const dy = t0.absoluteY - sy.get();
+        if (isZoomed) {
+          if (dx * dx + dy * dy > 16) mgr.activate();
+          return;
+        }
+        const adx = dx < 0 ? -dx : dx;
+        if (dy > 10 && dy > adx * 1.2) mgr.activate();
+        else if (adx > 10 || dy < -12) mgr.fail();
+      })
+      .onStart(() => {
+        'worklet';
+        tx0.set(tx.get());
+        ty0.set(ty.get());
+        if (sc.get() > 1.02) {
+          mode.set(1);
+        } else {
+          mode.set(2);
+          _zRunOnJS(jsDismissStart)();
+        }
+      })
+      .onUpdate((e) => {
+        'worklet';
+        const m = mode.get();
+        if (m === 1) {
+          const s = sc.get();
+          const mx = _zBoundX(s, cw.get(), ch.get(), nw, nh);
+          const my = _zBoundY(s, cw.get(), ch.get(), nw, nh);
+          let nx = tx0.get() + e.translationX;
+          let ny = ty0.get() + e.translationY;
+          if (nx > mx) nx = mx + (nx - mx) * 0.35; else if (nx < -mx) nx = -mx + (nx + mx) * 0.35;
+          if (ny > my) ny = my + (ny - my) * 0.35; else if (ny < -my) ny = -my + (ny + my) * 0.35;
+          tx.set(nx);
+          ty.set(ny);
+        } else if (m === 2) {
+          const dy = e.translationY > 0 ? e.translationY : 0;
+          ty.set(e.translationY > 0 ? e.translationY : e.translationY * 0.2);
+          tx.set(e.translationX * 0.6);
+          sc.set(Math.max(0.78, 1 - dy / (ch.get() * 1.6)));
+          if (dismissSV) dismissSV.set(_zClamp(dy / (ch.get() * 0.5), 0, 1));
+        }
+      })
+      .onEnd((e, success) => {
+        'worklet';
+        const m = mode.get();
+        mode.set(0);
+        if (m === 1) {
+          const s = sc.get();
+          const mx = _zBoundX(s, cw.get(), ch.get(), nw, nh);
+          const my = _zBoundY(s, cw.get(), ch.get(), nw, nh);
+          const x = tx.get();
+          const y = ty.get();
+          tx.set((x > mx || x < -mx) ? _zWithSpring(_zClamp(x, -mx, mx), _Z_SPRING) : _zWithDecay({ velocity: e.velocityX, clamp: [-mx, mx] }));
+          ty.set((y > my || y < -my) ? _zWithSpring(_zClamp(y, -my, my), _Z_SPRING) : _zWithDecay({ velocity: e.velocityY, clamp: [-my, my] }));
+        } else if (m === 2) {
+          const go = success !== false && (e.translationY > 110 || e.velocityY > 900);
+          if (go) {
+            ty.set(_zWithTiming(ch.get(), { duration: 200 }));
+            if (dismissSV) dismissSV.set(_zWithTiming(1, { duration: 200 }));
+            _zRunOnJS(jsDismissEnd)(true);
+          } else {
+            tx.set(_zWithSpring(0, _Z_SPRING));
+            ty.set(_zWithSpring(0, _Z_SPRING));
+            sc.set(_zWithSpring(1, _Z_SPRING));
+            if (dismissSV) dismissSV.set(_zWithSpring(0, _Z_SPRING));
+            _zRunOnJS(jsDismissEnd)(false);
+          }
+        }
+      });
+
+    const dbl = G.Tap()
+      .numberOfTaps(2)
+      .maxDelay(260)
+      .onEnd((e, success) => {
+        'worklet';
+        if (success === false) return;
+        if (sc.get() > 1.02) {
+          sc.set(_zWithSpring(1, _Z_SPRING));
+          tx.set(_zWithSpring(0, _Z_SPRING));
+          ty.set(_zWithSpring(0, _Z_SPRING));
+          setZoomFlag(0);
+          return;
+        }
+        const s = _Z_DOUBLE;
+        const fx = e.x - cw.get() / 2;
+        const fy = e.y - ch.get() / 2;
+        const mx = _zBoundX(s, cw.get(), ch.get(), nw, nh);
+        const my = _zBoundY(s, cw.get(), ch.get(), nw, nh);
+        sc.set(_zWithSpring(s, _Z_SPRING));
+        tx.set(_zWithSpring(_zClamp(-fx * (s - 1), -mx, mx), _Z_SPRING));
+        ty.set(_zWithSpring(_zClamp(-fy * (s - 1), -my, my), _Z_SPRING));
+        setZoomFlag(1);
+      });
+
+    return G.Simultaneous(pinch, pan, dbl);
+  }, [nw, nh, dismissSV, jsZoom, jsDismissStart, jsDismissEnd, sc, tx, ty, cw, ch, s0, tx0, ty0, fx0, fy0, sx, sy, mode, zoomed]);
+
+  const aStyle = _ZRea.useAnimatedStyle(() => ({
+    transform: [{ translateX: tx.get() }, { translateY: ty.get() }, { scale: sc.get() }],
+  }));
+
+  return (
+    <_ZGH.GestureHandlerRootView style={s.mediaContainer}>
+      <_ZGH.GestureDetector gesture={gesture}>
+        <View
+          style={s.mediaContainer}
+          collapsable={false}
+          onLayout={(e) => {
+            const { width, height } = e.nativeEvent.layout;
+            if (width > 0) cw.set(width);
+            if (height > 0) ch.set(height);
+          }}
+        >
+          <RA.View style={[s.mediaContainer, aStyle]}>
+            {children}
+          </RA.View>
+        </View>
+      </_ZGH.GestureDetector>
+    </_ZGH.GestureHandlerRootView>
+  );
+}
 // HEIC/HEIF are iOS-native captures. Server already transcodes for thumbnails
 // (ImageMagick fallback in driveGenerateThumbnail). Listing them here lets the
 // fullscreen viewer pick the image branch on iOS, where native ImageIO renders
@@ -250,7 +529,9 @@ function NativeImageViewerWithLoading({ url }) {
 // crashing). Defined at module scope so it isn't remounted each render.
 function _PinchPassthrough({ children }) { return children; }
 
-function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, blurhash, thumbUri, onDismissMove, onDismissEnd }) {
+function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, blurhash, thumbUri, onDismissMove, onDismissEnd, dismissSV, onDismissStart, onZoomChange }) {
+  // [2026-10-08 photo-editor] tamanho natural (limites do pan no zoom UI-thread)
+  const [_nat, _setNat] = useState(null);
   // We deliberately DO NOT use `_NativeImageZoomView` here even on iOS. The
   // native view downloads via raw URLSession which (a) lacks the loading
   // indicator the user expects and (b) silently fails for some CDN routes.
@@ -441,6 +722,94 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
   try { _PlaceholderImage = require('expo-image').Image || Image; } catch {}
   const _hasInstantPreview = !!(blurhash || placeholderUri || thumbUri);
 
+  // [2026-10-08 photo-editor] imagem içada: usada pelo zoom UI-thread OU pelo legado.
+  const _imgEl = (
+    <>
+        {/* [WAVE 72 2026-05-21] Use expo-image instead of RN <Image>.
+            Why: the chat bubble renders via ChatMedia → expo-image which
+            keeps the bytes in expo-image's NATIVE memory+disk cache. RN
+            <Image> uses a SEPARATE cache layer (NSURLCache on iOS / Fresco
+            on Android), so opening the viewer for a photo that was already
+            painted in the bubble paid a fresh network round-trip — ~1-2s on
+            cellular. Switching the viewer to expo-image makes it a memory-
+            cache HIT in the common case (bubble visible → tap → viewer):
+            zero-latency paint, no spinner.
+            • `cachePolicy="memory-disk"` shares the bubble's disk cache.
+            • `priority="high"` jumps the queue when not yet cached.
+            • `transition=0` avoids the 200ms fade-in (the loading state is
+              gated by `loading` which we drive ourselves via onLoad). */}
+        <_PlaceholderImage
+          key={retryEpoch}
+          // [2026-10-01] Fill the whole available area (flex:1) instead of a
+          // fixed SCREEN_H*0.75 box. The fixed box left ~12.5% black above and
+          // below; the top gap hid behind the opaque header bar while the
+          // bottom gap stayed visible, so the photo READ as "stuck to the top
+          // with a big black gap below". Filling the container + contentFit
+          // 'contain' centers any photo (tall or short) with balanced spacing.
+          // Pinch-zoom / swipe-dismiss / paging are unaffected — they live on
+          // the wrapping Animated.View's transform, not on the image size.
+          source={{ uri: effectiveUrl }}
+          style={[s.fullImage, { height: undefined, flex: 1 }]}
+          contentFit="contain"
+          resizeMode="contain"
+          cachePolicy="memory-disk"
+          priority="high"
+          transition={0}
+          onLoad={(ev) => {
+            setLoading(false);
+            try {
+              const src = ev?.source || ev?.nativeEvent?.source;
+              if (src && src.width > 0 && src.height > 0) _setNat({ w: src.width, h: src.height });
+            } catch {}
+          }}
+          onLoadEnd={() => setLoading(false)}
+          onError={(e) => {
+            setLoading(false);
+            // OFFLINE-FIRST: if the URL we tried IS a remote URL (i.e. cache
+            // missed BEFORE getFullUrl), one more sync check — the syncIndex
+            // may have been populated by a parallel cacheMedia that finished
+            // between mount and the Image fetch. Same for retry storms.
+            try {
+              const { getLocalUriIfCached } = require('../services/mediaCache');
+              if (effectiveUrl && !effectiveUrl.startsWith('file://')) {
+                const local = getLocalUriIfCached(effectiveUrl);
+                if (local && local !== effectiveUrl) {
+                  // We have it on disk — switch source and clear error.
+                  setFreshUrl(local);
+                  setImageError(null);
+                  setLoading(true);
+                  setRetryEpoch(epc => epc + 1);
+                  return;
+                }
+              }
+            } catch {}
+            const raw = e?.nativeEvent?.error || '';
+            // iOS WKWebView/NSURLSession surfaces NSURLErrorNotConnectedToInternet
+            // as the English string "The Internet connection appears to be
+            // offline." We catch known offline phrasings (also Android's "Unable
+            // to resolve host" etc.) and substitute the localized cache-miss
+            // copy. Anything else falls through to the original native message.
+            const lower = String(raw).toLowerCase();
+            const offlineLike = !raw
+              || lower.includes('offline')
+              || lower.includes('internet connection')
+              || lower.includes('not connected')
+              || lower.includes('unable to resolve')
+              || lower.includes('no address associated')
+              || lower.includes('failed to connect')
+              || lower.includes('network connection was lost')
+              || lower.includes('-1009')
+              || lower.includes('econnreset');
+            if (offlineLike) {
+              setImageError(t?.('media.offlineCacheMiss') || 'Sem internet — esta mídia ainda não foi baixada.');
+            } else {
+              setImageError(String(raw));
+            }
+          }}
+        />
+    </>
+  );
+
   return (
     <View style={s.mediaContainer}>
       {/* WhatsApp-style blurred preview behind the spinner. blurRadius keeps
@@ -541,6 +910,18 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
           )}
         </View>
       )}
+      {_UI_ZOOM ? (
+        <UIZoomSurface
+          natW={_nat?.w}
+          natH={_nat?.h}
+          dismissSV={dismissSV}
+          onDismissStart={onDismissStart}
+          onDismissEnd={onDismissEnd}
+          onZoomChange={onZoomChange}
+        >
+          {_imgEl}
+        </UIZoomSurface>
+      ) : (
       <_PinchWrap onGestureEvent={onPinchEvent} onHandlerStateChange={onPinchStateChange}>
       <Animated.View
         {...panResponder.panHandlers}
@@ -552,84 +933,10 @@ function ImageViewer({ url, messageId, fileSize, createdAt, t, placeholderUri, b
           ],
         }]}
       >
-        {/* [WAVE 72 2026-05-21] Use expo-image instead of RN <Image>.
-            Why: the chat bubble renders via ChatMedia → expo-image which
-            keeps the bytes in expo-image's NATIVE memory+disk cache. RN
-            <Image> uses a SEPARATE cache layer (NSURLCache on iOS / Fresco
-            on Android), so opening the viewer for a photo that was already
-            painted in the bubble paid a fresh network round-trip — ~1-2s on
-            cellular. Switching the viewer to expo-image makes it a memory-
-            cache HIT in the common case (bubble visible → tap → viewer):
-            zero-latency paint, no spinner.
-            • `cachePolicy="memory-disk"` shares the bubble's disk cache.
-            • `priority="high"` jumps the queue when not yet cached.
-            • `transition=0` avoids the 200ms fade-in (the loading state is
-              gated by `loading` which we drive ourselves via onLoad). */}
-        <_PlaceholderImage
-          key={retryEpoch}
-          // [2026-10-01] Fill the whole available area (flex:1) instead of a
-          // fixed SCREEN_H*0.75 box. The fixed box left ~12.5% black above and
-          // below; the top gap hid behind the opaque header bar while the
-          // bottom gap stayed visible, so the photo READ as "stuck to the top
-          // with a big black gap below". Filling the container + contentFit
-          // 'contain' centers any photo (tall or short) with balanced spacing.
-          // Pinch-zoom / swipe-dismiss / paging are unaffected — they live on
-          // the wrapping Animated.View's transform, not on the image size.
-          source={{ uri: effectiveUrl }}
-          style={[s.fullImage, { height: undefined, flex: 1 }]}
-          contentFit="contain"
-          resizeMode="contain"
-          cachePolicy="memory-disk"
-          priority="high"
-          transition={0}
-          onLoad={() => setLoading(false)}
-          onLoadEnd={() => setLoading(false)}
-          onError={(e) => {
-            setLoading(false);
-            // OFFLINE-FIRST: if the URL we tried IS a remote URL (i.e. cache
-            // missed BEFORE getFullUrl), one more sync check — the syncIndex
-            // may have been populated by a parallel cacheMedia that finished
-            // between mount and the Image fetch. Same for retry storms.
-            try {
-              const { getLocalUriIfCached } = require('../services/mediaCache');
-              if (effectiveUrl && !effectiveUrl.startsWith('file://')) {
-                const local = getLocalUriIfCached(effectiveUrl);
-                if (local && local !== effectiveUrl) {
-                  // We have it on disk — switch source and clear error.
-                  setFreshUrl(local);
-                  setImageError(null);
-                  setLoading(true);
-                  setRetryEpoch(epc => epc + 1);
-                  return;
-                }
-              }
-            } catch {}
-            const raw = e?.nativeEvent?.error || '';
-            // iOS WKWebView/NSURLSession surfaces NSURLErrorNotConnectedToInternet
-            // as the English string "The Internet connection appears to be
-            // offline." We catch known offline phrasings (also Android's "Unable
-            // to resolve host" etc.) and substitute the localized cache-miss
-            // copy. Anything else falls through to the original native message.
-            const lower = String(raw).toLowerCase();
-            const offlineLike = !raw
-              || lower.includes('offline')
-              || lower.includes('internet connection')
-              || lower.includes('not connected')
-              || lower.includes('unable to resolve')
-              || lower.includes('no address associated')
-              || lower.includes('failed to connect')
-              || lower.includes('network connection was lost')
-              || lower.includes('-1009')
-              || lower.includes('econnreset');
-            if (offlineLike) {
-              setImageError(t?.('media.offlineCacheMiss') || 'Sem internet — esta mídia ainda não foi baixada.');
-            } else {
-              setImageError(String(raw));
-            }
-          }}
-        />
+        {_imgEl}
       </Animated.View>
       </_PinchWrap>
+      )}
     </View>
   );
 }
@@ -1429,6 +1736,20 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
       Animated.timing(_chromeOpacity, { toValue: _chromeVisible ? 1 : 0, duration: 160, useNativeDriver: true }).start();
     }
   }, [_bgOpacity, _chromeOpacity, _chromeVisible, onClose]);
+  // [2026-10-08 photo-editor] Zoom/dispensar na UI thread: progresso do arrasto
+  // (0..1) num shared value que esmaece o fundo sem passar pelo JS; ampliado →
+  // paginação do FlatList desligada.
+  const _dismissSV = _useMaybeSharedValue(0);
+  const [_zoomed, _setZoomed] = useState(false);
+  const _onZoomChange = useCallback((z) => { _setZoomed(!!z); }, []);
+  const _onDismissStart = useCallback(() => {
+    Animated.timing(_chromeOpacity, { toValue: 0, duration: 120, useNativeDriver: true }).start();
+  }, [_chromeOpacity]);
+  useEffect(() => {
+    if (!visible) return;
+    _setZoomed(false);
+    try { if (_dismissSV) _dismissSV.set(0); } catch {}
+  }, [visible, _dismissSV]);
   const _toggleChrome = useCallback(() => {
     _setChromeVisible(v => {
       const next = !v;
@@ -1946,8 +2267,10 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             transparent). pointerEvents=none so it never swallows touches. */}
         <Animated.View
           pointerEvents="none"
-          style={[StyleSheet.absoluteFill, { backgroundColor: '#000', opacity: _bgOpacity }]}
-        />
+          style={[StyleSheet.absoluteFill, { backgroundColor: _dismissSV ? 'transparent' : '#000', opacity: _bgOpacity }]}
+        >
+          {_dismissSV ? <_DismissBackdrop sv={_dismissSV} /> : null}
+        </Animated.View>
         {/* View-once watermark — appears after a screenshot is detected
             (iOS) so the captured image carries the viewer's email +
             timestamp. The overlay is intentionally semi-transparent so
@@ -2086,6 +2409,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
             keyExtractor={(it, i) => `${it?.fileUrl || ''}_${i}`}
             horizontal
             pagingEnabled
+            scrollEnabled={!_zoomed}
             showsHorizontalScrollIndicator={false}
             initialScrollIndex={_initial}
             getItemLayout={(_, i) => ({ length: SCREEN_W, offset: SCREEN_W * i, index: i })}
@@ -2102,7 +2426,7 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
               const isPrv = PREVIEWABLE_EXTS.includes(e);
               return (
                 <View style={{ width: SCREEN_W, flex: 1 }}>
-                  {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} onDismissMove={_onDismissMove} onDismissEnd={_onDismissEnd} /> :
+                  {isImg ? <ImageViewer url={u} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} createdAt={item?.createdAt || item?.created_at} t={t} placeholderUri={item?.placeholderUri || item?.thumbB64Uri} blurhash={item?.blurhash} thumbUri={item?.thumbUri} onDismissMove={_onDismissMove} onDismissEnd={_onDismissEnd} dismissSV={_dismissSV} onDismissStart={_onDismissStart} onZoomChange={_onZoomChange} /> :
                    isVid ? <VideoPlayer url={u} isActive={index === _currentIdx} allowPip={!viewOnce} /> :
                    isPrv ? <PreviewViewer url={u} filename={item?.fileName} messageId={item?.messageId || item?.id || 0} fileSize={item?.fileSize} t={t} /> :
                    <GenericFileViewer url={u} filename={item?.fileName} fileSize={item?.fileSize} messageId={item?.messageId || item?.id || 0} t={t} />}
@@ -2139,6 +2463,9 @@ export default function ChatMediaViewer({ visible, onClose, fileUrl, hlsUrl, fil
                 thumbUri={_active?.thumbUri}
                 onDismissMove={_onDismissMove}
                 onDismissEnd={_onDismissEnd}
+                dismissSV={_dismissSV}
+                onDismissStart={_onDismissStart}
+                onZoomChange={_onZoomChange}
               />
             )
           ) : isVideo ? (

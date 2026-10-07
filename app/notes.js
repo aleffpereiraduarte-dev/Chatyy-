@@ -2,25 +2,27 @@ import { androidBottomInset, androidTopInset } from '../utils/systemInsets'; // 
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput, StyleSheet, Platform, ScrollView,
-  Modal, Alert, Animated, Dimensions, FlatList, Pressable, ActivityIndicator,
+  Modal, Alert, Animated, Dimensions, FlatList, Pressable, ActivityIndicator, RefreshControl,
   KeyboardAvoidingView, Linking, PanResponder, Easing, AppState,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { BorderRadius, FontSize, Spacing, Shadow, AnimTiming } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, Shadow, AnimTiming, haptic } from '../constants/theme';
 import {
   IconArrowLeft, IconPlus, IconSearch, IconX, IconCheck,
   IconStickyNote, IconPin, IconTrash, IconArchive, IconEdit, IconFolder,
   IconMail, IconCopy, IconDownload, IconSend, IconMenu, IconZap, IconRotateCcw,
-  IconBell, IconClock,
+  IconBell, IconClock, IconGrid,
 } from '../components/Icons';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { queueOfflineAction, isOnline } from '../services/offlineCache';
 import BrandFab from '../components/BrandFab';
+import PressableScale from '../components/PressableScale'; // [2026-10-08 apps-native]
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
 let NoteGridSkeleton = null; try { NoteGridSkeleton = require('../components/SkeletonLoader').NoteGridSkeleton; } catch {}
 // J.2 — native date/time picker for the "Lembrar" reminder. Optional require
 // so web (which uses <input type="datetime-local">) and any build without the
@@ -703,6 +705,365 @@ function BoardView({
 }
 
 
+// ---- Note Card (List View) with premium Google Keep-like design ----
+// [2026-10-08 apps-native] Era `const NoteCard = () =>` DENTRO do NotesScreen:
+// tipo novo a cada render → TODOS os cards desmontavam/remontavam a cada
+// tecla na busca, a cada estado (re-rodava animação de entrada, recriava
+// PanResponder, perdia swipe). Agora é memo de módulo; callbacks via props
+// e ref "latest" p/ o PanResponder (criado 1x) não usar note/onDelete velhos.
+const NoteCardItem = React.memo(function NoteCardItem({ note, index, isDark, colors, t, searchQuery, isDeleting, onOpen, onLongPress, onDelete }) {
+  const latestRef = useRef(null);
+  latestRef.current = { note, onDelete };
+  const colorMeta = getColorMeta(note.color);
+  const bgColor = (isDark ? (DARK_NOTE_COLORS[note.color] || '#2A2A2A') : (note.color || '#FFF9C4'));
+  const textColor = (isDark ? (DARK_NOTE_TEXT[note.color] || '#E0E0E0') : '#212121');
+  const secondaryColor = (isDark ? ((DARK_NOTE_TEXT[note.color] || '#BDBDBD') + 'B3') : '#616161');
+  const shadowCol = isDark ? colorMeta.darkShadow : colorMeta.shadowColor;
+  const [hovered, setHovered] = useState(false);
+  const webHover = Platform.OS === 'web' ? {
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => setHovered(false),
+  } : {};
+
+  // Gradient background for web
+  const gradientBg = Platform.OS === 'web'
+    ? (isDark
+      ? `linear-gradient(135deg, ${colorMeta.darkGradient[0]}, ${colorMeta.darkGradient[1]})`
+      : `linear-gradient(135deg, ${colorMeta.gradient[0]}, ${colorMeta.gradient[1]})`)
+    : undefined;
+
+
+  // iOS-style swipe to delete — left only, reveals red button underneath
+  const swipeX = useRef(new Animated.Value(0)).current;
+  const DELETE_THRESHOLD = 80;
+  // Red background width matches swipe distance
+  const deleteBtnWidth = swipeX.interpolate({
+    inputRange: [-SCREEN_WIDTH, -DELETE_THRESHOLD, 0],
+    outputRange: [SCREEN_WIDTH, DELETE_THRESHOLD, 0],
+    extrapolate: 'clamp',
+  });
+  const deleteBtnOpacity = swipeX.interpolate({
+    inputRange: [-DELETE_THRESHOLD, -20, 0],
+    outputRange: [1, 0.6, 0],
+    extrapolate: 'clamp',
+  });
+  const swipeResponder = useRef(
+    !isDesktop ? PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) => {
+        // Only activate on horizontal swipes (mostly left)
+        return Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 2;
+      },
+      onPanResponderGrant: () => {
+        swipeX.stopAnimation();
+        swipeX.setOffset(swipeX.__getValue());
+        swipeX.setValue(0);
+      },
+      onPanResponderMove: (_, g) => {
+        // iOS-style: only allow swipe LEFT (negative). Clamp right to 0.
+        if (g.dx > 0) {
+          // Allow slight right movement to snap back from open state
+          swipeX.setValue(Math.min(g.dx, 0));
+        } else {
+          // Smooth 1:1 tracking up to threshold, then rubber-band
+          const abs = Math.abs(g.dx);
+          const clamped = abs < DELETE_THRESHOLD
+            ? -abs
+            : -(DELETE_THRESHOLD + (abs - DELETE_THRESHOLD) * 0.3);
+          swipeX.setValue(clamped);
+        }
+      },
+      onPanResponderRelease: (_, g) => {
+        swipeX.flattenOffset();
+        const currentX = g.dx + (swipeX._offset || 0);
+        const velocity = g.vx;
+
+        if (currentX < -DELETE_THRESHOLD || velocity < -1.2) {
+          // Swipe far enough or fast flick left → delete
+          Animated.timing(swipeX, {
+            toValue: -SCREEN_WIDTH,
+            duration: 200,
+            easing: Easing.out(Easing.cubic),
+            useNativeDriver: true,
+          }).start(() => {
+            try { haptic.warning(); } catch {}
+            latestRef.current?.onDelete?.(latestRef.current.note);
+            swipeX.setValue(0);
+          });
+        } else {
+          // Snap back — iOS uses a fast, slightly bouncy spring
+          Animated.spring(swipeX, {
+            toValue: 0,
+            stiffness: 400,
+            damping: 30,
+            mass: 0.8,
+            useNativeDriver: true,
+          }).start();
+        }
+      },
+      onPanResponderTerminate: () => {
+        swipeX.flattenOffset();
+        Animated.spring(swipeX, {
+          toValue: 0, stiffness: 400, damping: 30, mass: 0.8,
+          useNativeDriver: true,
+        }).start();
+      },
+    }) : { panHandlers: {} }
+  ).current;
+
+  return (
+    <DeletableNoteCard index={index} style={{}} isDeleting={isDeleting}>
+      {/* iOS-style delete button revealed from right */}
+      {!isDesktop && (
+        <Animated.View style={[s.swipeDeleteBg, {
+          width: deleteBtnWidth,
+          opacity: deleteBtnOpacity,
+          right: 0,
+          left: undefined,
+        }]}>
+          <View style={[s.swipeDeleteInner, { backgroundColor: '#FF3B30', justifyContent: 'center' }]}>
+            <IconTrash size={22} color="#fff" />
+            <Text style={s.swipeDeleteText}>{t('notes.deleteNote') || 'Apagar'}</Text>
+          </View>
+        </Animated.View>
+      )}
+      <Animated.View
+        style={[
+          !isDesktop && { transform: [{ translateX: swipeX }] },
+        ]}
+        {...(isDesktop ? {} : swipeResponder.panHandlers)}
+      >
+        <Pressable
+          onPress={() => onOpen(note)}
+          onLongPress={() => { try { haptic.medium(); } catch {} onLongPress(note); }}
+          style={[
+            s.noteCard,
+            {
+              backgroundColor: isDark ? colors.surface : '#fff',
+              borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+            },
+            Platform.OS === 'web' && {
+              boxShadow: hovered
+                ? `0 8px 28px ${shadowCol}, 0 2px 8px rgba(0,0,0,0.1)`
+                : `0 2px 8px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)`,
+              transform: hovered ? [{ translateY: -3 }, { scale: 1.01 }] : [],
+            },
+            isDark && Platform.OS === 'web' && {
+              boxShadow: hovered
+                ? `0 8px 28px ${shadowCol}, 0 0 16px ${shadowCol}`
+                : `0 2px 8px ${shadowCol}`,
+            },
+          ]}
+          {...webHover}
+        >
+          {/* Color strip on left */}
+          <View style={[s.noteColorStrip, { backgroundColor: note.color || '#FFF9C4' }]} />
+
+          {/* Pin icon - golden with rotation */}
+          {note.is_pinned ? (
+            <View style={s.pinBadge}>
+              <View style={[s.pinBadgeInner, {
+                ...(Platform.OS === 'web' ? {
+                  filter: 'drop-shadow(0 1px 3px rgba(249,168,37,0.5))',
+                } : {}),
+              }]}>
+                <IconPin size={15} color={isDark ? '#FFD54F' : '#F9A825'} />
+              </View>
+            </View>
+          ) : null}
+
+          <View style={s.noteCardContent}>
+            {note.title ? (
+              <HighlightText
+                text={note.title}
+                highlight={searchQuery}
+                style={[s.noteTitle, { color: textColor }]}
+                numberOfLines={2}
+              />
+            ) : null}
+            {note.content ? (
+              <View style={s.noteContentWrap}>
+                <HighlightText
+                  text={note.content}
+                  highlight={searchQuery}
+                  style={[s.noteContent, { color: secondaryColor }]}
+                  numberOfLines={isDesktop ? 4 : 3}
+                />
+                {/* Fade-out gradient at bottom (web only) */}
+                {Platform.OS === 'web' && note.content && note.content.length > 100 && (
+                  <View style={[s.contentFadeOut, {
+                    background: isDark
+                      ? `linear-gradient(transparent, ${colors.surface})`
+                      : `linear-gradient(transparent, #fff)`,
+                  }]} />
+                )}
+              </View>
+            ) : null}
+            {!note.title && !note.content && (
+              <Text style={[s.noteContent, { color: secondaryColor, fontStyle: 'italic' }]}>
+                {t('notes.untitled')}
+              </Text>
+            )}
+            {/* Tags pills */}
+            {note.tags && note.tags.length > 0 && (
+              <View style={s.tagRow}>
+                {note.tags.map((tag, i) => (
+                  <View key={i} style={[s.tagPill, {
+                    backgroundColor: (TAG_COLORS[i % TAG_COLORS.length]) + '18',
+                  }]}>
+                    <Text style={[s.tagPillText, { color: TAG_COLORS[i % TAG_COLORS.length] }]} numberOfLines={1}>#{tag}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+            <View style={s.noteFooter}>
+              {note.notebook_name && (
+                <View style={[s.notebookTag, { backgroundColor: (note.notebook_color || '#4285F4') + '22' }]}>
+                  <Text style={[s.notebookTagText, { color: note.notebook_color || '#4285F4' }]} numberOfLines={1}>
+                    {note.notebook_name}
+                  </Text>
+                </View>
+              )}
+              <View style={{ flex: 1 }} />
+              {note.updated_at && (
+                <Text style={[s.noteDate, { color: secondaryColor }]}>
+                  {formatNoteDate(note.updated_at)}
+                </Text>
+              )}
+            </View>
+          </View>
+        </Pressable>
+      </Animated.View>
+    </DeletableNoteCard>
+  );
+});
+
+// ---- Notebook Card (Realistic Book Cover) ----
+// [2026-10-08 apps-native] Mesmo problema do NoteCard (componente recriado a
+// cada render) → memo de módulo.
+const NotebookCardItem = React.memo(function NotebookCardItem({ notebook, index, isActive, t, onOpen, onEdit, onFilter, onDelete }) {
+  const [hovered, setHovered] = useState(false);
+  const webHover = Platform.OS === 'web' ? {
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => setHovered(false),
+  } : {};
+
+  const nbColor = notebook.color || '#4285F4';
+  const nbCount = notebook.note_count || 0;
+  // Darken color for spine
+  const darkenColor = (hex, amount) => {
+    const r = Math.max(0, parseInt(hex.slice(1, 3), 16) - amount);
+    const g = Math.max(0, parseInt(hex.slice(3, 5), 16) - amount);
+    const b = Math.max(0, parseInt(hex.slice(5, 7), 16) - amount);
+    return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
+  };
+  const spineColor = darkenColor(nbColor, 40);
+
+  return (
+    <AnimatedNoteCard index={index} style={{}}>
+      <Pressable
+        onPress={() => onOpen(notebook)}
+        onLongPress={() => { try { haptic.medium(); } catch {} onEdit(notebook); }}
+        style={[
+          s.notebookCard,
+          {
+            backgroundColor: nbColor,
+          },
+          Platform.OS === 'web' && {
+            transform: hovered
+              ? [{ perspective: 800 }, { rotateY: '-5deg' }, { translateY: -6 }]
+              : [{ perspective: 800 }, { rotateY: '-2deg' }],
+            background: `linear-gradient(145deg, ${nbColor}, ${darkenColor(nbColor, 20)})`,
+            boxShadow: hovered
+              ? `8px 8px 24px rgba(0,0,0,0.25), -2px 0 0 ${spineColor}, -4px 0 0 ${darkenColor(nbColor, 60)}, inset 0 0 30px rgba(255,255,255,0.1)`
+              : `4px 6px 16px rgba(0,0,0,0.15), -2px 0 0 ${spineColor}, -4px 0 0 ${darkenColor(nbColor, 60)}, inset 0 0 20px rgba(255,255,255,0.05)`,
+            transition: 'transform 0.35s cubic-bezier(0.4,0,0.2,1), box-shadow 0.35s ease',
+          },
+          Platform.OS !== 'web' && {
+            ...Shadow.md,
+          },
+        ]}
+        {...webHover}
+      >
+        {/* Book spine - realistic thick left border with texture */}
+        <View style={[s.notebookSpine, { backgroundColor: spineColor }]}>
+          {/* Spine lines for texture */}
+          <View style={[s.spineLine, { top: '20%' }]} />
+          <View style={[s.spineLine, { top: '80%' }]} />
+        </View>
+
+        {/* Page edges visible from side */}
+        <View style={s.notebookPageEdges} />
+
+        {/* Cover area - elegant with centered title */}
+        <View style={s.notebookCoverArea}>
+          {/* Decorative top band */}
+          <View style={[s.notebookBand, { backgroundColor: 'rgba(255,255,255,0.15)' }]} />
+
+          {/* Title - elegant serif font */}
+          <Text style={[s.notebookCoverTitle, {
+            color: '#fff',
+            textShadowColor: 'rgba(0,0,0,0.3)',
+            textShadowOffset: { width: 0, height: 1 },
+            textShadowRadius: 3,
+          }]} numberOfLines={2}>
+            {notebook.name}
+          </Text>
+
+          {/* Page count in elegant circle */}
+          <View style={[s.notebookPageCount, {
+            borderColor: 'rgba(255,255,255,0.3)',
+          }]}>
+            <Text style={s.notebookPageCountText}>
+              {nbCount}
+            </Text>
+            <Text style={s.notebookPageCountLabel}>
+              {nbCount === 1 ? t('notes.noteCount1') : t('notes.noteCountN')}
+            </Text>
+          </View>
+
+          {/* Decorative bottom band */}
+          <View style={[s.notebookBand, { backgroundColor: 'rgba(255,255,255,0.1)' }]} />
+        </View>
+
+        {/* Action buttons row */}
+        <View style={s.notebookActionsRow}>
+          <TouchableOpacity
+            onPress={(e) => {
+              e.stopPropagation();
+              onFilter(notebook, isActive);
+            }}
+            style={s.notebookActionBtn}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <IconSearch size={14} color="rgba(255,255,255,0.7)" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={(e) => {
+              e.stopPropagation();
+              onEdit(notebook);
+            }}
+            style={s.notebookActionBtn}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <IconEdit size={14} color="rgba(255,255,255,0.7)" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={(e) => {
+              e.stopPropagation();
+              onDelete(notebook);
+            }}
+            style={s.notebookActionBtn}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <IconTrash size={14} color="rgba(255,255,255,0.7)" />
+          </TouchableOpacity>
+        </View>
+      </Pressable>
+    </AnimatedNoteCard>
+  );
+});
+
+
 export default function NotesScreen() {
   const router = useRouter();
   const { colors, isDark } = useTheme();
@@ -893,6 +1254,7 @@ export default function NotesScreen() {
 
   // Quick Note - creates and opens immediately
   const handleQuickNote = useCallback(async () => {
+    haptic.light(); // [2026-10-08 apps-native]
     setQuickNoteLoading(true);
     Animated.sequence([
       Animated.timing(quickNoteAnim, { toValue: 0.85, duration: 100, useNativeDriver: true }),
@@ -1132,11 +1494,15 @@ export default function NotesScreen() {
   // Toggle pin
   const togglePin = useCallback(async (note) => {
     try {
+      haptic.light(); // [2026-10-08 apps-native]
+      // Otimista: fixa/desafixa na hora (antes só depois do refetch).
+      setNotes(prev => prev.map(n => (n.id === note.id ? { ...n, is_pinned: note.is_pinned ? 0 : 1 } : n)));
       await api.notesUpdate(note.id, { is_pinned: note.is_pinned ? 0 : 1 });
       loadNotes(false);
     } catch (e) {
       // [2026-06-04] cacada R2: falhava em silencio — user re-tocava achando
       // que o botao quebrou.
+      loadNotes(false); // [2026-10-08 apps-native] desfaz o otimista
       const m = String(e?.message || e);
       if (Platform.OS === 'web') { try { window.alert(m); } catch {} } else Alert.alert(t('common.error') || 'Erro', m);
     }
@@ -1145,6 +1511,7 @@ export default function NotesScreen() {
   // Toggle archive
   const toggleArchive = useCallback(async (note) => {
     try {
+      haptic.light(); // [2026-10-08 apps-native]
       await api.notesUpdate(note.id, { is_archived: note.is_archived ? 0 : 1 });
       loadNotes(false);
     } catch (e) {
@@ -1300,369 +1667,46 @@ export default function NotesScreen() {
   const getNoteText = (color) => isDark ? (DARK_NOTE_TEXT[color] || '#E0E0E0') : '#212121';
   const getNoteSecondary = (color) => isDark ? ((DARK_NOTE_TEXT[color] || '#BDBDBD') + 'B3') : '#616161';
 
-  // ---- Note Card (List View) with premium Google Keep-like design ----
-  const NoteCard = ({ note, index }) => {
-    const colorMeta = getColorMeta(note.color);
-    const bgColor = getNoteBg(note.color);
-    const textColor = getNoteText(note.color);
-    const secondaryColor = getNoteSecondary(note.color);
-    const shadowCol = isDark ? colorMeta.darkShadow : colorMeta.shadowColor;
-    const [hovered, setHovered] = useState(false);
-    const webHover = Platform.OS === 'web' ? {
-      onMouseEnter: () => setHovered(true),
-      onMouseLeave: () => setHovered(false),
-    } : {};
-
-    // Gradient background for web
-    const gradientBg = Platform.OS === 'web'
-      ? (isDark
-        ? `linear-gradient(135deg, ${colorMeta.darkGradient[0]}, ${colorMeta.darkGradient[1]})`
-        : `linear-gradient(135deg, ${colorMeta.gradient[0]}, ${colorMeta.gradient[1]})`)
-      : undefined;
-
-    const isDeleting = deletingNoteId === note.id;
-
-    // iOS-style swipe to delete — left only, reveals red button underneath
-    const swipeX = useRef(new Animated.Value(0)).current;
-    const DELETE_THRESHOLD = 80;
-    // Red background width matches swipe distance
-    const deleteBtnWidth = swipeX.interpolate({
-      inputRange: [-SCREEN_WIDTH, -DELETE_THRESHOLD, 0],
-      outputRange: [SCREEN_WIDTH, DELETE_THRESHOLD, 0],
-      extrapolate: 'clamp',
-    });
-    const deleteBtnOpacity = swipeX.interpolate({
-      inputRange: [-DELETE_THRESHOLD, -20, 0],
-      outputRange: [1, 0.6, 0],
-      extrapolate: 'clamp',
-    });
-    const swipeResponder = useRef(
-      !isDesktop ? PanResponder.create({
-        onMoveShouldSetPanResponder: (_, g) => {
-          // Only activate on horizontal swipes (mostly left)
-          return Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 2;
-        },
-        onPanResponderGrant: () => {
-          swipeX.stopAnimation();
-          swipeX.setOffset(swipeX.__getValue());
-          swipeX.setValue(0);
-        },
-        onPanResponderMove: (_, g) => {
-          // iOS-style: only allow swipe LEFT (negative). Clamp right to 0.
-          if (g.dx > 0) {
-            // Allow slight right movement to snap back from open state
-            swipeX.setValue(Math.min(g.dx, 0));
-          } else {
-            // Smooth 1:1 tracking up to threshold, then rubber-band
-            const abs = Math.abs(g.dx);
-            const clamped = abs < DELETE_THRESHOLD
-              ? -abs
-              : -(DELETE_THRESHOLD + (abs - DELETE_THRESHOLD) * 0.3);
-            swipeX.setValue(clamped);
-          }
-        },
-        onPanResponderRelease: (_, g) => {
-          swipeX.flattenOffset();
-          const currentX = g.dx + (swipeX._offset || 0);
-          const velocity = g.vx;
-
-          if (currentX < -DELETE_THRESHOLD || velocity < -1.2) {
-            // Swipe far enough or fast flick left → delete
-            Animated.timing(swipeX, {
-              toValue: -SCREEN_WIDTH,
-              duration: 200,
-              easing: Easing.out(Easing.cubic),
-              useNativeDriver: true,
-            }).start(() => {
-              deleteNote(note);
-              swipeX.setValue(0);
-            });
-          } else {
-            // Snap back — iOS uses a fast, slightly bouncy spring
-            Animated.spring(swipeX, {
-              toValue: 0,
-              stiffness: 400,
-              damping: 30,
-              mass: 0.8,
-              useNativeDriver: true,
-            }).start();
-          }
-        },
-        onPanResponderTerminate: () => {
-          swipeX.flattenOffset();
-          Animated.spring(swipeX, {
-            toValue: 0, stiffness: 400, damping: 30, mass: 0.8,
-            useNativeDriver: true,
-          }).start();
-        },
-      }) : { panHandlers: {} }
-    ).current;
-
-    return (
-      <DeletableNoteCard index={index} style={{}} isDeleting={isDeleting}>
-        {/* iOS-style delete button revealed from right */}
-        {!isDesktop && (
-          <Animated.View style={[s.swipeDeleteBg, {
-            width: deleteBtnWidth,
-            opacity: deleteBtnOpacity,
-            right: 0,
-            left: undefined,
-          }]}>
-            <View style={[s.swipeDeleteInner, { backgroundColor: '#FF3B30', justifyContent: 'center' }]}>
-              <IconTrash size={22} color="#fff" />
-              <Text style={s.swipeDeleteText}>{t('notes.deleteNote') || 'Apagar'}</Text>
-            </View>
-          </Animated.View>
-        )}
-        <Animated.View
-          style={[
-            !isDesktop && { transform: [{ translateX: swipeX }] },
-          ]}
-          {...(isDesktop ? {} : swipeResponder.panHandlers)}
-        >
-          <Pressable
-            onPress={() => openEditor(note)}
-            onLongPress={() => {
-              setContextNote(note);
-              setContextMenuVisible(true);
-            }}
-            style={[
-              s.noteCard,
-              {
-                backgroundColor: isDark ? colors.surface : '#fff',
-                borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
-              },
-              Platform.OS === 'web' && {
-                boxShadow: hovered
-                  ? `0 8px 28px ${shadowCol}, 0 2px 8px rgba(0,0,0,0.1)`
-                  : `0 2px 8px rgba(0,0,0,0.06), 0 1px 3px rgba(0,0,0,0.04)`,
-                transform: hovered ? [{ translateY: -3 }, { scale: 1.01 }] : [],
-              },
-              isDark && Platform.OS === 'web' && {
-                boxShadow: hovered
-                  ? `0 8px 28px ${shadowCol}, 0 0 16px ${shadowCol}`
-                  : `0 2px 8px ${shadowCol}`,
-              },
-            ]}
-            {...webHover}
-          >
-            {/* Color strip on left */}
-            <View style={[s.noteColorStrip, { backgroundColor: note.color || '#FFF9C4' }]} />
-
-            {/* Pin icon - golden with rotation */}
-            {note.is_pinned ? (
-              <View style={s.pinBadge}>
-                <View style={[s.pinBadgeInner, {
-                  ...(Platform.OS === 'web' ? {
-                    filter: 'drop-shadow(0 1px 3px rgba(249,168,37,0.5))',
-                  } : {}),
-                }]}>
-                  <IconPin size={15} color={isDark ? '#FFD54F' : '#F9A825'} />
-                </View>
-              </View>
-            ) : null}
-
-            <View style={s.noteCardContent}>
-              {note.title ? (
-                <HighlightText
-                  text={note.title}
-                  highlight={searchQuery}
-                  style={[s.noteTitle, { color: textColor }]}
-                  numberOfLines={2}
-                />
-              ) : null}
-              {note.content ? (
-                <View style={s.noteContentWrap}>
-                  <HighlightText
-                    text={note.content}
-                    highlight={searchQuery}
-                    style={[s.noteContent, { color: secondaryColor }]}
-                    numberOfLines={isDesktop ? 4 : 3}
-                  />
-                  {/* Fade-out gradient at bottom (web only) */}
-                  {Platform.OS === 'web' && note.content && note.content.length > 100 && (
-                    <View style={[s.contentFadeOut, {
-                      background: isDark
-                        ? `linear-gradient(transparent, ${colors.surface})`
-                        : `linear-gradient(transparent, #fff)`,
-                    }]} />
-                  )}
-                </View>
-              ) : null}
-              {!note.title && !note.content && (
-                <Text style={[s.noteContent, { color: secondaryColor, fontStyle: 'italic' }]}>
-                  {t('notes.untitled')}
-                </Text>
-              )}
-              {/* Tags pills */}
-              {note.tags && note.tags.length > 0 && (
-                <View style={s.tagRow}>
-                  {note.tags.map((tag, i) => (
-                    <View key={i} style={[s.tagPill, {
-                      backgroundColor: (TAG_COLORS[i % TAG_COLORS.length]) + '18',
-                    }]}>
-                      <Text style={[s.tagPillText, { color: TAG_COLORS[i % TAG_COLORS.length] }]} numberOfLines={1}>#{tag}</Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-              <View style={s.noteFooter}>
-                {note.notebook_name && (
-                  <View style={[s.notebookTag, { backgroundColor: (note.notebook_color || '#4285F4') + '22' }]}>
-                    <Text style={[s.notebookTagText, { color: note.notebook_color || '#4285F4' }]} numberOfLines={1}>
-                      {note.notebook_name}
-                    </Text>
-                  </View>
-                )}
-                <View style={{ flex: 1 }} />
-                {note.updated_at && (
-                  <Text style={[s.noteDate, { color: secondaryColor }]}>
-                    {formatNoteDate(note.updated_at)}
-                  </Text>
-                )}
-              </View>
-            </View>
-          </Pressable>
-        </Animated.View>
-      </DeletableNoteCard>
-    );
-  };
-
-  // ---- Notebook Card (Realistic Book Cover) ----
-  const NotebookCard = ({ notebook, index }) => {
-    const isActive = selectedNotebook === notebook.id;
-    const [hovered, setHovered] = useState(false);
-    const webHover = Platform.OS === 'web' ? {
-      onMouseEnter: () => setHovered(true),
-      onMouseLeave: () => setHovered(false),
-    } : {};
-
-    const nbColor = notebook.color || '#4285F4';
-    const nbCount = notebook.note_count || 0;
-    // Darken color for spine
-    const darkenColor = (hex, amount) => {
-      const r = Math.max(0, parseInt(hex.slice(1, 3), 16) - amount);
-      const g = Math.max(0, parseInt(hex.slice(3, 5), 16) - amount);
-      const b = Math.max(0, parseInt(hex.slice(5, 7), 16) - amount);
-      return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
-    };
-    const spineColor = darkenColor(nbColor, 40);
-
-    return (
-      <AnimatedNoteCard index={index} style={{}}>
-        <Pressable
-          onPress={() => {
-            router.push(`/notebook-editor?notebook_id=${notebook.id}&notebook_name=${encodeURIComponent(notebook.name)}&notebook_color=${encodeURIComponent(notebook.color || '#4285F4')}`);
-          }}
-          onLongPress={() => {
-            setEditingNotebook(notebook);
-            setNotebookName(notebook.name);
-            setNotebookColor(notebook.color || '#4285F4');
-            setNotebookModalVisible(true);
-          }}
-          style={[
-            s.notebookCard,
-            {
-              backgroundColor: nbColor,
-            },
-            Platform.OS === 'web' && {
-              transform: hovered
-                ? [{ perspective: 800 }, { rotateY: '-5deg' }, { translateY: -6 }]
-                : [{ perspective: 800 }, { rotateY: '-2deg' }],
-              background: `linear-gradient(145deg, ${nbColor}, ${darkenColor(nbColor, 20)})`,
-              boxShadow: hovered
-                ? `8px 8px 24px rgba(0,0,0,0.25), -2px 0 0 ${spineColor}, -4px 0 0 ${darkenColor(nbColor, 60)}, inset 0 0 30px rgba(255,255,255,0.1)`
-                : `4px 6px 16px rgba(0,0,0,0.15), -2px 0 0 ${spineColor}, -4px 0 0 ${darkenColor(nbColor, 60)}, inset 0 0 20px rgba(255,255,255,0.05)`,
-              transition: 'transform 0.35s cubic-bezier(0.4,0,0.2,1), box-shadow 0.35s ease',
-            },
-            Platform.OS !== 'web' && {
-              ...Shadow.md,
-            },
-          ]}
-          {...webHover}
-        >
-          {/* Book spine - realistic thick left border with texture */}
-          <View style={[s.notebookSpine, { backgroundColor: spineColor }]}>
-            {/* Spine lines for texture */}
-            <View style={[s.spineLine, { top: '20%' }]} />
-            <View style={[s.spineLine, { top: '80%' }]} />
-          </View>
-
-          {/* Page edges visible from side */}
-          <View style={s.notebookPageEdges} />
-
-          {/* Cover area - elegant with centered title */}
-          <View style={s.notebookCoverArea}>
-            {/* Decorative top band */}
-            <View style={[s.notebookBand, { backgroundColor: 'rgba(255,255,255,0.15)' }]} />
-
-            {/* Title - elegant serif font */}
-            <Text style={[s.notebookCoverTitle, {
-              color: '#fff',
-              textShadowColor: 'rgba(0,0,0,0.3)',
-              textShadowOffset: { width: 0, height: 1 },
-              textShadowRadius: 3,
-            }]} numberOfLines={2}>
-              {notebook.name}
-            </Text>
-
-            {/* Page count in elegant circle */}
-            <View style={[s.notebookPageCount, {
-              borderColor: 'rgba(255,255,255,0.3)',
-            }]}>
-              <Text style={s.notebookPageCountText}>
-                {nbCount}
-              </Text>
-              <Text style={s.notebookPageCountLabel}>
-                {nbCount === 1 ? t('notes.noteCount1') : t('notes.noteCountN')}
-              </Text>
-            </View>
-
-            {/* Decorative bottom band */}
-            <View style={[s.notebookBand, { backgroundColor: 'rgba(255,255,255,0.1)' }]} />
-          </View>
-
-          {/* Action buttons row */}
-          <View style={s.notebookActionsRow}>
-            <TouchableOpacity
-              onPress={(e) => {
-                e.stopPropagation();
-                setSelectedNotebook(isActive ? null : notebook.id);
-                setActiveTab('all');
-              }}
-              style={s.notebookActionBtn}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <IconSearch size={14} color="rgba(255,255,255,0.7)" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={(e) => {
-                e.stopPropagation();
-                setEditingNotebook(notebook);
-                setNotebookName(notebook.name);
-                setNotebookColor(notebook.color || '#4285F4');
-                setNotebookModalVisible(true);
-              }}
-              style={s.notebookActionBtn}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <IconEdit size={14} color="rgba(255,255,255,0.7)" />
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={(e) => {
-                e.stopPropagation();
-                deleteNotebook(notebook);
-              }}
-              style={s.notebookActionBtn}
-              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-            >
-              <IconTrash size={14} color="rgba(255,255,255,0.7)" />
-            </TouchableOpacity>
-          </View>
-        </Pressable>
-      </AnimatedNoteCard>
-    );
-  };
+  // [2026-10-08 apps-native] NoteCard/NotebookCard agora são componentes de
+  // módulo (NoteCardItem/NotebookCardItem, acima do NotesScreen). Callbacks
+  // estáveis p/ o memo valer.
+  const onNoteLongPress = useCallback((note) => {
+    setContextNote(note);
+    setContextMenuVisible(true);
+  }, []);
+  const onNotebookOpen = useCallback((nb) => {
+    router.push(`/notebook-editor?notebook_id=${nb.id}&notebook_name=${encodeURIComponent(nb.name)}&notebook_color=${encodeURIComponent(nb.color || '#4285F4')}`);
+  }, [router]);
+  const onNotebookEdit = useCallback((nb) => {
+    setEditingNotebook(nb);
+    setNotebookName(nb.name);
+    setNotebookColor(nb.color || '#4285F4');
+    setNotebookModalVisible(true);
+  }, []);
+  const onNotebookFilter = useCallback((nb, isActive) => {
+    setSelectedNotebook(isActive ? null : nb.id);
+    setActiveTab('all');
+  }, []);
+  const renderNoteCard = (note, index) => (
+    <NoteCardItem
+      note={note}
+      index={index}
+      isDark={isDark}
+      colors={colors}
+      t={t}
+      searchQuery={searchQuery}
+      isDeleting={deletingNoteId === note.id}
+      onOpen={openEditor}
+      onLongPress={onNoteLongPress}
+      onDelete={deleteNote}
+    />
+  );
+  // Pull-to-refresh (antes não existia: `refreshing` era setado mas nunca exibido).
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadNotes(false);
+    loadNotebooks();
+  }, [loadNotes, loadNotebooks]);
 
   // Column count - single column list on mobile for clean card layout
   const numColumns = isDesktop ? (SCREEN_WIDTH > 1200 ? 4 : 3) : 1;
@@ -1698,7 +1742,51 @@ export default function NotesScreen() {
   // ---- Render ----
   return (
     <View style={[s.container, { backgroundColor: colors.background }]}>
-      {/* ---- Header (Frosted Glass) ---- */}
+      {/* [2026-10-08 apps-native] Nativo: header do sistema + busca NATIVA
+          (UISearchController / SearchView Material), como /contacts. Web
+          mantém o header "frosted glass" custom. */}
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          title: t('notes.title'),
+          headerRight: () => (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {viewMode === 'board' && activeTab !== 'notebooks' && (
+                <HeaderIconButton
+                  onPress={() => { haptic.select(); setSnapEnabled(v => !v); }}
+                  accessibilityLabel={t('notes.snapGrid')}
+                  style={{ width: undefined, paddingHorizontal: 6 }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: snapEnabled ? colors.text : colors.textTertiary }}>
+                    {t('notes.snapGrid')}
+                  </Text>
+                </HeaderIconButton>
+              )}
+              {activeTab !== 'notebooks' && (
+                <HeaderIconButton
+                  onPress={() => { haptic.select(); setViewMode(m => (m === 'board' ? 'list' : 'board')); }}
+                  accessibilityLabel={viewMode === 'board' ? 'List' : 'Board'}
+                >
+                  {viewMode === 'board'
+                    ? <IconMenu size={22} color={colors.text} />
+                    : <IconGrid size={22} color={colors.text} />}
+                </HeaderIconButton>
+              )}
+              <HeaderIconButton onPress={() => openEditor()} accessibilityLabel={t('notes.newNote')}>
+                <IconPlus size={24} color={colors.text} />
+              </HeaderIconButton>
+            </View>
+          ),
+          search: {
+            placeholder: t('notes.searchPlaceholder'),
+            onChangeText: (e) => handleSearch(e?.nativeEvent?.text ?? ''),
+            onSearchButtonPress: (e) => commitSearch(e?.nativeEvent?.text ?? searchQuery),
+            onCancelButtonPress: () => handleSearch(''),
+            onClose: () => handleSearch(''),
+          },
+        })} />
+      ) : (
+      // ---- Header (Frosted Glass, web) ----
       <View style={[s.header, {
         paddingTop: (Platform.OS === 'web' ? 16 : (insets.top || 0) + 8),
         backgroundColor: isDark ? 'rgba(18,18,30,0.88)' : 'rgba(255,255,255,0.88)',
@@ -1816,6 +1904,7 @@ export default function NotesScreen() {
           </TouchableOpacity>
         </View>
       </View>
+      )}
 
       {/* ---- Tabs ---- */}
       <View style={[s.tabRow, { borderBottomColor: isDark ? 'rgba(255,255,255,0.06)' : colors.borderLight }]}>
@@ -1826,7 +1915,7 @@ export default function NotesScreen() {
         ].map(tab => (
           <TouchableOpacity
             key={tab.key}
-            onPress={() => { setActiveTab(tab.key); setSelectedNotebook(null); setActiveFilter('all'); }}
+            onPress={() => { if (activeTab !== tab.key) haptic.select(); setActiveTab(tab.key); setSelectedNotebook(null); setActiveFilter('all'); }}
             style={[s.tab, activeTab === tab.key && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
           >
             <Text style={[
@@ -1856,6 +1945,7 @@ export default function NotesScreen() {
               <TouchableOpacity
                 key={chip.key}
                 onPress={() => {
+                  haptic.select(); // [2026-10-08 apps-native]
                   if (chip.notebookId) {
                     setSelectedNotebook(isActive ? null : chip.notebookId);
                     setActiveFilter('all');
@@ -1911,7 +2001,11 @@ export default function NotesScreen() {
         <NoteGridSkeleton count={6} columns={numColumns || 2} />
       ) : activeTab === 'notebooks' ? (
         // ---- Notebooks Grid ----
-        <ScrollView style={s.scrollContent} contentContainerStyle={s.notebooksContainer}>
+        <ScrollView
+          style={s.scrollContent}
+          contentContainerStyle={s.notebooksContainer}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textSecondary} colors={[colors.primary]} />}
+        >
           <TouchableOpacity
             onPress={() => {
               setEditingNotebook(null);
@@ -1932,7 +2026,16 @@ export default function NotesScreen() {
           <View style={s.notebooksGrid}>
             {notebooks.map((nb, i) => (
               <View key={nb.id} style={[s.notebookGridItem, { width: `${100 / notebookColumns}%` }]}>
-                <NotebookCard notebook={nb} index={i} />
+                <NotebookCardItem
+                  notebook={nb}
+                  index={i}
+                  isActive={selectedNotebook === nb.id}
+                  t={t}
+                  onOpen={onNotebookOpen}
+                  onEdit={onNotebookEdit}
+                  onFilter={onNotebookFilter}
+                  onDelete={deleteNotebook}
+                />
               </View>
             ))}
           </View>
@@ -2032,7 +2135,7 @@ export default function NotesScreen() {
             {t('notes.emptyTitle')}
           </Text>
           <Text style={[s.emptyDesc, { color: colors.textSecondary }]}>{t('notes.emptyDesc')}</Text>
-          <TouchableOpacity
+          <PressableScale
             onPress={() => openEditor()}
             style={[s.emptyBtn, {
               backgroundColor: colors.primary,
@@ -2044,7 +2147,7 @@ export default function NotesScreen() {
           >
             <IconPlus size={18} color="#fff" />
             <Text style={s.emptyBtnText}>{t('notes.newNote')}</Text>
-          </TouchableOpacity>
+          </PressableScale>
         </Animated.View>
       ) : viewMode === 'board' ? (
         // ---- Board View (Draggable Sticky Notes) ----
@@ -2065,36 +2168,48 @@ export default function NotesScreen() {
         />
       ) : (
         // ---- Notes Grid (List View) ----
-        <ScrollView
+        // [2026-10-08 apps-native] FlatList virtualizada (antes ScrollView +
+        // .map de TODAS as notas) + pull-to-refresh. Fixadas = header (poucas).
+        <FlatList
+          key={`notes-cols-${numColumns}`}
           style={s.scrollContent}
           contentContainerStyle={s.gridContainer}
           showsVerticalScrollIndicator={false}
-        >
-          {pinnedNotes.length > 0 && activeFilter !== 'pinned' && (
+          data={activeFilter === 'pinned' ? pinnedNotes : unpinnedNotes}
+          keyExtractor={(note) => String(note.id)}
+          numColumns={numColumns}
+          columnWrapperStyle={numColumns > 1 ? { columnGap: 10 } : undefined}
+          initialNumToRender={10}
+          windowSize={9}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.textSecondary} colors={[colors.primary]} />}
+          ListHeaderComponent={(
             <>
-              <Text style={[s.sectionLabel, { color: colors.textTertiary }]}>{t('notes.pinned')}</Text>
-              <View style={[s.grid, { columnGap: 10 }]}>
-                {pinnedNotes.map((note, i) => (
-                  <View key={note.id} style={[s.gridItem, { width: `${100 / numColumns}%` }]}>
-                    <NoteCard note={note} index={i} />
+              {pinnedNotes.length > 0 && activeFilter !== 'pinned' && (
+                <>
+                  <Text style={[s.sectionLabel, { color: colors.textTertiary }]}>{t('notes.pinned')}</Text>
+                  <View style={[s.grid, { columnGap: 10 }]}>
+                    {pinnedNotes.map((note, i) => (
+                      <View key={note.id} style={[s.gridItem, { width: `${100 / numColumns}%` }]}>
+                        {renderNoteCard(note, i)}
+                      </View>
+                    ))}
                   </View>
-                ))}
-              </View>
+                </>
+              )}
+              {pinnedNotes.length > 0 && unpinnedNotes.length > 0 && activeFilter !== 'pinned' && (
+                <Text style={[s.sectionLabel, { color: colors.textTertiary, marginTop: 12 }]}>
+                  {activeTab === 'archived' ? t('notes.archived') : ''}
+                </Text>
+              )}
             </>
           )}
-          {pinnedNotes.length > 0 && unpinnedNotes.length > 0 && activeFilter !== 'pinned' && (
-            <Text style={[s.sectionLabel, { color: colors.textTertiary, marginTop: 12 }]}>
-              {activeTab === 'archived' ? t('notes.archived') : ''}
-            </Text>
+          renderItem={({ item: note, index: i }) => (
+            <View style={[s.gridItem, { width: `${100 / numColumns}%` }]}>
+              {renderNoteCard(note, (activeFilter === 'pinned' ? 0 : pinnedNotes.length) + i)}
+            </View>
           )}
-          <View style={[s.grid, { columnGap: 10 }]}>
-            {(activeFilter === 'pinned' ? pinnedNotes : unpinnedNotes).map((note, i) => (
-              <View key={note.id} style={[s.gridItem, { width: `${100 / numColumns}%` }]}>
-                <NoteCard note={note} index={(activeFilter === 'pinned' ? 0 : pinnedNotes.length) + i} />
-              </View>
-            ))}
-          </View>
-        </ScrollView>
+        />
       )}
 
       {/* ---- Quick Note FAB ---- */}
@@ -2133,7 +2248,7 @@ export default function NotesScreen() {
           size={60}
           color={colors.primary}
           onPress={() => openEditor()}
-          accessibilityLabel="Create note"
+          accessibilityLabel={t('notes.newNote')}
         >
           <IconPlus size={28} color="#fff" />
         </BrandFab>
@@ -2145,7 +2260,7 @@ export default function NotesScreen() {
           size={60}
           color={colors.primary}
           onPress={() => openEditor()}
-          accessibilityLabel="Create note"
+          accessibilityLabel={t('notes.newNote')}
         >
           <IconPlus size={28} color="#fff" />
         </BrandFab>

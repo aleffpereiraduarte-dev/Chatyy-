@@ -28,6 +28,7 @@ import { LANGUAGES } from '../i18n';
 import { PASSKEYS_ENABLED } from '../constants/featureFlags';
 import * as api from '../services/api';
 import { firebasePhoneAvailable, fbSendCode, fbConfirm, fbSignOut } from '../services/firebasePhone';
+import { useSmsOtpAutofill } from '../services/smsOtp'; // [2026-10-08 android-otp-shortcuts]
 import { getDeviceId as getE2eDeviceId, getDevicePublicKey as getE2eDevicePublicKey } from '../services/e2e';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 // COUNTRIES (with masks/maxDigits) used to power format-as-you-type. The
@@ -1683,9 +1684,17 @@ export default function LoginScreen() {
     }
     setPhoneOtp(next);
     if (digits.length === 6) {
-      setTimeout(() => handlePhoneVerifyOtp(), 150);
+      // [2026-10-08 android-otp-shortcuts] via ref: this closure's
+      // handlePhoneVerifyOtp still sees the PREVIOUS phoneOtp (stale state →
+      // code.length !== 6 → silent no-op). The ref is the post-render one.
+      setTimeout(() => { try { phoneVerifyRef.current?.(); } catch {} }, 150);
     }
   };
+  const phoneVerifyRef = useRef(null);
+  phoneVerifyRef.current = handlePhoneVerifyOtp;
+  // [2026-10-08 android-otp-shortcuts] Android SMS User Consent → fill + auto-submit.
+  // Re-arms when a (re)send starts the 60s cooldown.
+  useSmsOtpAutofill(loginMode === 'phone' && phoneStep === 'otp', (code) => handlePhoneOtpFullChange(code), phoneResendTimer > 0);
 
   // [2026-10-07 login-ux] REMOVED the debounced "Conta encontrada / Vamos
   // criar" live-check. It called api.phoneLoginRequest({phone,…}) with an

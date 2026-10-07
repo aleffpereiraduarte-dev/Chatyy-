@@ -270,6 +270,7 @@ class MailWebSocket {
     // persist it every N events, and replay from there on reconnect.
     // Persisted via AsyncStorage under WS_LAST_EVENT_ID_KEY.
     this._lastEventId = 0;
+    this._evDedup = null; // [native-core-2] set by services/nativeCore.js only while primary
     this._lastEventIdPersistedAt = 0;
     this._eventIdSinceFlush = 0;
     this._resumeInFlight = false;
@@ -1705,6 +1706,15 @@ class MailWebSocket {
         this._eventIdSinceFlush = 0;
         this._persistLastEventId();
       }
+    }
+
+    // [2026-10-08 native-core-2] NATIVE_CORE_PRIMARY: services/nativeCore.js
+    // installs _evDedup while the native socket is the primary source. Frames
+    // with a per-user event_id may then arrive twice (native-injected + this
+    // socket) → first one wins, the copy is dropped here. null (default) →
+    // zero behavior change.
+    if (this._evDedup && msg && typeof msg.event_id === 'number') {
+      try { if (this._evDedup(msg) === true) return; } catch {}
     }
 
     switch (msg.type) {

@@ -8,6 +8,9 @@ import {
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import AvatarCircle from './AvatarCircle';
+// [2026-10-08 apps-native] feedback tátil nativo nos botões do rail + haptic do tema
+import PressableScale from './PressableScale';
+import { haptic } from '../constants/theme';
 import FeedComments from './FeedComments';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // [#1231 2026-05-20] useIsFocused para pausar reel quando user troca de aba
@@ -1145,7 +1148,7 @@ const BoostToast = memo(function BoostToast({ visible }) {
 });
 
 // ── Single Reel Item ──
-const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, onLikeChange, showLiveRing, overlayOpen, router, preload, screenFocused = true, muted = false, onToggleMute }) {
+const ReelItem = memo(function ReelItem({ onCreate, reel, isActive, colors, isDark, t, user, containerHeight, onOpenComments, onOpenLikers, onOpenProfile, onUseSound, onDuet, onStitch, onHidePost, onLikeChange, showLiveRing, overlayOpen, router, preload, screenFocused = true, muted = false, onToggleMute }) {
   // Safe-area insets so the bottom info block (username/caption/music row)
   // doesn't sit on top of the iOS home indicator or Android gesture pill.
   const insets = useSafeAreaInsets();
@@ -1308,7 +1311,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
     unsub = mailWs.on('feed_post_tip', (data) => {
       if (!data || Number(data.post_id) !== Number(reel.id)) return;
       const who = data.sender_name || data.sender_email?.split('@')[0] || '?';
-      pushDiamondBurst(`${who} 💎`);
+      pushDiamondBurst(String(who)); // [2026-10-08 apps-native] sem emoji (FloatingDiamond já desenha IconDiamond)
     });
     return () => {
       try { unsub?.(); } catch {}
@@ -1900,9 +1903,20 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
               <Text style={{ color: '#fff', fontSize: 12, fontWeight: '800', letterSpacing: 0.5 }}>CC</Text>
             </TouchableOpacity>
           )}
-          <TouchableOpacity activeOpacity={0.7} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-            <IconCamera size={26} color="#fff" />
-          </TouchableOpacity>
+          {/* [2026-10-08 apps-native] botão câmera era MORTO (sem onPress).
+              Agora só aparece quando o host passa onCreate (abre o criador). */}
+          {!!onCreate && (
+            <PressableScale
+              onPress={onCreate}
+              activeOpacity={0.85}
+              scaleTo={0.9}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityLabel={t?.('reels.create') || 'Criar reel'}
+              accessibilityRole="button"
+            >
+              <IconCamera size={26} color="#fff" />
+            </PressableScale>
+          )}
         </View>
       </View>
 
@@ -1967,47 +1981,52 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             which reuses the same SKU set + wallet UI as Live gifts.
             [2026-05-22 monetization-pause] hidden by MONETIZATION_ENABLED flag. */}
         {DIAMONDS_ENABLED && reel.author_email?.toLowerCase() !== user?.email?.toLowerCase() && (
-          <TouchableOpacity
+          <PressableScale
             style={styles.sidebarBtn}
             onPress={handleOpenTip}
-            activeOpacity={0.7}
+            activeOpacity={0.85}
+            scaleTo={0.88}
             accessibilityLabel={t?.('feed.tipCreator') || 'Mandar diamante'}
             accessibilityRole="button"
           >
             <IconDiamond size={26} color="#fff" />
-          </TouchableOpacity>
+          </PressableScale>
         )}
 
-        {/* Comment */}
-        <TouchableOpacity
+        {/* Comment — [2026-10-08 apps-native] PressableScale (scale + haptic nativo) */}
+        <PressableScale
           style={styles.sidebarBtn}
           onPress={() => onOpenComments?.(reel)}
-          activeOpacity={0.7}
+          activeOpacity={0.85}
+          scaleTo={0.88}
           accessibilityLabel={t('feed.comment') || 'Comment'}
           accessibilityRole="button"
         >
           <IconMessageCircle size={28} color="#fff" />
           <Text style={styles.sidebarCount}>{formatCount(commentCount)}</Text>
-        </TouchableOpacity>
+        </PressableScale>
 
         {/* Share */}
-        <TouchableOpacity
+        <PressableScale
           style={styles.sidebarBtn}
           onPress={handleShare}
-          activeOpacity={0.7}
+          activeOpacity={0.85}
+          scaleTo={0.88}
           accessibilityLabel={t('feed.share') || 'Compartilhar'}
           accessibilityRole="button"
         >
           <IconShare size={28} color="#fff" />
-        </TouchableOpacity>
+        </PressableScale>
 
         {/* Playback speed — TikTok parity. Tap cycles 1x → 1.5x → 2x → 0.5x.
             Hidden when at 1x to keep the rail clean; reveals as a small pill
             once user opted into a non-default speed. */}
-        <TouchableOpacity
+        <PressableScale
           style={[styles.sidebarBtn, { paddingVertical: 6 }]}
           onPress={cyclePlaybackRate}
-          activeOpacity={0.7}
+          haptic={false}
+          activeOpacity={0.85}
+          scaleTo={0.9}
           accessibilityLabel={`${t?.('feed.speed') || 'Velocidade'} ${playbackRate}x`}
           accessibilityRole="button"
         >
@@ -2020,7 +2039,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
               {playbackRate === 0.5 ? '0.5×' : playbackRate === 1 ? '1×' : playbackRate === 1.5 ? '1.5×' : '2×'}
             </Text>
           </View>
-        </TouchableOpacity>
+        </PressableScale>
 
         {/* Views */}
         {viewCount > 0 && (
@@ -2032,10 +2051,12 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
 
         {/* Bookmark */}
         <Animated.View style={{ transform: [{ scale: bookmarkScale }] }}>
-          <TouchableOpacity
+          <PressableScale
             style={styles.sidebarBtn}
             onPress={toggleBookmark}
-            activeOpacity={0.7}
+            haptic="select"
+            activeOpacity={0.85}
+            scaleTo={0.88}
             accessibilityLabel={bookmarked ? (t('feed.removeBookmark') || 'Remove') : (t('feed.bookmark') || 'Save')}
             accessibilityRole="button"
           >
@@ -2044,32 +2065,34 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
             ) : (
               <IconBookmark size={28} color="#fff" />
             )}
-          </TouchableOpacity>
+          </PressableScale>
         </Animated.View>
 
         {/* More (kebab) — Reels P0: opens the actions sheet
             (Duet / Stitch / Use sound / Not interested / Report). */}
-        <TouchableOpacity
+        <PressableScale
           style={styles.sidebarBtn}
           onPress={() => setMoreSheetOpen(true)}
-          activeOpacity={0.7}
+          activeOpacity={0.85}
+          scaleTo={0.88}
           accessibilityLabel={t?.('common.more') || 'More'}
           accessibilityRole="button"
         >
           <IconMoreHorizontal size={28} color="#fff" />
-        </TouchableOpacity>
+        </PressableScale>
 
         {/* Spinning album art disc — tap to jump to the sound feed
             ("Usar este som"). Long-press-friendly hit area thanks to the
             outer TouchableOpacity. */}
-        <TouchableOpacity
+        <PressableScale
           activeOpacity={0.85}
+          scaleTo={0.9}
           onPress={() => onUseSound && onUseSound(reel)}
           accessibilityLabel={t?.('feed.useThisSound') || 'Usar este som'}
           accessibilityRole="button"
         >
           <SpinningDisc authorEmail={reel.author_email} authorName={reel.author_name} />
-        </TouchableOpacity>
+        </PressableScale>
       </View>
 
       {/* ── Subtitle overlay (TikTok auto-caption) ──
@@ -2149,7 +2172,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
         onClose={() => setTipSheetOpen(false)}
         postId={reel?.id}
         onTipSent={(giftSku) => {
-          pushDiamondBurst((user?.name || user?.email?.split('@')[0] || 'Você') + ' 💎');
+          pushDiamondBurst(user?.name || user?.email?.split('@')[0] || 'Você'); // [2026-10-08 apps-native] sem emoji
           try { require('expo-haptics').notificationAsync(require('expo-haptics').NotificationFeedbackType.Success); } catch {}
         }}
         t={t}
@@ -2307,6 +2330,7 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
   if (prev.showLiveRing !== next.showLiveRing) return false;
   if (prev.containerHeight !== next.containerHeight) return false;
   if (prev.isDark !== next.isDark) return false;
+  if (!!prev.onCreate !== !!next.onCreate) return false; // [2026-10-08 apps-native] câmera aparece/some
   if (prev.colors !== next.colors) return false;
   if (prev.t !== next.t) return false;
   if (prev.user?.email !== next.user?.email) return false;
@@ -2326,24 +2350,44 @@ const ReelItem = memo(function ReelItem({ reel, isActive, colors, isDark, t, use
 });
 
 // ── Empty state ──
-function EmptyReels({ colors, isDark, t }) {
+// [2026-10-08 apps-native] variante de ERRO + botão "Tentar novamente" (antes
+// o vazio era um beco sem saída: early-return sem FlatList = sem pull-to-refresh).
+function EmptyReels({ colors, isDark, t, error = false, following = false, onRetry, height }) {
+  const title = error
+    ? (t('feed.loadError') || 'Erro ao carregar')
+    : following
+      ? (t('feed.noFollowingReels') || 'No reels from people you follow')
+      : (t('feed.noReels') || 'Sem reels ainda');
+  const sub = error
+    ? (t('common.networkError') || 'Falha de conexão')
+    : following
+      ? (t('feed.noFollowingReelsHint') || 'Follow people to see their reels here')
+      : (t('feed.noReelsHint') || 'Videos aparecerao aqui');
   return (
-    <View style={styles.emptyContainer}>
+    <View style={[styles.emptyContainer, height ? { height } : null]}>
       <View style={styles.emptyIcon}>
-        <IconPlay size={42} color="rgba(255,255,255,0.7)" />
+        {error
+          ? <IconRepeat size={40} color="rgba(255,255,255,0.7)" />
+          : <IconPlay size={42} color="rgba(255,255,255,0.7)" />}
       </View>
-      <Text style={styles.emptyTitle}>
-        {t('feed.noReels') || 'Sem reels ainda'}
-      </Text>
-      <Text style={styles.emptySubtext}>
-        {t('feed.noReelsHint') || 'Videos aparecerao aqui'}
-      </Text>
+      <Text style={styles.emptyTitle}>{title}</Text>
+      <Text style={styles.emptySubtext}>{sub}</Text>
+      {!!onRetry && (
+        <PressableScale
+          onPress={onRetry}
+          style={styles.emptyRetryBtn}
+          accessibilityRole="button"
+          accessibilityLabel={t('common.retry') || 'Tentar novamente'}
+        >
+          <Text style={styles.emptyRetryText}>{error ? (t('common.retry') || 'Tentar novamente') : (t('common.refresh') || 'Atualizar')}</Text>
+        </PressableScale>
+      )}
     </View>
   );
 }
 
 // ── Main ReelsViewer ──
-export default function ReelsViewer({ colors, isDark, t, user, router, feedMode: feedModeProp, showLiveRing, onAvatarTap, onPullRefresh, soundId: soundIdProp, soundLabel: soundLabelProp, parentActive = true }) {
+export default function ReelsViewer({ colors, isDark, t, user, router, feedMode: feedModeProp, showLiveRing, onAvatarTap, onPullRefresh, soundId: soundIdProp, soundLabel: soundLabelProp, parentActive = true, onCreate }) {
   // [#1231 2026-05-20] Screen focus gate — pausa qualquer reel quando a tela
   // sai de foco (user navegou pra /chat-conversation ou outra aba). Sem isso
   // o áudio continuava tocando em background; só `isActive` (per FlatList row)
@@ -2448,6 +2492,9 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  // [2026-10-08 apps-native] falha de rede antes caía no empty "Sem reels
+  // ainda" (mentira) sem jeito de tentar de novo. Agora vira estado de erro.
+  const [loadError, setLoadError] = useState(false);
   const [commentsReel, setCommentsReel] = useState(null);
   const [likersReel, setLikersReel] = useState(null);
   const [containerHeight, setContainerHeight] = useState(SCREEN_HEIGHT);
@@ -2520,6 +2567,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     setFollowingPage(1);
     setHasMore(true);
     setFollowingHasMore(true);
+    setLoadError(false);
     try {
       // Reels P0 — three load paths:
       //   1. soundIdProp set → "Use this sound" feed (chat_reels_by_sound)
@@ -2529,6 +2577,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
       //      will swap to algorithm='fyp' once FYP ranker is GA.
       if (soundIdProp) {
         const r = await api.chatReelsBySound(soundIdProp, 1, 50);
+        if (!r || !r.success) setLoadError(true); // [2026-10-08 apps-native]
         if (r && r.success && r.data) {
           const rawSound = Array.isArray(r.data.posts) ? r.data.posts : [];
           const videos = rawSound.filter(p => !hiddenIdsRef.current.has(String(p.id)));
@@ -2544,6 +2593,8 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
           api.feedList({ page: 1, limit: 50 }),
           api.feedList({ page: 1, limit: 50, type: 'following' }),
         ]);
+        // [2026-10-08 apps-native] as duas falharam → erro (não "vazio")
+        if ((!allR || !allR.success) && (!followR || !followR.success)) setLoadError(true);
         if (allR && allR.success && allR.data) {
           const rawPosts = allR.data.posts || allR.data;
           const allPosts = Array.isArray(rawPosts) ? rawPosts : [];
@@ -2563,6 +2614,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
       }
     } catch (e) {
       console.warn('Reels load error:', e);
+      setLoadError(true); // [2026-10-08 apps-native]
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -2705,6 +2757,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
   // on reelTab below (after activeReels has actually swapped) to avoid the
   // off-by-N where the FlatList paints the new tab's data against the old index.
   const handleTabChange = useCallback((tab) => {
+    try { haptic.select(); } catch {} // [2026-10-08 apps-native]
     setReelTab(tab);
     setCurrentIndex(0);
     loadingMoreRef.current = false;
@@ -2827,9 +2880,10 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         screenFocused={playGate}
         muted={muted}
         onToggleMute={handleToggleMute}
+        onCreate={onCreate}
       />
     );
-  }, [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, handleReelLikeChange, showLiveRing, overlayOpen, playGate, muted, handleToggleMute]);
+  }, [currentIndex, colors, isDark, t, user, router, containerHeight, handleOpenComments, handleOpenLikers, handleOpenProfile, handleUseSound, handleDuet, handleStitch, handleHidePost, handleReelLikeChange, showLiveRing, overlayOpen, playGate, muted, handleToggleMute, onCreate]);
 
   const keyExtractor = useCallback((item) => String(item.id), []);
 
@@ -2841,10 +2895,12 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     );
   }
 
-  if (reels.length === 0) {
+  // [2026-10-08 apps-native] só early-return quando AMBAS as abas estão vazias
+  // (antes: "Pra você" vazio escondia "Seguindo" com conteúdo). Com retry.
+  if (reels.length === 0 && followingReels.length === 0) {
     return (
       <View style={styles.loadingContainer}>
-        <EmptyReels colors={colors} isDark={isDark} t={t} />
+        <EmptyReels colors={colors} isDark={isDark} t={t} error={loadError} onRetry={() => loadReels(false)} />
       </View>
     );
   }
@@ -2853,10 +2909,12 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
     <View style={styles.reelsRoot} onLayout={onLayout}>
       {/* Following / For You tabs overlaying the top */}
       <View style={[styles.reelTabBar, { top: Math.max(outerInsets.top, Platform.OS === 'android' ? 12 : 44) + 8 }]} pointerEvents="box-none">
-        <TouchableOpacity
-          onPress={() => handleTabChange('following')}
-          activeOpacity={0.7}
+        <Pressable
+          onPress={() => { if (reelTab !== 'following') handleTabChange('following'); }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: reelTab === 'following' }}
+          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
         >
           <Text style={[
             styles.reelTabText,
@@ -2865,11 +2923,13 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
             {t('feed.followingReels') || 'Following'}
           </Text>
           {reelTab === 'following' && <View style={styles.reelTabIndicator} />}
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => handleTabChange('forYou')}
-          activeOpacity={0.7}
+        </Pressable>
+        <Pressable
+          onPress={() => { if (reelTab !== 'forYou') handleTabChange('forYou'); }}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: reelTab === 'forYou' }}
+          style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
         >
           <Text style={[
             styles.reelTabText,
@@ -2878,7 +2938,7 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
             {t('feed.forYou') || 'For You'}
           </Text>
           {reelTab === 'forYou' && <View style={styles.reelTabIndicator} />}
-        </TouchableOpacity>
+        </Pressable>
       </View>
 
       <FlatList
@@ -2913,22 +2973,10 @@ export default function ReelsViewer({ colors, isDark, t, user, router, feedMode:
         refreshing={refreshing}
         ListEmptyComponent={
           // Surface an empty state for *every* tab — silently rendering
-          // null on Discover/For You looked like a hung load. Copy varies
-          // by tab; icon adapts to dark mode contrast (was hardcoded #555).
+          // null on Discover/For You looked like a hung load.
+          // [2026-10-08 apps-native] EmptyReels unificado + retry/erro.
           <View style={[styles.loadingContainer, { height: containerHeight }]}>
-            <View style={styles.emptyIcon}>
-              <IconPlay size={48} color="rgba(255,255,255,0.55)" />
-            </View>
-            <Text style={styles.emptyTitle}>
-              {reelTab === 'following'
-                ? (t('feed.noFollowingReels') || 'No reels from people you follow')
-                : (t('feed.noReels') || 'Sem reels por aqui')}
-            </Text>
-            <Text style={styles.emptySubtext}>
-              {reelTab === 'following'
-                ? (t('feed.noFollowingReelsHint') || 'Follow people to see their reels here')
-                : (t('feed.noReelsHint') || 'Volte mais tarde — novos reels chegam o tempo todo.')}
-            </Text>
+            <EmptyReels t={t} error={loadError} following={reelTab === 'following'} onRetry={() => loadReels(false)} />
           </View>
         }
       />
@@ -3327,6 +3375,19 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     lineHeight: 19,
     textAlign: 'center',
+  },
+  // [2026-10-08 apps-native] pill branco (P&B) do retry
+  emptyRetryBtn: {
+    marginTop: 10,
+    paddingHorizontal: 22,
+    paddingVertical: 11,
+    borderRadius: 999,
+    backgroundColor: '#fff',
+  },
+  emptyRetryText: {
+    color: '#000',
+    fontSize: 14,
+    fontWeight: '700',
   },
 
   // ── Comments sheet (dark themed) ──

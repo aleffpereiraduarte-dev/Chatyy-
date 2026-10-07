@@ -21,7 +21,8 @@ class ChatCoreModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("ChatyyChatCore")
 
-    Events("onChatCoreFrame", "onChatCoreState")
+    // [2026-10-08 native-core-2] + onChatCoreRaw (primary frames) / onChatCoreAck (outbox).
+    Events("onChatCoreFrame", "onChatCoreState", "onChatCoreRaw", "onChatCoreAck")
 
     OnCreate {
       val self = this@ChatCoreModule
@@ -32,6 +33,12 @@ class ChatCoreModule : Module() {
         override fun onState(body: Map<String, Any?>) {
           try { self.sendEvent("onChatCoreState", body) } catch (_: Throwable) {}
         }
+        override fun onRaw(body: Map<String, Any?>) {
+          try { self.sendEvent("onChatCoreRaw", body) } catch (_: Throwable) {}
+        }
+        override fun onAck(body: Map<String, Any?>) {
+          try { self.sendEvent("onChatCoreAck", body) } catch (_: Throwable) {}
+        }
       }
     }
 
@@ -39,13 +46,39 @@ class ChatCoreModule : Module() {
       // JS runtime going away (reload / process teardown). Phase 1 is
       // JS-driven, so the socket goes with it.
       ChatCoreSocket.listener = null
+      try { ChatCoreSocket.setPrimary(false) } catch (_: Throwable) {}
       try {
         if (ChatCoreSocket.isRunning()) ChatCoreSocket.stop("module_destroy")
       } catch (_: Throwable) {}
     }
 
-    /** Protocol/feature version of the native core (JS gates on >= 1). */
-    Function("version") { 1 }
+    /**
+     * Protocol/feature version of the native core. 1 = shadow (phase 1);
+     * 2 = + setPrimary / sendText / cancelSend (phase 2 groundwork).
+     */
+    Function("version") { 2 }
+
+    Function("setPrimary") { on: Boolean ->
+      try { ChatCoreSocket.setPrimary(on) } catch (_: Throwable) {}
+    }
+
+    AsyncFunction("sendText") { acct: String, cmi: String, frameJson: String ->
+      val ctx = context
+      if (ctx == null) {
+        false
+      } else {
+        try {
+          ChatCoreSocket.sendText(ctx, acct, cmi, frameJson)
+        } catch (t: Throwable) {
+          Log.w("ChatCoreModule", "sendText failed: ${t.message}")
+          false
+        }
+      }
+    }
+
+    Function("cancelSend") { cmi: String ->
+      try { ChatCoreSocket.cancelSend(cmi) } catch (_: Throwable) {}
+    }
 
     AsyncFunction("start") { acct: String, lastEventId: Double, deviceId: String ->
       val ctx = context

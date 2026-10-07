@@ -129,6 +129,12 @@ import { useConfirm } from '../components/ConfirmModal';
 import MessageTypeIcon, { stripLeadingGlyph, hasLeadingGlyph } from '../components/MessageTypeIcon'; // [2026-10-07 app-feel-ui]
 import PressableRow from '../components/PressableRow'; // [2026-10-07 app-feel-ui] native cell feedback in the message menu
 import { BlurBackdrop, canNativeBlur } from '../components/NativeBlur'; // [2026-10-07 native-ui-build]
+// [2026-10-08 chat-native] lifted-bubble long-press menu + native attach sheet
+import {
+  LIFT_AVAILABLE, LIFT_REACT_H, LIFT_LIST_STYLES, captureBubbleAnchor, releaseBubbleAnchor,
+  computeLiftLayout, LiftedBubble, LiftReactionBar,
+} from '../components/chat/MessageLiftOverlay';
+import AttachSheetNative, { ATTACH_SHEET_NATIVE } from '../components/chat/AttachSheet';
 import NativeSwitch from '../components/NativeSwitch'; // [2026-10-07 native-ui-build] group info toggles
 import { useAuth, isChildAccount, getChildRestrictions } from '../context/AuthContext';
 import { useLanguage } from '../context/LanguageContext';
@@ -1273,17 +1279,31 @@ function MessageDeleteAnim({ children, deleting, onComplete }) {
 // ============================================================
 function SendButtonAnim({ children, isSend }) {
   const scaleVal = useRef(new Animated.Value(1)).current;
+  // [2026-10-08 chat-native] WhatsApp mic⇄send morph: the incoming glyph
+  // fades in while scaling up AND rotating from ±60° (send comes in turning
+  // clockwise, mic counter-clockwise) — all native-driver (UI thread).
+  const rotVal = useRef(new Animated.Value(0)).current;
   const prevIsSend = useRef(isSend);
   useEffect(() => {
     if (prevIsSend.current !== isSend) {
       prevIsSend.current = isSend;
-      if (isReduceMotionEnabled()) { scaleVal.setValue(1); return; } // Reduce Motion: no morph pop
-      scaleVal.setValue(0.5);
-      Animated.spring(scaleVal, { toValue: 1, useNativeDriver: true, tension: 300, friction: 10 }).start();
+      if (isReduceMotionEnabled()) { scaleVal.setValue(1); rotVal.setValue(0); return; } // Reduce Motion: no morph pop
+      scaleVal.setValue(0.4);
+      rotVal.setValue(isSend ? -1 : 1);
+      Animated.parallel([
+        Animated.spring(scaleVal, { toValue: 1, useNativeDriver: Platform.OS !== 'web', tension: 320, friction: 11 }),
+        Animated.spring(rotVal, { toValue: 0, useNativeDriver: Platform.OS !== 'web', tension: 260, friction: 13 }),
+      ]).start();
     }
   }, [isSend]);
   return (
-    <Animated.View style={{ transform: [{ scale: scaleVal }] }}>
+    <Animated.View style={{
+      opacity: scaleVal.interpolate({ inputRange: [0.4, 0.8, 1], outputRange: [0, 1, 1], extrapolate: 'clamp' }),
+      transform: [
+        { scale: scaleVal },
+        { rotate: rotVal.interpolate({ inputRange: [-1, 0, 1], outputRange: ['-60deg', '0deg', '60deg'] }) },
+      ],
+    }}>
       {children}
     </Animated.View>
   );
@@ -4150,7 +4170,26 @@ function IconGifBadge({ size = 24, color = '#fff' }) {
   );
 }
 
-function AttachmentMenu({ visible, onClose, onPick, colors }) {
+// [2026-10-08 chat-native] Message-menu style table for the lifted-bubble
+// layout (vertical list) — base styles + overrides, built once on first use.
+let _ctxListStyles = null;
+function getCtxListStyles() {
+  if (!_ctxListStyles) _ctxListStyles = { ...styles, ...LIFT_LIST_STYLES };
+  return _ctxListStyles;
+}
+
+// [2026-10-08 chat-native] Native: drag-to-dismiss UI-thread sheet
+// (components/chat/AttachSheet.native.js) with the SAME items/handlers.
+// Web (or a binary without Reanimated/RNGH): legacy Animated sheet below.
+function AttachmentMenu(props) {
+  const { t } = useLanguage();
+  if (ATTACH_SHEET_NATIVE && AttachSheetNative) {
+    return <AttachSheetNative {...props} items={buildAttachItems(t)} />;
+  }
+  return <AttachmentMenuLegacy {...props} />;
+}
+
+function AttachmentMenuLegacy({ visible, onClose, onPick, colors }) {
   const { t } = useLanguage();
   const sheetAnim = useRef(new Animated.Value(0)).current;
   const overlayAnim = useRef(new Animated.Value(0)).current;
@@ -4172,44 +4211,7 @@ function AttachmentMenu({ visible, onClose, onPick, colors }) {
   }, [visible]);
 
   if (!show) return null;
-  // Attachment sheet — câmera e áudio foram removidos: já existem como
-  // botões dedicados no input bar (atalho de câmera + microfone), ficavam
-  // redundantes aqui.
-  const items = [
-    { key: 'gallery', icon: IconImage, label: t('chatConv.gallery') || 'Galeria', color: '#111111' },
-    // GIF relocated here from the composer pill — see handlePickAttachment
-    // 'gif' case. Keeps the feature one tap away without crowding the
-    // text-input edge where stray keyboard-open taps used to land.
-    { key: 'gif', icon: IconGifBadge, label: t('chatConv.gif') || 'GIF', color: '#111111' },
-    { key: 'file', icon: IconFileText, label: t('chatConv.file') || 'Arquivo', color: '#3b82f6' },
-    // Scan document → PDF (native VisionKit / ML Kit). FLAG-GATED, default OFF
-    // (constants/featureFlags.js SCAN_DOCUMENT_ENABLED). The slot is not even
-    // rendered until the native scanner dep ships in a build, so production is
-    // unchanged. When ON, handlePickAttachment('scan_document') runs the scan
-    // and pipes the PDF into uploadAndSendFile (with caption).
-    ...(SCAN_DOCUMENT_ENABLED ? [{
-      key: 'scan_document', icon: IconFileText, label: t('chatConv.scanDocument') || 'Digitalizar documento', color: '#0ea5e9',
-    }] : []),
-    // [2026-05-15] "Localização" agora abre LocationPickerSheet que já tem
-    // chips 15min/1h/8h pra share ao vivo — botão "Loc. ao vivo" separado
-    // virou dedup. User: "se dentro da localizacao ja tem opcao de
-    // compartilhar ao vivo podemos tirar dos modulos".
-    { key: 'location', icon: IconMapPin, label: t('chatConv.location') || 'Localização', color: '#10b981' },
-    { key: 'contact', icon: IconUser, label: t('chatConv.contact') || 'Contato', color: '#06b6d4' },
-    { key: 'poll', icon: IconBarChart, label: t('chat.poll') || 'Enquete', color: '#f59e0b' },
-    { key: 'meetup', icon: IconMapPin, label: t('chatConv.meetup') || 'Encontro', color: '#111111' },
-    { key: 'playlist', icon: IconPlay, label: t('chatConv.playlist') || 'Playlist', color: '#111111' },
-    // 2026-05-18: "Vídeo curto" — Reels-style 9:16 clip in-chat. Only renders
-    // when the feature flag is on (isShortVideoInChatEnabled returns true).
-    // Returns null otherwise so the grid silently drops the slot for users
-    // not in the rollout. IconFilm + violet matches the Reels tab identity.
-    ...(_shortVideoConfig && _shortVideoConfig.isShortVideoInChatEnabled && _shortVideoConfig.isShortVideoInChatEnabled() ? [{
-      key: 'short_video',
-      icon: IconFilm,
-      label: t('chat.attach.shortVideo') || 'Vídeo curto',
-      color: '#111111',
-    }] : []),
-  ];
+  const items = buildAttachItems(t);
 
   const translateY = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [350, 0] });
   const scale = sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [0.95, 1] });
@@ -4245,6 +4247,50 @@ function AttachmentMenu({ visible, onClose, onPick, colors }) {
       </Animated.View>
     </View>
   );
+}
+
+// Attachment sheet items — shared by the legacy sheet (web) and the native
+// UI-thread sheet. [2026-10-08 chat-native] extracted, contents unchanged.
+function buildAttachItems(t) {
+  // Attachment sheet — câmera e áudio foram removidos: já existem como
+  // botões dedicados no input bar (atalho de câmera + microfone), ficavam
+  // redundantes aqui.
+  return [
+    { key: 'gallery', icon: IconImage, label: t('chatConv.gallery') || 'Galeria', color: '#111111' },
+    // GIF relocated here from the composer pill — see handlePickAttachment
+    // 'gif' case. Keeps the feature one tap away without crowding the
+    // text-input edge where stray keyboard-open taps used to land.
+    { key: 'gif', icon: IconGifBadge, label: t('chatConv.gif') || 'GIF', color: '#111111' },
+    { key: 'file', icon: IconFileText, label: t('chatConv.file') || 'Arquivo', color: '#3b82f6' },
+    // Scan document → PDF (native VisionKit / ML Kit). FLAG-GATED, default OFF
+    // (constants/featureFlags.js SCAN_DOCUMENT_ENABLED). The slot is not even
+    // rendered until the native scanner dep ships in a build, so production is
+    // unchanged. When ON, handlePickAttachment('scan_document') runs the scan
+    // and pipes the PDF into uploadAndSendFile (with caption).
+    ...(SCAN_DOCUMENT_ENABLED ? [{
+      key: 'scan_document', icon: IconFileText, label: t('chatConv.scanDocument') || 'Digitalizar documento', color: '#0ea5e9',
+    }] : []),
+    // [2026-05-15] "Localização" agora abre LocationPickerSheet que já tem
+    // chips 15min/1h/8h pra share ao vivo — botão "Loc. ao vivo" separado
+    // virou dedup. User: "se dentro da localizacao ja tem opcao de
+    // compartilhar ao vivo podemos tirar dos modulos".
+    { key: 'location', icon: IconMapPin, label: t('chatConv.location') || 'Localização', color: '#10b981' },
+    { key: 'contact', icon: IconUser, label: t('chatConv.contact') || 'Contato', color: '#06b6d4' },
+    { key: 'poll', icon: IconBarChart, label: t('chat.poll') || 'Enquete', color: '#f59e0b' },
+    // [2026-10-08 chat-native] Calendar glyph — was a 2nd MapPin, identical to "Localização".
+    { key: 'meetup', icon: IconCalendar, label: t('chatConv.meetup') || 'Encontro', color: '#111111' },
+    { key: 'playlist', icon: IconMusic || IconPlay, label: t('chatConv.playlist') || 'Playlist', color: '#111111' },
+    // 2026-05-18: "Vídeo curto" — Reels-style 9:16 clip in-chat. Only renders
+    // when the feature flag is on (isShortVideoInChatEnabled returns true).
+    // Returns null otherwise so the grid silently drops the slot for users
+    // not in the rollout. IconFilm + violet matches the Reels tab identity.
+    ...(_shortVideoConfig && _shortVideoConfig.isShortVideoInChatEnabled && _shortVideoConfig.isShortVideoInChatEnabled() ? [{
+      key: 'short_video',
+      icon: IconFilm,
+      label: t('chat.attach.shortVideo') || 'Vídeo curto',
+      color: '#111111',
+    }] : []),
+  ];
 }
 
 // Staggered spring for each attachment icon
@@ -5321,12 +5367,18 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
   // dramatic) and adjust brightness before sending. Reuses the standalone
   // PhotoEditor already shipped for the Photos screen.
   const [cropOpen, setCropOpen] = useState(false);
+  // [2026-10-08 photo-editor] Editor novo (recorte/proporções/giro + desenho +
+  // texto, gestos na UI thread). Só aparece quando o binário tem reanimated+RNGH.
+  const [proEditOpen, setProEditOpen] = useState(false);
   // Tracks whether the editor was auto-opened on entry (so Cancel = abort
   // the whole send) vs opened later via the crop toolbar button (Cancel =
   // just close the editor and return to preview).
   const editorAutoOpenedRef = useRef(false);
   const DrawOverlay = require('../components/DrawOverlay').default;
   const PhotoEditor = require('../components/PhotoEditor').default;
+  const _proEditorMod = require('../components/media/PhotoEditor'); // [2026-10-08 photo-editor]
+  const ProPhotoEditor = _proEditorMod.default;
+  const _proEditorOk = !!_proEditorMod.PHOTO_EDITOR_AVAILABLE;
 
   // Seed local state whenever the modal opens with a fresh batch.
   // For SINGLE-image picks we auto-open the PhotoEditor as the first
@@ -5598,7 +5650,28 @@ function MediaPreview({ visible, onClose, onSend, files: filesProp, colors, hdMo
           ) : (
             <Image source={{ uri: currentUri }} style={previewStyles.previewImage} resizeMode="contain" />
           )}
+          {/* [2026-10-08 photo-editor] "Editar" por imagem (ativa) */}
+          {!activeIsVideo && _proEditorOk && (
+            <TouchableOpacity
+              onPress={() => setProEditOpen(true)}
+              disabled={editing}
+              accessibilityRole="button"
+              accessibilityLabel={t('common.edit')}
+              style={{ position: 'absolute', left: 14, bottom: 14, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 14, height: 36, borderRadius: 18, backgroundColor: 'rgba(0,0,0,0.6)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.35)' }}
+            >
+              <IconPencil size={16} color="#fff" />
+              <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>{t('common.edit')}</Text>
+            </TouchableOpacity>
+          )}
         </View>
+        {proEditOpen && !activeIsVideo && _proEditorOk && (
+          <ProPhotoEditor
+            visible={proEditOpen}
+            imageUri={currentUri}
+            onCancel={() => setProEditOpen(false)}
+            onDone={(uri) => { if (uri && uri !== currentUri) setEdits(prev => ({ ...prev, [activeIdx]: uri })); setProEditOpen(false); }}
+          />
+        )}
 
         {/* Bottom bar — WhatsApp-style: caption + viewOnce + SEND all inline.
             Previously the send button was on its own row below the caption,
@@ -15220,6 +15293,8 @@ function ChatConversationInner() {
     // its isSelf guard keeps unread at 0 and skips the receive sound, and the
     // fresh-last_message reset clears the previous message's ✓✓ stamps.
     try {
+      // [2026-10-08] mailWs was never in scope here → event never fired.
+      const mailWs = require('../services/websocket').default;
       mailWs._emit?.('chat_local_outbound', {
         conversation_id: conversationId,
         id: tempId,
@@ -18470,7 +18545,7 @@ function ChatConversationInner() {
         // server never recorded the hide → the very next sync re-sent the
         // message and it reappeared (mirrors the for_all path above).
         try {
-          await queueOfflineAction({ type: 'chat_delete', message_id: msgId, mode: 'for_me' });
+          await require('../services/offlineCache').queueOfflineAction({ type: 'chat_delete', message_id: msgId, mode: 'for_me' });
         } catch {
           // Couldn't even queue — surface so the user knows it didn't stick.
           safeAlert(t('common.error') || 'Error', t('chatConv.deleteFailed') || 'Failed to delete message');
@@ -19769,8 +19844,29 @@ function ChatConversationInner() {
 
   const handleLongPress = (msg) => {
     if (msg.type === 'system' || msg.deleted_at) return;
-    try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy); } catch {}
-    setSelectedMsg(msg);
+    // [2026-10-08 chat-native] Medium (not Heavy) = WhatsApp/iOS context-menu
+    // "lift" feel; the selection tick on mount stays as the second beat.
+    try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
+    const node = LIFT_AVAILABLE ? bubbleNodeRefs.current.get(msg.id) : null;
+    if (!node) { setSelectedMsg(msg); return; }
+    if (liftPendingRef.current) return; // double long-press while snapshotting
+    liftPendingRef.current = true;
+    // WhatsApp drops the keyboard on long-press; otherwise (iOS) the keyboard
+    // window would sit on top of the action list. The snapshot keeps the
+    // pre-dismiss rect, then springs to its final spot anyway.
+    try { Keyboard.dismiss(); } catch {}
+    const isOwnMsg = (msg.sender_email || '').toLowerCase() === (currentEmail || '').toLowerCase();
+    captureBubbleAnchor(node).then((a) => {
+      liftPendingRef.current = false;
+      if (!mountedRef.current) { releaseBubbleAnchor(a); return; }
+      if (a) {
+        const anchor = { ...a, isOwn: isOwnMsg };
+        ctxAnchorRef.current = anchor;
+        setCtxMenuH(0);
+        setCtxAnchor(anchor);
+      }
+      setSelectedMsg(msg);
+    });
   };
 
   // Save a sticker/gif/image to the device's photo library (WhatsApp-style).
@@ -19935,6 +20031,97 @@ function ChatConversationInner() {
   // Context menu animation refs
   const ctxScaleAnim = useRef(new Animated.Value(0.85)).current;
   const ctxOpacityAnim = useRef(new Animated.Value(0)).current;
+
+  // [2026-10-08 chat-native] Lifted-bubble long-press menu (WhatsApp). The
+  // bubble View registers its host node here (renderMessage → ref); on
+  // long-press we measure + snapshot it and the menu Modal shows the bubble
+  // in place over the blurred chat, reactions above, actions below.
+  // ctxAnchor = { uri, x, y, w, h, isOwn } | null (null → classic menu).
+  const bubbleNodeRefs = useRef(new Map());
+  const _setBubbleNode = (id, node) => {
+    if (id == null) return;
+    if (node) bubbleNodeRefs.current.set(id, node);
+    else bubbleNodeRefs.current.delete(id);
+  };
+  const [ctxAnchor, setCtxAnchor] = useState(null);
+  const [ctxMenuH, setCtxMenuH] = useState(0);
+  const ctxAnchorRef = useRef(null);
+  const liftPendingRef = useRef(false);
+  const { width: _liftWinW, height: _liftWinH } = useWindowDimensions();
+  useEffect(() => {
+    if (selectedMsg) return;
+    // Menu closed (any of the ~40 setSelectedMsg(null) paths) → drop anchor.
+    if (ctxAnchorRef.current) { releaseBubbleAnchor(ctxAnchorRef.current); ctxAnchorRef.current = null; }
+    setCtxAnchor(null);
+    setCtxMenuH(0);
+  }, [selectedMsg]);
+  const _liftMenuW = Math.min(_liftWinW - 20, 260);
+  const _liftLayout = ctxAnchor
+    ? computeLiftLayout({ anchor: ctxAnchor, menuH: ctxMenuH, menuW: _liftMenuW, winW: _liftWinW, winH: _liftWinH, insets })
+    : null;
+  // Reaction shelf: 6×48 + 40 (+) + padding; shrink on narrow phones.
+  const _liftReactScale = Math.min(1, (_liftWinW - 20) / 340);
+  // Style table for the menu body: vertical list under the lifted bubble,
+  // the original icon grid otherwise (web / classic fallback).
+  const ctxS = ctxAnchor ? getCtxListStyles() : styles;
+  const CtxBody = ctxAnchor ? ScrollView : View;
+  const ctxBodyProps = ctxAnchor
+    ? { style: { maxHeight: Math.round(_liftWinH * 0.5) }, bounces: false, showsVerticalScrollIndicator: false }
+    : {};
+  // Quick-reaction shelf of the message menu (moved out of the Modal JSX so
+  // it can render inside the card (classic) or above the lifted bubble).
+  const renderCtxReactionsRow = (extraStyle) => (
+    <View style={[styles.ctxReactionsRow, {
+      backgroundColor: isDark ? 'rgba(40,40,60,0.7)' : 'rgba(255,255,255,0.85)',
+      borderRadius: 30, marginHorizontal: 12, marginTop: 8, marginBottom: 4,
+      ...(Platform.OS === 'web' ? { backdropFilter: 'blur(20px)', boxShadow: '0 2px 12px rgba(0,0,0,0.1)' } : { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4 }),
+    }, ctxAnchor ? { backgroundColor: isDark ? 'rgba(40,40,48,0.96)' : 'rgba(255,255,255,0.97)' } : null, extraStyle]}>
+      {(() => {
+        const _qr = getQuickReactions();
+        // Which emoji did the CURRENT user already react with on this
+        // message? Reactions are stored as { emoji, count, users: [email] }
+        // (see handleReact). Find the group whose users include our
+        // email so we can highlight that chip + signal "tap to remove".
+        const _meLc = (currentEmail || '').toLowerCase();
+        const _myReaction = (() => {
+          try {
+            const rx = Array.isArray(selectedMsg?.reactions) ? selectedMsg.reactions : [];
+            for (const g of rx) {
+              const users = Array.isArray(g?.users)
+                ? g.users
+                : (typeof g?.users === 'string' ? g.users.split(',') : []);
+              if (users.some(u => (u || '').toLowerCase() === _meLc)) {
+                return g.emoji || g.reaction || '';
+              }
+            }
+          } catch {}
+          return '';
+        })();
+        return (
+          <>
+            {_qr.map((r, i) => (
+              <ReactionButton
+                key={r.key}
+                emoji={r.emoji}
+                index={i}
+                colors={colors}
+                isDark={isDark}
+                isActive={!!_myReaction && _myReaction === r.emoji}
+                onPress={() => { handleReact(selectedMsg?.id, r.emoji); setSelectedMsg(null); }}
+              />
+            ))}
+            <ReactionButton
+              isPlus
+              index={_qr.length}
+              colors={colors}
+              isDark={isDark}
+              onPress={() => setShowFullEmojiPicker(true)}
+            />
+          </>
+        );
+      })()}
+    </View>
+  );
 
   const handleTranslate = async (msg) => {
     setSelectedMsg(null);
@@ -25853,7 +26040,7 @@ function ChatConversationInner() {
             );
           })()}
 
-          <View style={[
+          <View ref={LIFT_AVAILABLE ? (node) => _setBubbleNode(msg.id, node) : undefined} collapsable={false} style={[
             styles.bubble,
             !!msg.reply_to && !isDeleted && styles.bubbleWithReply,
             isOwn
@@ -30041,6 +30228,9 @@ function ChatConversationInner() {
         visible={!!selectedMsg}
         transparent
         animationType="none"
+        // [2026-10-08 chat-native] full-screen on Android too, so the lifted
+        // bubble's measureInWindow() coords line up with the modal's origin.
+        statusBarTranslucent
         onRequestClose={() => setSelectedMsg(null)}
         onShow={() => {
           // iMessage-style overshoot: scale jumps from 0.78 → past 1.0 with
@@ -30060,26 +30250,59 @@ function ChatConversationInner() {
         }}
       >
         <Pressable
-          style={[styles.ctxOverlay, canNativeBlur() ? { backgroundColor: 'transparent' } : null]}
+          style={[ctxS.ctxOverlay, canNativeBlur() ? { backgroundColor: 'transparent' } : null]}
           onPress={() => setSelectedMsg(null)}
         >
           {/* [2026-10-07 native-ui-build] iOS: conversa BORRADA atrás do menu
               (UIVisualEffectView, padrão iMessage). Android/web: dim 0.5 sólido. */}
           {canNativeBlur() && <BlurBackdrop isDark={isDark} dim={0.5} pointerEvents="none" />}
-          <Animated.View style={[
-            styles.ctxContainer,
+          {/* [2026-10-08 chat-native] Lifted bubble (snapshot of the real
+              bubble at its on-screen rect) + reaction shelf above it. */}
+          {ctxAnchor && _liftLayout ? (
+            <>
+              <LiftedBubble anchor={ctxAnchor} layout={ctxMenuH ? _liftLayout : null} />
+              {ctxMenuH ? (
+                <LiftReactionBar
+                  top={_liftLayout.reactTop}
+                  alignRight={ctxAnchor.isOwn}
+                  edgeInset={10}
+                  maxWidth={_liftWinW - 20}
+                  scale={_liftReactScale}
+                >
+                  {renderCtxReactionsRow({ marginHorizontal: 0, marginTop: 0, marginBottom: 0, gap: 0, paddingHorizontal: 6, paddingVertical: 4 })}
+                </LiftReactionBar>
+              ) : null}
+            </>
+          ) : null}
+          <Animated.View
+            onLayout={ctxAnchor ? (e) => {
+              const h = Math.round(e?.nativeEvent?.layout?.height || 0);
+              if (h > 0 && Math.abs(h - ctxMenuH) > 1) setCtxMenuH(h);
+            } : undefined}
+            style={[
+            ctxS.ctxContainer,
             {
               opacity: ctxOpacityAnim,
               transform: [{ scale: ctxScaleAnim }],
               backgroundColor: colors.surface + 'EB',
             },
+            ctxAnchor && _liftLayout ? {
+              position: 'absolute',
+              // Until measured (1st layout pass) park it off-screen so it can
+              // be measured without flashing at a provisional spot.
+              top: ctxMenuH ? _liftLayout.menuTop : -10000,
+              left: _liftLayout.cardLeft,
+              width: _liftMenuW, minWidth: 0, maxWidth: _liftMenuW,
+              borderRadius: 16,
+              transformOrigin: ctxAnchor.isOwn ? 'right top' : 'left top',
+            } : null,
             Platform.OS === 'web' ? { backdropFilter: 'blur(40px)', WebkitBackdropFilter: 'blur(40px)' } : {},
           ]}>
-            {/* Message Preview */}
-            {selectedMsg && (
-              <View style={[styles.ctxPreview, { backgroundColor: selectedMsg.sender_email === currentEmail ? (colors.primary + '18') : (colors.border + '60') }]}>
+            {/* Message Preview (classic menu only — the lifted bubble IS the preview) */}
+            {selectedMsg && !ctxAnchor && (
+              <View style={[ctxS.ctxPreview, { backgroundColor: selectedMsg.sender_email === currentEmail ? (colors.primary + '18') : (colors.border + '60') }]}>
                 <View style={{ flex: 1 }}>
-                  <Text style={[styles.ctxPreviewSender, { color: colors.primary }]} numberOfLines={1}>
+                  <Text style={[ctxS.ctxPreviewSender, { color: colors.primary }]} numberOfLines={1}>
                     {selectedMsg.sender_email === currentEmail ? (t('chatConv.you') || 'You') : (selectedMsg.sender_name || emailToDisplayName(selectedMsg.sender_email))}
                   </Text>
                   {/* [2026-10-07 app-feel-ui] SVG type glyph instead of emoji prefix (founder rule). */}
@@ -30151,84 +30374,37 @@ function ChatConversationInner() {
                     return (
                       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                         {_ctxHas ? <MessageTypeIcon type={selectedMsg.type} size={14} color={colors.textSecondary} /> : null}
-                        <Text style={[styles.ctxPreviewText, { color: colors.textSecondary, flexShrink: 1 }]} numberOfLines={2}>
+                        <Text style={[ctxS.ctxPreviewText, { color: colors.textSecondary, flexShrink: 1 }]} numberOfLines={2}>
                           {_ctxHas ? stripLeadingGlyph(_ctxRaw) : _ctxRaw}
                         </Text>
                       </View>
                     );
                   })()}
                 </View>
-                <Text style={[styles.ctxPreviewTime, { color: colors.textSecondary }]}>{formatTime(selectedMsg.created_at)}</Text>
+                <Text style={[ctxS.ctxPreviewTime, { color: colors.textSecondary }]}>{formatTime(selectedMsg.created_at)}</Text>
               </View>
             )}
 
-            {/* Quick Reactions Row */}
-            <View style={[styles.ctxReactionsRow, {
-              backgroundColor: isDark ? 'rgba(40,40,60,0.7)' : 'rgba(255,255,255,0.85)',
-              borderRadius: 30, marginHorizontal: 12, marginTop: 8, marginBottom: 4,
-              ...(Platform.OS === 'web' ? { backdropFilter: 'blur(20px)', boxShadow: '0 2px 12px rgba(0,0,0,0.1)' } : { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 8, elevation: 4 }),
-            }]}>
-              {(() => {
-                const _qr = getQuickReactions();
-                // Which emoji did the CURRENT user already react with on this
-                // message? Reactions are stored as { emoji, count, users: [email] }
-                // (see handleReact). Find the group whose users include our
-                // email so we can highlight that chip + signal "tap to remove".
-                const _meLc = (currentEmail || '').toLowerCase();
-                const _myReaction = (() => {
-                  try {
-                    const rx = Array.isArray(selectedMsg?.reactions) ? selectedMsg.reactions : [];
-                    for (const g of rx) {
-                      const users = Array.isArray(g?.users)
-                        ? g.users
-                        : (typeof g?.users === 'string' ? g.users.split(',') : []);
-                      if (users.some(u => (u || '').toLowerCase() === _meLc)) {
-                        return g.emoji || g.reaction || '';
-                      }
-                    }
-                  } catch {}
-                  return '';
-                })();
-                return (
-                  <>
-                    {_qr.map((r, i) => (
-                      <ReactionButton
-                        key={r.key}
-                        emoji={r.emoji}
-                        index={i}
-                        colors={colors}
-                        isDark={isDark}
-                        isActive={!!_myReaction && _myReaction === r.emoji}
-                        onPress={() => { handleReact(selectedMsg?.id, r.emoji); setSelectedMsg(null); }}
-                      />
-                    ))}
-                    <ReactionButton
-                      isPlus
-                      index={_qr.length}
-                      colors={colors}
-                      isDark={isDark}
-                      onPress={() => setShowFullEmojiPicker(true)}
-                    />
-                  </>
-                );
-              })()}
-            </View>
+            {/* Quick Reactions Row — classic menu only; with a lifted bubble
+                it floats ABOVE the bubble (LiftReactionBar). [2026-10-08 chat-native] */}
+            {!ctxAnchor && renderCtxReactionsRow()}
 
+            <CtxBody {...ctxBodyProps}>
             {/* Primary Action Bar — Horizontal Icons (iMessage-style) */}
-            <View style={[styles.ctxIconBar, { borderBottomColor: colors.border + '40' }]}>
+            <View style={[ctxS.ctxIconBar, { borderBottomColor: colors.border + '40' }]}>
               {/* Reply (ALWAYS first — guaranteed visible even if the bar
                   wraps on narrow screens). User-reported regression: reply
                   kept "disappearing" when extra actions pushed it to the
                   second row out of view. */}
               <PressableScale haptic={false}
-                style={styles.ctxIconBtn}
+                style={ctxS.ctxIconBtn}
                 onPress={() => handleReply(selectedMsg)}
                 activeOpacity={0.6}
               >
-                <View style={[styles.ctxIconCircle, { backgroundColor: colors.primary + '22' }]}>
+                <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.primary + '22' }]}>
                   <IconReply size={20} color={colors.primary} />
                 </View>
-                <Text style={[styles.ctxIconLabel, { color: colors.primary }]}>{t('chatConv.reply') || 'Responder'}</Text>
+                <Text style={[ctxS.ctxIconLabel, { color: colors.primary }]}>{t('chatConv.reply') || 'Responder'}</Text>
               </PressableScale>
 
               {/* Quote a portion of the text — Telegram-style partial reply.
@@ -30237,42 +30413,42 @@ function ChatConversationInner() {
                   "Reply" already quotes the whole thing. */}
               {!selectedMsg?.deleted_at && typeof selectedMsg?.content === 'string' && selectedMsg.content.trim().length > 12 && (
                 <PressableScale haptic={false}
-                  style={styles.ctxIconBtn}
+                  style={ctxS.ctxIconBtn}
                   onPress={() => { setQuoteSelectModal({ msg: selectedMsg, draft: '' }); setSelectedMsg(null); }}
                   activeOpacity={0.6}
                 >
-                  <View style={[styles.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
                     <IconReply size={20} color={colors.text} />
                   </View>
-                  <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.quote') || 'Citar'}</Text>
+                  <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.quote') || 'Citar'}</Text>
                 </PressableScale>
               )}
 
               {/* Copy */}
               {!selectedMsg?.deleted_at && selectedMsg?.content && (
                 <PressableScale haptic={false}
-                  style={styles.ctxIconBtn}
+                  style={ctxS.ctxIconBtn}
                   onPress={() => handleCopyMessage(selectedMsg)}
                   activeOpacity={0.6}
                 >
-                  <View style={[styles.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
                     <IconCopy size={20} color={colors.text} />
                   </View>
-                  <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.copy') || 'Copy'}</Text>
+                  <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.copy') || 'Copy'}</Text>
                 </PressableScale>
               )}
 
               {/* Save media (sticker/gif/image/video) — WhatsApp-style */}
               {!selectedMsg?.deleted_at && ['sticker', 'gif', 'image', 'video'].includes(selectedMsg?.type) && (
                 <PressableScale haptic={false}
-                  style={styles.ctxIconBtn}
+                  style={ctxS.ctxIconBtn}
                   onPress={() => handleSaveMedia(selectedMsg)}
                   activeOpacity={0.6}
                 >
-                  <View style={[styles.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
                     <IconDownload size={20} color={colors.text} />
                   </View>
-                  <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.saveToGallery') || 'Galeria'}</Text>
+                  <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.saveToGallery') || 'Galeria'}</Text>
                 </PressableScale>
               )}
 
@@ -30284,14 +30460,14 @@ function ChatConversationInner() {
                   option out of view to avoid a confusing 403 toast. */}
               {!selectedMsg?.deleted_at && !(forwardingDisabled && !isGroupAdmin) && (
                 <PressableScale haptic={false}
-                  style={styles.ctxIconBtn}
+                  style={ctxS.ctxIconBtn}
                   onPress={() => handleForward(selectedMsg)}
                   activeOpacity={0.6}
                 >
-                  <View style={[styles.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
                     <IconForward size={20} color={colors.text} />
                   </View>
-                  <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.forward')}</Text>
+                  <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.forward')}</Text>
                 </PressableScale>
               )}
 
@@ -30305,7 +30481,7 @@ function ChatConversationInner() {
                 && selectedMsg?.sender_email
                 && selectedMsg.sender_email !== currentEmail && (
                 <PressableScale haptic={false}
-                  style={styles.ctxIconBtn}
+                  style={ctxS.ctxIconBtn}
                   onPress={async () => {
                     const srcMsg = selectedMsg;
                     setSelectedMsg(null);
@@ -30364,10 +30540,10 @@ function ChatConversationInner() {
                   }}
                   activeOpacity={0.6}
                 >
-                  <View style={[styles.ctxIconCircle, { backgroundColor: '#11111120' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: '#11111120' }]}>
                     <IconMessageSquare size={20} color="#111111" />
                   </View>
-                  <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>
+                  <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>
                     {t('chatConv.replyPrivately') || 'Responder em privado'}
                   </Text>
                 </PressableScale>
@@ -30381,7 +30557,7 @@ function ChatConversationInner() {
                 const detectedEmail = emailMatch[0];
                 return (
                   <PressableScale haptic={false}
-                    style={styles.ctxIconBtn}
+                    style={ctxS.ctxIconBtn}
                     onPress={() => {
                       setSelectedMsg(null);
                       try {
@@ -30390,10 +30566,10 @@ function ChatConversationInner() {
                     }}
                     activeOpacity={0.6}
                   >
-                    <View style={[styles.ctxIconCircle, { backgroundColor: '#3B82F620' }]}>
+                    <View style={[ctxS.ctxIconCircle, { backgroundColor: '#3B82F620' }]}>
                       <IconMail size={20} color="#3B82F6" />
                     </View>
-                    <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>{t('chatConv.sendEmail') || 'Enviar e-mail'}</Text>
+                    <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]} numberOfLines={1}>{t('chatConv.sendEmail') || 'Enviar e-mail'}</Text>
                   </PressableScale>
                 );
               })()}
@@ -30401,16 +30577,16 @@ function ChatConversationInner() {
               {/* Star */}
               {!selectedMsg?.deleted_at && (
                 <PressableScale haptic={false}
-                  style={styles.ctxIconBtn}
+                  style={ctxS.ctxIconBtn}
                   onPress={() => handleStarMessage(selectedMsg)}
                   activeOpacity={0.6}
                 >
-                  <View style={[styles.ctxIconCircle, { backgroundColor: selectedMsg?.starred ? '#f59e0b20' : (colors.border + '50') }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: selectedMsg?.starred ? '#f59e0b20' : (colors.border + '50') }]}>
                     {selectedMsg?.starred
                       ? <IconStarFilled size={20} color="#f59e0b" />
                       : <IconStar size={20} color={colors.text} />}
                   </View>
-                  <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{selectedMsg?.starred ? t('chat.unstar') : t('chat.star')}</Text>
+                  <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{selectedMsg?.starred ? t('chat.unstar') : t('chat.star')}</Text>
                 </PressableScale>
               )}
 
@@ -30426,7 +30602,7 @@ function ChatConversationInner() {
                   the secondary list and asked for "WhatsApp-like" selection. */}
               {!selectedMsg?.deleted_at && (
                 <PressableScale haptic={false}
-                  style={styles.ctxIconBtn}
+                  style={ctxS.ctxIconBtn}
                   onPress={() => {
                     const msgId = selectedMsg?.id;
                     try { if (Platform.OS !== 'web') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); } catch {}
@@ -30436,10 +30612,10 @@ function ChatConversationInner() {
                   }}
                   activeOpacity={0.6}
                 >
-                  <View style={[styles.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: colors.border + '50' }]}>
                     <IconCheck size={20} color={colors.text} />
                   </View>
-                  <Text style={[styles.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.select') || 'Selecionar'}</Text>
+                  <Text style={[ctxS.ctxIconLabel, { color: colors.textSecondary }]}>{t('chatConv.select') || 'Selecionar'}</Text>
                 </PressableScale>
               )}
 
@@ -30450,20 +30626,20 @@ function ChatConversationInner() {
                   without affecting the sender. Matches WhatsApp behaviour. */}
               {!selectedMsg?.deleted_at && (
                 <PressableScale haptic={false}
-                  style={styles.ctxIconBtn}
+                  style={ctxS.ctxIconBtn}
                   onPress={() => handleDelete(selectedMsg?.id)}
                   activeOpacity={0.6}
                 >
-                  <View style={[styles.ctxIconCircle, { backgroundColor: (colors.error || '#EF4444') + '15' }]}>
+                  <View style={[ctxS.ctxIconCircle, { backgroundColor: (colors.error || '#EF4444') + '15' }]}>
                     <IconTrash size={20} color={colors.error || '#EF4444'} />
                   </View>
-                  <Text style={[styles.ctxIconLabel, { color: colors.error || '#EF4444' }]}>{t('chatConv.delete')}</Text>
+                  <Text style={[ctxS.ctxIconLabel, { color: colors.error || '#EF4444' }]}>{t('chatConv.delete')}</Text>
                 </PressableScale>
               )}
             </View>
 
             {/* Secondary Actions — Vertical List */}
-            <View style={styles.ctxSecondaryList}>
+            <View style={ctxS.ctxSecondaryList}>
               {/* Apagar para todos — surfaced when the user long-presses
                   their own message. Within window: shows live "Disponível
                   por Xm Ys mais" subtitle that ticks down each second.
@@ -30494,13 +30670,13 @@ function ChatConversationInner() {
                 if (within) {
                   return (
                     <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
-                      style={styles.ctxSecondaryItem}
+                      style={ctxS.ctxSecondaryItem}
                       onPress={() => handleDelete(selectedMsg?.id)}
                       activeOpacity={0.6}
                     >
                       <IconTrash size={18} color={colors.error || '#EF4444'} />
                       <View style={{ flex: 1, marginLeft: 12 }}>
-                        <Text style={[styles.ctxSecondaryText, { color: colors.error || '#EF4444', marginLeft: 0 }]}>
+                        <Text style={[ctxS.ctxSecondaryText, { color: colors.error || '#EF4444', marginLeft: 0 }]}>
                           {t('chatConv.deleteForEveryone') || 'Apagar para todos'}
                         </Text>
                         <Text style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>
@@ -30512,11 +30688,11 @@ function ChatConversationInner() {
                 }
                 return (
                   <View
-                    style={[styles.ctxSecondaryItem, { opacity: 0.5 }]}
+                    style={[ctxS.ctxSecondaryItem, { opacity: 0.5 }]}
                     accessibilityState={{ disabled: true }}
                   >
                     <IconTrash size={18} color={colors.textTertiary} />
-                    <Text style={[styles.ctxSecondaryText, { color: colors.textTertiary }]}>
+                    <Text style={[ctxS.ctxSecondaryText, { color: colors.textTertiary }]}>
                       {`${t('chatConv.deleteForEveryone') || 'Apagar para todos'} (expirado)`}
                     </Text>
                   </View>
@@ -30525,12 +30701,12 @@ function ChatConversationInner() {
               {/* Pin/Unpin */}
               {!selectedMsg?.deleted_at && (
                 <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
-                  style={styles.ctxSecondaryItem}
+                  style={ctxS.ctxSecondaryItem}
                   onPress={() => handlePinMessage(selectedMsg)}
                   activeOpacity={0.6}
                 >
                   <IconPin size={18} color={pinnedIdSet.has(String(selectedMsg?.id)) ? '#f59e0b' : colors.text} />
-                  <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>
+                  <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>
                     {pinnedIdSet.has(String(selectedMsg?.id)) ? (t('chatConv.unpinMessage') || 'Unpin') : (t('chatConv.pinMessage') || 'Pin')}
                   </Text>
                 </PressableRow>
@@ -30543,12 +30719,12 @@ function ChatConversationInner() {
                 || ((selectedMsg?.type === 'voice' || selectedMsg?.type === 'audio') && selectedMsg?.file_url)
               ) && (
                 <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
-                  style={styles.ctxSecondaryItem}
+                  style={ctxS.ctxSecondaryItem}
                   onPress={() => handleTranslate(selectedMsg)}
                   activeOpacity={0.6}
                 >
                   <IconGlobe size={18} color={colors.text} />
-                  <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>
+                  <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>
                     {translatedMessages[selectedMsg?.id]?.text ? t('chatConv.hideTranslation') : t('chatConv.translate')}
                   </Text>
                 </PressableRow>
@@ -30557,7 +30733,7 @@ function ChatConversationInner() {
               {/* AI: Transcribe + Summarize voice / audio */}
               {!selectedMsg?.deleted_at && (selectedMsg?.type === 'voice' || selectedMsg?.type === 'audio') && selectedMsg?.file_url && (
                 <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
-                  style={styles.ctxSecondaryItem}
+                  style={ctxS.ctxSecondaryItem}
                   onPress={async () => {
                     // Premium gate: free users get 2 transcriptions/day
                     try {
@@ -30618,19 +30794,19 @@ function ChatConversationInner() {
                   activeOpacity={0.6}
                 >
                   <View style={{ marginLeft: 0, marginRight: 4 }}><IconSparkles size={18} color={colors.text} /></View>
-                  <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>Transcrever + resumir</Text>
+                  <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>Transcrever + resumir</Text>
                 </PressableRow>
               )}
 
               {/* Message Info (own messages only) */}
               {selectedMsg?.sender_email === currentEmail && !selectedMsg?.deleted_at && typeof selectedMsg?.id === 'number' && (
                 <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
-                  style={styles.ctxSecondaryItem}
+                  style={ctxS.ctxSecondaryItem}
                   onPress={() => handleMessageInfo(selectedMsg)}
                   activeOpacity={0.6}
                 >
                   <IconInfo size={18} color={colors.text} />
-                  <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.messageInfo')}</Text>
+                  <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.messageInfo')}</Text>
                 </PressableRow>
               )}
 
@@ -30641,20 +30817,23 @@ function ChatConversationInner() {
                   const canEdit = createdAt ? (Date.now() - new Date(createdAt.endsWith('Z') ? createdAt : createdAt + 'Z').getTime()) < 15 * 60 * 1000 : true;
                   return canEdit ? (
                     <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
-                      style={styles.ctxSecondaryItem}
+                      style={ctxS.ctxSecondaryItem}
                       onPress={() => handleEdit(selectedMsg)}
                       activeOpacity={0.6}
                     >
                       <IconEdit size={18} color={colors.text} />
-                      <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.edit')}</Text>
+                      <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.edit')}</Text>
                     </PressableRow>
                   ) : null;
                 })()
               )}
 
-              {/* Select (enters multi-select mode — WhatsApp puts this here) */}
+              {/* Select (enters multi-select mode — WhatsApp puts this here).
+                  Hidden in the lifted-bubble list: "Selecionar" is already a
+                  row of the primary list there. [2026-10-08 chat-native] */}
+              {!ctxAnchor && (
               <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
-                style={styles.ctxSecondaryItem}
+                style={ctxS.ctxSecondaryItem}
                 onPress={() => {
                   const msgId = selectedMsg?.id;
                   setSelectedMsg(null);
@@ -30664,8 +30843,9 @@ function ChatConversationInner() {
                 activeOpacity={0.6}
               >
                 <IconCheck size={18} color={colors.text} />
-                <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.select') || 'Selecionar'}</Text>
+                <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>{t('chatConv.select') || 'Selecionar'}</Text>
               </PressableRow>
+              )}
 
               {/* Per-message "mark as unread" REMOVED 2026-05-25 (dev/owner
                   feedback: confusing — it rolled the whole thread's last_read
@@ -30678,7 +30858,7 @@ function ChatConversationInner() {
               {/* Keep message (in disappearing chats) */}
               {disappearingTimer > 0 && selectedMsg?.id && typeof selectedMsg.id === 'number' && (
                 <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
-                  style={styles.ctxSecondaryItem}
+                  style={ctxS.ctxSecondaryItem}
                   onPress={async () => {
                     const msgId = selectedMsg.id;
                     const isKept = selectedMsg.kept;
@@ -30691,7 +30871,7 @@ function ChatConversationInner() {
                   activeOpacity={0.6}
                 >
                   <IconStar size={18} color={selectedMsg?.kept ? '#f59e0b' : colors.text} />
-                  <Text style={[styles.ctxSecondaryText, { color: colors.text }]}>
+                  <Text style={[ctxS.ctxSecondaryText, { color: colors.text }]}>
                     {selectedMsg?.kept ? (t('chatConv.unkeep') || 'Remover marcação') : (t('chatConv.keep') || 'Manter na conversa')}
                   </Text>
                 </PressableRow>
@@ -30700,15 +30880,16 @@ function ChatConversationInner() {
               {/* Report (other people's messages) */}
               {selectedMsg?.sender_email && selectedMsg.sender_email !== currentEmail && (
                 <PressableRow highlightColor={isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)'}
-                  style={styles.ctxSecondaryItem}
+                  style={ctxS.ctxSecondaryItem}
                   onPress={() => { const email = selectedMsg.sender_email; const msgId = selectedMsg.id; setSelectedMsg(null); handleReportUser(email, msgId); }}
                   activeOpacity={0.6}
                 >
                   <IconAlertTriangle size={18} color={colors.error || '#EF4444'} />
-                  <Text style={[styles.ctxSecondaryText, { color: colors.error || '#EF4444' }]}>{t('chat.reportUser')}</Text>
+                  <Text style={[ctxS.ctxSecondaryText, { color: colors.error || '#EF4444' }]}>{t('chat.reportUser')}</Text>
                 </PressableRow>
               )}
             </View>
+            </CtxBody>
           </Animated.View>
         </Pressable>
       </Modal>

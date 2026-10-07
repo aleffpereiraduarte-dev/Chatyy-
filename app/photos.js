@@ -6,7 +6,8 @@ import {
   useWindowDimensions, Animated, Switch, Alert, Pressable, SectionList,
   Share, Linking, AppState,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton } from '../components/nativeHeader'; // [2026-10-08 apps-native]
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 // expo-image for native (ph:// URIs), standard Image for web
@@ -15,7 +16,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { usePhotos } from '../context/PhotosContext';
-import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, Shadow, haptic } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, setCache } from '../services/cache';
 import { formatBytes, getFileExt, PHOTO_EXTENSIONS, VIDEO_EXTENSIONS } from '../services/format';
@@ -240,6 +241,129 @@ function DeferHeavyMount({ children }) {
   if (!ready) return <View style={{ flex: 1, backgroundColor: colors.background }} />;
   return children;
 }
+
+// [2026-10-08 apps-native] Thumbnail URL resolver hoisted to module scope (it
+// only depends on `api`) so the grid cell below can be a real, stable
+// component. Same logic as the in-component getThumbnailUrl.
+// [2026-10-08 apps-native] i18n with fallback (t() returns the raw key when
+// missing) — lets hardcoded PT strings move to keys without blank labels.
+function tr(t, key, fb, params) {
+  try { const v = t(key, params); return (v && v !== key) ? v : fb; } catch { return fb; }
+}
+
+function thumbUrlFor(photo) {
+  if (!photo) return '';
+  if (!photo.isDevice) {
+    if (photo.cdn_url) return photo.cdn_url;
+    if (photo.thumbnail_url) {
+      const base = photo.thumbnail_url.startsWith('http') ? '' : api.BASE_URL;
+      return base + photo.thumbnail_url;
+    }
+    if (photo.id == null || photo.id === '' || photo.id === 'undefined') return '';
+    return api.fileDownloadUrl(photo.id);
+  }
+  return photo.uri;
+}
+
+// [2026-10-08 apps-native] Grid cell hoisted OUT of PhotosScreenInner. It used
+// to be `const PhotoGridItem = React.memo(...)` declared inside the screen body,
+// i.e. a brand-new component TYPE on every render → React unmounted/remounted
+// every visible thumbnail (image re-decode, flicker, dropped frames) on each
+// state change — including every scroll tick. Now a single module-level memo
+// component with stable handlers (onPressItem/onLongPressItem receive the
+// photo) so cells only re-render when their own props change.
+const PhotoGridItem = React.memo(function PhotoGridItem({ photo, index, isSelected, selectMode: sm, gridItemSize: gis, onPressItem, onLongPressItem, primaryColor }) {
+  const isVideoItem = isVideo(photo);
+  const imageUri = (photo.isDevice && photo.thumbUri) ? photo.thumbUri
+    : (photo.isDevice ? photo.uri : thumbUrlFor(photo));
+
+  // WhatsApp/Google Photos pattern: warm the full-res URL the moment the
+  // finger touches the cell, so the viewer opens with the image ready.
+  const _prefetchFull = useCallback(() => {
+    if (Platform.OS === 'web' || photo.isDevice) return;
+    try {
+      const url = photo.cdn_url || api.fileDownloadUrl(photo.id);
+      if (url) ExpoImage.prefetch?.(url, 'memory-disk');
+    } catch {}
+  }, [photo.id, photo.isDevice, photo.cdn_url]);
+  const _onPress = useCallback(() => onPressItem && onPressItem(photo, index), [onPressItem, photo, index]);
+  const _onLongPress = useCallback(() => onLongPressItem && onLongPressItem(photo, index), [onLongPressItem, photo, index]);
+
+  return (
+    <Pressable
+      onPress={_onPress}
+      onPressIn={_prefetchFull}
+      onLongPress={_onLongPress}
+      delayLongPress={320}
+      accessibilityRole="imagebutton"
+      accessibilityState={sm ? { selected: !!isSelected } : undefined}
+      style={({ pressed }) => [
+        s.gridItem,
+        { width: gis, height: gis, borderRadius: 6 },
+        isSelected && { borderWidth: 3, borderColor: primaryColor },
+        pressed && Platform.OS !== 'web' && { opacity: 0.85 },
+      ]}
+    >
+      <View style={{ flex: 1, backgroundColor: '#e5e7eb' }}>
+        <View style={{ flex: 1 }}>
+          {Platform.OS === 'web' ? (
+            <Image source={{ uri: imageUri }} style={s.gridImage} resizeMode="cover" />
+          ) : photo.thumbUri ? (
+            <Image source={{ uri: photo.thumbUri }} style={s.gridImage} resizeMode="cover" />
+          ) : (
+            <ExpoImage
+              source={{ uri: imageUri }}
+              style={s.gridImage}
+              contentFit="cover"
+              cachePolicy="memory-disk"
+              recyclingKey={String(photo.id)}
+            />
+          )}
+        </View>
+      </View>
+
+      {isVideoItem && (
+        <View style={s.videoDuration}>
+          <IconPlay size={10} color="#fff" />
+          <Text style={s.videoDurationText}>{formatDuration(photo.duration)}</Text>
+        </View>
+      )}
+
+      {/* Backup status seal — discreet tick when backed up, subtle cloud-off when pending. */}
+      {photo.isDevice && !sm && (
+        photo.backedUp ? (
+          <View style={s.syncSeal} pointerEvents="none">
+            <IconCheck size={9} color="#fff" />
+          </View>
+        ) : (
+          <View style={[s.syncSeal, s.syncSealPending]} pointerEvents="none">
+            <IconCloudOff size={10} color="#fff" />
+          </View>
+        )
+      )}
+
+      {photo.starred && !sm && (
+        <View style={s.favoriteOverlay} pointerEvents="none">
+          <View style={s.favoriteOverlayShadow} />
+          <Svg width={16} height={16} viewBox="0 0 24 24">
+            <Path
+              d="M12 21s-7-4.35-7-10a4.5 4.5 0 018-2.83A4.5 4.5 0 0119 11c0 5.65-7 10-7 10z"
+              fill="#fff"
+              stroke="rgba(0,0,0,0.18)"
+              strokeWidth={1}
+            />
+          </Svg>
+        </View>
+      )}
+
+      {sm && (
+        <View style={[s.selectCircle, isSelected && { backgroundColor: primaryColor, borderColor: primaryColor }]}>
+          {isSelected && <IconCheck size={14} color="#fff" />}
+        </View>
+      )}
+    </Pressable>
+  );
+});
 
 export default function PhotosScreen() {
   return <PhotosScreenInner />;
@@ -2708,6 +2832,16 @@ function PhotosScreenInner() {
     return width / gridColumns - GRID_GAP;
   }, [width, gridColumns]);
 
+  // [2026-10-08 apps-native] Rows for the timeline SectionList, memoized. Was
+  // rebuilt inside renderPhotosTab on EVERY render (and every scroll tick).
+  const photoSections = useMemo(() => groupedPhotos.map(g => {
+    const rows = [];
+    for (let i = 0; i < g.data.length; i += gridColumns) {
+      rows.push({ items: g.data.slice(i, i + gridColumns), rowIndex: i });
+    }
+    return { title: g.title, data: rows };
+  }), [groupedPhotos, gridColumns]);
+
   const cycleGridColumns = useCallback(() => {
     // Includes 1-col fullbleed mode (Google Photos: pinch-out to one column)
     const options = isDesktop ? [1, 3, 4, 5, 6] : [1, 3, 4, 5];
@@ -2727,7 +2861,7 @@ function PhotosScreenInner() {
         <View style={[s.backupBanner, { backgroundColor: isDark ? '#451a03' : '#fef2f2', borderColor: '#ef4444' + '40' }]}>
           <View style={s.backupBannerLeft}>
             <View style={{ marginLeft: 10, flex: 1 }}>
-              <Text style={[s.backupBannerTitle, { color: '#ef4444' }]}>Backup indisponível</Text>
+              <Text style={[s.backupBannerTitle, { color: '#ef4444' }]}>{tr(t, 'photos.ux.backupUnavailable', 'Backup indisponível')}</Text>
               <Text style={[s.backupBannerSub, { color: colors.textSecondary }]}>{photoError}</Text>
             </View>
           </View>
@@ -2830,7 +2964,7 @@ function PhotosScreenInner() {
             <View style={s.backupBannerLeft}>
               <ActivityIndicator size="small" color={colors.primary} />
               <View style={{ marginLeft: 10, flex: 1 }}>
-                <Text style={[s.backupBannerTitle, { color: colors.text }]}>Verificando fotos...</Text>
+                <Text style={[s.backupBannerTitle, { color: colors.text }]}>{tr(t, 'photos.ux.checkingPhotos', 'Verificando fotos...')}</Text>
               </View>
             </View>
           </View>
@@ -2990,7 +3124,13 @@ function PhotosScreenInner() {
   const [scrubberVisible, setScrubberVisible] = useState(false);
   const scrubberOpacity = useRef(new Animated.Value(0)).current;
   const scrubberTimer = useRef(null);
-  const [scrollPercent, setScrollPercent] = useState(0);
+  // [2026-10-08 apps-native] Scrubber thumb position is an Animated value set
+  // imperatively from onScroll — it used to be React state updated on every
+  // scroll event (16ms), re-rendering this 7k-line screen at 60Hz.
+  const scrubberThumbY = useRef(new Animated.Value(0)).current;
+  const scrubberTrackH = useRef(0);
+  const scrubberShown = useRef(false);
+  const scrollDateShown = useRef(false);
   const scrollContentHeight = useRef(0);
   const scrollViewHeight = useRef(0);
 
@@ -3092,145 +3232,40 @@ function PhotosScreenInner() {
   // Thumbnails: 200x200 JPEG cached to disk via thumbnailCache service
   // Grid shows cached file:// thumbUri (instant) or ph:// uri as fallback
 
-  // Memoized PhotoGridItem
-  const PhotoGridItem = React.memo(({ photo, index, isSelected, selectMode: sm, gridItemSize: gis, onPress, onLongPress, primaryColor }) => {
-    const isVideoItem = isVideo(photo);
+  // [2026-10-08 apps-native] PhotoGridItem now lives at module scope (see top
+  // of file). Handlers are stable callbacks that receive the photo, so memoized
+  // cells don't re-render on unrelated state changes.
+  // Viewer index is resolved BY ID against filteredPhotos (the viewer's list):
+  // album / people-cluster / ML-search grids pass their LOCAL index, which used
+  // to open the wrong photo in the viewer.
+  const onGridItemPress = useCallback((photo, index) => {
+    if (selectMode) {
+      try { haptic.select(); } catch {}
+      toggleSelect(photo.id);
+      return;
+    }
+    const byId = photoIndexMap.get(photo.id);
+    openViewer(byId != null ? byId : index);
+  }, [selectMode, toggleSelect, openViewer, photoIndexMap]);
+  const onGridItemLongPress = useCallback((photo) => {
+    if (selectMode) return;
+    try { haptic.medium(); } catch {}
+    setSelectMode(true);
+    toggleSelect(photo.id);
+  }, [selectMode, toggleSelect]);
 
-    // Use cached thumbnail (file://) if available, then ph:// URI, then cloud thumbnail
-    const imageUri = (photo.isDevice && photo.thumbUri) ? photo.thumbUri
-      : (photo.isDevice ? photo.uri : getThumbnailUrl(photo));
-
-    // WhatsApp/Google Photos pattern: warm the full-res URL the moment the
-    // finger touches the cell. By the time onPress fires + the viewer modal
-    // mounts (~120-200ms of spring animation), the full image has either
-    // started decoding or is already on disk → no perceived load delay.
-    const _prefetchFull = useCallback(() => {
-      if (Platform.OS === 'web' || photo.isDevice) return;
-      try {
-        const url = photo.cdn_url || api.fileDownloadUrl(photo.id);
-        if (url) ExpoImage.prefetch?.(url, 'memory-disk');
-      } catch {}
-    }, [photo.id, photo.isDevice, photo.cdn_url]);
-
-    return (
-      <Pressable
-        onPress={onPress}
-        onPressIn={_prefetchFull}
-        onLongPress={onLongPress}
-        style={[
-          s.gridItem,
-          { width: gis, height: gis, borderRadius: 6 },
-          isSelected && { borderWidth: 3, borderColor: primaryColor },
-        ]}
-      >
-        <View style={{ flex: 1, backgroundColor: '#e5e7eb' }}>
-          <View style={{ flex: 1 }}>
-            {Platform.OS === 'web' ? (
-              <Image
-                source={{ uri: imageUri }}
-                style={s.gridImage}
-                resizeMode="cover"
-              />
-            ) : photo.thumbUri ? (
-              <Image
-                source={{ uri: photo.thumbUri }}
-                style={s.gridImage}
-                resizeMode="cover"
-              />
-            ) : (
-              <ExpoImage
-                source={{ uri: imageUri }}
-                style={s.gridImage}
-                contentFit="cover"
-                cachePolicy="memory-disk"
-                recyclingKey={photo.id}
-              />
-            )}
-          </View>
-        </View>
-
-        {/* Video duration overlay */}
-        {isVideoItem && (
-          <View style={s.videoDuration}>
-            <IconPlay size={10} color="#fff" />
-            <Text style={s.videoDurationText}>
-              {formatDuration(photo.duration)}
-            </Text>
-          </View>
-        )}
-
-        {/* Backup status seal — discreet (WhatsApp / Google Photos style).
-            Backed-up photos get a small, low-key translucent tick instead of a
-            loud green check-in-a-white-box on every single thumb; photos that
-            are NOT yet backed up get a subtle amber cloud so they stand out as
-            the ones still pending. */}
-        {photo.isDevice && !sm && (
-          photo.backedUp ? (
-            <View style={s.syncSeal} pointerEvents="none">
-              <IconCheck size={9} color="#fff" />
-            </View>
-          ) : (
-            <View style={[s.syncSeal, s.syncSealPending]} pointerEvents="none">
-              <IconCloudOff size={10} color="#fff" />
-            </View>
-          )
-        )}
-
-        {/* Favorite heart overlay (Google Photos style) — top-right */}
-        {photo.starred && !sm && (
-          <View style={s.favoriteOverlay} pointerEvents="none">
-            <View style={s.favoriteOverlayShadow} />
-            <Svg width={16} height={16} viewBox="0 0 24 24">
-              <Path
-                d="M12 21s-7-4.35-7-10a4.5 4.5 0 018-2.83A4.5 4.5 0 0119 11c0 5.65-7 10-7 10z"
-                fill="#fff"
-                stroke="rgba(0,0,0,0.18)"
-                strokeWidth={1}
-              />
-            </Svg>
-          </View>
-        )}
-
-        {/* Selection checkmark */}
-        {sm && (
-          <View style={[
-            s.selectCircle,
-            isSelected && { backgroundColor: primaryColor, borderColor: primaryColor },
-          ]}>
-            {isSelected && <IconCheck size={14} color="#fff" />}
-          </View>
-        )}
-      </Pressable>
-    );
-  });
-
-  const renderPhotoItem = useCallback(({ item: photo, index }) => {
-    const isSelected = selectedItems.has(photo.id);
-
-    return (
-      <PhotoGridItem
-        photo={photo}
-        index={index}
-        isSelected={isSelected}
-        selectMode={selectMode}
-        gridItemSize={gridItemSize}
-        primaryColor={colors.primary}
-        onPress={() => {
-          if (selectMode) {
-            toggleSelect(photo.id);
-          } else {
-            openViewer(index);
-          }
-        }}
-        onLongPress={() => {
-          if (!selectMode) {
-            setSelectMode(true);
-            toggleSelect(photo.id);
-          }
-        }}
-      />
-    );
-  }, [selectMode, selectedItems, gridItemSize, colors, toggleSelect, openViewer, getThumbnailUrl]);
+  const renderPhotoItem = useCallback(({ item: photo, index }) => (
+    <PhotoGridItem
+      photo={photo}
+      index={index}
+      isSelected={selectedItems.has(photo.id)}
+      selectMode={selectMode}
+      gridItemSize={gridItemSize}
+      primaryColor={colors.primary}
+      onPressItem={onGridItemPress}
+      onLongPressItem={onGridItemLongPress}
+    />
+  ), [selectMode, selectedItems, gridItemSize, colors.primary, onGridItemPress, onGridItemLongPress]);
 
   // ============================================================
   // SECTION HEADER
@@ -3253,7 +3288,7 @@ function PhotosScreenInner() {
         ]}
       >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 9 }}>
-          <View style={{ width: 4, height: 16, borderRadius: 3, backgroundColor: '#111111' }} />
+          <View style={{ width: 4, height: 16, borderRadius: 3, backgroundColor: colors.text }} />
           <Text
             style={[
               s.sectionTitle,
@@ -3270,8 +3305,8 @@ function PhotosScreenInner() {
           </Text>
         </View>
         {total > 0 && (
-          <View style={[s.sectionCountChip, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.18)' : 'rgba(17, 17, 17,0.08)' }]}>
-            <Text style={[s.sectionCount, { color: '#111111', fontWeight: '700' }]}>
+          <View style={[s.sectionCountChip, { backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17, 17, 17,0.08)' }]}>
+            <Text style={[s.sectionCount, { color: colors.text, fontWeight: '700' }]}>
               {total}
             </Text>
           </View>
@@ -3310,13 +3345,7 @@ function PhotosScreenInner() {
 
     // Convert grouped into section list format — chunk into rows for proper virtualization
     // Each row is a separate SectionList item, so rows outside viewport are unmounted
-    const sections = groupedPhotos.map(g => {
-      const rows = [];
-      for (let i = 0; i < g.data.length; i += gridColumns) {
-        rows.push({ items: g.data.slice(i, i + gridColumns), rowIndex: i });
-      }
-      return { title: g.title, data: rows };
-    });
+    const sections = photoSections;
 
     const handleScroll = (e) => {
       const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
@@ -3324,7 +3353,8 @@ function PhotosScreenInner() {
       scrollViewHeight.current = layoutMeasurement.height;
       const maxScroll = contentSize.height - layoutMeasurement.height;
       if (maxScroll > 0) {
-        setScrollPercent(contentOffset.y / maxScroll);
+        const pct = Math.max(0, Math.min(contentOffset.y / maxScroll, 1));
+        scrubberThumbY.setValue(pct * Math.max(0, scrubberTrackH.current - 28));
       }
 
       // FAB hide-on-scroll: down past 8px → translate +96 (offscreen);
@@ -3340,10 +3370,14 @@ function PhotosScreenInner() {
       }
       fabLastScrollY.current = y;
 
-      // Show scrubber while scrolling
-      Animated.timing(scrubberOpacity, { toValue: 1, duration: 150, useNativeDriver: false }).start();
+      // Show scrubber while scrolling (start the fade-in once, not per event)
+      if (!scrubberShown.current) {
+        scrubberShown.current = true;
+        Animated.timing(scrubberOpacity, { toValue: 1, duration: 150, useNativeDriver: false }).start();
+      }
       if (scrubberTimer.current) clearTimeout(scrubberTimer.current);
       scrubberTimer.current = setTimeout(() => {
+        scrubberShown.current = false;
         Animated.timing(scrubberOpacity, { toValue: 0, duration: 600, useNativeDriver: false }).start();
       }, 1200);
 
@@ -3359,10 +3393,14 @@ function PhotosScreenInner() {
         accumH += sectionH;
       }
 
-      // Show/hide floating date label
-      Animated.timing(scrollDateOpacity, { toValue: 1, duration: 100, useNativeDriver: false }).start();
+      // Show/hide floating date label (fade-in started once per scroll burst)
+      if (!scrollDateShown.current) {
+        scrollDateShown.current = true;
+        Animated.timing(scrollDateOpacity, { toValue: 1, duration: 100, useNativeDriver: false }).start();
+      }
       if (scrollDateTimer.current) clearTimeout(scrollDateTimer.current);
       scrollDateTimer.current = setTimeout(() => {
+        scrollDateShown.current = false;
         Animated.timing(scrollDateOpacity, { toValue: 0, duration: 400, useNativeDriver: false }).start();
       }, 1000);
     };
@@ -3445,6 +3483,21 @@ function PhotosScreenInner() {
           }
           onEndReached={loadMore}
           onEndReachedThreshold={0.5}
+          // [2026-10-08 apps-native] Favorites/filter with zero hits used to
+          // render a blank list. Show the canonical empty state instead.
+          ListEmptyComponent={
+            <ScreenEmptyState
+              compact
+              kind={showFavorites ? 'photos' : 'search'}
+              title={showFavorites
+                ? ((t('photos.emptyFavoritesTitle') !== 'photos.emptyFavoritesTitle' && t('photos.emptyFavoritesTitle')) || 'Nenhuma favorita ainda')
+                : ((t('photos.emptyFilterTitle') !== 'photos.emptyFilterTitle' && t('photos.emptyFilterTitle')) || 'Nada encontrado')}
+              subtitle={showFavorites
+                ? ((t('photos.emptyFavoritesSub') !== 'photos.emptyFavoritesSub' && t('photos.emptyFavoritesSub')) || 'Toque na estrela de uma foto para guardá-la aqui.')
+                : undefined}
+              secondary={showFavorites ? { label: t('photos.allPhotos'), onPress: () => setShowFavorites(false) } : undefined}
+            />
+          }
           ListHeaderComponent={
             <View>
               {renderBackupBanner()}
@@ -3459,33 +3512,36 @@ function PhotosScreenInner() {
                     marginHorizontal: Spacing.lg, marginTop: 8, marginBottom: 4,
                     paddingHorizontal: 12, paddingVertical: 6,
                     borderRadius: 16,
-                    backgroundColor: isDark ? 'rgba(17, 17, 17,0.22)' : 'rgba(17, 17, 17,0.10)',
+                    backgroundColor: isDark ? 'rgba(255,255,255,0.12)' : 'rgba(17, 17, 17,0.10)',
                     gap: 6,
                   }}
+                  accessibilityRole="button"
                 >
                   {presetLoading ? (
-                    <ActivityIndicator size="small" color="#111111" />
+                    <ActivityIndicator size="small" color={colors.text} />
                   ) : null}
-                  <Text style={{ fontSize: 13, fontWeight: '700', color: '#111111' }}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: colors.text }}>
                     {(() => {
                       // Centralized label resolver — keeps the active-filter
                       // pill in sync with the card list. Falls back to a
                       // capitalized key so a future preset auto-labels even
                       // without a manual entry here.
+                      // [2026-10-08 apps-native] i18n (was hardcoded PT).
+                      const _tr = (k, fb) => { const v = t(k); return (v && v !== k) ? v : fb; };
                       const labels = {
-                        summer: `Verão ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}`,
-                        thisweek: 'Esta semana',
-                        people: 'Pessoas',
-                        selfies: 'Selfies',
-                        food: 'Comida',
-                        pets: 'Pets',
-                        sunset: 'Por do sol',
-                        documents: 'Documentos',
+                        summer: `${_tr('photos.preset.summer', 'Verão')} ${(new Date().getMonth() >= 11 ? new Date().getFullYear() + 1 : new Date().getFullYear())}`,
+                        thisweek: _tr('photos.preset.thisweek', 'Esta semana'),
+                        people: _tr('photos.preset.people', 'Pessoas'),
+                        selfies: _tr('photos.preset.selfies', 'Selfies'),
+                        food: _tr('photos.preset.food', 'Comida'),
+                        pets: _tr('photos.preset.pets', 'Pets'),
+                        sunset: _tr('photos.preset.sunset', 'Pôr do sol'),
+                        documents: _tr('photos.preset.documents', 'Documentos'),
                       };
                       return labels[presetFilter] || (presetFilter.charAt(0).toUpperCase() + presetFilter.slice(1));
                     })()}
                   </Text>
-                  <Text style={{ fontSize: 13, color: '#111111', fontWeight: '700' }}>×</Text>
+                  <IconX size={14} color={colors.text} />
                 </Pressable>
               )}
               {/* Memories — iOS Photos-grade horizontal carousel (320×180 cinematic 16:9). */}
@@ -3528,8 +3584,11 @@ function PhotosScreenInner() {
 
         {/* Timeline scrubber (right side) */}
         <Animated.View style={[s.timelineScrubber, { opacity: scrubberOpacity }]} pointerEvents="none">
-          <View style={[s.scrubberTrack, { backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.18)' }]}>
-            <View style={[s.scrubberThumb, { backgroundColor: colors.primary, top: `${Math.min(scrollPercent * 100, 95)}%` }]} />
+          <View
+            style={[s.scrubberTrack, { backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.18)' }]}
+            onLayout={(e) => { scrubberTrackH.current = e.nativeEvent.layout.height || 0; }}
+          >
+            <Animated.View style={[s.scrubberThumb, { backgroundColor: colors.primary, top: 0, transform: [{ translateY: scrubberThumbY }] }]} />
           </View>
         </Animated.View>
       </View>
@@ -3544,17 +3603,19 @@ function PhotosScreenInner() {
       return loading ? (
         <GridSkeleton count={6} columns={3} />
       ) : (
-        <View style={s.emptyState}>
-          <View style={s.emptyIllustration}>
-            <View style={[s.emptyIconCircle, { backgroundColor: isDark ? 'rgba(17, 17, 17,0.16)' : 'rgba(17, 17, 17,0.08)' }]}>
-              <IconAlbum size={48} color="#111111" />
-            </View>
-          </View>
-          <Text style={[s.emptyTitle, { color: colors.text }]}>{t('photos.noAlbums')}</Text>
-          <Text style={[s.emptySubtitle, { color: colors.textSecondary }]}>
-            {t('photos.noAlbumsDesc') || 'Crie álbuns para organizar suas fotos favoritas.'}
-          </Text>
-        </View>
+        // [2026-10-08 apps-native] Canonical empty state + CTA. The "create
+        // album" tile only exists inside the non-empty grid, so a user with
+        // zero albums had NO way to create the first one from this tab.
+        <ScreenEmptyState
+          kind="photos"
+          title={t('photos.noAlbums')}
+          subtitle={t('photos.noAlbumsDesc') || 'Crie álbuns para organizar suas fotos favoritas.'}
+          cta={{
+            label: (t('photos.createAlbum') !== 'photos.createAlbum' && t('photos.createAlbum')) || 'Criar álbum',
+            icon: 'plus',
+            onPress: () => { try { haptic.light(); } catch {} setCreateAlbumVisible(true); },
+          }}
+        />
       );
     }
 
@@ -3702,7 +3763,7 @@ function PhotosScreenInner() {
             <TouchableOpacity
               onPress={() => { setRenameClusterTarget(viewingCluster); setRenameValue(viewingCluster.person_name || ''); }}
               style={{ padding: 8 }}
-              accessibilityLabel="Renomear"
+              accessibilityLabel={tr(t, 'photos.ux.rename', 'Renomear')}
             >
               <IconEdit size={20} color={colors.text} />
             </TouchableOpacity>
@@ -3833,7 +3894,7 @@ function PhotosScreenInner() {
           <View style={[s.card, { backgroundColor: colors.surface, borderColor: colors.border, padding: 0, overflow: 'hidden' }]}>
             <TextInput
               style={{ padding: 14, fontSize: 15, color: colors.text }}
-              placeholder='Buscar por "cachorro", "praia", "festa"...'
+              placeholder={tr(t, 'photos.ux.mlSearchPlaceholder', 'Buscar por "cachorro", "praia", "festa"...')}
               placeholderTextColor={colors.textTertiary}
               value={searchTabQuery}
               onChangeText={setSearchTabQuery}
@@ -3851,7 +3912,7 @@ function PhotosScreenInner() {
           {searchTabResults.length > 0 && (
             <View style={{ marginTop: Spacing.md }}>
               <Text style={[s.cardTitle, { color: colors.text, marginBottom: 8 }]}>
-                {searchTabResults.length} resultados
+                {tr(t, 'photos.ux.resultsCount', `${searchTabResults.length} resultados`, { count: searchTabResults.length })}
               </Text>
               <View style={s.gridRow}>
                 {searchTabResults.map((photo, idx) => (
@@ -3866,7 +3927,7 @@ function PhotosScreenInner() {
           {/* Faces section */}
           {faceClusters.length > 0 && !searchTabQuery && (
             <View style={{ marginTop: Spacing.lg }}>
-              <Text style={[s.cardTitle, { color: colors.text, marginBottom: 12 }]}>Pessoas</Text>
+              <Text style={[s.cardTitle, { color: colors.text, marginBottom: 12 }]}>{tr(t, 'photos.people', 'Pessoas')}</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 12 }}>
                 {faceClusters.map((cluster, idx) => (
                   <TouchableOpacity key={idx} style={{ alignItems: 'center', width: 80 }}
@@ -3891,7 +3952,7 @@ function PhotosScreenInner() {
           {/* Tag suggestions */}
           {suggestedTags.length > 0 && !searchTabQuery && (
             <View style={{ marginTop: Spacing.lg }}>
-              <Text style={[s.cardTitle, { color: colors.text, marginBottom: 12 }]}>Explorar</Text>
+              <Text style={[s.cardTitle, { color: colors.text, marginBottom: 12 }]}>{tr(t, 'photos.ux.explore', 'Explorar')}</Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
                 {suggestedTags.slice(0, 20).map((tag, idx) => (
                   <TouchableOpacity key={idx}
@@ -3913,7 +3974,7 @@ function PhotosScreenInner() {
                 <SvgCircle cx="11" cy="11" r="8" />
                 <Line x1="21" y1="21" x2="16.65" y2="16.65" />
               </Svg>
-              <Text style={[s.cardTitle, { color: colors.text }]}>Inteligencia Artificial</Text>
+              <Text style={[s.cardTitle, { color: colors.text }]}>{tr(t, 'photos.ux.ai', 'Inteligência Artificial')}</Text>
             </View>
             <Text style={{ color: colors.textSecondary, fontSize: 13, marginBottom: 12 }}>
               Analisa suas fotos com IA para busca por conteudo (pessoas, objetos, cenas, cores)
@@ -3926,7 +3987,7 @@ function PhotosScreenInner() {
               {analyzing ? (
                 <ActivityIndicator size="small" color="#fff" />
               ) : (
-                <Text style={s.backupBtnText}>Analisar fotos</Text>
+                <Text style={s.backupBtnText}>{tr(t, 'photos.ux.analyze', 'Analisar fotos')}</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -4033,7 +4094,7 @@ function PhotosScreenInner() {
               <View style={[s.card, { backgroundColor: isDark ? '#052e16' : '#f0fdf4', borderColor: '#22c55e40', marginBottom: Spacing.md }]}>
                 <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   <IconCheck size={20} color="#22c55e" />
-                  <Text style={{ color: '#22c55e', fontWeight: '600' }}>Backup completo!</Text>
+                  <Text style={{ color: '#22c55e', fontWeight: '600' }}>{tr(t, 'photos.ux.backupComplete', 'Backup completo!')}</Text>
                 </View>
               </View>
             )}
@@ -4042,8 +4103,8 @@ function PhotosScreenInner() {
                 <View style={{ padding: 16, flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                   <Text style={{ fontSize: 20 }}>⏸</Text>
                   <View style={{ flex: 1 }}>
-                    <Text style={{ color: isDark ? '#fbbf24' : '#92400e', fontWeight: '700', fontSize: 14 }}>Backup pausado</Text>
-                    <Text style={{ color: isDark ? '#fde68a' : '#78350f', fontSize: 12, marginTop: 2 }}>Sem progresso há alguns minutos.</Text>
+                    <Text style={{ color: isDark ? '#fbbf24' : '#92400e', fontWeight: '700', fontSize: 14 }}>{tr(t, 'photos.ux.backupPaused', 'Backup pausado')}</Text>
+                    <Text style={{ color: isDark ? '#fde68a' : '#78350f', fontSize: 12, marginTop: 2 }}>{tr(t, 'photos.ux.noProgress', 'Sem progresso há alguns minutos.')}</Text>
                   </View>
                   <TouchableOpacity
                     onPress={() => {
@@ -4056,7 +4117,7 @@ function PhotosScreenInner() {
                     accessibilityLabel="Continuar backup"
                     accessibilityRole="button"
                   >
-                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Continuar</Text>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{tr(t, 'photos.ux.resume', 'Continuar')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     onPress={repairBackup}
@@ -4064,7 +4125,7 @@ function PhotosScreenInner() {
                     accessibilityLabel="Reparar backup"
                     accessibilityRole="button"
                   >
-                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>Reparar</Text>
+                    <Text style={{ color: '#fff', fontWeight: '700', fontSize: 13 }}>{tr(t, 'photos.ux.repair', 'Reparar')}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -4775,14 +4836,81 @@ function PhotosScreenInner() {
     }
   }, [viewerPhoto, getFullUrl]);
 
+  // [2026-10-08 apps-native] Backup status pill — shared by the web header row
+  // and the native header's headerRight.
+  const renderStatusPill = () => {
+                const dc = deviceTotalCount || devicePhotos.length || 0;
+                const realPending = Math.max(0, dc - (backedUpTotal || 0));
+                let mode = null;
+                if (backupStatus === 'backing_up') mode = 'uploading';
+                else if (backupEnabled === false || backupStatus === 'paused') mode = 'paused';
+                else if (dc > 0 && realPending === 0) mode = 'synced';
+                if (!mode) return null;
+                const palette = mode === 'synced'
+                  ? { bg: isDark ? 'rgba(34,197,94,0.14)' : '#DCFCE7', fg: '#16A34A', dot: '#22C55E' }
+                  : mode === 'uploading'
+                  ? { bg: isDark ? 'rgba(255,255,255,0.12)' : '#F1F3F5', fg: colors.text, dot: colors.text }
+                  : { bg: isDark ? 'rgba(245,158,11,0.16)' : '#FEF3C7', fg: '#D97706', dot: '#F59E0B' };
+                const label = mode === 'synced'
+                  ? (t('photos.allSynced') || 'Sincronizado')
+                  : mode === 'uploading'
+                  ? `${t('photos.uploadingShort') || 'Enviando'} ${Math.max(realPending, 1)}`
+                  : (t('photos.paused') || 'Pausado');
+                return (
+                  <Pressable
+                    onPress={() => setActiveTab('backup')}
+                    style={[s.statusPill, { backgroundColor: palette.bg }]}
+                  >
+                    {mode === 'uploading' ? (
+                      <ActivityIndicator size="small" color={palette.fg} style={{ marginRight: 4, transform: [{ scale: 0.7 }] }} />
+                    ) : (
+                      <View style={[s.statusPillDot, { backgroundColor: palette.dot }]} />
+                    )}
+                    <Text style={[s.statusPillText, { color: palette.fg }]} numberOfLines={1}>{label}</Text>
+                  </Pressable>
+                );
+  };
+
   // ============================================================
   // RENDER
   // ============================================================
   return (
     <Animated.View style={[s.container, { backgroundColor: colors.background, opacity: fadeAnim }]}>
+      {/* [2026-10-08 apps-native] Nativo: UINavigationBar / Toolbar Material
+          (título anima com o push, back do sistema, swipe-back). O modo
+          seleção troca título/botões do header nativo. Web mantém o header
+          custom abaixo. */}
+      {USE_NATIVE_HEADER && (
+        <Stack.Screen options={nativeHeaderOptions({
+          colors,
+          isDark,
+          title: selectMode
+            ? `${selectedItems.size} ${t('photos.selected') || 'selecionadas'}`
+            : (t('photos.title') || 'Fotos'),
+          headerLeft: selectMode ? () => (
+            <HeaderIconButton onPress={clearSelection} accessibilityLabel={t('common.cancel') || 'Cancelar'}>
+              <IconX size={24} color={colors.text} />
+            </HeaderIconButton>
+          ) : undefined,
+          headerRight: () => (selectMode ? (
+            <HeaderIconButton onPress={selectAll} accessibilityLabel={t('photos.selectAll') || 'Selecionar tudo'}>
+              <IconCheckCircle size={22} color={colors.text} />
+            </HeaderIconButton>
+          ) : (
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              {renderStatusPill()}
+              {activeTab === 'photos' && (
+                <HeaderIconButton onPress={() => { try { haptic.select(); } catch {} cycleGridColumns(); }} accessibilityLabel={t('photos.gridSize') || 'Tamanho da grade'}>
+                  <IconGrid size={22} color={colors.text} />
+                </HeaderIconButton>
+              )}
+            </View>
+          )),
+        })} />
+      )}
       {/* Header */}
-      <View style={[s.header, { backgroundColor: colors.headerBgSolid, borderBottomColor: colors.headerBorder, paddingTop: insets.top }]}>
-        {selectMode ? (
+      <View style={[s.header, { backgroundColor: colors.headerBgSolid, borderBottomColor: colors.headerBorder, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+        {selectMode && USE_NATIVE_HEADER ? null : selectMode ? (
           // Selection header — Google Photos grade with counter chip
           <View style={s.headerRow}>
             <TouchableOpacity onPress={clearSelection} style={s.headerBtn}>
@@ -4817,6 +4945,7 @@ function PhotosScreenInner() {
         ) : (
           // Normal header
           <>
+            {!USE_NATIVE_HEADER && (
             <View style={s.headerRow}>
               <TouchableOpacity onPress={() => { if (Platform.OS === "web" && window.parent !== window) { try { window.parent.postMessage({ type: "close-side-panel", route: "/photos" }, "*"); } catch {} } else { router.back(); } }} style={s.headerBtn}>
                 <IconArrowLeft size={24} color={colors.text} />
@@ -4825,38 +4954,7 @@ function PhotosScreenInner() {
               <Text style={[s.headerTitle, { color: colors.text, marginLeft: 8 }]}>{t('photos.title')}</Text>
               <View style={{ flex: 1 }} />
               {/* Backup status pill — Tudo sincronizado / Enviando / Pausado */}
-              {(() => {
-                const dc = deviceTotalCount || devicePhotos.length || 0;
-                const realPending = Math.max(0, dc - (backedUpTotal || 0));
-                let mode = null;
-                if (backupStatus === 'backing_up') mode = 'uploading';
-                else if (backupEnabled === false || backupStatus === 'paused') mode = 'paused';
-                else if (dc > 0 && realPending === 0) mode = 'synced';
-                if (!mode) return null;
-                const palette = mode === 'synced'
-                  ? { bg: isDark ? 'rgba(34,197,94,0.14)' : '#DCFCE7', fg: '#16A34A', dot: '#22C55E' }
-                  : mode === 'uploading'
-                  ? { bg: isDark ? 'rgba(17, 17, 17,0.16)' : '#F1F3F5', fg: '#111111', dot: '#111111' }
-                  : { bg: isDark ? 'rgba(245,158,11,0.16)' : '#FEF3C7', fg: '#D97706', dot: '#F59E0B' };
-                const label = mode === 'synced'
-                  ? (t('photos.allSynced') || 'Sincronizado')
-                  : mode === 'uploading'
-                  ? `${t('photos.uploadingShort') || 'Enviando'} ${Math.max(realPending, 1)}`
-                  : (t('photos.paused') || 'Pausado');
-                return (
-                  <Pressable
-                    onPress={() => setActiveTab('backup')}
-                    style={[s.statusPill, { backgroundColor: palette.bg }]}
-                  >
-                    {mode === 'uploading' ? (
-                      <ActivityIndicator size="small" color={palette.fg} style={{ marginRight: 4, transform: [{ scale: 0.7 }] }} />
-                    ) : (
-                      <View style={[s.statusPillDot, { backgroundColor: palette.dot }]} />
-                    )}
-                    <Text style={[s.statusPillText, { color: palette.fg }]} numberOfLines={1}>{label}</Text>
-                  </Pressable>
-                );
-              })()}
+              {renderStatusPill()}
               {activeTab === 'photos' && (
                 <TouchableOpacity onPress={cycleGridColumns} style={[s.headerBtn, { marginLeft: 4 }]}>
                   <IconGrid size={22} color={colors.textSecondary} />
@@ -4864,6 +4962,7 @@ function PhotosScreenInner() {
                 </TouchableOpacity>
               )}
             </View>
+            )}
             {/* Always-visible search bar (Google Photos style) */}
             {(activeTab === 'photos' || activeTab === 'search' || activeTab === 'albums') && (
               <View style={{ paddingHorizontal: Spacing.md, paddingBottom: 8 }}>
@@ -4891,10 +4990,10 @@ function PhotosScreenInner() {
             <ActivityIndicator size="small" color={colors.primary} />
             <View style={{ flex: 1 }}>
               <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>
-                Backup em andamento · {Math.min(backedUpTotal, deviceTotalCount || devicePhotos.length || backedUpTotal)} fotos salvas
+                {tr(t, 'photos.ux.backupInProgress', `Backup em andamento · ${Math.min(backedUpTotal, deviceTotalCount || devicePhotos.length || backedUpTotal)} fotos salvas`, { count: Math.min(backedUpTotal, deviceTotalCount || devicePhotos.length || backedUpTotal) })}
               </Text>
               <Text style={{ color: colors.textSecondary, fontSize: 11, marginTop: 1 }}>
-                Continua mesmo com o app minimizado
+                {tr(t, 'photos.ux.continuesInBackground', 'Continua mesmo com o app minimizado')}
               </Text>
             </View>
           </View>
@@ -4914,7 +5013,7 @@ function PhotosScreenInner() {
             style={{ backgroundColor: isDark ? '#052e16' : '#dcfce7', paddingHorizontal: 16, paddingVertical: 8, flexDirection: 'row', alignItems: 'center', gap: 8 }}
           >
             <IconCheck size={16} color="#22c55e" />
-            <Text style={{ color: '#16a34a', fontSize: 13, fontWeight: '600', flex: 1 }}>Backup completo! {backedUpTotal} fotos salvas</Text>
+            <Text style={{ color: '#16a34a', fontSize: 13, fontWeight: '600', flex: 1 }}>{tr(t, 'photos.ux.backupCompleteCount', `Backup completo! ${backedUpTotal} fotos salvas`, { count: backedUpTotal })}</Text>
             <IconX size={14} color="#16a34a" />
           </TouchableOpacity>
         )}
@@ -5024,10 +5123,7 @@ function PhotosScreenInner() {
             {albumLoading ? (
               <GridSkeleton count={12} columns={3} />
             ) : albumPhotos.length === 0 ? (
-              <View style={s.emptyState}>
-                <IconImage size={64} color={colors.textTertiary} />
-                <Text style={[s.emptyTitle, { color: colors.text }]}>{t('photos.noPhotos') || 'Nenhuma foto'}</Text>
-              </View>
+              <ScreenEmptyState compact kind="photos" title={t('photos.noPhotos') || 'Nenhuma foto'} />
             ) : (
               <FlatList
                 data={albumPhotos}

@@ -4345,10 +4345,10 @@ export default function LiveBroadcastScreen() {
                 emoji palette dump. Each preset gets a tinted gradient bubble
                 + a single-letter monogram (or an SVG when available). */}
             {[
-              { key: 'none',        glyph: '✕',  tint: 'rgba(148,163,184,0.35)', label: t('live.arNone')        || 'Nenhum' },
+              { key: 'none',        svg: 'x',  tint: 'rgba(148,163,184,0.35)', label: t('live.arNone')        || 'Nenhum' },
               { key: 'dog',         glyph: 'D',  tint: 'rgba(251,146,60,0.45)',  label: t('live.arDogEars')     || 'Cachorro' },
               { key: 'sunglasses',  glyph: 'S',  tint: 'rgba(56,189,248,0.45)',  label: t('live.arSunglasses')  || 'Óculos' },
-              { key: 'hearts',      glyph: '♥',  tint: 'rgba(17, 17, 17,0.55)', label: t('live.arHearts')      || 'Corações' },
+              { key: 'hearts',      svg: 'heart', tint: 'rgba(17, 17, 17,0.55)', label: t('live.arHearts')      || 'Corações' },
               { key: 'beauty',      svg: 'sparkles', tint: 'rgba(250,204,21,0.45)', label: t('live.arBeauty')   || 'Suavizar' },
               { key: 'slim',        glyph: '◊',  tint: 'rgba(17, 17, 17,0.45)',  label: t('live.arSlimFace')    || 'Afinar' },
               { key: 'blur',        glyph: '◐',  tint: 'rgba(99,102,241,0.45)',  label: t('live.arBlurBg')      || 'Desfocar' },
@@ -4369,9 +4369,15 @@ export default function LiveBroadcastScreen() {
                   accessibilityState={{ selected: active }}
                 >
                   <View style={[styles.arChipGlyphBubble, { backgroundColor: p.tint }, active && styles.arChipGlyphBubbleActive]}>
+                    {/* [2026-10-08 apps-native] ✕/♥ eram glifos de texto (♥ vira
+                        emoji vermelho no iOS) → SVG */}
                     {p.svg === 'sparkles'
                       ? <IconSparkles size={18} color="#fff" />
-                      : <Text style={styles.arChipGlyph}>{p.glyph}</Text>}
+                      : p.svg === 'x'
+                        ? <IconX size={18} color="#fff" />
+                        : p.svg === 'heart'
+                          ? <IconHeart size={18} color="#fff" />
+                          : <Text style={styles.arChipGlyph}>{p.glyph}</Text>}
                   </View>
                   <Text style={[styles.arChipLabel, active && { color: '#fff', fontWeight: '800' }]} numberOfLines={1}>
                     {p.label}

@@ -13,6 +13,7 @@ import {
   IconCreditCard, IconDiamond,
   // [2026-10-07 apps-menu] Apps drawer redesign icons
   IconMegaphone, IconUsersSmall, IconReels, IconBroadcast,
+  IconCheckCircle, // [2026-10-08 apps-native] tile Tarefas
 } from '../components/Icons';
 import PressableScale from '../components/PressableScale';
 import Svg, { Circle as SvgCircle, Path, Rect, Line, Defs, LinearGradient, Stop } from 'react-native-svg';
@@ -1660,6 +1661,8 @@ const AppsDrawerModal = React.memo(function AppsDrawerModal({ visible, onClose, 
         { key: 'files',    label: t('sidebar.files'),     ic: I(IconFolder, '#0ea5e9'),   route: '/files',      kw: 'arquivos files cloud drive nuvem archivos' },
         { key: 'docs',     label: t('sidebar.documents'), ic: I(IconFileText, '#2563eb'), route: '/documentos', kw: 'docs documentos documents planilhas sheets' },
         { key: 'notes',    label: t('sidebar.notes'),     ic: I(IconStickyNote, '#d97706'), route: '/notes',    kw: 'notas notes anotacoes' },
+        // [2026-10-08 apps-native] /tasks existia (pendentes/concluídas, criada de e-mail) mas não tinha tile.
+        { key: 'tasks',    label: t('tasks.title'),       ic: I(IconCheckCircle, '#7c3aed'), route: '/tasks',   kw: 'tarefas tasks todo afazeres pendentes tareas' },
         { key: 'photos',   label: t('sidebar.photos'),    ic: I(IconImage, '#14b8a6'),    route: '/photos',     kw: 'fotos photos galeria gallery imagens' },
       ],
     },

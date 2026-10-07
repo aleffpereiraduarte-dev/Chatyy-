@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLanguage } from '../context/LanguageContext';
 import { subscribeEmailUndo, getEmailUndo, undoEmailSend, dismissEmailUndo } from '../services/emailUndo';
+import { initEmailOutbox } from '../services/emailOutbox';
 
 export default function EmailUndoBar() {
   const [st, setSt] = useState(getEmailUndo());
@@ -16,6 +17,9 @@ export default function EmailUndoBar() {
   const { t } = useLanguage();
 
   useEffect(() => subscribeEmailUndo(setSt), []);
+  // [2026-10-08 email-outbox] this bar is mounted once globally — wire the
+  // outbox drain triggers (foreground / reconnect / account switch) here.
+  useEffect(() => { try { initEmailOutbox(); } catch {} }, []);
   useEffect(() => {
     if (!st || st.phase !== 'pending') return undefined;
     const id = setInterval(() => setTick((n) => n + 1), 500);
@@ -24,6 +28,7 @@ export default function EmailUndoBar() {
 
   if (!st) return null;
   const pending = st.phase === 'pending';
+  const outbox = st.phase === 'outbox' || st.phase === 'sending';
   const left = Math.max(0, Math.ceil((st.until - Date.now()) / 1000));
 
   const onUndo = async () => {
@@ -37,11 +42,15 @@ export default function EmailUndoBar() {
     <View pointerEvents="box-none" style={[st_.wrap, { bottom: Math.max(insets.bottom, 12) + 64 }]}>
       <View style={st_.bar} accessibilityLiveRegion="polite">
         <Text style={st_.text} numberOfLines={1}>
-          {pending ? (t('compose.sendingUndo') || 'Enviando…') : (t('compose.sentToast') || 'E-mail enviado')}
+          {pending || st.phase === 'sending' ? t('compose.sendingUndo') : outbox ? t('emailOutbox.queuedToast') : t('compose.sentToast')}
         </Text>
-        {pending ? (
+        {outbox ? (
+          <TouchableOpacity onPress={() => { dismissEmailUndo(); try { router.push('/email-outbox'); } catch {} }} hitSlop={10} accessibilityRole="button" style={st_.btn}>
+            <Text style={st_.btnText}>{t('emailOutbox.view')}</Text>
+          </TouchableOpacity>
+        ) : pending ? (
           <TouchableOpacity onPress={onUndo} hitSlop={10} accessibilityRole="button" style={st_.btn}>
-            <Text style={st_.btnText}>{(t('undo.button') || 'Desfazer') + (left > 0 ? ` (${left})` : '')}</Text>
+            <Text style={st_.btnText}>{t('undo.button') + (left > 0 ? ` (${left})` : '')}</Text>
           </TouchableOpacity>
         ) : (
           <TouchableOpacity onPress={dismissEmailUndo} hitSlop={10} accessibilityRole="button" style={st_.btn}>

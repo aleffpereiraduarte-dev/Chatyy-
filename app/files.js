@@ -3,14 +3,15 @@ import {
   View, FlatList, SectionList, Text, TouchableOpacity, StyleSheet, TextInput,
   ActivityIndicator, RefreshControl, Alert, Platform, Modal, Linking, Image,
   Animated, Easing, ScrollView, useWindowDimensions, KeyboardAvoidingView,
+  BackHandler,
 } from 'react-native';
 // FlashList reverted to FlatList
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
-import { BorderRadius, FontSize, Spacing, Shadow } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, Shadow, haptic } from '../constants/theme';
 import * as api from '../services/api';
 import { getCached, getCachedSync, setCache } from '../services/cache';
 import { safeAlert } from '../services/alerts';
@@ -21,11 +22,16 @@ import {
   IconEdit, IconMoreVert, IconArrowLeft, IconPlus, IconClock, IconChevronRight,
   IconPaperclip, IconCheck, IconX, IconArchive, IconCamera, IconInbox,
   IconEye, IconPlay, IconCloud, IconSparkles,
+  IconGrid, IconMenu, IconFilter, IconChevronUp, IconChevronDown,
 } from '../components/Icons';
 import FileViewer from '../components/FileViewer';
 import { ListSkeleton } from '../components/SkeletonLoader';
 import EmptyStateCard from '../components/EmptyStateCard';
 import ScreenEmptyState from '../components/ScreenEmptyState';
+// [2026-10-08 apps-native] header nativo + células com feedback nativo + boundary padrão
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderIconButton, HeaderBackButton } from '../components/nativeHeader';
+import PressableRow from '../components/PressableRow';
+import ErrorBoundary from '../components/ErrorBoundary';
 import Svg, { Defs, LinearGradient as SvgLinearGradient, Stop, Path, Circle as SvgCircle, Rect as SvgRect } from 'react-native-svg';
 
 const TABS = ['all', 'recent', 'starred', 'trash'];
@@ -149,11 +155,12 @@ function glassStyle(isDark) {
 }
 
 function glassCardBg(isDark) {
-  return isDark ? 'rgba(30,41,59,0.6)' : 'rgba(255,255,255,0.72)';
+  // [2026-10-08 apps-native] dark neutro (era slate azulado) — P&B
+  return isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.72)';
 }
 
 function glassHeaderBg(isDark) {
-  return isDark ? 'rgba(15,23,42,0.85)' : 'rgba(248,250,252,0.82)';
+  return isDark ? 'rgba(10,10,10,0.85)' : 'rgba(248,250,252,0.82)';
 }
 
 // ============================================================
@@ -164,7 +171,6 @@ function FolderCard({ folder, colors, onPress, onLongPress, onContextMenu, t, is
   const folderColor = getFolderColor(folder.id);
   const folderBg = isDark ? folderColor + '18' : folderColor + '10';
   const hoverAnim = useRef(new Animated.Value(0)).current;
-  const pressAnim = useRef(new Animated.Value(0)).current;
 
   const onHoverIn = () => {
     if (!isWeb) return;
@@ -175,17 +181,8 @@ function FolderCard({ folder, colors, onPress, onLongPress, onContextMenu, t, is
     Animated.timing(hoverAnim, { toValue: 0, duration: 220, useNativeDriver: false, easing: Easing.out(Easing.quad) }).start();
   };
 
-  const onPressIn = () => {
-    Animated.timing(pressAnim, { toValue: 1, duration: 80, useNativeDriver: false }).start();
-  };
-  const onPressOut = () => {
-    Animated.timing(pressAnim, { toValue: 0, duration: 200, useNativeDriver: false }).start();
-  };
-
-  const animatedBg = pressAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: [glassCardBg(isDark), isDark ? 'rgba(96,165,250,0.12)' : 'rgba(37,99,235,0.08)'],
-  });
+  // [2026-10-08 apps-native] Sem overlay azul animado (JS-driver, fora do P&B):
+  // PressableRow dá o highlight nativo (iOS cell gray / Android ripple).
 
   const animatedStyle = isWeb ? {
     transform: [{ scale: hoverAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.02] }) }],
@@ -194,22 +191,24 @@ function FolderCard({ folder, colors, onPress, onLongPress, onContextMenu, t, is
 
   return (
     <Animated.View style={animatedStyle}>
-      <TouchableOpacity
+      <PressableRow
         style={[
           styles.itemCard,
           {
+            backgroundColor: glassCardBg(isDark),
             borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+            // Android: recorta o ripple no raio; iOS mantém a sombra (overflow clipa sombra)
+            ...(Platform.OS === 'android' ? { overflow: 'hidden' } : null),
           },
           glassStyle(isDark),
         ]}
         onPress={onPress}
         onLongPress={onLongPress}
-        onPressIn={onPressIn}
-        onPressOut={onPressOut}
-        activeOpacity={0.7}
+        delayLongPress={350}
+        accessibilityRole="button"
+        accessibilityLabel={folder.name}
         {...(isWeb ? { onMouseEnter: onHoverIn, onMouseLeave: onHoverOut, onContextMenu } : {})}
       >
-        <Animated.View style={[StyleSheet.absoluteFill, { backgroundColor: animatedBg, borderRadius: BorderRadius.xl }]} />
         <View style={[styles.itemIconWrap, { backgroundColor: folderBg }]}>
           <IconFolder size={24} color={folderColor} />
         </View>
@@ -231,7 +230,7 @@ function FolderCard({ folder, colors, onPress, onLongPress, onContextMenu, t, is
         <View style={[styles.folderChevron, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)' }]}>
           <IconChevronRight size={16} color={colors.textTertiary} />
         </View>
-      </TouchableOpacity>
+      </PressableRow>
     </Animated.View>
   );
 }
@@ -279,12 +278,14 @@ function FileCard({ file, colors, onPress, onLongPress, onContextMenu, onStar, t
 
   return (
     <Animated.View style={animatedStyle}>
-      <TouchableOpacity
+      <PressableRow
         style={[
           styles.itemCard,
           {
             backgroundColor: glassCardBg(isDark),
             borderColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+            // Android: recorta o ripple no raio; iOS mantém a sombra (overflow clipa sombra)
+            ...(Platform.OS === 'android' ? { overflow: 'hidden' } : null),
           },
           glassStyle(isDark),
           isSelected && {
@@ -295,7 +296,9 @@ function FileCard({ file, colors, onPress, onLongPress, onContextMenu, onStar, t
         ]}
         onPress={multiSelect ? onSelect : onPress}
         onLongPress={onLongPress}
-        activeOpacity={0.7}
+        delayLongPress={350}
+        accessibilityRole="button"
+        accessibilityLabel={file.original_name}
         {...(isWeb ? { onMouseEnter: onHoverIn, onMouseLeave: onHoverOut, onContextMenu } : {})}
       >
         {multiSelect && (
@@ -360,14 +363,14 @@ function FileCard({ file, colors, onPress, onLongPress, onContextMenu, onStar, t
             </Text>
           ) : null}
         </View>
-        <TouchableOpacity onPress={onStar} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={styles.starBtn}>
+        <TouchableOpacity onPress={() => { haptic.select(); onStar && onStar(); }} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }} style={styles.starBtn} accessibilityRole="button" accessibilityLabel={t?.('files.starred')}>
           {file.is_starred === 1 ? (
             <IconStarFilled size={18} color={colors.starColor || '#f59e0b'} />
           ) : (
             <IconStar size={18} color={isDark ? 'rgba(255,255,255,0.15)' : colors.textTertiary} />
           )}
         </TouchableOpacity>
-      </TouchableOpacity>
+      </PressableRow>
     </Animated.View>
   );
 }
@@ -401,7 +404,7 @@ function BreadcrumbCrumb({ children, isActive, isDark, colors, onPress, withIcon
 
 function BreadcrumbBar({ breadcrumb, colors, onNavigate, t, isDark }) {
   return (
-    <View style={[styles.breadcrumb, { backgroundColor: isDark ? 'rgba(30,41,59,0.4)' : 'rgba(241,245,249,0.6)' }]}>
+    <View style={[styles.breadcrumb, { backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(241,245,249,0.6)' }]}>
       <BreadcrumbCrumb
         isActive={breadcrumb.length === 0}
         isDark={isDark}
@@ -645,22 +648,6 @@ function GridCardPressable({ children, style, onPress, onLongPress, onContextMen
 // ERROR BOUNDARY
 // ============================================================
 
-class FilesErrorBoundary extends React.Component {
-  state = { error: null };
-  static getDerivedStateFromError(error) { return { error }; }
-  render() {
-    if (this.state.error) {
-      return (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-          <Text style={{ fontSize: 18, fontWeight: '700', color: '#dc2626', marginBottom: 12 }}>Files Error</Text>
-          <Text style={{ fontSize: 13, color: '#666', textAlign: 'center' }}>{String(this.state.error)}</Text>
-        </View>
-      );
-    }
-    return this.props.children;
-  }
-}
-
 // [cold-start 2026-10-01] This screen opens with a 'fade' transition and mounts
 // a heavy tree. Mounting during the fade hitched the first frame. Defer the
 // heavy mount until the transition's interaction settles (one frame later,
@@ -685,11 +672,14 @@ function DeferHeavyMount({ children }) {
   return children;
 }
 
+// [2026-10-08 apps-native] ErrorBoundary padrão do app (ícone + "tentar de
+// novo" + Sentry + crashReporter) no lugar do FilesErrorBoundary local, que
+// mostrava "Files Error" cru em vermelho com a mensagem da exceção.
 export default function FilesScreenWrapper() {
   return (
-    <FilesErrorBoundary>
+    <ErrorBoundary>
       <FilesScreenInner />
-    </FilesErrorBoundary>
+    </ErrorBoundary>
   );
 }
 
@@ -948,7 +938,7 @@ function PhotosTimelineView({
   }, [timeline]);
 
   const renderSectionHeader = ({ section }) => (
-    <View style={[photosStyles.sectionHeader, { backgroundColor: isDark ? 'rgba(15,23,42,0.9)' : 'rgba(248,250,252,0.9)' }]}>
+    <View style={[photosStyles.sectionHeader, { backgroundColor: isDark ? 'rgba(10,10,10,0.92)' : 'rgba(248,250,252,0.9)' }]}>
       <Text style={[photosStyles.sectionTitle, { color: colors.text }]}>{section.title}</Text>
       <Text style={[photosStyles.sectionCount, { color: colors.textTertiary }]}>
         {section.count} {section.count === 1 ? 'item' : 'items'}
@@ -1119,6 +1109,9 @@ function FilesScreenInner() {
     return true;
   });
   const [refreshing, setRefreshing] = useState(false);
+  // [2026-10-08 apps-native] Falha de rede SEM cache caía no empty state
+  // ("nenhum arquivo") — enganoso. Agora vira estado de erro com "tentar de novo".
+  const [loadError, setLoadError] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadingFile, setUploadingFile] = useState('');
   const [uploadProgress, setUploadProgress] = useState(0); // 0..100, 0 = indeterminate
@@ -1486,7 +1479,10 @@ function FilesScreenInner() {
         folderCache.current[cacheKey] = data;
         setAllFolders(data.folders);
         setAllFiles(data.files);
+        setLoadError(false);
         setCache(persistKey, data, 7776000000).catch(() => {});
+      } else if (!folderCache.current[cacheKey]) {
+        setLoadError(true);
       }
       // Load trash separately only if on trash tab
       if (tab === 'trash') {
@@ -1502,7 +1498,9 @@ function FilesScreenInner() {
           setAllTrash((rt.data?.files || []).map(normalizeTrash));
         }
       }
-    } catch {} finally {
+    } catch {
+      if (requestId === loadRequestIdRef.current && !folderCache.current[cacheKey]) setLoadError(true);
+    } finally {
       if (requestId === loadRequestIdRef.current) {
         setLoading(false);
         setRefreshing(false);
@@ -2282,6 +2280,34 @@ function FilesScreenInner() {
     setShowSortMenu(false);
   }, [sortBy]);
 
+  // [2026-10-08 apps-native] "Voltar" contextual: sai da seleção → sai da busca
+  // → sobe uma pasta → só então fecha a tela. Antes o back do Android (gesto /
+  // botão) fechava o Drive inteiro mesmo 3 pastas adentro.
+  const searchBarRef = useRef(null);
+  const handleContextBack = useCallback(() => {
+    if (multiSelect) { exitMultiSelect(); return true; }
+    if (searchMode) {
+      toggleSearchMode(false);
+      try { searchBarRef.current?.clearText?.(); searchBarRef.current?.blur?.(); } catch {}
+      return true;
+    }
+    if (tab === 'all' && breadcrumb.length > 0) {
+      const parent = breadcrumb.length > 1 ? breadcrumb[breadcrumb.length - 2].id : null;
+      navigateToFolder(parent);
+      return true;
+    }
+    return false;
+  }, [multiSelect, exitMultiSelect, searchMode, toggleSearchMode, tab, breadcrumb, navigateToFolder]);
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', handleContextBack);
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, [handleContextBack]);
+  // Mostra o back custom no header nativo só quando o back tem que fazer algo
+  // dentro da tela (pasta/busca/seleção); senão fica o back do sistema
+  // (chevron com menu de long-press + swipe-back sincronizado).
+  const needsContextBack = multiSelect || searchMode || (tab === 'all' && breadcrumb.length > 0);
+
   // ---- RENDER LIST DATA ----
   const displayFolders = searchResults ? (searchResults.folders || []) : folders;
   const displayFiles = searchResults ? (searchResults.files || []) : files;
@@ -2301,7 +2327,7 @@ function FilesScreenInner() {
           folder={item}
           colors={colors}
           onPress={() => navigateToFolder(item.id)}
-          onLongPress={() => showActionMenu('folder', item)}
+          onLongPress={() => { haptic.medium(); showActionMenu('folder', item); }}
           onContextMenu={isWeb ? (e) => { e?.preventDefault?.(); showActionMenu('folder', item); } : undefined}
           t={t}
           isDark={isDark}
@@ -2328,14 +2354,9 @@ function FilesScreenInner() {
         }}
         onContextMenu={isWeb ? (e) => { e?.preventDefault?.(); showActionMenu(tab === 'trash' ? 'trash_file' : 'file', item); } : undefined}
         onLongPress={() => {
-          // Long-press always opens action menu
+          // Long-press always opens action menu (haptic médio = menu de contexto iOS)
+          haptic.medium();
           showActionMenu(tab === 'trash' ? 'trash_file' : 'file', item);
-          return;
-          if (!multiSelect && tab !== 'trash') {
-            enterMultiSelect(item.id);
-          } else {
-            showActionMenu(tab === 'trash' ? 'trash_file' : 'file', item);
-          }
         }}
         onStar={() => tab !== 'trash' && handleStar(item.id)}
         isDark={isDark}
@@ -2346,6 +2367,17 @@ function FilesScreenInner() {
 
   const renderEmpty = () => {
     if (loading) return null;
+    if (loadError && !searchMode && tab !== 'trash') {
+      const tr = (k, fb) => { const v = t(k); return v && v !== k ? v : fb; };
+      return (
+        <ScreenEmptyState
+          kind="files"
+          title={tr('files.loadErrorTitle', 'Não foi possível carregar')}
+          subtitle={tr('files.loadErrorDesc', 'Verifique sua conexão e tente de novo.')}
+          cta={{ label: tr('common.retry', 'Tentar novamente'), onPress: () => { haptic.light(); setLoading(true); loadAllFiles(true); } }}
+        />
+      );
+    }
     return <FilesEmptyState tab={tab} isDark={isDark} colors={colors} t={t} onUpload={handleUpload} onNewFolder={() => setNewFolderModal(true)} searchMode={searchMode} />;
   };
 
@@ -2468,7 +2500,7 @@ function FilesScreenInner() {
 
   return (
     <View
-      style={[styles.container, { backgroundColor: colors.background, paddingTop: insets.top }]}
+      style={[styles.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}
       {...(isWeb ? {
         onDragOver: handleDragOver,
         onDragEnter: handleDragEnter,
@@ -2495,7 +2527,7 @@ function FilesScreenInner() {
           <View style={{
             paddingHorizontal: 24,
             paddingVertical: 16,
-            backgroundColor: isDark ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.95)',
+            backgroundColor: isDark ? 'rgba(20,20,20,0.92)' : 'rgba(255,255,255,0.95)',
             borderRadius: BorderRadius.xl,
             borderWidth: 1,
             borderColor: colors.primary + '40',
@@ -2510,9 +2542,57 @@ function FilesScreenInner() {
           </View>
         </View>
       )}
-      {/* Header — Chatyy purple gradient (matches inbox.js + chat.js).
-          Wave 3 brand harmonization: era frosted glass branco, agora compartilha
-          o gradient roxo das outras superfícies top-level. */}
+      {/* [2026-10-08 apps-native] Nativo: UINavigationBar / Toolbar Material via
+          components/nativeHeader (título anima junto com o push, swipe-back,
+          busca NATIVA — UISearchController / SearchView). Back custom só quando
+          há navegação interna (pasta/busca/seleção). Web mantém o header antigo. */}
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={(() => {
+          const o = nativeHeaderOptions({
+            colors,
+            title: multiSelect ? t('files.selectedCount', { count: selectedIds.size }) : headerTitle,
+            headerLeft: needsContextBack
+              ? () => <HeaderBackButton onPress={handleContextBack} color={colors.text} accessibilityLabel={t('common.back')} />
+              : undefined,
+            headerRight: () => (
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                {mainMode === 'files' && !searchMode && (
+                  <>
+                    <HeaderIconButton
+                      onPress={() => { haptic.select(); setViewMode(v => v === 'list' ? 'grid' : 'list'); }}
+                      accessibilityLabel={viewMode === 'list' ? 'Grid' : 'List'}
+                    >
+                      {viewMode === 'list' ? <IconGrid size={21} color={colors.text} /> : <IconMenu size={22} color={colors.text} />}
+                    </HeaderIconButton>
+                    <HeaderIconButton
+                      onPress={() => setShowSortMenu(v => !v)}
+                      accessibilityLabel={t('files.sortName') || 'Sort'}
+                    >
+                      <IconFilter size={21} color={colors.text} />
+                    </HeaderIconButton>
+                  </>
+                )}
+              </View>
+            ),
+            search: {
+              ref: searchBarRef,
+              placeholder: t('files.searchPlaceholder'),
+              onFocus: () => { if (!searchMode) toggleSearchMode(true); },
+              onChangeText: (e) => {
+                const v = e?.nativeEvent?.text ?? '';
+                if (!searchMode) toggleSearchMode(true);
+                onSearchChange(v);
+              },
+              onCancelButtonPress: () => toggleSearchMode(false),
+              onClose: () => toggleSearchMode(false),
+            },
+          });
+          if (!needsContextBack) { o.headerLeft = undefined; o.headerBackVisible = true; }
+          // iOS: swipe-back dentro de subpasta fecharia o Drive inteiro.
+          o.gestureEnabled = !needsContextBack;
+          return o;
+        })()} />
+      ) : (
       <View style={[
         styles.header,
         {
@@ -2614,6 +2694,7 @@ function FilesScreenInner() {
           </>
         )}
       </View>
+      )}
 
       {/* Sort menu dropdown */}
       {showSortMenu && (
@@ -2623,7 +2704,7 @@ function FilesScreenInner() {
           onPress={() => setShowSortMenu(false)}
           activeOpacity={1}
         />
-        <View style={[styles.sortMenu, { backgroundColor: colors.surface, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
+        <View style={[styles.sortMenu, USE_NATIVE_HEADER && { top: 4, right: 12 }, { backgroundColor: colors.surface, borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)' }]}>
           {[
             { key: 'name', label: t('files.sortName') || 'Name' },
             { key: 'date', label: t('files.sortDate') || 'Date' },
@@ -2633,15 +2714,15 @@ function FilesScreenInner() {
             <TouchableOpacity
               key={opt.key}
               style={[styles.sortMenuItem, sortBy === opt.key && { backgroundColor: isDark ? colors.primary + '1f' : colors.primary + '0f' }]}
-              onPress={() => handleSort(opt.key)}
+              onPress={() => { haptic.select(); handleSort(opt.key); }}
               activeOpacity={0.6}
             >
               <Text style={[styles.sortMenuText, { color: sortBy === opt.key ? colors.primary : colors.text }]}>
                 {opt.label}
               </Text>
-              {sortBy === opt.key && (
-                <Text style={{ color: colors.primary, fontSize: 12 }}>{sortAsc ? '\u2191' : '\u2193'}</Text>
-              )}
+              {sortBy === opt.key && (sortAsc
+                ? <IconChevronUp size={14} color={colors.primary} />
+                : <IconChevronDown size={14} color={colors.primary} />)}
             </TouchableOpacity>
           ))}
         </View>
@@ -2696,7 +2777,7 @@ function FilesScreenInner() {
 
       {/* Mode Toggle: Files / Photos */}
       {!searchMode && !multiSelect && (
-        <View style={[photosStyles.modeToggleWrap, { backgroundColor: isDark ? 'rgba(30,41,59,0.5)' : 'rgba(241,245,249,0.8)' }]}>
+        <View style={[photosStyles.modeToggleWrap, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(241,245,249,0.8)' }]}>
           <TouchableOpacity
             style={[
               photosStyles.modeToggleBtn,
@@ -2704,7 +2785,7 @@ function FilesScreenInner() {
                 { backgroundColor: isDark ? colors.primary + '25' : colors.primary },
               ],
             ]}
-            onPress={() => setMainMode('files')}
+            onPress={() => { if (mainMode !== 'files') haptic.select(); setMainMode('files'); }}
             activeOpacity={0.7}
           >
             <IconFolder size={14} color={mainMode === 'files' ? (isDark ? colors.primary : colors.onPrimary) : colors.textSecondary} />
@@ -2720,16 +2801,16 @@ function FilesScreenInner() {
             style={[
               photosStyles.modeToggleBtn,
               mainMode === 'photos' && [
-                { backgroundColor: isDark ? colors.warning + '25' : colors.warning },
+                { backgroundColor: isDark ? colors.primary + '25' : colors.primary },
               ],
             ]}
-            onPress={() => setMainMode('photos')}
+            onPress={() => { if (mainMode !== 'photos') haptic.select(); setMainMode('photos'); }}
             activeOpacity={0.7}
           >
-            <IconImage size={14} color={mainMode === 'photos' ? (isDark ? colors.warning : colors.onPrimary) : colors.textSecondary} />
+            <IconImage size={14} color={mainMode === 'photos' ? (isDark ? colors.primary : colors.onPrimary) : colors.textSecondary} />
             <Text style={[
               photosStyles.modeToggleText,
-              { color: mainMode === 'photos' ? (isDark ? colors.warning : colors.onPrimary) : colors.textSecondary },
+              { color: mainMode === 'photos' ? (isDark ? colors.primary : colors.onPrimary) : colors.textSecondary },
               mainMode === 'photos' && { fontWeight: '700' },
             ]}>
               {t('files.tabPhotos')}
@@ -2740,7 +2821,7 @@ function FilesScreenInner() {
 
       {/* Tab Bar (only in files mode) */}
       {!searchMode && !multiSelect && mainMode === 'files' && (
-        <View style={[styles.tabBar, { backgroundColor: isDark ? 'rgba(30,41,59,0.5)' : 'rgba(241,245,249,0.8)' }]}>
+        <View style={[styles.tabBar, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(241,245,249,0.8)' }]}>
           {TABS.map((key) => {
             const TabIcon = key === 'all' ? IconInbox : key === 'recent' ? IconClock : key === 'starred' ? IconStarFilled : IconTrash;
             const isActive = tab === key;
@@ -2754,7 +2835,7 @@ function FilesScreenInner() {
                     isDark && isWeb && { boxShadow: `0 0 10px ${colors.primary}30` },
                   ],
                 ]}
-                onPress={() => { setTab(key); setCurrentFolderId(null); exitMultiSelect(); }}
+                onPress={() => { if (tab !== key) haptic.select(); setTab(key); setCurrentFolderId(null); breadcrumbStackRef.current = []; setBreadcrumb([]); exitMultiSelect(); }}
               >
                 <View style={styles.tabContent}>
                   <TabIcon size={14} color={isActive ? (isDark ? colors.primary : colors.onPrimary) : colors.textSecondary} />
@@ -2905,11 +2986,10 @@ function FilesScreenInner() {
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} progressBackgroundColor={colors.surface} />
             }
-            getItemLayout={viewMode === 'list' ? (data, index) => ({
-              length: 76,
-              offset: 76 * index,
-              index,
-            }) : undefined}
+            // [2026-10-08 apps-native] getItemLayout(76) removido: o card real
+            // tem ~86-92pt (padding 16×2 + ícone 48 + borda + margem + gap) e as
+            // linhas da lixeira têm uma linha extra → offsets errados = pulos de
+            // scroll e células em branco com removeClippedSubviews.
             maxToRenderPerBatch={20}
             windowSize={10}
             initialNumToRender={20}

@@ -3,12 +3,19 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, Platform, ActivityIndicator,
   Modal, Pressable, FlatList, TextInput, Alert, RefreshControl, ScrollView,
+  BackHandler,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, Stack } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../context/ThemeContext';
 import { useLanguage } from '../context/LanguageContext';
-import { BorderRadius, FontSize, Spacing } from '../constants/theme';
+import { BorderRadius, FontSize, Spacing, haptic } from '../constants/theme';
+// [2026-10-08 apps-native] header nativo, células nativas, skeleton + empty canônicos
+import { USE_NATIVE_HEADER, nativeHeaderOptions, HeaderBackButton } from '../components/nativeHeader';
+import PressableRow from '../components/PressableRow';
+import PressableScale from '../components/PressableScale';
+import ScreenEmptyState from '../components/ScreenEmptyState';
+import { ListSkeleton } from '../components/SkeletonLoader';
 import {
   IconArrowLeft, IconPlus, IconFileText, IconBarChart, IconTrash,
   IconEdit, IconCopy, IconShare, IconSearch, IconMoreVert, IconFolder,
@@ -96,6 +103,10 @@ function DocumentosScreenInner() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
+  // [2026-10-08 apps-native] searchInput = o que o usuário digita; searchQuery
+  // = valor com debounce (300ms) que dispara a busca. Antes cada tecla fazia
+  // um docs_list no servidor (e piscava o spinner de tela cheia).
+  const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [showCreateMenu, setShowCreateMenu] = useState(false);
@@ -128,7 +139,9 @@ function DocumentosScreenInner() {
       } catch {
         setLoading(true);
       }
-    } else if (!isRefresh) {
+    } else if (!isRefresh && !documents.length) {
+      // [2026-10-08 apps-native] busca não apaga mais a lista atual com
+      // loading de tela cheia — os resultados substituem quando chegam.
       setLoading(true);
     }
 
@@ -163,6 +176,16 @@ function DocumentosScreenInner() {
 
   useEffect(() => { fetchDocs(); }, [fetchDocs]);
 
+  useEffect(() => {
+    const v = searchInput.trim();
+    if (v === searchQuery) return undefined;
+    const id = setTimeout(() => setSearchQuery(v), v ? 300 : 0);
+    return () => clearTimeout(id);
+  }, [searchInput, searchQuery]);
+
+  // tr(): t() devolve a própria chave quando falta tradução → fallback legível.
+  const tr = useCallback((k, fb) => { const v = t(k); return v && v !== k ? v : fb; }, [t]);
+
   // Actions
   const handleOpenDoc = useCallback((doc) => {
     const docId = doc.doc_id || doc.id;
@@ -182,6 +205,7 @@ function DocumentosScreenInner() {
 
   const handleCreateDoc = useCallback(async (type) => {
     setShowCreateMenu(false);
+    haptic.light();
     const titleMap = {
       document: t('docs.untitledDocument') || 'Untitled Document',
       spreadsheet: t('docs.untitledSpreadsheet') || 'Untitled Spreadsheet',
@@ -230,6 +254,7 @@ function DocumentosScreenInner() {
     const doIt = async () => {
       try {
         await docsTrash(doc.doc_id);
+        haptic.success();
         fetchDocs();
       } catch (e) {
         // [2026-06-04] cacada R2: lixeira falhava em silencio.
@@ -282,7 +307,7 @@ function DocumentosScreenInner() {
       const m = String(e?.message || e);
       if (Platform.OS === 'web') window.alert(m); else Alert.alert(t('common.error') || 'Erro', m);
     }
-  }, [fetchDocs]);
+  }, [fetchDocs, t]);
 
   const handleShare = useCallback((doc) => {
     setContextDoc(null);
@@ -369,7 +394,7 @@ function DocumentosScreenInner() {
 
   // Context menu items
   const contextMenuItems = [
-    { key: 'analyze', label: 'Analisar com One AI', icon: IconSparkles, color: '#111111', action: handleAnalyzeWithOne },
+    { key: 'analyze', label: tr('docs.analyzeWithBia', 'Analisar com a Bia'), icon: IconSparkles, color: colors.text, action: handleAnalyzeWithOne },
     { key: 'edit', label: t('common.edit'), icon: IconEdit, color: colors.text, action: openEdit },
     { key: 'rename', label: t('docs.rename'), icon: IconFileText, color: colors.text, action: openRename },
     { key: 'duplicate', label: t('docs.duplicate'), icon: IconCopy, color: colors.text, action: handleDuplicate },
@@ -380,12 +405,11 @@ function DocumentosScreenInner() {
   // Render a single document row
   const renderDocItem = useCallback(({ item }) => {
     const row = (
-      <TouchableOpacity
-        style={[s.docRow, { borderBottomColor: colors.border }]}
+      <PressableRow
+        style={[s.docRow, { borderBottomColor: colors.border, backgroundColor: colors.background }]}
         onPress={() => handleOpenDoc(item)}
-        onLongPress={() => setContextDoc(item)}
+        onLongPress={() => { haptic.medium(); setContextDoc(item); }}
         delayLongPress={400}
-        activeOpacity={0.7}
         accessibilityLabel={item.title}
         accessibilityRole="button"
         {...(Platform.OS === 'web' ? { onContextMenu: (e) => { e?.preventDefault?.(); setContextDoc(item); } } : {})}
@@ -418,7 +442,7 @@ function DocumentosScreenInner() {
         >
           <IconMoreVert size={20} color={colors.textSecondary} />
         </TouchableOpacity>
-      </TouchableOpacity>
+      </PressableRow>
     );
 
     return (
@@ -432,10 +456,11 @@ function DocumentosScreenInner() {
   }, [colors, handleOpenDoc, handleTrash, t]);
 
   const renderFolderItem = useCallback(({ item }) => (
-    <TouchableOpacity
-      style={[s.docRow, { borderBottomColor: colors.border }]}
+    <PressableRow
+      style={[s.docRow, { borderBottomColor: colors.border, backgroundColor: colors.background }]}
       onPress={() => openFolder(item)}
-      activeOpacity={0.7}
+      accessibilityRole="button"
+      accessibilityLabel={item.name}
     >
       <View style={[iconStyles.badge, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : '#f5f5f5' }]}>
         <IconFolder size={22} color={colors.textSecondary} />
@@ -443,7 +468,7 @@ function DocumentosScreenInner() {
       <View style={s.docInfo}>
         <Text style={[s.docTitle, { color: colors.text }]} numberOfLines={1}>{item.name}</Text>
       </View>
-    </TouchableOpacity>
+    </PressableRow>
   ), [colors, isDark, openFolder]);
 
   // Recent documents (last 5 edited, sorted by updated_at)
@@ -454,10 +479,10 @@ function DocumentosScreenInner() {
       .slice(0, 5);
   }, [documents, searchQuery, currentFolder]);
 
-  const allItems = [
+  const allItems = useMemo(() => [
     ...folders.map(f => ({ ...f, _type: 'folder' })),
     ...documents.map(d => ({ ...d, _type: 'doc' })),
-  ];
+  ], [folders, documents]);
 
   const renderItem = useCallback(({ item }) => {
     if (item._type === 'folder') return renderFolderItem({ item });
@@ -465,24 +490,60 @@ function DocumentosScreenInner() {
   }, [renderFolderItem, renderDocItem]);
 
   const keyExtractor = useCallback((item) => {
-    return item._type === 'folder' ? `f-${item.id}` : `d-${item.id}`;
+    // doc_id é a chave real dos docs (alguns payloads não trazem `id` →
+    // várias linhas "d-undefined" = keys duplicadas / reciclagem errada).
+    return item._type === 'folder' ? `f-${item.id}` : `d-${item.doc_id || item.id}`;
   }, []);
 
   const EmptyState = () => (
-    <View style={s.emptyContainer}>
-      <IconFileText size={48} color={colors.textSecondary} />
-      <Text style={[s.emptyTitle, { color: colors.text }]}>
-        {searchQuery ? t('docs.noResults') : t('docs.emptyTitle')}
-      </Text>
-      <Text style={[s.emptySubtitle, { color: colors.textSecondary }]}>
-        {searchQuery ? t('docs.noResultsDesc') : t('docs.emptyDesc')}
-      </Text>
-    </View>
+    <ScreenEmptyState
+      kind={searchQuery ? 'search' : 'files'}
+      title={searchQuery ? t('docs.noResults') : t('docs.emptyTitle')}
+      subtitle={searchQuery ? t('docs.noResultsDesc') : t('docs.emptyDesc')}
+      cta={searchQuery ? undefined : { label: t('docs.createNew'), onPress: () => setShowCreateMenu(true) }}
+    />
   );
 
+  // Back contextual: dentro de pasta → sobe; senão fecha a tela.
+  const handleContextBack = useCallback(() => {
+    if (currentFolder) { goBackFolder(); return true; }
+    return false;
+  }, [currentFolder, goBackFolder]);
+  useEffect(() => {
+    if (Platform.OS !== 'android') return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', handleContextBack);
+    return () => { try { sub?.remove?.(); } catch {} };
+  }, [handleContextBack]);
+  const headerTitleText = currentFolder
+    ? (folderStack[folderStack.length - 1]?.name || t('sidebar.documents'))
+    : t('sidebar.documents');
+
   return (
-    <View style={[s.container, { backgroundColor: colors.background, paddingTop: insets.top }]}>
-      {/* Header */}
+    <View style={[s.container, { backgroundColor: colors.background, paddingTop: USE_NATIVE_HEADER ? 0 : insets.top }]}>
+      {/* [2026-10-08 apps-native] Nativo: header do sistema + busca NATIVA
+          (UISearchController / SearchView). Pull-to-refresh substitui o botão
+          de recarregar. Dentro de pasta o back sobe um nível. Web: header antigo. */}
+      {USE_NATIVE_HEADER ? (
+        <Stack.Screen options={(() => {
+          const o = nativeHeaderOptions({
+            colors,
+            title: headerTitleText,
+            headerLeft: currentFolder
+              ? () => <HeaderBackButton onPress={goBackFolder} color={colors.text} accessibilityLabel={t('common.back')} />
+              : undefined,
+            search: {
+              placeholder: t('common.search'),
+              onChangeText: (e) => setSearchInput(e?.nativeEvent?.text ?? ''),
+              onSearchButtonPress: (e) => setSearchQuery(String(e?.nativeEvent?.text ?? searchInput).trim()),
+              onCancelButtonPress: () => { setSearchInput(''); setSearchQuery(''); },
+              onClose: () => { setSearchInput(''); setSearchQuery(''); },
+            },
+          });
+          if (!currentFolder) { o.headerLeft = undefined; o.headerBackVisible = true; }
+          o.gestureEnabled = !currentFolder;
+          return o;
+        })()} />
+      ) : (
       <View style={[s.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           onPress={currentFolder ? goBackFolder : () => router.back()}
@@ -496,25 +557,22 @@ function DocumentosScreenInner() {
             <TextInput
               ref={searchRef}
               style={[s.searchInput, { color: colors.text }]}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
+              value={searchInput}
+              onChangeText={setSearchInput}
               placeholder={t('common.search')}
               placeholderTextColor={colors.textSecondary}
               autoFocus
               returnKeyType="search"
-              onSubmitEditing={() => fetchDocs()}
+              onSubmitEditing={() => setSearchQuery(searchInput.trim())}
             />
-            <TouchableOpacity onPress={() => { setShowSearch(false); setSearchQuery(''); }}>
+            <TouchableOpacity onPress={() => { setShowSearch(false); setSearchInput(''); setSearchQuery(''); }}>
               <IconX size={18} color={colors.textSecondary} />
             </TouchableOpacity>
           </View>
         ) : (
           <>
             <Text style={[s.headerTitle, { color: colors.text }]}>
-              {currentFolder
-                ? (folderStack[folderStack.length - 1]?.name || t('sidebar.documents'))
-                : t('sidebar.documents')
-              }
+              {headerTitleText}
             </Text>
             <View style={{ flex: 1 }} />
             <TouchableOpacity onPress={() => setShowSearch(true)} style={s.headerBtn}>
@@ -526,29 +584,30 @@ function DocumentosScreenInner() {
           </>
         )}
       </View>
+      )}
 
       {/* Document list */}
       {loading && !refreshing ? (
-        <View style={s.loadingContainer}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
+        <ListSkeleton count={8} />
       ) : error ? (
-        <View style={s.emptyContainer}>
-          <Text style={[s.emptyTitle, { color: colors.text }]}>{t('common.error')}</Text>
-          <Text style={[s.emptySubtitle, { color: colors.textSecondary }]}>{error}</Text>
-          <TouchableOpacity
-            onPress={() => fetchDocs()}
-            style={[s.retryBtn, { backgroundColor: colors.primary }]}
-          >
-            <Text style={s.retryText}>{t('common.retry') || 'Retry'}</Text>
-          </TouchableOpacity>
-        </View>
+        <ScreenEmptyState
+          kind="files"
+          title={t('common.error')}
+          subtitle={error}
+          cta={{ label: tr('common.retry', 'Tentar novamente'), onPress: () => { haptic.light(); fetchDocs(); } }}
+        />
       ) : (
         <FlatList
           data={allItems}
           renderItem={renderItem}
           keyExtractor={keyExtractor}
-          contentContainerStyle={allItems.length === 0 ? { flex: 1 } : undefined}
+          contentContainerStyle={allItems.length === 0 ? { flex: 1 } : { paddingBottom: 96 }}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          initialNumToRender={14}
+          maxToRenderPerBatch={12}
+          windowSize={9}
+          removeClippedSubviews={Platform.OS === 'android'}
           ListHeaderComponent={!searchQuery && !currentFolder ? (
             <>
               {/* Quick Create — card-style buttons */}
@@ -559,20 +618,21 @@ function DocumentosScreenInner() {
                   { type: 'presentation', label: t('docs.newPresentation') || 'Apresentação', color: '#ff9800', Icon: IconFileText },
                   { type: 'markdown', label: t('docs.newMarkdown') || 'Nota', color: '#111111', Icon: IconFileText },
                 ].map(item => (
-                  <TouchableOpacity
+                  <PressableScale
                     key={item.type}
                     style={[s.quickCreateBtn, {
                       backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : '#fff',
                       borderColor: isDark ? 'rgba(255,255,255,0.08)' : '#e5e7eb',
                     }]}
                     onPress={() => handleCreateDoc(item.type)}
-                    activeOpacity={0.75}
+                    accessibilityRole="button"
+                    accessibilityLabel={item.label}
                   >
                     <View style={[s.quickCreateIconWrap, { backgroundColor: item.color + '18' }]}>
                       <item.Icon size={20} color={item.color} />
                     </View>
                     <Text style={[s.quickCreateText, { color: colors.text }]} numberOfLines={1}>{item.label}</Text>
-                  </TouchableOpacity>
+                  </PressableScale>
                 ))}
               </ScrollView>
 
@@ -584,11 +644,13 @@ function DocumentosScreenInner() {
                   </Text>
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, gap: 10 }}>
                     {recentDocs.map(doc => (
-                      <TouchableOpacity
-                        key={doc.id || doc.doc_id}
+                      <PressableScale
+                        key={doc.doc_id || doc.id}
                         style={[s.recentCard, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f9fafb', borderColor: isDark ? 'rgba(255,255,255,0.08)' : '#e5e7eb' }]}
                         onPress={() => handleOpenDoc(doc)}
-                        activeOpacity={0.7}
+                        onLongPress={() => { haptic.medium(); setContextDoc(doc); }}
+                        accessibilityRole="button"
+                        accessibilityLabel={doc.title || t('docs.untitledDocument')}
                       >
                         <DocTypeIcon type={doc.type} size={24} />
                         <Text style={[s.recentCardTitle, { color: colors.text }]} numberOfLines={2}>
@@ -597,7 +659,7 @@ function DocumentosScreenInner() {
                         <Text style={[s.recentCardDate, { color: colors.textSecondary }]}>
                           {formatDate(doc.updated_at)}
                         </Text>
-                      </TouchableOpacity>
+                      </PressableScale>
                     ))}
                   </ScrollView>
                 </View>
@@ -628,11 +690,11 @@ function DocumentosScreenInner() {
         style={{ position: 'absolute', bottom: 24, right: 16 }}
         size={56}
         radius={16}
-        color="#4285f4"
+        color={isDark ? '#ffffff' : '#111111'}
         onPress={() => setShowCreateMenu(true)}
         accessibilityLabel={t('docs.createNew')}
       >
-        <IconPlus size={24} color="#fff" />
+        <IconPlus size={24} color={isDark ? '#111111' : '#ffffff'} />
       </BrandFab>
 
       {/* Create menu modal */}
@@ -643,10 +705,9 @@ function DocumentosScreenInner() {
             ...(Platform.OS === 'web' ? { boxShadow: '0 8px 32px rgba(0,0,0,0.15)' } : {}),
           }]}>
             <Text style={[s.menuTitle, { color: colors.text }]}>{t('docs.createNew')}</Text>
-            <TouchableOpacity
+            <PressableRow
               style={[s.menuItem, { borderBottomColor: colors.border }]}
               onPress={() => handleCreateDoc('document')}
-              activeOpacity={0.7}
             >
               <View style={[iconStyles.badge, { backgroundColor: '#e3f2fd' }]}>
                 <IconFileText size={20} color="#4285f4" />
@@ -655,11 +716,10 @@ function DocumentosScreenInner() {
                 <Text style={[s.menuItemTitle, { color: colors.text }]}>{t('docs.newDocument')}</Text>
                 <Text style={[s.menuItemSub, { color: colors.textSecondary }]}>{t('docs.newDocumentDesc')}</Text>
               </View>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </PressableRow>
+            <PressableRow
               style={[s.menuItem, { borderBottomColor: colors.border }]}
               onPress={() => handleCreateDoc('spreadsheet')}
-              activeOpacity={0.7}
             >
               <View style={[iconStyles.badge, { backgroundColor: '#e8f5e9' }]}>
                 <IconBarChart size={20} color="#34a853" />
@@ -668,11 +728,10 @@ function DocumentosScreenInner() {
                 <Text style={[s.menuItemTitle, { color: colors.text }]}>{t('docs.newSpreadsheet')}</Text>
                 <Text style={[s.menuItemSub, { color: colors.textSecondary }]}>{t('docs.newSpreadsheetDesc')}</Text>
               </View>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </PressableRow>
+            <PressableRow
               style={[s.menuItem, { borderBottomColor: colors.border }]}
               onPress={() => handleCreateDoc('presentation')}
-              activeOpacity={0.7}
             >
               <View style={[iconStyles.badge, { backgroundColor: '#fff3e0' }]}>
                 <IconFileText size={20} color="#ff9800" />
@@ -681,11 +740,10 @@ function DocumentosScreenInner() {
                 <Text style={[s.menuItemTitle, { color: colors.text }]}>{t('docs.newPresentation')}</Text>
                 <Text style={[s.menuItemSub, { color: colors.textSecondary }]}>{t('docs.newPresentationDesc')}</Text>
               </View>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </PressableRow>
+            <PressableRow
               style={[s.menuItem, { borderBottomColor: colors.border }]}
               onPress={() => handleCreateDoc('markdown')}
-              activeOpacity={0.7}
             >
               <View style={[iconStyles.badge, { backgroundColor: '#f3e5f5' }]}>
                 <IconFileText size={20} color="#111111" />
@@ -694,11 +752,10 @@ function DocumentosScreenInner() {
                 <Text style={[s.menuItemTitle, { color: colors.text }]}>{t('docs.newMarkdown')}</Text>
                 <Text style={[s.menuItemSub, { color: colors.textSecondary }]}>{t('docs.newMarkdownDesc')}</Text>
               </View>
-            </TouchableOpacity>
-            <TouchableOpacity
+            </PressableRow>
+            <PressableRow
               style={s.menuItem}
               onPress={() => handleCreateDoc('drawing')}
-              activeOpacity={0.7}
             >
               <View style={[iconStyles.badge, { backgroundColor: '#fce4ec' }]}>
                 <IconEdit size={20} color="#e91e63" />
@@ -707,7 +764,7 @@ function DocumentosScreenInner() {
                 <Text style={[s.menuItemTitle, { color: colors.text }]}>{t('docs.newDrawing')}</Text>
                 <Text style={[s.menuItemSub, { color: colors.textSecondary }]}>{t('docs.newDrawingDesc')}</Text>
               </View>
-            </TouchableOpacity>
+            </PressableRow>
             <TouchableOpacity
               style={[s.menuCancel, { backgroundColor: isDark ? 'rgba(255,255,255,0.06)' : '#f5f5f5' }]}
               onPress={() => setShowCreateMenu(false)}
@@ -735,15 +792,15 @@ function DocumentosScreenInner() {
                   </Text>
                 </View>
                 {contextMenuItems.map((item) => (
-                  <TouchableOpacity
+                  <PressableRow
                     key={item.key}
                     style={[s.contextItem, { borderTopColor: colors.border }]}
                     onPress={() => item.action(contextDoc)}
-                    activeOpacity={0.7}
+                    accessibilityRole="button"
                   >
                     <item.icon size={20} color={item.color} />
                     <Text style={[s.contextLabel, { color: item.color }]}>{item.label}</Text>
-                  </TouchableOpacity>
+                  </PressableRow>
                 ))}
               </>
             )}
@@ -787,10 +844,10 @@ function DocumentosScreenInner() {
                 <Text style={{ color: colors.textSecondary, fontWeight: '600' }}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[s.renameBtn, { backgroundColor: '#4285f4' }]}
+                style={[s.renameBtn, { backgroundColor: colors.text }]}
                 onPress={handleRename}
               >
-                <Text style={{ color: '#fff', fontWeight: '600' }}>{t('docs.save')}</Text>
+                <Text style={{ color: colors.background, fontWeight: '600' }}>{t('docs.save')}</Text>
               </TouchableOpacity>
             </View>
           </Pressable>

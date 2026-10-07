@@ -180,8 +180,36 @@ export const SCAN_DOCUMENT_ENABLED = false;
 // e-mail(s) in NATIVE_CORE_TEST_ACCOUNTS (lowercase) and publish an OTA — only
 // those accounts start the shadow socket. Dev console: globalThis.
 // __chatyy_native_core = true then require('services/nativeCore').init().
+//
+// [2026-10-08 native-core-2] Shadow ON for the two QA accounts only (apitest +
+// founder's QA account duarte@). Hub side (chatyy-ws-go) already treats
+// client:"native-core" sockets as non-presence (no initial_data, no offline
+// queue flush, no online/last_seen, own 4-socket cap — never evicts JS).
 export const NATIVE_CORE_ENABLED = false;
-export const NATIVE_CORE_TEST_ACCOUNTS = [];
+export const NATIVE_CORE_TEST_ACCOUNTS = [
+  'apitest@onemundo.com.br',
+  'duarte@chatyy.com.br',
+];
+
+// ────────────────────────────────────────────────────────────────────────
+// [2026-10-08 native-core-2] NATIVE_CORE_PRIMARY — phase 2 of the native core.
+// When ON (and the shadow is running + authenticated for this account):
+//   - frames that carry a per-user `event_id` (chat_message / chat_summary /
+//     receipts / edits / deletes … everything logged in ws_event_log) are
+//     forwarded RAW by the native socket and injected into services/websocket
+//     `_handleMessage` (same listeners as today); a shared event_id dedup makes
+//     whichever socket delivers first win, the other copy is dropped;
+//   - text sends that today go over the JS socket's native chat_send
+//     (services/api.js _tryNativeWsSend, hub cap `native_send`) go through the
+//     NATIVE outbox instead (ChatCoreSocket sendText: persisted, retried on
+//     reconnect with the same client_message_id; ack/fallback emitted to JS).
+//     JS keeps its 4 s timeout → HTTP with the same cmi (PHP + hub dedup).
+// The JS socket stays connected as the fallback for everything (calls,
+// presence, typing, acks, frames without event_id).
+// **DEFAULT false.** Applies only to accounts for which the shadow is enabled
+// (isEnabledFor). Dev override: globalThis.__chatyy_native_core_primary = true|false.
+// Needs a binary whose ChatyyChatCore reports version() >= 2.
+export const NATIVE_CORE_PRIMARY = false;
 
 // ────────────────────────────────────────────────────────────────────────
 // [2026-10-07 native-group-call] NATIVE_GROUP_CALL — /group-call renders the

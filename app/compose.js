@@ -63,6 +63,9 @@ import AIComposeModal from '../components/AIComposeModal';
 import RichTextEditor from '../components/RichTextEditor';
 import ContactAutocomplete from '../components/ContactAutocomplete';
 import AttachmentPicker from '../components/AttachmentPicker';
+// [2026-10-08 email-outbox] pre-upload on pick + durable outbox
+import { startAttachUpload, cancelAttachUpload, withServerId } from '../services/emailAttachUploads';
+import { enqueueEmail, newClientSendId, classifyEmailSend, isEmailDeviceOffline } from '../services/emailOutbox';
 import ScheduleSendModal from '../components/ScheduleSendModal';
 import TemplatePickerModal from '../components/TemplatePickerModal';
 import AISmartCompose from '../components/AISmartCompose';
@@ -1425,7 +1428,37 @@ export default function ComposeScreen() {
             return;
           }
         }
-        const r = await sendEmail(toStr, sendSubject, finalBody, ccStr, bccStr, params.reply_uid || null, params.folder || 'INBOX', sendAttachments, { trackOpens, fromAlias, undoDelay: delay });
+        // [2026-10-08 email-outbox] Attachments travel as server ids (already
+        // uploaded on pick). Still uploading, device offline, or a network /
+        // 5xx failure → hand the message to the durable outbox (same csid, the
+        // server dedupes) and close the composer like a normal send.
+        const csid = newClientSendId();
+        const attsNow = sendAttachments.map(withServerId);
+        const uploadsPending = attsNow.some(a => a && !a.is_drive_ref && !a.server_id);
+        const toOutbox = async (reason) => {
+          await enqueueEmail({
+            csid, reason, to: toStr, cc: ccStr, bcc: bccStr, subject: sendSubject, body: finalBody,
+            replyUid: params.reply_uid || null, folder: params.folder || 'INBOX', trackOpens, fromAlias,
+            undoDelay: delay, attachments: attsNow,
+            restore: { to: sendTo, cc: sendCc, bcc: sendBcc, subject: sendSubject, body: sendBody },
+          });
+          sentRef.current = true;
+          try { require('../services/emailUndo').showEmailNotice(reason === 'uploading' && !isEmailDeviceOffline() ? 'sending' : 'outbox'); } catch {}
+          finishSendSuccess({ instant: true });
+        };
+        if (uploadsPending || isEmailDeviceOffline()) {
+          try { await toOutbox(uploadsPending ? 'uploading' : 'offline'); return; } catch {}
+        }
+        let r = null;
+        let sendErr = null;
+        try {
+          r = await sendEmail(toStr, sendSubject, finalBody, ccStr, bccStr, params.reply_uid || null, params.folder || 'INBOX', attsNow, { trackOpens, fromAlias, undoDelay: delay, clientSendId: csid });
+        } catch (e) { sendErr = e; }
+        const sendKind = classifyEmailSend(r, sendErr);
+        if (sendKind === 'offline' || sendKind === 'transient' || sendKind === 'att_expired') {
+          try { await toOutbox(sendKind); return; } catch {}
+        }
+        if (sendErr) throw sendErr;
         if (r && r.success) {
           // Stash the server send_id so the Desfazer button can cancel the
           // queued message backend-side (real undo, not just a local timer).
@@ -1559,7 +1592,27 @@ export default function ComposeScreen() {
   };
 
   const handleAddAttachment = (file) => setAttachments(prev => [...prev, file]);
-  const handleRemoveAttachment = (index) => setAttachments(prev => prev.filter((_, i) => i !== index));
+  const handleRemoveAttachment = (index) => setAttachments(prev => {
+    const gone = prev[index];
+    if (gone && gone._akey) { try { cancelAttachUpload(gone._akey); } catch {} }
+    return prev.filter((_, i) => i !== index);
+  });
+
+  // [2026-10-08 email-outbox] Gmail-style: every attachment starts uploading
+  // the moment it lands in the list (picker, forward, Drive, undo/outbox
+  // restore) — `send` then only references server ids. Drive refs and
+  // already-uploaded items (server_id) register as done without a transfer.
+  useEffect(() => {
+    if (!attachments.some(a => a && !a._akey)) return;
+    setAttachments(prev => prev.map(a => (a && !a._akey) ? { ...a, _akey: startAttachUpload(a) } : a));
+  }, [attachments]);
+  // Composer discarded (not sent / not handed to the outbox) → stop uploads.
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
+  useEffect(() => () => {
+    if (sentRef.current) return;
+    (attachmentsRef.current || []).forEach(a => { if (a && a._akey) { try { cancelAttachUpload(a._akey); } catch {} } });
+  }, []);
 
   // Body soft-cap (~100KB of text/HTML). RichTextEditor is not a plain
   // TextInput so we cap on change instead of via maxLength. We slice the raw
